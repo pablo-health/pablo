@@ -1,15 +1,14 @@
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
+  - name: 'gcr.io/kaniko-project/executor:latest'
     args:
-      - 'build'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/frontend:latest'
-      - '-f'
-      - 'Dockerfile.production'
-      - '.'
+      - '--dockerfile=Dockerfile.production'
+      - '--context=.'
+      - '--destination=${_REGION}-docker.pkg.dev/$PROJECT_ID/pablo/frontend:latest'
+      - '--cache=true'
+      - '--cache-ttl=720h'
 
-images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/frontend:latest'
+substitutions:
+  _REGION: 'us-central1'
 
 options:
   machineType: 'E2_HIGHCPU_8'

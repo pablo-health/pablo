@@ -909,28 +909,35 @@ echo ""
 echo -e "${BLUE}Step 9: Building Docker images...${NC}"
 echo ""
 echo "This builds frontend and backend images using Cloud Build."
-echo "First build may take 15-20 minutes."
 echo ""
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Build backend base image — skip if deps haven't changed.
-# Tag with a hash of pyproject.toml + poetry.lock so we only rebuild when deps change.
+# Pre-built base image from GitHub Container Registry.
+# Users only need to build their own if they modify pyproject.toml/poetry.lock.
+PUBLIC_BASE_IMAGE="ghcr.io/pablo-health/backend-base:latest"
+
 DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
 BASE_TAG="deps-${DEPS_HASH}"
-BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:${BASE_TAG}"
+PRIVATE_BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:${BASE_TAG}"
 
-if gcloud artifacts docker images describe "$BASE_IMAGE" &>/dev/null; then
+if gcloud artifacts docker images describe "$PRIVATE_BASE_IMAGE" &>/dev/null; then
     echo -e "${GREEN}Backend base image already up-to-date (${BASE_TAG}) — skipping${NC}"
+    BASE_IMAGE="$PRIVATE_BASE_IMAGE"
+elif docker pull "$PUBLIC_BASE_IMAGE" &>/dev/null; then
+    echo -e "${GREEN}Using pre-built base image from ghcr.io${NC}"
+    BASE_IMAGE="$PUBLIC_BASE_IMAGE"
 else
     echo -e "${YELLOW}Building backend base image (Python deps + spaCy model)...${NC}"
+    echo "This is a one-time build (~15-20 min). Future deploys will be fast."
     gcloud builds submit . \
         --config=./backend/cloudbuild-base.yaml \
         --substitutions="_DATE_TAG=${BASE_TAG}" \
         --timeout=30m \
         --quiet
     echo -e "${GREEN}Backend base image built (${BASE_TAG})${NC}"
+    BASE_IMAGE="$PRIVATE_BASE_IMAGE"
 fi
 echo ""
 
@@ -938,6 +945,7 @@ echo ""
 echo -e "${YELLOW}Building backend image...${NC}"
 gcloud builds submit . \
     --config=./backend/cloudbuild.yaml \
+    --substitutions="_BASE_IMAGE=${BASE_IMAGE},_REGION=${REPO_LOCATION}" \
     --timeout=15m \
     --quiet
 echo -e "${GREEN}Backend image built${NC}"
@@ -947,6 +955,7 @@ echo ""
 echo -e "${YELLOW}Building frontend image...${NC}"
 gcloud builds submit ./frontend \
     --config=./frontend/cloudbuild.yaml \
+    --substitutions="_REGION=${REPO_LOCATION}" \
     --timeout=20m \
     --quiet
 echo -e "${GREEN}Frontend image built${NC}"

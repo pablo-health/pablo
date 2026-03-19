@@ -5,9 +5,8 @@
 # To rebuild the base image (when deps change):
 #   ./rebuild-base.sh
 
-ARG PROJECT_ID
-ARG REGION=us-central1
-FROM ${REGION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend-base:latest
+ARG BASE_IMAGE=ghcr.io/pablo-health/backend-base:latest
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

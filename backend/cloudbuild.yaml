@@ -1,17 +1,16 @@
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
+  - name: 'gcr.io/kaniko-project/executor:latest'
     args:
-      - 'build'
-      - '--build-arg'
-      - 'PROJECT_ID=$PROJECT_ID'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend:latest'
-      - '-f'
-      - 'backend/Dockerfile.production'
-      - '.'
+      - '--dockerfile=backend/Dockerfile.production'
+      - '--context=.'
+      - '--build-arg=BASE_IMAGE=${_BASE_IMAGE}'
+      - '--destination=${_REGION}-docker.pkg.dev/$PROJECT_ID/pablo/backend:latest'
+      - '--cache=true'
+      - '--cache-ttl=720h'
 
-images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend:latest'
+substitutions:
+  _BASE_IMAGE: 'ghcr.io/pablo-health/backend-base:latest'
+  _REGION: 'us-central1'
 
 options:
   machineType: 'E2_HIGHCPU_8'
