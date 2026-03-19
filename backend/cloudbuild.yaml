@@ -1,0 +1,18 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'PROJECT_ID=$PROJECT_ID'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/backend:latest'
+      - '-f'
+      - 'backend/Dockerfile.production'
+      - '.'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/backend:latest'
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,100 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Weekly Monday 6am UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  trivy-deps:
+    name: Trivy (dependencies)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan dependency lockfiles
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-deps.sarif
+          severity: CRITICAL,HIGH
+          scanners: vuln
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-deps
+
+  trivy-base-images:
+    name: Trivy (base images)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: python:3.13-slim
+            category: trivy-python-base
+          - image: node:22-slim
+            category: trivy-node-base
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan ${{ matrix.image }}
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          image-ref: ${{ matrix.image }}
+          format: sarif
+          output: trivy-base.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-base.sarif
+          category: ${{ matrix.category }}
+
+  trivy-config:
+    name: Trivy (Dockerfile config)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan Dockerfiles for misconfigurations
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config

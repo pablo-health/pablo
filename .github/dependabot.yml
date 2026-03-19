@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - python
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - javascript
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - ci
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"

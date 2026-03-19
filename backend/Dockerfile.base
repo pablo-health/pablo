@@ -1,0 +1,50 @@
+# Backend Base Image
+# Contains all Python dependencies (PyTorch, spaCy, ONNX, Presidio, etc.)
+# Rebuild only when pyproject.toml or poetry.lock changes.
+#
+# Usage:
+#   ./rebuild-base.sh
+#   ./redeploy.sh base
+
+# Stage 1: Builder - Install dependencies
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+# Install system dependencies for building Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+ENV POETRY_HOME="/opt/poetry"
+ENV PATH="$POETRY_HOME/bin:$PATH"
+RUN curl -sSL https://install.python-poetry.org | python3 -
+
+# Copy dependency files
+COPY pyproject.toml poetry.lock ./
+
+# Install dependencies (no dev packages, no virtualenv)
+# Note: meeting-transcription is automatically cloned from git by Poetry
+# (configured in pyproject.toml line 38)
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-root --only main
+
+# Download spaCy language model for PII detection
+RUN python -m spacy download en_core_web_lg
+
+# Stage 2: Runtime - Minimal image with all deps, no app code
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install only runtime system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
