@@ -26,7 +26,11 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 # Copy dependency files
 COPY pyproject.toml poetry.lock ./
 
-# Install dependencies (no dev packages, no virtualenv)
+# Install CPU-only PyTorch first (Cloud Run has no GPU).
+# This avoids downloading ~2GB of CUDA/nvidia packages.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies (no dev packages, no virtualenv)
 # Note: meeting-transcription is automatically cloned from git by Poetry
 # (configured in pyproject.toml line 38)
 RUN poetry config virtualenvs.create false \
