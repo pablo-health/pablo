@@ -467,47 +467,54 @@ create_index() {
         --async --quiet 2>&1 || true
 }
 
-echo "Creating composite indexes..."
+# Check if indexes already exist by looking for the last index we create
+EXISTING_INDEXES=$(gcloud firestore indexes composite list --project="$PROJECT_ID" --format="value(fieldConfig)" 2>/dev/null || echo "")
+
+if echo "$EXISTING_INDEXES" | grep -q "session_number"; then
+    echo -e "${GREEN}Firestore indexes already exist — skipping${NC}"
+else
+    echo "Creating composite indexes..."
+    echo ""
+
+    echo "  patients (user_id + last_name + first_name)..."
+    create_index patients \
+        "field-path=user_id,order=ascending" \
+        "field-path=last_name_lower,order=ascending" \
+        "field-path=first_name_lower,order=ascending" \
+        "field-path=__name__,order=ascending"
+
+    echo "  patients (user_id + first_name + last_name)..."
+    create_index patients \
+        "field-path=user_id,order=ascending" \
+        "field-path=first_name_lower,order=ascending" \
+        "field-path=last_name_lower,order=ascending" \
+        "field-path=__name__,order=ascending"
+
+    echo "  therapy_sessions (user_id + session_date)..."
+    create_index therapy_sessions \
+        "field-path=user_id,order=ascending" \
+        "field-path=session_date,order=descending" \
+        "field-path=__name__,order=descending"
+
+    echo "  therapy_sessions (patient_id + user_id + session_date)..."
+    create_index therapy_sessions \
+        "field-path=patient_id,order=ascending" \
+        "field-path=user_id,order=ascending" \
+        "field-path=session_date,order=descending" \
+        "field-path=__name__,order=descending"
+
+    echo "  therapy_sessions (patient_id + session_number)..."
+    create_index therapy_sessions \
+        "field-path=patient_id,order=ascending" \
+        "field-path=session_number,order=descending" \
+        "field-path=__name__,order=descending"
+
+    echo ""
+    echo -e "${YELLOW}Note: Index creation happens asynchronously (5-10 minutes)${NC}"
+    echo "  Check status: gcloud firestore indexes composite list --project=${PROJECT_ID}"
+fi
 echo ""
-
-echo "  patients (user_id + last_name + first_name)..."
-create_index patients \
-    "field-path=user_id,order=ascending" \
-    "field-path=last_name_lower,order=ascending" \
-    "field-path=first_name_lower,order=ascending" \
-    "field-path=__name__,order=ascending"
-
-echo "  patients (user_id + first_name + last_name)..."
-create_index patients \
-    "field-path=user_id,order=ascending" \
-    "field-path=first_name_lower,order=ascending" \
-    "field-path=last_name_lower,order=ascending" \
-    "field-path=__name__,order=ascending"
-
-echo "  therapy_sessions (user_id + session_date)..."
-create_index therapy_sessions \
-    "field-path=user_id,order=ascending" \
-    "field-path=session_date,order=descending" \
-    "field-path=__name__,order=descending"
-
-echo "  therapy_sessions (patient_id + user_id + session_date)..."
-create_index therapy_sessions \
-    "field-path=patient_id,order=ascending" \
-    "field-path=user_id,order=ascending" \
-    "field-path=session_date,order=descending" \
-    "field-path=__name__,order=descending"
-
-echo "  therapy_sessions (patient_id + session_number)..."
-create_index therapy_sessions \
-    "field-path=patient_id,order=ascending" \
-    "field-path=session_number,order=descending" \
-    "field-path=__name__,order=descending"
-
-echo ""
-echo -e "${YELLOW}Note: Index creation happens asynchronously (5-10 minutes)${NC}"
-echo "  Check status: gcloud firestore indexes composite list --project=${PROJECT_ID}"
-echo ""
-echo -e "${GREEN}Firestore index creation initiated${NC}"
+echo -e "${GREEN}Firestore indexes ready${NC}"
 echo ""
 
 # ============================================================================
@@ -790,44 +797,29 @@ echo ""
 echo -e "${BLUE}Step 8: Generating secrets...${NC}"
 echo ""
 
-# JWT secret
-JWT_SECRET=$(openssl rand -hex 32)
-echo "Storing JWT secret..."
-echo -n "$JWT_SECRET" | gcloud secrets create JWT_SECRET_KEY --data-file=- 2>/dev/null || {
-    echo -n "$JWT_SECRET" | gcloud secrets versions add JWT_SECRET_KEY --data-file=-
+# Helper: create a secret only if it doesn't already exist
+ensure_secret() {
+    local name="$1"
+    if gcloud secrets describe "$name" &>/dev/null; then
+        echo -e "${GREEN}${name} already exists — skipping${NC}"
+    else
+        local value
+        value=$(openssl rand -hex 32)
+        echo -n "$value" | gcloud secrets create "$name" --data-file=-
+        gcloud secrets add-iam-policy-binding "$name" \
+            --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+            --role="roles/secretmanager.secretAccessor" \
+            --quiet 2>/dev/null || true
+        echo -e "${GREEN}${name} created${NC}"
+    fi
 }
-gcloud secrets add-iam-policy-binding JWT_SECRET_KEY \
-    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet 2>/dev/null || true
-echo -e "${GREEN}JWT secret stored${NC}"
 
-# AUTH_SECRET for session signing
-AUTH_SECRET=$(openssl rand -hex 32)
-echo "Storing AUTH_SECRET..."
-echo -n "$AUTH_SECRET" | gcloud secrets create AUTH_SECRET --data-file=- 2>/dev/null || {
-    echo -n "$AUTH_SECRET" | gcloud secrets versions add AUTH_SECRET --data-file=-
-}
-gcloud secrets add-iam-policy-binding AUTH_SECRET \
-    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet 2>/dev/null || true
-echo -e "${GREEN}AUTH_SECRET stored${NC}"
-
-# AUTH_COOKIE_SIGNATURE_KEY for cookie signing
-AUTH_COOKIE_SIG_KEY=$(openssl rand -hex 32)
-echo "Storing AUTH_COOKIE_SIGNATURE_KEY..."
-echo -n "$AUTH_COOKIE_SIG_KEY" | gcloud secrets create AUTH_COOKIE_SIGNATURE_KEY --data-file=- 2>/dev/null || {
-    echo -n "$AUTH_COOKIE_SIG_KEY" | gcloud secrets versions add AUTH_COOKIE_SIGNATURE_KEY --data-file=-
-}
-gcloud secrets add-iam-policy-binding AUTH_COOKIE_SIGNATURE_KEY \
-    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet 2>/dev/null || true
-echo -e "${GREEN}AUTH_COOKIE_SIGNATURE_KEY stored${NC}"
+ensure_secret JWT_SECRET_KEY
+ensure_secret AUTH_SECRET
+ensure_secret AUTH_COOKIE_SIGNATURE_KEY
 
 echo ""
-echo -e "${GREEN}All secrets generated and stored${NC}"
+echo -e "${GREEN}All secrets ready${NC}"
 
 # ============================================================================
 # STEP 8b: Set up Google OAuth credentials
@@ -836,38 +828,43 @@ echo ""
 echo -e "${BLUE}Step 8b: Setting up Google OAuth credentials...${NC}"
 echo ""
 
-echo "Please complete these steps in Google Cloud Console:"
-echo ""
-echo "  1. Visit: https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}"
-echo ""
-echo "  2. Remember to configure the OAuth consent screen with information"
-echo "     about your application, then click 'Get started'"
-echo ""
-echo "  3. Create OAuth Client ID:"
-echo "     a. Click 'CREATE CREDENTIALS' > 'OAuth client ID'"
-echo "     b. Application type: 'Web application'"
-echo "     c. Name: 'Pablo'"
-echo ""
-echo "  4. Add authorized redirect URI:"
-echo "     https://${PROJECT_ID}.firebaseapp.com/__/auth/handler"
-echo "     (We'll add the Cloud Run frontend URL after deployment)"
-echo ""
-echo "  5. Click 'CREATE' and copy the credentials"
-echo ""
-read -p "Paste your Google OAuth Client ID: " GOOGLE_CLIENT_ID
-read -sp "Paste your Google OAuth Client Secret (hidden): " GOOGLE_CLIENT_SECRET
-echo ""
+if gcloud secrets describe GOOGLE_CLIENT_SECRET &>/dev/null; then
+    echo -e "${GREEN}Google OAuth credentials already configured — skipping${NC}"
+    # Retrieve stored client ID for Identity Platform registration
+    GOOGLE_CLIENT_ID=$(gcloud secrets versions access latest --secret=GOOGLE_CLIENT_ID 2>/dev/null || echo "")
+else
+    echo "Please complete these steps in Google Cloud Console:"
+    echo ""
+    echo "  1. Visit: https://console.cloud.google.com/apis/credentials?project=${PROJECT_ID}"
+    echo ""
+    echo "  2. Remember to configure the OAuth consent screen with information"
+    echo "     about your application, then click 'Get started'"
+    echo ""
+    echo "  3. Create OAuth Client ID:"
+    echo "     a. Click 'CREATE CREDENTIALS' > 'OAuth client ID'"
+    echo "     b. Application type: 'Web application'"
+    echo "     c. Name: 'Pablo'"
+    echo ""
+    echo "  4. Add authorized redirect URI:"
+    echo "     https://${PROJECT_ID}.firebaseapp.com/__/auth/handler"
+    echo "     (We'll add the Cloud Run frontend URL after deployment)"
+    echo ""
+    echo "  5. Click 'CREATE' and copy the credentials"
+    echo ""
+    read -p "Paste your Google OAuth Client ID: " GOOGLE_CLIENT_ID
+    read -sp "Paste your Google OAuth Client Secret (hidden): " GOOGLE_CLIENT_SECRET
+    echo ""
 
-echo ""
-echo "Storing Google OAuth credentials..."
-echo -n "$GOOGLE_CLIENT_SECRET" | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=- 2>/dev/null || {
-    echo -n "$GOOGLE_CLIENT_SECRET" | gcloud secrets versions add GOOGLE_CLIENT_SECRET --data-file=-
-}
-gcloud secrets add-iam-policy-binding GOOGLE_CLIENT_SECRET \
-    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet 2>/dev/null || true
-echo -e "${GREEN}Google OAuth credentials stored${NC}"
+    echo ""
+    echo "Storing Google OAuth credentials..."
+    echo -n "$GOOGLE_CLIENT_SECRET" | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-
+    echo -n "$GOOGLE_CLIENT_ID" | gcloud secrets create GOOGLE_CLIENT_ID --data-file=- 2>/dev/null || true
+    gcloud secrets add-iam-policy-binding GOOGLE_CLIENT_SECRET \
+        --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+        --role="roles/secretmanager.secretAccessor" \
+        --quiet 2>/dev/null || true
+    echo -e "${GREEN}Google OAuth credentials stored${NC}"
+fi
 
 # Register Google OAuth with Identity Platform
 echo ""
@@ -918,14 +915,23 @@ echo ""
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Build backend base image
-echo -e "${YELLOW}Building backend base image (Python deps + spaCy model)...${NC}"
-gcloud builds submit . \
-    --config=./backend/cloudbuild-base.yaml \
-    --substitutions="_DATE_TAG=$(date +%Y%m%d)" \
-    --timeout=30m \
-    --quiet
-echo -e "${GREEN}Backend base image built${NC}"
+# Build backend base image — skip if deps haven't changed.
+# Tag with a hash of pyproject.toml + poetry.lock so we only rebuild when deps change.
+DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
+BASE_TAG="deps-${DEPS_HASH}"
+BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:${BASE_TAG}"
+
+if gcloud artifacts docker images describe "$BASE_IMAGE" &>/dev/null; then
+    echo -e "${GREEN}Backend base image already up-to-date (${BASE_TAG}) — skipping${NC}"
+else
+    echo -e "${YELLOW}Building backend base image (Python deps + spaCy model)...${NC}"
+    gcloud builds submit . \
+        --config=./backend/cloudbuild-base.yaml \
+        --substitutions="_DATE_TAG=${BASE_TAG}" \
+        --timeout=30m \
+        --quiet
+    echo -e "${GREEN}Backend base image built (${BASE_TAG})${NC}"
+fi
 echo ""
 
 # Build backend app image
@@ -1078,11 +1084,39 @@ echo ""
 echo -e "${BLUE}Step 11: Creating your user account...${NC}"
 echo ""
 
-echo "Enter the email you'll use to sign in."
-echo "This will be your admin account."
-echo ""
-read -p "Email address: " ADMIN_EMAIL
-echo ""
+# Check if an admin user already exists in Firestore
+AUTH_TOKEN=$(gcloud auth print-access-token)
+EXISTING_ADMIN=$(curl -s \
+    "https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery" \
+    -H "Authorization: Bearer ${AUTH_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "structuredQuery": {
+            "from": [{"collectionId": "users"}],
+            "where": {"fieldFilter": {"field": {"fieldPath": "is_admin"}, "op": "EQUAL", "value": {"booleanValue": true}}},
+            "limit": 1
+        }
+    }' | python3 -c "
+import sys, json
+docs = json.load(sys.stdin)
+for d in docs:
+    fields = d.get('document', {}).get('fields', {})
+    email = fields.get('email', {}).get('stringValue', '')
+    if email:
+        print(email)
+        break
+" 2>/dev/null)
+
+if [ -n "$EXISTING_ADMIN" ]; then
+    echo -e "${GREEN}Admin user already exists (${EXISTING_ADMIN}) — skipping${NC}"
+    ADMIN_EMAIL=""
+else
+    echo "Enter the email you'll use to sign in."
+    echo "This will be your admin account."
+    echo ""
+    read -p "Email address: " ADMIN_EMAIL
+    echo ""
+fi
 
 if [ -n "$ADMIN_EMAIL" ]; then
     ADMIN_EMAIL_LOWER=$(echo "${ADMIN_EMAIL}" | tr '[:upper:]' '[:lower:]')
