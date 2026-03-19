@@ -6,7 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar"
 import { Header } from "@/components/layout/Header"
 import { redirect } from "next/navigation"
 import { mockUser } from "@/lib/mockData"
-import { getBAAStatus, getUserStatus } from "@/lib/api/users"
+import { getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { setTenantHeader } from "@/lib/api/client"
@@ -70,18 +70,6 @@ export default async function DashboardLayout({
       redirect("/login")
     }
 
-    // Check BAA acceptance status
-    // SECURITY: This is fail-closed - any error blocks access
-    try {
-      const baaStatus = await getBAAStatus(token)
-      if (!baaStatus.accepted || baaStatus.version !== baaStatus.current_version) {
-        redirect("/baa-acceptance")
-      }
-    } catch (error) {
-      if (error && typeof error === "object" && "digest" in error) throw error
-      console.error("Failed to check BAA status — blocking access")
-      redirect("/baa-acceptance")
-    }
   }
 
   return (

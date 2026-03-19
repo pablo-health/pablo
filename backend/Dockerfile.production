@@ -7,7 +7,7 @@
 
 ARG PROJECT_ID
 ARG REGION=us-central1
-FROM ${REGION}-docker.pkg.dev/${PROJECT_ID}/therapy/backend-base:latest
+FROM ${REGION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend-base:latest
 
 WORKDIR /app
 
