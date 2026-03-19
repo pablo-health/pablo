@@ -1,0 +1,64 @@
+# Backend Base Image
+# Contains all Python dependencies. When INSTALL_NLI=false, skips PyTorch,
+# sentence-transformers, and ONNX for a lighter solo image.
+# Rebuild only when pyproject.toml or poetry.lock changes.
+#
+# Usage:
+#   ./rebuild-base.sh
+#   ./redeploy.sh base
+
+# Build arg: set to "false" to skip NLI/ML deps (torch, sentence-transformers, onnxruntime)
+ARG INSTALL_NLI=true
+
+# Stage 1: Builder - Install dependencies
+FROM python:3.13-slim AS builder
+
+ARG INSTALL_NLI
+
+WORKDIR /build
+
+# Install system dependencies for building Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+ENV POETRY_HOME="/opt/poetry"
+ENV PATH="$POETRY_HOME/bin:$PATH"
+RUN curl -sSL https://install.python-poetry.org | python3 -
+
+# Copy dependency files
+COPY pyproject.toml poetry.lock ./
+
+# Install CPU-only PyTorch first (Cloud Run has no GPU).
+# This avoids downloading ~2GB of CUDA/nvidia packages.
+# Skipped for solo builds (INSTALL_NLI=false) since torch is only needed by NLI.
+RUN if [ "$INSTALL_NLI" = "true" ]; then \
+        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
+    fi
+
+# Install remaining dependencies (no dev packages, no virtualenv)
+# Note: meeting-transcription is automatically cloned from git by Poetry
+RUN poetry config virtualenvs.create false \
+    && if [ "$INSTALL_NLI" = "true" ]; then \
+        poetry install --no-interaction --no-ansi --no-root --only main; \
+    else \
+        poetry install --no-interaction --no-ansi --no-root --only main --without nli; \
+    fi
+
+
+# Stage 2: Runtime - Minimal image with all deps, no app code
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install only runtime system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin

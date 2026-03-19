@@ -1,0 +1,54 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - /app/.venv  # Prevent overwriting venv
+      - ~/.config/gcloud:/home/appuser/.config/gcloud:ro  # Mount gcloud credentials (read-only)
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - ENVIRONMENT=development
+      - CORS_ORIGINS=["http://localhost:3001","http://localhost:3002","http://localhost:3000"]
+      - CORS_ALLOW_CREDENTIALS=true
+      - FIRESTORE_EMULATOR_HOST=firebase-emulators:8080
+      - FIREBASE_AUTH_EMULATOR_HOST=firebase-emulators:9099
+      - FIREBASE_STORAGE_EMULATOR_HOST=firebase-emulators:9199
+      - GCP_PROJECT_ID=demo-therapy-platform
+      - FIREBASE_PROJECT_ID=demo-therapy-platform
+      - REQUIRE_BAA=false
+      # AI/LLM Configuration - Vertex AI
+      - AI_MODEL=${AI_MODEL:-google:gemini-3-pro-preview}
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_REGION=${GOOGLE_REGION:-global}
+    depends_on:
+      - firebase-emulators
+    networks:
+      - therapy-net
+
+  firebase-emulators:
+    build:
+      context: .  # This stays as current dir since it doesn't need meeting-transcription
+      dockerfile: Dockerfile.firebase
+    ports:
+      - "4000:4000"   # Firebase UI
+      - "8080:8080"   # Firestore
+      - "9099:9099"   # Auth
+      - "9199:9199"   # Storage
+    volumes:
+      - ./firebase.json:/app/firebase.json
+      - ./firestore.rules:/app/firestore.rules
+      - firebase-data:/app/.firebase  # Persist emulator data
+    networks:
+      - therapy-net
+
+networks:
+  therapy-net:
+    driver: bridge
+
+volumes:
+  firebase-data:

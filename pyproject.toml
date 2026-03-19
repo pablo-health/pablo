@@ -1,0 +1,190 @@
+[tool.poetry]
+name = "pablo"
+version = "0.1.0"
+description = "Therapy session management platform with AI-powered SOAP note generation"
+authors = ["Kurt Niemi <kurt@pablo.health>"]
+readme = "README.md"
+packages = [{include = "backend"}]
+
+[tool.poetry.dependencies]
+python = ">=3.13,<3.14"
+
+# Web Framework
+fastapi = ">=0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.41.0"}
+pydantic = "^2.5.0"
+pydantic-settings = "^2.13.1"
+
+# Environment Variables
+python-dotenv = "^1.2.2"
+
+# Google Cloud (for GCP deployment)
+google-cloud-firestore = "^2.23.0"
+google-cloud-secret-manager = "^2.18.0"
+
+# Firebase Admin SDK (for verifying Firebase ID tokens)
+firebase-admin = "^6.9.0"
+pyjwt = {extras = ["crypto"], version = ">=2.12.0"}
+
+# Caching
+redis = "^5.0.0"
+
+# PDF Generation
+reportlab = "^4.4.10"
+
+# Meeting Transcription Pipeline
+meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcription.git"}
+
+# PII Redaction
+faker = "^40.8.0"
+email-validator = "^2.3.0"
+
+[tool.poetry.group.nli]
+optional = true
+
+[tool.poetry.group.nli.dependencies]
+# NLI Verification (source attribution confidence scoring)
+# Solo deployments skip this group for a lighter image (~300MB smaller).
+sentence-transformers = ">=3.0.0"
+onnxruntime = ">=1.17.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.0"
+pytest-cov = "^7.0.0"
+pytest-mock = "^3.12.0"
+httpx = "^0.28.1"
+ruff = "^0.15.5"
+mypy = "^1.7.0"
+types-redis = "^4.6.0"
+pip-audit = "^2.7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+exclude = [
+    ".git",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort (import sorting)
+    "N",      # pep8-naming
+    "UP",     # pyupgrade (modern Python syntax)
+    "S",      # flake8-bandit (security checks)
+    "B",      # flake8-bugbear (common bugs)
+    "C4",     # flake8-comprehensions
+    "SIM",    # flake8-simplify
+    "RUF",    # Ruff-specific rules
+    "PL",     # pylint (comprehensive checks)
+    "PT",     # flake8-pytest-style
+    "TID",    # flake8-tidy-imports
+    "TC",     # flake8-type-checking (TYPE_CHECKING blocks)
+    "ARG",    # flake8-unused-arguments
+    "PTH",    # flake8-use-pathlib (prefer pathlib over os.path)
+]
+
+ignore = [
+    "B008",     # Do not perform function calls in argument defaults (FastAPI Depends pattern)
+    "TID252",   # Prefer absolute imports - relative imports are fine within packages
+]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/**/*.py" = [
+    "S101",     # Allow assert in tests
+    "ARG001",   # Allow unused function args (pytest fixtures)
+    "PLR0913",  # Allow many arguments (pytest fixture injection)
+    "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
+]
+"backend/tests_integration/**/*.py" = [
+    "S101",     # Allow assert in tests
+    "ARG001",   # Allow unused function args (pytest fixtures)
+    "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
+]
+"backend/app/routes/**/*.py" = [
+    "PLR0913",  # Allow many arguments (FastAPI Depends injection)
+]
+"backend/app/services/**/*.py" = [
+    "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
+    "PLC0415",  # Allow lazy imports for optional ML libraries (spacy, sentence_transformers, etc.)
+]
+"backend/plugins/**/*.py" = [
+    "PLR0912",  # Allow many branches in plugin processing logic
+]
+"backend/scripts/**/*.py" = [
+    "S603",     # Allow subprocess calls in dev scripts
+    "S607",     # Allow partial executable paths in dev scripts
+    "PLC0415",  # Allow lazy imports in standalone scripts (conditional/env-dependent)
+]
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false  # stubs differ between local/CI mypy versions
+warn_no_return = true
+check_untyped_defs = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "fastapi.*",
+    "pydantic.*",
+    "google.cloud.*",
+    "google.auth.*",
+    "google.genai.*",
+    "google.oauth2.*",
+    "firebase_admin.*",
+    "redis.*",
+    "reportlab.*",
+    "meeting_transcription.*",
+    "presidio_analyzer.*",
+    "presidio_anonymizer.*",
+    "faker.*",
+    "spacy.*",
+    "negspacy",
+    "negspacy.*",
+    "sentence_transformers.*",
+    "onnxruntime.*",
+    "torch.*",
+    "datasets.*",
+    "sklearn.*",
+    "scipy.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--cov=backend/app",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "spacy: tests requiring a spaCy model (en_core_web_lg)",
+    "gcp: tests requiring GCP credentials / connectivity",
+]

@@ -1,0 +1,41 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Distribution / packaging
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# OS
+.DS_Store
+
+# Node.js
+node_modules/
+
+# Next.js
+.next/
+
+# Firebase emulator data
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+
+# NLI training data and model artifacts
+backend/data/*.jsonl
+backend/data/nli-therapy-*

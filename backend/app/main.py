@@ -1,0 +1,63 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""
+Main FastAPI application for Pablo.
+"""
+
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
+from .routes import admin, auth, patients, scheduling, sessions, users
+from .settings import get_settings
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+# Security: warn loudly if development mode bypasses are active
+if settings.is_development:
+    logger.warning(
+        "SECURITY: Running in development mode — "
+        "MFA enforcement, admin checks, and HTTPS enforcement are DISABLED. "
+        "Do NOT use ENVIRONMENT=development in production."
+    )
+
+app = FastAPI(
+    title=settings.api_title,
+    description=settings.api_description,
+    version=settings.api_version,
+    debug=settings.debug,
+    docs_url="/docs" if settings.is_development else None,
+    redoc_url="/redoc" if settings.is_development else None,
+    openapi_url="/openapi.json" if settings.is_development else None,
+)
+
+# Security middleware - HIPAA TLS enforcement (order matters: security first)
+app.add_middleware(SecurityHeadersMiddleware, settings=settings)
+app.add_middleware(HTTPSEnforcementMiddleware, settings=settings)
+
+# CORS configuration
+# Parse CORS origins (comma-separated string to list)
+cors_origins = [origin.strip() for origin in settings.cors_origins.split(",")]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-ID"],
+)
+
+# Core routes (always included)
+app.include_router(auth.router)
+app.include_router(admin.router)
+app.include_router(users.router)
+app.include_router(patients.router)
+app.include_router(scheduling.router)
+app.include_router(sessions.router)
+
+@app.get("/api/health")
+def health_check() -> dict[str, str]:
+    """Health check endpoint."""
+    return {"status": "healthy"}

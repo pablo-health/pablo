@@ -1,0 +1,235 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "./calendar-theme.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: var(--font-dm-sans), system-ui, sans-serif;
+  --font-display: var(--font-fraunces), Georgia, serif;
+
+  /* Pablo Brand: Honey/Amber primary */
+  --color-primary-50: #FDF6EC;
+  --color-primary-100: #FAE8C8;
+  --color-primary-200: #F5D49E;
+  --color-primary-300: #F0BE6F;
+  --color-primary-400: #ECA94F;
+  --color-primary-500: #E8A849;
+  --color-primary-600: #D4952F;
+  --color-primary-700: #B07A24;
+  --color-primary-800: #8E6220;
+  --color-primary-900: #74501C;
+
+  /* Pablo Brand: Sage Green secondary */
+  --color-secondary-50: #F2F7F3;
+  --color-secondary-100: #E0EDE2;
+  --color-secondary-200: #C2DBC6;
+  --color-secondary-300: #9DC4A3;
+  --color-secondary-400: #7A9E7E;
+  --color-secondary-500: #5F8563;
+  --color-secondary-600: #4A6B4E;
+  --color-secondary-700: #3D5640;
+  --color-secondary-800: #334636;
+  --color-secondary-900: #2B3A2E;
+
+  /* Pablo Brand: Sky Blue accent */
+  --color-accent-50: #F0F6F9;
+  --color-accent-100: #DCE9F0;
+  --color-accent-200: #C2D9E5;
+  --color-accent-300: #89B4C8;
+  --color-accent-400: #6FA0B8;
+  --color-accent-500: #5A8DA5;
+  --color-accent-600: #49748A;
+  --color-accent-700: #3D5F71;
+  --color-accent-800: #354F5E;
+  --color-accent-900: #2E4350;
+
+  /* Pablo Brand: Warm browns */
+  --color-neutral-50: #FDF6EC;
+  --color-neutral-100: #F5EBD9;
+  --color-neutral-200: #E8D5B5;
+  --color-neutral-300: #D4BA8E;
+  --color-neutral-400: #B89B6D;
+  --color-neutral-500: #9A7F58;
+  --color-neutral-600: #6B5344;
+  --color-neutral-700: #553F33;
+  --color-neutral-800: #3D2D24;
+  --color-neutral-900: #2C1810;
+}
+
+@layer base {
+  body {
+    @apply bg-neutral-50 text-neutral-900;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-display font-semibold;
+  }
+}
+
+@layer components {
+
+  /* Primary button - warm honey/amber */
+  .btn-primary {
+    @apply bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 hover:shadow-md active:scale-[0.98] focus:ring-2 focus:ring-primary-300 focus:outline-none transition-all duration-200 shadow-sm;
+  }
+
+  /* Secondary button - sage green */
+  .btn-secondary {
+    @apply bg-secondary-500 text-white px-6 py-3 rounded-lg font-medium hover:bg-secondary-600 hover:shadow-md active:scale-[0.98] focus:ring-2 focus:ring-secondary-300 focus:outline-none transition-all duration-200 shadow-sm;
+  }
+
+  /* Neutral button */
+  .btn-neutral {
+    @apply bg-neutral-100 text-neutral-900 px-6 py-3 rounded-lg font-medium hover:bg-neutral-200 hover:shadow active:scale-[0.98] focus:ring-2 focus:ring-neutral-300 focus:outline-none transition-all duration-200;
+  }
+
+  /* Card component - subtle shadow, spacious */
+  .card {
+    @apply bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-all duration-300;
+  }
+
+  /* Input field - calming design */
+  .input {
+    @apply w-full px-4 py-3 rounded-lg border border-neutral-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-200 focus:outline-none transition-all duration-200 placeholder:text-neutral-400 hover:border-neutral-400;
+  }
+
+  /* Spacious form layout */
+  .form-group {
+    @apply space-y-2 mb-6;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-neutral-700 mb-2;
+  }
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.625rem;
+  /* Pablo: warm cream background, deep brown foreground */
+  --background: oklch(0.97 0.015 75);
+  --foreground: oklch(0.22 0.04 45);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.04 45);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.04 45);
+  /* Pablo: deep warm brown for shadcn primary (buttons/links) */
+  --primary: oklch(0.35 0.06 50);
+  --primary-foreground: oklch(0.985 0.01 75);
+  /* Pablo: sage tint for secondary */
+  --secondary: oklch(0.95 0.02 140);
+  --secondary-foreground: oklch(0.30 0.04 45);
+  --muted: oklch(0.95 0.01 75);
+  --muted-foreground: oklch(0.50 0.04 55);
+  /* Pablo: sage tint for accent hover states */
+  --accent: oklch(0.94 0.025 140);
+  --accent-foreground: oklch(0.30 0.04 45);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.90 0.02 75);
+  --input: oklch(0.90 0.02 75);
+  /* Pablo: honey focus rings */
+  --ring: oklch(0.75 0.14 75);
+  --chart-1: oklch(0.75 0.14 75);
+  --chart-2: oklch(0.6 0.10 150);
+  --chart-3: oklch(0.65 0.10 220);
+  --chart-4: oklch(0.55 0.06 50);
+  --chart-5: oklch(0.80 0.12 75);
+  --sidebar: oklch(0.97 0.015 75);
+  --sidebar-foreground: oklch(0.22 0.04 45);
+  --sidebar-primary: oklch(0.35 0.06 50);
+  --sidebar-primary-foreground: oklch(0.985 0.01 75);
+  --sidebar-accent: oklch(0.94 0.025 140);
+  --sidebar-accent-foreground: oklch(0.30 0.04 45);
+  --sidebar-border: oklch(0.90 0.02 75);
+  --sidebar-ring: oklch(0.75 0.14 75);
+}
+
+.dark {
+  /* Pablo dark: warm dark brown, not cold gray */
+  --background: oklch(0.18 0.02 45);
+  --foreground: oklch(0.95 0.01 75);
+  --card: oklch(0.22 0.025 45);
+  --card-foreground: oklch(0.95 0.01 75);
+  --popover: oklch(0.22 0.025 45);
+  --popover-foreground: oklch(0.95 0.01 75);
+  --primary: oklch(0.75 0.14 75);
+  --primary-foreground: oklch(0.18 0.02 45);
+  --secondary: oklch(0.28 0.02 140);
+  --secondary-foreground: oklch(0.95 0.01 75);
+  --muted: oklch(0.26 0.02 45);
+  --muted-foreground: oklch(0.65 0.03 55);
+  --accent: oklch(0.28 0.025 140);
+  --accent-foreground: oklch(0.95 0.01 75);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0.01 75 / 10%);
+  --input: oklch(1 0.01 75 / 15%);
+  --ring: oklch(0.65 0.12 75);
+  --chart-1: oklch(0.75 0.14 75);
+  --chart-2: oklch(0.60 0.10 150);
+  --chart-3: oklch(0.65 0.10 220);
+  --chart-4: oklch(0.55 0.06 50);
+  --chart-5: oklch(0.80 0.12 75);
+  --sidebar: oklch(0.20 0.025 45);
+  --sidebar-foreground: oklch(0.95 0.01 75);
+  --sidebar-primary: oklch(0.75 0.14 75);
+  --sidebar-primary-foreground: oklch(0.18 0.02 45);
+  --sidebar-accent: oklch(0.28 0.025 140);
+  --sidebar-accent-foreground: oklch(0.95 0.01 75);
+  --sidebar-border: oklch(1 0.01 75 / 10%);
+  --sidebar-ring: oklch(0.65 0.12 75);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
