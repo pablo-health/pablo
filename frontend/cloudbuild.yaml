@@ -3,13 +3,13 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/frontend:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/frontend:latest'
       - '-f'
       - 'Dockerfile.production'
       - '.'
 
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/frontend:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/frontend:latest'
 
 options:
   machineType: 'E2_HIGHCPU_8'

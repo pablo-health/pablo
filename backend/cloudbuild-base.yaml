@@ -3,16 +3,16 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/backend-base:latest'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
       - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/backend-base:v${_DATE_TAG}'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
       - '-f'
       - 'backend/Dockerfile.base'
       - '.'
 
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/backend-base:latest'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/therapy/backend-base:v${_DATE_TAG}'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
 
 substitutions:
   _DATE_TAG: '00000000'

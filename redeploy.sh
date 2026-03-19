@@ -25,7 +25,7 @@ cd "$SCRIPT_DIR"
 
 # Configuration
 REGION="us-central1"
-REPO_NAME="therapy"
+REPO_NAME="pablo"
 
 # Get project ID
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null)
@@ -84,18 +84,18 @@ deploy_backend() {
     echo ""
 
     # Just update the image - Cloud Run preserves all other settings
-    gcloud run services update therapy-backend \
+    gcloud run services update pablo-backend \
         --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend:latest" \
         --region="$REGION" \
         --quiet
 
     # Ensure traffic routes to the new revision
-    gcloud run services update-traffic therapy-backend \
+    gcloud run services update-traffic pablo-backend \
         --to-latest \
         --region="$REGION" \
         --quiet
 
-    BACKEND_URL=$(gcloud run services describe therapy-backend \
+    BACKEND_URL=$(gcloud run services describe pablo-backend \
         --region="$REGION" \
         --format="value(status.url)")
 
@@ -122,18 +122,18 @@ deploy_frontend() {
     echo ""
 
     # Just update the image - Cloud Run preserves all other settings
-    gcloud run services update therapy-frontend \
+    gcloud run services update pablo-frontend \
         --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/frontend:latest" \
         --region="$REGION" \
         --quiet
 
     # Ensure traffic routes to the new revision
-    gcloud run services update-traffic therapy-frontend \
+    gcloud run services update-traffic pablo-frontend \
         --to-latest \
         --region="$REGION" \
         --quiet
 
-    FRONTEND_URL=$(gcloud run services describe therapy-frontend \
+    FRONTEND_URL=$(gcloud run services describe pablo-frontend \
         --region="$REGION" \
         --format="value(status.url)")
 
