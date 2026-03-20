@@ -36,8 +36,6 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --only main
 
-# Download spaCy language model for PII detection
-RUN python -m spacy download en_core_web_lg
 
 # Stage 2: Runtime - Minimal image with all deps, no app code
 FROM python:3.13-slim

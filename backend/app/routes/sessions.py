@@ -37,7 +37,6 @@ from ..repositories import (
 )
 from ..services import (
     AuditService,
-    EvalExportService,
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
     MeetingTranscriptionSOAPService,
@@ -51,13 +50,11 @@ from ..services import (
     SOAPGenerationService,
     get_audit_service,
 )
-from ..services.pii_redaction_service import PIIRedactionService
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["sessions"])
-
 
 def get_patient_repository(
     ctx: TenantContext = Depends(get_tenant_context),
@@ -66,7 +63,6 @@ def get_patient_repository(
     db = get_tenant_firestore_client(ctx.firestore_db)
     return FirestorePatientRepository(db)
 
-
 def get_session_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
@@ -74,28 +70,17 @@ def get_session_repository(
     db = get_tenant_firestore_client(ctx.firestore_db)
     return FirestoreTherapySessionRepository(db)
 
-
 def get_soap_generation_service() -> SOAPGenerationService:
     """Get SOAP generation service instance."""
     return MeetingTranscriptionSOAPService()
-
-
-def get_eval_export_service() -> EvalExportService:
-    """Get eval export service instance."""
-    pii_service = PIIRedactionService()
-    settings = get_settings()
-    return EvalExportService(pii_service, settings)
-
 
 def get_session_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     soap_service: SOAPGenerationService = Depends(get_soap_generation_service),
-    eval_export_service: EvalExportService = Depends(get_eval_export_service),
 ) -> SessionService:
     """Get session service instance with all dependencies."""
-    return SessionService(session_repo, patient_repo, soap_service, eval_export_service)
-
+    return SessionService(session_repo, patient_repo, soap_service)
 
 @router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_201_CREATED)
 def upload_session(
@@ -141,7 +126,6 @@ def upload_session(
 
     return SessionResponse.from_session(session, patient.display_name)
 
-
 @router.get("/api/sessions")
 def list_sessions(
     request: Request,
@@ -179,7 +163,6 @@ def list_sessions(
         page=page,
         page_size=page_size,
     )
-
 
 @router.get("/api/sessions/today")
 def get_today_sessions(
@@ -235,7 +218,6 @@ def get_today_sessions(
 
     return TodaySessionListResponse(data=data, total=len(data))
 
-
 @router.get("/api/sessions/{session_id}")
 def get_session(
     session_id: str,
@@ -272,7 +254,6 @@ def get_session(
     audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
 
     return SessionResponse.from_session(session, patient_name)
-
 
 @router.patch("/api/sessions/{session_id}/finalize")
 def finalize_session(
@@ -341,7 +322,6 @@ def finalize_session(
 
     return SessionResponse.from_session(session, patient_name)
 
-
 @router.patch("/api/sessions/{session_id}/rating")
 def update_session_rating(
     session_id: str,
@@ -408,9 +388,7 @@ def update_session_rating(
 
     return SessionResponse.from_session(session, patient_name)
 
-
 # --- Companion scheduling endpoints ---
-
 
 @router.post("/api/sessions/schedule", status_code=status.HTTP_201_CREATED)
 def schedule_session(
@@ -432,7 +410,6 @@ def schedule_session(
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
     return SessionResponse.from_session(session, patient.display_name)
-
 
 @router.patch("/api/sessions/{session_id}/status")
 def update_session_status(
@@ -481,7 +458,6 @@ def update_session_status(
 
     return SessionResponse.from_session(session, patient_name)
 
-
 @router.patch("/api/sessions/{session_id}")
 def update_session_metadata(
     session_id: str,
@@ -512,7 +488,6 @@ def update_session_metadata(
 
     patient_name = patient.display_name if patient else "Unknown"
     return SessionResponse.from_session(session, patient_name)
-
 
 @router.post("/api/sessions/{session_id}/transcript")
 def upload_transcript_to_session(
