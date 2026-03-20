@@ -6,6 +6,7 @@ import { useState } from "react"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -50,10 +51,6 @@ function toUTC(localDatetime: string): string {
   return new Date(localDatetime).toISOString()
 }
 
-/**
- * Derive a stable key that changes whenever the modal should reinitialize.
- * This forces React to remount AppointmentForm with fresh initial state.
- */
 function formKey(
   appointment: AppointmentResponse | null | undefined,
   defaultStart?: string,
@@ -71,13 +68,17 @@ export function AppointmentModal({
 }: AppointmentModalProps) {
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[540px] overflow-y-auto max-h-[85vh]">
         <DialogHeader>
           <DialogTitle>
             {appointment ? "Edit Appointment" : "New Appointment"}
           </DialogTitle>
+          <DialogDescription>
+            {appointment
+              ? "Update appointment details below."
+              : "Fill in the details to schedule a new appointment."}
+          </DialogDescription>
         </DialogHeader>
-        {/* Key forces remount so useState initializers run fresh */}
         <AppointmentForm
           key={formKey(appointment, defaultStart)}
           appointment={appointment ?? null}
@@ -87,6 +88,14 @@ export function AppointmentModal({
         />
       </DialogContent>
     </Dialog>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-xs font-medium uppercase tracking-wider text-neutral-500 pt-1">
+      {children}
+    </p>
   )
 }
 
@@ -110,7 +119,6 @@ function AppointmentForm({
 
   const isEditing = !!appointment
 
-  // Initialize from appointment (edit) or defaults (new)
   const [patientId, setPatientId] = useState(appointment?.patient_id ?? "")
   const [title, setTitle] = useState(appointment?.title ?? "")
   const [startAt, setStartAt] = useState(
@@ -183,11 +191,13 @@ function AppointmentForm({
 
   return (
     <>
-      <div className="grid gap-4 py-4">
+      <div className="grid gap-5 py-4">
+        {/* Patient & Title */}
+        <SectionLabel>Patient &amp; Title</SectionLabel>
         <div className="grid gap-2">
           <Label htmlFor="patient">Patient</Label>
           <Select value={patientId} onValueChange={setPatientId}>
-            <SelectTrigger id="patient">
+            <SelectTrigger id="patient" aria-required="true">
               <SelectValue placeholder="Select patient" />
             </SelectTrigger>
             <SelectContent>
@@ -210,6 +220,9 @@ function AppointmentForm({
           />
         </div>
 
+        {/* Schedule */}
+        <div className="border-t border-neutral-100" />
+        <SectionLabel>Schedule</SectionLabel>
         <div className="grid grid-cols-2 gap-4">
           <div className="grid gap-2">
             <Label htmlFor="start">Start</Label>
@@ -218,6 +231,7 @@ function AppointmentForm({
               type="datetime-local"
               value={startAt}
               onChange={(e) => handleStartChange(e.target.value)}
+              aria-required="true"
             />
           </div>
           <div className="grid gap-2">
@@ -233,6 +247,9 @@ function AppointmentForm({
           </div>
         </div>
 
+        {/* Session Details */}
+        <div className="border-t border-neutral-100" />
+        <SectionLabel>Session Details</SectionLabel>
         <div className="grid grid-cols-2 gap-4">
           <div className="grid gap-2">
             <Label htmlFor="session-type">Session Type</Label>
@@ -258,6 +275,9 @@ function AppointmentForm({
           </div>
         </div>
 
+        {/* Notes */}
+        <div className="border-t border-neutral-100" />
+        <SectionLabel>Notes</SectionLabel>
         <div className="grid gap-2">
           <Label htmlFor="notes">Notes</Label>
           <Textarea

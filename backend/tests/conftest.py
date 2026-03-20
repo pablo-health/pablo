@@ -7,6 +7,8 @@ import os
 # Set environment to development for all tests
 # CRITICAL: This must be set BEFORE importing app to ensure development mode
 os.environ["ENVIRONMENT"] = "development"
+# Enable SaaS features so admin/tenant routes are registered for tests
+os.environ["PABLO_EDITION"] = "solo"
 
 from typing import Any
 from unittest.mock import MagicMock, patch

@@ -7,42 +7,62 @@ import FullCalendar from "@fullcalendar/react"
 import dayGridPlugin from "@fullcalendar/daygrid"
 import timeGridPlugin from "@fullcalendar/timegrid"
 import interactionPlugin from "@fullcalendar/interaction"
-import type { DateSelectArg, EventClickArg, EventDropArg, DatesSetArg } from "@fullcalendar/core"
+import type { DateSelectArg, EventClickArg, EventDropArg, DatesSetArg, EventContentArg } from "@fullcalendar/core"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
+import { User, Users } from "lucide-react"
 
-const STATUS_COLORS: Record<string, string> = {
-  confirmed: "#3b82f6",
-  cancelled: "#9ca3af",
-  no_show: "#ef4444",
-  completed: "#22c55e",
+const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  confirmed: { bg: "#C2D9E5", text: "#3D5F71" },
+  completed: { bg: "#C2DBC6", text: "#3D5640" },
+  cancelled: { bg: "#E8D5B5", text: "#553F33" },
+  no_show: { bg: "#FECACA", text: "#991B1B" },
 }
 
 interface CalendarViewProps {
   onSelectSlot: (start: string, end: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
+  workingHoursStart?: number
+  workingHoursEnd?: number
 }
 
-export function CalendarView({ onSelectSlot, onSelectAppointment }: CalendarViewProps) {
+function toSlotTime(hour: number): string {
+  return `${String(hour).padStart(2, "0")}:00:00`
+}
+
+export function CalendarView({
+  onSelectSlot,
+  onSelectAppointment,
+  workingHoursStart = 8,
+  workingHoursEnd = 18,
+}: CalendarViewProps) {
   const [dateRange, setDateRange] = useState({ start: "", end: "" })
+  const [dateRangeText, setDateRangeText] = useState("")
   const { data } = useAppointmentList(dateRange.start, dateRange.end)
   const updateMutation = useUpdateAppointment()
 
-  const events = (data?.data ?? []).map((appt) => ({
-    id: appt.id,
-    title: appt.title,
-    start: appt.start_at,
-    end: appt.end_at,
-    backgroundColor: STATUS_COLORS[appt.status] ?? "#3b82f6",
-    borderColor: STATUS_COLORS[appt.status] ?? "#3b82f6",
-    extendedProps: appt,
-  }))
+  const events = (data?.data ?? []).map((appt) => {
+    const colors = STATUS_COLORS[appt.status] ?? STATUS_COLORS.confirmed
+    return {
+      id: appt.id,
+      title: appt.title,
+      start: appt.start_at,
+      end: appt.end_at,
+      backgroundColor: colors.bg,
+      borderColor: colors.bg,
+      textColor: colors.text,
+      extendedProps: appt,
+    }
+  })
 
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
     setDateRange({
       start: arg.startStr,
       end: arg.endStr,
     })
+    const start = arg.start.toLocaleDateString("en-US", { month: "long", day: "numeric" })
+    const end = arg.end.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+    setDateRangeText(`Showing ${start} to ${end}`)
   }, [])
 
   const handleSelect = useCallback(
@@ -74,7 +94,30 @@ export function CalendarView({ onSelectSlot, onSelectAppointment }: CalendarView
     [updateMutation]
   )
 
+  const renderEventContent = useCallback((arg: EventContentArg) => {
+    const appt = arg.event.extendedProps as AppointmentResponse
+    const isGroup = appt.session_type === "group" || appt.session_type === "couples"
+    const timeText = arg.timeText
+
+    return (
+      <div className="flex items-start gap-1.5 px-1.5 py-1 overflow-hidden w-full">
+        {isGroup
+          ? <Users className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          : <User className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        }
+        <div className="min-w-0">
+          <div className="font-medium text-xs leading-tight truncate">{arg.event.title}</div>
+          {timeText && <div className="text-[10px] opacity-75 leading-tight">{timeText}</div>}
+        </div>
+      </div>
+    )
+  }, [])
+
   return (
+    <>
+    <div className="sr-only" aria-live="polite" role="status">
+      {dateRangeText}
+    </div>
     <FullCalendar
       plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
       initialView="timeGridWeek"
@@ -90,11 +133,19 @@ export function CalendarView({ onSelectSlot, onSelectAppointment }: CalendarView
       select={handleSelect}
       eventClick={handleEventClick}
       eventDrop={handleEventDrop}
-      slotMinTime="07:00:00"
-      slotMaxTime="21:00:00"
+      eventContent={renderEventContent}
+      slotMinTime="00:00:00"
+      slotMaxTime="24:00:00"
+      scrollTime={toSlotTime(workingHoursStart)}
+      businessHours={{
+        daysOfWeek: [1, 2, 3, 4, 5],
+        startTime: toSlotTime(workingHoursStart),
+        endTime: toSlotTime(workingHoursEnd),
+      }}
       allDaySlot={false}
       nowIndicator
       height="auto"
     />
+    </>
   )
 }

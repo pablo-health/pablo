@@ -7,7 +7,7 @@
  */
 
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
-import { get, post } from "./client"
+import { get, post, put } from "./client"
 
 interface UserProfile {
   id: string
@@ -129,4 +129,28 @@ export async function acceptBAA(
   token?: string
 ): Promise<BAAStatusResponse> {
   return post<BAAStatusResponse>("/api/users/me/accept-baa", data, token)
+}
+
+export interface UserPreferences {
+  default_video_platform: string
+  default_session_type: string
+  default_duration_minutes: number
+  auto_transcribe: boolean
+  quality_preset: string
+  therapist_display_name: string | null
+  working_hours_start: number
+  working_hours_end: number
+}
+
+export async function getPreferences(
+  token?: string
+): Promise<UserPreferences> {
+  return get<UserPreferences>("/api/users/me/preferences", token)
+}
+
+export async function savePreferences(
+  prefs: UserPreferences,
+  token?: string
+): Promise<UserPreferences> {
+  return put<UserPreferences>("/api/users/me/preferences", prefs, token)
 }

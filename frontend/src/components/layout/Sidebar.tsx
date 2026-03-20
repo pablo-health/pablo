@@ -5,14 +5,11 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  Building2,
   Calendar,
   Home,
   Users,
   FileText,
   Settings,
-  ShieldCheck,
-  UserCog,
 } from "lucide-react"
 
 const navigation = [
@@ -20,9 +17,6 @@ const navigation = [
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
   { name: "Patients", href: "/dashboard/patients", icon: Users },
   { name: "Sessions", href: "/dashboard/sessions", icon: FileText },
-  { name: "Export Review", href: "/dashboard/admin/export-review", icon: ShieldCheck },
-  { name: "User Management", href: "/dashboard/admin/users", icon: UserCog },
-  { name: "Tenants", href: "/dashboard/admin/tenants", icon: Building2 },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ]
 
@@ -37,15 +31,16 @@ export function Sidebar() {
         </h1>
       </div>
 
-      <nav className="flex-1 space-y-1 px-3 py-4">
+      <nav aria-label="Main navigation" className="flex-1 space-y-1 px-3 py-4">
         {navigation.map((item) => {
           const isActive = pathname === item.href
           return (
             <Link
               key={item.name}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
               className={`
-                group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium 
+                group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium
                 transition-all duration-200
                 ${isActive
                   ? "bg-primary-50 text-primary-700 shadow-sm"

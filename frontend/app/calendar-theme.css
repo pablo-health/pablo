@@ -1,0 +1,124 @@
+/* Pablo FullCalendar Theme Override
+ * Aligns FullCalendar's default blue theme with the Pablo brand palette.
+ * All overrides are CSS-only — no JS changes needed.
+ */
+
+/* === Toolbar === */
+.fc .fc-toolbar-title {
+  font-family: var(--font-display), Georgia, serif;
+  color: var(--color-neutral-900);
+}
+
+.fc .fc-button {
+  background-color: var(--color-neutral-100);
+  color: var(--color-neutral-800);
+  border: 1px solid var(--color-neutral-200);
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.fc .fc-button:hover {
+  background-color: var(--color-neutral-200);
+  color: var(--color-neutral-900);
+}
+
+.fc .fc-button:focus {
+  box-shadow: 0 0 0 2px var(--color-primary-300);
+  outline: none;
+}
+
+.fc .fc-button-active,
+.fc .fc-button.fc-button-active {
+  background-color: var(--color-primary-600) !important;
+  color: white !important;
+  border-color: var(--color-primary-600) !important;
+}
+
+.fc .fc-button-active:focus,
+.fc .fc-button.fc-button-active:focus {
+  box-shadow: 0 0 0 2px var(--color-primary-300);
+}
+
+.fc .fc-today-button {
+  text-transform: capitalize;
+}
+
+/* === Grid Borders === */
+.fc th,
+.fc td,
+.fc .fc-scrollgrid {
+  border-color: var(--color-neutral-200);
+}
+
+/* === Day Headers === */
+.fc .fc-col-header-cell-cushion {
+  color: var(--color-neutral-600);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  font-weight: 500;
+}
+
+.fc .fc-day-today .fc-col-header-cell-cushion {
+  color: var(--color-primary-700);
+  font-weight: 600;
+}
+
+/* === Time Slots === */
+.fc .fc-timegrid-slot {
+  background-color: var(--color-neutral-50);
+}
+
+.fc .fc-timegrid-col.fc-day-today {
+  background-color: var(--color-primary-50) !important;
+  opacity: 0.6;
+}
+
+/* Business hours override — white for active work time */
+.fc .fc-non-business {
+  background-color: var(--color-neutral-50);
+}
+
+.fc .fc-timegrid-col:not(.fc-day-today) {
+  background-color: white;
+}
+
+/* === Now Indicator === */
+.fc .fc-timegrid-now-indicator-line {
+  border-color: var(--color-primary-500);
+  border-width: 2px;
+}
+
+.fc .fc-timegrid-now-indicator-arrow {
+  border-color: var(--color-primary-500);
+}
+
+/* === Events === */
+.fc .fc-event {
+  border-radius: 0.5rem;
+  border: 0;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  transition: box-shadow 0.15s ease;
+}
+
+.fc .fc-event:hover {
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.1);
+}
+
+/* === Selection Highlight === */
+.fc .fc-highlight {
+  background-color: rgb(from var(--color-primary-100) r g b / 0.5);
+}
+
+/* === Misc === */
+.fc .fc-timegrid-slot-label-cushion {
+  color: var(--color-neutral-500);
+  font-size: 0.75rem;
+}
+
+.fc .fc-daygrid-day-number {
+  color: var(--color-neutral-600);
+}
+
+.fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+  color: var(--color-primary-700);
+  font-weight: 600;
+}

@@ -3,11 +3,16 @@
 "use client"
 
 import { useCallback, useState } from "react"
+import { Plus, Calendar as CalendarIcon } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { CalendarView } from "@/components/calendar/CalendarView"
+import { StatusLegend } from "@/components/calendar/StatusLegend"
 import { AppointmentModal } from "@/components/calendar/AppointmentModal"
+import { usePreferences } from "@/hooks/usePreferences"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 export default function CalendarPage() {
+  const { data: preferences } = usePreferences()
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentResponse | null>(null)
   const [defaultStart, setDefaultStart] = useState<string>()
@@ -37,19 +42,24 @@ export default function CalendarPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-display font-semibold text-neutral-900">Calendar</h1>
-        <button
-          onClick={() => handleSelectSlot(new Date().toISOString(), "")}
-          className="btn-primary px-4 py-2 rounded-lg text-sm font-medium"
-        >
+        <div>
+          <h1 className="text-3xl font-display font-semibold text-neutral-900">Calendar</h1>
+          <p className="text-sm text-neutral-600 mt-1">Schedule and manage appointments</p>
+        </div>
+        <Button onClick={() => handleSelectSlot(new Date().toISOString(), "")}>
+          <Plus className="h-4 w-4" />
           New Appointment
-        </button>
+        </Button>
       </div>
 
-      <div className="card p-4">
+      <StatusLegend />
+
+      <div className="card p-4" aria-label="Weekly appointment calendar">
         <CalendarView
           onSelectSlot={handleSelectSlot}
           onSelectAppointment={handleSelectAppointment}
+          workingHoursStart={preferences?.working_hours_start}
+          workingHoursEnd={preferences?.working_hours_end}
         />
       </div>
 

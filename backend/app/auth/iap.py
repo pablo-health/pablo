@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 
 
-def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> dict:
+def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> dict[str, object]:
     """Verify a Google Cloud IAP JWT assertion.
 
     Args:
@@ -43,4 +43,5 @@ def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> dict:
         certs_url=IAP_CERTS_URL,
     )
     logger.debug("IAP JWT verified for user: %s", decoded.get("email", "unknown"))
-    return decoded
+    result: dict[str, object] = decoded
+    return result

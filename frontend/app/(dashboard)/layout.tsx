@@ -74,10 +74,16 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex h-screen">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:top-4 focus:left-4 focus:bg-white focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg focus:text-primary-700 focus:font-medium"
+      >
+        Skip to main content
+      </a>
       <Sidebar />
       <div className="flex flex-1 flex-col">
         <Header user={user} />
-        <main className="flex-1 overflow-y-auto p-6 bg-neutral-50">
+        <main id="main-content" className="flex-1 overflow-y-auto p-6 bg-neutral-50">
           <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         </main>
       </div>
