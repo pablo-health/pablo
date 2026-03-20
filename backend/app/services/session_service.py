@@ -27,23 +27,18 @@ from ..models import (
 )
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..settings import get_settings
-from .eval_export_service import EvalExportService
 from .soap_generation_service import SOAPGenerationService
 
 logger = logging.getLogger(__name__)
 
-
 class SessionServiceError(Exception):
     """Base exception for session service errors."""
-
 
 class PatientNotFoundError(SessionServiceError):
     """Raised when a patient is not found."""
 
-
 class SessionNotFoundError(SessionServiceError):
     """Raised when a session is not found."""
-
 
 class InvalidSessionStatusError(SessionServiceError):
     """Raised when a session is in the wrong status for an operation."""
@@ -52,10 +47,8 @@ class InvalidSessionStatusError(SessionServiceError):
         self.current_status = current_status
         super().__init__(f"Expected status '{expected}', got '{current_status}'")
 
-
 class SOAPGenerationFailedError(SessionServiceError):
     """Raised when SOAP generation fails."""
-
 
 class InvalidStatusTransitionError(SessionServiceError):
     """Raised when a session status transition is not allowed."""
@@ -65,7 +58,6 @@ class InvalidStatusTransitionError(SessionServiceError):
         self.target = target
         super().__init__(f"Cannot transition from '{current}' to '{target}'")
 
-
 class SessionAlreadyInStatusError(SessionServiceError):
     """Raised when a session is already in the target status (409)."""
 
@@ -73,14 +65,12 @@ class SessionAlreadyInStatusError(SessionServiceError):
         self.status = status
         super().__init__(f"Session is already in status '{status}'")
 
-
 class SessionInTerminalStatusError(SessionServiceError):
     """Raised when trying to modify a session in a terminal status."""
 
     def __init__(self, status: str) -> None:
         self.status = status
         super().__init__(f"Cannot modify session in terminal status '{status}'")
-
 
 # Valid status transitions (state machine)
 VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -94,7 +84,6 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 
 TERMINAL_STATUSES = {SessionStatus.FINALIZED, SessionStatus.CANCELLED, SessionStatus.FAILED}
 
-
 class RatingFeedbackRequiredError(SessionServiceError):
     """Raised when rating feedback is required but not provided."""
 
@@ -102,10 +91,8 @@ class RatingFeedbackRequiredError(SessionServiceError):
         self.threshold = threshold
         super().__init__(f"Rating below {threshold} requires feedback (reason or sections)")
 
-
 def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
 
 def validate_rating_feedback(
     rating: int,
@@ -124,7 +111,6 @@ def validate_rating_feedback(
     if not has_reason and not has_sections:
         raise RatingFeedbackRequiredError(settings.rating_feedback_required_below)
 
-
 class SessionService:
     """Orchestrates multi-step session operations."""
 
@@ -133,12 +119,10 @@ class SessionService:
         session_repo: TherapySessionRepository,
         patient_repo: PatientRepository,
         soap_service: SOAPGenerationService,
-        eval_export_service: EvalExportService,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.soap_service = soap_service
-        self.eval_export_service = eval_export_service
 
     def upload_session(
         self,
@@ -261,12 +245,6 @@ class SessionService:
             )
 
         session = self.session_repo.update(session)
-
-        # Check if session should be queued for eval export
-        decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
-        if decision.should_queue:
-            session = self.eval_export_service.queue_session_for_export(session)
-            session = self.session_repo.update(session)
 
         patient = self.patient_repo.get(session.patient_id, user_id)
 

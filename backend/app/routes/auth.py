@@ -19,10 +19,6 @@ from ..auth.firebase_init import initialize_firebase_app
 from ..database import get_admin_firestore_client
 from ..rate_limit import require_rate_limit
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
-from ..services.tenant_provisioning import (
-    TenantProvisioningError,
-    TenantProvisioningService,
-)
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -31,25 +27,20 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 RESOLVE_MIN_DURATION = 0.15  # 150ms minimum response time
 
-
 class ResolveTenantRequest(BaseModel):
     email: EmailStr
-
 
 class ResolveTenantResponse(BaseModel):
     status: str = "ok"
     tenant_id: str | None = None
 
-
 class SignupRequest(BaseModel):
     email: EmailStr
     practice_name: str
 
-
 class SignupResponse(BaseModel):
     status: str = "ok"
     tenant_id: str | None = None
-
 
 @router.post("/resolve-tenant", response_model=ResolveTenantResponse)
 async def resolve_tenant(
@@ -74,7 +65,6 @@ async def resolve_tenant(
 
     await _pad_response_time(start)
     return ResolveTenantResponse(tenant_id=tenant_id)
-
 
 @router.post("/signup", response_model=SignupResponse)
 async def signup(
@@ -103,29 +93,15 @@ async def signup(
         # Already has a tenant — return it
         return SignupResponse(tenant_id=existing.to_dict().get("tenant_id"))
 
-    try:
-        service = TenantProvisioningService.from_settings()
-        result = service.provision_practice(request.practice_name, email_lower)
-        return SignupResponse(tenant_id=result.tenant_id)
-    except TenantProvisioningError as exc:
-        logger.exception("Failed to provision practice")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to provision practice. Please try again.",
-        ) from exc
-
-
 async def _pad_response_time(start: float) -> None:
     """Pad response to constant minimum duration to prevent timing attacks."""
     elapsed = time.monotonic() - start
     if elapsed < RESOLVE_MIN_DURATION:
         await asyncio.sleep(RESOLVE_MIN_DURATION - elapsed)
 
-
 # --- Native App Code Exchange (RFC 8252) ---
 
 ALLOWED_NATIVE_SCHEMES = {"pablohealth", "therapyrecorder"}
-
 
 def _is_valid_native_redirect_uri(uri: str) -> bool:
     """Validate that the redirect URI is an allowed native app callback."""
@@ -139,26 +115,21 @@ def _is_valid_native_redirect_uri(uri: str) -> bool:
     # Allow localhost loopback for Windows (RFC 8252 Section 7.3)
     return parsed.scheme == "http" and parsed.hostname == "localhost"
 
-
 class CreateAuthCodeRequest(BaseModel):
     id_token: str
     refresh_token: str
     redirect_uri: str
 
-
 class CreateAuthCodeResponse(BaseModel):
     code: str
-
 
 class ExchangeAuthCodeRequest(BaseModel):
     code: str
     redirect_uri: str
 
-
 class ExchangeAuthCodeResponse(BaseModel):
     id_token: str
     refresh_token: str
-
 
 @router.post("/native/code", response_model=CreateAuthCodeResponse)
 def create_native_code(
@@ -196,7 +167,6 @@ def create_native_code(
         redirect_uri=request.redirect_uri,
     )
     return CreateAuthCodeResponse(code=code)
-
 
 @router.post("/native/exchange", response_model=ExchangeAuthCodeResponse)
 def exchange_native_code(

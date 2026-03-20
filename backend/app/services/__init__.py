@@ -1,7 +1,6 @@
 """Service layer for business logic."""
 
 from .audit_service import AuditService, get_audit_service
-from .eval_export_service import EvalExportService, QueueDecision
 from .export_service import ExportService
 from .session_service import (
     InvalidSessionStatusError,
@@ -30,14 +29,12 @@ from .source_attribution_service import (
 
 __all__ = [
     "AuditService",
-    "EvalExportService",
     "ExportService",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
     "MeetingTranscriptionSOAPService",
     "MockSOAPGenerationService",
     "PatientNotFoundError",
-    "QueueDecision",
     "RatingFeedbackRequiredError",
     "SOAPGenerationFailedError",
     "SOAPGenerationService",

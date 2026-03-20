@@ -920,7 +920,7 @@ PUBLIC_BASE_IMAGE="ghcr.io/pablo-health/backend-base:latest"
 
 DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
 BASE_TAG="deps-${DEPS_HASH}"
-PRIVATE_BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:${BASE_TAG}"
+PRIVATE_BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:v${BASE_TAG}"
 
 if gcloud artifacts docker images describe "$PRIVATE_BASE_IMAGE" &>/dev/null; then
     echo -e "${GREEN}Backend base image already up-to-date (${BASE_TAG}) — skipping${NC}"

@@ -21,7 +21,6 @@ from ..repositories import (
     get_user_repository,
 )
 from ..services import AuditService, get_audit_service
-from ..services.braintrust_export_service import BraintrustExportService
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)

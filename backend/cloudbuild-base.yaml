@@ -1,12 +1,18 @@
 steps:
-  - name: 'gcr.io/kaniko-project/executor:latest'
+  - name: 'gcr.io/cloud-builders/docker'
     args:
-      - '--dockerfile=backend/Dockerfile.base'
-      - '--context=.'
-      - '--destination=us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
-      - '--destination=us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
-      - '--cache=true'
-      - '--cache-ttl=720h'
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
+      - '-f'
+      - 'backend/Dockerfile.base'
+      - '.'
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
 
 substitutions:
   _DATE_TAG: '00000000'
