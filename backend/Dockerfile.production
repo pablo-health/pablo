@@ -5,7 +5,7 @@
 # To rebuild the base image (when deps change):
 #   ./rebuild-base.sh
 
-ARG BASE_IMAGE=ghcr.io/pablo-health/backend-base:deps-9fb543044c90
+ARG BASE_IMAGE=ghcr.io/pablo-health/backend-base:deps-10f1ce3d1104
 FROM ${BASE_IMAGE}
 
 WORKDIR /app

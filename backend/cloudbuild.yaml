@@ -9,7 +9,7 @@ steps:
       - '--cache-ttl=720h'
 
 substitutions:
-  _BASE_IMAGE: 'ghcr.io/pablo-health/backend-base:deps-9fb543044c90'
+  _BASE_IMAGE: 'ghcr.io/pablo-health/backend-base:deps-10f1ce3d1104'
   _REGION: 'us-central1'
 
 options:
