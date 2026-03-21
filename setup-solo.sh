@@ -988,7 +988,7 @@ gcloud run deploy pablo-backend \
     --max-instances=10 \
     --timeout=300 \
     --set-secrets="${SECRETS_STRING}" \
-    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*" \
+    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||RESTRICT_SIGNUPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*" \
     --quiet
 
 BACKEND_URL=$(gcloud run services describe pablo-backend \
