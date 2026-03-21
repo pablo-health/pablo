@@ -3,7 +3,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   TotpMultiFactorGenerator,
   TotpSecret,
@@ -19,7 +19,9 @@ import { post } from "@/lib/api/client"
 
 export function MFAEnrollmentForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, loading: authLoading } = useAuth()
+  const returnTo = searchParams.get("returnTo")
   const [totpSecret, setTotpSecret] = useState<TotpSecret | null>(null)
   const [verificationCode, setVerificationCode] = useState("")
   const [error, setError] = useState("")
@@ -28,11 +30,14 @@ export function MFAEnrollmentForm() {
   const [generating, setGenerating] = useState(false)
   const [needsReauth, setNeedsReauth] = useState(false)
 
-  // Record MFA enrollment in the backend and redirect to dashboard
+  // Record MFA enrollment in the backend and redirect
   const recordEnrollmentAndRedirect = async (currentUser: FirebaseUser) => {
     const token = await currentUser.getIdToken()
     await post("/api/users/me/mfa-enrolled", {}, token)
-    router.push("/dashboard")
+    // Return to the native-auth page (or wherever the user came from) if specified,
+    // otherwise default to the dashboard. Only allow relative paths.
+    const destination = returnTo && returnTo.startsWith("/") ? returnTo : "/dashboard"
+    router.push(destination)
   }
 
   // Try generating TOTP secret on mount (works if session is fresh enough)

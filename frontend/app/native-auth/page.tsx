@@ -103,6 +103,15 @@ export default function NativeAuthPage() {
         })
 
         if (!res.ok) {
+          const data = await res.json().catch(() => null)
+          const errorCode = data?.detail?.error?.code ?? data?.error?.code
+          if (res.status === 403 && errorCode === "MFA_REQUIRED") {
+            // User hasn't completed MFA — send them through enrollment,
+            // then return here to finish the native auth handoff.
+            const returnUrl = `/native-auth?redirect_uri=${encodeURIComponent(redirectUri!)}`
+            window.location.href = `/mfa-enrollment?returnTo=${encodeURIComponent(returnUrl)}`
+            return
+          }
           throw new Error("Failed to generate authorization code")
         }
 

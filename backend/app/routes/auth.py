@@ -155,13 +155,33 @@ def create_native_code(
     # Verify the Firebase id_token before issuing a code
     initialize_firebase_app()
     try:
-        firebase_auth.verify_id_token(request.id_token, check_revoked=True)
+        decoded_token = firebase_auth.verify_id_token(request.id_token, check_revoked=True)
     except Exception as err:
         logger.warning("Native code request with invalid id_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired id_token.",
         ) from err
+
+    # Enforce MFA: reject tokens without a completed second factor
+    settings = get_settings()
+    if (
+        settings.require_mfa
+        and not settings.is_development
+        and settings.auth_mode != "iap"
+    ):
+        firebase_claims = decoded_token.get("firebase", {})
+        if not firebase_claims.get("sign_in_second_factor"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": {
+                        "code": "MFA_REQUIRED",
+                        "message": "Multi-factor authentication is required",
+                        "details": {},
+                    }
+                },
+            )
 
     code = create_auth_code(
         id_token=request.id_token,
