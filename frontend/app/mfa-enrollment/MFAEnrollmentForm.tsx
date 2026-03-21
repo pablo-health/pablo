@@ -36,7 +36,7 @@ export function MFAEnrollmentForm() {
     await post("/api/users/me/mfa-enrolled", {}, token)
     // Return to the native-auth page (or wherever the user came from) if specified,
     // otherwise default to the dashboard. Only allow relative paths.
-    const destination = returnTo && returnTo.startsWith("/") ? returnTo : "/dashboard"
+    const destination = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/dashboard"
     router.push(destination)
   }
 
