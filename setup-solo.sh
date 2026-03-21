@@ -503,6 +503,12 @@ else
         "field-path=session_date,order=descending" \
         "field-path=__name__,order=descending"
 
+    echo "  therapy_sessions (user_id + scheduled_at)..."
+    create_index therapy_sessions \
+        "field-path=user_id,order=ascending" \
+        "field-path=scheduled_at,order=ascending" \
+        "field-path=__name__,order=ascending"
+
     echo "  therapy_sessions (patient_id + session_number)..."
     create_index therapy_sessions \
         "field-path=patient_id,order=ascending" \
