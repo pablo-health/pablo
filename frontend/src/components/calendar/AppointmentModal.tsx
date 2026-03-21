@@ -124,9 +124,15 @@ function AppointmentForm({
   const [startAt, setStartAt] = useState(
     appointment ? toLocalDatetime(appointment.start_at) : defaultStart ? toLocalDatetime(defaultStart) : ""
   )
-  const [endAt, setEndAt] = useState(
-    appointment ? toLocalDatetime(appointment.end_at) : defaultEnd ? toLocalDatetime(defaultEnd) : ""
-  )
+  const [endAt, setEndAt] = useState(() => {
+    if (appointment) return toLocalDatetime(appointment.end_at)
+    if (defaultEnd) return toLocalDatetime(defaultEnd)
+    if (defaultStart) {
+      const end = new Date(new Date(defaultStart).getTime() + 50 * 60000)
+      return toLocalDatetime(end.toISOString())
+    }
+    return ""
+  })
   const [durationMinutes, setDurationMinutes] = useState(appointment?.duration_minutes ?? 50)
   const [sessionType, setSessionType] = useState(appointment?.session_type ?? "individual")
   const [videoLink, setVideoLink] = useState(appointment?.video_link ?? "")
@@ -303,7 +309,7 @@ function AppointmentForm({
           <Button variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={handleSubmit} disabled={!patientId || !startAt || isSubmitting}>
+          <Button onClick={handleSubmit} disabled={!patientId || !title || !startAt || !endAt || isSubmitting}>
             {isEditing ? "Save Changes" : "Create"}
           </Button>
         </div>
