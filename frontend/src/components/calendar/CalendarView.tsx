@@ -134,8 +134,8 @@ export function CalendarView({
       eventClick={handleEventClick}
       eventDrop={handleEventDrop}
       eventContent={renderEventContent}
-      slotMinTime="00:00:00"
-      slotMaxTime="24:00:00"
+      slotMinTime={toSlotTime(Math.max(0, workingHoursStart - 1))}
+      slotMaxTime={toSlotTime(Math.min(24, workingHoursEnd + 1))}
       scrollTime={toSlotTime(workingHoursStart)}
       businessHours={{
         daysOfWeek: [1, 2, 3, 4, 5],

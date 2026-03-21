@@ -86,14 +86,14 @@ describe("CalendarView", () => {
       })
     })
 
-    it("allows scrolling to full 24-hour range", () => {
+    it("constrains visible range to working hours with 1-hour buffer", () => {
       render(
         <CalendarView onSelectSlot={vi.fn()} onSelectAppointment={vi.fn()} />,
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.slotMinTime).toBe("00:00:00")
-      expect(lastCalendarProps.slotMaxTime).toBe("24:00:00")
+      expect(lastCalendarProps.slotMinTime).toBe("07:00:00")
+      expect(lastCalendarProps.slotMaxTime).toBe("19:00:00")
     })
 
     it("handles early morning working hours", () => {
@@ -108,6 +108,8 @@ describe("CalendarView", () => {
       )
 
       expect(lastCalendarProps.scrollTime).toBe("06:00:00")
+      expect(lastCalendarProps.slotMinTime).toBe("05:00:00")
+      expect(lastCalendarProps.slotMaxTime).toBe("15:00:00")
       expect(lastCalendarProps.businessHours).toEqual({
         daysOfWeek: [1, 2, 3, 4, 5],
         startTime: "06:00:00",
@@ -127,11 +129,28 @@ describe("CalendarView", () => {
       )
 
       expect(lastCalendarProps.scrollTime).toBe("14:00:00")
+      expect(lastCalendarProps.slotMinTime).toBe("13:00:00")
+      expect(lastCalendarProps.slotMaxTime).toBe("23:00:00")
       expect(lastCalendarProps.businessHours).toEqual({
         daysOfWeek: [1, 2, 3, 4, 5],
         startTime: "14:00:00",
         endTime: "22:00:00",
       })
+    })
+
+    it("clamps slot bounds at 0 and 24", () => {
+      render(
+        <CalendarView
+          onSelectSlot={vi.fn()}
+          onSelectAppointment={vi.fn()}
+          workingHoursStart={0}
+          workingHoursEnd={24}
+        />,
+        { wrapper: createWrapper() }
+      )
+
+      expect(lastCalendarProps.slotMinTime).toBe("00:00:00")
+      expect(lastCalendarProps.slotMaxTime).toBe("24:00:00")
     })
   })
 })
