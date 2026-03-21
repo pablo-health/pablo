@@ -36,6 +36,8 @@ HIPAA requires that only authorized individuals can access PHI.
 - **MFA (default)**: Pablo ships with TOTP MFA support. Enable it in Identity Platform during setup.
 - **Google Cloud IAP**: If you deploy behind Identity-Aware Proxy, users authenticate via their Google account at the load balancer level before reaching the app. This satisfies HIPAA access control requirements without app-level MFA. The setup script offers this as an option.
 
+**Signup restriction:** Pablo defaults to `RESTRICT_SIGNUPS=true`, which means only emails you add to the allowlist can access the platform. The setup script automatically adds your admin email during initial deployment. If you need to add additional users, use the admin panel.
+
 ## 3. Encryption
 
 | | Self-Hosted | Pablo Solo |
@@ -87,7 +89,27 @@ HIPAA requires audit trails for PHI access.
 
 Cloud Run provides a good security baseline. For additional protection, consider enabling Cloud Armor.
 
-## 7. Staying Up to Date
+## 7. Device and Physical Security
+
+HIPAA requires physical safeguards for any device that accesses PHI.
+
+**What you need to do:**
+1. **Encrypt your device** — enable FileVault (Mac), BitLocker (Windows), or full-disk encryption on any device you use to access Pablo
+2. **Use a screen lock** — set your device to lock after 5 minutes of inactivity or less
+3. **Never use shared or public computers** to access Pablo
+4. **Keep your browser up to date** — browser vulnerabilities can expose session data
+5. **Log out when done** — close the browser tab or log out explicitly after each session
+
+## 8. Data Minimization
+
+HIPAA's "minimum necessary" standard applies to what you enter into Pablo.
+
+**What you need to do:**
+- Avoid entering Social Security numbers, full street addresses, or insurance IDs into session transcripts
+- Use only the minimum client information needed for clinical documentation
+- Review generated SOAP notes before finalizing to ensure no unnecessary PHI is included
+
+## 9. Staying Up to Date
 
 **You are responsible for pulling updates when we release them.** Security patches, bug fixes, and new features will not apply automatically to your deployment.
 
@@ -104,7 +126,7 @@ Cloud Run provides a good security baseline. For additional protection, consider
 3. Pull the update and run `./redeploy.sh` to apply it
 4. Test that everything works after the update
 
-## 8. Register Your Deployment
+## 10. Register Your Deployment
 
 If you deploy Pablo for clinical use, you **must** register your deployment at [pablo.health/register](https://pablo.health/register). This is how we notify you of:
 
@@ -121,6 +143,7 @@ We will never spam you or share your information. This is solely for your protec
 - [ ] Signed BAA with Google Cloud
 - [ ] Signed BAA with AI provider (if using Anthropic Claude)
 - [ ] Configured authentication (MFA or IAP)
+- [ ] Verified signup restriction is enabled (`RESTRICT_SIGNUPS=true`)
 - [ ] Verified HTTPS enforcement is active
 - [ ] Generated and stored encryption keys in Secret Manager
 - [ ] Enabled Cloud Audit Logs for Firestore
@@ -128,6 +151,8 @@ We will never spam you or share your information. This is solely for your protec
 - [ ] Configured Firestore backup exports
 - [ ] Tested restore from backup
 - [ ] Documented your disaster recovery plan
+- [ ] Encrypted all devices that access Pablo
+- [ ] Configured screen lock (5 minutes or less)
 - [ ] Registered your deployment at pablo.health/register
 - [ ] Subscribed to releases on GitHub for update notifications
 
