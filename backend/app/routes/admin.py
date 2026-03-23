@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
 
-
 def _get_all_session_databases() -> list[tuple[str | None, Any]]:
     """Return Firestore clients for all databases that contain therapy sessions.
 
@@ -50,9 +49,7 @@ def _get_all_session_databases() -> list[tuple[str | None, Any]]:
         databases.append((tenant_id, get_tenant_firestore_client(db_name)))
     return databases
 
-
 # --- User Management Models ---
-
 
 class UserListItem(BaseModel):
     """Response model for a user in the admin list."""
@@ -66,13 +63,11 @@ class UserListItem(BaseModel):
     baa_accepted_at: str | None
     created_at: str
 
-
 class UserListResponse(BaseModel):
     """Response for listing all users."""
 
     data: list[UserListItem]
     total: int
-
 
 class AllowlistEntry(BaseModel):
     """Response model for an allowlist entry."""
@@ -81,19 +76,16 @@ class AllowlistEntry(BaseModel):
     added_by: str
     added_at: str
 
-
 class AllowlistResponse(BaseModel):
     """Response for listing allowlisted emails."""
 
     data: list[AllowlistEntry]
     total: int
 
-
 class AddToAllowlistRequest(BaseModel):
     """Request to add an email to the allowlist."""
 
     email: str = Field(min_length=3, max_length=255)
-
 
 class ExportQueueItemResponse(BaseModel):
     """Response model for a single export queue item."""
@@ -110,20 +102,17 @@ class ExportQueueItemResponse(BaseModel):
     export_queued_at: str | None
     finalized_at: str | None
 
-
 class ExportQueueListResponse(BaseModel):
     """Response model for export queue list."""
 
     data: list[ExportQueueItemResponse]
     total: int
 
-
 class ExportActionRequest(BaseModel):
     """Request model for export queue action."""
 
     action: str = Field(pattern="^(approve|skip|flag)$")
     reason: str | None = None
-
 
 @router.get("/api/admin/export-queue")
 def list_export_queue(
@@ -200,7 +189,6 @@ def list_export_queue(
     )
 
     return ExportQueueListResponse(data=sessions, total=len(sessions))
-
 
 @router.post("/api/admin/export-queue/{session_id}/action")
 def perform_export_action(
@@ -289,9 +277,7 @@ def perform_export_action(
         "export_status": new_status,
     }
 
-
 # --- User Management Endpoints ---
-
 
 @router.get("/api/admin/users")
 def list_users(
@@ -314,7 +300,6 @@ def list_users(
         for u in users
     ]
     return UserListResponse(data=items, total=len(items))
-
 
 @router.patch("/api/admin/users/{user_id}/disable")
 def disable_user(
@@ -345,7 +330,6 @@ def disable_user(
     logger.info("Admin %s disabled user %s", admin.id, target.id)
     return {"message": "User disabled", "user_id": user_id}
 
-
 @router.patch("/api/admin/users/{user_id}/enable")
 def enable_user(
     user_id: str,
@@ -364,9 +348,7 @@ def enable_user(
     logger.info("Admin %s enabled user %s", admin.id, target.id)
     return {"message": "User enabled", "user_id": user_id}
 
-
 # --- Allowlist Endpoints ---
-
 
 @router.get("/api/admin/allowlist")
 def list_allowlist(
@@ -385,7 +367,6 @@ def list_allowlist(
     ]
     return AllowlistResponse(data=items, total=len(items))
 
-
 @router.post("/api/admin/allowlist", status_code=status.HTTP_201_CREATED)
 def add_to_allowlist(
     request: AddToAllowlistRequest,
@@ -396,7 +377,6 @@ def add_to_allowlist(
     allowlist_repo.add(request.email, admin.id)
     logger.info("Admin %s added email to allowlist", admin.id)
     return {"message": "Email added to allowlist", "email": request.email.lower()}
-
 
 @router.delete("/api/admin/allowlist/{email}")
 def remove_from_allowlist(

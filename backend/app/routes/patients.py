@@ -72,35 +72,6 @@ def get_export_service(
     return ExportService(patient_repo, session_repo)
 
 
-def compute_next_session_date(
-    patient_id: str,
-    user_id: str,
-    session_repo: TherapySessionRepository,
-) -> str | None:
-    """
-    Compute the next upcoming session date for a patient.
-
-    Args:
-        patient_id: Patient's unique identifier
-        user_id: User's unique identifier (for multi-tenant isolation)
-        session_repo: Session repository instance
-
-    Returns:
-        ISO date string of next future session, or None if no future sessions
-    """
-    sessions = session_repo.list_by_patient(patient_id, user_id)
-    now = datetime.now(UTC).isoformat()
-
-    # Filter to future sessions only
-    future_sessions = [s for s in sessions if s.session_date > now]
-
-    if not future_sessions:
-        return None
-
-    # Sort by date (ascending) and return first
-    future_sessions.sort(key=lambda s: s.session_date)
-    return future_sessions[0].session_date
-
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_patient(
@@ -155,7 +126,6 @@ def list_patients(
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     user: User = Depends(require_baa_acceptance),
     repo: PatientRepository = Depends(get_patient_repository),
-    session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientListResponse:
     """
@@ -167,19 +137,13 @@ def list_patients(
     - **page_size**: Items per page (default 20, max 100)
 
     Returns patients sorted by last name, then first name.
-    Each patient includes next_session_date if they have future sessions scheduled.
+    next_session_date is denormalized on the patient document.
     """
     patients, total = repo.list_by_user(
         user.id, search=search, search_by=search_by.value, page=page, page_size=page_size
     )
 
-    # Compute next_session_date for each patient on this page
-    responses = []
-    for patient in patients:
-        next_session = compute_next_session_date(patient.id, user.id, session_repo)
-        response = PatientResponse.from_patient(patient)
-        response.next_session_date = next_session
-        responses.append(response)
+    responses = [PatientResponse.from_patient(p) for p in patients]
 
     audit.log_patient_list(user, request, total)
     return PatientListResponse(
@@ -196,7 +160,6 @@ def get_patient(
     request: Request,
     user: User = Depends(require_baa_acceptance),
     repo: PatientRepository = Depends(get_patient_repository),
-    session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> PatientResponse:
     """
@@ -205,7 +168,7 @@ def get_patient(
     - **patient_id**: The patient's unique identifier
 
     Returns the patient if found and belongs to the current user.
-    Includes next_session_date if the patient has future sessions scheduled.
+    next_session_date is denormalized on the patient document.
     """
     patient = repo.get(patient_id, user.id)
 
@@ -221,14 +184,8 @@ def get_patient(
             },
         )
 
-    # Compute next session date
-    next_session = compute_next_session_date(patient_id, user.id, session_repo)
-
     audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, patient)
-
-    response = PatientResponse.from_patient(patient)
-    response.next_session_date = next_session
-    return response
+    return PatientResponse.from_patient(patient)
 
 
 @router.patch("/{patient_id}")

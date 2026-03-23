@@ -35,7 +35,7 @@ export type SessionStatus =
  * 1. not_queued - Default, not selected for export
  * 2. pending_review - Queued, awaiting manual review
  * 3. approved - Reviewed and approved for export
- * 4. exported - Successfully exported
+ * 4. exported - Successfully exported 
  * 5. skipped - Redaction failed or manually skipped
  */
 export type ExportStatus =

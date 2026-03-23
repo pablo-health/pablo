@@ -515,6 +515,32 @@ else
         "field-path=session_number,order=descending" \
         "field-path=__name__,order=descending"
 
+    echo "  appointments (user_id + start_at)..."
+    create_index appointments \
+        "field-path=user_id,order=ascending" \
+        "field-path=start_at,order=ascending" \
+        "field-path=__name__,order=ascending"
+
+    echo "  appointments (user_id + patient_id + start_at)..."
+    create_index appointments \
+        "field-path=user_id,order=ascending" \
+        "field-path=patient_id,order=ascending" \
+        "field-path=start_at,order=ascending" \
+        "field-path=__name__,order=ascending"
+
+    echo "  appointments (user_id + recurring_appointment_id + start_at)..."
+    create_index appointments \
+        "field-path=user_id,order=ascending" \
+        "field-path=recurring_appointment_id,order=ascending" \
+        "field-path=start_at,order=ascending" \
+        "field-path=__name__,order=ascending"
+
+    echo "  availability_rules (user_id + created_at)..."
+    create_index availability_rules \
+        "field-path=user_id,order=ascending" \
+        "field-path=created_at,order=ascending" \
+        "field-path=__name__,order=ascending"
+
     echo ""
     echo -e "${YELLOW}Note: Index creation happens asynchronously (5-10 minutes)${NC}"
     echo "  Check status: gcloud firestore indexes composite list --project=${PROJECT_ID}"
@@ -920,12 +946,12 @@ echo ""
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
-BASE_TAG="solo-${DEPS_HASH}"
-
-# Pre-built base image from GitHub Container Registry (solo variant, no NLI/torch).
+# Pre-built base image from GitHub Container Registry.
 # Users only need to build their own if they modify pyproject.toml/poetry.lock.
-PUBLIC_BASE_IMAGE="ghcr.io/pablo-health/backend-base:${BASE_TAG}"
+PUBLIC_BASE_IMAGE="ghcr.io/pablo-health/backend-base:latest"
+
+DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
+BASE_TAG="deps-${DEPS_HASH}"
 PRIVATE_BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:v${BASE_TAG}"
 
 if gcloud artifacts docker images describe "$PRIVATE_BASE_IMAGE" &>/dev/null; then
@@ -935,7 +961,7 @@ elif docker pull "$PUBLIC_BASE_IMAGE" &>/dev/null; then
     echo -e "${GREEN}Using pre-built base image from ghcr.io${NC}"
     BASE_IMAGE="$PUBLIC_BASE_IMAGE"
 else
-    echo -e "${YELLOW}Building backend base image (Python deps)...${NC}"
+    echo -e "${YELLOW}Building backend base image (Python deps + spaCy model)...${NC}"
     echo "This is a one-time build (~15-20 min). Future deploys will be fast."
     gcloud builds submit . \
         --config=./backend/cloudbuild-base.yaml \
@@ -988,13 +1014,13 @@ gcloud run deploy pablo-backend \
     --platform=managed \
     --allow-unauthenticated \
     --service-account="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --memory=2Gi \
-    --cpu=1 \
-    --min-instances=0 \
+    --memory=4Gi \
+    --cpu=2 \
+    --min-instances=1 \
     --max-instances=10 \
     --timeout=300 \
     --set-secrets="${SECRETS_STRING}" \
-    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||RESTRICT_SIGNUPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*" \
+    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*" \
     --quiet
 
 BACKEND_URL=$(gcloud run services describe pablo-backend \
@@ -1152,40 +1178,19 @@ if [ -n "$ADMIN_EMAIL" ]; then
         }"
     echo -e "${GREEN}Email added to allowlist: ${ADMIN_EMAIL_LOWER}${NC}"
 
-    # Check Identity Platform for existing user (preserves MFA enrollment)
-    echo "Checking Identity Platform for existing account..."
-    EXISTING_IP_USER=$(curl -s \
-        -X POST "https://identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts:lookup" \
+    # Create user via Identity Platform
+    echo "Creating user account..."
+    ADMIN_CREATE_RESULT=$(curl -s \
+        -X POST "https://identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts" \
         -H "Authorization: Bearer ${AUTH_TOKEN}" \
         -H "Content-Type: application/json" \
-        -d "{\"email\": [\"${ADMIN_EMAIL_LOWER}\"]}" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    users = d.get('users', [])
-    if users:
-        print(users[0].get('localId', ''))
-except: pass
-" 2>/dev/null)
+        -d "{
+            \"email\": \"${ADMIN_EMAIL_LOWER}\",
+            \"emailVerified\": true,
+            \"disabled\": false
+        }")
 
-    if [ -n "$EXISTING_IP_USER" ]; then
-        echo -e "${GREEN}User already exists in Identity Platform (uid: ${EXISTING_IP_USER}) — reusing${NC}"
-        echo "  MFA enrollment and credentials are preserved."
-        ADMIN_UID="$EXISTING_IP_USER"
-    else
-        # Create user via Identity Platform
-        echo "Creating user account..."
-        ADMIN_CREATE_RESULT=$(curl -s \
-            -X POST "https://identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts" \
-            -H "Authorization: Bearer ${AUTH_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{
-                \"email\": \"${ADMIN_EMAIL_LOWER}\",
-                \"emailVerified\": true,
-                \"disabled\": false
-            }")
-
-        ADMIN_UID=$(echo "${ADMIN_CREATE_RESULT}" | python3 -c "
+    ADMIN_UID=$(echo "${ADMIN_CREATE_RESULT}" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -1193,16 +1198,10 @@ try:
 except: pass
 " 2>/dev/null)
 
-        if [ -n "$ADMIN_UID" ]; then
-            echo -e "${GREEN}User created (uid: ${ADMIN_UID})${NC}"
-        else
-            echo -e "${RED}Failed to create user account.${NC}"
-            echo "  Check Identity Platform console for details."
-        fi
-    fi
-
     if [ -n "$ADMIN_UID" ]; then
-        # Ensure admin record exists in Firestore (idempotent)
+        echo -e "${GREEN}User created (uid: ${ADMIN_UID})${NC}"
+
+        # Mark as admin in Firestore
         echo "Setting admin flag..."
         curl -s -o /dev/null -w "" \
             -X PATCH "https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${ADMIN_UID}?updateMask.fieldPaths=email&updateMask.fieldPaths=is_admin&updateMask.fieldPaths=status&updateMask.fieldPaths=name&updateMask.fieldPaths=created_at" \
@@ -1218,6 +1217,9 @@ except: pass
                 }
             }"
         echo -e "${GREEN}Admin flag set${NC}"
+    else
+        echo -e "${YELLOW}Could not create user (may already exist).${NC}"
+        echo "  If re-running setup, the existing user is unchanged."
     fi
     echo ""
 fi

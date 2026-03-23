@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Rebuild the backend base image (Python dependencies)
+# Rebuild the backend base image (Python deps + spaCy model)
 # Run this when pyproject.toml or poetry.lock changes.
 #
 # Usage:
@@ -12,21 +12,21 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
+DATE_TAG=$(date +%Y%m%d)
 
 echo ""
 echo "Building backend base image..."
-echo "  Tags: backend-base:latest, backend-base:deps-${DEPS_HASH}"
+echo "  Tags: backend-base:latest, backend-base:v${DATE_TAG}"
 echo ""
 
 gcloud builds submit . \
     --config=./backend/cloudbuild-base.yaml \
-    --substitutions="_DATE_TAG=deps-${DEPS_HASH}" \
+    --substitutions="_DATE_TAG=${DATE_TAG}" \
     --timeout=30m \
     --quiet
 
 echo ""
 echo "Base image built and pushed:"
 echo "  backend-base:latest"
-echo "  backend-base:deps-${DEPS_HASH}"
+echo "  backend-base:v${DATE_TAG}"
 echo ""

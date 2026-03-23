@@ -114,6 +114,46 @@ def mock_audit_service() -> AuditService:
 
 
 @pytest.fixture
+def admin_user() -> User:
+    """Create a test admin user."""
+    return User(
+        id="admin-user-123",
+        email="admin@example.com",
+        name="Admin User",
+        created_at="2024-01-01T00:00:00Z",
+        baa_accepted_at="2024-01-01T00:00:00Z",
+        baa_version="2024-01-01",
+        is_admin=True,
+    )
+
+
+@pytest.fixture
+def mock_firestore_session() -> dict[str, Any]:
+    """Create a mock Firestore session document for admin export tests."""
+    return {
+        "id": "session-123",
+        "user_id": "user-123",
+        "patient_id": "patient-123",
+        "session_date": "2024-01-15T14:30:00Z",
+        "session_number": 1,
+        "status": "finalized",
+        "quality_rating": 2,
+        "export_status": "pending_review",
+        "export_queued_at": "2024-01-15T15:00:00Z",
+        "finalized_at": "2024-01-15T14:45:00Z",
+        "created_at": "2024-01-15T14:30:00Z",
+        "transcript": {"format": "text", "content": "Session transcript content."},
+        "redacted_transcript": "Patient <PERSON_1> discussed anxiety.",
+        "redacted_soap_note": {
+            "subjective": "<PERSON_1> reports anxiety.",
+            "objective": "Patient appeared calm.",
+            "assessment": "Anxiety improving.",
+            "plan": "Continue therapy.",
+        },
+    }
+
+
+@pytest.fixture
 def client(
     mock_repo: InMemoryPatientRepository,
     mock_session_repo: InMemoryTherapySessionRepository,

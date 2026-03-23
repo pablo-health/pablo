@@ -9,7 +9,10 @@ import {
   TotpSecret,
   multiFactor,
   reauthenticateWithPopup,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   GoogleAuthProvider,
+  sendEmailVerification,
   type User as FirebaseUser,
 } from "firebase/auth"
 import { QRCodeSVG } from "qrcode.react"
@@ -20,8 +23,8 @@ import { post } from "@/lib/api/client"
 export function MFAEnrollmentForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { user, loading: authLoading } = useAuth()
   const returnTo = searchParams.get("returnTo")
+  const { user, loading: authLoading } = useAuth()
   const [totpSecret, setTotpSecret] = useState<TotpSecret | null>(null)
   const [verificationCode, setVerificationCode] = useState("")
   const [error, setError] = useState("")
@@ -29,13 +32,14 @@ export function MFAEnrollmentForm() {
   const [showManualEntry, setShowManualEntry] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [needsReauth, setNeedsReauth] = useState(false)
+  const [needsEmailVerification, setNeedsEmailVerification] = useState(false)
+  const [verificationEmailSent, setVerificationEmailSent] = useState(false)
+  const [reauthPassword, setReauthPassword] = useState("")
 
-  // Record MFA enrollment in the backend and redirect
+  // Record MFA enrollment in the backend and redirect to dashboard
   const recordEnrollmentAndRedirect = async (currentUser: FirebaseUser) => {
     const token = await currentUser.getIdToken()
     await post("/api/users/me/mfa-enrolled", {}, token)
-    // Return to the native-auth page (or wherever the user came from) if specified,
-    // otherwise default to the dashboard. Only allow relative paths.
     const destination = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/dashboard"
     router.push(destination)
   }
@@ -79,7 +83,7 @@ export function MFAEnrollmentForm() {
           // Session not fresh enough — need reauthentication via user gesture
           setNeedsReauth(true)
         } else if (errCode === "auth/unverified-email") {
-          setError("Please verify your email address before enabling MFA.")
+          setNeedsEmailVerification(true)
         } else {
           setError(`Failed to generate MFA secret: ${errCode || "unknown error"}. Please refresh the page.`)
         }
@@ -91,8 +95,13 @@ export function MFAEnrollmentForm() {
     generateSecret()
   }, [user]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const isPasswordUser = user?.providerData?.some(
+    (p) => p.providerId === "password"
+  )
+
   // Reauthenticate and retry — must be called from a user gesture (click)
-  const handleReauthenticate = async () => {
+  const handleReauthenticate = async (e?: React.FormEvent) => {
+    e?.preventDefault()
     const auth = getFirebaseAuth()
     const currentUser = auth.currentUser
     if (!currentUser) return
@@ -102,9 +111,16 @@ export function MFAEnrollmentForm() {
     setNeedsReauth(false)
 
     try {
-      // Reauthenticate with the appropriate provider
-      const provider = new GoogleAuthProvider()
-      await reauthenticateWithPopup(currentUser, provider)
+      if (isPasswordUser && reauthPassword) {
+        const credential = EmailAuthProvider.credential(
+          currentUser.email!,
+          reauthPassword
+        )
+        await reauthenticateWithCredential(currentUser, credential)
+      } else {
+        const provider = new GoogleAuthProvider()
+        await reauthenticateWithPopup(currentUser, provider)
+      }
 
       // Now generate the TOTP secret with the fresh session
       const multiFactorSession = await multiFactor(currentUser).getSession()
@@ -122,6 +138,12 @@ export function MFAEnrollmentForm() {
       } else if (errCode === "auth/popup-blocked") {
         setNeedsReauth(true)
         setError("Popup was blocked by your browser. Please allow popups for this site.")
+      } else if (
+        errCode === "auth/wrong-password" ||
+        errCode === "auth/invalid-credential"
+      ) {
+        setNeedsReauth(true)
+        setError("Incorrect password. Please try again.")
       } else {
         setError(`Authentication failed: ${errCode || "unknown error"}. Please try again.`)
         setNeedsReauth(true)
@@ -178,7 +200,77 @@ export function MFAEnrollmentForm() {
   if (!totpSecret) {
     return (
       <div className="card">
-        {needsReauth ? (
+        {needsEmailVerification ? (
+          <div className="py-8 space-y-4">
+            <div className="text-center">
+              <svg
+                className="w-12 h-12 text-amber-500 mx-auto mb-3"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                />
+              </svg>
+              <h3 className="text-lg font-semibold text-neutral-900 mb-2">
+                Verify Your Email First
+              </h3>
+              <p className="text-sm text-neutral-600">
+                You need to verify your email address before enabling MFA.
+                Check your inbox (and spam folder) for the verification link.
+              </p>
+            </div>
+
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
+
+            {verificationEmailSent && (
+              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-sm text-green-700">
+                  Verification email sent. Check your inbox and spam folder.
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                const currentUser = getFirebaseAuth().currentUser
+                if (!currentUser) return
+                try {
+                  await sendEmailVerification(currentUser, {
+                    url: `${window.location.origin}/mfa-enrollment`,
+                  })
+                  setVerificationEmailSent(true)
+                  setError("")
+                } catch {
+                  setError("Failed to send verification email. Please wait a minute and try again.")
+                }
+              }}
+              disabled={verificationEmailSent}
+              className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
+            >
+              {verificationEmailSent ? "Email Sent" : "Resend Verification Email"}
+            </button>
+
+            <button
+              onClick={() => {
+                setNeedsEmailVerification(false)
+                setError("")
+                window.location.reload()
+              }}
+              className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
+            >
+              I&apos;ve verified my email — retry
+            </button>
+          </div>
+        ) : needsReauth ? (
           <div className="py-8 space-y-4">
             <p className="text-sm text-neutral-700 text-center">
               For security, please verify your identity before setting up MFA.
@@ -188,13 +280,43 @@ export function MFAEnrollmentForm() {
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
-            <button
-              onClick={handleReauthenticate}
-              disabled={generating}
-              className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
-            >
-              {generating ? "Verifying..." : "Verify Identity with Google"}
-            </button>
+            {isPasswordUser ? (
+              <form onSubmit={handleReauthenticate} className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="reauth-password"
+                    className="block text-sm font-medium text-neutral-700 mb-1"
+                  >
+                    Enter your password to continue
+                  </label>
+                  <input
+                    id="reauth-password"
+                    type="password"
+                    value={reauthPassword}
+                    onChange={(e) => setReauthPassword(e.target.value)}
+                    placeholder="Your password"
+                    className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    required
+                    autoFocus
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={generating || !reauthPassword}
+                  className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
+                >
+                  {generating ? "Verifying..." : "Verify Identity"}
+                </button>
+              </form>
+            ) : (
+              <button
+                onClick={() => handleReauthenticate()}
+                disabled={generating}
+                className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
+              >
+                {generating ? "Verifying..." : "Verify Identity with Google"}
+              </button>
+            )}
           </div>
         ) : error ? (
           <div className="py-8">

@@ -160,6 +160,35 @@ def enable_mfa(tenant_id: str) -> None:
     logger.info("Enabled MFA on tenant %s", tenant_id)
 
 
+def enable_email_inheritance(tenant_id: str) -> None:
+    """Enable email config inheritance so tenant uses project-level SMTP and templates.
+
+    Without this, tenants default to generic Firebase email delivery even when
+    custom SMTP and branded templates are configured at the project level.
+    """
+    settings = get_settings()
+    project_id = settings.gcp_project_id
+
+    creds, _ = google.auth.default(  # type: ignore[no-untyped-call]
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    creds.refresh(google.auth.transport.requests.Request())  # type: ignore[no-untyped-call]
+
+    resp = requests.patch(
+        f"https://identitytoolkit.googleapis.com/v2/projects/{project_id}/tenants/{tenant_id}",
+        headers={
+            "Authorization": f"Bearer {creds.token}",
+            "x-goog-user-project": project_id,
+            "Content-Type": "application/json",
+        },
+        params={"updateMask": "inheritance.emailSendingConfig"},
+        json={"inheritance": {"emailSendingConfig": True}},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    logger.info("Enabled email inheritance on tenant %s", tenant_id)
+
+
 def delete_tenant(tenant_id: str) -> None:
     """Delete an Identity Platform tenant (used for rollback on provisioning failure)."""
     initialize_firebase_app()

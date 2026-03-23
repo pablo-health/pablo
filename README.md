@@ -7,10 +7,7 @@ Pablo generates SOAP notes from session transcripts with dual-method verificatio
 ## Features
 
 - **AI SOAP Note Generation** — Upload a session transcript, get a clinically accurate SOAP note
-- **Dual-Method Verification** — Every claim is verified by both LLM and NLP pipelines
-- **Source Attribution** — Every statement in the note links back to the transcript
-- **Confidence Scoring** — Know how reliable each section of the note is
-- **Scheduling** — Built-in calendar with Google Calendar sync
+- **Built-in Calendar** — Schedule and manage therapy sessions
 - **Patient Management** — Secure patient records with session history
 - **HIPAA-Ready** — TLS enforcement, audit logging, encryption at rest
 
@@ -73,4 +70,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Registration
 
-If you deploy Pablo for clinical use, please [register your deployment](https://pablo.health/register) so we can notify you of critical security updates. This is a condition of using Pablo in production.
+If you deploy Pablo for clinical use, please email support@pablo.health so we can notify you of critical security updates. This is a condition of using Pablo in production.

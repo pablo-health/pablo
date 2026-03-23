@@ -119,7 +119,7 @@ class PatientResponse(BaseModel):
             diagnosis=patient.diagnosis,
             session_count=patient.session_count,
             last_session_date=patient.last_session_date,
-            next_session_date=None,  # Computed separately in routes
+            next_session_date=patient.next_session_date,
             created_at=patient.created_at,
             updated_at=patient.updated_at,
         )
@@ -182,6 +182,7 @@ class Patient:
     date_of_birth: str | None = None
     diagnosis: str | None = None
     last_session_date: str | None = None
+    next_session_date: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""
@@ -221,6 +222,7 @@ class Patient:
             date_of_birth=data.get("date_of_birth"),
             diagnosis=data.get("diagnosis"),
             last_session_date=data.get("last_session_date"),
+            next_session_date=data.get("next_session_date"),
         )
 
     def to_dict(self) -> dict[str, Any]:

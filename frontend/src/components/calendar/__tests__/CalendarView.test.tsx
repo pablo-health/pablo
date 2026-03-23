@@ -5,15 +5,17 @@ import { render } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { CalendarView } from "../CalendarView"
 
-// Mock FullCalendar to capture props
-let lastCalendarProps: Record<string, unknown> = {}
+// Use a spy to capture FullCalendar props without mutating module-scoped state
+const calendarSpy = vi.fn()
 
-vi.mock("@fullcalendar/react", () => ({
-  default: (props: Record<string, unknown>) => {
-    lastCalendarProps = props
+vi.mock("@fullcalendar/react", () => {
+  const MockCalendar = vi.fn((props: Record<string, unknown>) => {
+    calendarSpy(props)
     return <div data-testid="fullcalendar" />
-  },
-}))
+  })
+  MockCalendar.displayName = "MockFullCalendar"
+  return { default: MockCalendar }
+})
 
 vi.mock("@fullcalendar/daygrid", () => ({ default: {} }))
 vi.mock("@fullcalendar/timegrid", () => ({ default: {} }))
@@ -28,6 +30,10 @@ vi.mock("@/lib/config", () => ({
   useConfig: () => ({ dataMode: "api" }),
 }))
 
+function lastCalendarProps(): Record<string, unknown> {
+  return calendarSpy.mock.calls.at(-1)?.[0] ?? {}
+}
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -41,7 +47,7 @@ const createWrapper = () => {
 
 describe("CalendarView", () => {
   beforeEach(() => {
-    lastCalendarProps = {}
+    calendarSpy.mockClear()
   })
 
   it("renders FullCalendar", () => {
@@ -59,8 +65,8 @@ describe("CalendarView", () => {
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.scrollTime).toBe("08:00:00")
-      expect(lastCalendarProps.businessHours).toEqual({
+      expect(lastCalendarProps().scrollTime).toBe("08:00:00")
+      expect(lastCalendarProps().businessHours).toEqual({
         daysOfWeek: [1, 2, 3, 4, 5],
         startTime: "08:00:00",
         endTime: "18:00:00",
@@ -78,22 +84,22 @@ describe("CalendarView", () => {
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.scrollTime).toBe("09:00:00")
-      expect(lastCalendarProps.businessHours).toEqual({
+      expect(lastCalendarProps().scrollTime).toBe("09:00:00")
+      expect(lastCalendarProps().businessHours).toEqual({
         daysOfWeek: [1, 2, 3, 4, 5],
         startTime: "09:00:00",
         endTime: "17:00:00",
       })
     })
 
-    it("constrains visible range to working hours with 1-hour buffer", () => {
+    it("allows scrolling to full 24-hour range", () => {
       render(
         <CalendarView onSelectSlot={vi.fn()} onSelectAppointment={vi.fn()} />,
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.slotMinTime).toBe("07:00:00")
-      expect(lastCalendarProps.slotMaxTime).toBe("19:00:00")
+      expect(lastCalendarProps().slotMinTime).toBe("00:00:00")
+      expect(lastCalendarProps().slotMaxTime).toBe("24:00:00")
     })
 
     it("handles early morning working hours", () => {
@@ -107,10 +113,8 @@ describe("CalendarView", () => {
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.scrollTime).toBe("06:00:00")
-      expect(lastCalendarProps.slotMinTime).toBe("05:00:00")
-      expect(lastCalendarProps.slotMaxTime).toBe("15:00:00")
-      expect(lastCalendarProps.businessHours).toEqual({
+      expect(lastCalendarProps().scrollTime).toBe("06:00:00")
+      expect(lastCalendarProps().businessHours).toEqual({
         daysOfWeek: [1, 2, 3, 4, 5],
         startTime: "06:00:00",
         endTime: "14:00:00",
@@ -128,29 +132,33 @@ describe("CalendarView", () => {
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.scrollTime).toBe("14:00:00")
-      expect(lastCalendarProps.slotMinTime).toBe("13:00:00")
-      expect(lastCalendarProps.slotMaxTime).toBe("23:00:00")
-      expect(lastCalendarProps.businessHours).toEqual({
+      expect(lastCalendarProps().scrollTime).toBe("14:00:00")
+      expect(lastCalendarProps().businessHours).toEqual({
         daysOfWeek: [1, 2, 3, 4, 5],
         startTime: "14:00:00",
         endTime: "22:00:00",
       })
     })
 
-    it("clamps slot bounds at 0 and 24", () => {
+    it("uses fixed height so scrollTime is honored", () => {
       render(
-        <CalendarView
-          onSelectSlot={vi.fn()}
-          onSelectAppointment={vi.fn()}
-          workingHoursStart={0}
-          workingHoursEnd={24}
-        />,
+        <CalendarView onSelectSlot={vi.fn()} onSelectAppointment={vi.fn()} />,
         { wrapper: createWrapper() }
       )
 
-      expect(lastCalendarProps.slotMinTime).toBe("00:00:00")
-      expect(lastCalendarProps.slotMaxTime).toBe("24:00:00")
+      expect(lastCalendarProps().height).toBe(700)
+    })
+  })
+
+  describe("Time Navigation", () => {
+    it("renders earlier and later scroll buttons", () => {
+      const { getByLabelText } = render(
+        <CalendarView onSelectSlot={vi.fn()} onSelectAppointment={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+
+      expect(getByLabelText("Scroll to earlier times")).toBeInTheDocument()
+      expect(getByLabelText("Scroll to later times")).toBeInTheDocument()
     })
   })
 })

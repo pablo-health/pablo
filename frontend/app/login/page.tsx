@@ -23,10 +23,17 @@ import { useConfig } from "@/lib/config"
 import {
   getCachedTenantId,
   setCachedTenantId,
+  clearCachedTenantId,
   resolveTenant,
+  signupPractice,
 } from "@/lib/tenant"
 
-type LoginStep = "email-resolve" | "sign-in" | "mfa" | "verify-email"
+type LoginStep =
+  | "email-resolve"
+  | "sign-in"
+  | "register-practice"
+  | "mfa"
+  | "verify-email"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -34,10 +41,15 @@ export default function LoginPage() {
   const { user, loading: authLoading } = useAuth()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [practiceName, setPracticeName] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
+  const [resendSent, setResendSent] = useState(false)
   const [isSignUp, setIsSignUp] = useState(false)
+  const [resolvedTenantId, setResolvedTenantId] = useState<string | null>(
+    getCachedTenantId
+  )
 
   // Tenant resolution state — skip email-resolve in single-tenant mode
   const [step, setStep] = useState<LoginStep>(() =>
@@ -59,10 +71,11 @@ export default function LoginPage() {
     if (tenantId) {
       setFirebaseTenantId(tenantId)
       setCachedTenantId(tenantId)
+      setResolvedTenantId(tenantId)
     }
   }
 
-  // Step 1: Resolve tenant from email (for returning users on new browser)
+  // Step 1: Resolve tenant from email
   const handleResolveEmail = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
@@ -72,11 +85,39 @@ export default function LoginPage() {
       const tenantId = await resolveTenant(email, config.apiUrl)
       if (tenantId) {
         ensureTenantId(tenantId)
+        setStep("sign-in")
+      } else if (config.multiTenancyEnabled) {
+        // No tenant found — offer to register a new practice
+        setStep("register-practice")
+      } else {
+        setStep("sign-in")
       }
-      // Proceed to sign-in even without a tenant (allows project-level admin auth)
-      setStep("sign-in")
     } catch {
       setError("Unable to verify email. Please try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Register a new practice
+  const handleRegisterPractice = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setLoading(true)
+
+    try {
+      const tenantId = await signupPractice(email, practiceName, config.apiUrl)
+      if (tenantId) {
+        ensureTenantId(tenantId)
+        setIsSignUp(true)
+        setStep("sign-in")
+      } else {
+        setError(
+          "Unable to register practice. Your email may not be on the allowlist. Contact your administrator."
+        )
+      }
+    } catch {
+      setError("Failed to register practice. Please try again.")
     } finally {
       setLoading(false)
     }
@@ -181,7 +222,9 @@ export default function LoginPage() {
         email,
         password
       )
-      await sendEmailVerification(credential.user)
+      await sendEmailVerification(credential.user, {
+        url: `${window.location.origin}/login`,
+      })
       setStep("verify-email")
     } catch (err) {
       const code = (err as { code?: string }).code
@@ -260,6 +303,17 @@ export default function LoginPage() {
     }
   }
 
+  const handleStartOver = () => {
+    clearCachedTenantId()
+    setResolvedTenantId(null)
+    setError("")
+    setEmail("")
+    setPassword("")
+    setPracticeName("")
+    setIsSignUp(false)
+    setStep("email-resolve")
+  }
+
   // MFA Challenge Screen
   if (step === "mfa" && mfaResolver) {
     return (
@@ -334,6 +388,22 @@ export default function LoginPage() {
 
   // Email Verification Sent Screen
   if (step === "verify-email") {
+    const handleResendVerification = async () => {
+      const auth = getFirebaseAuth()
+      if (!auth.currentUser) {
+        setError("Session expired. Please sign up again.")
+        return
+      }
+      try {
+        await sendEmailVerification(auth.currentUser, {
+          url: `${window.location.origin}/login`,
+        })
+        setResendSent(true)
+      } catch {
+        setError("Failed to resend. Please wait a minute and try again.")
+      }
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
         <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
@@ -346,14 +416,108 @@ export default function LoginPage() {
               verify your email before signing in.
             </p>
           </div>
+
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          )}
+
+          {resendSent && (
+            <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+              <p className="text-sm text-green-700">
+                Verification email resent. Check your inbox and spam folder.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <button
+              onClick={handleResendVerification}
+              disabled={resendSent}
+              className="w-full bg-white border-2 border-primary-600 text-primary-600 px-6 py-3 rounded-lg font-medium hover:bg-primary-50 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {resendSent ? "Email Resent" : "Resend Verification Email"}
+            </button>
+
+            <button
+              onClick={() => {
+                setIsSignUp(false)
+                setResendSent(false)
+                setError("")
+                setStep("sign-in")
+              }}
+              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+            >
+              Back to Sign In
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Register Practice Screen (no tenant found for this email)
+  if (step === "register-practice") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
+        <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
+          <div className="text-center">
+            <h1 className="text-4xl font-display font-bold text-primary-600">
+              Pablo
+            </h1>
+            <p className="mt-3 text-neutral-600">
+              No practice found for <strong>{email}</strong>
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              Register a new practice to get started, or use a different email if
+              you already have an account.
+            </p>
+          </div>
+
+          <form onSubmit={handleRegisterPractice} className="space-y-4">
+            <div>
+              <label
+                htmlFor="practice-name"
+                className="block text-sm font-medium text-neutral-700 mb-1"
+              >
+                Practice Name
+              </label>
+              <input
+                id="practice-name"
+                type="text"
+                value={practiceName}
+                onChange={(e) => setPracticeName(e.target.value)}
+                placeholder="e.g. Sunrise Behavioral Health"
+                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                required
+                autoFocus
+                minLength={2}
+                maxLength={100}
+              />
+            </div>
+
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? "Setting up your practice..." : "Register Practice"}
+            </button>
+          </form>
+
           <button
-            onClick={() => {
-              setIsSignUp(false)
-              setStep("sign-in")
-            }}
-            className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+            type="button"
+            onClick={handleStartOver}
+            className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
           >
-            Back to Sign In
+            Use a different email
           </button>
         </div>
       </div>
@@ -420,7 +584,7 @@ export default function LoginPage() {
     )
   }
 
-  // Main Sign-In Screen (tenant resolved)
+  // Main Sign-In Screen (tenant resolved or single-tenant mode)
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
       <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
@@ -431,6 +595,11 @@ export default function LoginPage() {
           <p className="mt-3 text-neutral-600">
             HIPAA-compliant therapy session management
           </p>
+          {config.multiTenancyEnabled && resolvedTenantId && (
+            <p className="mt-1 text-sm text-neutral-500">
+              Signing in as {email}
+            </p>
+          )}
         </div>
 
         <div className="mt-8 space-y-4">
@@ -564,6 +733,16 @@ export default function LoginPage() {
             </svg>
             Sign in with Google
           </button>
+
+          {config.multiTenancyEnabled && (
+            <button
+              type="button"
+              onClick={handleStartOver}
+              className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
+            >
+              Use a different email
+            </button>
+          )}
 
           <p className="mt-6 text-center text-sm text-neutral-500">
             By signing in, you agree to our Terms of Service and Privacy Policy

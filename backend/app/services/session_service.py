@@ -98,6 +98,19 @@ class SessionService:
         self.patient_repo = patient_repo
         self.soap_service = soap_service
 
+    def _update_next_session_date(self, patient: Patient, user_id: str) -> None:
+        """Recompute and persist next_session_date from scheduled sessions."""
+        sessions = self.session_repo.list_by_patient(patient.id, user_id)
+        now = datetime.now(UTC).isoformat()
+        future = [
+            s.scheduled_at or s.session_date
+            for s in sessions
+            if (s.scheduled_at or s.session_date) > now
+            and s.status not in TERMINAL_STATUSES
+        ]
+        patient.next_session_date = min(future) if future else None
+        self.patient_repo.update(patient)
+
     def upload_session(
         self,
         patient_id: str,
@@ -293,6 +306,7 @@ class SessionService:
             updated_at=now,
         )
         session = self.session_repo.create(session)
+        self._update_next_session_date(patient, user_id)
         return session, patient
 
     def transition_status(
@@ -340,6 +354,8 @@ class SessionService:
         session = self.session_repo.update(session)
 
         patient = self.patient_repo.get(session.patient_id, user_id)
+        if patient and target in {SessionStatus.CANCELLED, SessionStatus.IN_PROGRESS}:
+            self._update_next_session_date(patient, user_id)
         return session, patient  # type: ignore[return-value]
 
     def update_session_metadata(

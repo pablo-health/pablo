@@ -3,13 +3,12 @@ steps:
     args:
       - '--dockerfile=backend/Dockerfile.production'
       - '--context=.'
-      - '--build-arg=BASE_IMAGE=${_BASE_IMAGE}'
+      - '--build-arg=BASE_IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
       - '--destination=${_REGION}-docker.pkg.dev/$PROJECT_ID/pablo/backend:latest'
       - '--cache=true'
       - '--cache-ttl=720h'
 
 substitutions:
-  _BASE_IMAGE: 'ghcr.io/pablo-health/backend-base:deps-10f1ce3d1104'
   _REGION: 'us-central1'
 
 options:

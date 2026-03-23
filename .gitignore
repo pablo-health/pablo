@@ -39,3 +39,6 @@ ui-debug.log
 # NLI training data and model artifacts
 backend/data/*.jsonl
 backend/data/nli-therapy-*
+
+# Claude Code local settings
+.claude/
