@@ -11,6 +11,7 @@ import { SessionDefaults } from "@/components/settings/SessionDefaults"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, Check, Clock, Mic, Settings2, User } from "lucide-react"
+import { isEnabled } from "@/lib/featureFlags"
 import type { UserPreferences } from "@/lib/api/users"
 
 export default function SettingsPage() {
@@ -101,29 +102,33 @@ export default function SettingsPage() {
         />
       </SettingsSection>
 
-      <SettingsSection
-        icon={Settings2}
-        title="Session Defaults"
-        description="Default values pre-filled when creating new appointments."
-      >
-        <SessionDefaults
-          preferences={preferences}
-          onSave={handleSave}
-          isSaving={saveMutation.isPending}
-        />
-      </SettingsSection>
+      {isEnabled("session_defaults") && (
+        <SettingsSection
+          icon={Settings2}
+          title="Session Defaults"
+          description="Default values pre-filled when creating new appointments."
+        >
+          <SessionDefaults
+            preferences={preferences}
+            onSave={handleSave}
+            isSaving={saveMutation.isPending}
+          />
+        </SettingsSection>
+      )}
 
-      <SettingsSection
-        icon={Mic}
-        title="Transcription"
-        description="Configure automatic transcription behavior."
-      >
-        <TranscriptionSettings
-          preferences={preferences}
-          onSave={handleSave}
-          isSaving={saveMutation.isPending}
-        />
-      </SettingsSection>
+      {isEnabled("transcription") && (
+        <SettingsSection
+          icon={Mic}
+          title="Transcription"
+          description="Configure automatic transcription behavior."
+        >
+          <TranscriptionSettings
+            preferences={preferences}
+            onSave={handleSave}
+            isSaving={saveMutation.isPending}
+          />
+        </SettingsSection>
+      )}
     </div>
   )
 }

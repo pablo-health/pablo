@@ -163,14 +163,19 @@ class FirestoreTherapySessionRepository(TherapySessionRepository):
         """List therapy sessions for a user with pagination."""
         base_query = self.collection.where("user_id", "==", user_id)
 
-        # Get total count (Firestore has no native count for filtered queries)
-        all_docs = list(base_query.order_by("session_date", direction="DESCENDING").stream())
-        total = len(all_docs)
+        # Server-side count via Firestore aggregation
+        count_result = base_query.count().get()
+        total = count_result[0][0].value if count_result and count_result[0] else 0
 
-        # Apply pagination via slicing
+        # Server-side pagination
         offset = (page - 1) * page_size
-        paginated_docs = all_docs[offset : offset + page_size]
-        return [TherapySession.from_dict(doc.to_dict()) for doc in paginated_docs], total
+        paginated_query = (
+            base_query.order_by("session_date", direction="DESCENDING")
+            .offset(offset)
+            .limit(page_size)
+        )
+        sessions = [TherapySession.from_dict(doc.to_dict()) for doc in paginated_query.stream()]
+        return sessions, total
 
     def create(self, session: TherapySession) -> TherapySession:
         """Create a new therapy session."""

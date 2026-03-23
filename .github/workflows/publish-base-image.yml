@@ -12,155 +12,35 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: pablo-health/backend-base
-  GCP_REGION: us-central1
 
 jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      deps-hash: ${{ steps.deps-hash.outputs.hash }}
-      full-exists: ${{ steps.check-full.outputs.exists }}
-      solo-exists: ${{ steps.check-solo.outputs.exists }}
-    permissions:
-      packages: read
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Compute dependency hash
-        id: deps-hash
-        run: echo "hash=$(cat pyproject.toml poetry.lock | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Check if full image exists
-        id: check-full
-        run: |
-          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:deps-${{ steps.deps-hash.outputs.hash }} > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check if solo image exists
-        id: check-solo
-        run: |
-          if docker manifest inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:solo-${{ steps.deps-hash.outputs.hash }} > /dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
   build-and-push:
-    needs: prepare
-    if: needs.prepare.outputs.full-exists == 'false' || needs.prepare.outputs.solo-exists == 'false'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      id-token: write  # Required for GCP Workload Identity Federation
-    strategy:
-      matrix:
-        include:
-          - variant: full
-            install_nli: "true"
-            tag_prefix: deps
-            skip: ${{ needs.prepare.outputs.full-exists }}
-          - variant: solo
-            install_nli: "false"
-            tag_prefix: solo
-            skip: ${{ needs.prepare.outputs.solo-exists }}
 
     steps:
-      - name: Skip if image already exists
-        if: matrix.skip == 'true'
-        run: echo "Image ${{ matrix.variant }} already exists — skipping"
-
-      - uses: actions/checkout@v6
-        if: matrix.skip != 'true'
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        if: matrix.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
-        if: matrix.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # GCP Workload Identity Federation — no long-lived keys
-      # Requires one-time setup: see docs/GCP_DEPLOYMENT.md
-      - name: Authenticate to GCP
-        if: matrix.skip != 'true' && vars.GCP_WIF_PROVIDER != ''
-        id: gcp-auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: ${{ vars.GCP_SA_EMAIL }}
-
-      - name: Configure Docker for GCP Artifact Registry
-        if: matrix.skip != 'true' && steps.gcp-auth.outcome == 'success'
-        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
-
-      - name: Determine image tags
-        if: matrix.skip != 'true'
-        id: tags
-        run: |
-          HASH="${{ needs.prepare.outputs.deps-hash }}"
-          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ matrix.tag_prefix }}-${HASH}"
-          # Add latest tag for full variant only
-          if [ "${{ matrix.variant }}" = "full" ]; then
-            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          fi
-          # Add GCP Artifact Registry tags if authenticated
-          if [ "${{ steps.gcp-auth.outcome }}" = "success" ]; then
-            GCP_IMAGE="${{ env.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/pablo/backend-base"
-            TAGS="${TAGS},${GCP_IMAGE}:${{ matrix.tag_prefix }}-${HASH}"
-            if [ "${{ matrix.variant }}" = "full" ]; then
-              TAGS="${TAGS},${GCP_IMAGE}:latest"
-            fi
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push base image (${{ matrix.variant }})
-        if: matrix.skip != 'true'
+      - name: Build and push base image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: backend/Dockerfile.base
           push: true
-          build-args: INSTALL_NLI=${{ matrix.install_nli }}
-          tags: ${{ steps.tags.outputs.tags }}
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,scope=${{ matrix.variant }},mode=max
-
-  pin-tag:
-    needs: [prepare, build-and-push]
-    if: always() && needs.prepare.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Update pinned base image tag
-        run: |
-          TAG="deps-${{ needs.prepare.outputs.deps-hash }}"
-          # Update Dockerfile.production and cloudbuild.yaml with new pinned tag
-          sed -i "s|backend-base:deps-[a-f0-9]\{12\}|backend-base:${TAG}|g" backend/Dockerfile.production
-          sed -i "s|backend-base:deps-[a-f0-9]\{12\}|backend-base:${TAG}|g" backend/cloudbuild.yaml
-
-      - name: Commit updated base image references
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add backend/Dockerfile.production backend/cloudbuild.yaml
-          git diff --staged --quiet || git commit -m "chore: pin base image to deps-${{ needs.prepare.outputs.deps-hash }}"
-          git push
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

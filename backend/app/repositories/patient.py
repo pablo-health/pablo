@@ -210,12 +210,14 @@ class FirestorePatientRepository(PatientRepository):
         # Sort by last name, then first name (clinical standard)
         query = query.order_by("last_name_lower").order_by("first_name_lower")
 
-        # Get total count then paginate
-        all_docs = list(query.stream())
-        total = len(all_docs)
+        # Server-side count via Firestore aggregation
+        count_result = query.count().get()
+        total = count_result[0][0].value if count_result and count_result[0] else 0
+
+        # Server-side pagination
         offset = (page - 1) * page_size
-        paginated_docs = all_docs[offset : offset + page_size]
-        return [Patient.from_dict(doc.to_dict()) for doc in paginated_docs], total
+        paginated_query = query.offset(offset).limit(page_size)
+        return [Patient.from_dict(doc.to_dict()) for doc in paginated_query.stream()], total
 
     def create(self, patient: Patient) -> Patient:
         """Create a new patient."""

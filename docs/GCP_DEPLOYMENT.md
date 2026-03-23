@@ -358,7 +358,7 @@ gcloud run deploy therapy-backend \
   --service-account=$BACKEND_SA \
   --memory=1Gi \
   --cpu=1 \
-  --min-instances=0 \
+  --min-instances=1 \
   --max-instances=10 \
   --set-env-vars="GCP_PROJECT_ID=$PROJECT_ID" \
   --set-env-vars="ENVIRONMENT=production" \
@@ -713,7 +713,7 @@ gcloud run services update therapy-backend \
 # Check memory/CPU limits (may need to increase)
 gcloud run services update therapy-backend \
   --region=$REGION \
-  --memory=2Gi \
+  --memory=4Gi \
   --cpu=2
 ```
 

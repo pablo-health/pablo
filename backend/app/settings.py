@@ -94,10 +94,12 @@ class Settings(BaseSettings):
 
     # Sign-up Restriction Settings
     restrict_signups: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Only allowlisted emails can sign in. "
-            "Set to False to allow any authenticated user."
+            "SaaS deployments set this to True via setup.sh. "
+            "Self-hosted (Core) defaults to False — solo therapist "
+            "doesn't need an allowlist."
         ),
     )
 

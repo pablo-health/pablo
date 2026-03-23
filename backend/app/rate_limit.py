@@ -15,11 +15,18 @@ from fastapi import HTTPException, Request, status
 
 
 class _SlidingWindow:
-    """Thread-safe sliding window rate limiter."""
+    """Thread-safe sliding window rate limiter.
 
-    def __init__(self, max_requests: int, window_seconds: int) -> None:
+    max_keys caps the number of tracked IPs to prevent unbounded memory growth
+    under sustained attacks with many unique source IPs.
+    """
+
+    def __init__(
+        self, max_requests: int, window_seconds: int, *, max_keys: int = 10_000
+    ) -> None:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
+        self._max_keys = max_keys
         self._hits: dict[str, list[float]] = defaultdict(list)
         self._lock = Lock()
 
@@ -29,6 +36,12 @@ class _SlidingWindow:
         cutoff = now - self.window_seconds
 
         with self._lock:
+            # Evict stale keys if at capacity
+            if len(self._hits) >= self._max_keys and key not in self._hits:
+                stale = [k for k, v in self._hits.items() if not v or v[-1] <= cutoff]
+                for k in stale:
+                    del self._hits[k]
+
             timestamps = self._hits[key]
             # Prune expired entries
             self._hits[key] = [t for t in timestamps if t > cutoff]

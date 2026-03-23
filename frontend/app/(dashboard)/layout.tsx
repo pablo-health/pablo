@@ -22,9 +22,11 @@ export default async function DashboardLayout({
 }) {
   let user
   let token: string | undefined
+  let isAdmin = false
 
   if (IS_DEV_MODE) {
     user = mockUser
+    isAdmin = true
   } else {
     const tokens = await getTokens(await cookies(), authConfig)
     if (!tokens) {
@@ -54,6 +56,7 @@ export default async function DashboardLayout({
         email: userStatus.email || decodedToken.email,
         image: decodedToken.picture,
       }
+      isAdmin = userStatus.is_admin
 
       // Disabled users cannot access the platform
       if (userStatus.status === "disabled") {
@@ -80,7 +83,7 @@ export default async function DashboardLayout({
       >
         Skip to main content
       </a>
-      <Sidebar />
+      <Sidebar isAdmin={isAdmin} />
       <div className="flex flex-1 flex-col">
         <Header user={user} />
         <main id="main-content" className="flex-1 overflow-y-auto p-6 bg-neutral-50">

@@ -36,7 +36,6 @@ jobs:
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4
         if: always()
-        continue-on-error: true
         with:
           sarif_file: trivy-deps.sarif
           category: trivy-deps
@@ -70,7 +69,6 @@ jobs:
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4
         if: always()
-        continue-on-error: true
         with:
           sarif_file: trivy-base.sarif
           category: ${{ matrix.category }}
@@ -97,7 +95,6 @@ jobs:
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4
         if: always()
-        continue-on-error: true
         with:
           sarif_file: trivy-config.sarif
           category: trivy-config

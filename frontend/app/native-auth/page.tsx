@@ -106,8 +106,6 @@ export default function NativeAuthPage() {
           const data = await res.json().catch(() => null)
           const errorCode = data?.detail?.error?.code ?? data?.error?.code
           if (res.status === 403 && errorCode === "MFA_REQUIRED") {
-            // User hasn't completed MFA — send them through enrollment,
-            // then return here to finish the native auth handoff.
             const returnUrl = `/native-auth?redirect_uri=${encodeURIComponent(redirectUri!)}`
             window.location.href = `/mfa-enrollment?returnTo=${encodeURIComponent(returnUrl)}`
             return
@@ -268,7 +266,9 @@ export default function NativeAuthPage() {
         email,
         password
       )
-      await sendEmailVerification(credential.user)
+      await sendEmailVerification(credential.user, {
+        url: `${window.location.origin}/login`,
+      })
       setVerificationSent(true)
     } catch (err) {
       const code = (err as { code?: string }).code
