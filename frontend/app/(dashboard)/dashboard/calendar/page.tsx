@@ -2,17 +2,17 @@
 
 "use client"
 
-import { useCallback, useState } from "react"
-import { Plus, Calendar as CalendarIcon } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { useCallback, useRef, useState } from "react"
 import { CalendarView } from "@/components/calendar/CalendarView"
 import { StatusLegend } from "@/components/calendar/StatusLegend"
 import { AppointmentModal } from "@/components/calendar/AppointmentModal"
-import { usePreferences } from "@/hooks/usePreferences"
+import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 export default function CalendarPage() {
   const { data: preferences } = usePreferences()
+  const saveMutation = useSavePreferences()
+  const lastSavedView = useRef(preferences?.calendar_default_view)
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentResponse | null>(null)
   const [defaultStart, setDefaultStart] = useState<string>()
@@ -39,17 +39,24 @@ export default function CalendarPage() {
     setDefaultEnd(undefined)
   }, [])
 
+  const handleCreateNew = useCallback(() => {
+    handleSelectSlot(new Date().toISOString(), "")
+  }, [handleSelectSlot])
+
+  const handleViewChange = useCallback(
+    (view: string) => {
+      if (!preferences || view === lastSavedView.current) return
+      lastSavedView.current = view
+      saveMutation.mutate({ ...preferences, calendar_default_view: view })
+    },
+    [preferences, saveMutation]
+  )
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-display font-semibold text-neutral-900">Calendar</h1>
-          <p className="text-sm text-neutral-600 mt-1">Schedule and manage appointments</p>
-        </div>
-        <Button onClick={() => handleSelectSlot(new Date().toISOString(), "")}>
-          <Plus className="h-4 w-4" />
-          New Appointment
-        </Button>
+      <div>
+        <h1 className="text-3xl font-display font-semibold text-neutral-900">Calendar</h1>
+        <p className="text-sm text-neutral-600 mt-1">Schedule and manage appointments</p>
       </div>
 
       <StatusLegend />
@@ -58,8 +65,11 @@ export default function CalendarPage() {
         <CalendarView
           onSelectSlot={handleSelectSlot}
           onSelectAppointment={handleSelectAppointment}
+          onCreateNew={handleCreateNew}
           workingHoursStart={preferences?.working_hours_start}
           workingHoursEnd={preferences?.working_hours_end}
+          defaultView={preferences?.calendar_default_view}
+          onViewChange={handleViewChange}
         />
       </div>
 
@@ -69,6 +79,7 @@ export default function CalendarPage() {
         defaultStart={defaultStart}
         defaultEnd={defaultEnd}
         appointment={selectedAppointment}
+        preferences={preferences}
       />
     </div>
   )

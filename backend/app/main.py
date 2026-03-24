@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
-from .routes import admin, auth, patients, scheduling, sessions, users
+from .routes import admin, auth, ehr_routes, patients, scheduling, sessions, users
 from .settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,8 @@ app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
+app.include_router(ehr_routes.route_router)
+app.include_router(ehr_routes.navigate_router)
 
 @app.get("/api/health")
 def health_check() -> dict[str, str]:

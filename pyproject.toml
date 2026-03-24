@@ -120,6 +120,7 @@ ignore = [
     "PLR0912",  # Allow many branches in plugin processing logic
 ]
 "backend/scripts/**/*.py" = [
+    "E501",     # Allow long lines in scripts (prompt text, CLI output)
     "S603",     # Allow subprocess calls in dev scripts
     "S607",     # Allow partial executable paths in dev scripts
     "PLC0415",  # Allow lazy imports in standalone scripts (conditional/env-dependent)

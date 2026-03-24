@@ -38,12 +38,16 @@ class AuditAction(StrEnum):
     TENANT_ENABLED = "tenant_enabled"
     TENANT_DELETED = "tenant_deleted"
 
+    # EHR navigation
+    EHR_NAVIGATE = "ehr_navigate"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
 
     PATIENT = "patient"
     SESSION = "session"
+    EHR_ROUTE = "ehr_route"
 
 
 # Retention period for audit logs (HIPAA requires minimum 6 years, but

@@ -30,7 +30,6 @@ from app.services.session_service import (
 )
 from app.services.soap_generation_service import SOAPGenerationService
 
-
 @pytest.fixture
 def session_repo() -> InMemoryTherapySessionRepository:
     return InMemoryTherapySessionRepository()

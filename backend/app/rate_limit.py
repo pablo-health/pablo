@@ -79,3 +79,21 @@ def _get_client_ip(request: Request) -> str:
 def require_rate_limit(request: Request) -> None:
     """FastAPI dependency that enforces rate limiting by client IP."""
     _preauth_limiter.check(_get_client_ip(request))
+
+
+# EHR navigate: per-user daily rate limit (lazily initialized from settings)
+_ehr_navigate_limiter: _SlidingWindow | None = None
+
+
+def get_ehr_navigate_limiter() -> _SlidingWindow:
+    """Get the per-user daily rate limiter for EHR navigate endpoint."""
+    global _ehr_navigate_limiter  # noqa: PLW0603
+    if _ehr_navigate_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415 — lazy to avoid circular import
+
+        settings = get_settings()
+        _ehr_navigate_limiter = _SlidingWindow(
+            max_requests=settings.ehr_navigate_daily_limit,
+            window_seconds=86_400,
+        )
+    return _ehr_navigate_limiter

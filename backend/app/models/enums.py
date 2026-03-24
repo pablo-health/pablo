@@ -60,7 +60,7 @@ class ExportStatus(StrEnum):
     NOT_QUEUED = "not_queued"  # Default - not selected for export
     PENDING_REVIEW = "pending_review"  # Queued, awaiting manual review
     APPROVED = "approved"  # Reviewed and approved for export
-    EXPORTED = "exported"  # Successfully exported
+    EXPORTED = "exported"  # Successfully exported 
     SKIPPED = "skipped"  # Redaction failed or manually skipped
 
 
@@ -71,3 +71,22 @@ class TranscriptFormat(StrEnum):
     JSON = "json"
     TXT = "txt"
     GOOGLE_MEET = "google_meet"
+
+
+class EhrSystem(StrEnum):
+    """Supported EHR systems."""
+
+    SIMPLEPRACTICE = "simplepractice"
+    THERAPYNOTES = "therapynotes"
+    JANE_APP = "jane_app"
+    SESSIONS_HEALTH = "sessions_health"
+
+
+class EhrAction(StrEnum):
+    """EHR navigation actions."""
+
+    CLICK = "click"
+    FILL = "fill"
+    NAVIGATE = "navigate"
+    WAIT = "wait"
+    NONE = "none"

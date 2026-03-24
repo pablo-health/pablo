@@ -1,0 +1,134 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to deploy"
+        type: choice
+        options: [both, backend, frontend]
+        default: both
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy-dev-backend:
+    name: Deploy Backend to Dev
+    needs: ci
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      PROJECT_ID: pablohealth-dev
+      REGION: us-central1
+      WIF_PROVIDER: projects/1065989021055/locations/global/workloadIdentityPools/github-actions/providers/github
+      SA_EMAIL: github-deploy@pablohealth-dev.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and deploy backend
+        run: |
+          gcloud builds submit . \
+            --config=./backend/cloudbuild.yaml \
+            --project=$PROJECT_ID \
+            --timeout=15m --quiet
+
+          gcloud run services update pablo-backend \
+            --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend:latest" \
+            --region=$REGION --project=$PROJECT_ID --quiet
+
+          gcloud run services update-traffic pablo-backend \
+            --to-latest --region=$REGION --project=$PROJECT_ID --quiet
+
+  deploy-dev-frontend:
+    name: Deploy Frontend to Dev
+    needs: ci
+    if: inputs.target == 'both' || inputs.target == 'frontend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      PROJECT_ID: pablohealth-dev
+      REGION: us-central1
+      WIF_PROVIDER: projects/1065989021055/locations/global/workloadIdentityPools/github-actions/providers/github
+      SA_EMAIL: github-deploy@pablohealth-dev.iam.gserviceaccount.com
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and deploy frontend
+        run: |
+          gcloud builds submit ./frontend \
+            --config=./frontend/cloudbuild.yaml \
+            --project=$PROJECT_ID \
+            --timeout=20m --quiet
+
+          gcloud run services update pablo-frontend \
+            --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/pablo/frontend:latest" \
+            --region=$REGION --project=$PROJECT_ID --quiet
+
+          gcloud run services update-traffic pablo-frontend \
+            --to-latest --region=$REGION --project=$PROJECT_ID --quiet
+
+  # Uncomment when production GCP project is configured with WIF
+  # deploy-prod:
+  #   name: Deploy to Production
+  #   needs: [ci, deploy-dev-backend, deploy-dev-frontend]
+  #   runs-on: ubuntu-latest
+  #   environment: production  # <- configure required reviewers in GitHub repo settings
+  #   env:
+  #     PROJECT_ID: <prod-project-id>
+  #     REGION: us-central1
+  #     WIF_PROVIDER: projects/<prod-project-number>/locations/global/workloadIdentityPools/github-actions/providers/github
+  #     SA_EMAIL: github-deploy@<prod-project-id>.iam.gserviceaccount.com
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #
+  #     - id: auth
+  #       uses: google-github-actions/auth@v2
+  #       with:
+  #         workload_identity_provider: ${{ env.WIF_PROVIDER }}
+  #         service_account: ${{ env.SA_EMAIL }}
+  #
+  #     - uses: google-github-actions/setup-gcloud@v2
+  #
+  #     - name: Deploy backend
+  #       run: |
+  #         gcloud builds submit . --config=./backend/cloudbuild.yaml --project=$PROJECT_ID --timeout=15m --quiet
+  #         gcloud run services update pablo-backend \
+  #           --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend:latest" \
+  #           --region=$REGION --project=$PROJECT_ID --quiet
+  #         gcloud run services update-traffic pablo-backend --to-latest --region=$REGION --project=$PROJECT_ID --quiet
+  #
+  #     - name: Deploy frontend
+  #       run: |
+  #         gcloud builds submit ./frontend --config=./frontend/cloudbuild.yaml --project=$PROJECT_ID --timeout=20m --quiet
+  #         gcloud run services update pablo-frontend \
+  #           --image="${REGION}-docker.pkg.dev/${PROJECT_ID}/pablo/frontend:latest" \
+  #           --region=$REGION --project=$PROJECT_ID --quiet
+  #         gcloud run services update-traffic pablo-frontend --to-latest --region=$REGION --project=$PROJECT_ID --quiet

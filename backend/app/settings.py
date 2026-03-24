@@ -16,7 +16,6 @@ from typing import Literal
 from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 class Settings(BaseSettings):
     """
     Application configuration settings.
@@ -229,6 +228,17 @@ class Settings(BaseSettings):
     minicheck_model_path: str = Field(
         default="lytang/MiniCheck-RoBERTa-Large",
         description="MiniCheck model name or local path for fact verification",
+    )
+
+    # EHR Navigation Settings
+    ehr_navigate_daily_limit: int = Field(
+        default=50,
+        ge=1,
+        description="Max LLM fallback calls per user per day for EHR navigation",
+    )
+    ehr_navigate_model: str = Field(
+        default="gemini-2.5-flash-lite",
+        description="Gemini model for EHR navigation LLM fallback",
     )
 
     # Google Calendar Integration
