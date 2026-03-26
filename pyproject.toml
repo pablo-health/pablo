@@ -11,7 +11,7 @@ python = ">=3.13,<3.14"
 
 # Web Framework
 fastapi = ">=0.115.0"
-uvicorn = {extras = ["standard"], version = "^0.41.0"}
+uvicorn = {extras = ["standard"], version = "^0.42.0"}
 pydantic = "^2.5.0"
 pydantic-settings = "^2.13.1"
 
@@ -19,7 +19,7 @@ pydantic-settings = "^2.13.1"
 python-dotenv = "^1.2.2"
 
 # Google Cloud (for GCP deployment)
-google-cloud-firestore = "^2.23.0"
+google-cloud-firestore = "^2.26.0"
 google-cloud-secret-manager = "^2.18.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
@@ -40,17 +40,17 @@ sentence-transformers = ">=3.0.0"
 onnxruntime = ">=1.17.0"
 
 # PII Redaction
-faker = "^40.8.0"
+faker = "^40.11.1"
 email-validator = "^2.3.0"
 
 
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.0"
-pytest-cov = "^7.0.0"
+pytest-cov = "^7.1.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
-ruff = "^0.15.5"
+ruff = "^0.15.7"
 mypy = "^1.7.0"
 types-redis = "^4.6.0"
 pip-audit = "^2.7.0"
