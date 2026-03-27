@@ -54,6 +54,7 @@ from ..services.transcription_queue_service import (
     MockTranscriptionQueueService,
     TranscriptionQueueService,
 )
+from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
