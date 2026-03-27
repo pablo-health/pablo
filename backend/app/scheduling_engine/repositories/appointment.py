@@ -45,6 +45,14 @@ class AppointmentRepository(ABC):
         """List all occurrences of a recurring series, optionally after a date."""
 
     @abstractmethod
+    def list_by_ical_source(
+        self,
+        user_id: str,
+        ehr_system: str,
+    ) -> list[Appointment]:
+        """List all appointments synced from a specific iCal source."""
+
+    @abstractmethod
     def create(self, appointment: Appointment) -> Appointment:
         """Create a new appointment."""
 
@@ -117,6 +125,20 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         if after:
             results = [a for a in results if a.start_at >= after]
         return sorted(results, key=lambda a: a.start_at)
+
+    def list_by_ical_source(
+        self,
+        user_id: str,
+        ehr_system: str,
+    ) -> list[Appointment]:
+        return sorted(
+            [
+                a
+                for a in self._appointments.values()
+                if a.user_id == user_id and a.ical_source == ehr_system
+            ],
+            key=lambda a: a.start_at,
+        )
 
     def create(self, appointment: Appointment) -> Appointment:
         self._appointments[appointment.id] = appointment

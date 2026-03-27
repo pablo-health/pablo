@@ -65,6 +65,18 @@ class FirestoreAppointmentRepository(AppointmentRepository):
         query = query.order_by("start_at")
         return [Appointment.from_dict(doc.to_dict()) for doc in query.stream()]
 
+    def list_by_ical_source(
+        self,
+        user_id: str,
+        ehr_system: str,
+    ) -> list[Appointment]:
+        query = (
+            self.collection.where("user_id", "==", user_id)
+            .where("ical_source", "==", ehr_system)
+            .order_by("start_at")
+        )
+        return [Appointment.from_dict(doc.to_dict()) for doc in query.stream()]
+
     def create(self, appointment: Appointment) -> Appointment:
         self.collection.document(appointment.id).set(appointment.to_dict())
         return appointment

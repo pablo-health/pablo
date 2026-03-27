@@ -82,9 +82,14 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const tenantId = await resolveTenant(email, config.apiUrl)
+      const { tenantId, isAdmin } = await resolveTenant(email, config.apiUrl)
       if (tenantId) {
         ensureTenantId(tenantId)
+        setStep("sign-in")
+      } else if (isAdmin) {
+        // Platform admin — sign in at project level (no tenant)
+        setFirebaseTenantId(null)
+        clearCachedTenantId()
         setStep("sign-in")
       } else if (config.multiTenancyEnabled) {
         // No tenant found — offer to register a new practice
@@ -152,7 +157,12 @@ export default function LoginPage() {
         totpCode
       )
 
-      await mfaResolver.resolveSignIn(assertion)
+      const credential = await mfaResolver.resolveSignIn(assertion)
+      const idToken = await credential.user.getIdToken()
+      await fetch("/api/login", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      })
       router.push("/dashboard")
     } catch (err) {
       const code = (err as { code?: string }).code
@@ -192,11 +202,14 @@ export default function LoginPage() {
       } else if (
         code === "auth/invalid-credential" ||
         code === "auth/user-not-found" ||
-        code === "auth/wrong-password"
+        code === "auth/wrong-password" ||
+        code === "auth/user-disabled"
       ) {
         setError("Invalid email or password")
       } else if (code === "auth/too-many-requests") {
         setError("Too many attempts. Please try again later.")
+      } else if (code === "auth/network-request-failed") {
+        setError("Network error. Please check your connection and try again.")
       } else {
         setError("Login failed. Please try again.")
       }

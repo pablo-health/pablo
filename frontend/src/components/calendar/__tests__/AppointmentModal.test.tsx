@@ -133,4 +133,104 @@ describe("AppointmentModal", () => {
     )
     expect(screen.queryByText("New Appointment")).not.toBeInTheDocument()
   })
+
+  describe("Preferences as Defaults", () => {
+    const prefs = {
+      default_video_platform: "teams",
+      default_session_type: "couples",
+      default_duration_minutes: 60,
+      auto_transcribe: true,
+      quality_preset: "balanced",
+      therapist_display_name: null,
+      working_hours_start: 8,
+      working_hours_end: 18,
+      calendar_default_view: "timeGridWeek",
+    }
+
+    it("uses preference duration for new appointments", () => {
+      render(
+        <AppointmentModal open onClose={vi.fn()} preferences={prefs} />,
+        { wrapper: createWrapper() }
+      )
+      const durationInput = screen.getByLabelText("Duration (min)") as HTMLInputElement
+      expect(durationInput.value).toBe("60")
+    })
+
+    it("uses appointment values over preferences when editing", () => {
+      const appointment = {
+        id: "a1",
+        user_id: "u1",
+        patient_id: "p1",
+        title: "Session",
+        start_at: "2026-03-20T10:00:00Z",
+        end_at: "2026-03-20T10:50:00Z",
+        duration_minutes: 50,
+        status: "confirmed" as const,
+        session_type: "individual",
+        video_link: null,
+        video_platform: null,
+        notes: null,
+        recurrence_rule: null,
+        recurring_appointment_id: null,
+        recurrence_index: null,
+        is_exception: false,
+        google_event_id: null,
+        google_sync_status: null,
+        session_id: null,
+        created_at: "2026-03-20T09:00:00Z",
+        updated_at: null,
+      }
+
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={appointment}
+          preferences={prefs}
+        />,
+        { wrapper: createWrapper() }
+      )
+      const durationInput = screen.getByLabelText("Duration (min)") as HTMLInputElement
+      expect(durationInput.value).toBe("50")
+    })
+  })
+
+  describe("Auto-title Generation", () => {
+    it("auto-generates title when patient is selected", async () => {
+      const user = userEvent.setup()
+      render(
+        <AppointmentModal open onClose={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+
+      // Open patient dropdown and select Jane Doe
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      const option = screen.getByRole("option", { name: /Doe, Jane/i })
+      await user.click(option)
+
+      const titleInput = screen.getByLabelText("Title") as HTMLInputElement
+      expect(titleInput.value).toBe("Jane Doe - Individual")
+    })
+
+    it("preserves manual title edits", async () => {
+      const user = userEvent.setup()
+      render(
+        <AppointmentModal open onClose={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+
+      // Manually type a title first
+      const titleInput = screen.getByLabelText("Title") as HTMLInputElement
+      await user.type(titleInput, "Custom Title")
+
+      // Select a patient — should NOT overwrite manual title
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      const option = screen.getByRole("option", { name: /Doe, Jane/i })
+      await user.click(option)
+
+      expect(titleInput.value).toBe("Custom Title")
+    })
+  })
 })

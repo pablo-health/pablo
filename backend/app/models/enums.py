@@ -15,6 +15,7 @@ class SessionStatus(StrEnum):
     CANCELLED = "cancelled"
     # Existing SOAP pipeline statuses
     QUEUED = "queued"
+    TRANSCRIBING = "transcribing"
     PROCESSING = "processing"
     PENDING_REVIEW = "pending_review"
     FINALIZED = "finalized"
@@ -71,3 +72,22 @@ class TranscriptFormat(StrEnum):
     JSON = "json"
     TXT = "txt"
     GOOGLE_MEET = "google_meet"
+
+
+class EhrSystem(StrEnum):
+    """Supported EHR systems."""
+
+    SIMPLEPRACTICE = "simplepractice"
+    THERAPYNOTES = "therapynotes"
+    JANE_APP = "jane_app"
+    SESSIONS_HEALTH = "sessions_health"
+
+
+class EhrAction(StrEnum):
+    """EHR navigation actions."""
+
+    CLICK = "click"
+    FILL = "fill"
+    NAVIGATE = "navigate"
+    WAIT = "wait"
+    NONE = "none"

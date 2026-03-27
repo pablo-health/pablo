@@ -23,10 +23,15 @@ export default async function middleware(request: NextRequest) {
     return addSecurityHeaders(NextResponse.next())
   }
 
+  // Pass tenant ID dynamically so the library preserves firebase.tenant in all tokens.
+  // Without this, the library's custom token exchange strips the tenant claim.
+  const tenantId = request.cookies.get("X-Tenant-ID")?.value
+
   return authMiddleware(request, {
     loginPath,
     logoutPath,
     ...authConfig,
+    ...(tenantId && { tenantId }),
 
     handleValidToken: async (_tokens, headers) => {
       const { pathname } = request.nextUrl

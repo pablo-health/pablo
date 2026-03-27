@@ -18,15 +18,24 @@ Pablo generates SOAP notes from session transcripts with dual-method verificatio
 - A Google Cloud Platform account with billing enabled
 - `gcloud` CLI installed ([install guide](https://cloud.google.com/sdk/docs/install))
 
-### Deploy
+### One-Click Deploy
+
+[![Open in Cloud Shell](https://gstatic.com/cloudssh/images/open-btn.svg)](https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=https://github.com/pablo-health/pablo.git&cloudshell_open_in_editor=setup-solo.sh&cloudshell_tutorial=setup-solo.sh)
+
+Then run:
+```bash
+./setup-solo.sh
+```
+
+The setup script walks you through everything: GCP project creation, Firestore, Firebase Auth, AI model selection, and Cloud Run deployment.
+
+### Manual Deploy
 
 ```bash
 git clone https://github.com/pablo-health/pablo.git
 cd pablo
 ./setup-solo.sh
 ```
-
-The setup script walks you through everything: GCP project creation, Firestore, Firebase Auth, AI model selection, and Cloud Run deployment.
 
 ### Local Development
 

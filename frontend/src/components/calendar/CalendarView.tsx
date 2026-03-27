@@ -2,14 +2,15 @@
 
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import FullCalendar from "@fullcalendar/react"
 import dayGridPlugin from "@fullcalendar/daygrid"
 import timeGridPlugin from "@fullcalendar/timegrid"
 import interactionPlugin from "@fullcalendar/interaction"
-import type { DateSelectArg, EventClickArg, EventDropArg, DatesSetArg, EventContentArg } from "@fullcalendar/core"
+import type { DateSelectArg, EventClickArg, EventDropArg, DatesSetArg, EventContentArg, ViewMountArg } from "@fullcalendar/core"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
+import { usePatientList } from "@/hooks/usePatients"
 import { ChevronUp, ChevronDown, User, Users } from "lucide-react"
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
@@ -22,8 +23,11 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 interface CalendarViewProps {
   onSelectSlot: (start: string, end: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
+  onCreateNew?: () => void
   workingHoursStart?: number
   workingHoursEnd?: number
+  defaultView?: string
+  onViewChange?: (view: string) => void
 }
 
 function toSlotTime(hour: number): string {
@@ -35,17 +39,30 @@ const SCROLL_STEP_HOURS = 3
 export function CalendarView({
   onSelectSlot,
   onSelectAppointment,
+  onCreateNew,
   workingHoursStart = 8,
   workingHoursEnd = 18,
+  defaultView = "timeGridWeek",
+  onViewChange,
 }: CalendarViewProps) {
   const calendarRef = useRef<FullCalendar>(null)
   const [dateRange, setDateRange] = useState({ start: "", end: "" })
   const [dateRangeText, setDateRangeText] = useState("")
   const { data } = useAppointmentList(dateRange.start, dateRange.end)
+  const { data: patientData } = usePatientList()
   const updateMutation = useUpdateAppointment()
 
+  const patientMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const p of patientData?.data ?? []) {
+      map.set(p.id, `${p.first_name} ${p.last_name}`)
+    }
+    return map
+  }, [patientData])
+
   const scrollToHour = useCallback((hour: number) => {
-    const el = calendarRef.current?.elRef?.current
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (calendarRef.current as any)?.elRef?.current as HTMLElement | null
     if (!el) return
     const scroller = el.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null
     if (!scroller) return
@@ -54,7 +71,8 @@ export function CalendarView({
   }, [])
 
   const handleScrollEarlier = useCallback(() => {
-    const el = calendarRef.current?.elRef?.current
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (calendarRef.current as any)?.elRef?.current as HTMLElement | null
     if (!el) return
     const scroller = el.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null
     if (!scroller) return
@@ -64,7 +82,8 @@ export function CalendarView({
   }, [scrollToHour])
 
   const handleScrollLater = useCallback(() => {
-    const el = calendarRef.current?.elRef?.current
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const el = (calendarRef.current as any)?.elRef?.current as HTMLElement | null
     if (!el) return
     const scroller = el.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null
     if (!scroller) return
@@ -77,7 +96,7 @@ export function CalendarView({
     const colors = STATUS_COLORS[appt.status] ?? STATUS_COLORS.confirmed
     return {
       id: appt.id,
-      title: appt.title,
+      title: patientMap.get(appt.patient_id) ?? appt.title,
       start: appt.start_at,
       end: appt.end_at,
       backgroundColor: colors.bg,
@@ -126,6 +145,13 @@ export function CalendarView({
     [updateMutation]
   )
 
+  const handleViewMount = useCallback(
+    (arg: ViewMountArg) => {
+      onViewChange?.(arg.view.type)
+    },
+    [onViewChange]
+  )
+
   const renderEventContent = useCallback((arg: EventContentArg) => {
     const appt = arg.event.extendedProps as AppointmentResponse
     const isGroup = appt.session_type === "group" || appt.session_type === "couples"
@@ -172,12 +198,19 @@ export function CalendarView({
         <FullCalendar
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
-          initialView="timeGridWeek"
+          initialView={defaultView}
+          customButtons={onCreateNew ? {
+            newAppointment: {
+              text: "+ New",
+              click: onCreateNew,
+            },
+          } : undefined}
           headerToolbar={{
             left: "prev,next today",
             center: "title",
-            right: "timeGridWeek,timeGridDay",
+            right: `${onCreateNew ? "newAppointment " : ""}timeGridWeek,timeGridDay`,
           }}
+          viewDidMount={handleViewMount}
           selectable
           editable
           events={events}

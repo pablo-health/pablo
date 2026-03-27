@@ -1,0 +1,385 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "What to deploy"
+        type: choice
+        options: [both, backend, frontend]
+        default: both
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+  # Dev (build + deploy)
+  DEV_PROJECT: pablohealth-dev
+  DEV_REGISTRY: us-central1-docker.pkg.dev/pablohealth-dev/pablo
+  DEV_WIF: projects/1065989021055/locations/global/workloadIdentityPools/github-actions/providers/github
+  DEV_SA: github-deploy@pablohealth-dev.iam.gserviceaccount.com
+  # Prod (copy images + deploy)
+  PROD_PROJECT: pablohealth-prod
+  PROD_REGISTRY: us-central1-docker.pkg.dev/pablohealth-prod/pablo
+  PROD_WIF: projects/1061315495622/locations/global/workloadIdentityPools/github-actions/providers/github
+  PROD_SA: github-deploy@pablohealth-prod.iam.gserviceaccount.com
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  # Rebuild base image only when Python dependencies change
+  build-base-image:
+    name: Build Base Image (if deps changed)
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    outputs:
+      base-tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+
+      - name: Compute dependency hash
+        id: check
+        run: |
+          HASH=$(cat pyproject.toml poetry.lock | sha256sum | cut -c1-12)
+          echo "tag=deps-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "Dependency hash: deps-${HASH}"
+
+          TOKEN="${{ steps.auth.outputs.access_token }}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://${{ env.REGION }}-docker.pkg.dev/v2/${{ env.DEV_PROJECT }}/pablo/backend-base/manifests/deps-${HASH}")
+
+          if [ "$STATUS" = "200" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Base image deps-${HASH} already exists, skipping build."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Base image deps-${HASH} not found, will build."
+          fi
+
+      - uses: google-github-actions/setup-gcloud@v2
+        if: steps.check.outputs.exists == 'false'
+
+      - name: Build base image via Cloud Build
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          DATE_TAG=$(date +%Y%m%d)
+          gcloud builds submit . \
+            --config=./backend/cloudbuild-base.yaml \
+            --substitutions="_DATE_TAG=${DATE_TAG}" \
+            --project=${{ env.DEV_PROJECT }} \
+            --timeout=30m \
+            --quiet
+
+  # Build app images (dev registry)
+  build-backend:
+    name: Build Backend Image
+    needs: [build-base-image]
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile.production
+          push: true
+          tags: |
+            ${{ env.DEV_REGISTRY }}/backend:latest
+            ${{ env.DEV_REGISTRY }}/backend:${{ github.sha }}
+          build-args: |
+            BASE_IMAGE=${{ env.DEV_REGISTRY }}/backend-base:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+  build-frontend:
+    name: Build Frontend Image
+    if: inputs.target == 'both' || inputs.target == 'frontend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile.production
+          push: true
+          tags: |
+            ${{ env.DEV_REGISTRY }}/frontend:latest
+            ${{ env.DEV_REGISTRY }}/frontend:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  build-transcription:
+    name: Build Transcription Worker Image
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push transcription worker
+        uses: docker/build-push-action@v6
+        with:
+          context: services/transcription
+          file: services/transcription/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DEV_REGISTRY }}/transcription:latest
+            ${{ env.DEV_REGISTRY }}/transcription:${{ github.sha }}
+          cache-from: type=gha,scope=transcription
+          cache-to: type=gha,mode=max,scope=transcription
+
+  # ── Dev deploys ──────────────────────────────────────────────
+  deploy-dev-backend:
+    name: Deploy Backend to Dev
+    needs: [ci, build-backend]
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services update pablo-backend \
+            --image="${{ env.DEV_REGISTRY }}/backend:${{ github.sha }}" \
+            --region=${{ env.REGION }} --project=${{ env.DEV_PROJECT }} --quiet
+
+          gcloud run services update-traffic pablo-backend \
+            --to-latest --region=${{ env.REGION }} --project=${{ env.DEV_PROJECT }} --quiet
+
+  deploy-dev-frontend:
+    name: Deploy Frontend to Dev
+    needs: [ci, build-frontend]
+    if: inputs.target == 'both' || inputs.target == 'frontend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services update pablo-frontend \
+            --image="${{ env.DEV_REGISTRY }}/frontend:${{ github.sha }}" \
+            --region=${{ env.REGION }} --project=${{ env.DEV_PROJECT }} --quiet
+
+          gcloud run services update-traffic pablo-frontend \
+            --to-latest --region=${{ env.REGION }} --project=${{ env.DEV_PROJECT }} --quiet
+
+  # ── Prod deploys (copy images to prod registry, deploy with prod SA) ──
+  deploy-prod-backend:
+    name: Deploy Backend to Prod
+    needs: [deploy-dev-backend]
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - id: auth-dev
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+          create_credentials_file: false
+
+      - id: auth-prod
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.PROD_WIF }}
+          service_account: ${{ env.PROD_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Copy image to prod registry
+        run: |
+          # Login with dev SA to pull from dev registry
+          echo '${{ steps.auth-dev.outputs.access_token }}' | \
+            docker login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+          docker pull "${{ env.DEV_REGISTRY }}/backend:${{ github.sha }}"
+
+          # Tag for prod
+          docker tag "${{ env.DEV_REGISTRY }}/backend:${{ github.sha }}" \
+                     "${{ env.PROD_REGISTRY }}/backend:${{ github.sha }}"
+          docker tag "${{ env.DEV_REGISTRY }}/backend:${{ github.sha }}" \
+                     "${{ env.PROD_REGISTRY }}/backend:latest"
+
+          # Login with prod SA to push to prod registry
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker push "${{ env.PROD_REGISTRY }}/backend:${{ github.sha }}"
+          docker push "${{ env.PROD_REGISTRY }}/backend:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services update pablo-backend \
+            --image="${{ env.PROD_REGISTRY }}/backend:${{ github.sha }}" \
+            --region=${{ env.REGION }} --project=${{ env.PROD_PROJECT }} --quiet
+
+          gcloud run services update-traffic pablo-backend \
+            --to-latest --region=${{ env.REGION }} --project=${{ env.PROD_PROJECT }} --quiet
+
+  copy-transcription-to-prod:
+    name: Copy Transcription Image to Prod
+    needs: [deploy-dev-backend, build-transcription]
+    if: inputs.target == 'both' || inputs.target == 'backend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - id: auth-dev
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+          create_credentials_file: false
+
+      - id: auth-prod
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.PROD_WIF }}
+          service_account: ${{ env.PROD_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Copy transcription image to prod registry
+        run: |
+          echo '${{ steps.auth-dev.outputs.access_token }}' | \
+            docker login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+          docker pull "${{ env.DEV_REGISTRY }}/transcription:${{ github.sha }}"
+
+          docker tag "${{ env.DEV_REGISTRY }}/transcription:${{ github.sha }}" \
+                     "${{ env.PROD_REGISTRY }}/transcription:${{ github.sha }}"
+          docker tag "${{ env.DEV_REGISTRY }}/transcription:${{ github.sha }}" \
+                     "${{ env.PROD_REGISTRY }}/transcription:latest"
+
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker push "${{ env.PROD_REGISTRY }}/transcription:${{ github.sha }}"
+          docker push "${{ env.PROD_REGISTRY }}/transcription:latest"
+
+  deploy-prod-frontend:
+    name: Deploy Frontend to Prod
+    needs: [deploy-dev-frontend]
+    if: inputs.target == 'both' || inputs.target == 'frontend' || inputs.target == ''
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - id: auth-dev
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.DEV_WIF }}
+          service_account: ${{ env.DEV_SA }}
+          token_format: access_token
+          create_credentials_file: false
+
+      - id: auth-prod
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.PROD_WIF }}
+          service_account: ${{ env.PROD_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Copy image to prod registry
+        run: |
+          # Login with dev SA to pull from dev registry
+          echo '${{ steps.auth-dev.outputs.access_token }}' | \
+            docker login us-central1-docker.pkg.dev -u oauth2accesstoken --password-stdin
+          docker pull "${{ env.DEV_REGISTRY }}/frontend:${{ github.sha }}"
+
+          # Tag for prod
+          docker tag "${{ env.DEV_REGISTRY }}/frontend:${{ github.sha }}" \
+                     "${{ env.PROD_REGISTRY }}/frontend:${{ github.sha }}"
+          docker tag "${{ env.DEV_REGISTRY }}/frontend:${{ github.sha }}" \
+                     "${{ env.PROD_REGISTRY }}/frontend:latest"
+
+          # Login with prod SA to push to prod registry
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker push "${{ env.PROD_REGISTRY }}/frontend:${{ github.sha }}"
+          docker push "${{ env.PROD_REGISTRY }}/frontend:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run services update pablo-frontend \
+            --image="${{ env.PROD_REGISTRY }}/frontend:${{ github.sha }}" \
+            --region=${{ env.REGION }} --project=${{ env.PROD_PROJECT }} --quiet
+
+          gcloud run services update-traffic pablo-frontend \
+            --to-latest --region=${{ env.REGION }} --project=${{ env.PROD_PROJECT }} --quiet
