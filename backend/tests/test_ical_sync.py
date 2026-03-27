@@ -11,6 +11,7 @@ import zipfile
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
 from app.models.patient import Patient
@@ -235,7 +236,8 @@ class TestICalParsing:
         e2 = next(e for e in events if e.uid == "3426439378")
         assert e2.summary == "P.B. Appointment"
         assert e2.duration_minutes == 50
-        assert "video.simplepractice.com" in (e2.url or "")
+        assert e2.url is not None
+        assert urlparse(e2.url).hostname == "video.simplepractice.com"
 
     def test_parse_sessions_health_events(self, service: ICalSyncService):
         events = service._parse_events(SH_ICAL_DATA)
@@ -419,7 +421,7 @@ class TestSyncDiff:
         appts = sync_service._appt_repo.list_by_ical_source("user1", "simplepractice")
         video_appt = next(a for a in appts if a.ical_uid == "3426439378")
         assert video_appt.video_link is not None
-        assert "video.simplepractice.com" in video_appt.video_link
+        assert urlparse(video_appt.video_link).hostname == "video.simplepractice.com"
 
 
 class TestUrlValidation:
@@ -432,8 +434,14 @@ class TestUrlValidation:
         )
 
     def test_invalid_sp_url(self, service: ICalSyncService):
-        with pytest.raises(ValueError, match="SimplePractice"):
+        with pytest.raises(ValueError, match="hostname must be"):
             service._validate_feed_url("simplepractice", "https://evil.com/feed")
+
+    def test_invalid_sp_url_http(self, service: ICalSyncService):
+        with pytest.raises(ValueError, match="must use HTTPS"):
+            service._validate_feed_url(
+                "simplepractice", "http://secure.simplepractice.com/ical/abc"
+            )
 
     def test_valid_sh_url(self, service: ICalSyncService):
         service._validate_feed_url(
@@ -442,7 +450,7 @@ class TestUrlValidation:
         )
 
     def test_invalid_sh_url(self, service: ICalSyncService):
-        with pytest.raises(ValueError, match="Sessions Health"):
+        with pytest.raises(ValueError, match="hostname must be"):
             service._validate_feed_url("sessions_health", "https://evil.com/feed")
 
     def test_unsupported_ehr(self, service: ICalSyncService):

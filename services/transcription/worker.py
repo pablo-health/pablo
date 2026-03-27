@@ -88,12 +88,21 @@ class TranscriptionWorker:
             self._gcs_client = storage.Client()
         return self._gcs_client
 
+    _ALLOWED_AUDIO_SUFFIXES = {".wav", ".mp3", ".mp4", ".ogg", ".webm", ".flac", ".m4a"}
+
     def download_audio(self, gcs_path: str) -> Path:
         """Download audio from GCS to a temp file. Returns the local path."""
+        # Sanitize: reject path traversal and enforce known audio extensions
+        if ".." in gcs_path or gcs_path.startswith("/"):
+            raise ValueError(f"Invalid GCS path: {gcs_path!r}")
+
+        suffix = Path(gcs_path).suffix.lower() or ".wav"
+        if suffix not in self._ALLOWED_AUDIO_SUFFIXES:
+            raise ValueError(f"Unsupported audio format: {suffix!r}")
+
         bucket_name = self.settings.gcs_audio_bucket
         blob = self.gcs_client.bucket(bucket_name).blob(gcs_path)
 
-        suffix = Path(gcs_path).suffix or ".wav"
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         blob.download_to_filename(tmp.name)
         logger.info("Downloaded gs://%s/%s → %s", bucket_name, gcs_path, tmp.name)

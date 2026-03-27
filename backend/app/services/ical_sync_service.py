@@ -22,6 +22,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from icalendar import Calendar
@@ -566,17 +567,27 @@ class ICalSyncService:
         return changed
 
     def _validate_feed_url(self, ehr_system: str, feed_url: str) -> None:
-        """Basic validation of the feed URL."""
-        if ehr_system == EhrSystem.SIMPLEPRACTICE:
-            if not feed_url.startswith("https://secure.simplepractice.com/ical/"):
-                msg = "SimplePractice feed URL must start with https://secure.simplepractice.com/ical/"
-                raise ValueError(msg)
-        elif ehr_system == EhrSystem.SESSIONS_HEALTH:
-            if not feed_url.startswith("https://app.sessionshealth.com/calendars/"):
-                msg = "Sessions Health feed URL must start with https://app.sessionshealth.com/calendars/"
-                raise ValueError(msg)
-        else:
+        """Validate feed URL scheme and hostname to prevent SSRF."""
+        allowed_hosts: dict[str, tuple[str, str]] = {
+            EhrSystem.SIMPLEPRACTICE: ("secure.simplepractice.com", "/ical/"),
+            EhrSystem.SESSIONS_HEALTH: ("app.sessionshealth.com", "/calendars/"),
+        }
+
+        if ehr_system not in allowed_hosts:
             msg = f"Unsupported EHR system: {ehr_system}"
+            raise ValueError(msg)
+
+        allowed_host, allowed_prefix = allowed_hosts[ehr_system]
+        parsed = urlparse(feed_url)
+
+        if parsed.scheme != "https":
+            msg = f"Feed URL must use HTTPS (got {parsed.scheme!r})"
+            raise ValueError(msg)
+        if parsed.hostname != allowed_host:
+            msg = f"Feed URL hostname must be {allowed_host} (got {parsed.hostname!r})"
+            raise ValueError(msg)
+        if not parsed.path.startswith(allowed_prefix):
+            msg = f"Feed URL path must start with {allowed_prefix}"
             raise ValueError(msg)
 
     def _extract_csv(self, file_content: bytes, filename: str) -> str | None:
