@@ -17,15 +17,12 @@ from ..services import (
     SessionNotFoundError,
     SOAPGenerationFailedError,
 )
-from ..services.eval_export_service import EvalExportService
-from ..services.pii_redaction_service import PIIRedactionService
 from ..services.session_service import SessionService
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["internal"])
-
 
 class TranscriptionCompleteRequest(BaseModel):
     """Callback payload from the transcription worker."""
@@ -35,7 +32,6 @@ class TranscriptionCompleteRequest(BaseModel):
     user_id: str
     transcript_content: str = Field(min_length=1)
     transcript_format: str = "vtt"
-
 
 def _verify_service_token(http_request: Request) -> None:
     """Verify the OIDC identity token from the transcription worker.
@@ -73,7 +69,6 @@ def _verify_service_token(http_request: Request) -> None:
             detail="Invalid or expired service identity token",
         ) from err
 
-
 def _validate_tenant_db(tenant_db: str) -> None:
     """Validate that tenant_db corresponds to an active tenant."""
     settings = get_settings()
@@ -98,7 +93,6 @@ def _validate_tenant_db(tenant_db: str) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tenant is not active",
         )
-
 
 @router.post("/api/internal/transcription-complete")
 def transcription_complete(
@@ -126,9 +120,7 @@ def transcription_complete(
     session_repo = FirestoreTherapySessionRepository(db)
     patient_repo = FirestorePatientRepository(db)
     soap_service = MeetingTranscriptionSOAPService()
-    pii_service = PIIRedactionService()
-    eval_export_service = EvalExportService(pii_service, settings)
-    session_service = SessionService(session_repo, patient_repo, soap_service, eval_export_service)
+    session_service = SessionService(session_repo, patient_repo, soap_service)
 
     # Fetch session
     session = session_repo.get(request.session_id, request.user_id)
