@@ -597,7 +597,7 @@ async def upload_audio(
     session.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     session_repo.update(session)
 
-    is_practice = settings.pablo_edition == "practice"
+    is_practice = False  # OSS: no edition gating
     queue_service.enqueue_transcription(
         session_id=session_id,
         tenant_db=ctx.firestore_db,
