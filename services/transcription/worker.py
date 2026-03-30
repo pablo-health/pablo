@@ -88,28 +88,37 @@ class TranscriptionWorker:
             self._gcs_client = storage.Client()
         return self._gcs_client
 
-    _ALLOWED_AUDIO_SUFFIXES = {".wav", ".mp3", ".mp4", ".ogg", ".webm", ".flac", ".m4a"}
+    # Frozen tuple so the allowlist values are compile-time constants
+    _ALLOWED_AUDIO_SUFFIXES = (".wav", ".mp3", ".mp4", ".ogg", ".webm", ".flac", ".m4a")
+
+    @staticmethod
+    def _safe_audio_suffix(gcs_path: str) -> str:
+        """Return a hardcoded suffix from the allowlist matching the file extension.
+
+        Extracts the extension from the final path segment, then looks it up
+        in the allowlist. Returns the allowlist's own constant — never a value
+        derived from user input — so taint analysis tools see a clean string.
+        """
+        filename = gcs_path.rsplit("/", 1)[-1]
+        dot_pos = filename.rfind(".")
+        candidate = filename[dot_pos:].lower() if dot_pos != -1 else ""
+        for allowed in TranscriptionWorker._ALLOWED_AUDIO_SUFFIXES:
+            if candidate == allowed:
+                return allowed  # return the hardcoded constant, not candidate
+        return ""
 
     def download_audio(self, gcs_path: str) -> Path:
         """Download audio from GCS to a temp file. Returns the local path."""
-        # Sanitize: reject path traversal and enforce known audio extensions
         if ".." in gcs_path or gcs_path.startswith("/"):
             raise ValueError(f"Invalid GCS path: {gcs_path!r}")
 
-        # Extract suffix from final path segment only — dots in directory names
-        # (e.g. "uploads/v2.1/audio.wav") must not influence the extension.
-        filename = gcs_path.rsplit("/", 1)[-1]
-        dot_pos = filename.rfind(".")
-        suffix = filename[dot_pos:].lower() if dot_pos != -1 else ".wav"
-        if not suffix.startswith(".") or not suffix[1:].isalnum():
-            suffix = ".wav"
-        if suffix not in self._ALLOWED_AUDIO_SUFFIXES:
-            raise ValueError(f"Unsupported audio format: {suffix!r}")
+        suffix = self._safe_audio_suffix(gcs_path)
+        if not suffix:
+            raise ValueError(f"Unsupported audio format in path: {gcs_path!r}")
 
         bucket_name = self.settings.gcs_audio_bucket
         blob = self.gcs_client.bucket(bucket_name).blob(gcs_path)
 
-        # Write to temp file with validated suffix (not derived from user path object)
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         blob.download_to_filename(tmp.name)
         logger.info("Downloaded gs://%s/%s → %s", bucket_name, gcs_path, tmp.name)
