@@ -167,5 +167,5 @@ async def ehr_navigate(
         logger.exception("EHR navigate failed for user %s", user.id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Navigation LLM call failed: {err}",
+            detail="Navigation failed — please try again",
         ) from err

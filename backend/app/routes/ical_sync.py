@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 
@@ -25,6 +26,7 @@ from ..repositories.ical_client_mapping import ICalClientMappingRepository
 from ..repositories.ical_sync_config import ICalSyncConfigRepository
 from ..repositories.patient import FirestorePatientRepository
 from ..services.ical_sync_service import ICalSyncService
+from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +143,9 @@ def resolve_client(
     return {"message": "Client mapped successfully"}
 
 
+_ALLOWED_EXTENSIONS = {".csv", ".zip"}
+
+
 @router.post("/import-clients", response_model=ImportClientsResponse)
 async def import_clients(
     ehr_system: str,
@@ -154,7 +159,29 @@ async def import_clients(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No file provided",
         )
-    content = await file.read()
+
+    # Validate file extension
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type. Allowed: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+        )
+
+    # Enforce size limit (read in chunks to avoid OOM on huge uploads)
+    max_bytes = get_settings().max_upload_mb * 1024 * 1024
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await file.read(64 * 1024):
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File exceeds {get_settings().max_upload_mb} MB limit",
+            )
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
     result = service.import_clients(ctx.user_id, ehr_system, content, file.filename)
     return ImportClientsResponse(
         imported=result.imported,

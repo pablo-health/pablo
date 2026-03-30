@@ -175,6 +175,12 @@ class Settings(BaseSettings):
         description="Firebase project ID for token verification (falls back to gcp_project_id)",
     )
 
+    # Upload Settings
+    max_upload_mb: int = Field(
+        default=30,
+        description="Maximum file upload size in megabytes",
+    )
+
     # Redis Settings
     use_redis: bool = Field(
         default=False,

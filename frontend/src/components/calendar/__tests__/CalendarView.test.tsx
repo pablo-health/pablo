@@ -9,11 +9,13 @@ import { CalendarView } from "../CalendarView"
 const calendarSpy = vi.fn()
 
 vi.mock("@fullcalendar/react", () => {
-  const MockCalendar = vi.fn((props: Record<string, unknown>) => {
-    calendarSpy(props)
-    return <div data-testid="fullcalendar" />
-  })
-  MockCalendar.displayName = "MockFullCalendar"
+  const MockCalendar = Object.assign(
+    vi.fn((props: Record<string, unknown>) => {
+      calendarSpy(props)
+      return <div data-testid="fullcalendar" />
+    }),
+    { displayName: "MockFullCalendar" }
+  )
   return { default: MockCalendar }
 })
 
