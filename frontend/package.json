@@ -46,7 +46,7 @@
     "react-dom": "^19.2.3",
     "react-hook-form": "^7.71.2",
     "tailwind-merge": "^3.5.0",
-    "typescript": "^5.9.3",
+    "typescript": "^6.0.2",
     "zod": "^4.3.5"
   },
   "devDependencies": {
