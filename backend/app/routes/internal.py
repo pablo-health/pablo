@@ -50,12 +50,19 @@ def _verify_service_token(http_request: Request) -> None:
     token = auth_header.removeprefix("Bearer ")
     settings = get_settings()
 
+    audience = settings.transcription_backend_callback_url
+    if not audience:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server misconfiguration — callback URL not set",
+        )
+
     try:
         request_adapter = google.auth.transport.requests.Request()
         claims = google.oauth2.id_token.verify_token(
             token,
             request_adapter,
-            audience=settings.transcription_backend_callback_url or None,
+            audience=audience,
         )
         logger.info(
             "Internal endpoint authenticated: sub=%s email=%s",

@@ -7,6 +7,7 @@ Each job provisions a spot VM, runs Whisper in a container, and tears down.
 Priority jobs use SPOT with on-demand fallback; standard jobs are spot-only.
 """
 
+import base64
 import json
 import logging
 import uuid
@@ -182,7 +183,7 @@ def _build_entrypoint_script(
     This script: downloads audio from GCS → transcribes with Whisper → callbacks.
     Using inline script avoids needing a separate entry point in the container.
     """
-    params = json.dumps({
+    params_json = json.dumps({
         "session_id": session_id,
         "tenant_db": tenant_db,
         "user_id": user_id,
@@ -190,10 +191,12 @@ def _build_entrypoint_script(
         "gcs_bucket": gcs_bucket,
         "backend_url": backend_url,
     })
+    params_b64 = base64.b64encode(params_json.encode()).decode()
     return (
+        "import base64, json; "
         "from worker import TranscriptionWorker; "
         "from config import TranscriptionSettings; "
-        f"import json; params = json.loads('{params}'); "
+        f"params = json.loads(base64.b64decode('{params_b64}')); "
         "s = TranscriptionSettings("
         "gcs_audio_bucket=params['gcs_bucket'], "
         "backend_url=params['backend_url']); "

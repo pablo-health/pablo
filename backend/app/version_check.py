@@ -24,6 +24,8 @@ Platform = Literal["web", "macos", "windows"]
 
 VALID_PLATFORMS: set[str] = {"web", "macos", "windows"}
 
+_SEMVER_PART_COUNT = 3  # major.minor.patch
+
 # backend/ is two levels up from this file: app/ -> backend/
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 # Repo root is one more level up: backend/ -> repo root
@@ -44,15 +46,18 @@ def get_min_versions() -> dict[str, str]:
     return data
 
 
-def parse_semver(version: str) -> tuple[int, ...]:
-    """Parse a semver string into a comparable tuple.
+def parse_semver(version: str) -> tuple[int, int, int]:
+    """Parse a semver string into a 3-part comparable tuple.
 
-    Accepts "1.0.0", "1.2", "1" — missing parts default to 0.
+    Accepts "1.0.0", "1.2", "1" — missing parts are padded with 0.
     """
     try:
-        return tuple(int(p) for p in version.strip().split("."))
+        parts = [int(p) for p in version.strip().split(".")]
     except (ValueError, AttributeError) as err:
         raise ValueError(f"Invalid version: {version!r}") from err
+    # Pad to exactly major.minor.patch so (1,0) doesn't compare < (1,0,0)
+    parts.extend(0 for _ in range(_SEMVER_PART_COUNT - len(parts)))
+    return (parts[0], parts[1], parts[2])
 
 
 def is_version_outdated(client_version: str, min_version: str) -> bool:

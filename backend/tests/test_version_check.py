@@ -19,10 +19,10 @@ class TestParseSemver:
         assert parse_semver("1.2.3") == (1, 2, 3)
 
     def test_two_part(self) -> None:
-        assert parse_semver("1.2") == (1, 2)
+        assert parse_semver("1.2") == (1, 2, 0)
 
     def test_single_part(self) -> None:
-        assert parse_semver("2") == (2,)
+        assert parse_semver("2") == (2, 0, 0)
 
     def test_invalid_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid version"):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections import defaultdict
 from threading import Lock
 from typing import TYPE_CHECKING, Protocol
@@ -94,17 +95,18 @@ class RedisSlidingWindow:
         cutoff = now - self.window_seconds
         rkey = f"{self.KEY_PREFIX}{key}"
 
+        member = f"{uuid.uuid4().hex}:{now}"
+
         pipe = self._redis.pipeline()
         pipe.zremrangebyscore(rkey, 0, cutoff)
         pipe.zcard(rkey)
-        pipe.zadd(rkey, {f"{now}": now})
+        pipe.zadd(rkey, {member: now})
         pipe.expire(rkey, self.window_seconds + 1)
         results = pipe.execute()
 
         count = results[1]  # zcard result (before adding new entry)
         if count >= self.max_requests:
-            # Remove the entry we just added since we're over limit
-            self._redis.zrem(rkey, f"{now}")
+            self._redis.zrem(rkey, member)
             raise _TOO_MANY_REQUESTS
 
     def reset(self) -> None:

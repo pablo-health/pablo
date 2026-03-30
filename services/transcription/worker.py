@@ -120,9 +120,11 @@ class TranscriptionWorker:
         blob = self.gcs_client.bucket(bucket_name).blob(gcs_path)
 
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-        blob.download_to_filename(tmp.name)
-        logger.info("Downloaded gs://%s/%s → %s", bucket_name, gcs_path, tmp.name)
-        return Path(tmp.name)
+        tmp_path = tmp.name
+        tmp.close()
+        blob.download_to_filename(tmp_path)
+        logger.info("Downloaded gs://%s/%s → %s", bucket_name, gcs_path, tmp_path)
+        return Path(tmp_path)
 
     def transcribe_channel(self, audio_path: Path, speaker: str) -> list[LabeledSegment]:
         """Run Whisper on a single audio channel. Returns labeled segments."""
@@ -197,14 +199,15 @@ class TranscriptionWorker:
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
 
-        # In production, use IAM identity token for service-to-service auth
-        if self.settings.gcp_project_id:
+        # In production, use IAM identity token for service-to-service auth.
+        # Always attempt token fetch unless explicitly in dev mode.
+        if not self.settings.dev_mode:
             try:
                 auth_req = google.auth.transport.requests.Request()
                 token = google.oauth2.id_token.fetch_id_token(auth_req, self.settings.backend_url)
                 headers["Authorization"] = f"Bearer {token}"
             except Exception:
-                logger.warning("Could not fetch ID token — running without auth (dev mode)")
+                logger.warning("Could not fetch ID token — running without auth (dev mode?)")
 
         payload = {
             "session_id": session_id,

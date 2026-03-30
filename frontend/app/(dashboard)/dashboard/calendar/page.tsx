@@ -19,7 +19,7 @@ import type { AppointmentResponse } from "@/types/scheduling"
 export default function CalendarPage() {
   const { data: preferences } = usePreferences()
   const saveMutation = useSavePreferences()
-  const lastSavedView = useRef(preferences?.calendar_default_view)
+  const lastSavedView = useRef<string | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentResponse | null>(null)
   const [defaultStart, setDefaultStart] = useState<string>()
@@ -28,15 +28,32 @@ export default function CalendarPage() {
   const [syncStatus, setSyncStatus] = useState<ICalConnectionStatus[]>([])
   const [syncResult, setSyncResult] = useState<string | null>(null)
 
+  const syncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+
   useEffect(() => {
     getICalSyncStatus()
       .then((s) => setSyncStatus(s.connections))
       .catch(() => {})
   }, [])
 
+  // Sync lastSavedView ref when preferences load asynchronously
+  useEffect(() => {
+    if (preferences?.calendar_default_view) {
+      lastSavedView.current = preferences.calendar_default_view
+    }
+  }, [preferences?.calendar_default_view])
+
+  // Clean up sync result timer on unmount
+  useEffect(() => {
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
+    }
+  }, [])
+
   const handleSync = useCallback(async () => {
     setSyncing(true)
     setSyncResult(null)
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current)
     try {
       const results = await triggerICalSync()
       const totals = results.reduce(
@@ -51,11 +68,9 @@ export default function CalendarPage() {
           ? `${totals.created} new, ${totals.updated} updated`
           : "Up to date"
       )
-      // Refresh status
       const s = await getICalSyncStatus()
       setSyncStatus(s.connections)
-      // Clear result after 5 seconds
-      setTimeout(() => setSyncResult(null), 5000)
+      syncTimerRef.current = setTimeout(() => setSyncResult(null), 5000)
     } catch {
       setSyncResult("Sync failed")
     } finally {

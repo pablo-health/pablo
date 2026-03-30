@@ -48,3 +48,6 @@ class TranscriptionSettings(BaseSettings):
 
     # GCP project (for IAM auth)
     gcp_project_id: str = Field(default="", description="GCP project ID")
+
+    # Development mode — skips IAM auth for local testing
+    dev_mode: bool = Field(default=False, description="Set True to skip OIDC auth (local dev only)")
