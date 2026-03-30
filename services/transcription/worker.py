@@ -96,13 +96,16 @@ class TranscriptionWorker:
         if ".." in gcs_path or gcs_path.startswith("/"):
             raise ValueError(f"Invalid GCS path: {gcs_path!r}")
 
-        suffix = Path(gcs_path).suffix.lower() or ".wav"
+        # Extract suffix safely — use posixpath to avoid local filesystem interpretation
+        dot_pos = gcs_path.rfind(".")
+        suffix = gcs_path[dot_pos:].lower() if dot_pos != -1 else ".wav"
         if suffix not in self._ALLOWED_AUDIO_SUFFIXES:
             raise ValueError(f"Unsupported audio format: {suffix!r}")
 
         bucket_name = self.settings.gcs_audio_bucket
         blob = self.gcs_client.bucket(bucket_name).blob(gcs_path)
 
+        # Write to temp file with validated suffix (not derived from user path object)
         tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         blob.download_to_filename(tmp.name)
         logger.info("Downloaded gs://%s/%s → %s", bucket_name, gcs_path, tmp.name)

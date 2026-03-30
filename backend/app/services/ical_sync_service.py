@@ -126,10 +126,10 @@ class ICalSyncService:
         self, user_id: str, ehr_system: str, feed_url: str
     ) -> ConfigureResult:
         """Validate, test-fetch, encrypt, and store the iCal feed URL."""
-        self._validate_feed_url(ehr_system, feed_url)
+        safe_url = self._validate_feed_url(ehr_system, feed_url)
 
         # Test-fetch to verify the URL works
-        ical_data = self._fetch_feed(feed_url)
+        ical_data = self._fetch_feed(safe_url)
         events = self._parse_events(ical_data)
 
         encrypted = encrypt_tokens({"feed_url": feed_url})
@@ -566,8 +566,12 @@ class ICalSyncService:
 
         return changed
 
-    def _validate_feed_url(self, ehr_system: str, feed_url: str) -> None:
-        """Validate feed URL scheme and hostname to prevent SSRF."""
+    def _validate_feed_url(self, ehr_system: str, feed_url: str) -> str:
+        """Validate and reconstruct feed URL to prevent SSRF.
+
+        Returns a URL rebuilt from validated components (scheme + host + path)
+        so the caller never passes raw user input to urlopen.
+        """
         allowed_hosts: dict[str, tuple[str, str]] = {
             EhrSystem.SIMPLEPRACTICE: ("secure.simplepractice.com", "/ical/"),
             EhrSystem.SESSIONS_HEALTH: ("app.sessionshealth.com", "/calendars/"),
@@ -589,6 +593,9 @@ class ICalSyncService:
         if not parsed.path.startswith(allowed_prefix):
             msg = f"Feed URL path must start with {allowed_prefix}"
             raise ValueError(msg)
+
+        # Reconstruct from validated parts — never pass raw user input to urlopen
+        return f"https://{allowed_host}{parsed.path}"
 
     def _extract_csv(self, file_content: bytes, filename: str) -> str | None:
         """Extract clients.csv from a zip file or return raw CSV content."""
