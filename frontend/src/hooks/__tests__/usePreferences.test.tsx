@@ -20,6 +20,7 @@ const mockPreferences: usersApi.UserPreferences = {
   therapist_display_name: null,
   working_hours_start: 8,
   working_hours_end: 18,
+  calendar_default_view: "week",
 }
 
 function createWrapper() {

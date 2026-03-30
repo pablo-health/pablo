@@ -375,12 +375,22 @@ def _resolve_user(
         if not email:
             try:
                 token_tenant = decoded_token.get("firebase", {}).get("tenant")
-                tenant_id = token_tenant or tenant_id_header
                 if token_tenant and tenant_id_header and token_tenant != tenant_id_header:
                     logger.warning(
-                        "Tenant mismatch: JWT tenant=%s, header tenant=%s, uid=%s",
+                        "Tenant mismatch rejected: JWT tenant=%s, header tenant=%s, uid=%s",
                         token_tenant, tenant_id_header, user_id,
                     )
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "error": {
+                                "code": "TENANT_MISMATCH",
+                                "message": "Token tenant does not match request tenant",
+                                "details": {},
+                            }
+                        },
+                    )
+                tenant_id = token_tenant or tenant_id_header
                 logger.info(
                     "Email lookup: uid=%s, tenant_source=%s",
                     user_id,
