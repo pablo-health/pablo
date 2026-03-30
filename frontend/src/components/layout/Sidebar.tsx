@@ -20,7 +20,7 @@ const navigation = [
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ]
 
-const adminNavigation = [
+const adminNavigation: typeof navigation = [
 ]
 
 interface SidebarProps {

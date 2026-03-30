@@ -541,7 +541,7 @@ def google_calendar_callback(
         logger.exception("Google Calendar OAuth callback failed")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"OAuth callback failed: {e}",
+            detail="OAuth callback failed",
         ) from e
     return {"status": "connected"}
 

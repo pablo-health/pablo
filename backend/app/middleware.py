@@ -140,4 +140,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Permissions-Policy - Restrict browser features
         response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
 
+        # Cache-Control — prevent caching of PHI responses (HIPAA §164.312)
+        # Applied to all authenticated API responses; public assets (health
+        # check, static files) are excluded so CDNs can still cache them.
+        if request.url.path.startswith("/api/") and request.url.path != "/api/health":
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+
         return response

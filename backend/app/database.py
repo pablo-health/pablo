@@ -19,7 +19,7 @@ from .settings import get_settings
 try:
     from google.cloud import firestore
 except ImportError:
-    firestore = None
+    firestore = None  # type: ignore[assignment]
 
 
 def _check_firestore_import() -> None:
