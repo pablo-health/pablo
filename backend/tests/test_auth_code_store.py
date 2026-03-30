@@ -6,7 +6,7 @@ import time
 from unittest.mock import patch
 
 import pytest
-from app.services.auth_code_store import AuthCodeStore
+from app.services.auth_code_store import InMemoryAuthCodeStore
 
 FAKE_TOKEN = "test-token-value"  # noqa: S105
 FAKE_REFRESH = "test-refresh-value"
@@ -15,7 +15,7 @@ FAKE_URI = "pablohealth://cb"
 
 class TestAuthCodeStore:
     def setup_method(self) -> None:
-        self.store = AuthCodeStore(ttl_seconds=5)
+        self.store = InMemoryAuthCodeStore(ttl_seconds=5)
 
     def test_create_returns_nonempty_code(self) -> None:
         code = self.store.create(FAKE_TOKEN, FAKE_REFRESH, FAKE_URI)
@@ -39,13 +39,13 @@ class TestAuthCodeStore:
         assert self.store.exchange("nonexistent") is None
 
     def test_exchange_expired_code(self) -> None:
-        store = AuthCodeStore(ttl_seconds=0)
+        store = InMemoryAuthCodeStore(ttl_seconds=0)
         code = store.create(FAKE_TOKEN, FAKE_REFRESH, FAKE_URI)
         # Code expired immediately (TTL=0)
         assert store.exchange(code) is None
 
     def test_prune_removes_expired(self) -> None:
-        store = AuthCodeStore(ttl_seconds=1)
+        store = InMemoryAuthCodeStore(ttl_seconds=1)
         store.create(FAKE_TOKEN, FAKE_REFRESH, FAKE_URI)
 
         with patch("app.services.auth_code_store.time") as mock_time:
@@ -56,7 +56,7 @@ class TestAuthCodeStore:
             assert len(store._codes) == 1
 
     def test_max_pending_limit(self) -> None:
-        store = AuthCodeStore(ttl_seconds=60, max_pending=3)
+        store = InMemoryAuthCodeStore(ttl_seconds=60, max_pending=3)
         store.create("a", "b", FAKE_URI)
         store.create("c", "d", FAKE_URI)
         store.create("e", "f", FAKE_URI)

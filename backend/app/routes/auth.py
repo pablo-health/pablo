@@ -11,7 +11,7 @@ import logging
 import time
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from firebase_admin import auth as firebase_auth
 from pydantic import BaseModel, EmailStr
 
@@ -20,6 +20,7 @@ from ..database import get_admin_firestore_client
 from ..rate_limit import require_rate_limit
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..settings import get_settings
+from ..version_check import check_client_version
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class ResolveTenantRequest(BaseModel):
 class ResolveTenantResponse(BaseModel):
     status: str = "ok"
     tenant_id: str | None = None
+    is_admin: bool = False
 
 class SignupRequest(BaseModel):
     email: EmailStr
@@ -63,8 +65,17 @@ async def resolve_tenant(
     doc = admin_db.collection("email_tenants").document(request.email.lower()).get()
     tenant_id = doc.to_dict().get("tenant_id") if doc.exists else None
 
+    # Check if admin user — admins with a tenant sign in through their tenant,
+    # admins without a tenant sign in at project level
+    is_admin = False
+    users = admin_db.collection("users").where("email", "==", request.email.lower()).limit(1)
+    for user_doc in users.stream():
+        user_data = user_doc.to_dict()
+        if user_data and user_data.get("is_admin"):
+            is_admin = True
+
     await _pad_response_time(start)
-    return ResolveTenantResponse(tenant_id=tenant_id)
+    return ResolveTenantResponse(tenant_id=tenant_id, is_admin=is_admin)
 
 @router.post("/signup", response_model=SignupResponse)
 async def signup(
@@ -135,7 +146,9 @@ class ExchangeAuthCodeResponse(BaseModel):
 
 @router.post("/native/code", response_model=CreateAuthCodeResponse)
 def create_native_code(
-    request: CreateAuthCodeRequest, _: None = Depends(require_rate_limit)
+    request: CreateAuthCodeRequest,
+    http_request: Request,
+    _: None = Depends(require_rate_limit),
 ) -> CreateAuthCodeResponse:
     """Generate a one-time authorization code for native app auth.
 
@@ -146,6 +159,9 @@ def create_native_code(
     The id_token is verified server-side before issuing a code to
     prevent storing arbitrary or forged payloads.
     """
+    # Block outdated desktop clients before processing auth
+    check_client_version(http_request)
+
     if not _is_valid_native_redirect_uri(request.redirect_uri):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

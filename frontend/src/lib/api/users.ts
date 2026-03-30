@@ -140,6 +140,7 @@ export interface UserPreferences {
   therapist_display_name: string | null
   working_hours_start: number
   working_hours_end: number
+  calendar_default_view: string
 }
 
 export async function getPreferences(

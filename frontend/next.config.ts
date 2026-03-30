@@ -14,6 +14,16 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  async rewrites() {
+    return [
+      {
+        // Firebase auth action emails link to /__/auth/action
+        // but Next.js treats _-prefixed dirs as private, so rewrite to /auth/action
+        source: "/__/auth/action",
+        destination: "/auth/action",
+      },
+    ];
+  },
   async headers() {
     return [
       {

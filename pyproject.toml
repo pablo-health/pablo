@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "pablo"
-version = "0.1.0"
+version = "1.0.0"
 description = "Therapy session management platform with AI-powered SOAP note generation"
 authors = ["Kurt Niemi <kurt@pablo.health>"]
 readme = "README.md"
@@ -39,9 +39,16 @@ meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcr
 sentence-transformers = ">=3.0.0"
 onnxruntime = ">=1.17.0"
 
+# iCal calendar feed parsing
+icalendar = "^6.0.0"
+
 # PII Redaction
 faker = "^40.8.0"
 email-validator = "^2.3.0"
+python-multipart = "^0.0.22"
+google-cloud-storage = "^2.18.0"
+google-cloud-tasks = "^2.22.0"
+google-cloud-batch = "^0.18.0"
 
 
 
@@ -120,6 +127,7 @@ ignore = [
     "PLR0912",  # Allow many branches in plugin processing logic
 ]
 "backend/scripts/**/*.py" = [
+    "E501",     # Allow long lines in scripts (prompt text, CLI output)
     "S603",     # Allow subprocess calls in dev scripts
     "S607",     # Allow partial executable paths in dev scripts
     "PLC0415",  # Allow lazy imports in standalone scripts (conditional/env-dependent)
@@ -166,6 +174,7 @@ module = [
     "datasets.*",
     "sklearn.*",
     "scipy.*",
+    "icalendar.*",
 ]
 ignore_missing_imports = true
 

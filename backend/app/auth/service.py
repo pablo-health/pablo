@@ -23,6 +23,7 @@ from ..repositories import (
     get_user_repository,
 )
 from ..settings import get_settings
+from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
 
 logger = logging.getLogger(__name__)
@@ -451,11 +452,12 @@ def get_current_user(
     Get the current authenticated user, auto-provisioning on first login.
 
     Depends on require_mfa to avoid double token verification.
-    Checks allowlist before provisioning and user status after lookup.
+    Checks client version, allowlist before provisioning, and user status after lookup.
 
     Raises:
-        HTTPException: If authentication fails or user is not allowed
+        HTTPException: If authentication fails, client is outdated, or user is not allowed
     """
+    check_client_version(request)
     tenant_id_header = request.headers.get("X-Tenant-ID")
     return _resolve_user(decoded_token, user_repo, allowlist_repo, tenant_id_header)
 

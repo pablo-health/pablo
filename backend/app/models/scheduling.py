@@ -86,6 +86,10 @@ class AppointmentResponse(BaseModel):
     is_exception: bool = False
     google_event_id: str | None = None
     google_sync_status: str | None = None
+    ical_uid: str | None = None
+    ical_source: str | None = None
+    ical_sync_status: str | None = None
+    ehr_appointment_url: str | None = None
     session_id: str | None = None
     created_at: str
     updated_at: str | None = None
@@ -189,3 +193,73 @@ class GoogleCalendarStatusResponse(BaseModel):
     connected: bool
     calendar_id: str | None = None
     last_synced_at: str | None = None
+
+
+# --- iCal sync models ---
+
+
+class ConfigureICalRequest(BaseModel):
+    """Request to configure an iCal feed URL."""
+
+    ehr_system: str
+    feed_url: str = Field(min_length=1, max_length=500)
+
+
+class UnmatchedEvent(BaseModel):
+    """An iCal event that couldn't be matched to a patient."""
+
+    ical_uid: str
+    client_identifier: str
+    start_at: str
+    ehr_appointment_url: str = ""
+
+
+class ICalSyncResponse(BaseModel):
+    """Response from an iCal sync operation."""
+
+    created: int
+    updated: int
+    deleted: int
+    unchanged: int
+    unmatched_events: list[UnmatchedEvent]
+    errors: list[str] = Field(default_factory=list)
+
+
+class ICalConnectionStatus(BaseModel):
+    """Status of a single iCal feed connection."""
+
+    ehr_system: str
+    connected: bool
+    last_synced_at: str | None = None
+    last_sync_error: str | None = None
+
+
+class ICalStatusResponse(BaseModel):
+    """Response for all iCal connections."""
+
+    connections: list[ICalConnectionStatus]
+
+
+class ResolveClientRequest(BaseModel):
+    """Request to manually map a client identifier to a patient."""
+
+    ehr_system: str
+    client_identifier: str
+    patient_id: str
+
+
+class ICalConfigureResponse(BaseModel):
+    """Response from configuring an iCal feed."""
+
+    message: str
+    event_count: int
+    ehr_system: str
+
+
+class ImportClientsResponse(BaseModel):
+    """Response from importing clients via CSV/zip."""
+
+    imported: int
+    skipped: int
+    mappings_created: int
+    errors: list[str] = Field(default_factory=list)

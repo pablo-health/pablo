@@ -351,7 +351,6 @@ class GoogleCalendarService:
             "extendedProperties": {
                 "private": {
                     "pablo_appointment_id": appointment.id,
-                    "pablo_patient_id": appointment.patient_id,
                 }
             },
         }
