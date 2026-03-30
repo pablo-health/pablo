@@ -314,6 +314,7 @@ class TherapySession:
     started_at: str | None = None
     ended_at: str | None = None
     updated_at: str | None = None
+    audio_gcs_path: str | None = None
     soap_note: SOAPNote | None = None
     soap_note_edited: SOAPNote | None = None
     quality_rating: int | None = None
@@ -388,6 +389,7 @@ class TherapySession:
             started_at=data.get("started_at"),
             ended_at=data.get("ended_at"),
             updated_at=data.get("updated_at"),
+            audio_gcs_path=data.get("audio_gcs_path"),
             soap_note=soap_note,
             soap_note_edited=soap_note_edited,
             quality_rating=data.get("quality_rating"),
@@ -429,6 +431,7 @@ class TherapySession:
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "updated_at": self.updated_at,
+            "audio_gcs_path": self.audio_gcs_path,
             "soap_note": self.soap_note.to_dict() if self.soap_note else None,
             "soap_note_edited": self.soap_note_edited.to_dict() if self.soap_note_edited else None,
             "quality_rating": self.quality_rating,

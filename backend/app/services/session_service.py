@@ -74,7 +74,12 @@ class SessionInTerminalStatusError(SessionServiceError):
 VALID_TRANSITIONS: dict[str, set[str]] = {
     SessionStatus.SCHEDULED: {SessionStatus.IN_PROGRESS, SessionStatus.CANCELLED},
     SessionStatus.IN_PROGRESS: {SessionStatus.RECORDING_COMPLETE, SessionStatus.CANCELLED},
-    SessionStatus.RECORDING_COMPLETE: {SessionStatus.QUEUED, SessionStatus.CANCELLED},
+    SessionStatus.RECORDING_COMPLETE: {
+        SessionStatus.QUEUED,
+        SessionStatus.TRANSCRIBING,
+        SessionStatus.CANCELLED,
+    },
+    SessionStatus.TRANSCRIBING: {SessionStatus.QUEUED, SessionStatus.FAILED},
     SessionStatus.QUEUED: {SessionStatus.PROCESSING},
     SessionStatus.PROCESSING: {SessionStatus.PENDING_REVIEW, SessionStatus.FAILED},
     SessionStatus.PENDING_REVIEW: {SessionStatus.FINALIZED},

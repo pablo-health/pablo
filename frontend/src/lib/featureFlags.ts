@@ -8,8 +8,9 @@
  */
 
 const FLAGS = {
-  session_defaults: false,
+  session_defaults: true,
   transcription: false,
+  calendar_integrations: true,
 } as const satisfies Record<string, boolean>
 
 export type FeatureFlag = keyof typeof FLAGS

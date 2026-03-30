@@ -27,11 +27,18 @@ from app.main import app
 from app.models import User
 from app.repositories import (
     InMemoryAllowlistRepository,
+    InMemoryEhrPromptRepository,
+    InMemoryEhrRouteRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
     get_allowlist_repository,
     get_user_repository,
+)
+from app.routes.ehr_routes import (
+    get_ehr_navigation_service,
+    get_ehr_prompt_repository,
+    get_ehr_route_repository,
 )
 from app.routes.patients import get_patient_repository, get_therapy_session_repository
 from app.routes.sessions import (
@@ -40,7 +47,7 @@ from app.routes.sessions import (
 from app.routes.sessions import (
     get_session_repository,
 )
-from app.services import AuditService, get_audit_service
+from app.services import AuditService, MockEhrNavigationService, get_audit_service
 from fastapi.testclient import TestClient
 
 
@@ -106,6 +113,24 @@ def mock_allowlist_repo() -> InMemoryAllowlistRepository:
 
 
 @pytest.fixture
+def mock_ehr_route_repo() -> InMemoryEhrRouteRepository:
+    """Create a fresh in-memory EHR route repository for each test."""
+    return InMemoryEhrRouteRepository()
+
+
+@pytest.fixture
+def mock_ehr_prompt_repo() -> InMemoryEhrPromptRepository:
+    """Create a fresh in-memory EHR prompt repository for each test."""
+    return InMemoryEhrPromptRepository()
+
+
+@pytest.fixture
+def mock_ehr_navigation_service() -> MockEhrNavigationService:
+    """Create a mock EHR navigation service for testing."""
+    return MockEhrNavigationService()
+
+
+@pytest.fixture
 def mock_audit_service() -> AuditService:
     """Create a mock audit service that doesn't write to Firestore."""
     mock_db = MagicMock()
@@ -162,6 +187,9 @@ def client(
     mock_user_repo: InMemoryUserRepository,
     mock_allowlist_repo: InMemoryAllowlistRepository,
     mock_audit_service: AuditService,
+    mock_ehr_route_repo: InMemoryEhrRouteRepository,
+    mock_ehr_prompt_repo: InMemoryEhrPromptRepository,
+    mock_ehr_navigation_service: MockEhrNavigationService,
 ) -> Any:
     """Create a TestClient with mocked dependencies."""
     # Override dependencies
@@ -178,6 +206,9 @@ def client(
     app.dependency_overrides[get_user_repository] = lambda: mock_user_repo
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service
+    app.dependency_overrides[get_ehr_route_repository] = lambda: mock_ehr_route_repo
+    app.dependency_overrides[get_ehr_prompt_repository] = lambda: mock_ehr_prompt_repo
+    app.dependency_overrides[get_ehr_navigation_service] = lambda: mock_ehr_navigation_service
 
     # Create client
     test_client = TestClient(app)

@@ -8,14 +8,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
-from app.rate_limit import _preauth_limiter
+from app.rate_limit import reset_preauth_limiter
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter() -> None:
     """Reset the rate limiter between tests to prevent 429s."""
-    _preauth_limiter.reset()
+    reset_preauth_limiter()
 
 
 @pytest.fixture
@@ -50,7 +50,7 @@ class TestResolveTenant:
             json={"email": "dr@example.com"},
         )
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok", "tenant_id": None}
+        assert resp.json() == {"status": "ok", "tenant_id": None, "is_admin": False}
 
     @patch("app.routes.auth.get_admin_firestore_client")
     @patch("app.routes.auth.get_settings")

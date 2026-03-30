@@ -1,6 +1,11 @@
 """Service layer for business logic."""
 
 from .audit_service import AuditService, get_audit_service
+from .ehr_navigation_service import (
+    EhrNavigationService,
+    GeminiEhrNavigationService,
+    MockEhrNavigationService,
+)
 from .export_service import ExportService
 from .session_service import (
     InvalidSessionStatusError,
@@ -28,10 +33,13 @@ from .source_attribution_service import (
 
 __all__ = [
     "AuditService",
+    "EhrNavigationService",
     "ExportService",
+    "GeminiEhrNavigationService",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
     "MeetingTranscriptionSOAPService",
+    "MockEhrNavigationService",
     "MockSOAPGenerationService",
     "PatientNotFoundError",
     "SOAPGenerationFailedError",

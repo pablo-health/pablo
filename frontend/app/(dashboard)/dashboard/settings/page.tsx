@@ -8,9 +8,10 @@ import { WorkingHoursSettings } from "@/components/calendar/WorkingHoursSettings
 import { SettingsSection } from "@/components/settings/SettingsSection"
 import { ProfileSettings } from "@/components/settings/ProfileSettings"
 import { SessionDefaults } from "@/components/settings/SessionDefaults"
+import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertCircle, Check, Clock, Mic, Settings2, User } from "lucide-react"
+import { AlertCircle, Calendar, Check, Clock, Mic, Settings2, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
 import type { UserPreferences } from "@/lib/api/users"
 
@@ -113,6 +114,16 @@ export default function SettingsPage() {
             onSave={handleSave}
             isSaving={saveMutation.isPending}
           />
+        </SettingsSection>
+      )}
+
+      {isEnabled("calendar_integrations") && (
+        <SettingsSection
+          icon={Calendar}
+          title="Calendar Integrations"
+          description="Connect your EHR calendar to sync appointments into Pablo."
+        >
+          <IntegrationSettings />
         </SettingsSection>
       )}
 

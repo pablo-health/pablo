@@ -108,7 +108,6 @@ class Settings(BaseSettings):
         default="Pablo API",
         description="API title",
     )
-    api_version: str = Field(default="1.0.0", description="API version")
     api_description: str = Field(
         default="Backend API for therapy session management and SOAP note generation",
         description="API description",
@@ -177,6 +176,14 @@ class Settings(BaseSettings):
     )
 
     # Redis Settings
+    use_redis: bool = Field(
+        default=False,
+        description=(
+            "Use Redis for shared state (auth codes, rate limiting, tenant cache). "
+            "Required for multi-instance Cloud Run deployments. "
+            "When False, uses in-memory stores (fine for single-instance / self-hosted)."
+        ),
+    )
     redis_host: str = Field(default="localhost", description="Redis host")
     redis_port: int = Field(default=6379, description="Redis port")
     redis_password: SecretStr = Field(
@@ -219,6 +226,32 @@ class Settings(BaseSettings):
         description="Load secrets from GCP Secret Manager instead of env vars",
     )
 
+    # Transcription Service Settings
+    transcription_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable server-side audio transcription. "
+            "When enabled, audio uploads are accepted and queued for Whisper processing "
+            "on GPU worker instances."
+        ),
+    )
+    transcription_audio_bucket: str = Field(
+        default="pablo-audio",
+        description="GCS bucket for encrypted audio uploads",
+    )
+    transcription_worker_image: str = Field(
+        default="",
+        description="Container image for Whisper worker (e.g., gcr.io/PROJECT/pablo-transcription)",
+    )
+    transcription_backend_callback_url: str = Field(
+        default="",
+        description="Backend URL the Batch worker calls back to with the transcript",
+    )
+    transcription_queue_location: str = Field(
+        default="us-central1",
+        description="GCP region for Batch jobs",
+    )
+
     # NLI Model Settings
     nli_model_path: str = Field(
         default="cross-encoder/nli-deberta-v3-xsmall",
@@ -229,6 +262,17 @@ class Settings(BaseSettings):
     minicheck_model_path: str = Field(
         default="lytang/MiniCheck-RoBERTa-Large",
         description="MiniCheck model name or local path for fact verification",
+    )
+
+    # EHR Navigation Settings
+    ehr_navigate_daily_limit: int = Field(
+        default=50,
+        ge=1,
+        description="Max LLM fallback calls per user per day for EHR navigation",
+    )
+    ehr_navigate_model: str = Field(
+        default="gemini-2.5-flash-lite",
+        description="Gemini model for EHR navigation LLM fallback",
     )
 
     # Google Calendar Integration

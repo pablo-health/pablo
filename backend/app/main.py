@@ -10,8 +10,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
-from .routes import admin, auth, patients, scheduling, sessions, users
+from .routes import (
+    admin,
+    auth,
+    ehr_routes,
+    ical_sync,
+    internal,
+    patients,
+    scheduling,
+    sessions,
+    users,
+)
 from .settings import get_settings
+from .version_check import get_min_versions, get_server_version
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -27,7 +38,7 @@ if settings.is_development:
 app = FastAPI(
     title=settings.api_title,
     description=settings.api_description,
-    version=settings.api_version,
+    version=get_server_version(),
     debug=settings.debug,
     docs_url="/docs" if settings.is_development else None,
     redoc_url="/redoc" if settings.is_development else None,
@@ -46,7 +57,13 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_credentials=settings.cors_allow_credentials,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Tenant-ID"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Tenant-ID",
+        "X-Client-Version",
+        "X-Client-Platform",
+    ],
 )
 
 # Core routes (always included)
@@ -56,8 +73,20 @@ app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
+app.include_router(ehr_routes.route_router)
+app.include_router(ehr_routes.navigate_router)
+app.include_router(ical_sync.router)
+app.include_router(internal.router)
 
 @app.get("/api/health")
-def health_check() -> dict[str, str]:
-    """Health check endpoint."""
-    return {"status": "healthy"}
+def health_check() -> dict[str, object]:
+    """Health check endpoint.
+
+    Returns server status and minimum required client versions
+    so clients can proactively check for updates.
+    """
+    return {
+        "status": "healthy",
+        "server_version": get_server_version(),
+        "min_client_versions": get_min_versions(),
+    }

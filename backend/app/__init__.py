@@ -2,4 +2,6 @@
 Pablo backend application.
 """
 
-__version__ = "1.0.0"
+from pathlib import Path
+
+__version__ = (Path(__file__).resolve().parent.parent / "VERSION").read_text().strip()

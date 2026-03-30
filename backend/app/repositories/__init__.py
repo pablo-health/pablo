@@ -12,6 +12,16 @@ from .allowlist import (
 )
 from .appointment import FirestoreAppointmentRepository
 from .availability_rule import FirestoreAvailabilityRuleRepository
+from .ehr_prompt import (
+    EhrPromptRepository,
+    FirestoreEhrPromptRepository,
+    InMemoryEhrPromptRepository,
+)
+from .ehr_route import (
+    EhrRouteRepository,
+    FirestoreEhrRouteRepository,
+    InMemoryEhrRouteRepository,
+)
 from .patient import (
     FirestorePatientRepository,
     InMemoryPatientRepository,
@@ -43,13 +53,19 @@ def get_allowlist_repository() -> AllowlistRepository:
 
 __all__ = [
     "AllowlistRepository",
+    "EhrPromptRepository",
+    "EhrRouteRepository",
     "FirestoreAllowlistRepository",
     "FirestoreAppointmentRepository",
     "FirestoreAvailabilityRuleRepository",
+    "FirestoreEhrPromptRepository",
+    "FirestoreEhrRouteRepository",
     "FirestorePatientRepository",
     "FirestoreTherapySessionRepository",
     "FirestoreUserRepository",
     "InMemoryAllowlistRepository",
+    "InMemoryEhrPromptRepository",
+    "InMemoryEhrRouteRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",

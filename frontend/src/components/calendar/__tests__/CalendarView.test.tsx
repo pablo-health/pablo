@@ -26,6 +26,17 @@ vi.mock("@/hooks/useAppointments", () => ({
   useUpdateAppointment: () => ({ mutate: vi.fn() }),
 }))
 
+vi.mock("@/hooks/usePatients", () => ({
+  usePatientList: () => ({
+    data: {
+      data: [
+        { id: "p1", first_name: "Jane", last_name: "Doe" },
+        { id: "p2", first_name: "John", last_name: "Smith" },
+      ],
+    },
+  }),
+}))
+
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ dataMode: "api" }),
 }))
@@ -147,6 +158,68 @@ describe("CalendarView", () => {
       )
 
       expect(lastCalendarProps().height).toBe(700)
+    })
+  })
+
+  describe("Default View", () => {
+    it("uses timeGridWeek by default", () => {
+      render(
+        <CalendarView onSelectSlot={vi.fn()} onSelectAppointment={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+      expect(lastCalendarProps().initialView).toBe("timeGridWeek")
+    })
+
+    it("respects defaultView prop", () => {
+      render(
+        <CalendarView
+          onSelectSlot={vi.fn()}
+          onSelectAppointment={vi.fn()}
+          defaultView="timeGridDay"
+        />,
+        { wrapper: createWrapper() }
+      )
+      expect(lastCalendarProps().initialView).toBe("timeGridDay")
+    })
+  })
+
+  describe("New Appointment Button", () => {
+    it("adds custom button when onCreateNew is provided", () => {
+      render(
+        <CalendarView
+          onSelectSlot={vi.fn()}
+          onSelectAppointment={vi.fn()}
+          onCreateNew={vi.fn()}
+        />,
+        { wrapper: createWrapper() }
+      )
+      const props = lastCalendarProps()
+      expect(props.customButtons).toHaveProperty("newAppointment")
+      const toolbar = props.headerToolbar as { right: string }
+      expect(toolbar.right).toContain("newAppointment")
+    })
+
+    it("does not add custom button when onCreateNew is not provided", () => {
+      render(
+        <CalendarView onSelectSlot={vi.fn()} onSelectAppointment={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+      const props = lastCalendarProps()
+      expect(props.customButtons).toBeUndefined()
+    })
+  })
+
+  describe("View Change Callback", () => {
+    it("passes viewDidMount handler when onViewChange is provided", () => {
+      render(
+        <CalendarView
+          onSelectSlot={vi.fn()}
+          onSelectAppointment={vi.fn()}
+          onViewChange={vi.fn()}
+        />,
+        { wrapper: createWrapper() }
+      )
+      expect(lastCalendarProps().viewDidMount).toBeTypeOf("function")
     })
   })
 

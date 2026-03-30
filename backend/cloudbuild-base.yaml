@@ -1,18 +1,18 @@
 steps:
   - name: 'gcr.io/cloud-builders/docker'
+    entrypoint: 'bash'
     args:
-      - 'build'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
-      - '-t'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
-      - '-f'
-      - 'backend/Dockerfile.base'
-      - '.'
+      - '-c'
+      - |
+        DEPS_HASH=$(cat pyproject.toml poetry.lock | sha256sum | cut -c1-12)
+        docker build \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG} \
+          -t us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:deps-$${DEPS_HASH} \
+          -f backend/Dockerfile.base .
 
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:latest'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base:v${_DATE_TAG}'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/pablo/backend-base'
 
 substitutions:
   _DATE_TAG: '00000000'

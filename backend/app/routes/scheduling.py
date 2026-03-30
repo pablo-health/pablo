@@ -8,6 +8,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -45,6 +46,31 @@ from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
+
+# Native app schemes allowed for Google Calendar OAuth redirect
+_ALLOWED_GCAL_SCHEMES = {"pablohealth", "therapyrecorder"}
+
+
+def _is_valid_gcal_redirect_uri(redirect_uri: str) -> bool:
+    """Validate redirect_uri against allowed origins and native app schemes."""
+    try:
+        parsed = urlparse(redirect_uri)
+    except Exception:
+        return False
+
+    # Allow native app schemes
+    if parsed.scheme in _ALLOWED_GCAL_SCHEMES:
+        return True
+
+    # Allow localhost for development
+    if parsed.scheme == "http" and parsed.hostname == "localhost":
+        return True
+
+    # Allow CORS origins (the known frontend URLs)
+    settings = get_settings()
+    allowed_origins = {o.strip().rstrip("/") for o in settings.cors_origins.split(",") if o.strip()}
+    origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+    return origin in allowed_origins
 
 if TYPE_CHECKING:
     from ..scheduling_engine.models.appointment import Appointment
@@ -107,6 +133,10 @@ def _to_response(appt: Appointment) -> AppointmentResponse:
         is_exception=appt.is_exception,
         google_event_id=appt.google_event_id,
         google_sync_status=appt.google_sync_status,
+        ical_uid=appt.ical_uid,
+        ical_source=appt.ical_source,
+        ical_sync_status=appt.ical_sync_status,
+        ehr_appointment_url=appt.ehr_appointment_url,
         session_id=appt.session_id,
         created_at=appt.created_at,
         updated_at=appt.updated_at,
@@ -483,6 +513,11 @@ def google_calendar_authorize(
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> GoogleCalendarAuthResponse:
     """Get Google OAuth authorization URL to connect calendar."""
+    if not _is_valid_gcal_redirect_uri(redirect_uri):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri",
+        )
     auth_url = service.get_auth_url(ctx.user_id, redirect_uri)
     return GoogleCalendarAuthResponse(auth_url=auth_url)
 
@@ -495,6 +530,11 @@ def google_calendar_callback(
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens."""
+    if not _is_valid_gcal_redirect_uri(redirect_uri):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri",
+        )
     try:
         service.handle_callback(ctx.user_id, code, redirect_uri)
     except Exception as e:

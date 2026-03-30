@@ -7,8 +7,9 @@ Thin HTTP handlers that delegate business logic to SessionService.
 """
 
 import logging
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..database import get_tenant_firestore_client
@@ -49,6 +50,11 @@ from ..services import (
     SOAPGenerationService,
     get_audit_service,
 )
+from ..services.transcription_queue_service import (
+    MockTranscriptionQueueService,
+    TranscriptionQueueService,
+)
+from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -508,4 +514,102 @@ def upload_transcript_to_session(
         "id": session.id,
         "status": session.status,
         "message": "Transcript received. SOAP note generation started.",
+    }
+
+# --- Audio upload for server-side transcription ---
+
+_MAX_AUDIO_SIZE = 500 * 1024 * 1024  # 500 MB
+_ALLOWED_AUDIO_TYPES = {"audio/wav", "audio/wave", "audio/x-wav", "audio/mpeg", "audio/mp4",
+                        "audio/ogg", "audio/webm", "audio/flac", "application/octet-stream"}
+
+@router.post("/api/sessions/{session_id}/upload-audio")
+async def upload_audio(
+    session_id: str,
+    therapist_audio: UploadFile,
+    client_audio: UploadFile,
+    _http_request: Request,
+    ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
+    session_repo: TherapySessionRepository = Depends(get_session_repository),
+) -> dict[str, str]:
+    """Upload dual-channel audio for server-side Whisper transcription.
+
+    Accepts two audio files (therapist mic + client system audio), matching
+    the companion app's AudioCaptureKit channel split. Each channel is
+    transcribed separately with speaker labels, then merged by timestamp.
+
+    Practice tier users get priority processing; Solo tier uses standard queue.
+    """
+    settings = get_settings()
+    if not settings.transcription_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Server-side transcription is not enabled.",
+        )
+
+    session = session_repo.get(session_id, user.id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"detail": "Session not found", "error_code": "NOT_FOUND"},
+        )
+
+    if session.status != SessionStatus.RECORDING_COMPLETE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "detail": f"Session must be in 'recording_complete' status, got '{session.status}'",
+                "error_code": "INVALID_STATUS",
+            },
+        )
+
+    for label, f in [("therapist_audio", therapist_audio), ("client_audio", client_audio)]:
+        if f.content_type and f.content_type not in _ALLOWED_AUDIO_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"Unsupported audio type for {label}: {f.content_type}",
+            )
+
+    therapist_data = await therapist_audio.read()
+    client_data = await client_audio.read()
+
+    for label, data in [("therapist_audio", therapist_data), ("client_audio", client_data)]:
+        if len(data) > _MAX_AUDIO_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
+            )
+
+    queue_service: TranscriptionQueueService
+    if settings.is_development:
+        queue_service = MockTranscriptionQueueService()
+    else:
+        queue_service = TranscriptionQueueService()
+
+    therapist_filename = therapist_audio.filename or f"{session_id}-therapist.pcm"
+    client_filename = client_audio.filename or f"{session_id}-client.pcm"
+    therapist_gcs_path = queue_service.upload_audio(therapist_data, session_id, therapist_filename)
+    client_gcs_path = queue_service.upload_audio(client_data, session_id, client_filename)
+
+    # Store both paths (comma-separated) and transition to transcribing
+    session.audio_gcs_path = f"{therapist_gcs_path},{client_gcs_path}"
+    session.status = SessionStatus.TRANSCRIBING
+    session.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    session_repo.update(session)
+
+    is_practice = False  # OSS: no edition gating
+    queue_service.enqueue_transcription(
+        session_id=session_id,
+        tenant_db=ctx.firestore_db,
+        user_id=user.id,
+        gcs_path=session.audio_gcs_path,
+        priority=is_practice,
+    )
+
+    queue_type = "priority" if is_practice else "standard"
+    return {
+        "id": session.id,
+        "status": session.status,
+        "queue": queue_type,
+        "message": f"Audio uploaded (2 channels). Transcription queued ({queue_type}).",
     }

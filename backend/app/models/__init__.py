@@ -13,6 +13,18 @@ Models are organized by domain:
 """
 
 from .audit import AuditAction, AuditLogEntry, ResourceType
+from .ehr_prompt import EhrPrompt
+from .ehr_route import (
+    EhrRoute,
+    EhrRouteResponse,
+    EhrRouteStep,
+    EhrRouteStepResponse,
+    GoalNavigationRequest,
+    GoalNavigationResponse,
+    PreviousAction,
+    UpdateEhrRouteStepRequest,
+)
+from .enums import EhrAction, EhrSystem
 from .patient import (
     CreatePatientRequest,
     DeletePatientResponse,
@@ -77,15 +89,11 @@ from .session import (
 from .user import AcceptBAARequest, BAAStatusResponse, UpdateUserRequest, User, UserPreferences
 
 __all__ = [
-    # Session models
     "CONFIDENCE_THRESHOLDS",
-    # User models
     "AcceptBAARequest",
-    # Scheduling models
     "AppointmentListResponse",
     "AppointmentResponse",
     "AssessmentNote",
-    # Audit models
     "AuditAction",
     "AuditLogEntry",
     "AvailabilityRuleListResponse",
@@ -94,16 +102,24 @@ __all__ = [
     "CheckConflictsRequest",
     "CheckConflictsResponse",
     "ConflictResponse",
-    # Patient models
     "CreateAppointmentRequest",
     "CreateAvailabilityRuleRequest",
     "CreatePatientRequest",
     "CreateRecurringAppointmentRequest",
     "DeletePatientResponse",
     "EditSeriesRequest",
+    "EhrAction",
+    "EhrPrompt",
+    "EhrRoute",
+    "EhrRouteResponse",
+    "EhrRouteStep",
+    "EhrRouteStepResponse",
+    "EhrSystem",
     "ExportFormat",
     "FinalizeSessionRequest",
     "FreeSlotsResponse",
+    "GoalNavigationRequest",
+    "GoalNavigationResponse",
     "ObjectiveNote",
     "Patient",
     "PatientExportData",
@@ -111,6 +127,7 @@ __all__ = [
     "PatientResponse",
     "PatientSummary",
     "PlanNote",
+    "PreviousAction",
     "ResourceType",
     "SOAPNote",
     "SOAPNoteModel",
@@ -135,6 +152,7 @@ __all__ = [
     "TranscriptSegmentModel",
     "UpdateAppointmentRequest",
     "UpdateAvailabilityRuleRequest",
+    "UpdateEhrRouteStepRequest",
     "UpdatePatientRequest",
     "UpdateSessionMetadataRequest",
     "UpdateSessionRatingRequest",

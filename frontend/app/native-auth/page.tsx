@@ -212,7 +212,7 @@ export default function NativeAuthPage() {
     setLoading(true)
 
     try {
-      const tenantId = await resolveTenant(email, config.apiUrl)
+      const { tenantId } = await resolveTenant(email, config.apiUrl)
       if (tenantId) {
         setFirebaseTenantId(tenantId)
         setCachedTenantId(tenantId)

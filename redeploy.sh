@@ -65,11 +65,35 @@ deploy_base() {
     echo ""
 }
 
+check_base_image() {
+    # Check if the base image matches current dependencies
+    local DEPS_HASH
+    DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
+    local TAG="deps-${DEPS_HASH}"
+    local REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}"
+
+    echo -e "Checking base image (${TAG})..."
+
+    # Try to pull the hash-tagged image to see if it exists
+    if gcloud artifacts docker images describe "${REGISTRY}/backend-base:${TAG}" \
+        --project="$PROJECT_ID" &>/dev/null 2>&1; then
+        echo -e "${GREEN}✓ Base image is up to date${NC}"
+        return 0
+    else
+        echo -e "${YELLOW}⚠ Base image is stale — rebuilding (this takes ~30 min)...${NC}"
+        deploy_base
+        return 0
+    fi
+}
+
 deploy_backend() {
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${YELLOW}Building backend image...${NC}"
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+
+    # Auto-detect if base image needs rebuilding
+    check_base_image
 
     gcloud builds submit . \
         --config=./backend/cloudbuild.yaml \

@@ -49,10 +49,16 @@ class Appointment:
     recurrence_index: int | None = None
     is_exception: bool = False
 
-    # External sync
+    # External sync — Google Calendar
     google_event_id: str | None = None
     google_calendar_id: str | None = None
     google_sync_status: str | None = None
+
+    # External sync — EHR iCal feed
+    ical_uid: str | None = None
+    ical_source: str | None = None  # "simplepractice" | "sessions_health"
+    ical_sync_status: str | None = None  # "synced" | "deleted"
+    ehr_appointment_url: str | None = None
 
     # Clinical link
     session_id: str | None = None
@@ -87,6 +93,10 @@ class Appointment:
             google_event_id=data.get("google_event_id"),
             google_calendar_id=data.get("google_calendar_id"),
             google_sync_status=data.get("google_sync_status"),
+            ical_uid=data.get("ical_uid"),
+            ical_source=data.get("ical_source"),
+            ical_sync_status=data.get("ical_sync_status"),
+            ehr_appointment_url=data.get("ehr_appointment_url"),
             session_id=data.get("session_id"),
             reminder_24h_sent=data.get("reminder_24h_sent", False),
             reminder_1h_sent=data.get("reminder_1h_sent", False),
@@ -116,6 +126,10 @@ class Appointment:
             "google_event_id": self.google_event_id,
             "google_calendar_id": self.google_calendar_id,
             "google_sync_status": self.google_sync_status,
+            "ical_uid": self.ical_uid,
+            "ical_source": self.ical_source,
+            "ical_sync_status": self.ical_sync_status,
+            "ehr_appointment_url": self.ehr_appointment_url,
             "session_id": self.session_id,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,
