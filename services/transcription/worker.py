@@ -96,9 +96,13 @@ class TranscriptionWorker:
         if ".." in gcs_path or gcs_path.startswith("/"):
             raise ValueError(f"Invalid GCS path: {gcs_path!r}")
 
-        # Extract suffix safely — use posixpath to avoid local filesystem interpretation
-        dot_pos = gcs_path.rfind(".")
-        suffix = gcs_path[dot_pos:].lower() if dot_pos != -1 else ".wav"
+        # Extract suffix from final path segment only — dots in directory names
+        # (e.g. "uploads/v2.1/audio.wav") must not influence the extension.
+        filename = gcs_path.rsplit("/", 1)[-1]
+        dot_pos = filename.rfind(".")
+        suffix = filename[dot_pos:].lower() if dot_pos != -1 else ".wav"
+        if not suffix.startswith(".") or not suffix[1:].isalnum():
+            suffix = ".wav"
         if suffix not in self._ALLOWED_AUDIO_SUFFIXES:
             raise ValueError(f"Unsupported audio format: {suffix!r}")
 
