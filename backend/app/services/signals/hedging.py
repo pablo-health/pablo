@@ -108,7 +108,7 @@ class HedgingSignal(VerificationSignal):
                         confidence=_FAIL_CONFIDENCE,
                         signal_name=self.name,
                         detail=(
-                            f"{category} mismatch: " f"claim={claim_level}, segment={segment_level}"
+                            f"{category} mismatch: claim={claim_level}, segment={segment_level}"
                         ),
                     )
                 # One-level difference: uncertain but notable
@@ -117,8 +117,7 @@ class HedgingSignal(VerificationSignal):
                     confidence=_ONE_LEVEL_CONFIDENCE,
                     signal_name=self.name,
                     detail=(
-                        f"{category} slight mismatch: "
-                        f"claim={claim_level}, segment={segment_level}"
+                        f"{category} slight mismatch: claim={claim_level}, segment={segment_level}"
                     ),
                 )
 

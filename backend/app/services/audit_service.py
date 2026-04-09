@@ -107,7 +107,10 @@ class AuditService:
             self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
             logger.debug(
                 "Audit log: %s by user %s on %s/%s",
-                action.value, user.id, resource_type.value, resource_id,
+                action.value,
+                user.id,
+                resource_type.value,
+                resource_id,
             )
         except Exception as e:
             # Log but don't fail the request - audit logging should not break functionality
@@ -179,7 +182,9 @@ class AuditService:
         try:
             self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
             logger.debug(
-                "Audit log: patient_listed by user %s, %d patients", user.id, patient_count,
+                "Audit log: patient_listed by user %s, %d patients",
+                user.id,
+                patient_count,
             )
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
@@ -210,7 +215,9 @@ class AuditService:
         try:
             self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
             logger.debug(
-                "Audit log: session_listed by user %s, %d sessions", user.id, session_count,
+                "Audit log: session_listed by user %s, %d sessions",
+                user.id,
+                session_count,
             )
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")

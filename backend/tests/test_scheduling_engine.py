@@ -110,9 +110,7 @@ class TestListAppointments:
                 end_at="2026-03-23T14:50:00Z",
             ),
         )
-        results = service.list_appointments(
-            USER_ID, "2026-03-16T00:00:00Z", "2026-03-20T00:00:00Z"
-        )
+        results = service.list_appointments(USER_ID, "2026-03-16T00:00:00Z", "2026-03-20T00:00:00Z")
         assert len(results) == 2
         assert results[0].title == "Monday"
         assert results[1].title == "Wednesday"
@@ -130,9 +128,7 @@ class TestListAppointments:
                 title="Theirs", start_at="2026-03-18T15:00:00Z", end_at="2026-03-18T15:50:00Z"
             ),
         )
-        results = service.list_appointments(
-            USER_ID, "2026-03-18T00:00:00Z", "2026-03-19T00:00:00Z"
-        )
+        results = service.list_appointments(USER_ID, "2026-03-18T00:00:00Z", "2026-03-19T00:00:00Z")
         assert len(results) == 1
         assert results[0].title == "Mine"
 

@@ -44,9 +44,7 @@ class InMemorySlidingWindow:
     max_keys caps tracked IPs to prevent unbounded memory growth.
     """
 
-    def __init__(
-        self, max_requests: int, window_seconds: int, *, max_keys: int = 10_000
-    ) -> None:
+    def __init__(self, max_requests: int, window_seconds: int, *, max_keys: int = 10_000) -> None:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._max_keys = max_keys

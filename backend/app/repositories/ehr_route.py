@@ -90,20 +90,24 @@ class FirestoreEhrRouteRepository(EhrRouteRepository):
 
         now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         route.updated_at = now
-        self._collection().document(ehr_system).update({
-            "steps": [s.to_dict() for s in route.steps],
-            "updated_at": now,
-        })
+        self._collection().document(ehr_system).update(
+            {
+                "steps": [s.to_dict() for s in route.steps],
+                "updated_at": now,
+            }
+        )
         return route
 
     def increment_success(self, ehr_system: str) -> None:
         from google.cloud.firestore import Increment  # type: ignore[attr-defined]  # noqa: PLC0415
 
         now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        self._collection().document(ehr_system).update({
-            "success_count": Increment(1),
-            "last_success": now,
-        })
+        self._collection().document(ehr_system).update(
+            {
+                "success_count": Increment(1),
+                "last_success": now,
+            }
+        )
 
 
 class InMemoryEhrRouteRepository(EhrRouteRepository):

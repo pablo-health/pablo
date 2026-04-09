@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from firebase_admin import auth as firebase_auth
+from firebase_admin import tenant_mgt
 from pydantic import BaseModel, EmailStr
 
 from ..auth.firebase_init import initialize_firebase_app
@@ -78,9 +79,7 @@ async def resolve_tenant(
     return ResolveTenantResponse(tenant_id=tenant_id, is_admin=is_admin)
 
 @router.post("/signup", response_model=SignupResponse)
-async def signup(
-    request: SignupRequest, _: None = Depends(require_rate_limit)
-) -> SignupResponse:
+async def signup(request: SignupRequest, _: None = Depends(require_rate_limit)) -> SignupResponse:
     """Self-service signup: provision a new practice for an allowlisted email.
 
     Always returns 200 to prevent email enumeration.
@@ -125,8 +124,8 @@ def _is_valid_native_redirect_uri(uri: str) -> bool:
         return False
     if parsed.scheme in ALLOWED_NATIVE_SCHEMES:
         return True
-    # Allow localhost loopback for Windows (RFC 8252 Section 7.3)
-    return parsed.scheme == "http" and parsed.hostname == "localhost"
+    # Allow loopback for native apps (RFC 8252 Section 7.3)
+    return parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1")
 
 class CreateAuthCodeRequest(BaseModel):
     id_token: str
@@ -168,12 +167,22 @@ def create_native_code(
             detail="Invalid redirect_uri.",
         )
 
-    # Verify the Firebase id_token before issuing a code
+    # Verify the Firebase id_token before issuing a code.
+    # Two-pass: first verify JWT signature (no revocation check), then
+    # re-verify with the tenant-scoped client so check_revoked can find
+    # the user record (tenant users are invisible to the parent project).
     initialize_firebase_app()
     try:
-        decoded_token = firebase_auth.verify_id_token(request.id_token, check_revoked=True)
+        decoded_token = firebase_auth.verify_id_token(request.id_token, check_revoked=False)
+        tenant_id = decoded_token.get("firebase", {}).get("tenant")
+        if tenant_id:
+            tenant_client = tenant_mgt.auth_for_tenant(tenant_id)
+            tenant_client.verify_id_token(request.id_token, check_revoked=True)
+        else:
+            firebase_auth.verify_id_token(request.id_token, check_revoked=True)
     except Exception as err:
         logger.warning("Native code request with invalid id_token")
+        logger.debug("id_token verification detail: %s", err)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired id_token.",
@@ -181,11 +190,7 @@ def create_native_code(
 
     # Enforce MFA: reject tokens without a completed second factor
     settings = get_settings()
-    if (
-        settings.require_mfa
-        and not settings.is_development
-        and settings.auth_mode != "iap"
-    ):
+    if settings.require_mfa and not settings.is_development and settings.auth_mode != "iap":
         firebase_claims = decoded_token.get("firebase", {})
         if not firebase_claims.get("sign_in_second_factor"):
             raise HTTPException(

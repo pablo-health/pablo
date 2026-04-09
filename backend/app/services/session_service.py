@@ -110,8 +110,7 @@ class SessionService:
         future = [
             s.scheduled_at or s.session_date
             for s in sessions
-            if (s.scheduled_at or s.session_date) > now
-            and s.status not in TERMINAL_STATUSES
+            if (s.scheduled_at or s.session_date) > now and s.status not in TERMINAL_STATUSES
         ]
         patient.next_session_date = min(future) if future else None
         self.patient_repo.update(patient)
@@ -348,9 +347,8 @@ class SessionService:
         # Apply side effects
         if target == SessionStatus.IN_PROGRESS:
             session.started_at = now
-        elif (
-            target == SessionStatus.RECORDING_COMPLETE
-            or (target == SessionStatus.CANCELLED and session.started_at)
+        elif target == SessionStatus.RECORDING_COMPLETE or (
+            target == SessionStatus.CANCELLED and session.started_at
         ):
             session.ended_at = now
 

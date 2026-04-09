@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 logger = logging.getLogger(__name__)
 
 COLLECTION = "ical_sync_configs"
@@ -79,7 +81,7 @@ class ICalSyncConfigRepository:
         return ICalSyncConfig.from_dict(doc.to_dict())
 
     def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
-        query = self._collection.where("user_id", "==", user_id)
+        query = self._collection.where(filter=FieldFilter("user_id", "==", user_id))
         return [ICalSyncConfig.from_dict(doc.to_dict()) for doc in query.stream()]
 
     def save(self, config: ICalSyncConfig) -> None:
@@ -101,7 +103,9 @@ class ICalSyncConfigRepository:
         error: str | None = None,
     ) -> None:
         doc_id = f"{user_id}_{ehr_system}"
-        self._collection.document(doc_id).update({
-            "last_synced_at": _now(),
-            "last_sync_error": error,
-        })
+        self._collection.document(doc_id).update(
+            {
+                "last_synced_at": _now(),
+                "last_sync_error": error,
+            }
+        )

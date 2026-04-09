@@ -63,6 +63,10 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
     """
     Verify a Firebase ID token.
 
+    For tenant-scoped tokens (Identity Platform), the revocation check must use
+    the tenant-aware auth client. Otherwise get_user() fails with UserNotFoundError
+    because tenant users don't exist in the parent project's user store.
+
     Args:
         token: The Firebase ID token to verify
 
@@ -74,7 +78,17 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
     """
     initialize_firebase_app()
     try:
-        decoded_token: dict[str, Any] = firebase_auth.verify_id_token(token, check_revoked=True)
+        # First verify the JWT signature and claims (no revocation check yet)
+        decoded_token: dict[str, Any] = firebase_auth.verify_id_token(token, check_revoked=False)
+
+        # Now do the revocation/disabled check with the correct auth client
+        tenant_id = decoded_token.get("firebase", {}).get("tenant")
+        if tenant_id:
+            tenant_client = tenant_mgt.auth_for_tenant(tenant_id)
+            tenant_client.verify_id_token(token, check_revoked=True)
+        else:
+            firebase_auth.verify_id_token(token, check_revoked=True)
+
         return decoded_token
     except firebase_auth.ExpiredIdTokenError as err:
         raise HTTPException(
@@ -233,6 +247,14 @@ def require_mfa(
         logger.debug("MFA check skipped (IAP mode — access control at load balancer)")
         return decoded_token
 
+    # E2E test accounts bypass MFA in non-production environments only
+    is_prod_project = settings.gcp_project_id.endswith("-prod")
+    if settings.e2e_test_emails and not is_prod_project:
+        email = decoded_token.get("email", "")
+        if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
+            logger.warning("MFA bypassed for E2E test account: %s", email)
+            return decoded_token
+
     firebase_claims = decoded_token.get("firebase", {})
     if not firebase_claims.get("sign_in_second_factor"):
         raise HTTPException(
@@ -378,7 +400,9 @@ def _resolve_user(
                 if token_tenant and tenant_id_header and token_tenant != tenant_id_header:
                     logger.warning(
                         "Tenant mismatch rejected: JWT tenant=%s, header tenant=%s, uid=%s",
-                        token_tenant, tenant_id_header, user_id,
+                        token_tenant,
+                        tenant_id_header,
+                        user_id,
                     )
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
@@ -406,7 +430,8 @@ def _resolve_user(
             except Exception as exc:
                 logger.warning(
                     "Could not look up email from Firebase Auth for uid=%s: %s",
-                    user_id, exc,
+                    user_id,
+                    exc,
                 )
 
         # Defense-in-depth: check allowlist before auto-provisioning
@@ -511,8 +536,7 @@ def require_baa_acceptance(
                     "details": {
                         "baa_accepted": False,
                         "message": (
-                            "Please review and accept the Business Associate Agreement "
-                            "to continue"
+                            "Please review and accept the Business Associate Agreement to continue"
                         ),
                     },
                 }

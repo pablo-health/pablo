@@ -192,9 +192,7 @@ class GoogleCalendarService:
             logger.info("Updated Google Calendar event")
         else:
             event = (
-                service.events()
-                .insert(calendarId=token_doc.calendar_id, body=event_body)
-                .execute()
+                service.events().insert(calendarId=token_doc.calendar_id, body=event_body).execute()
             )
             logger.info("Created Google Calendar event")
 
@@ -254,13 +252,15 @@ class GoogleCalendarService:
             next_sync_token = result.get("nextSyncToken")
 
             for event in result.get("items", []):
-                changes.append({
-                    "google_event_id": event.get("id"),
-                    "summary": event.get("summary", ""),
-                    "start": event.get("start", {}),
-                    "end": event.get("end", {}),
-                    "status": event.get("status", ""),
-                })
+                changes.append(
+                    {
+                        "google_event_id": event.get("id"),
+                        "summary": event.get("summary", ""),
+                        "start": event.get("start", {}),
+                        "end": event.get("end", {}),
+                        "status": event.get("status", ""),
+                    }
+                )
 
             if next_sync_token:
                 self._token_repo.update_sync_token(user_id, next_sync_token)

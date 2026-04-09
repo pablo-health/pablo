@@ -260,6 +260,7 @@ class ImportClientsResponse(BaseModel):
     """Response from importing clients via CSV/zip."""
 
     imported: int
+    updated: int
     skipped: int
     mappings_created: int
     errors: list[str] = Field(default_factory=list)

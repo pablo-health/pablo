@@ -84,7 +84,10 @@ export async function apiClient<T>(
   const url = `${getApiUrl()}${endpoint}`
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // Don't set Content-Type for FormData — browser must set it with multipart boundary
+    ...(fetchOptions.body instanceof FormData
+      ? {}
+      : { "Content-Type": "application/json" }),
     ...(fetchOptions.headers as Record<string, string>),
   }
 

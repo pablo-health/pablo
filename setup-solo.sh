@@ -816,7 +816,7 @@ if [ "$MODEL_CHOICE" = "2" ]; then
     echo -e "${GREEN}Anthropic API key stored securely${NC}"
     ANTHROPIC_SECRET="ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
 else
-    AI_MODEL="google:gemini-3-pro-preview"
+    AI_MODEL="google:gemini-3.1-pro-preview"
     GOOGLE_REGION="global"
     ANTHROPIC_SECRET=""
     echo -e "${GREEN}Using Google Gemini — auto-authenticated on GCP${NC}"

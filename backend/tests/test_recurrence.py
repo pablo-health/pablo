@@ -108,9 +108,7 @@ class TestRecurrenceGenerator:
 
     def test_default_horizon_6_months(self) -> None:
         start = datetime(2026, 1, 1, 14, 0, tzinfo=ZoneInfo("UTC"))
-        occurrences = RecurrenceGenerator.generate(
-            start, RecurrenceFrequency.WEEKLY, "UTC"
-        )
+        occurrences = RecurrenceGenerator.generate(start, RecurrenceFrequency.WEEKLY, "UTC")
         assert 25 <= len(occurrences) <= 27
 
     def test_end_date_limits_generation(self) -> None:

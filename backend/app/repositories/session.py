@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from ..models import TherapySession
 
 
@@ -151,8 +153,8 @@ class FirestoreTherapySessionRepository(TherapySessionRepository):
     def list_by_patient(self, patient_id: str, user_id: str) -> list[TherapySession]:
         """List all therapy sessions for a patient, ensuring user has access."""
         query = (
-            self.collection.where("patient_id", "==", patient_id)
-            .where("user_id", "==", user_id)
+            self.collection.where(filter=FieldFilter("patient_id", "==", patient_id))
+            .where(filter=FieldFilter("user_id", "==", user_id))
             .order_by("session_date", direction="DESCENDING")
         )
         return [TherapySession.from_dict(doc.to_dict()) for doc in query.stream()]
@@ -161,7 +163,7 @@ class FirestoreTherapySessionRepository(TherapySessionRepository):
         self, user_id: str, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[TherapySession], int]:
         """List therapy sessions for a user with pagination."""
-        base_query = self.collection.where("user_id", "==", user_id)
+        base_query = self.collection.where(filter=FieldFilter("user_id", "==", user_id))
 
         # Server-side count via Firestore aggregation
         count_result = base_query.count().get()
@@ -191,9 +193,9 @@ class FirestoreTherapySessionRepository(TherapySessionRepository):
         """List today's sessions for a user using Firestore range query."""
         start_utc, end_utc = _compute_day_boundaries(tz_name)
         query = (
-            self.collection.where("user_id", "==", user_id)
-            .where("scheduled_at", ">=", start_utc)
-            .where("scheduled_at", "<", end_utc)
+            self.collection.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("scheduled_at", ">=", start_utc))
+            .where(filter=FieldFilter("scheduled_at", "<", end_utc))
             .order_by("scheduled_at")
         )
         return [TherapySession.from_dict(doc.to_dict()) for doc in query.stream()]
@@ -201,7 +203,7 @@ class FirestoreTherapySessionRepository(TherapySessionRepository):
     def get_session_number_for_patient(self, patient_id: str) -> int:
         """Get the next session number for a patient."""
         query = (
-            self.collection.where("patient_id", "==", patient_id)
+            self.collection.where(filter=FieldFilter("patient_id", "==", patient_id))
             .order_by("session_number", direction="DESCENDING")
             .limit(1)
         )

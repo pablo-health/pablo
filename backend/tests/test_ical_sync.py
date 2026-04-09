@@ -118,9 +118,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _make_patient(
-    patient_id: str, first: str, last: str, user_id: str = "user1"
-) -> Patient:
+def _make_patient(patient_id: str, first: str, last: str, user_id: str = "user1") -> Patient:
     now = _now()
     return Patient(
         id=patient_id,
@@ -178,9 +176,7 @@ class InMemoryICalClientMappingRepo:
     def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
         return [m for m in self._mappings.values() if m.user_id == user_id]
 
-    def list_by_source(
-        self, user_id: str, ehr_system: str
-    ) -> list[ICalClientMapping]:
+    def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]:
         return [
             m
             for m in self._mappings.values()
@@ -190,9 +186,7 @@ class InMemoryICalClientMappingRepo:
     def save(self, mapping: ICalClientMapping) -> None:
         self._mappings[mapping.doc_id] = mapping
 
-    def delete(
-        self, user_id: str, ehr_system: str, client_identifier: str
-    ) -> bool:
+    def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool:
         key = f"{user_id}_{ehr_system}_{client_identifier}"
         if key in self._mappings:
             del self._mappings[key]
@@ -243,16 +237,12 @@ class TestICalParsing:
         events = service._parse_events(SH_ICAL_DATA)
         assert len(events) == 2
 
-        e1 = next(
-            e for e in events if e.uid == "21420944-260316@app.sessionshealth.com"
-        )
+        e1 = next(e for e in events if e.uid == "21420944-260316@app.sessionshealth.com")
         assert e1.summary == "SH00001"
         assert e1.duration_minutes == 60
         assert "sessionshealth.com/events" in (e1.url or "")
 
-        e2 = next(
-            e for e in events if e.uid == "21629232-260325@app.sessionshealth.com"
-        )
+        e2 = next(e for e in events if e.uid == "21629232-260325@app.sessionshealth.com")
         assert e2.summary == "SH00002"
         assert e2.duration_minutes == 30
 
@@ -269,24 +259,16 @@ class TestClientMatching:
     """Tests for client identifier extraction and matching."""
 
     def test_extract_sp_initials(self, service: ICalSyncService):
-        assert (
-            service._extract_client_identifier("simplepractice", "J.A. Appointment")
-            == "J.A."
-        )
+        assert service._extract_client_identifier("simplepractice", "J.A. Appointment") == "J.A."
 
     def test_extract_sp_full_name(self, service: ICalSyncService):
         assert (
-            service._extract_client_identifier(
-                "simplepractice", "Jane Adams Appointment"
-            )
+            service._extract_client_identifier("simplepractice", "Jane Adams Appointment")
             == "Jane Adams"
         )
 
     def test_extract_sh_code(self, service: ICalSyncService):
-        assert (
-            service._extract_client_identifier("sessions_health", "SH00001")
-            == "SH00001"
-        )
+        assert service._extract_client_identifier("sessions_health", "SH00001") == "SH00001"
 
     def test_match_sp_unique_initials(self, service: ICalSyncService):
         patients = [
@@ -315,9 +297,7 @@ class TestClientMatching:
     def test_match_via_saved_mapping(self, service: ICalSyncService):
         mappings = {"SH00001": "patient-abc"}
         patients: list[Patient] = []
-        result = service._match_patient(
-            "sessions_health", "SH00001", mappings, patients
-        )
+        result = service._match_patient("sessions_health", "SH00001", mappings, patients)
         assert result == "patient-abc"
 
 
@@ -363,9 +343,7 @@ class TestSyncDiff:
         assert result.deleted == 0
 
     @patch.object(ICalSyncService, "_fetch_feed")
-    def test_second_sync_no_changes(
-        self, mock_fetch: MagicMock, sync_service: ICalSyncService
-    ):
+    def test_second_sync_no_changes(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
         mock_fetch.return_value = SP_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
@@ -401,20 +379,19 @@ class TestSyncDiff:
         assert result.unchanged == 1
 
     @patch.object(ICalSyncService, "_fetch_feed")
-    def test_ehr_appointment_url_set(
-        self, mock_fetch: MagicMock, sync_service: ICalSyncService
-    ):
+    def test_ehr_appointment_url_set(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
         mock_fetch.return_value = SP_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
         appts = sync_service._appt_repo.list_by_ical_source("user1", "simplepractice")
         sp_appt = next(a for a in appts if a.ical_uid == "3415461692")
-        assert sp_appt.ehr_appointment_url == "https://secure.simplepractice.com/appointments/3415461692"
+        assert (
+            sp_appt.ehr_appointment_url
+            == "https://secure.simplepractice.com/appointments/3415461692"
+        )
 
     @patch.object(ICalSyncService, "_fetch_feed")
-    def test_video_link_extracted(
-        self, mock_fetch: MagicMock, sync_service: ICalSyncService
-    ):
+    def test_video_link_extracted(self, mock_fetch: MagicMock, sync_service: ICalSyncService):
         mock_fetch.return_value = SP_ICAL_DATA
         sync_service.sync("user1", "simplepractice")
 
@@ -520,13 +497,9 @@ class TestCsvImport:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("export/clients.csv", csv_content)
-        result = service.import_clients(
-            "user1", "sessions_health", buf.getvalue(), "export.zip"
-        )
+        result = service.import_clients("user1", "sessions_health", buf.getvalue(), "export.zip")
         assert result.imported == 1
 
     def test_import_bad_file(self, service: ICalSyncService):
-        result = service.import_clients(
-            "user1", "sessions_health", b"not a csv", "data.txt"
-        )
+        result = service.import_clients("user1", "sessions_health", b"not a csv", "data.txt")
         assert len(result.errors) == 1
