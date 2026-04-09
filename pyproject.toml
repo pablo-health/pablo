@@ -14,7 +14,7 @@ packages = [{include = "backend"}]
 
 # Web Framework
 fastapi = ">=0.115.0"
-uvicorn = {extras = ["standard"], version = "^0.42.0"}
+uvicorn = {extras = ["standard"], version = "^0.44.0"}
 pydantic = "^2.5.0"
 pydantic-settings = "^2.13.1"
 
@@ -23,7 +23,7 @@ python-dotenv = "^1.2.2"
 
 # Google Cloud (for GCP deployment)
 google-cloud-firestore = "^2.23.0"
-google-cloud-secret-manager = "^2.18.0"
+google-cloud-secret-manager = "^2.27.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
 firebase-admin = "^6.9.0"
@@ -49,22 +49,22 @@ icalendar = "^6.0.0"
 httpx = ">=0.28.0"
 
 # PII Redaction
-faker = "^40.8.0"
+faker = "^40.13.0"
 email-validator = "^2.3.0"
-python-multipart = "^0.0.22"
+python-multipart = "^0.0.24"
 google-cloud-storage = "^2.18.0"
 google-cloud-tasks = "^2.22.0"
-google-cloud-batch = "^0.18.0"
+google-cloud-batch = "^0.21.0"
 
 
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^9.0.0"
+pytest = "^9.0.3"
 pytest-cov = "^7.0.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
-ruff = "^0.15.5"
-mypy = "^1.7.0"
+ruff = "^0.15.9"
+mypy = "^1.20.0"
 types-redis = "^4.6.0"
 pip-audit = "^2.7.0"
 mcp = "^1.27.0"
