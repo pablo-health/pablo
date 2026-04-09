@@ -1,13 +1,16 @@
-[tool.poetry]
+[project]
 name = "pablo"
 version = "1.0.0"
 description = "Therapy session management platform with AI-powered SOAP note generation"
-authors = ["Kurt Niemi <kurt@pablo.health>"]
+authors = [{name = "Kurt Niemi", email = "kurt@pablo.health"}]
 readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dynamic = ["dependencies"]
+
+[tool.poetry]
 packages = [{include = "backend"}]
 
 [tool.poetry.dependencies]
-python = ">=3.13,<3.14"
 
 # Web Framework
 fastapi = ">=0.115.0"
@@ -37,10 +40,13 @@ meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcr
 
 # NLI Verification (source attribution confidence scoring)
 sentence-transformers = ">=3.0.0"
-onnxruntime = ">=1.17.0"
+onnxruntime = ">=1.18.0"
 
 # iCal calendar feed parsing
 icalendar = "^6.0.0"
+
+# Real-time audio (Practice Mode)
+httpx = ">=0.28.0"
 
 # PII Redaction
 faker = "^40.8.0"
@@ -61,6 +67,7 @@ ruff = "^0.15.5"
 mypy = "^1.7.0"
 types-redis = "^4.6.0"
 pip-audit = "^2.7.0"
+mcp = "^1.27.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -108,6 +115,7 @@ ignore = [
 "backend/tests/**/*.py" = [
     "S101",     # Allow assert in tests
     "ARG001",   # Allow unused function args (pytest fixtures)
+    "ARG002",   # Allow unused method args (pytest fixtures)
     "PLR0913",  # Allow many arguments (pytest fixture injection)
     "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
 ]
@@ -131,6 +139,15 @@ ignore = [
     "S603",     # Allow subprocess calls in dev scripts
     "S607",     # Allow partial executable paths in dev scripts
     "PLC0415",  # Allow lazy imports in standalone scripts (conditional/env-dependent)
+]
+"security/**/*.py" = [
+    "PLC0415",  # Allow lazy imports (MCP tool functions defer imports to avoid startup cost)
+    "PLR0913",  # Allow many arguments (internal test orchestration functions)
+    "PLR0911",  # Allow many returns (Firestore value type converters)
+    "PLR2004",  # Allow magic values (HTTP status codes are self-documenting)
+    "S603",     # Allow subprocess calls (gcloud CLI for rules drift check)
+    "S607",     # Allow partial executable paths (gcloud)
+    "PT028",    # Not pytest tests — functions named test_* are pentest tool functions
 ]
 
 [tool.mypy]
@@ -175,6 +192,9 @@ module = [
     "sklearn.*",
     "scipy.*",
     "icalendar.*",
+    "elevenlabs.*",
+    "httpx.*",
+    "websockets.*",
 ]
 ignore_missing_imports = true
 

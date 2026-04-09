@@ -10,8 +10,9 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-# Copy application code
+# Copy application code and repo-root config files
 COPY backend/ ./backend/
+COPY min_client_versions.json ./
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

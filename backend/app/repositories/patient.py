@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import Any
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from ..models import Patient
 from .session import InMemoryTherapySessionRepository, TherapySessionRepository
 
@@ -131,9 +133,7 @@ class InMemoryPatientRepository(PatientRepository):
             self._session_repo, InMemoryTherapySessionRepository
         ):
             session_ids = [
-                sid
-                for sid, s in self._session_repo._sessions.items()
-                if s.patient_id == patient_id
+                sid for sid, s in self._session_repo._sessions.items() if s.patient_id == patient_id
             ]
             for sid in session_ids:
                 del self._session_repo._sessions[sid]
@@ -179,8 +179,8 @@ class FirestorePatientRepository(PatientRepository):
             chunk = patient_id_list[i : i + 10]
             # Convert string IDs to document references for __name__ filter
             chunk_refs = [self.collection.document(patient_id) for patient_id in chunk]
-            query = self.collection.where("user_id", "==", user_id).where(
-                "__name__", "in", chunk_refs
+            query = self.collection.where(filter=FieldFilter("user_id", "==", user_id)).where(
+                filter=FieldFilter("__name__", "in", chunk_refs)
             )
             for doc in query.stream():
                 patient = Patient.from_dict(doc.to_dict())
@@ -198,14 +198,14 @@ class FirestorePatientRepository(PatientRepository):
         page_size: int = 20,
     ) -> tuple[list[Patient], int]:
         """List patients for a user with pagination."""
-        query = self.collection.where("user_id", "==", user_id)
+        query = self.collection.where(filter=FieldFilter("user_id", "==", user_id))
 
         if search:
             search_lower = search.lower()
             search_field = "first_name_lower" if search_by == "first_name" else "last_name_lower"
             # Firestore prefix search using range query
-            query = query.where(search_field, ">=", search_lower)
-            query = query.where(search_field, "<", search_lower + "\uffff")
+            query = query.where(filter=FieldFilter(search_field, ">=", search_lower))
+            query = query.where(filter=FieldFilter(search_field, "<", search_lower + "\uffff"))
 
         # Sort by last name, then first name (clinical standard)
         query = query.order_by("last_name_lower").order_by("first_name_lower")
@@ -242,7 +242,9 @@ class FirestorePatientRepository(PatientRepository):
 
         # Delete associated therapy sessions
         sessions = (
-            self.db.collection("therapy_sessions").where("patient_id", "==", patient_id).stream()
+            self.db.collection("therapy_sessions")
+            .where(filter=FieldFilter("patient_id", "==", patient_id))
+            .stream()
         )
         for session in sessions:
             session.reference.delete()

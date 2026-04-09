@@ -44,6 +44,7 @@ class SessionSource(StrEnum):
     WEB = "web"
     COMPANION = "companion"
     CALENDAR = "calendar"
+    PRACTICE = "practice"
 
 
 class SOAPSection(StrEnum):

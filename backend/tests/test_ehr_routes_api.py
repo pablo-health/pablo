@@ -191,9 +191,7 @@ def test_update_step_index_out_of_range(
 
 def test_ehr_navigate_rate_limit_exceeded(client: Any) -> None:
     """Rate limit should kick in after 50 calls/user/day."""
-    with patch(
-        "app.routes.ehr_routes.get_ehr_navigate_limiter"
-    ) as mock_limiter:
+    with patch("app.routes.ehr_routes.get_ehr_navigate_limiter") as mock_limiter:
 
         def raise_429(key: str) -> None:
             raise HTTPException(

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from ..scheduling_engine.models.availability import AvailabilityRule
 from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
@@ -26,9 +28,8 @@ class FirestoreAvailabilityRuleRepository(AvailabilityRuleRepository):
         return None
 
     def list_by_user(self, user_id: str) -> list[AvailabilityRule]:
-        query = (
-            self.collection.where("user_id", "==", user_id)
-            .order_by("created_at")
+        query = self.collection.where(filter=FieldFilter("user_id", "==", user_id)).order_by(
+            "created_at"
         )
         return [AvailabilityRule.from_dict(doc.to_dict()) for doc in query.stream()]
 

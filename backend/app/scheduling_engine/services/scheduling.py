@@ -21,6 +21,14 @@ def _now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def _to_utc(iso_str: str) -> str:
+    """Normalize an ISO 8601 datetime string to UTC Z-suffix format."""
+    dt = datetime.fromisoformat(iso_str)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(UTC)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
 class SchedulingService:
     """Orchestrates appointment CRUD with validation.
 
@@ -80,7 +88,7 @@ class SchedulingService:
 
     def list_appointments(self, user_id: str, start: str, end: str) -> list[Appointment]:
         """List appointments in a date range."""
-        return self._repo.list_by_range(user_id, start, end)
+        return self._repo.list_by_range(user_id, _to_utc(start), _to_utc(end))
 
     def update_appointment(
         self,

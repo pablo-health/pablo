@@ -27,9 +27,7 @@ def _time_to_minutes(t: str) -> int:
     return int(h) * 60 + int(m)
 
 
-def _ranges_overlap(
-    start_a: int, end_a: int, start_b: int, end_b: int
-) -> bool:
+def _ranges_overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> bool:
     return start_a < end_b and start_b < end_a
 
 
@@ -47,9 +45,7 @@ class AvailabilityEngine:
         self._rule_repo = rule_repo
         self._appt_repo = appointment_repo
 
-    def check_conflicts(
-        self, user_id: str, start_at: str, end_at: str
-    ) -> list[Conflict]:
+    def check_conflicts(self, user_id: str, start_at: str, end_at: str) -> list[Conflict]:
         """Check all availability rules for conflicts with a proposed time."""
         rules = self._rule_repo.list_by_user(user_id)
         proposed_start = _parse_iso(start_at)
@@ -57,17 +53,13 @@ class AvailabilityEngine:
         conflicts: list[Conflict] = []
 
         for rule in rules:
-            conflict = self._check_rule(
-                rule, user_id, proposed_start, proposed_end
-            )
+            conflict = self._check_rule(rule, user_id, proposed_start, proposed_end)
             if conflict:
                 conflicts.append(conflict)
 
         return conflicts
 
-    def get_free_slots(
-        self, user_id: str, date_str: str, duration_minutes: int
-    ) -> list[TimeSlot]:
+    def get_free_slots(self, user_id: str, date_str: str, duration_minutes: int) -> list[TimeSlot]:
         """Compute available time slots for a given date and duration."""
         rules = self._rule_repo.list_by_user(user_id)
 
@@ -87,9 +79,7 @@ class AvailabilityEngine:
 
         buffer_before, buffer_after = self._get_buffers(rules)
 
-        appt_blocked = self._appointments_to_blocked_minutes(
-            active, buffer_before, buffer_after
-        )
+        appt_blocked = self._appointments_to_blocked_minutes(active, buffer_before, buffer_after)
         blocked_minutes = blocked_minutes | appt_blocked
 
         max_per_day = self._get_max_per_day(rules)
@@ -97,9 +87,7 @@ class AvailabilityEngine:
             return []
 
         slots: list[TimeSlot] = []
-        remaining_capacity = (
-            max_per_day - len(active) if max_per_day is not None else None
-        )
+        remaining_capacity = max_per_day - len(active) if max_per_day is not None else None
 
         for work_start, work_end in working_ranges:
             minute = work_start
@@ -136,24 +124,18 @@ class AvailabilityEngine:
             RuleType.WORKING_HOURS: lambda: self._check_working_hours(
                 rule, proposed_start, proposed_end
             ),
-            RuleType.BLOCK_DAY_OF_WEEK: lambda: self._check_block_day_of_week(
-                rule, proposed_start
-            ),
+            RuleType.BLOCK_DAY_OF_WEEK: lambda: self._check_block_day_of_week(rule, proposed_start),
             RuleType.BLOCK_TIME_RANGE: lambda: self._check_block_time_range(
                 rule, proposed_start, proposed_end
             ),
-            RuleType.MAX_PER_DAY: lambda: self._check_max_per_day(
-                rule, user_id, proposed_start
-            ),
+            RuleType.MAX_PER_DAY: lambda: self._check_max_per_day(rule, user_id, proposed_start),
             RuleType.BUFFER_BEFORE: lambda: self._check_buffer_before(
                 rule, user_id, proposed_start, rule.params
             ),
             RuleType.BUFFER_AFTER: lambda: self._check_buffer_after(
                 rule, user_id, proposed_end, rule.params
             ),
-            RuleType.BLOCK_DATE_RANGE: lambda: self._check_block_date_range(
-                rule, proposed_start
-            ),
+            RuleType.BLOCK_DATE_RANGE: lambda: self._check_block_date_range(rule, proposed_start),
             RuleType.BLOCK_SPECIFIC_DATES: lambda: self._check_block_specific_dates(
                 rule, proposed_start
             ),
@@ -232,8 +214,7 @@ class AvailabilityEngine:
                 rule=rule,
                 enforcement=rule.enforcement,
                 message=(
-                    f"Maximum {max_count} appointments per day reached"
-                    f" ({len(active)} existing)"
+                    f"Maximum {max_count} appointments per day reached ({len(active)} existing)"
                 ),
             )
         return None
@@ -338,9 +319,7 @@ class AvailabilityEngine:
                 ranges.append((start, end))
         return sorted(ranges)
 
-    def _is_date_blocked(
-        self, rules: list[AvailabilityRule], date_str: str
-    ) -> bool:
+    def _is_date_blocked(self, rules: list[AvailabilityRule], date_str: str) -> bool:
         dt = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
         day_of_week = dt.weekday()
         for rule in rules:
@@ -354,16 +333,13 @@ class AvailabilityEngine:
                 and rule.params["start_date"] <= date_str <= rule.params["end_date"]
             ):
                 return True
-            if (
-                rule.rule_type == RuleType.BLOCK_SPECIFIC_DATES
-                and date_str in rule.params.get("dates", [])
+            if rule.rule_type == RuleType.BLOCK_SPECIFIC_DATES and date_str in rule.params.get(
+                "dates", []
             ):
                 return True
         return False
 
-    def _get_blocked_minutes(
-        self, rules: list[AvailabilityRule]
-    ) -> set[int]:
+    def _get_blocked_minutes(self, rules: list[AvailabilityRule]) -> set[int]:
         """Get blocked minutes from block_time_range rules."""
         blocked: set[int] = set()
         for rule in rules:
@@ -373,9 +349,7 @@ class AvailabilityEngine:
                 blocked.update(range(start, end))
         return blocked
 
-    def _get_buffers(
-        self, rules: list[AvailabilityRule]
-    ) -> tuple[int, int]:
+    def _get_buffers(self, rules: list[AvailabilityRule]) -> tuple[int, int]:
         """Get buffer before and after values from rules."""
         buffer_before = 0
         buffer_after = 0
@@ -386,9 +360,7 @@ class AvailabilityEngine:
                 buffer_after = max(buffer_after, rule.params["minutes"])
         return buffer_before, buffer_after
 
-    def _get_max_per_day(
-        self, rules: list[AvailabilityRule]
-    ) -> int | None:
+    def _get_max_per_day(self, rules: list[AvailabilityRule]) -> int | None:
         """Get the most restrictive max_per_day value."""
         result: int | None = None
         for rule in rules:

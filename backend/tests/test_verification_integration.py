@@ -149,9 +149,9 @@ class TestFullPipelineIntegration:
                 assert sentence.confidence_score > 0, f"{key} should have a score > 0"
                 assert sentence.confidence_level != "", f"{key} should have a level"
             else:
-                assert (
-                    sentence.confidence_level == "unverified"
-                ), f"{key} with no sources should be unverified"
+                assert sentence.confidence_level == "unverified", (
+                    f"{key} with no sources should be unverified"
+                )
 
     def test_mixed_confidence_levels_in_same_note(self) -> None:
         """A single SOAP note can have high, medium, low, and unverified claims."""
@@ -363,13 +363,13 @@ class TestSerializationRoundTrip:
             rest = restored_claims[key]
             assert rest.text == orig.text, f"{key}: text mismatch"
             assert rest.source_segment_ids == orig.source_segment_ids, f"{key}: ids mismatch"
-            assert rest.confidence_score == pytest.approx(
-                orig.confidence_score
-            ), f"{key}: score mismatch"
+            assert rest.confidence_score == pytest.approx(orig.confidence_score), (
+                f"{key}: score mismatch"
+            )
             assert rest.confidence_level == orig.confidence_level, f"{key}: level mismatch"
-            assert (
-                rest.possible_match_segment_ids == orig.possible_match_segment_ids
-            ), f"{key}: possible_matches mismatch"
+            assert rest.possible_match_segment_ids == orig.possible_match_segment_ids, (
+                f"{key}: possible_matches mismatch"
+            )
 
     def test_to_dict_from_dict_preserves_list_items(self) -> None:
         """List fields (symptoms, interventions) preserve confidence on round-trip."""

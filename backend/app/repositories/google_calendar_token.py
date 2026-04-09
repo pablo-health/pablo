@@ -69,10 +69,12 @@ class GoogleCalendarTokenRepository:
 
     def update_sync_token(self, user_id: str, sync_token: str) -> None:
         now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-        self._collection.document(user_id).update({
-            "sync_token": sync_token,
-            "last_synced_at": now,
-        })
+        self._collection.document(user_id).update(
+            {
+                "sync_token": sync_token,
+                "last_synced_at": now,
+            }
+        )
 
     def delete(self, user_id: str) -> bool:
         doc = self._collection.document(user_id).get()

@@ -342,9 +342,7 @@ class TestFreeSlots:
                 rule_id="r1",
             )
         )
-        rule_repo.create(
-            _rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 2}, rule_id="r2")
-        )
+        rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 2}, rule_id="r2"))
         slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
         assert len(slots) == 0
 

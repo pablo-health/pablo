@@ -21,7 +21,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -102,6 +102,7 @@ class ImportResult:
     """Result of importing clients from a CSV/zip export."""
 
     imported: int = 0
+    updated: int = 0
     skipped: int = 0
     mappings_created: int = 0
     errors: list[str] = field(default_factory=list)
@@ -122,9 +123,7 @@ class ICalSyncService:
         self._patient_repo = patient_repo
         self._mapping_repo = mapping_repo
 
-    def configure(
-        self, user_id: str, ehr_system: str, feed_url: str
-    ) -> ConfigureResult:
+    def configure(self, user_id: str, ehr_system: str, feed_url: str) -> ConfigureResult:
         """Validate, test-fetch, encrypt, and store the iCal feed URL."""
         safe_url = self._validate_feed_url(ehr_system, feed_url)
 
@@ -161,9 +160,7 @@ class ICalSyncService:
             for c in configs
         ]
 
-    def sync(
-        self, user_id: str, ehr_system: str | None = None
-    ) -> list[SyncResult]:
+    def sync(self, user_id: str, ehr_system: str | None = None) -> list[SyncResult]:
         """Sync one or all configured iCal sources."""
         configs = self._config_repo.list_by_user(user_id)
         if ehr_system:
@@ -173,16 +170,12 @@ class ICalSyncService:
         for config in configs:
             try:
                 result = self._sync_source(user_id, config)
-                self._config_repo.update_sync_status(
-                    user_id, config.ehr_system, error=None
-                )
+                self._config_repo.update_sync_status(user_id, config.ehr_system, error=None)
                 results.append(result)
             except Exception:
                 logger.exception("iCal sync failed for source")
                 error_msg = "Sync failed — could not fetch or parse feed"
-                self._config_repo.update_sync_status(
-                    user_id, config.ehr_system, error=error_msg
-                )
+                self._config_repo.update_sync_status(user_id, config.ehr_system, error=error_msg)
                 error_result = SyncResult(errors=[error_msg])
                 results.append(error_result)
         return results
@@ -206,9 +199,10 @@ class ICalSyncService:
         # Update existing appointments with this identifier
         appointments = self._appt_repo.list_by_ical_source(user_id, ehr_system)
         for appt in appointments:
-            if appt.patient_id == "" and self._get_client_identifier(
-                ehr_system, appt.notes or ""
-            ) == client_identifier:
+            if (
+                appt.patient_id == ""
+                and self._get_client_identifier(ehr_system, appt.notes or "") == client_identifier
+            ):
                 appt.patient_id = patient_id
                 appt.updated_at = _now()
                 self._appt_repo.update(appt)
@@ -228,11 +222,9 @@ class ICalSyncService:
         reader = csv.DictReader(io.StringIO(csv_text))
         result = ImportResult()
 
-        all_patients, _ = self._patient_repo.list_by_user(
-            user_id, page=1, page_size=10000
-        )
-        existing = {
-            (p.first_name.lower(), p.last_name.lower()) for p in all_patients
+        all_patients, _ = self._patient_repo.list_by_user(user_id, page=1, page_size=10000)
+        existing_by_name = {
+            (p.first_name.lower(), p.last_name.lower()): p for p in all_patients
         }
 
         for row_num, row in enumerate(reader, start=1):
@@ -243,29 +235,23 @@ class ICalSyncService:
                 continue
 
             key = (first_name.lower(), last_name.lower())
-            if key in existing:
-                result.skipped += 1
+            if key in existing_by_name:
+                # Update existing patient with any newly populated fields
+                if self._update_patient_from_csv(existing_by_name[key], row):
+                    result.updated += 1
+                else:
+                    result.skipped += 1
             else:
                 patient = self._create_patient_from_csv(user_id, row)
                 self._patient_repo.create(patient)
-                existing.add(key)
+                existing_by_name[key] = patient
                 result.imported += 1
 
             # Auto-create SH code mapping for Sessions Health
             if ehr_system == EhrSystem.SESSIONS_HEALTH:
                 sh_code = f"SH{row_num:05d}"
-                # Find the patient (may have just been created or already existed)
-                patient_id = self._find_patient_by_name(
-                    all_patients, first_name, last_name
-                )
-                if patient_id is None:
-                    # Reload to include just-created patients
-                    all_patients, _ = self._patient_repo.list_by_user(
-                        user_id, page=1, page_size=10000
-                    )
-                    patient_id = self._find_patient_by_name(
-                        all_patients, first_name, last_name
-                    )
+                patient = existing_by_name.get(key)
+                patient_id = patient.id if patient else None
                 if patient_id:
                     mapping = ICalClientMapping(
                         user_id=user_id,
@@ -280,9 +266,7 @@ class ICalSyncService:
 
     # --- Private helpers ---
 
-    def _sync_source(
-        self, user_id: str, config: ICalSyncConfig
-    ) -> SyncResult:
+    def _sync_source(self, user_id: str, config: ICalSyncConfig) -> SyncResult:
         """Sync a single iCal source."""
         tokens = decrypt_tokens(config.encrypted_feed_url)
         feed_url = tokens["feed_url"]
@@ -290,9 +274,7 @@ class ICalSyncService:
         ical_data = self._fetch_feed(feed_url)
         feed_events = {e.uid: e for e in self._parse_events(ical_data)}
 
-        existing_appts = self._appt_repo.list_by_ical_source(
-            user_id, config.ehr_system
-        )
+        existing_appts = self._appt_repo.list_by_ical_source(user_id, config.ehr_system)
         existing_by_uid = {a.ical_uid: a for a in existing_appts if a.ical_uid}
 
         # Load mappings and patients for client matching
@@ -300,32 +282,24 @@ class ICalSyncService:
             m.client_identifier: m.patient_id
             for m in self._mapping_repo.list_by_source(user_id, config.ehr_system)
         }
-        all_patients, _ = self._patient_repo.list_by_user(
-            user_id, page=1, page_size=10000
-        )
+        all_patients, _ = self._patient_repo.list_by_user(user_id, page=1, page_size=10000)
 
         result = SyncResult()
 
         # Create or update
         for uid, event in feed_events.items():
             if uid in existing_by_uid:
-                updated = self._update_if_changed(
-                    existing_by_uid[uid], event, config.ehr_system
-                )
+                updated = self._update_if_changed(existing_by_uid[uid], event, config.ehr_system)
                 if updated:
                     result.updated += 1
                 else:
                     result.unchanged += 1
             else:
-                client_id = self._extract_client_identifier(
-                    config.ehr_system, event.summary
-                )
+                client_id = self._extract_client_identifier(config.ehr_system, event.summary)
                 patient_id = self._match_patient(
                     config.ehr_system, client_id, mappings, all_patients
                 )
-                appt = self._create_appointment(
-                    user_id, config.ehr_system, event, patient_id
-                )
+                appt = self._create_appointment(user_id, config.ehr_system, event, patient_id)
                 # Store identifier in notes for later resolution
                 if client_id:
                     appt.notes = f"ical_client:{client_id}"
@@ -333,14 +307,17 @@ class ICalSyncService:
                 result.created += 1
 
                 if not patient_id:
-                    result.unmatched_events.append({
-                        "ical_uid": uid,
-                        "client_identifier": client_id or "unknown",
-                        "start_at": event.start_at,
-                        "ehr_appointment_url": self._derive_appointment_url(
-                            config.ehr_system, uid, event.url
-                        ) or "",
-                    })
+                    result.unmatched_events.append(
+                        {
+                            "ical_uid": uid,
+                            "client_identifier": client_id or "unknown",
+                            "start_at": event.start_at,
+                            "ehr_appointment_url": self._derive_appointment_url(
+                                config.ehr_system, uid, event.url
+                            )
+                            or "",
+                        }
+                    )
 
         # Soft-delete events no longer in feed
         for uid, appt in existing_by_uid.items():
@@ -353,7 +330,10 @@ class ICalSyncService:
 
         logger.info(
             "iCal sync complete (created=%d, updated=%d, deleted=%d, unchanged=%d)",
-            result.created, result.updated, result.deleted, result.unchanged,
+            result.created,
+            result.updated,
+            result.deleted,
+            result.unchanged,
         )
         return result
 
@@ -396,19 +376,19 @@ class ICalSyncService:
             url_prop = component.get("URL")
             url = str(url_prop) if url_prop else None
 
-            events.append(ParsedEvent(
-                uid=uid,
-                summary=summary,
-                start_at=start_utc.isoformat().replace("+00:00", "Z"),
-                end_at=end_utc.isoformat().replace("+00:00", "Z"),
-                duration_minutes=duration,
-                url=url,
-            ))
+            events.append(
+                ParsedEvent(
+                    uid=uid,
+                    summary=summary,
+                    start_at=start_utc.isoformat().replace("+00:00", "Z"),
+                    end_at=end_utc.isoformat().replace("+00:00", "Z"),
+                    duration_minutes=duration,
+                    url=url,
+                )
+            )
         return events
 
-    def _extract_client_identifier(
-        self, ehr_system: str, summary: str
-    ) -> str:
+    def _extract_client_identifier(self, ehr_system: str, summary: str) -> str:
         """Extract the client identifier from the SUMMARY field."""
         if ehr_system == EhrSystem.SIMPLEPRACTICE:
             # Try initials first: "J.A. Appointment"
@@ -428,7 +408,7 @@ class ICalSyncService:
     def _get_client_identifier(self, _ehr_system: str, notes: str) -> str:
         """Extract client identifier from appointment notes."""
         if notes.startswith("ical_client:"):
-            return notes[len("ical_client:"):]
+            return notes[len("ical_client:") :]
         return ""
 
     def _match_patient(
@@ -449,9 +429,7 @@ class ICalSyncService:
 
         return ""
 
-    def _match_sp_patient(
-        self, identifier: str, patients: list[Patient]
-    ) -> str:
+    def _match_sp_patient(self, identifier: str, patients: list[Patient]) -> str:
         """Match a SimplePractice identifier to a patient."""
         # Initials format: "J.A."
         m = _SP_INITIALS_RE.match(identifier + " Appointment")
@@ -459,8 +437,10 @@ class ICalSyncService:
             first_initial = m.group(1).upper()
             last_initial = m.group(2).upper()
             matches = [
-                p for p in patients
-                if p.first_name and p.last_name
+                p
+                for p in patients
+                if p.first_name
+                and p.last_name
                 and p.first_name[0].upper() == first_initial
                 and p.last_name[0].upper() == last_initial
             ]
@@ -475,8 +455,7 @@ class ICalSyncService:
             first = parts[0].lower()
             last = parts[-1].lower()
             matches = [
-                p for p in patients
-                if p.first_name_lower == first and p.last_name_lower == last
+                p for p in patients if p.first_name_lower == first and p.last_name_lower == last
             ]
             if len(matches) == 1:
                 return matches[0].id
@@ -525,9 +504,7 @@ class ICalSyncService:
             ical_uid=event.uid,
             ical_source=ehr_system,
             ical_sync_status="synced",
-            ehr_appointment_url=self._derive_appointment_url(
-                ehr_system, event.uid, event.url
-            ),
+            ehr_appointment_url=self._derive_appointment_url(ehr_system, event.uid, event.url),
             created_at=_now(),
         )
 
@@ -612,9 +589,34 @@ class ICalSyncService:
             return file_content.decode("utf-8")
         return None
 
-    def _create_patient_from_csv(
-        self, user_id: str, row: dict[str, str]
-    ) -> Any:
+    _CSV_FIELD_MAP: ClassVar[dict[str, str]] = {
+        "Email": "email",
+        "Phone Number": "phone",
+        "Birth Date": "date_of_birth",
+        "Diagnosis": "diagnosis",
+    }
+
+    def _update_patient_from_csv(self, patient: Any, row: dict[str, str]) -> bool:
+        """Update existing patient with newly populated CSV fields. Returns True if changed."""
+        changed = False
+        for csv_col, attr in self._CSV_FIELD_MAP.items():
+            csv_val = row.get(csv_col, "").strip() or None
+            if csv_val and not getattr(patient, attr):
+                setattr(patient, attr, csv_val)
+                changed = True
+
+        # Update status if patient was inactive but CSV says active
+        csv_active = row.get("Active", "Y").strip().upper() == "Y"
+        if csv_active and patient.status == "inactive":
+            patient.status = "active"
+            changed = True
+
+        if changed:
+            patient.updated_at = _now()
+            self._patient_repo.update(patient)
+        return changed
+
+    def _create_patient_from_csv(self, user_id: str, row: dict[str, str]) -> Any:
         """Create a Patient dataclass from a CSV row."""
         from ..models.patient import Patient
 

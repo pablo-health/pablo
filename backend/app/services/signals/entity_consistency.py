@@ -353,7 +353,7 @@ class EntityConsistencySignal(VerificationSignal):
         segment_meds = _extract_medications(segment_text)
         if claim_meds and segment_meds and not claim_meds & segment_meds:
             mismatches.append(
-                f"medications: claim={sorted(claim_meds)}, " f"segment={sorted(segment_meds)}"
+                f"medications: claim={sorted(claim_meds)}, segment={sorted(segment_meds)}"
             )
 
         # Check dosage mismatches
@@ -361,7 +361,7 @@ class EntityConsistencySignal(VerificationSignal):
         segment_dosages = _extract_dosages(segment_text)
         if claim_dosages and segment_dosages and not claim_dosages & segment_dosages:
             mismatches.append(
-                f"dosages: claim={sorted(claim_dosages)}, " f"segment={sorted(segment_dosages)}"
+                f"dosages: claim={sorted(claim_dosages)}, segment={sorted(segment_dosages)}"
             )
 
         # Check frequency mismatches
@@ -369,7 +369,7 @@ class EntityConsistencySignal(VerificationSignal):
         segment_freqs = _extract_frequencies(segment_text)
         if claim_freqs and segment_freqs and not claim_freqs & segment_freqs:
             mismatches.append(
-                f"frequencies: claim={sorted(claim_freqs)}, " f"segment={sorted(segment_freqs)}"
+                f"frequencies: claim={sorted(claim_freqs)}, segment={sorted(segment_freqs)}"
             )
 
         # Check DSM code mismatches
@@ -377,7 +377,7 @@ class EntityConsistencySignal(VerificationSignal):
         segment_dsm = _extract_dsm_codes(segment_text)
         if claim_dsm and segment_dsm and not claim_dsm & segment_dsm:
             mismatches.append(
-                f"DSM codes: claim={sorted(claim_dsm)}, " f"segment={sorted(segment_dsm)}"
+                f"DSM codes: claim={sorted(claim_dsm)}, segment={sorted(segment_dsm)}"
             )
 
         # Check person role mismatches (provider vs client attribution)
@@ -385,7 +385,7 @@ class EntityConsistencySignal(VerificationSignal):
         segment_roles = _categorize_roles(_extract_person_roles(segment_text))
         if claim_roles and segment_roles and not claim_roles & segment_roles:
             mismatches.append(
-                f"person roles: claim={sorted(claim_roles)}, " f"segment={sorted(segment_roles)}"
+                f"person roles: claim={sorted(claim_roles)}, segment={sorted(segment_roles)}"
             )
 
         if mismatches:

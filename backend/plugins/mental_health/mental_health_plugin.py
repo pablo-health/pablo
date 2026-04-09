@@ -276,8 +276,7 @@ from this therapy session transcript.
                         "risk_assessment": {
                             "type": "string",
                             "description": (
-                                "Assessment of safety concerns "
-                                "(suicide, self-harm, harm to others)"
+                                "Assessment of safety concerns (suicide, self-harm, harm to others)"
                             ),
                         },
                         "functioning_level": {

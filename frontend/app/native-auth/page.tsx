@@ -76,8 +76,8 @@ export default function NativeAuthPage() {
       const scheme = url.protocol.replace(":", "")
       // Allow custom URL schemes (macOS)
       if (ALLOWED_SCHEMES.includes(scheme)) return true
-      // Allow localhost loopback for Windows (RFC 8252 Section 7.3)
-      if (scheme === "http" && url.hostname === "localhost") return true
+      // Allow loopback for native apps (RFC 8252 Section 7.3)
+      if (scheme === "http" && (url.hostname === "localhost" || url.hostname === "127.0.0.1")) return true
       return false
     } catch {
       return false

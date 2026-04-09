@@ -83,7 +83,9 @@ class MeetingTranscriptionSOAPService(SOAPGenerationService):
         self, transcript: Transcript, patient: Patient, session_date: str
     ) -> SOAPNote:
         """Generate SOAP note using meeting-transcription pipeline."""
-        from backend.plugins.mental_health.plugin import get_plugin  # type: ignore[import-untyped]
+        from backend.plugins.mental_health.plugin import (  # type: ignore[import-untyped,import-not-found]
+            get_plugin,
+        )
 
         # Load and configure plugin
         plugin = get_plugin()
@@ -97,7 +99,7 @@ class MeetingTranscriptionSOAPService(SOAPGenerationService):
 
         # Metadata for SOAP generation
         metadata = {
-            "client_name": f"{patient.first_name} {patient.last_name}",
+            "client_name": "the client",
             "session_date": session_date.split("T", maxsplit=1)[0],  # Extract date part
             "session_number": "1",  # Will be set correctly in route
             "therapist_name": self.therapist_name,
@@ -358,7 +360,7 @@ class MockSOAPGenerationService(SOAPGenerationService):
                 speech=_s("Clear and coherent, normal rate and volume."),
                 thought_process=_s("Linear and goal-directed."),
                 affect_observed=_s(
-                    "Congruent with mood. " "Demonstrated insight into presenting concerns."
+                    "Congruent with mood. Demonstrated insight into presenting concerns."
                 ),
             ),
             assessment=AssessmentNote(
@@ -369,8 +371,7 @@ class MockSOAPGenerationService(SOAPGenerationService):
                     [0, 1, 6],
                 ),
                 progress=_s(
-                    "Progress is evident in increased awareness and application of "
-                    "coping skills.",
+                    "Progress is evident in increased awareness and application of coping skills.",
                     [6],
                 ),
                 risk_assessment=_s(

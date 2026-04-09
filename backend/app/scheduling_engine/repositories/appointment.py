@@ -119,8 +119,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         results = [
             a
             for a in self._appointments.values()
-            if a.user_id == user_id
-            and a.recurring_appointment_id == recurring_appointment_id
+            if a.user_id == user_id and a.recurring_appointment_id == recurring_appointment_id
         ]
         if after:
             results = [a for a in results if a.start_at >= after]

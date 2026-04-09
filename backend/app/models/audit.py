@@ -70,9 +70,11 @@ class AuditLogEntry:
         default_factory=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z")
     )
     expires_at: str = field(
-        default_factory=lambda: (datetime.now(UTC) + timedelta(days=AUDIT_LOG_RETENTION_DAYS))
-        .isoformat()
-        .replace("+00:00", "Z")
+        default_factory=lambda: (
+            (datetime.now(UTC) + timedelta(days=AUDIT_LOG_RETENTION_DAYS))
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
     )
 
     # Who performed the action

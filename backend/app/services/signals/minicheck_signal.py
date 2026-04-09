@@ -43,7 +43,8 @@ class MiniCheckSignal(VerificationSignal):
             from minicheck.minicheck import MiniCheck  # type: ignore[import-not-found]
 
             self._model = MiniCheck(
-                model_name=self._model_path, enable_prefix_caching=False,
+                model_name=self._model_path,
+                enable_prefix_caching=False,
             )
         return self._model
 
@@ -60,7 +61,8 @@ class MiniCheckSignal(VerificationSignal):
         model = self._get_model()
         # MiniCheck expects (document, claim) format
         pred_label, raw_prob, _, _ = model.score(
-            docs=[segment_text], claims=[claim_text],
+            docs=[segment_text],
+            claims=[claim_text],
         )
 
         prob = float(raw_prob[0])

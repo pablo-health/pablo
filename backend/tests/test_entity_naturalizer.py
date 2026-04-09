@@ -2,7 +2,6 @@
 
 """Unit tests for EntityNaturalizer service."""
 
-
 from app.services.entity_naturalizer import EntityNaturalizer, RedactedEntity
 
 

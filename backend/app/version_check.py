@@ -39,11 +39,21 @@ def get_server_version() -> str:
 
 
 @lru_cache
-def get_min_versions() -> dict[str, str]:
-    """Read minimum required client versions from min_client_versions.json."""
-    versions_file = _REPO_ROOT / "min_client_versions.json"
-    data: dict[str, str] = json.loads(versions_file.read_text())
-    return data
+def get_min_versions() -> dict[str, str] | None:
+    """Read minimum required client versions from min_client_versions.json.
+
+    Returns None if the file is missing (e.g. Docker image without the file).
+    """
+    candidates = (
+        _REPO_ROOT / "min_client_versions.json",
+        _BACKEND_ROOT / "min_client_versions.json",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            data: dict[str, str] = json.loads(candidate.read_text())
+            return data
+    logger.warning("min_client_versions.json not found — skipping version enforcement")
+    return None
 
 
 def parse_semver(version: str) -> tuple[int, int, int]:
@@ -86,7 +96,11 @@ def check_client_version(request: Request) -> None:
         return
 
     min_versions = get_min_versions()
-    min_version = min_versions[platform]
+    if min_versions is None:
+        return
+    min_version = min_versions.get(platform)
+    if min_version is None:
+        return
 
     try:
         if is_version_outdated(client_version, min_version):

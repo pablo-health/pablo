@@ -426,9 +426,9 @@ class TestTranscriptSegmentParsing:
 
 class TestFormatTranscriptWithSegmentIds:
     def test_basic_formatting(self) -> None:
-        content = "[00:01] Therapist: Hello.\n" "[00:05] Client: Hi.\n"
+        content = "[00:01] Therapist: Hello.\n[00:05] Client: Hi.\n"
         result = format_transcript_with_segment_ids(content)
-        assert result == ("[S0] [00:01] Therapist: Hello.\n" "[S1] [00:05] Client: Hi.")
+        assert result == ("[S0] [00:01] Therapist: Hello.\n[S1] [00:05] Client: Hi.")
 
     def test_empty_lines_skipped(self) -> None:
         content = "[00:01] A: Hello.\n\n[00:05] B: Hi.\n"
@@ -632,7 +632,7 @@ class TestSessionResponseWithSources:
             status="pending_review",
             transcript=Transcript(
                 format="txt",
-                content=("[00:01] Therapist: How are you?\n" "[00:06] Client: Better this week.\n"),
+                content=("[00:01] Therapist: How are you?\n[00:06] Client: Better this week.\n"),
             ),
             created_at="2024-06-01T00:00:00Z",
             soap_note=SOAPNote(

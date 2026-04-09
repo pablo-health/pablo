@@ -33,18 +33,14 @@ def _get_encryption_key() -> bytes:
     """
     raw = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY", "")
     if not raw:
-        raise TokenEncryptionError(
-            "GOOGLE_CALENDAR_ENCRYPTION_KEY environment variable is not set"
-        )
+        raise TokenEncryptionError("GOOGLE_CALENDAR_ENCRYPTION_KEY environment variable is not set")
     try:
         key = base64.b64decode(raw)
     except Exception as exc:
         raise TokenEncryptionError("Invalid base64 in GOOGLE_CALENDAR_ENCRYPTION_KEY") from exc
 
     if len(key) != AES_KEY_BYTES:
-        raise TokenEncryptionError(
-            f"Encryption key must be {AES_KEY_BYTES} bytes, got {len(key)}"
-        )
+        raise TokenEncryptionError(f"Encryption key must be {AES_KEY_BYTES} bytes, got {len(key)}")
     return key
 
 

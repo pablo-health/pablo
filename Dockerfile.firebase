@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
@@ -10,6 +10,11 @@ RUN npm install -g firebase-tools
 
 # Copy Firebase config
 COPY firebase.json firestore.rules storage.rules ./
+
+# Run as non-root user
+RUN addgroup -S emulator && adduser -S emulator -G emulator && \
+    chown -R emulator:emulator /app
+USER emulator
 
 # Expose emulator ports
 EXPOSE 4000 8080 9099 9199

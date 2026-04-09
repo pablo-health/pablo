@@ -82,8 +82,10 @@ export default function LoginPage() {
       const tenantId = await resolveTenant(email, config.apiUrl)
       if (tenantId) {
         ensureTenantId(tenantId)
+        setStep("sign-in")
+      } else {
+        setStep("sign-in")
       }
-      setStep("sign-in")
     } catch {
       setError("Unable to verify email. Please try again.")
     } finally {

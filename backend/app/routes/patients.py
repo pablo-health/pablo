@@ -72,7 +72,6 @@ def get_export_service(
     return ExportService(patient_repo, session_repo)
 
 
-
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_patient(
     http_request: Request,

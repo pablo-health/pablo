@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 COLLECTION = "ical_client_mappings"
 
 
@@ -67,28 +69,21 @@ class ICalClientMappingRepository:
         return ICalClientMapping.from_dict(doc.to_dict())
 
     def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
-        query = self._collection.where("user_id", "==", user_id)
+        query = self._collection.where(filter=FieldFilter("user_id", "==", user_id))
         return [ICalClientMapping.from_dict(doc.to_dict()) for doc in query.stream()]
 
-    def list_by_source(
-        self, user_id: str, ehr_system: str
-    ) -> list[ICalClientMapping]:
-        query = (
-            self._collection.where("user_id", "==", user_id)
-            .where("ehr_system", "==", ehr_system)
+    def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]:
+        query = self._collection.where(filter=FieldFilter("user_id", "==", user_id)).where(
+            filter=FieldFilter("ehr_system", "==", ehr_system)
         )
         return [ICalClientMapping.from_dict(doc.to_dict()) for doc in query.stream()]
 
     def save(self, mapping: ICalClientMapping) -> None:
         if not mapping.created_at:
-            mapping.created_at = (
-                datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            )
+            mapping.created_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         self._collection.document(mapping.doc_id).set(mapping.to_dict())
 
-    def delete(
-        self, user_id: str, ehr_system: str, client_identifier: str
-    ) -> bool:
+    def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool:
         doc_id = f"{user_id}_{ehr_system}_{client_identifier}"
         doc = self._collection.document(doc_id).get()
         if not doc.exists:

@@ -97,12 +97,14 @@ class RedisAuthCodeStore:
 
     def create(self, id_token: str, refresh_token: str, redirect_uri: str) -> str:
         code = secrets.token_urlsafe(32)
-        data = json.dumps({
-            "id_token": id_token,
-            "refresh_token": refresh_token,
-            "redirect_uri": redirect_uri,
-            "created_at": time.time(),
-        })
+        data = json.dumps(
+            {
+                "id_token": id_token,
+                "refresh_token": refresh_token,
+                "redirect_uri": redirect_uri,
+                "created_at": time.time(),
+            }
+        )
         self._redis.setex(f"{self.KEY_PREFIX}{code}", self.ttl_seconds, data)
         return code
 

@@ -84,9 +84,9 @@ def _validate_tenant_db(tenant_db: str) -> None:
 
     admin_db = get_admin_firestore_client()
     # Check all tenants to find one whose firestore_database matches
-    tenants = admin_db.collection("tenants").where(
-        "firestore_database", "==", tenant_db
-    ).limit(1).get()
+    tenants = (
+        admin_db.collection("tenants").where("firestore_database", "==", tenant_db).limit(1).get()
+    )
 
     if not tenants:
         raise HTTPException(

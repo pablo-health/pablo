@@ -1250,7 +1250,7 @@ jobs:
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
 | `ANTHROPIC_API_KEY` | string | - | Anthropic API key for Claude |
-| `AI_MODEL` | string | google:gemini-3-pro-preview | Vertex AI model selection |
+| `AI_MODEL` | string | google:gemini-3.1-pro-preview | Vertex AI model selection |
 | `GOOGLE_REGION` | string | global | GCP region for Vertex AI |
 
 **Firebase Emulators (Development Only):**

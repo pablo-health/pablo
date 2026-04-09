@@ -100,6 +100,7 @@ export function IntegrationSettings() {
     } catch (err) {
       setImportResult({
         imported: 0,
+        updated: 0,
         skipped: 0,
         mappings_created: 0,
         errors: [err instanceof Error ? err.message : "Import failed"],
@@ -291,8 +292,9 @@ export function IntegrationSettings() {
             ) : (
               <p className="text-green-600">
                 <Check className="h-4 w-4 inline mr-1" />
-                {importResult.imported} imported, {importResult.skipped} already
-                existed
+                {importResult.imported} imported
+                {importResult.updated > 0 && `, ${importResult.updated} updated`}
+                , {importResult.skipped} unchanged
                 {importResult.mappings_created > 0 &&
                   `, ${importResult.mappings_created} client mappings created`}
               </p>

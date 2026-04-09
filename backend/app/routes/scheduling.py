@@ -72,6 +72,7 @@ def _is_valid_gcal_redirect_uri(redirect_uri: str) -> bool:
     origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
     return origin in allowed_origins
 
+
 if TYPE_CHECKING:
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
