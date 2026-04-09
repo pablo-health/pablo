@@ -51,6 +51,7 @@ export interface ICalConfigureResponse {
 
 export interface ImportClientsResponse {
   imported: number
+  updated: number
   skipped: number
   mappings_created: number
   errors: string[]

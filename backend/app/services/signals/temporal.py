@@ -230,7 +230,7 @@ class TemporalConsistencySignal(VerificationSignal):
                 verdict=SignalVerdict.FAIL,
                 confidence=0.15,
                 signal_name=self.name,
-                detail=(f"Tense mismatch: claim={claim_tense}, " f"segment={segment_tense}"),
+                detail=(f"Tense mismatch: claim={claim_tense}, segment={segment_tense}"),
             )
 
         # Check duration mismatch
@@ -245,9 +245,7 @@ class TemporalConsistencySignal(VerificationSignal):
                 verdict=SignalVerdict.FAIL,
                 confidence=0.10,
                 signal_name=self.name,
-                detail=(
-                    f"Duration mismatch: claim={claim_durations}, " f"segment={segment_durations}"
-                ),
+                detail=(f"Duration mismatch: claim={claim_durations}, segment={segment_durations}"),
             )
 
         # Check frequency mismatch
@@ -262,7 +260,7 @@ class TemporalConsistencySignal(VerificationSignal):
                 verdict=SignalVerdict.FAIL,
                 confidence=0.10,
                 signal_name=self.name,
-                detail=(f"Frequency mismatch: claim={claim_freqs}, " f"segment={segment_freqs}"),
+                detail=(f"Frequency mismatch: claim={claim_freqs}, segment={segment_freqs}"),
             )
 
         return SignalResult(

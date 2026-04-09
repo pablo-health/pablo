@@ -118,9 +118,7 @@ class TranscriptionQueueService:
         instance_policy = batch_v1.AllocationPolicy.InstancePolicy(
             machine_type="n1-standard-4",
             accelerators=[accelerator],
-            provisioning_model=(
-                batch_v1.AllocationPolicy.ProvisioningModel.SPOT
-            ),
+            provisioning_model=(batch_v1.AllocationPolicy.ProvisioningModel.SPOT),
         )
 
         instances = batch_v1.AllocationPolicy.InstancePolicyOrTemplate(
@@ -167,7 +165,7 @@ class TranscriptionQueueService:
             response.name,
             "high" if priority else "standard",
         )
-        return response.name
+        return response.name  # type: ignore[no-any-return]
 
 
 def _build_entrypoint_script(
@@ -183,14 +181,16 @@ def _build_entrypoint_script(
     This script: downloads audio from GCS → transcribes with Whisper → callbacks.
     Using inline script avoids needing a separate entry point in the container.
     """
-    params_json = json.dumps({
-        "session_id": session_id,
-        "tenant_db": tenant_db,
-        "user_id": user_id,
-        "gcs_path": gcs_path,
-        "gcs_bucket": gcs_bucket,
-        "backend_url": backend_url,
-    })
+    params_json = json.dumps(
+        {
+            "session_id": session_id,
+            "tenant_db": tenant_db,
+            "user_id": user_id,
+            "gcs_path": gcs_path,
+            "gcs_bucket": gcs_bucket,
+            "backend_url": backend_url,
+        }
+    )
     params_b64 = base64.b64encode(params_json.encode()).decode()
     return (
         "import base64, json; "

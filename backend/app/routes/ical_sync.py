@@ -83,9 +83,7 @@ def sync_ical_calendar(
             updated=r.updated,
             deleted=r.deleted,
             unchanged=r.unchanged,
-            unmatched_events=[
-                UnmatchedEvent(**e) for e in r.unmatched_events
-            ],
+            unmatched_events=[UnmatchedEvent(**e) for e in r.unmatched_events],
             errors=r.errors,
         )
         for r in results
@@ -185,6 +183,7 @@ async def import_clients(
     result = service.import_clients(ctx.user_id, ehr_system, content, file.filename)
     return ImportClientsResponse(
         imported=result.imported,
+        updated=result.updated,
         skipped=result.skipped,
         mappings_created=result.mappings_created,
         errors=result.errors,

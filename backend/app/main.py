@@ -78,6 +78,12 @@ app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(internal.router)
 
+# Practice Mode (feature-flagged)
+if settings.practice_enabled:
+    from .routes import practice
+
+    app.include_router(practice.router)
+
 @app.get("/api/health")
 def health_check() -> dict[str, object]:
     """Health check endpoint.

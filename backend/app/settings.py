@@ -80,6 +80,22 @@ class Settings(BaseSettings):
             "Set to False only for local development."
         ),
     )
+    e2e_test_emails_raw: str = Field(
+        default="",
+        alias="E2E_TEST_EMAILS",
+        description=(
+            "Comma-separated emails that bypass MFA for E2E testing. "
+            "Only honored in non-production environments. "
+            "Example: E2E_TEST_EMAILS=test@pablo.health"
+        ),
+    )
+
+    @property
+    def e2e_test_emails(self) -> set[str]:
+        """Parse comma-separated E2E_TEST_EMAILS into a set."""
+        if not self.e2e_test_emails_raw:
+            return set()
+        return {e.strip() for e in self.e2e_test_emails_raw.split(",") if e.strip()}
 
     # Trusted Proxy Settings
     trusted_proxy_ips: str = Field(
@@ -137,6 +153,17 @@ class Settings(BaseSettings):
         description=(
             "Firestore database for the admin/control plane "
             "(tenant mappings, allowlist, provisioning log)."
+        ),
+    )
+
+    # Pablo Edition (feature gating)
+    pablo_edition: Literal["core", "solo", "practice"] = Field(
+        default="core",
+        description=(
+            "Pablo edition controls feature availability. "
+            "'core' = self-hosted open-source (Pablo Core). "
+            "'solo' = Pablo Solo hosted ($19-24/mo). "
+            "'practice' = Pablo Practice multi-therapist."
         ),
     )
 
@@ -237,8 +264,16 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "Enable server-side audio transcription. "
-            "When enabled, audio uploads are accepted and queued for Whisper processing "
-            "on GPU worker instances."
+            "When enabled, audio uploads are accepted and queued for processing "
+            "via the configured transcription provider."
+        ),
+    )
+    transcription_provider: Literal["whisper", "assemblyai"] = Field(
+        default="whisper",
+        description=(
+            "Transcription provider for session audio. "
+            "'whisper' = self-hosted faster-whisper on GCP Batch spot GPUs. "
+            "'assemblyai' = AssemblyAI batch API (lower ops, higher per-session cost)."
         ),
     )
     transcription_audio_bucket: str = Field(
@@ -281,6 +316,65 @@ class Settings(BaseSettings):
         description="Gemini model for EHR navigation LLM fallback",
     )
 
+    # Practice Mode (AI patient simulation)
+    practice_enabled: bool = Field(
+        default=False,
+        description="Enable Practice Mode for AI patient simulation",
+    )
+    practice_daily_session_limit: int = Field(
+        default=10,
+        ge=1,
+        description="Max practice sessions per user per day",
+    )
+    practice_max_concurrent: int = Field(
+        default=1,
+        ge=1,
+        description="Max concurrent practice sessions per user",
+    )
+    practice_max_duration_minutes: int = Field(
+        default=30,
+        ge=1,
+        le=60,
+        description="Max duration of a single practice session in minutes",
+    )
+    practice_session_ttl_days: int = Field(
+        default=30,
+        ge=1,
+        description="Days before practice sessions are auto-deleted",
+    )
+    practice_gemini_model: str = Field(
+        default="gemini-2.5-flash",
+        description="Gemini model for practice mode text generation",
+    )
+
+    # ASR (Speech-to-Text) for Practice Mode
+    asr_provider: str = Field(
+        default="assemblyai",
+        description="ASR provider for practice mode: 'assemblyai' or 'google'",
+    )
+    assemblyai_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="AssemblyAI API key for real-time transcription",
+    )
+
+    # ElevenLabs TTS (Practice Mode voice synthesis)
+    elevenlabs_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="ElevenLabs API key for Pablo Bear voice synthesis",
+    )
+    elevenlabs_voice_id: str = Field(
+        default="OhisAd2u8Q6qSA4xXAAT",
+        description="ElevenLabs voice ID for Pablo Bear",
+    )
+    elevenlabs_model_id: str = Field(
+        default="eleven_multilingual_v2",
+        description="ElevenLabs model for voice synthesis",
+    )
+    elevenlabs_therapist_voice_id: str = Field(
+        default="pMsXgVXv3BLzUgSXRplE",
+        description="ElevenLabs voice ID for AI therapist in demo mode (Serena)",
+    )
+
     # Google Calendar Integration
     google_calendar_client_id: str = Field(
         default="",
@@ -308,6 +402,16 @@ class Settings(BaseSettings):
             else ""
         )
         return f"{protocol}://{password_part}{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def is_saas(self) -> bool:
+        """Check if running as a SaaS edition (Solo or Practice)."""
+        return self.pablo_edition in ("solo", "practice")
+
+    @property
+    def is_core(self) -> bool:
+        """Check if running as self-hosted open-source (Pablo Core)."""
+        return self.pablo_edition == "core"
 
     @property
     def is_development(self) -> bool:

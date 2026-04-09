@@ -203,8 +203,7 @@ class NegationSignal(VerificationSignal):
                     confidence=0.05,
                     signal_name=self.name,
                     detail=(
-                        f"Polarity flip detected: {negated_side} is negated "
-                        f"with matching content"
+                        f"Polarity flip detected: {negated_side} is negated with matching content"
                     ),
                 )
             # Negation cue found in one side but content doesn't match -- inconclusive

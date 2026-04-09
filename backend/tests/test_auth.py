@@ -36,8 +36,36 @@ class TestVerifyFirebaseToken:
             result = verify_firebase_token("valid-token")
 
             assert result["uid"] == "user123"
-            mock_verify.assert_called_once_with("valid-token", check_revoked=True)
+            # Called twice: first without check_revoked for JWT verification,
+            # then with check_revoked for revocation check (non-tenant path)
+            assert mock_verify.call_count == 2
+            mock_verify.assert_any_call("valid-token", check_revoked=False)
+            mock_verify.assert_any_call("valid-token", check_revoked=True)
             mock_firebase_init.assert_called_once()
+
+    def test_valid_tenant_token(self, mock_firebase_init: Any) -> None:
+        """Tenant-scoped tokens use the tenant-aware client for revocation check."""
+        with (
+            patch(VERIFY_PATCH) as mock_verify,
+            patch("app.auth.service.tenant_mgt") as mock_tenant_mgt,
+        ):
+            mock_verify.return_value = {
+                "uid": "user123",
+                "email": "test@example.com",
+                "firebase": {"tenant": "TestTenant-abc123"},
+            }
+            mock_tenant_client = mock_tenant_mgt.auth_for_tenant.return_value
+
+            result = verify_firebase_token("tenant-token")
+
+            assert result["uid"] == "user123"
+            # JWT verification (no revocation check)
+            mock_verify.assert_called_once_with("tenant-token", check_revoked=False)
+            # Revocation check via tenant-aware client
+            mock_tenant_mgt.auth_for_tenant.assert_called_once_with("TestTenant-abc123")
+            mock_tenant_client.verify_id_token.assert_called_once_with(
+                "tenant-token", check_revoked=True
+            )
 
     def test_expired_token(self) -> None:
         with patch(VERIFY_PATCH) as mock_verify:
@@ -166,6 +194,93 @@ class TestRequireMfa:
             result = require_mfa(mock_credentials)
 
         assert result["uid"] == "user123"
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_e2e_email_bypasses_mfa_in_non_production(self, mock_verify: MagicMock) -> None:
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "e2e-token"
+        mock_verify.return_value = {
+            "uid": "e2e-user",
+            "email": "test@pablo.health",
+            "email_verified": True,
+            "firebase": {},
+        }
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "standard"
+            mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
+            result = require_mfa(mock_credentials)
+
+        assert result["uid"] == "e2e-user"
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_e2e_email_blocked_in_production(self, mock_verify: MagicMock) -> None:
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "e2e-token"
+        mock_verify.return_value = {
+            "uid": "e2e-user",
+            "email": "test@pablo.health",
+            "email_verified": True,
+            "firebase": {},
+        }
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.gcp_project_id = "pablohealth-prod"
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "standard"
+            mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
+            with pytest.raises(HTTPException) as exc_info:
+                require_mfa(mock_credentials)
+
+        assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_e2e_email_blocked_when_not_verified(self, mock_verify: MagicMock) -> None:
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "e2e-token"
+        mock_verify.return_value = {
+            "uid": "e2e-user",
+            "email": "test@pablo.health",
+            "email_verified": False,
+            "firebase": {},
+        }
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "standard"
+            mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
+            with pytest.raises(HTTPException) as exc_info:
+                require_mfa(mock_credentials)
+
+        assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_e2e_bypass_ignores_unlisted_email(self, mock_verify: MagicMock) -> None:
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "e2e-token"
+        mock_verify.return_value = {
+            "uid": "e2e-user",
+            "email": "attacker@evil.com",
+            "email_verified": True,
+            "firebase": {},
+        }
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "standard"
+            mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
+            with pytest.raises(HTTPException) as exc_info:
+                require_mfa(mock_credentials)
+
+        assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
 
     @patch("app.auth.service.verify_firebase_token")
     def test_bypassed_when_require_mfa_false(self, mock_verify: MagicMock) -> None:
@@ -343,7 +458,7 @@ class TestTokenVerificationWithTenantClaims:
     """
 
     def test_tenant_scoped_token_verified_normally(self, mock_firebase_init: Any) -> None:
-        """Token with tenant claim is verified the same as any other token."""
+        """Token with tenant claim uses tenant-aware client for revocation check."""
         tenant_token_claims = {
             "uid": "user123",
             "email": "dr.smith@gmail.com",
@@ -354,14 +469,23 @@ class TestTokenVerificationWithTenantClaims:
             },
         }
 
-        with patch(VERIFY_PATCH) as mock_verify:
+        with (
+            patch(VERIFY_PATCH) as mock_verify,
+            patch("app.auth.service.tenant_mgt") as mock_tenant_mgt,
+        ):
             mock_verify.return_value = tenant_token_claims
 
             result = verify_firebase_token("tenant-scoped-token")
 
             assert result["uid"] == "user123"
             assert result["firebase"]["tenant"] == "practice-a1b2c3"
-            mock_verify.assert_called_once_with("tenant-scoped-token", check_revoked=True)
+            # JWT verification without revocation check
+            mock_verify.assert_called_once_with("tenant-scoped-token", check_revoked=False)
+            # Revocation check via tenant-aware client
+            mock_tenant_mgt.auth_for_tenant.assert_called_once_with("practice-a1b2c3")
+            mock_tenant_mgt.auth_for_tenant.return_value.verify_id_token.assert_called_once_with(
+                "tenant-scoped-token", check_revoked=True
+            )
             mock_firebase_init.assert_called_once()
 
     def test_mfa_works_with_tenant_claim(self) -> None:

@@ -360,8 +360,8 @@ def test_delete_patient_cascades_to_sessions(
             {
                 "patient_id": "patient-1",
                 "user_id": test_user_id,
-                "date": f"2024-01-0{i+1}T10:00:00Z",
-                "notes": f"Session {i+1}",
+                "date": f"2024-01-0{i + 1}T10:00:00Z",
+                "notes": f"Session {i + 1}",
             }
         )
 

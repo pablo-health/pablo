@@ -315,9 +315,7 @@ class TestUploadTranscriptToSession:
         user_id: str,
         patient: Patient,
     ) -> None:
-        session = _make_session(
-            session_repo, user_id, patient.id, SessionStatus.RECORDING_COMPLETE
-        )
+        session = _make_session(session_repo, user_id, patient.id, SessionStatus.RECORDING_COMPLETE)
         req = UploadTranscriptToSessionRequest(
             format="google_meet",
             content="Therapist: Hello\nClient: Hi",
@@ -340,9 +338,7 @@ class TestUploadTranscriptToSession:
         patient: Patient,
     ) -> None:
         session = _make_session(session_repo, user_id, patient.id, SessionStatus.SCHEDULED)
-        req = UploadTranscriptToSessionRequest(
-            format="txt", content="content"
-        )
+        req = UploadTranscriptToSessionRequest(format="txt", content="content")
         with pytest.raises(InvalidSessionStatusError):
             service.upload_transcript_to_session(session.id, user_id, req)
 

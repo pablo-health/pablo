@@ -64,7 +64,8 @@ export default async function DashboardLayout({
       }
 
       // MFA not enrolled → redirect to enrollment page
-      if (!userStatus.mfa_enrolled_at) {
+      // Skip if MFA is not required (local development)
+      if (process.env.REQUIRE_MFA !== "false" && !userStatus.mfa_enrolled_at) {
         redirect("/mfa-enrollment")
       }
     } catch (error) {

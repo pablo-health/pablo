@@ -58,9 +58,7 @@ class TestResolveTenant:
         self, mock_settings: MagicMock, mock_db: MagicMock, client: TestClient
     ) -> None:
         mock_settings.return_value.multi_tenancy_enabled = True
-        mock_db.return_value = _mock_collection(
-            _mock_doc(True, {"tenant_id": "tenant-abc"})
-        )
+        mock_db.return_value = _mock_collection(_mock_doc(True, {"tenant_id": "tenant-abc"}))
         resp = client.post(
             "/api/auth/resolve-tenant",
             json={"email": "dr@example.com"},
@@ -194,6 +192,17 @@ class TestNativeCodeExchange:
         )
         assert resp.status_code == 200
 
+    def test_create_code_valid_loopback_ip(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/auth/native/code",
+            json={
+                "id_token": "id_tok",
+                "refresh_token": "ref_tok",
+                "redirect_uri": "http://127.0.0.1:54321/callback",
+            },
+        )
+        assert resp.status_code == 200
+
     def test_create_code_invalid_redirect_uri(self, client: TestClient) -> None:
         resp = client.post(
             "/api/auth/native/code",
@@ -272,16 +281,22 @@ class TestNativeCodeExchange:
         code = create_resp.json()["code"]
 
         # First exchange succeeds
-        assert client.post(
-            "/api/auth/native/exchange",
-            json={"code": code, "redirect_uri": self.REDIRECT_URI},
-        ).status_code == 200
+        assert (
+            client.post(
+                "/api/auth/native/exchange",
+                json={"code": code, "redirect_uri": self.REDIRECT_URI},
+            ).status_code
+            == 200
+        )
 
         # Second exchange fails (code consumed)
-        assert client.post(
-            "/api/auth/native/exchange",
-            json={"code": code, "redirect_uri": self.REDIRECT_URI},
-        ).status_code == 400
+        assert (
+            client.post(
+                "/api/auth/native/exchange",
+                json={"code": code, "redirect_uri": self.REDIRECT_URI},
+            ).status_code
+            == 400
+        )
 
     def test_exchange_invalid_code(self, client: TestClient) -> None:
         resp = client.post(

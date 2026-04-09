@@ -133,9 +133,9 @@ def list_export_queue(
     for _tenant_id, db in _get_all_session_databases():
         patient_repo = FirestorePatientRepository(db)
         sessions_ref = db.collection("therapy_sessions")
-        query = sessions_ref.where(
-            "export_status", "==", "pending_review"
-        ).order_by("export_queued_at")
+        query = sessions_ref.where("export_status", "==", "pending_review").order_by(
+            "export_queued_at"
+        )
 
         for doc in query.stream():
             data = doc.to_dict()

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from google.cloud.firestore_v1.base_query import FieldFilter
+
 from ..scheduling_engine.models.appointment import Appointment
 from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
@@ -32,9 +34,9 @@ class FirestoreAppointmentRepository(AppointmentRepository):
         end: str,
     ) -> list[Appointment]:
         query = (
-            self.collection.where("user_id", "==", user_id)
-            .where("start_at", ">=", start)
-            .where("start_at", "<", end)
+            self.collection.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("start_at", ">=", start))
+            .where(filter=FieldFilter("start_at", "<", end))
             .order_by("start_at")
         )
         return [Appointment.from_dict(doc.to_dict()) for doc in query.stream()]
@@ -45,8 +47,8 @@ class FirestoreAppointmentRepository(AppointmentRepository):
         patient_id: str,
     ) -> list[Appointment]:
         query = (
-            self.collection.where("user_id", "==", user_id)
-            .where("patient_id", "==", patient_id)
+            self.collection.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("patient_id", "==", patient_id))
             .order_by("start_at")
         )
         return [Appointment.from_dict(doc.to_dict()) for doc in query.stream()]
@@ -57,11 +59,11 @@ class FirestoreAppointmentRepository(AppointmentRepository):
         recurring_appointment_id: str,
         after: str | None = None,
     ) -> list[Appointment]:
-        query = self.collection.where("user_id", "==", user_id).where(
-            "recurring_appointment_id", "==", recurring_appointment_id
+        query = self.collection.where(filter=FieldFilter("user_id", "==", user_id)).where(
+            filter=FieldFilter("recurring_appointment_id", "==", recurring_appointment_id)
         )
         if after:
-            query = query.where("start_at", ">=", after)
+            query = query.where(filter=FieldFilter("start_at", ">=", after))
         query = query.order_by("start_at")
         return [Appointment.from_dict(doc.to_dict()) for doc in query.stream()]
 
@@ -71,8 +73,8 @@ class FirestoreAppointmentRepository(AppointmentRepository):
         ehr_system: str,
     ) -> list[Appointment]:
         query = (
-            self.collection.where("user_id", "==", user_id)
-            .where("ical_source", "==", ehr_system)
+            self.collection.where(filter=FieldFilter("user_id", "==", user_id))
+            .where(filter=FieldFilter("ical_source", "==", ehr_system))
             .order_by("start_at")
         )
         return [Appointment.from_dict(doc.to_dict()) for doc in query.stream()]

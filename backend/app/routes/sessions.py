@@ -6,6 +6,7 @@ Session API routes.
 Thin HTTP handlers that delegate business logic to SessionService.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -50,6 +51,7 @@ from ..services import (
     SOAPGenerationService,
     get_audit_service,
 )
+from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
 from ..services.transcription_queue_service import (
     MockTranscriptionQueueService,
     TranscriptionQueueService,
@@ -57,6 +59,9 @@ from ..services.transcription_queue_service import (
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Background transcription tasks — prevent garbage collection
+_background_tasks: set[asyncio.Task[None]] = set()
 
 router = APIRouter(tags=["sessions"])
 
@@ -455,9 +460,7 @@ def update_session_metadata(
 ) -> SessionResponse:
     """Update session metadata (reschedule, change video link, etc.)."""
     try:
-        session, patient = session_service.update_session_metadata(
-            session_id, user.id, request
-        )
+        session, patient = session_service.update_session_metadata(session_id, user.id, request)
     except SessionNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -519,8 +522,17 @@ def upload_transcript_to_session(
 # --- Audio upload for server-side transcription ---
 
 _MAX_AUDIO_SIZE = 500 * 1024 * 1024  # 500 MB
-_ALLOWED_AUDIO_TYPES = {"audio/wav", "audio/wave", "audio/x-wav", "audio/mpeg", "audio/mp4",
-                        "audio/ogg", "audio/webm", "audio/flac", "application/octet-stream"}
+_ALLOWED_AUDIO_TYPES = {
+    "audio/wav",
+    "audio/wave",
+    "audio/x-wav",
+    "audio/mpeg",
+    "audio/mp4",
+    "audio/ogg",
+    "audio/webm",
+    "audio/flac",
+    "application/octet-stream",
+}
 
 @router.post("/api/sessions/{session_id}/upload-audio")
 async def upload_audio(
@@ -580,6 +592,35 @@ async def upload_audio(
                 detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
             )
 
+    # Transition to transcribing
+    session.status = SessionStatus.TRANSCRIBING
+    session.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    if settings.transcription_provider == "assemblyai":
+        # AssemblyAI: upload directly to their API, no GCS needed
+        session_repo.update(session)
+
+        aai_service = AssemblyAiTranscriptionService(settings)
+        task = asyncio.create_task(
+            aai_service.transcribe_dual_channel(
+                therapist_audio=therapist_data,
+                client_audio=client_data,
+                session_id=session_id,
+                tenant_db=ctx.firestore_db,
+                user_id=user.id,
+            )
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+        return {
+            "id": session.id,
+            "status": session.status,
+            "provider": "assemblyai",
+            "message": "Audio uploaded (2 channels). Transcription queued (AssemblyAI).",
+        }
+
+    # Whisper: upload to GCS, submit GCP Batch job
     queue_service: TranscriptionQueueService
     if settings.is_development:
         queue_service = MockTranscriptionQueueService()
@@ -591,13 +632,10 @@ async def upload_audio(
     therapist_gcs_path = queue_service.upload_audio(therapist_data, session_id, therapist_filename)
     client_gcs_path = queue_service.upload_audio(client_data, session_id, client_filename)
 
-    # Store both paths (comma-separated) and transition to transcribing
     session.audio_gcs_path = f"{therapist_gcs_path},{client_gcs_path}"
-    session.status = SessionStatus.TRANSCRIBING
-    session.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     session_repo.update(session)
 
-    is_practice = False  # OSS: no edition gating
+    is_practice = settings.pablo_edition == "practice"
     queue_service.enqueue_transcription(
         session_id=session_id,
         tenant_db=ctx.firestore_db,
@@ -610,6 +648,7 @@ async def upload_audio(
     return {
         "id": session.id,
         "status": session.status,
+        "provider": "whisper",
         "queue": queue_type,
         "message": f"Audio uploaded (2 channels). Transcription queued ({queue_type}).",
     }
