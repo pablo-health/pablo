@@ -1,6 +1,7 @@
 # Backend Production Dockerfile (Distroless)
 # Layers app code on top of the pre-built distroless base image (backend-base)
 # which contains the Python runtime and all dependencies.
+# trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
 #
 # To rebuild the base image (when deps change):
 #   ./rebuild-base.sh

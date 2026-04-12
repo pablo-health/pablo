@@ -1,6 +1,7 @@
 # Backend Base Image (Distroless)
 # Contains Python 3.13 runtime + all dependencies (FastAPI, SQLAlchemy, etc.)
 # Rebuild only when pyproject.toml or poetry.lock changes.
+# trivy:ignore:DS-0026 — base image, not a service; no endpoint to healthcheck
 #
 # Usage:
 #   ./rebuild-base.sh
