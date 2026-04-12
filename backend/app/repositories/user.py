@@ -3,10 +3,10 @@
 """User repository implementations."""
 
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
 from typing import Any
 
 from ..models import User, UserPreferences
+from ..utcnow import utc_now_iso
 
 
 class UserRepository(ABC):
@@ -48,7 +48,7 @@ class InMemoryUserRepository(UserRepository):
             id="user123",
             email="test@example.com",
             name="Test Therapist",
-            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            created_at=utc_now_iso(),
             title="Dr.",
             credentials="PhD, LMFT",
         )

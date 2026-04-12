@@ -11,6 +11,7 @@ import {
   FileText,
   Settings,
 } from "lucide-react"
+import { AdminNav } from "./AdminNav"
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
@@ -18,9 +19,6 @@ const navigation = [
   { name: "Patients", href: "/dashboard/patients", icon: Users },
   { name: "Sessions", href: "/dashboard/sessions", icon: FileText },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
-]
-
-const adminNavigation: typeof navigation = [
 ]
 
 interface SidebarProps {
@@ -61,36 +59,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
           )
         })}
 
-        {isAdmin && (
-          <>
-            <div className="pt-4 pb-1 px-3">
-              <span className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
-                Admin
-              </span>
-            </div>
-            {adminNavigation.map((item) => {
-              const isActive = pathname === item.href
-              return (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  aria-current={isActive ? "page" : undefined}
-                  className={`
-                    group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium
-                    transition-all duration-200
-                    ${isActive
-                      ? "bg-primary-50 text-primary-700 shadow-sm"
-                      : "text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900"
-                    }
-                  `}
-                >
-                  <item.icon className={`h-5 w-5 transition-transform duration-200 ${isActive ? "" : "group-hover:scale-110"}`} />
-                  {item.name}
-                </Link>
-              )
-            })}
-          </>
-        )}
+        {isAdmin && <AdminNav />}
       </nav>
 
       <div className="p-4 border-t border-neutral-200">

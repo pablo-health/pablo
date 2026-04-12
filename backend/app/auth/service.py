@@ -5,7 +5,6 @@
 import logging
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +22,7 @@ from ..repositories import (
     get_user_repository,
 )
 from ..settings import get_settings
+from ..utcnow import utc_now_iso
 from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
 
@@ -252,7 +252,7 @@ def require_mfa(
     if settings.e2e_test_emails and not is_prod_project:
         email = decoded_token.get("email", "")
         if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
-            logger.warning("MFA bypassed for E2E test account: %s", email)
+            logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
             return decoded_token
 
     firebase_claims = decoded_token.get("firebase", {})
@@ -454,7 +454,7 @@ def _resolve_user(
             id=str(user_id),
             email=email,
             name=decoded_token.get("name", decoded_token.get("email", "User")),
-            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            created_at=utc_now_iso(),
             picture=decoded_token.get("picture"),
             status="approved",
         )
@@ -497,8 +497,48 @@ def get_current_user(
     return _resolve_user(decoded_token, user_repo, allowlist_repo, tenant_id_header)
 
 
-def require_baa_acceptance(
+def require_active_subscription(
     user: User = Depends(get_current_user),
+) -> User:
+    """Verify the user's practice has an active (or trial/grace) subscription.
+
+    No-op for self-hosted (non-SaaS) installations.
+
+    Raises:
+        HTTPException: 403 if subscription is lapsed and no grace extension is active.
+    """
+    settings = get_settings()
+    if not settings.is_saas:
+        return user
+
+    from ..routes.subscription import _fetch_subscription  # type: ignore[import-not-found]
+
+    sub = _fetch_subscription(user.email, settings)
+    if not sub:
+        # No subscription record — might be mid-provisioning; let through
+        return user
+
+    effective = sub.get("effective_status", sub.get("status"))
+    if effective in ("active", "trial"):
+        return user
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "error": {
+                "code": "SUBSCRIPTION_INACTIVE",
+                "message": "Your subscription is not active",
+                "details": {
+                    "status": sub.get("status"),
+                    "grace_extension_available": sub.get("grace_extension_available", False),
+                },
+            }
+        },
+    )
+
+
+def require_baa_acceptance(
+    user: User = Depends(require_active_subscription),
 ) -> User:
     """
     Verify that the user has accepted the Business Associate Agreement.

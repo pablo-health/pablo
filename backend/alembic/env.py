@@ -1,0 +1,91 @@
+"""Alembic environment configuration for schema-per-practice migrations.
+
+Migrations run against the practice schema template. When deploying,
+a provisioning step applies migrations to all existing practice schemas.
+"""
+
+import sys
+from logging.config import fileConfig
+from pathlib import Path
+
+from alembic import context
+from sqlalchemy import engine_from_config, pool, text
+
+# Add backend to sys.path so we can import app modules
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
+from app.db.models import Base
+from app.db.platform_models import PlatformBase
+import app.db.saas_models as _saas_models  # noqa: F401  # register SaaS models with PlatformBase
+from app.settings import get_settings
+
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+target_metadata = Base.metadata
+platform_metadata = PlatformBase.metadata
+
+settings = get_settings()
+
+
+def run_migrations_offline() -> None:
+    """Run migrations in 'offline' mode — emit SQL without a live connection."""
+    url = settings.database_url
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def run_migrations_online() -> None:
+    """Run migrations against a live database.
+
+    Creates platform schema if needed, then runs practice-schema migrations
+    within the default practice schema.
+    """
+    configuration = config.get_section(config.config_ini_section, {})
+    configuration["sqlalchemy.url"] = settings.database_url
+
+    connectable = engine_from_config(
+        configuration,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+
+    with connectable.connect() as connection:
+        # Ensure schemas exist
+        connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
+        connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DEFAULT_PRACTICE_SCHEMA}"))
+        connection.commit()
+
+        # Create platform tables directly (not versioned — small, stable set)
+        platform_metadata.create_all(connection)
+        connection.commit()
+
+        # Run practice-schema migrations
+        connection.execute(
+            text(f"SET search_path = {DEFAULT_PRACTICE_SCHEMA}, {PLATFORM_SCHEMA}, public")
+        )
+
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table_schema=DEFAULT_PRACTICE_SCHEMA,
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

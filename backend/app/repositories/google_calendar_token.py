@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
+
+from ..utcnow import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class GoogleCalendarTokenRepository:
         self._collection.document(token_doc.user_id).set(token_doc.to_dict())
 
     def update_sync_token(self, user_id: str, sync_token: str) -> None:
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         self._collection.document(user_id).update(
             {
                 "sync_token": sync_token,

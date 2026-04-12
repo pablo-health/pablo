@@ -8,7 +8,6 @@ import base64
 import io
 import os
 import zipfile
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
@@ -16,6 +15,7 @@ from urllib.parse import urlparse
 import pytest
 from app.models.patient import Patient
 from app.repositories.ical_sync_config import ICalSyncConfig
+from app.utcnow import utc_now_iso
 
 if TYPE_CHECKING:
     from app.repositories.ical_client_mapping import ICalClientMapping
@@ -115,7 +115,7 @@ END:VCALENDAR"""
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _make_patient(patient_id: str, first: str, last: str, user_id: str = "user1") -> Patient:

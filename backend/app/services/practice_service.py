@@ -14,6 +14,7 @@ from ..models.enums import SessionSource
 from ..models.practice import CreatePracticeSessionRequest, PracticeTopic
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..settings import Settings
+from ..utcnow import utc_now_iso
 from .practice_session_manager import ConversationEntry
 
 logger = logging.getLogger(__name__)
@@ -127,11 +128,11 @@ class PracticeService:
             if existing.first_name == "Pablo":
                 existing.first_name = "Pablo Practice"
                 existing.first_name_lower = "pablo practice"
-                existing.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+                existing.updated_at = utc_now_iso()
                 return self._patient_repo.update(existing)
             return existing
 
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         patient = Patient(
             id=patient_id,
             user_id=user_id,
@@ -203,7 +204,7 @@ class PracticeService:
         if self._has_active_session(user_id, patient.id):
             raise PracticeConcurrentLimitError
 
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         session_number = self._session_repo.get_session_number_for_patient(patient.id)
 
         session = TherapySession(
@@ -248,7 +249,7 @@ class PracticeService:
         if session.status != SessionStatus.SCHEDULED:
             raise PracticeSessionNotEndableError(session.status)
 
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         session.status = SessionStatus.IN_PROGRESS
         session.started_at = now
         session.updated_at = now
@@ -264,7 +265,7 @@ class PracticeService:
         if session.status not in endable:
             raise PracticeSessionNotEndableError(session.status)
 
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         session.status = SessionStatus.RECORDING_COMPLETE
         session.ended_at = now
         session.updated_at = now
