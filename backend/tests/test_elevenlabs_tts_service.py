@@ -99,7 +99,6 @@ class TestOutputFormatPlacement:
 
 
 class TestURLConstruction:
-
     def test_url_contains_voice_id(self, tts_custom_voice):
         captured: dict[str, Any] = {}
         tts_custom_voice._client = _mock_client(captured)
@@ -117,7 +116,6 @@ class TestURLConstruction:
 
 
 class TestRequestBody:
-
     def test_body_contains_text_and_model(self, tts):
         captured: dict[str, Any] = {}
         tts._client = _mock_client(captured)
@@ -145,7 +143,6 @@ class TestRequestBody:
 
 
 class TestEmptyInput:
-
     def test_empty_text_skips_api_call(self, tts):
         callback = AsyncMock()
         asyncio.run(tts.synthesize_stream("", callback))
@@ -158,7 +155,6 @@ class TestEmptyInput:
 
 
 class TestErrorHandling:
-
     def test_non_200_raises_tts_error(self, tts):
         captured: dict[str, Any] = {}
         tts._client = _mock_client(captured, status=401, body=b'{"detail":"invalid_api_key"}')

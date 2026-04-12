@@ -94,6 +94,7 @@ if settings.practice_enabled:
 
     app.include_router(practice.router)
 
+
 @app.get("/api/health")
 def health_check() -> dict[str, object]:
     """Health check endpoint.

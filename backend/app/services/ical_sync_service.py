@@ -224,9 +224,7 @@ class ICalSyncService:
         result = ImportResult()
 
         all_patients, _ = self._patient_repo.list_by_user(user_id, page=1, page_size=10000)
-        existing_by_name = {
-            (p.first_name.lower(), p.last_name.lower()): p for p in all_patients
-        }
+        existing_by_name = {(p.first_name.lower(), p.last_name.lower()): p for p in all_patients}
 
         for row_num, row in enumerate(reader, start=1):
             first_name = row.get("First Name", "").strip()

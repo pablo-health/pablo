@@ -77,33 +77,22 @@ def _migrate_platform_columns(engine: Engine) -> None:
     subs = f"{PLATFORM_SCHEMA}.subscriptions"
     migrations = [
         # practices: columns added over time
-        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
-        " tenant_id VARCHAR(128) UNIQUE",
+        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128) UNIQUE",
         f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
         " owner_email VARCHAR(255) NOT NULL DEFAULT ''",
-        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
-        " status VARCHAR(20) DEFAULT 'active'",
+        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active'",
         # subscriptions: trial tracking
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS"
-        " trial_start VARCHAR(50)",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS"
-        " trial_sessions_used INTEGER DEFAULT 0",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS"
-        " trial_sessions_limit INTEGER DEFAULT 15",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS"
-        " trial_days_limit INTEGER DEFAULT 0",
+        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_start VARCHAR(50)",
+        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_sessions_used INTEGER DEFAULT 0",
+        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_sessions_limit INTEGER DEFAULT 15",
+        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_days_limit INTEGER DEFAULT 0",
         # subscriptions: grace extension
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS"
-        " grace_extension_used BOOLEAN DEFAULT FALSE",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS"
-        " grace_extension_expires_at VARCHAR(50)",
+        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS grace_extension_used BOOLEAN DEFAULT FALSE",
+        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS grace_extension_expires_at VARCHAR(50)",
         # Widen all timestamp columns from VARCHAR(30) to 50
-        f"ALTER TABLE {practices}"
-        " ALTER COLUMN created_at TYPE VARCHAR(50)",
-        f"ALTER TABLE {subs}"
-        " ALTER COLUMN created_at TYPE VARCHAR(50)",
-        f"ALTER TABLE {subs}"
-        " ALTER COLUMN updated_at TYPE VARCHAR(50)",
+        f"ALTER TABLE {practices} ALTER COLUMN created_at TYPE VARCHAR(50)",
+        f"ALTER TABLE {subs} ALTER COLUMN created_at TYPE VARCHAR(50)",
+        f"ALTER TABLE {subs} ALTER COLUMN updated_at TYPE VARCHAR(50)",
         f"ALTER TABLE {PLATFORM_SCHEMA}.email_tenant_mappings"
         " ALTER COLUMN created_at TYPE VARCHAR(50)",
     ]

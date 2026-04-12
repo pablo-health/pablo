@@ -79,21 +79,19 @@ class ReminderService:
         return {"24h_sent": sent_24h, "1h_sent": sent_1h}
 
     @staticmethod
-    def _send_24h_reminder(appointment_id: str, _patient_id: str) -> None:
+    def _send_24h_reminder(_appointment_id: str, _patient_id: str) -> None:
         """Send a 24-hour reminder for an appointment.
 
         TODO: Integrate with email/notification service.
         Currently logs the reminder action without PHI.
         """
-        # HIPAA: log IDs only, never patient names or session content
-        logger.info("24h reminder queued for appointment %s", appointment_id)
+        logger.info("24h reminder queued")
 
     @staticmethod
-    def _send_1h_reminder(appointment_id: str, _patient_id: str) -> None:
+    def _send_1h_reminder(_appointment_id: str, _patient_id: str) -> None:
         """Send a 1-hour reminder for an appointment.
 
         TODO: Integrate with email/notification service.
         Currently logs the reminder action without PHI.
         """
-        # HIPAA: log IDs only, never patient names or session content
-        logger.info("1h reminder queued for appointment %s", appointment_id)
+        logger.info("1h reminder queued")

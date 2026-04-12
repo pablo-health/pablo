@@ -34,14 +34,18 @@ from .soap_generation_service import SOAPGenerationService
 
 logger = logging.getLogger(__name__)
 
+
 class SessionServiceError(Exception):
     """Base exception for session service errors."""
+
 
 class PatientNotFoundError(SessionServiceError):
     """Raised when a patient is not found."""
 
+
 class SessionNotFoundError(SessionServiceError):
     """Raised when a session is not found."""
+
 
 class InvalidSessionStatusError(SessionServiceError):
     """Raised when a session is in the wrong status for an operation."""
@@ -50,8 +54,10 @@ class InvalidSessionStatusError(SessionServiceError):
         self.current_status = current_status
         super().__init__(f"Expected status '{expected}', got '{current_status}'")
 
+
 class SOAPGenerationFailedError(SessionServiceError):
     """Raised when SOAP generation fails."""
+
 
 class InvalidStatusTransitionError(SessionServiceError):
     """Raised when a session status transition is not allowed."""
@@ -61,6 +67,7 @@ class InvalidStatusTransitionError(SessionServiceError):
         self.target = target
         super().__init__(f"Cannot transition from '{current}' to '{target}'")
 
+
 class SessionAlreadyInStatusError(SessionServiceError):
     """Raised when a session is already in the target status (409)."""
 
@@ -68,12 +75,14 @@ class SessionAlreadyInStatusError(SessionServiceError):
         self.status = status
         super().__init__(f"Session is already in status '{status}'")
 
+
 class SessionInTerminalStatusError(SessionServiceError):
     """Raised when trying to modify a session in a terminal status."""
 
     def __init__(self, status: str) -> None:
         self.status = status
         super().__init__(f"Cannot modify session in terminal status '{status}'")
+
 
 # Valid status transitions (state machine)
 VALID_TRANSITIONS: dict[str, set[str]] = {
@@ -92,8 +101,10 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 
 TERMINAL_STATUSES = {SessionStatus.FINALIZED, SessionStatus.CANCELLED, SessionStatus.FAILED}
 
+
 def _now() -> str:
     return utc_now_iso()
+
 
 class SessionService:
     """Orchestrates multi-step session operations."""

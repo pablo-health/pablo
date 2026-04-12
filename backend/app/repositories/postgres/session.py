@@ -41,9 +41,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[TherapySession], int]:
-        base = self._session.query(TherapySessionRow).filter(
-            TherapySessionRow.user_id == user_id
-        )
+        base = self._session.query(TherapySessionRow).filter(TherapySessionRow.user_id == user_id)
         total = base.count()
         offset = (page - 1) * page_size
         rows = (

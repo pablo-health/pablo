@@ -106,5 +106,4 @@ class TestRequireAdmin:
             assert detail["error"]["code"] == "ADMIN_REQUIRED"
 
 
-
 # Export queue tests are in test_admin_export_queue.py (SaaS-only, excluded from OSS)

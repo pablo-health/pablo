@@ -72,11 +72,13 @@ _background_tasks: set[asyncio.Task[None]] = set()
 
 router = APIRouter(tags=["sessions"])
 
+
 def get_patient_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
     return _patient_repo_factory(firestore_db=ctx.firestore_db)
+
 
 def get_session_repository(
     ctx: TenantContext = Depends(get_tenant_context),
@@ -84,9 +86,11 @@ def get_session_repository(
     """Get session repository scoped to the tenant's database."""
     return _session_repo_factory(firestore_db=ctx.firestore_db)
 
+
 def get_soap_generation_service() -> SOAPGenerationService:
     """Get SOAP generation service instance."""
     return MeetingTranscriptionSOAPService()
+
 
 def _build_eval_export_service() -> "EvalExportService | None":
     """Build eval export service if SaaS edition is active."""
@@ -98,6 +102,7 @@ def _build_eval_export_service() -> "EvalExportService | None":
 
     return EvalExportService(PIIRedactionService(), settings)
 
+
 def get_session_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
@@ -105,6 +110,7 @@ def get_session_service(
 ) -> SessionService:
     """Get session service instance with all dependencies."""
     return SessionService(session_repo, patient_repo, soap_service, _build_eval_export_service())
+
 
 @router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_201_CREATED)
 def upload_session(
@@ -150,6 +156,7 @@ def upload_session(
 
     return SessionResponse.from_session(session, patient.display_name)
 
+
 @router.get("/api/sessions")
 def list_sessions(
     request: Request,
@@ -187,6 +194,7 @@ def list_sessions(
         page=page,
         page_size=page_size,
     )
+
 
 @router.get("/api/sessions/today")
 def get_today_sessions(
@@ -242,6 +250,7 @@ def get_today_sessions(
 
     return TodaySessionListResponse(data=data, total=len(data))
 
+
 @router.get("/api/sessions/{session_id}")
 def get_session(
     session_id: str,
@@ -278,6 +287,7 @@ def get_session(
     audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
 
     return SessionResponse.from_session(session, patient_name)
+
 
 @router.patch("/api/sessions/{session_id}/finalize")
 def finalize_session(
@@ -337,6 +347,7 @@ def finalize_session(
 
     return SessionResponse.from_session(session, patient_name)
 
+
 @router.patch("/api/sessions/{session_id}/rating")
 def update_session_rating(
     session_id: str,
@@ -394,7 +405,9 @@ def update_session_rating(
 
     return SessionResponse.from_session(session, patient_name)
 
+
 # --- Companion scheduling endpoints ---
+
 
 @router.post("/api/sessions/schedule", status_code=status.HTTP_201_CREATED)
 def schedule_session(
@@ -416,6 +429,7 @@ def schedule_session(
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
     return SessionResponse.from_session(session, patient.display_name)
+
 
 @router.patch("/api/sessions/{session_id}/status")
 def update_session_status(
@@ -464,6 +478,7 @@ def update_session_status(
 
     return SessionResponse.from_session(session, patient_name)
 
+
 @router.patch("/api/sessions/{session_id}")
 def update_session_metadata(
     session_id: str,
@@ -492,6 +507,7 @@ def update_session_metadata(
 
     patient_name = patient.display_name if patient else "Unknown"
     return SessionResponse.from_session(session, patient_name)
+
 
 @router.post("/api/sessions/{session_id}/transcript")
 def upload_transcript_to_session(
@@ -534,6 +550,7 @@ def upload_transcript_to_session(
         "message": "Transcript received. SOAP note generation started.",
     }
 
+
 # --- Audio upload for server-side transcription ---
 
 _MAX_AUDIO_SIZE = 500 * 1024 * 1024  # 500 MB
@@ -548,6 +565,7 @@ _ALLOWED_AUDIO_TYPES = {
     "audio/flac",
     "application/octet-stream",
 }
+
 
 @router.post("/api/sessions/{session_id}/upload-audio")
 async def upload_audio(

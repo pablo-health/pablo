@@ -1,36 +1,32 @@
-# Backend Production Dockerfile
+# Backend Production Dockerfile (Chainguard)
 # Layers app code on top of the pre-built base image (backend-base)
-# which contains all Python dependencies. This makes deploys fast (~1-3 min).
+# which contains the Python runtime and all dependencies.
+# trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
 #
 # To rebuild the base image (when deps change):
 #   ./rebuild-base.sh
 
-ARG BASE_IMAGE=ghcr.io/pablo-health/backend-base:latest
+ARG BASE_IMAGE=ghcr.io/pablo-health/backend-base:2026-04-11
 FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
 # Copy application code and repo-root config files
-COPY backend/ ./backend/
-COPY min_client_versions.json ./
+COPY --chown=nonroot:nonroot backend/ ./backend/
+COPY --chown=nonroot:nonroot min_client_versions.json ./
+COPY --chown=nonroot:nonroot backend/entrypoint.py ./entrypoint.py
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+USER nonroot
 
 # Expose port (Cloud Run uses PORT env var, defaults to 8000)
 EXPOSE 8000
-
-# Health check endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)"
 
 # Production server configuration
 ENV PYTHONUNBUFFERED=1
 ENV ENVIRONMENT=production
 
-# Run with production settings (no reload, single worker)
+# Run with production settings via Python entrypoint (no shell in Chainguard).
 # Single worker required: the in-memory auth code store (native app
 # code exchange) is process-local and cannot be shared across workers.
 # Move to Redis-backed store before scaling to multiple workers.
-CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --log-level info --no-access-log"]
+CMD ["python", "entrypoint.py"]

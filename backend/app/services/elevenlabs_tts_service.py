@@ -62,8 +62,7 @@ class ElevenLabsTTSService:
 
         client = await self._ensure_client()
         url = (
-            f"{ELEVENLABS_API_BASE}/text-to-speech"
-            f"/{self._voice_id}/stream?output_format=pcm_24000"
+            f"{ELEVENLABS_API_BASE}/text-to-speech/{self._voice_id}/stream?output_format=pcm_24000"
         )
 
         try:

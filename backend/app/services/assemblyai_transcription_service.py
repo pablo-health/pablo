@@ -46,9 +46,7 @@ class _SpeechRegion:
     original_offset: float  # seconds into the original audio where this region starts
 
 
-def _merge_close_regions(
-    regions: list[tuple[int, int]], gap_samples: int
-) -> list[tuple[int, int]]:
+def _merge_close_regions(regions: list[tuple[int, int]], gap_samples: int) -> list[tuple[int, int]]:
     """Merge adjacent regions that are closer than gap_samples apart."""
     merged: list[tuple[int, int]] = [regions[0]]
     for start, end in regions[1:]:
@@ -213,12 +211,14 @@ class AssemblyAiTranscriptionService:
         if not words:
             text = result.get("text", "").strip()
             if text:
-                return [{
-                    "start": region.original_offset,
-                    "end": region.original_offset,
-                    "speaker": speaker,
-                    "text": text,
-                }]
+                return [
+                    {
+                        "start": region.original_offset,
+                        "end": region.original_offset,
+                        "speaker": speaker,
+                        "text": text,
+                    }
+                ]
             return []
 
         return _words_to_utterances(

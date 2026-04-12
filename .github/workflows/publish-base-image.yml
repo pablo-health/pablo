@@ -70,4 +70,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.check.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Pass GHCR auth to buildx so it can pull the private base-python image
+          secrets: |
+            GIT_AUTH_TOKEN=${{ secrets.GITHUB_TOKEN }}
         timeout-minutes: 45
