@@ -23,7 +23,7 @@ COPY . .
 RUN AUTH_COOKIE_SIGNATURE_KEY="build-time-placeholder-replaced-at-runtime" npm run build
 
 # Stage 2: Runner - Distroless production image (no shell, no package manager)
-FROM gcr.io/distroless/nodejs22-debian12 AS runner
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runner
 
 WORKDIR /app
 

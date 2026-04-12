@@ -1,5 +1,5 @@
 # Backend Base Image (Distroless)
-# Contains Python 3.13 runtime + all dependencies (PyTorch, spaCy, ONNX, Presidio, etc.)
+# Contains Python 3.13 runtime + all dependencies (FastAPI, SQLAlchemy, etc.)
 # Rebuild only when pyproject.toml or poetry.lock changes.
 #
 # Usage:
@@ -26,9 +26,6 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 # Copy dependency files
 COPY pyproject.toml poetry.lock ./
 
-# Install CPU-only PyTorch first (Cloud Run has no GPU).
-# This avoids downloading ~2GB of CUDA/nvidia packages.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Install remaining dependencies (no dev packages, no virtualenv)
 # Note: meeting-transcription is automatically cloned from git by Poetry
@@ -45,7 +42,7 @@ COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/pytho
 COPY --from=builder /usr/local/bin/python3.13 /usr/local/bin/python3.13
 COPY --from=builder /usr/local/lib/libpython3.13.so* /usr/local/lib/
 
-# Discover all shared libraries required by native extensions (PyTorch, ONNX, etc.)
+# Discover all shared libraries required by native extensions
 # and the Python interpreter itself, then copy them into /runtime-libs.
 # This catches .so dependencies that distroless/cc doesn't include (e.g., libgomp, libopenblas).
 RUN mkdir -p /runtime-libs \
@@ -79,6 +76,8 @@ COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
 # Ensure dynamic linker finds our copied libraries
 ENV LD_LIBRARY_PATH=/usr/local/lib
 ENV PYTHONUNBUFFERED=1
+
+USER nonroot
 
 # Smoke test: verify all critical imports work at build time.
 # Catches missing shared libraries before they hit production.
