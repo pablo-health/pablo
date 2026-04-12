@@ -48,38 +48,25 @@ jobs:
       security-events: write
       contents: read
       actions: read
-      packages: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: ghcr.io/pablo-health/base-python:2026-04-11
+          # Scan Chainguard source images (public, identical to our GHCR mirrors)
+          - image: cgr.dev/chainguard/python:latest
             category: trivy-python-base
-          - image: ghcr.io/pablo-health/base-node:2026-04-11
+          - image: cgr.dev/chainguard/node:latest
             category: trivy-node-base
     steps:
       - uses: actions/checkout@v6
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull image
-        run: docker pull ${{ matrix.image }}
-
       - name: Scan ${{ matrix.image }}
         uses: aquasecurity/trivy-action@0.35.0
         with:
-          input: /dev/null
           image-ref: ${{ matrix.image }}
           format: sarif
           output: trivy-base.sarif
           severity: CRITICAL,HIGH
-        env:
-          TRIVY_IMAGE_SRC: docker
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4
