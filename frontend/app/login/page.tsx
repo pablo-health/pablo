@@ -3,7 +3,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   signInWithPopup,
   signInWithRedirect,
@@ -25,37 +25,57 @@ import {
   setCachedTenantId,
   clearCachedTenantId,
   resolveTenant,
+  signupPractice,
 } from "@/lib/tenant"
 
 type LoginStep =
   | "email-resolve"
   | "sign-in"
+  | "register-practice"
   | "mfa"
   | "verify-email"
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const config = useConfig()
   const { user, loading: authLoading } = useAuth()
-  const [email, setEmail] = useState("")
+
+  // Check for query params from marketing signup redirect
+  const paramEmail = searchParams.get("email") || ""
+  const paramTenantId = searchParams.get("tenant_id") || ""
+
+  const [email, setEmail] = useState(paramEmail)
   const [password, setPassword] = useState("")
+  const [practiceName, setPracticeName] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
   const [resendSent, setResendSent] = useState(false)
-  const [isSignUp, setIsSignUp] = useState(false)
+  const [isSignUp, setIsSignUp] = useState(!!paramTenantId)
   const [resolvedTenantId, setResolvedTenantId] = useState<string | null>(
-    getCachedTenantId
+    paramTenantId || getCachedTenantId
   )
 
-  // Tenant resolution state — skip email-resolve in single-tenant mode
-  const [step, setStep] = useState<LoginStep>(() =>
-    !config.multiTenancyEnabled || getCachedTenantId() ? "sign-in" : "email-resolve"
-  )
+  // Tenant resolution state — skip email-resolve if tenant provided via query param,
+  // cached, or in single-tenant mode
+  const [step, setStep] = useState<LoginStep>(() => {
+    if (paramTenantId || !config.multiTenancyEnabled || getCachedTenantId()) {
+      return "sign-in"
+    }
+    return "email-resolve"
+  })
 
   // MFA challenge state
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
   const [totpCode, setTotpCode] = useState("")
+
+  // If tenant_id was provided via query param (from marketing signup), cache it
+  useEffect(() => {
+    if (paramTenantId) {
+      ensureTenantId(paramTenantId)
+    }
+  }, [paramTenantId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redirect to dashboard when already authenticated
   useEffect(() => {
@@ -79,15 +99,47 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const tenantId = await resolveTenant(email, config.apiUrl)
+      const { tenantId, isAdmin } = await resolveTenant(email, config.apiUrl)
       if (tenantId) {
         ensureTenantId(tenantId)
         setStep("sign-in")
+      } else if (isAdmin) {
+        // Platform admin — sign in at project level (no tenant)
+        setFirebaseTenantId(null)
+        clearCachedTenantId()
+        setStep("sign-in")
+      } else if (config.multiTenancyEnabled) {
+        // No tenant found — offer to register a new practice
+        setStep("register-practice")
       } else {
         setStep("sign-in")
       }
     } catch {
       setError("Unable to verify email. Please try again.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Register a new practice
+  const handleRegisterPractice = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError("")
+    setLoading(true)
+
+    try {
+      const tenantId = await signupPractice(email, practiceName, config.apiUrl)
+      if (tenantId) {
+        ensureTenantId(tenantId)
+        setIsSignUp(true)
+        setStep("sign-in")
+      } else {
+        setError(
+          "Unable to register practice. Your email may not be on the allowlist. Contact your administrator."
+        )
+      }
+    } catch {
+      setError("Failed to register practice. Please try again.")
     } finally {
       setLoading(false)
     }
@@ -287,6 +339,7 @@ export default function LoginPage() {
     setError("")
     setEmail("")
     setPassword("")
+    setPracticeName("")
     setIsSignUp(false)
     setStep("email-resolve")
   }
@@ -429,6 +482,73 @@ export default function LoginPage() {
               Back to Sign In
             </button>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Register Practice Screen (no tenant found for this email)
+  if (step === "register-practice") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
+        <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
+          <div className="text-center">
+            <h1 className="text-4xl font-display font-bold text-primary-600">
+              Pablo
+            </h1>
+            <p className="mt-3 text-neutral-600">
+              No practice found for <strong>{email}</strong>
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              Register a new practice to get started, or use a different email if
+              you already have an account.
+            </p>
+          </div>
+
+          <form onSubmit={handleRegisterPractice} className="space-y-4">
+            <div>
+              <label
+                htmlFor="practice-name"
+                className="block text-sm font-medium text-neutral-700 mb-1"
+              >
+                Practice Name
+              </label>
+              <input
+                id="practice-name"
+                type="text"
+                value={practiceName}
+                onChange={(e) => setPracticeName(e.target.value)}
+                placeholder="e.g. Sunrise Behavioral Health"
+                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                required
+                autoFocus
+                minLength={2}
+                maxLength={100}
+              />
+            </div>
+
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-sm text-red-600">{error}</p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? "Setting up your practice..." : "Register Practice"}
+            </button>
+          </form>
+
+          <button
+            type="button"
+            onClick={handleStartOver}
+            className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
+          >
+            Use a different email
+          </button>
         </div>
       </div>
     )

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from datetime import date as date_type
 from typing import TYPE_CHECKING
 
+from ...utcnow import utc_now_iso
 from ..exceptions import AppointmentNotFoundError, InvalidAppointmentError, InvalidRecurrenceError
 from ..models.appointment import Appointment, AppointmentStatus, RecurrenceFrequency
 from .recurrence import RecurrenceGenerator
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _to_utc(iso_str: str) -> str:

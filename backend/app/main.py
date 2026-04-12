@@ -14,8 +14,8 @@ from .routes import (
     admin,
     auth,
     ehr_routes,
+    ext_auth,
     ical_sync,
-    internal,
     patients,
     scheduling,
     sessions,
@@ -45,6 +45,16 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.is_development else None,
 )
 
+# PostgreSQL session middleware (must be added before security middleware
+# so it wraps the request lifecycle inside the security layer)
+if settings.database_backend == "postgres":
+    from .db import get_engine
+    from .db.middleware import DatabaseSessionMiddleware
+    from .db.provisioning import ensure_schemas
+
+    ensure_schemas(get_engine())
+    app.add_middleware(DatabaseSessionMiddleware)
+
 # Security middleware - HIPAA TLS enforcement (order matters: security first)
 app.add_middleware(SecurityHeadersMiddleware, settings=settings)
 app.add_middleware(HTTPSEnforcementMiddleware, settings=settings)
@@ -68,6 +78,7 @@ app.add_middleware(
 
 # Core routes (always included)
 app.include_router(auth.router)
+app.include_router(ext_auth.router)
 app.include_router(admin.router)
 app.include_router(users.router)
 app.include_router(patients.router)
@@ -76,7 +87,6 @@ app.include_router(sessions.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
-app.include_router(internal.router)
 
 # Practice Mode (feature-flagged)
 if settings.practice_enabled:

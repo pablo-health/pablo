@@ -8,7 +8,6 @@ Implements CRUD operations for patient management with multi-tenant isolation.
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import cast
 
@@ -16,7 +15,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..database import get_tenant_firestore_client
 from ..models import (
     AuditAction,
     CreatePatientRequest,
@@ -28,12 +26,17 @@ from ..models import (
     User,
 )
 from ..repositories import (
-    FirestorePatientRepository,
-    FirestoreTherapySessionRepository,
     PatientRepository,
     TherapySessionRepository,
 )
+from ..repositories import (
+    get_patient_repository as _patient_repo_factory,
+)
+from ..repositories import (
+    get_session_repository as _session_repo_factory,
+)
 from ..services import AuditService, ExportService, get_audit_service
+from ..utcnow import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +55,14 @@ def get_patient_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestorePatientRepository(db)
+    return _patient_repo_factory(firestore_db=ctx.firestore_db)
 
 
 def get_therapy_session_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestoreTherapySessionRepository(db)
+    return _session_repo_factory(firestore_db=ctx.firestore_db)
 
 
 def get_export_service(
@@ -91,7 +92,7 @@ def create_patient(
     - **date_of_birth**: Date of birth in ISO format (optional)
     - **diagnosis**: Current diagnosis (optional)
     """
-    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    now = utc_now_iso()
 
     patient = Patient(
         id=str(uuid.uuid4()),

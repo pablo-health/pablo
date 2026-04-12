@@ -11,18 +11,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 from google.cloud.firestore_v1.base_query import FieldFilter
 
+from ..utcnow import utc_now_iso
+
 logger = logging.getLogger(__name__)
 
 COLLECTION = "ical_sync_configs"
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @dataclass
@@ -105,7 +102,7 @@ class ICalSyncConfigRepository:
         doc_id = f"{user_id}_{ehr_system}"
         self._collection.document(doc_id).update(
             {
-                "last_synced_at": _now(),
+                "last_synced_at": utc_now_iso(),
                 "last_sync_error": error,
             }
         )

@@ -1,23 +1,19 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Pre-auth endpoints for tenant resolution, signup, and native app code exchange.
+"""Pre-auth endpoints for native app code exchange (RFC 8252).
 
 These endpoints do NOT require authentication — they run before the user has a JWT.
-Security: constant-time responses prevent email enumeration.
 """
 
-import asyncio
 import logging
-import time
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from firebase_admin import auth as firebase_auth
 from firebase_admin import tenant_mgt
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 from ..auth.firebase_init import initialize_firebase_app
-from ..database import get_admin_firestore_client
 from ..rate_limit import require_rate_limit
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..settings import get_settings
@@ -27,93 +23,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-RESOLVE_MIN_DURATION = 0.15  # 150ms minimum response time
-
-class ResolveTenantRequest(BaseModel):
-    email: EmailStr
-
-class ResolveTenantResponse(BaseModel):
-    status: str = "ok"
-    tenant_id: str | None = None
-    is_admin: bool = False
-
-class SignupRequest(BaseModel):
-    email: EmailStr
-    practice_name: str
-
-class SignupResponse(BaseModel):
-    status: str = "ok"
-    tenant_id: str | None = None
-
-@router.post("/resolve-tenant", response_model=ResolveTenantResponse)
-async def resolve_tenant(
-    request: ResolveTenantRequest, _: None = Depends(require_rate_limit)
-) -> ResolveTenantResponse:
-    """Resolve an email to a tenant ID for pre-auth tenant selection.
-
-    Always returns 200 with identical response shape to prevent email enumeration.
-    Uses constant-time responses (padded to RESOLVE_MIN_DURATION).
-    """
-    start = time.monotonic()
-
-    settings = get_settings()
-    if not settings.multi_tenancy_enabled:
-        # Single-tenant mode — no tenant resolution needed
-        await _pad_response_time(start)
-        return ResolveTenantResponse()
-
-    admin_db = get_admin_firestore_client()
-    doc = admin_db.collection("email_tenants").document(request.email.lower()).get()
-    tenant_id = doc.to_dict().get("tenant_id") if doc.exists else None
-
-    # Check if admin user — admins with a tenant sign in through their tenant,
-    # admins without a tenant sign in at project level
-    is_admin = False
-    users = admin_db.collection("users").where("email", "==", request.email.lower()).limit(1)
-    for user_doc in users.stream():
-        user_data = user_doc.to_dict()
-        if user_data and user_data.get("is_admin"):
-            is_admin = True
-
-    await _pad_response_time(start)
-    return ResolveTenantResponse(tenant_id=tenant_id, is_admin=is_admin)
-
-@router.post("/signup", response_model=SignupResponse)
-async def signup(request: SignupRequest, _: None = Depends(require_rate_limit)) -> SignupResponse:
-    """Self-service signup: provision a new practice for an allowlisted email.
-
-    Always returns 200 to prevent email enumeration.
-    """
-    settings = get_settings()
-    if not settings.multi_tenancy_enabled:
-        return SignupResponse()
-
-    admin_db = get_admin_firestore_client()
-
-    # Check allowlist
-    email_lower = request.email.lower()
-    allowed_doc = admin_db.collection("allowed_emails").document(email_lower).get()
-    if not allowed_doc.exists:
-        # Not allowlisted — return generic response (no enumeration)
-        return SignupResponse()
-
-    # Check if already provisioned
-    existing = admin_db.collection("email_tenants").document(email_lower).get()
-    if existing.exists:
-        # Already has a tenant — return it
-        return SignupResponse(tenant_id=existing.to_dict().get("tenant_id"))
-
-    return SignupResponse()
-
-async def _pad_response_time(start: float) -> None:
-    """Pad response to constant minimum duration to prevent timing attacks."""
-    elapsed = time.monotonic() - start
-    if elapsed < RESOLVE_MIN_DURATION:
-        await asyncio.sleep(RESOLVE_MIN_DURATION - elapsed)
 
 # --- Native App Code Exchange (RFC 8252) ---
 
 ALLOWED_NATIVE_SCHEMES = {"pablohealth", "therapyrecorder"}
+
 
 def _is_valid_native_redirect_uri(uri: str) -> bool:
     """Validate that the redirect URI is an allowed native app callback."""
@@ -127,21 +41,26 @@ def _is_valid_native_redirect_uri(uri: str) -> bool:
     # Allow loopback for native apps (RFC 8252 Section 7.3)
     return parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1")
 
+
 class CreateAuthCodeRequest(BaseModel):
     id_token: str
     refresh_token: str
     redirect_uri: str
 
+
 class CreateAuthCodeResponse(BaseModel):
     code: str
+
 
 class ExchangeAuthCodeRequest(BaseModel):
     code: str
     redirect_uri: str
 
+
 class ExchangeAuthCodeResponse(BaseModel):
     id_token: str
     refresh_token: str
+
 
 @router.post("/native/code", response_model=CreateAuthCodeResponse)
 def create_native_code(
@@ -210,6 +129,7 @@ def create_native_code(
         redirect_uri=request.redirect_uri,
     )
     return CreateAuthCodeResponse(code=code)
+
 
 @router.post("/native/exchange", response_model=ExchangeAuthCodeResponse)
 def exchange_native_code(

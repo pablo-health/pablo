@@ -20,7 +20,7 @@ from ..auth.service import (
     resolve_tenant_database,
     verify_firebase_token,
 )
-from ..database import get_admin_firestore_client, get_tenant_firestore_client
+from ..database import get_admin_firestore_client
 from ..models import UploadTranscriptToSessionRequest
 from ..models.practice import (
     CreatePracticeSessionRequest,
@@ -33,7 +33,12 @@ from ..models.practice import (
     PracticeTopicListResponse,
     PracticeTopicResponse,
 )
-from ..repositories import FirestorePatientRepository, FirestoreTherapySessionRepository
+from ..repositories import (
+    get_patient_repository as _patient_repo_factory,
+)
+from ..repositories import (
+    get_session_repository as _session_repo_factory,
+)
 from ..services.practice_service import (
     PracticeConcurrentLimitError,
     PracticeDailyLimitError,
@@ -118,10 +123,9 @@ _ws_ticket_store = _WsTicketStore()
 def _get_practice_service(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> PracticeService:
-    db = get_tenant_firestore_client(ctx.firestore_db)
     return PracticeService(
-        session_repo=FirestoreTherapySessionRepository(db),
-        patient_repo=FirestorePatientRepository(db),
+        session_repo=_session_repo_factory(firestore_db=ctx.firestore_db),
+        patient_repo=_patient_repo_factory(firestore_db=ctx.firestore_db),
         settings=get_settings(),
     )
 
@@ -420,9 +424,8 @@ async def practice_websocket(
         if not ticket:
             # Only re-resolve for deprecated ?token= path
             firestore_db = _resolve_firestore_db(decoded_token, settings)
-        db = get_tenant_firestore_client(firestore_db)
-        session_repo = FirestoreTherapySessionRepository(db)
-        patient_repo = FirestorePatientRepository(db)
+        session_repo = _session_repo_factory(firestore_db=firestore_db)
+        patient_repo = _patient_repo_factory(firestore_db=firestore_db)
         practice_svc = PracticeService(
             session_repo=session_repo,
             patient_repo=patient_repo,

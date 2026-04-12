@@ -9,6 +9,10 @@ finalization with export queuing, and rating updates.
 import logging
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .eval_export_service import EvalExportService  # type: ignore[import-not-found]
 
 from ..models import (
     FinalizeSessionRequest,
@@ -25,6 +29,7 @@ from ..models import (
     UploadTranscriptToSessionRequest,
 )
 from ..repositories import PatientRepository, TherapySessionRepository
+from ..utcnow import utc_now_iso
 from .soap_generation_service import SOAPGenerationService
 
 logger = logging.getLogger(__name__)
@@ -88,7 +93,7 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 TERMINAL_STATUSES = {SessionStatus.FINALIZED, SessionStatus.CANCELLED, SessionStatus.FAILED}
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 class SessionService:
     """Orchestrates multi-step session operations."""
@@ -98,10 +103,12 @@ class SessionService:
         session_repo: TherapySessionRepository,
         patient_repo: PatientRepository,
         soap_service: SOAPGenerationService,
+        eval_export_service: "EvalExportService | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.soap_service = soap_service
+        self.eval_export_service = eval_export_service
 
     def _update_next_session_date(self, patient: Patient, user_id: str) -> None:
         """Recompute and persist next_session_date from scheduled sessions."""
@@ -230,6 +237,13 @@ class SessionService:
             )
 
         session = self.session_repo.update(session)
+
+        # Check if session should be queued for eval export (SaaS only)
+        if self.eval_export_service:
+            decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
+            if decision.should_queue:
+                session = self.eval_export_service.queue_session_for_export(session)
+                session = self.session_repo.update(session)
 
         patient = self.patient_repo.get(session.patient_id, user_id)
 

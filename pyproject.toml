@@ -14,7 +14,7 @@ packages = [{include = "backend"}]
 
 # Web Framework
 fastapi = ">=0.115.0"
-uvicorn = {extras = ["standard"], version = "^0.44.0"}
+uvicorn = {extras = ["standard"], version = "^0.42.0"}
 pydantic = "^2.5.0"
 pydantic-settings = "^2.13.1"
 
@@ -28,6 +28,11 @@ google-cloud-secret-manager = "^2.27.0"
 # Firebase Admin SDK (for verifying Firebase ID tokens)
 firebase-admin = "^6.9.0"
 pyjwt = {extras = ["crypto"], version = ">=2.12.0"}
+
+# PostgreSQL (schema-per-practice multi-tenancy)
+sqlalchemy = "^2.0.0"
+alembic = "^1.14.0"
+psycopg2-binary = "^2.9.0"
 
 # Caching
 redis = "^5.0.0"
@@ -49,9 +54,9 @@ icalendar = "^6.0.0"
 httpx = ">=0.28.0"
 
 # PII Redaction
-faker = "^40.13.0"
+faker = "^40.12.0"
 email-validator = "^2.3.0"
-python-multipart = "^0.0.24"
+python-multipart = "^0.0.22"
 google-cloud-storage = "^2.18.0"
 google-cloud-tasks = "^2.22.0"
 google-cloud-batch = "^0.21.0"
@@ -59,11 +64,11 @@ google-cloud-batch = "^0.21.0"
 
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^9.0.3"
+pytest = "^9.0.0"
 pytest-cov = "^7.0.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
-ruff = "^0.15.9"
+ruff = "^0.15.5"
 mypy = "^1.20.0"
 types-redis = "^4.6.0"
 pip-audit = "^2.7.0"
@@ -126,6 +131,10 @@ ignore = [
 ]
 "backend/app/routes/**/*.py" = [
     "PLR0913",  # Allow many arguments (FastAPI Depends injection)
+    "PLC0415",  # Lazy imports for conditional SaaS features and circular import avoidance
+]
+"backend/app/auth/service.py" = [
+    "PLC0415",  # Lazy import of subscription module (SaaS-only, behind is_saas guard)
 ]
 "backend/app/services/**/*.py" = [
     "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
@@ -133,6 +142,18 @@ ignore = [
 ]
 "backend/plugins/**/*.py" = [
     "PLR0912",  # Allow many branches in plugin processing logic
+]
+"backend/alembic/**/*.py" = [
+    "E501",     # Auto-generated migration files have long lines
+    "I001",     # Import sorting in auto-generated code
+    "W291",     # Trailing whitespace in auto-generated docstrings
+]
+"backend/app/db/**/*.py" = [
+    "RUF012",   # SQLAlchemy __table_args__ are mutable class attrs by design
+    "PLC0415",  # Lazy imports in provisioning to avoid circular imports
+]
+"backend/app/repositories/__init__.py" = [
+    "PLC0415",  # Lazy imports in factory functions for conditional backends
 ]
 "backend/scripts/**/*.py" = [
     "E501",     # Allow long lines in scripts (prompt text, CLI output)
@@ -192,6 +213,8 @@ module = [
     "sklearn.*",
     "scipy.*",
     "icalendar.*",
+    "sqlalchemy.*",
+    "alembic.*",
     "elevenlabs.*",
     "httpx.*",
     "websockets.*",

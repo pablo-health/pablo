@@ -9,8 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 
-from ..auth.service import TenantContext, get_tenant_context
-from ..database import get_tenant_firestore_client
+from ..auth.service import TenantContext, get_tenant_context, require_active_subscription
 from ..models.scheduling import (
     ConfigureICalRequest,
     ICalConfigureResponse,
@@ -21,27 +20,38 @@ from ..models.scheduling import (
     ResolveClientRequest,
     UnmatchedEvent,
 )
-from ..repositories.appointment import FirestoreAppointmentRepository
-from ..repositories.ical_client_mapping import ICalClientMappingRepository
-from ..repositories.ical_sync_config import ICalSyncConfigRepository
-from ..repositories.patient import FirestorePatientRepository
+from ..repositories import (
+    get_appointment_repository as _appt_repo_factory,
+)
+from ..repositories import (
+    get_ical_client_mapping_repository as _mapping_repo_factory,
+)
+from ..repositories import (
+    get_ical_sync_config_repository as _config_repo_factory,
+)
+from ..repositories import (
+    get_patient_repository as _patient_repo_factory,
+)
 from ..services.ical_sync_service import ICalSyncService
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/ical-sync", tags=["ical-sync"])
+router = APIRouter(
+    prefix="/api/ical-sync",
+    tags=["ical-sync"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 
 def _get_service(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> ICalSyncService:
-    db = get_tenant_firestore_client(ctx.firestore_db)
     return ICalSyncService(
-        config_repo=ICalSyncConfigRepository(db),
-        appointment_repo=FirestoreAppointmentRepository(db),
-        patient_repo=FirestorePatientRepository(db),
-        mapping_repo=ICalClientMappingRepository(db),
+        config_repo=_config_repo_factory(firestore_db=ctx.firestore_db),
+        appointment_repo=_appt_repo_factory(firestore_db=ctx.firestore_db),
+        patient_repo=_patient_repo_factory(firestore_db=ctx.firestore_db),
+        mapping_repo=_mapping_repo_factory(firestore_db=ctx.firestore_db),
     )
 
 

@@ -76,4 +76,12 @@ export const queryKeys = {
     preferences: () => [...queryKeys.user.all, "preferences"] as const,
   },
 
+  // Admin query keys
+  admin: {
+    all: ["admin"] as const,
+    exportQueue: () => [...queryKeys.admin.all, "export-queue"] as const,
+    users: () => [...queryKeys.admin.all, "users"] as const,
+    allowlist: () => [...queryKeys.admin.all, "allowlist"] as const,
+    tenants: () => [...queryKeys.admin.all, "tenants"] as const,
+  },
 } as const

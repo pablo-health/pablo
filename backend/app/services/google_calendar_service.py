@@ -12,13 +12,13 @@ HIPAA Compliance:
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..repositories.google_calendar_token import (
     GoogleCalendarTokenDoc,
     GoogleCalendarTokenRepository,
 )
+from ..utcnow import utc_now_iso
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
@@ -39,7 +39,7 @@ _DEFAULT_EVENT_SUMMARY = "Therapy Session"
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _build_flow(

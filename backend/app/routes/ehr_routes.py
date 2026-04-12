@@ -13,8 +13,12 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..auth.service import TenantContext, get_current_user, get_tenant_context
-from ..database import get_firestore_client, get_tenant_firestore_client
+from ..auth.service import (
+    TenantContext,
+    get_current_user,
+    get_tenant_context,
+    require_active_subscription,
+)
 from ..models import User
 from ..models.ehr_route import (
     EhrRouteResponse,
@@ -24,8 +28,14 @@ from ..models.ehr_route import (
 )
 from ..models.enums import EhrSystem
 from ..rate_limit import get_ehr_navigate_limiter
-from ..repositories.ehr_prompt import EhrPromptRepository, FirestoreEhrPromptRepository
-from ..repositories.ehr_route import EhrRouteRepository, FirestoreEhrRouteRepository
+from ..repositories import (
+    get_ehr_prompt_repository as _ehr_prompt_repo_factory,
+)
+from ..repositories import (
+    get_ehr_route_repository as _ehr_route_repo_factory,
+)
+from ..repositories.ehr_prompt import EhrPromptRepository
+from ..repositories.ehr_route import EhrRouteRepository
 from ..services.ehr_navigation_service import (
     EhrNavigationService,
     GeminiEhrNavigationService,
@@ -44,8 +54,7 @@ def get_ehr_route_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> EhrRouteRepository:
     """Get EHR route repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestoreEhrRouteRepository(db)
+    return _ehr_route_repo_factory(firestore_db=ctx.firestore_db)
 
 
 def get_ehr_prompt_repository() -> EhrPromptRepository:
@@ -54,8 +63,7 @@ def get_ehr_prompt_repository() -> EhrPromptRepository:
     EHR prompts are system configuration (URL patterns, navigation instructions),
     not tenant data. Shared across all tenants with no PHI.
     """
-    db = get_firestore_client()
-    return FirestoreEhrPromptRepository(db)
+    return _ehr_prompt_repo_factory()
 
 
 def get_ehr_navigation_service(
@@ -73,8 +81,15 @@ def get_ehr_navigation_service(
 # Routers
 # ---------------------------------------------------------------------------
 
-route_router = APIRouter(prefix="/api/ehr-routes", tags=["ehr-navigation"])
-navigate_router = APIRouter(tags=["ehr-navigation"])
+route_router = APIRouter(
+    prefix="/api/ehr-routes",
+    tags=["ehr-navigation"],
+    dependencies=[Depends(require_active_subscription)],
+)
+navigate_router = APIRouter(
+    tags=["ehr-navigation"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +140,7 @@ def update_ehr_route_step(
         )
     except IndexError as err:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(err),
         ) from err
 

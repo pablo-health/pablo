@@ -186,6 +186,23 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Database Backend
+    database_backend: Literal["firestore", "postgres"] = Field(
+        default="firestore",
+        description=(
+            "Primary database backend. "
+            "'firestore' = Google Cloud Firestore (default, used by Pablo Solo/Core). "
+            "'postgres' = PostgreSQL with schema-per-practice multi-tenancy."
+        ),
+    )
+    database_url: str = Field(
+        default="",
+        description=(
+            "PostgreSQL connection URL. Required when database_backend=postgres. "
+            "Format: postgresql://user:pass@host:port/dbname"
+        ),
+    )
+
     # Database Settings (Google Cloud Firestore)
     gcp_project_id: str = Field(
         default="",
@@ -280,6 +297,11 @@ class Settings(BaseSettings):
         default="pablo-audio",
         description="GCS bucket for encrypted audio uploads",
     )
+    marketing_site_url: str = Field(
+        default="",
+        description="Marketing site URL — OIDC audience for M2M provisioning",
+    )
+
     transcription_worker_image: str = Field(
         default="",
         description="Container image for Whisper worker (e.g., gcr.io/PROJECT/pablo-transcription)",

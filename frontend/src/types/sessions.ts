@@ -228,6 +228,39 @@ export interface UpdateSessionRatingRequest {
 }
 
 /**
+ * Export queue item for admin review
+ */
+export interface ExportQueueItem {
+  id: string
+  user_id: string
+  patient_name: string
+  session_date: string
+  session_number: number
+  quality_rating: number | null
+  redacted_transcript: string | null
+  redacted_soap_note: SOAPNoteModel | null
+  export_status: ExportStatus
+  export_queued_at: string | null
+  finalized_at: string | null
+}
+
+/**
+ * Paginated list of export queue items
+ */
+export interface ExportQueueListResponse {
+  data: ExportQueueItem[]
+  total: number
+}
+
+/**
+ * Request payload for export queue action
+ */
+export interface ExportActionRequest {
+  action: "approve" | "skip" | "flag"
+  reason?: string
+}
+
+/**
  * Clinician observation data for the Objective section.
  * Captures details the AI cannot infer from transcript alone.
  */
