@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
+from ..utcnow import utc_now_iso
+
 
 class AuditAction(StrEnum):
     """Actions tracked in audit log for HIPAA compliance."""
@@ -66,9 +68,7 @@ class AuditLogEntry:
 
     # Auto-generated fields
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    )
+    timestamp: str = field(default_factory=utc_now_iso)
     expires_at: str = field(
         default_factory=lambda: (
             (datetime.now(UTC) + timedelta(days=AUDIT_LOG_RETENTION_DAYS))

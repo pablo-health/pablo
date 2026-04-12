@@ -97,19 +97,19 @@ class TestPatientListPagination:
 
     def test_page_zero_rejected(self, client: TestClient) -> None:
         response = client.get("/api/patients?page=0")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_negative_page_rejected(self, client: TestClient) -> None:
         response = client.get("/api/patients?page=-1")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_page_size_zero_rejected(self, client: TestClient) -> None:
         response = client.get("/api/patients?page_size=0")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_page_size_over_max_rejected(self, client: TestClient) -> None:
         response = client.get("/api/patients?page_size=101")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_page_size_at_max(self, client: TestClient) -> None:
         response = client.get("/api/patients?page_size=100")
@@ -216,11 +216,11 @@ class TestSessionListPagination:
 
     def test_page_zero_rejected(self, client: TestClient) -> None:
         response = client.get("/api/sessions?page=0")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_page_size_over_max_rejected(self, client: TestClient) -> None:
         response = client.get("/api/sessions?page_size=101")
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
     def test_page_size_at_max(self, client: TestClient) -> None:
         response = client.get("/api/sessions?page_size=100")

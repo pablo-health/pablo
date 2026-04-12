@@ -236,14 +236,14 @@ def test_create_patient_missing_first_name(client: TestClient) -> None:
     """Test creating patient without first_name returns 422."""
     response = client.post("/api/patients", json={"last_name": "Doe"})
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_patient_missing_last_name(client: TestClient) -> None:
     """Test creating patient without last_name returns 422."""
     response = client.post("/api/patients", json={"first_name": "John"})
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_patient_invalid_date_format(client: TestClient) -> None:
@@ -257,7 +257,7 @@ def test_create_patient_invalid_date_format(client: TestClient) -> None:
         },
     )
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_update_patient_invalid_date_format(
@@ -271,7 +271,7 @@ def test_update_patient_invalid_date_format(
     # Try to update with invalid date
     response = client.patch(f"/api/patients/{patient_id}", json={"date_of_birth": "not-a-date"})
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_get_patient_not_found(client: TestClient) -> None:
@@ -374,7 +374,7 @@ def test_list_patients_invalid_search_by_parameter(client: TestClient) -> None:
     # Try to search with invalid search_by parameter
     response = client.get("/api/patients?search=John&search_by=invalid_field")
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_list_patients_valid_search_by_values(client: TestClient) -> None:
@@ -580,7 +580,7 @@ def test_create_patient_invalid_email(client: TestClient) -> None:
 
     response = client.post("/api/patients", json=patient_data)
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_patient_invalid_phone(client: TestClient) -> None:
@@ -593,7 +593,7 @@ def test_create_patient_invalid_phone(client: TestClient) -> None:
 
     response = client.post("/api/patients", json=patient_data)
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_create_patient_invalid_status(client: TestClient) -> None:
@@ -606,7 +606,7 @@ def test_create_patient_invalid_status(client: TestClient) -> None:
 
     response = client.post("/api/patients", json=patient_data)
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_update_patient_status(client: TestClient, sample_patient_data: dict[str, Any]) -> None:

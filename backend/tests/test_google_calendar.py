@@ -7,7 +7,11 @@ from __future__ import annotations
 import base64
 import os
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, Mock, patch
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 import pytest
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
@@ -20,6 +24,7 @@ from app.services.token_encryption import (
     encrypt_tokens,
     generate_encryption_key,
 )
+from app.settings import get_settings
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,10 +32,13 @@ from app.services.token_encryption import (
 
 
 @pytest.fixture(autouse=True)
-def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Provide a valid AES-256 encryption key for all tests."""
     key = base64.b64encode(os.urandom(32)).decode()
     monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", key)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -106,15 +114,23 @@ class TestTokenEncryption:
         assert decrypt_tokens(enc1) == decrypt_tokens(enc2)
 
     def test_missing_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", raising=False)
-        with pytest.raises(TokenEncryptionError, match="not set"):
-            encrypt_tokens({"token": "test"})
+        monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", "")
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(TokenEncryptionError, match="not set"):
+                encrypt_tokens({"token": "test"})
+        finally:
+            get_settings.cache_clear()
 
     def test_invalid_key_length_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         short_key = base64.b64encode(b"too-short").decode()
         monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", short_key)
-        with pytest.raises(TokenEncryptionError, match="must be 32 bytes"):
-            encrypt_tokens({"token": "test"})
+        get_settings.cache_clear()
+        try:
+            with pytest.raises(TokenEncryptionError, match="must be 32 bytes"):
+                encrypt_tokens({"token": "test"})
+        finally:
+            get_settings.cache_clear()
 
     def test_tampered_ciphertext_raises(self) -> None:
         encrypted = encrypt_tokens({"token": "secret"})

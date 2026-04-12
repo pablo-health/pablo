@@ -7,7 +7,6 @@ Implements user profile management and BAA (Business Associate Agreement) accept
 """
 
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,6 +15,7 @@ from fastapi.responses import PlainTextResponse
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import AcceptBAARequest, BAAStatusResponse, User, UserPreferences
 from ..repositories import UserRepository, get_user_repository
+from ..utcnow import utc_now_iso
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -71,20 +71,33 @@ def _resolve_baa_path(version: str) -> Path:
 @router.get("/me/status")
 def get_user_status(
     user: User = Depends(get_current_user_no_mfa),
-) -> dict[str, str | bool | None]:
+) -> dict:
     """
     Get current user status without requiring MFA.
 
-    Used by dashboard layout to check if MFA enrollment is needed
-    before the user has completed MFA setup.
+    Used by dashboard layout and companion app to check MFA enrollment
+    and subscription/trial status.
     """
-    return {
+    from ..settings import get_settings
+
+    result: dict = {
         "status": user.status,
         "mfa_enrolled_at": user.mfa_enrolled_at,
         "is_admin": user.is_admin,
         "name": user.name,
         "email": user.email,
     }
+
+    # Include subscription/trial info for SaaS editions
+    settings = get_settings()
+    if settings.is_saas:
+        from .subscription import _get_subscription_info  # type: ignore[import-not-found]
+
+        sub_info = _get_subscription_info(user.email, settings)
+        if sub_info:
+            result["subscription"] = sub_info
+
+    return result
 
 
 @router.post("/me/mfa-enrolled")
@@ -99,7 +112,7 @@ def record_mfa_enrollment(
     Uses get_current_user_no_mfa since this is called immediately after
     enrolling (before the user has signed in with MFA).
     """
-    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    now = utc_now_iso()
     user.mfa_enrolled_at = now
     user_repo.update(user)
     return {"mfa_enrolled_at": now}
@@ -176,7 +189,7 @@ def accept_baa(
     baa_full_text = baa_path.read_text()
 
     # Update user with BAA acceptance
-    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    now = utc_now_iso()
     user.baa_accepted_at = now
     user.baa_version = request.version
     user.baa_legal_name = request.legal_name

@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
 from typing import Any
 
 from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..models import Patient
+from ..utcnow import utc_now_iso
 from .session import InMemoryTherapySessionRepository, TherapySessionRepository
 
 
@@ -115,7 +115,7 @@ class InMemoryPatientRepository(PatientRepository):
 
     def update(self, patient: Patient) -> Patient:
         """Update an existing patient."""
-        patient.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        patient.updated_at = utc_now_iso()
         # Regenerate search fields
         patient.first_name_lower = patient.first_name.lower()
         patient.last_name_lower = patient.last_name.lower()
@@ -226,7 +226,7 @@ class FirestorePatientRepository(PatientRepository):
 
     def update(self, patient: Patient) -> Patient:
         """Update an existing patient."""
-        patient.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        patient.updated_at = utc_now_iso()
         # Regenerate search fields
         patient.first_name_lower = patient.first_name.lower()
         patient.last_name_lower = patient.last_name.lower()

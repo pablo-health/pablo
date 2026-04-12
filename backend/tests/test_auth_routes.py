@@ -1,10 +1,12 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Tests for pre-auth endpoints (resolve-tenant, signup, native code exchange)."""
+"""Tests for pre-auth endpoints (native code exchange).
+
+SaaS-only tests (resolve-tenant, signup) are in test_saas_auth_routes.py.
+"""
 
 from collections.abc import Generator
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from app.main import app
@@ -21,135 +23,6 @@ def _reset_rate_limiter() -> None:
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
-
-
-def _mock_doc(exists: bool, data: dict[str, Any] | None = None) -> MagicMock:
-    doc = MagicMock()
-    doc.exists = exists
-    doc.to_dict.return_value = data or {}
-    return doc
-
-
-def _mock_collection(doc_return: MagicMock) -> MagicMock:
-    """Build a mock admin_db with collection().document().get() chain."""
-    db = MagicMock()
-    db.collection.return_value.document.return_value.get.return_value = doc_return
-    return db
-
-
-class TestResolveTenant:
-    """POST /api/auth/resolve-tenant"""
-
-    @patch("app.routes.auth.get_settings")
-    def test_single_tenant_mode_returns_empty(
-        self, mock_settings: MagicMock, client: TestClient
-    ) -> None:
-        mock_settings.return_value.multi_tenancy_enabled = False
-        resp = client.post(
-            "/api/auth/resolve-tenant",
-            json={"email": "dr@example.com"},
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "ok", "tenant_id": None, "is_admin": False}
-
-    @patch("app.routes.auth.get_admin_firestore_client")
-    @patch("app.routes.auth.get_settings")
-    def test_known_email_returns_tenant(
-        self, mock_settings: MagicMock, mock_db: MagicMock, client: TestClient
-    ) -> None:
-        mock_settings.return_value.multi_tenancy_enabled = True
-        mock_db.return_value = _mock_collection(_mock_doc(True, {"tenant_id": "tenant-abc"}))
-        resp = client.post(
-            "/api/auth/resolve-tenant",
-            json={"email": "dr@example.com"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["tenant_id"] == "tenant-abc"
-
-    @patch("app.routes.auth.get_admin_firestore_client")
-    @patch("app.routes.auth.get_settings")
-    def test_unknown_email_returns_null_tenant(
-        self, mock_settings: MagicMock, mock_db: MagicMock, client: TestClient
-    ) -> None:
-        mock_settings.return_value.multi_tenancy_enabled = True
-        mock_db.return_value = _mock_collection(_mock_doc(False))
-        resp = client.post(
-            "/api/auth/resolve-tenant",
-            json={"email": "unknown@example.com"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["tenant_id"] is None
-
-    def test_invalid_email_rejected(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/auth/resolve-tenant",
-            json={"email": "not-an-email"},
-        )
-        assert resp.status_code == 422
-
-
-class TestSignup:
-    """POST /api/auth/signup"""
-
-    @patch("app.routes.auth.get_settings")
-    def test_single_tenant_mode_returns_empty(
-        self, mock_settings: MagicMock, client: TestClient
-    ) -> None:
-        mock_settings.return_value.multi_tenancy_enabled = False
-        resp = client.post(
-            "/api/auth/signup",
-            json={"email": "dr@example.com", "practice_name": "My Practice"},
-        )
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "ok", "tenant_id": None}
-
-    @patch("app.routes.auth.get_admin_firestore_client")
-    @patch("app.routes.auth.get_settings")
-    def test_not_allowlisted_returns_generic(
-        self, mock_settings: MagicMock, mock_db: MagicMock, client: TestClient
-    ) -> None:
-        mock_settings.return_value.multi_tenancy_enabled = True
-        mock_db.return_value = _mock_collection(_mock_doc(False))
-        resp = client.post(
-            "/api/auth/signup",
-            json={
-                "email": "rando@example.com",
-                "practice_name": "Rando Practice",
-            },
-        )
-        assert resp.status_code == 200
-        assert resp.json()["tenant_id"] is None
-
-    @patch("app.routes.auth.get_admin_firestore_client")
-    @patch("app.routes.auth.get_settings")
-    def test_already_provisioned_returns_existing(
-        self, mock_settings: MagicMock, mock_db: MagicMock, client: TestClient
-    ) -> None:
-        mock_settings.return_value.multi_tenancy_enabled = True
-        db = MagicMock()
-        # allowed_emails check → exists
-        # email_tenants check → exists with tenant_id
-        db.collection.return_value.document.return_value.get.side_effect = [
-            _mock_doc(True),
-            _mock_doc(True, {"tenant_id": "existing-tenant"}),
-        ]
-        mock_db.return_value = db
-        resp = client.post(
-            "/api/auth/signup",
-            json={
-                "email": "dr@example.com",
-                "practice_name": "My Practice",
-            },
-        )
-        assert resp.status_code == 200
-        assert resp.json()["tenant_id"] == "existing-tenant"
-
-    def test_signup_invalid_email_rejected(self, client: TestClient) -> None:
-        resp = client.post(
-            "/api/auth/signup",
-            json={"email": "bad", "practice_name": "X"},
-        )
-        assert resp.status_code == 422
 
 
 class TestNativeCodeExchange:

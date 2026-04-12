@@ -90,6 +90,52 @@ clean:
 	rm -rf htmlcov/ .coverage
 
 # ============================================================================
+# PostgreSQL Database Commands
+# ============================================================================
+
+# Start just the PostgreSQL container
+db-up:
+	docker compose up -d postgres
+
+# Stop PostgreSQL container
+db-down:
+	docker compose stop postgres
+
+# Run Alembic migrations (practice schema)
+db-migrate:
+	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run alembic upgrade head
+
+# Generate a new Alembic migration
+db-revision:
+	@read -p "Migration message: " msg && \
+	cd backend && DATABASE_BACKEND=postgres DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run alembic revision --autogenerate -m "$$msg"
+
+# Reset database (drop and recreate all schemas)
+db-reset:
+	@echo "Dropping and recreating database..."
+	docker compose exec postgres psql -U pablo -d pablo -c "DROP SCHEMA IF EXISTS practice CASCADE; DROP SCHEMA IF EXISTS platform CASCADE;"
+	$(MAKE) db-migrate
+	@echo "Database reset complete."
+
+# Connect to local PostgreSQL via psql
+db-shell:
+	docker compose exec postgres psql -U pablo -d pablo
+
+# Connect to dev Cloud SQL via psql (requires proxy running)
+db-dev-shell:
+	PGPASSWORD=$$PABLO_DEV_DB_PASSWORD psql -h localhost -p 5433 -U pablo -d pablo
+
+# Show PostgreSQL logs
+db-logs:
+	docker compose logs -f postgres
+
+# Start Cloud SQL Auth Proxy for dev (connects localhost:5433 → Cloud SQL dev)
+db-dev-proxy:
+	@echo "Starting Cloud SQL Auth Proxy for pablohealth-dev..."
+	@echo "Connect with: DATABASE_URL=postgresql://pablo:PASSWORD@localhost:5433/pablo"
+	cloud-sql-proxy pablohealth-dev:us-central1:pablo-dev --port 5433
+
+# ============================================================================
 # Docker Development Commands
 # ============================================================================
 

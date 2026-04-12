@@ -27,13 +27,16 @@ class TokenEncryptionError(Exception):
 
 
 def _get_encryption_key() -> bytes:
-    """Load the AES-256 encryption key from environment.
+    """Load the AES-256 encryption key from settings.
 
     The key must be a 32-byte value, base64-encoded in the environment variable.
+    Uses pydantic SecretStr via settings to prevent accidental logging.
     """
-    raw = os.environ.get("GOOGLE_CALENDAR_ENCRYPTION_KEY", "")
+    from ..settings import get_settings
+
+    raw = get_settings().google_calendar_encryption_key.get_secret_value()
     if not raw:
-        raise TokenEncryptionError("GOOGLE_CALENDAR_ENCRYPTION_KEY environment variable is not set")
+        raise TokenEncryptionError("GOOGLE_CALENDAR_ENCRYPTION_KEY is not set")
     try:
         key = base64.b64decode(raw)
     except Exception as exc:

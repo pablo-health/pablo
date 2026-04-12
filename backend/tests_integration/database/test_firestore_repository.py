@@ -4,12 +4,12 @@ Tests actual Firestore behavior using the emulator.
 Run with: FIRESTORE_EMULATOR_HOST=localhost:8080 pytest tests_integration/
 """
 
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 from app.models import Patient
 from app.repositories import FirestorePatientRepository
+from app.utcnow import utc_now_iso
 
 
 @pytest.fixture
@@ -30,8 +30,8 @@ def sample_patient(test_user_id: str) -> Patient:
         last_name_lower="doe",
         date_of_birth="1980-05-15T00:00:00Z",
         diagnosis="Anxiety disorder",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
 
 
@@ -95,8 +95,8 @@ def test_list_by_user_with_patients(
         last_name_lower="smith",
         date_of_birth="1985-03-20T00:00:00Z",
         diagnosis="Depression",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
     patient2 = Patient(
         id="patient-2",
@@ -107,8 +107,8 @@ def test_list_by_user_with_patients(
         last_name_lower="jones",
         date_of_birth="1990-07-10T00:00:00Z",
         diagnosis="PTSD",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
 
     repository.create(patient1)
@@ -195,8 +195,8 @@ def test_list_by_user_only_returns_own_patients(
         last_name_lower="patient",
         date_of_birth="1980-01-01T00:00:00Z",
         diagnosis="Test",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
     patient2 = Patient(
         id="patient-user2",
@@ -207,8 +207,8 @@ def test_list_by_user_only_returns_own_patients(
         last_name_lower="patient",
         date_of_birth="1980-01-01T00:00:00Z",
         diagnosis="Test",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
 
     repository.create(patient1)
@@ -260,8 +260,8 @@ def test_search_by_last_name(repository: FirestorePatientRepository, test_user_i
             last_name_lower=last_name.lower(),
             date_of_birth="1980-01-01T00:00:00Z",
             diagnosis="Test",
-            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
         )
         for i, last_name in enumerate(["Smith", "Smithson", "Jones", "Johnson"])
     ]
@@ -290,8 +290,8 @@ def test_search_by_first_name(repository: FirestorePatientRepository, test_user_
             last_name_lower="test",
             date_of_birth="1980-01-01T00:00:00Z",
             diagnosis="Test",
-            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-            updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            created_at=utc_now_iso(),
+            updated_at=utc_now_iso(),
         )
         for i, first_name in enumerate(["Alice", "Alison", "Bob", "Barbara"])
     ]
@@ -318,8 +318,8 @@ def test_search_case_insensitive(repository: FirestorePatientRepository, test_us
         last_name_lower="smith",
         date_of_birth="1980-01-01T00:00:00Z",
         diagnosis="Test",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
     repository.create(patient)
 
@@ -348,8 +348,8 @@ def test_delete_patient_cascades_to_sessions(
         last_name_lower="doe",
         date_of_birth="1980-01-01T00:00:00Z",
         diagnosis="Test",
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        updated_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        created_at=utc_now_iso(),
+        updated_at=utc_now_iso(),
     )
     repository.create(patient)
 

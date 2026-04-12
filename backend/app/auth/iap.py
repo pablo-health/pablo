@@ -42,6 +42,6 @@ def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> dict[str, object]:
         audience=expected_audience,
         certs_url=IAP_CERTS_URL,
     )
-    logger.debug("IAP JWT verified for user: %s", decoded.get("email", "unknown"))
+    logger.debug("IAP JWT verified for user: %s", decoded.get("sub", "unknown"))
     result: dict[str, object] = decoded
     return result

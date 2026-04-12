@@ -8,12 +8,14 @@ Thin HTTP handlers that delegate business logic to SessionService.
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 
+if TYPE_CHECKING:
+    from ..services.eval_export_service import EvalExportService  # type: ignore[import-not-found]
+
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..database import get_tenant_firestore_client
 from ..models import (
     AuditAction,
     FinalizeSessionRequest,
@@ -32,10 +34,14 @@ from ..models import (
     User,
 )
 from ..repositories import (
-    FirestorePatientRepository,
-    FirestoreTherapySessionRepository,
     PatientRepository,
     TherapySessionRepository,
+)
+from ..repositories import (
+    get_patient_repository as _patient_repo_factory,
+)
+from ..repositories import (
+    get_session_repository as _session_repo_factory,
 )
 from ..services import (
     AuditService,
@@ -57,6 +63,7 @@ from ..services.transcription_queue_service import (
     TranscriptionQueueService,
 )
 from ..settings import get_settings
+from ..utcnow import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -69,19 +76,27 @@ def get_patient_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestorePatientRepository(db)
+    return _patient_repo_factory(firestore_db=ctx.firestore_db)
 
 def get_session_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestoreTherapySessionRepository(db)
+    return _session_repo_factory(firestore_db=ctx.firestore_db)
 
 def get_soap_generation_service() -> SOAPGenerationService:
     """Get SOAP generation service instance."""
     return MeetingTranscriptionSOAPService()
+
+def _build_eval_export_service() -> "EvalExportService | None":
+    """Build eval export service if SaaS edition is active."""
+    settings = get_settings()
+    if not settings.is_saas:
+        return None
+    from ..services.eval_export_service import EvalExportService
+    from ..services.pii_redaction_service import PIIRedactionService
+
+    return EvalExportService(PIIRedactionService(), settings)
 
 def get_session_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
@@ -89,7 +104,7 @@ def get_session_service(
     soap_service: SOAPGenerationService = Depends(get_soap_generation_service),
 ) -> SessionService:
     """Get session service instance with all dependencies."""
-    return SessionService(session_repo, patient_repo, soap_service)
+    return SessionService(session_repo, patient_repo, soap_service, _build_eval_export_service())
 
 @router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_201_CREATED)
 def upload_session(
@@ -594,7 +609,7 @@ async def upload_audio(
 
     # Transition to transcribing
     session.status = SessionStatus.TRANSCRIBING
-    session.updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    session.updated_at = utc_now_iso()
 
     if settings.transcription_provider == "assemblyai":
         # AssemblyAI: upload directly to their API, no GCS needed

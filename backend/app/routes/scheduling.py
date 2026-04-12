@@ -6,14 +6,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from ..auth.service import TenantContext, get_tenant_context
-from ..database import get_tenant_firestore_client
+from ..auth.service import TenantContext, get_tenant_context, require_active_subscription
 from ..models.scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -33,9 +31,15 @@ from ..models.scheduling import (
     UpdateAppointmentRequest,
     UpdateAvailabilityRuleRequest,
 )
-from ..repositories.appointment import FirestoreAppointmentRepository
-from ..repositories.availability_rule import FirestoreAvailabilityRuleRepository
-from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
+from ..repositories import (
+    get_appointment_repository as _appt_repo_factory,
+)
+from ..repositories import (
+    get_availability_rule_repository as _rule_repo_factory,
+)
+from ..repositories import (
+    get_google_calendar_token_repository as _gcal_token_repo_factory,
+)
 from ..scheduling_engine.exceptions import (
     AppointmentNotFoundError,
     InvalidAppointmentError,
@@ -46,6 +50,7 @@ from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
+from ..utcnow import utc_now_iso
 
 # Native app schemes allowed for Google Calendar OAuth redirect
 _ALLOWED_GCAL_SCHEMES = {"pablohealth", "therapyrecorder"}
@@ -80,23 +85,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["scheduling"])
+router = APIRouter(tags=["scheduling"], dependencies=[Depends(require_active_subscription)])
 
 
 def get_appointment_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> AppointmentRepository:
     """Get appointment repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestoreAppointmentRepository(db)
+    return _appt_repo_factory(firestore_db=ctx.firestore_db)
 
 
 def get_availability_rule_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> AvailabilityRuleRepository:
     """Get availability rule repository scoped to the tenant's database."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    return FirestoreAvailabilityRuleRepository(db)
+    return _rule_repo_factory(firestore_db=ctx.firestore_db)
 
 
 def get_scheduling_service(
@@ -311,10 +314,6 @@ def cancel_series(
 # --- Availability endpoints ---
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-
 def _rule_to_response(rule: AvailabilityRule) -> AvailabilityRuleResponse:
     return AvailabilityRuleResponse(
         id=rule.id,
@@ -407,7 +406,7 @@ def create_availability_rule(
             detail=f"Invalid enforcement: {request.enforcement}",
         ) from e
 
-    now = _now()
+    now = utc_now_iso()
     rule = AvailabilityRule(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
@@ -462,7 +461,7 @@ def update_availability_rule(
     if request.params is not None:
         rule.params = request.params
 
-    rule.updated_at = _now()
+    rule.updated_at = utc_now_iso()
     updated = rule_repo.update(rule)
     return _rule_to_response(updated)
 
@@ -492,9 +491,8 @@ def get_google_calendar_service(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
-    db = get_tenant_firestore_client(ctx.firestore_db)
-    token_repo = GoogleCalendarTokenRepository(db)
-    appt_repo = FirestoreAppointmentRepository(db)
+    token_repo = _gcal_token_repo_factory(firestore_db=ctx.firestore_db)
+    appt_repo = _appt_repo_factory(firestore_db=ctx.firestore_db)
     settings = get_settings()
     return GoogleCalendarService(
         token_repo=token_repo,

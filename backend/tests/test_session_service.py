@@ -35,11 +35,13 @@ from app.services.soap_generation_service import SOAPGenerationService
 def session_repo() -> InMemoryTherapySessionRepository:
     return InMemoryTherapySessionRepository()
 
+
 @pytest.fixture
 def patient_repo(
     session_repo: InMemoryTherapySessionRepository,
 ) -> InMemoryPatientRepository:
     return InMemoryPatientRepository(session_repo=session_repo)
+
 
 @pytest.fixture
 def mock_soap_service() -> Mock:
@@ -54,9 +56,11 @@ def mock_soap_service() -> Mock:
     )
     return service
 
+
 @pytest.fixture
 def user_id() -> str:
     return "test-user-123"
+
 
 @pytest.fixture
 def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
@@ -73,6 +77,7 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
     patient_repo.create(p)
     return p
 
+
 @pytest.fixture
 def service(
     session_repo: InMemoryTherapySessionRepository,
@@ -80,6 +85,7 @@ def service(
     mock_soap_service: Mock,
 ) -> SessionService:
     return SessionService(session_repo, patient_repo, mock_soap_service)
+
 
 def _make_pending_session(
     session_repo: InMemoryTherapySessionRepository,
@@ -107,6 +113,7 @@ def _make_pending_session(
     )
     session_repo.create(session)
     return session
+
 
 def _make_finalized_session(
     session_repo: InMemoryTherapySessionRepository,
@@ -136,6 +143,7 @@ def _make_finalized_session(
     )
     session_repo.create(session)
     return session
+
 
 class TestUploadSession:
     def test_successful_upload(
@@ -216,6 +224,7 @@ class TestUploadSession:
         assert updated is not None
         assert updated.session_count == 1
         assert updated.last_session_date == "2026-02-01T10:00:00Z"
+
 
 class TestFinalizeSession:
     def test_successful_finalization(
@@ -360,4 +369,5 @@ class TestUpdateRating:
 
         assert result.quality_rating == 1
         assert old_rating == 5
+
 

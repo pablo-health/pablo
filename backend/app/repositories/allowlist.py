@@ -3,8 +3,9 @@
 """Allowlist repository implementations."""
 
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
 from typing import Any
+
+from ..utcnow import utc_now_iso
 
 
 class AllowlistRepository(ABC):
@@ -44,7 +45,7 @@ class InMemoryAllowlistRepository(AllowlistRepository):
         self._entries[email.lower()] = {
             "email": email.lower(),
             "added_by": added_by,
-            "added_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "added_at": utc_now_iso(),
         }
 
     def remove(self, email: str) -> bool:
@@ -70,7 +71,7 @@ class FirestoreAllowlistRepository(AllowlistRepository):
             {
                 "email": email.lower(),
                 "added_by": added_by,
-                "added_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "added_at": utc_now_iso(),
             }
         )
 

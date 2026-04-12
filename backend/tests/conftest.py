@@ -19,6 +19,7 @@ from app.auth.service import (
     get_current_user,
     get_current_user_id,
     get_current_user_no_mfa,
+    require_active_subscription,
     require_admin,
     require_baa_acceptance,
     require_mfa,
@@ -203,6 +204,7 @@ def client(
     app.dependency_overrides[get_current_user_no_mfa] = lambda: mock_user
     app.dependency_overrides[require_baa_acceptance] = lambda: mock_user
     app.dependency_overrides[require_admin] = lambda: mock_user
+    app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_user_repository] = lambda: mock_user_repo
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service

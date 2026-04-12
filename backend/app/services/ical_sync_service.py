@@ -20,7 +20,7 @@ import re
 import uuid
 import zipfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC
 from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -31,6 +31,7 @@ from ..models.enums import EhrSystem
 from ..repositories.ical_client_mapping import ICalClientMapping, ICalClientMappingRepository
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
+from ..utcnow import utc_now_iso
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ _SH_CODE_RE = re.compile(r"^SH(\d+)$")
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 @dataclass

@@ -35,17 +35,20 @@ from app.services.session_service import (
     SessionService,
 )
 from app.services.soap_generation_service import SOAPGenerationService
+from app.utcnow import utc_now_iso
 
 
 @pytest.fixture
 def session_repo() -> InMemoryTherapySessionRepository:
     return InMemoryTherapySessionRepository()
 
+
 @pytest.fixture
 def patient_repo(
     session_repo: InMemoryTherapySessionRepository,
 ) -> InMemoryPatientRepository:
     return InMemoryPatientRepository(session_repo=session_repo)
+
 
 @pytest.fixture
 def mock_soap_service() -> Mock:
@@ -60,9 +63,11 @@ def mock_soap_service() -> Mock:
     )
     return service
 
+
 @pytest.fixture
 def user_id() -> str:
     return "test-user-123"
+
 
 @pytest.fixture
 def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
@@ -78,6 +83,7 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
     patient_repo.create(p)
     return p
 
+
 @pytest.fixture
 def service(
     session_repo: InMemoryTherapySessionRepository,
@@ -85,6 +91,7 @@ def service(
     mock_soap_service: Mock,
 ) -> SessionService:
     return SessionService(session_repo, patient_repo, mock_soap_service)
+
 
 def _make_session(
     session_repo: InMemoryTherapySessionRepository,
@@ -94,7 +101,7 @@ def _make_session(
     scheduled_at: str | None = None,
 ) -> TherapySession:
     """Helper to create a session in a given status."""
-    now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    now = utc_now_iso()
     session = TherapySession(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -114,7 +121,9 @@ def _make_session(
         session.ended_at = now
     return session_repo.create(session)
 
+
 # --- Schedule session tests ---
+
 
 class TestScheduleSession:
     def test_creates_scheduled_session(
@@ -147,7 +156,9 @@ class TestScheduleSession:
         with pytest.raises(PatientNotFoundError):
             service.schedule_session(user_id, req)
 
+
 # --- Status transition tests ---
+
 
 class TestTransitionStatus:
     def test_scheduled_to_in_progress(
@@ -244,7 +255,9 @@ class TestTransitionStatus:
         with pytest.raises(SessionNotFoundError):
             service.transition_status("nonexistent", user_id, req)
 
+
 # --- Metadata update tests ---
+
 
 class TestUpdateSessionMetadata:
     def test_updates_metadata(
@@ -305,7 +318,9 @@ class TestUpdateSessionMetadata:
         with pytest.raises(SessionNotFoundError):
             service.update_session_metadata("nonexistent", user_id, req)
 
+
 # --- Transcript upload tests ---
+
 
 class TestUploadTranscriptToSession:
     def test_uploads_and_triggers_soap(
@@ -347,7 +362,9 @@ class TestUploadTranscriptToSession:
         with pytest.raises(SessionNotFoundError):
             service.upload_transcript_to_session("nonexistent", user_id, req)
 
+
 # --- Today's sessions repository test ---
+
 
 class TestListTodaySessions:
     def test_returns_today_only(
@@ -375,7 +392,7 @@ class TestListTodaySessions:
         session_repo: InMemoryTherapySessionRepository,
         patient: Patient,
     ) -> None:
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         _make_session(session_repo, "user-a", patient.id, scheduled_at=now)
         _make_session(session_repo, "user-b", patient.id, scheduled_at=now)
 
@@ -383,7 +400,9 @@ class TestListTodaySessions:
         assert len(session_repo.list_today_by_user("user-b", "UTC")) == 1
         assert len(session_repo.list_today_by_user("user-c", "UTC")) == 0
 
+
 # --- User preferences tests ---
+
 
 class TestUserPreferences:
     def test_defaults(self) -> None:

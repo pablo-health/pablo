@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..models.ehr_prompt import EhrPrompt
+from ..utcnow import utc_now_iso
 
 if TYPE_CHECKING:
     from google.cloud.firestore import Client as FirestoreClient
@@ -46,7 +46,7 @@ class FirestoreEhrPromptRepository(EhrPromptRepository):
         return EhrPrompt.from_dict(data)
 
     def upsert(self, prompt: EhrPrompt) -> EhrPrompt:
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         prompt.updated_at = now
         self._collection().document(prompt.ehr_system).set(prompt.to_dict())
         return prompt
@@ -62,7 +62,7 @@ class InMemoryEhrPromptRepository(EhrPromptRepository):
         return self._prompts.get(ehr_system)
 
     def upsert(self, prompt: EhrPrompt) -> EhrPrompt:
-        now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        now = utc_now_iso()
         prompt.updated_at = now
         self._prompts[prompt.ehr_system] = prompt
         return prompt
