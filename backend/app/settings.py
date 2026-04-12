@@ -450,10 +450,12 @@ class Settings(BaseSettings):
         """Firebase project ID, falling back to GCP project ID."""
         return self.firebase_project_id or self.gcp_project_id
 
+
 @lru_cache
 def get_settings() -> Settings:
     """Get cached application settings."""
     return Settings()
+
 
 # Global settings instance for backwards compatibility
 # Prefer using get_settings() for dependency injection

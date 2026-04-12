@@ -309,6 +309,7 @@ class TestFinalizeSession:
 
         assert result.soap_note_edited is not None
 
+
 class TestUpdateRating:
     def test_successful_update(
         self,
@@ -369,5 +370,3 @@ class TestUpdateRating:
 
         assert result.quality_rating == 1
         assert old_rating == 5
-
-

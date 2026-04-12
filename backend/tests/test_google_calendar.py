@@ -169,7 +169,7 @@ class TestOAuthFlow:
 
         url = calendar_service.get_auth_url("user-001", "http://localhost:3000/callback")
 
-        assert "accounts.google.com" in url
+        assert url.startswith("https://accounts.google.com/")
         mock_flow.authorization_url.assert_called_once_with(
             access_type="offline",
             prompt="consent",

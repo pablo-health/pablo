@@ -1,0 +1,4 @@
+# DS-0026: No HEALTHCHECK defined
+# backend/Dockerfile.base — base image, not a service; no endpoint to healthcheck
+# backend/Dockerfile.production — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
+DS-0026

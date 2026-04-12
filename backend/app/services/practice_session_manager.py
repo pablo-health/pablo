@@ -26,6 +26,7 @@ class ConversationEntry(TypedDict):
     text: str
     elapsed: float
 
+
 # Binary frame direction bytes
 DIRECTION_CLIENT_TO_SERVER = 0x01
 DIRECTION_PATIENT_VOICE = 0x02
