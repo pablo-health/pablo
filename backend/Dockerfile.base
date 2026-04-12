@@ -41,5 +41,7 @@ COPY --from=builder /usr/bin/uvicorn /usr/bin/uvicorn
 
 ENV PYTHONUNBUFFERED=1
 
+USER nonroot
+
 # Smoke test: verify critical imports work at build time
 RUN ["python", "-c", "import fastapi; import uvicorn; print('chainguard smoke test passed')"]
