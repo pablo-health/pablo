@@ -1,5 +1,5 @@
-# Backend Production Dockerfile (Distroless)
-# Layers app code on top of the pre-built distroless base image (backend-base)
+# Backend Production Dockerfile (Chainguard)
+# Layers app code on top of the pre-built base image (backend-base)
 # which contains the Python runtime and all dependencies.
 # trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
 #
@@ -12,12 +12,9 @@ FROM ${BASE_IMAGE}
 WORKDIR /app
 
 # Copy application code and repo-root config files
-# Base image runs as nonroot (UID 65532) — set ownership accordingly
-COPY --chown=65532:65532 backend/ ./backend/
-COPY --chown=65532:65532 min_client_versions.json ./
-COPY --chown=65532:65532 backend/entrypoint.py ./entrypoint.py
-
-USER nonroot
+COPY --chown=nonroot:nonroot backend/ ./backend/
+COPY --chown=nonroot:nonroot min_client_versions.json ./
+COPY --chown=nonroot:nonroot backend/entrypoint.py ./entrypoint.py
 
 # Expose port (Cloud Run uses PORT env var, defaults to 8000)
 EXPOSE 8000
@@ -26,8 +23,8 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV ENVIRONMENT=production
 
-# Run with production settings via Python entrypoint (no shell in distroless).
+# Run with production settings via Python entrypoint (no shell in Chainguard).
 # Single worker required: the in-memory auth code store (native app
 # code exchange) is process-local and cannot be shared across workers.
 # Move to Redis-backed store before scaling to multiple workers.
-CMD ["/usr/local/bin/python3.13", "entrypoint.py"]
+CMD ["python", "entrypoint.py"]

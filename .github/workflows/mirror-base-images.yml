@@ -1,0 +1,64 @@
+name: Mirror Chainguard Base Images
+
+# Pulls latest Chainguard images (0 CVEs) and pushes them to GHCR
+# with date-stamped + :latest tags. This gives us:
+#   - Zero CVEs in base images (Chainguard rebuilds nightly)
+#   - Reproducible builds (date-stamped tags are immutable)
+#   - Controlled rollout (we decide when to update)
+#   - Audit trail (git history of workflow runs)
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Weekly Monday 7am UTC (after security scan at 6am)
+  workflow_dispatch: # Manual trigger
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  mirror:
+    name: Mirror ${{ matrix.source }}
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: cgr.dev/chainguard/python:latest
+            target: pablo-health/base-python
+          - source: cgr.dev/chainguard/node:latest
+            target: pablo-health/base-node
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull, tag, and push
+        run: |
+          DATE_TAG=$(date +%Y-%m-%d)
+
+          echo "Pulling ${{ matrix.source }}..."
+          docker pull ${{ matrix.source }}
+
+          echo "Tagging as ${{ env.REGISTRY }}/${{ matrix.target }}:${DATE_TAG} and :latest"
+          docker tag ${{ matrix.source }} ${{ env.REGISTRY }}/${{ matrix.target }}:${DATE_TAG}
+          docker tag ${{ matrix.source }} ${{ env.REGISTRY }}/${{ matrix.target }}:latest
+
+          echo "Pushing..."
+          docker push ${{ env.REGISTRY }}/${{ matrix.target }}:${DATE_TAG}
+          docker push ${{ env.REGISTRY }}/${{ matrix.target }}:latest
+
+          echo "### Mirrored ${{ matrix.source }}" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ matrix.target }}:${DATE_TAG}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ matrix.target }}:latest\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Trivy scan mirrored image
+        uses: aquasecurity/trivy-action@0.35.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ matrix.target }}:latest
+          format: table
+          severity: CRITICAL,HIGH,MEDIUM

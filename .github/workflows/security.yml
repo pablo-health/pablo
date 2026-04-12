@@ -52,9 +52,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: gcr.io/distroless/cc-debian12:nonroot
+          - image: ghcr.io/pablo-health/base-python:latest
             category: trivy-python-base
-          - image: gcr.io/distroless/nodejs22-debian12
+          - image: ghcr.io/pablo-health/base-node:latest
             category: trivy-node-base
     steps:
       - uses: actions/checkout@v6
