@@ -23,7 +23,7 @@ COPY . .
 RUN AUTH_COOKIE_SIGNATURE_KEY="build-time-placeholder-replaced-at-runtime" npm run build
 
 # Stage 2: Runner - Chainguard minimal image (0 CVEs, no shell, no package manager)
-FROM ghcr.io/pablo-health/base-node:latest AS runner
+FROM ghcr.io/pablo-health/base-node:2026-04-11 AS runner
 
 WORKDIR /app
 
