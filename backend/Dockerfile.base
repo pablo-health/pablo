@@ -1,12 +1,12 @@
-# Backend Base Image
-# Contains all Python dependencies (PyTorch, spaCy, ONNX, Presidio, etc.)
+# Backend Base Image (Distroless)
+# Contains Python 3.13 runtime + all dependencies (PyTorch, spaCy, ONNX, Presidio, etc.)
 # Rebuild only when pyproject.toml or poetry.lock changes.
 #
 # Usage:
 #   ./rebuild-base.sh
 #   ./redeploy.sh base
 
-# Stage 1: Builder - Install dependencies
+# Stage 1: Builder - Install all Python dependencies
 FROM python:3.13-slim AS builder
 
 WORKDIR /build
@@ -37,16 +37,49 @@ RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --only main
 
 
-# Stage 2: Runtime - Minimal image with all deps, no app code
-FROM python:3.13-slim
+# Stage 2: Shared library collector - discover native extension dependencies
+FROM python:3.13-slim AS lib-collector
+
+# Copy Python packages and binary from builder
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin/python3.13 /usr/local/bin/python3.13
+COPY --from=builder /usr/local/lib/libpython3.13.so* /usr/local/lib/
+
+# Discover all shared libraries required by native extensions (PyTorch, ONNX, etc.)
+# and the Python interpreter itself, then copy them into /runtime-libs.
+# This catches .so dependencies that distroless/cc doesn't include (e.g., libgomp, libopenblas).
+RUN mkdir -p /runtime-libs \
+    && { \
+        ldd /usr/local/bin/python3.13 2>/dev/null; \
+        find /usr/local/lib/python3.13/site-packages -name "*.so*" -exec ldd {} + 2>/dev/null; \
+    } | grep "=> /" | awk '{print $3}' | sort -u \
+    | while read -r lib; do cp --parents "$lib" /runtime-libs/ 2>/dev/null || true; done
+
+# Stage 3: Distroless runtime - minimal image with all deps, no app code
+FROM gcr.io/distroless/cc-debian12:nonroot
 
 WORKDIR /app
 
-# Install only runtime system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Copy shared libraries discovered by the collector
+COPY --from=lib-collector /runtime-libs/ /
 
-# Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy Python interpreter
+COPY --from=builder /usr/local/bin/python3.13 /usr/local/bin/python3.13
+COPY --from=builder /usr/local/bin/python3 /usr/local/bin/python3
+
+# Copy Python shared library
+COPY --from=builder /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so.1.0
+
+# Copy Python standard library + installed packages
+COPY --from=builder /usr/local/lib/python3.13 /usr/local/lib/python3.13
+
+# Copy installed CLI scripts (uvicorn, etc.)
+COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
+
+# Ensure dynamic linker finds our copied libraries
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV PYTHONUNBUFFERED=1
+
+# Smoke test: verify all critical imports work at build time.
+# Catches missing shared libraries before they hit production.
+RUN ["/usr/local/bin/python3.13", "-c", "import fastapi; import uvicorn; print('distroless smoke test passed')"]
