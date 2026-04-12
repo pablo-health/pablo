@@ -20,11 +20,10 @@ COPY . .
 # AUTH_COOKIE_SIGNATURE_KEY is required at build time because auth-config.ts
 # evaluates on module import. This placeholder is NOT used at runtime —
 # the real key is injected via Cloud Run environment variables.
-ENV AUTH_COOKIE_SIGNATURE_KEY="build-time-placeholder-replaced-at-runtime"
-RUN npm run build
+RUN AUTH_COOKIE_SIGNATURE_KEY="build-time-placeholder-replaced-at-runtime" npm run build
 
-# Stage 2: Runner - Minimal production image
-FROM node:22-slim AS runner
+# Stage 2: Runner - Distroless production image (no shell, no package manager)
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runner
 
 WORKDIR /app
 
@@ -32,22 +31,15 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Create non-root user for security
-# node:22-slim already has node user with UID 1000, so we'll use that
-RUN chown -R node:node /app
-USER node
+# Copy standalone build — distroless runs as nonroot (UID 65532) by default
+COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
+COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
+COPY --from=builder --chown=65532:65532 /app/public ./public
 
-# Copy standalone build (minimal node_modules automatically included)
-COPY --from=builder --chown=node:node /app/.next/standalone ./
-COPY --from=builder --chown=node:node /app/.next/static ./.next/static
-COPY --from=builder --chown=node:node /app/public ./public
+USER nonroot
 
 # Expose port (Cloud Run uses PORT env var, defaults to 3000)
 EXPOSE 3000
-
-# Health check endpoint (Next.js doesn't have a built-in /health, but root page works)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3000', (r) => r.statusCode === 200 ? process.exit(0) : process.exit(1))"
 
 # Set port from environment (Cloud Run sets PORT)
 ENV PORT=3000
@@ -64,4 +56,4 @@ ENV RATING_FEEDBACK_REQUIRED_BELOW="5"
 
 # Run Next.js in production mode
 # Standalone mode uses server.js as entry point
-CMD ["node", "server.js"]
+CMD ["server.js"]
