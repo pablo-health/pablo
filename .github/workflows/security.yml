@@ -67,13 +67,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Pull image
+        run: docker pull ${{ matrix.image }}
+
       - name: Scan ${{ matrix.image }}
         uses: aquasecurity/trivy-action@0.35.0
         with:
+          input: /dev/null
           image-ref: ${{ matrix.image }}
           format: sarif
           output: trivy-base.sarif
           severity: CRITICAL,HIGH
+        env:
+          TRIVY_IMAGE_SRC: docker
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v4
