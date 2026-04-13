@@ -39,7 +39,7 @@ RUN poetry config virtualenvs.create false \
 
 
 # Stage 2: Runtime - Chainguard minimal image (0 CVEs)
-FROM ghcr.io/pablo-health/base-python:2026-04-11
+FROM ghcr.io/pablo-health/base-python:2026-04-13
 
 WORKDIR /app
 
