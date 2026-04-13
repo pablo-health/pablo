@@ -3,7 +3,7 @@
 # Rebuild only when pyproject.toml or poetry.lock changes.
 # trivy:ignore:DS-0026 — base image, not a service; no endpoint to healthcheck
 #
-# Builder uses python:3.14-slim (ephemeral, discarded after build).
+# Builder uses Chainguard dev image (same wolfi glibc as runtime).
 # Runtime uses Chainguard (0 CVEs), mirrored to GHCR weekly.
 #
 # Usage:
@@ -11,29 +11,19 @@
 #   ./redeploy.sh base
 
 # Stage 1: Builder - Install all Python dependencies
-FROM python:3.14-slim AS builder
+# Use Chainguard dev variant so compiled .so files link against the same
+# wolfi glibc as the runtime image — eliminates version-drift breakage.
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
 WORKDIR /build
 
-# Install system dependencies for building Python packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Poetry
-ENV POETRY_HOME="/opt/poetry"
-ENV PATH="$POETRY_HOME/bin:$PATH"
-RUN curl -sSL https://install.python-poetry.org | python3 -
+# Install Poetry via pip (Chainguard dev already has pip, git, gcc, build-base)
+RUN pip install --no-cache-dir poetry
 
 # Copy dependency files
 COPY pyproject.toml poetry.lock ./
 
-
 # Install remaining dependencies (no dev packages, no virtualenv)
-# Note: meeting-transcription is automatically cloned from git by Poetry
-# (configured in pyproject.toml line 38)
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root --only main
 
@@ -44,8 +34,8 @@ FROM ghcr.io/pablo-health/base-python:2026-04-11
 WORKDIR /app
 
 # Copy Python packages from builder
-COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/lib/python3.14/site-packages
-COPY --from=builder /usr/local/bin/uvicorn /usr/bin/uvicorn
+COPY --from=builder /usr/lib/python3.14/site-packages /usr/lib/python3.14/site-packages
+COPY --from=builder /usr/bin/uvicorn /usr/bin/uvicorn
 
 ENV PYTHONUNBUFFERED=1
 
