@@ -17,6 +17,9 @@ FROM cgr.dev/chainguard/python:latest-dev AS builder
 
 WORKDIR /build
 
+# Chainguard defaults to nonroot — switch to root for the ephemeral builder
+USER root
+
 # Install Poetry via pip (Chainguard dev already has pip, git, gcc, build-base)
 RUN pip install --no-cache-dir poetry
 
