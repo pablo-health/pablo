@@ -44,7 +44,6 @@ reportlab = "^4.4.10"
 meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcription.git"}
 
 # NLI Verification (source attribution confidence scoring)
-sentence-transformers = ">=3.0.0"
 onnxruntime = ">=1.18.0"
 
 # iCal calendar feed parsing
