@@ -53,7 +53,7 @@ jobs:
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-ansi --with pii --with nli
+        run: poetry install --no-interaction --no-ansi
 
       - name: Audit Python dependencies
         run: poetry run pip-audit --skip-editable
