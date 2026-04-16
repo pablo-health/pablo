@@ -149,7 +149,14 @@ def _migrate_platform_columns(engine: Engine) -> None:
 
     with engine.connect() as conn:
         for stmt in migrations:
-            conn.execute(text(stmt))
+            savepoint = conn.begin_nested()
+            try:
+                conn.execute(text(stmt))
+                savepoint.commit()
+            except Exception:
+                # Table/column may not exist in this edition (e.g. SaaS-only
+                # tables like platform.subscriptions in the OSS build) — skip.
+                savepoint.rollback()
         conn.commit()
     logger.info("Platform column migrations applied")
 
