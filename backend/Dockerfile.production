@@ -1,32 +1,60 @@
-# Backend Production Dockerfile (Distroless)
-# Layers app code on top of the pre-built base image (backend-base)
-# which contains the Python runtime and all dependencies.
-# trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
+# Backend Production Dockerfile (self-contained)
 #
-# To rebuild the base image (when deps change):
-#   ./rebuild-base.sh
+# Two-stage build using only public images so this works for self-hosters:
+#   1. Builder stage: install Python deps + spaCy model under python:3.13-slim
+#   2. Runtime stage: copy installed packages into a fresh python:3.13-slim
+#
+# trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
 
-ARG BASE_IMAGE=ghcr.io/pablo-health/backend-base:2026-04-11
-FROM ${BASE_IMAGE}
+# ---------- Stage 1: Builder ----------
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV POETRY_HOME="/opt/poetry"
+ENV PATH="$POETRY_HOME/bin:$PATH"
+RUN curl -sSL https://install.python-poetry.org | python3 -
+
+COPY pyproject.toml poetry.lock ./
+
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi --no-root --only main
+
+RUN python -m spacy download en_core_web_lg
+
+
+# ---------- Stage 2: Runtime ----------
+FROM python:3.13-slim
 
 WORKDIR /app
 
-# Copy application code and repo-root config files
-COPY --chown=65532:65532 backend/ ./backend/
-COPY --chown=65532:65532 min_client_versions.json ./
-COPY --chown=65532:65532 backend/entrypoint.py ./entrypoint.py
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 65532 nonroot
+
+# Installed Python packages and console scripts from the builder
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
+
+# Application code and repo-root config
+COPY --chown=nonroot:nonroot backend/ ./backend/
+COPY --chown=nonroot:nonroot min_client_versions.json ./
+COPY --chown=nonroot:nonroot backend/entrypoint.py ./entrypoint.py
 
 USER nonroot
 
-# Expose port (Cloud Run uses PORT env var, defaults to 8000)
 EXPOSE 8000
 
-# Production server configuration
 ENV PYTHONUNBUFFERED=1
 ENV ENVIRONMENT=production
 
-# Run with production settings via Python entrypoint (no shell in distroless).
 # Single worker required: the in-memory auth code store (native app
 # code exchange) is process-local and cannot be shared across workers.
 # Move to Redis-backed store before scaling to multiple workers.
-CMD ["/usr/local/bin/python3.13", "entrypoint.py"]
+CMD ["python3.13", "entrypoint.py"]

@@ -162,7 +162,6 @@ echo ""
 
 gcloud services enable \
     run.googleapis.com \
-    cloudbuild.googleapis.com \
     artifactregistry.googleapis.com \
     sqladmin.googleapis.com \
     secretmanager.googleapis.com \
@@ -227,11 +226,6 @@ else
 
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
         --member="user:$CURRENT_USER" \
-        --role="roles/cloudbuild.builds.editor" \
-        --quiet 2>/dev/null || GRANT_FAILED=1
-
-    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-        --member="user:$CURRENT_USER" \
         --role="roles/iam.serviceAccountAdmin" \
         --quiet 2>/dev/null || GRANT_FAILED=1
 
@@ -252,10 +246,6 @@ else
         echo "  gcloud projects add-iam-policy-binding $PROJECT_ID \\"
         echo "    --member=\"user:$CURRENT_USER\" \\"
         echo "    --role=\"roles/run.admin\""
-        echo ""
-        echo "  gcloud projects add-iam-policy-binding $PROJECT_ID \\"
-        echo "    --member=\"user:$CURRENT_USER\" \\"
-        echo "    --role=\"roles/cloudbuild.builds.editor\""
         echo ""
         echo "  gcloud projects add-iam-policy-binding $PROJECT_ID \\"
         echo "    --member=\"user:$CURRENT_USER\" \\"
@@ -308,21 +298,6 @@ gcloud iam service-accounts add-iam-policy-binding \
     --project="$PROJECT_ID" \
     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
     --role="roles/iam.serviceAccountTokenCreator" \
-    --quiet 2>/dev/null || true
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-    --role="roles/run.admin" \
-    --quiet 2>/dev/null || true
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-    --role="roles/iam.serviceAccountUser" \
-    --quiet 2>/dev/null || true
-
-gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-    --role="roles/artifactregistry.writer" \
     --quiet 2>/dev/null || true
 
 echo -e "${GREEN}Service account permissions configured${NC}"
@@ -412,11 +387,12 @@ else
     echo "  Region:    ${REPO_LOCATION}"
     echo "  Disk:      10GB (auto-increase enabled)"
     echo ""
-    echo -e "${YELLOW}This takes 3-5 minutes...${NC}"
+    echo -e "${YELLOW}This takes 5-10 minutes...${NC}"
     echo ""
 
     if gcloud sql instances create "$SQL_INSTANCE_NAME" \
         --database-version=POSTGRES_16 \
+        --edition=ENTERPRISE \
         --tier=db-f1-micro \
         --region="$REPO_LOCATION" \
         --storage-size=10 \
@@ -431,8 +407,9 @@ else
         echo "  1. Visit: https://console.cloud.google.com/sql/instances?project=${PROJECT_ID}"
         echo "  2. Click 'Create Instance' > 'PostgreSQL'"
         echo "  3. Instance ID: ${SQL_INSTANCE_NAME}"
-        echo "  4. PostgreSQL 16, db-f1-micro, ${REPO_LOCATION}"
-        echo "  5. Click 'Create Instance'"
+        echo "  4. Edition: Enterprise (not Enterprise Plus)"
+        echo "  5. PostgreSQL 16, db-f1-micro, ${REPO_LOCATION}"
+        echo "  6. Click 'Create Instance'"
         echo ""
         read -p "Press Enter after you've created the Cloud SQL instance..."
     fi
@@ -631,34 +608,94 @@ if [ -n "$FIREBASE_APP_ID" ]; then
     echo -e "${GREEN}Firebase web app exists: ${FIREBASE_APP_ID}${NC}"
 else
     echo "Creating Firebase web app..."
-    curl -s -X POST \
+    CREATE_RESPONSE=$(curl -s -X POST \
         "https://firebase.googleapis.com/v1beta1/projects/${PROJECT_ID}/webApps" \
         -H "Authorization: Bearer $(gcloud auth print-access-token)" \
         -H "X-Goog-User-Project: ${PROJECT_ID}" \
         -H "Content-Type: application/json" \
-        -d '{"displayName": "Pablo"}' > /dev/null
+        -d '{"displayName": "Pablo"}')
 
-    sleep 5
-
-    EXISTING_APPS=$(curl -s \
-        "https://firebase.googleapis.com/v1beta1/projects/${PROJECT_ID}/webApps" \
-        -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-        -H "X-Goog-User-Project: ${PROJECT_ID}")
-
-    FIREBASE_APP_ID=$(echo "$EXISTING_APPS" | python3 -c "
+    # Check for immediate errors (e.g. missing permissions, API not enabled)
+    ERROR_MSG=$(echo "$CREATE_RESPONSE" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
-    apps = d.get('apps', [])
-    if apps:
-        print(apps[0]['appId'])
+    if 'error' in d:
+        print(d['error'].get('message', 'Unknown error'))
 except: pass
 " 2>/dev/null)
+
+    if [ -n "$ERROR_MSG" ]; then
+        echo -e "${RED}Firebase web app creation failed: ${ERROR_MSG}${NC}"
+        echo ""
+        echo "Full response:"
+        echo "$CREATE_RESPONSE"
+        exit 1
+    fi
+
+    # webApps.create returns a long-running operation — poll until done
+    OPERATION_NAME=$(echo "$CREATE_RESPONSE" | python3 -c "
+import sys, json
+try:
+    print(json.load(sys.stdin).get('name', ''))
+except: pass
+" 2>/dev/null)
+
+    if [ -z "$OPERATION_NAME" ]; then
+        echo -e "${RED}Unexpected Firebase API response (no operation name):${NC}"
+        echo "$CREATE_RESPONSE"
+        exit 1
+    fi
+
+    echo "  Operation: ${OPERATION_NAME}"
+    echo "  Waiting for Firebase web app to be created..."
+
+    RETRY_COUNT=0
+    MAX_RETRIES=24  # 24 * 5s = 2 minutes
+    FIREBASE_APP_ID=""
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        sleep 5
+        OP_STATUS=$(curl -s \
+            "https://firebase.googleapis.com/v1beta1/${OPERATION_NAME}" \
+            -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+            -H "X-Goog-User-Project: ${PROJECT_ID}")
+
+        DONE=$(echo "$OP_STATUS" | python3 -c "
+import sys, json
+try:
+    print('yes' if json.load(sys.stdin).get('done') else 'no')
+except: print('no')
+" 2>/dev/null)
+
+        if [ "$DONE" = "yes" ]; then
+            FIREBASE_APP_ID=$(echo "$OP_STATUS" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    if 'error' in d:
+        print('ERROR:' + d['error'].get('message', 'Unknown error'))
+    else:
+        print(d.get('response', {}).get('appId', ''))
+except: pass
+" 2>/dev/null)
+
+            if [[ "$FIREBASE_APP_ID" == ERROR:* ]]; then
+                echo -e "${RED}Firebase web app creation failed: ${FIREBASE_APP_ID#ERROR:}${NC}"
+                exit 1
+            fi
+            break
+        fi
+
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        echo "  Still waiting... ($((RETRY_COUNT * 5))s)"
+    done
 
     if [ -n "$FIREBASE_APP_ID" ]; then
         echo -e "${GREEN}Firebase web app created: ${FIREBASE_APP_ID}${NC}"
     else
-        echo -e "${RED}Failed to create Firebase web app${NC}"
+        echo -e "${RED}Firebase web app creation timed out after 2 minutes.${NC}"
+        echo "Check: https://console.firebase.google.com/project/${PROJECT_ID}/settings/general"
         exit 1
     fi
 fi
@@ -778,61 +815,17 @@ echo ""
 echo -e "${GREEN}Identity Platform fully configured${NC}"
 echo ""
 
-# ============================================================================
-# STEP 7: AI Model Configuration
-# ============================================================================
-echo ""
-echo -e "${BLUE}Step 7: AI Model Configuration${NC}"
-echo ""
-
-echo "Choose your AI model for generating SOAP notes:"
-echo ""
-echo "  1) Google Vertex AI (Gemini) — Recommended for GCP"
-echo "     Auto-authenticated on Cloud Run (no API key needed)"
-echo "     Cost: ~\$0.10-0.30 per SOAP note"
-echo ""
-echo "  2) Anthropic (Claude)"
-echo "     Requires Anthropic API key"
-echo "     Cost: ~\$0.15-0.40 per SOAP note"
-echo ""
-read -p "Choice [1]: " MODEL_CHOICE
-MODEL_CHOICE=${MODEL_CHOICE:-1}
-
-if [ "$MODEL_CHOICE" = "2" ]; then
-    AI_MODEL="anthropic/claude-sonnet-4-20250514"
-    echo ""
-    echo -e "${YELLOW}Setting up Anthropic API key...${NC}"
-    echo ""
-    echo -e "${GREEN}Get your API key from: https://console.anthropic.com/settings/keys${NC}"
-    echo ""
-
-    read -sp "Paste your Anthropic API Key (hidden): " ANTHROPIC_KEY
-    echo ""
-
-    echo "Storing API key in Secret Manager..."
-    echo -n "$ANTHROPIC_KEY" | gcloud secrets create ANTHROPIC_API_KEY --data-file=- 2>/dev/null || {
-        echo -n "$ANTHROPIC_KEY" | gcloud secrets versions add ANTHROPIC_API_KEY --data-file=-
-    }
-
-    gcloud secrets add-iam-policy-binding ANTHROPIC_API_KEY \
-        --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-        --role="roles/secretmanager.secretAccessor" \
-        --quiet 2>/dev/null || true
-
-    echo -e "${GREEN}Anthropic API key stored securely${NC}"
-    ANTHROPIC_SECRET="ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest"
-else
-    AI_MODEL="google:gemini-3.1-pro-preview"
-    GOOGLE_REGION="global"
-    ANTHROPIC_SECRET=""
-    echo -e "${GREEN}Using Google Gemini — auto-authenticated on GCP${NC}"
-fi
+# Vertex AI (Gemini) is the default — auto-authenticated on Cloud Run, covered
+# under the GCP BAA, and requires no third-party API key.
+AI_MODEL="google:gemini-3.1-pro-preview"
+GOOGLE_REGION="global"
+ANTHROPIC_SECRET=""
 
 # ============================================================================
-# STEP 8: Generate secrets
+# STEP 7: Generate secrets
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 8: Generating secrets...${NC}"
+echo -e "${BLUE}Step 7: Generating secrets...${NC}"
 echo ""
 
 # Helper: create a secret only if it doesn't already exist
@@ -860,10 +853,10 @@ echo ""
 echo -e "${GREEN}All secrets ready${NC}"
 
 # ============================================================================
-# STEP 8b: Set up Google OAuth credentials
+# STEP 7b: Set up Google OAuth credentials
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 8b: Setting up Google OAuth credentials...${NC}"
+echo -e "${BLUE}Step 7b: Setting up Google OAuth credentials...${NC}"
 echo ""
 
 if gcloud secrets describe GOOGLE_CLIENT_SECRET &>/dev/null; then
@@ -941,69 +934,42 @@ fi
 echo -e "${GREEN}Google OAuth registered with Identity Platform${NC}"
 
 # ============================================================================
-# STEP 9: Build Docker images
+# STEP 8: Mirror pre-built container images from ghcr.io
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 9: Building Docker images...${NC}"
+echo -e "${BLUE}Step 8: Mirroring container images from ghcr.io...${NC}"
 echo ""
-echo "This builds frontend and backend images using Cloud Build."
-echo ""
-
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$SCRIPT_DIR"
-
-# Pre-built base image from GitHub Container Registry.
-# Users only need to build their own if they modify pyproject.toml/poetry.lock.
-PUBLIC_BASE_IMAGE="ghcr.io/pablo-health/backend-base:latest"
-
-DEPS_HASH=$(cat pyproject.toml poetry.lock | shasum -a 256 | cut -c1-12)
-BASE_TAG="deps-${DEPS_HASH}"
-PRIVATE_BASE_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend-base:v${BASE_TAG}"
-
-if gcloud artifacts docker images describe "$PRIVATE_BASE_IMAGE" &>/dev/null; then
-    echo -e "${GREEN}Backend base image already up-to-date (${BASE_TAG}) — skipping${NC}"
-    BASE_IMAGE="$PRIVATE_BASE_IMAGE"
-elif docker pull "$PUBLIC_BASE_IMAGE" &>/dev/null; then
-    echo -e "${GREEN}Using pre-built base image from ghcr.io${NC}"
-    BASE_IMAGE="$PUBLIC_BASE_IMAGE"
-else
-    echo -e "${YELLOW}Building backend base image (Python deps + spaCy model)...${NC}"
-    echo "This is a one-time build (~15-20 min). Future deploys will be fast."
-    gcloud builds submit . \
-        --config=./backend/cloudbuild-base.yaml \
-        --substitutions="_DATE_TAG=${BASE_TAG}" \
-        --timeout=30m \
-        --quiet
-    echo -e "${GREEN}Backend base image built (${BASE_TAG})${NC}"
-    BASE_IMAGE="$PRIVATE_BASE_IMAGE"
-fi
+echo "Pablo ships pre-built backend and frontend images on GitHub Container Registry."
+echo "This step copies them into your Artifact Registry for Cloud Run to deploy."
 echo ""
 
-# Build backend app image
-echo -e "${YELLOW}Building backend image...${NC}"
-gcloud builds submit . \
-    --config=./backend/cloudbuild.yaml \
-    --substitutions="_BASE_IMAGE=${BASE_IMAGE},_REGION=${REPO_LOCATION}" \
-    --timeout=15m \
-    --quiet
-echo -e "${GREEN}Backend image built${NC}"
+# PABLO_VERSION can be overridden to pin a specific release (e.g. export PABLO_VERSION=v0.1.0)
+PABLO_VERSION="${PABLO_VERSION:-latest}"
+SOURCE_BACKEND="ghcr.io/pablo-health/backend:${PABLO_VERSION}"
+SOURCE_FRONTEND="ghcr.io/pablo-health/frontend:${PABLO_VERSION}"
+DEST_BACKEND="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend:${PABLO_VERSION}"
+DEST_FRONTEND="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/frontend:${PABLO_VERSION}"
 
-# Build frontend image
+echo "  Version:  ${PABLO_VERSION}"
+echo "  Backend:  ${SOURCE_BACKEND}"
+echo "  Frontend: ${SOURCE_FRONTEND}"
 echo ""
-echo -e "${YELLOW}Building frontend image...${NC}"
-gcloud builds submit ./frontend \
-    --config=./frontend/cloudbuild.yaml \
-    --substitutions="_REGION=${REPO_LOCATION}" \
-    --timeout=20m \
-    --quiet
-echo -e "${GREEN}Frontend image built${NC}"
+
+echo -e "${YELLOW}Copying backend image...${NC}"
+gcloud artifacts docker images copy "$SOURCE_BACKEND" "$DEST_BACKEND" --quiet
+echo -e "${GREEN}Backend image mirrored${NC}"
+
+echo ""
+echo -e "${YELLOW}Copying frontend image...${NC}"
+gcloud artifacts docker images copy "$SOURCE_FRONTEND" "$DEST_FRONTEND" --quiet
+echo -e "${GREEN}Frontend image mirrored${NC}"
 echo ""
 
 # ============================================================================
-# STEP 10: Deploy to Cloud Run
+# STEP 9: Deploy to Cloud Run
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 10: Deploying to Cloud Run...${NC}"
+echo -e "${BLUE}Step 9: Deploying to Cloud Run...${NC}"
 echo ""
 
 # Build secrets string for backend
@@ -1015,7 +981,7 @@ fi
 # Deploy backend
 echo -e "${YELLOW}Deploying backend...${NC}"
 gcloud run deploy pablo-backend \
-    --image="$REPO_LOCATION-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend:latest" \
+    --image="$DEST_BACKEND" \
     --region="$REPO_LOCATION" \
     --platform=managed \
     --allow-unauthenticated \
@@ -1040,7 +1006,7 @@ echo ""
 # Deploy frontend
 echo -e "${YELLOW}Deploying frontend...${NC}"
 gcloud run deploy pablo-frontend \
-    --image="$REPO_LOCATION-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/frontend:latest" \
+    --image="$DEST_FRONTEND" \
     --region="$REPO_LOCATION" \
     --platform=managed \
     --allow-unauthenticated \
@@ -1126,10 +1092,10 @@ gcloud run services update pablo-backend \
 echo -e "${GREEN}CORS configured${NC}"
 
 # ============================================================================
-# STEP 11: Create your user
+# STEP 10: Create your user
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 11: Creating your user account...${NC}"
+echo -e "${BLUE}Step 10: Creating your user account...${NC}"
 echo ""
 
 # Wait for backend to be healthy
@@ -1282,15 +1248,6 @@ echo "  - Sign your Google Cloud BAA"
 echo "  - Enable Cloud Audit Logs for Cloud SQL"
 echo "  - Enable Cloud SQL automated backups"
 echo "  - See: docs/SELF_HOSTING_HIPAA_GUIDE.md"
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo -e "${BLUE}Estimated Monthly Cost${NC}"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "  Cloud Run:     \$8-25"
-echo "  Cloud SQL:     \$7-15"
-echo "  AI (per note):  \$0.10-0.40"
-echo "  Total (est.):  \$20-55/month"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "${BLUE}Next Steps${NC}"
