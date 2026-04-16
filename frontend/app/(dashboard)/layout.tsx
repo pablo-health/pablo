@@ -14,6 +14,7 @@ import { IdleTimeout } from "@/components/IdleTimeout"
 export const dynamic = "force-dynamic"
 
 const IS_DEV_MODE = process.env.DEV_MODE === "true"
+const IS_OSS_EDITION = (process.env.PABLO_EDITION || "core") === "core"
 
 export default async function DashboardLayout({
   children,
@@ -67,17 +68,20 @@ export default async function DashboardLayout({
       redirect("/login")
     }
 
-    // Check BAA acceptance status
+    // Check BAA acceptance status (managed editions only).
+    // OSS self-hosters sign the BAA directly with Google Cloud, not in-app.
     // SECURITY: This is fail-closed - any error blocks access
-    try {
-      const baaStatus = await getBAAStatus(token)
-      if (!baaStatus.accepted || baaStatus.version !== baaStatus.current_version) {
+    if (!IS_OSS_EDITION) {
+      try {
+        const baaStatus = await getBAAStatus(token)
+        if (!baaStatus.accepted || baaStatus.version !== baaStatus.current_version) {
+          redirect("/baa-acceptance")
+        }
+      } catch (error) {
+        if (error && typeof error === "object" && "digest" in error) throw error
+        console.error("Failed to check BAA status — blocking access")
         redirect("/baa-acceptance")
       }
-    } catch (error) {
-      if (error && typeof error === "object" && "digest" in error) throw error
-      console.error("Failed to check BAA status — blocking access")
-      redirect("/baa-acceptance")
     }
   }
 
