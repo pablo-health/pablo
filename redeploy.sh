@@ -65,7 +65,7 @@ mirror_and_deploy() {
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    docker pull "$source"
+    docker pull --platform linux/amd64 "$source"
     docker tag "$source" "$dest"
     docker push "$dest"
     echo -e "${GREEN}✓ ${service} image mirrored to Artifact Registry${NC}"
