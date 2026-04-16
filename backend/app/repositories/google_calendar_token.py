@@ -53,19 +53,25 @@ class GoogleCalendarTokenRepository(ABC):
     """Abstract interface for Google Calendar token storage."""
 
     @abstractmethod
-    def get(self, user_id: str) -> GoogleCalendarTokenDoc | None: ...
+    def get(self, user_id: str) -> GoogleCalendarTokenDoc | None:
+        raise NotImplementedError
 
     @abstractmethod
-    def list_all(self) -> list[GoogleCalendarTokenDoc]: ...
+    def list_all(self) -> list[GoogleCalendarTokenDoc]:
+        raise NotImplementedError
 
     @abstractmethod
-    def save(self, token_doc: GoogleCalendarTokenDoc) -> None: ...
+    def save(self, token_doc: GoogleCalendarTokenDoc) -> None:
+        raise NotImplementedError
 
     @abstractmethod
-    def update_sync_token(self, user_id: str, sync_token: str) -> None: ...
+    def update_sync_token(self, user_id: str, sync_token: str) -> None:
+        raise NotImplementedError
 
     @abstractmethod
-    def delete(self, user_id: str) -> bool: ...
+    def delete(self, user_id: str) -> bool:
+        raise NotImplementedError
 
     @abstractmethod
-    def exists(self, user_id: str) -> bool: ...
+    def exists(self, user_id: str) -> bool:
+        raise NotImplementedError
