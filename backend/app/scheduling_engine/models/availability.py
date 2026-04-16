@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -37,8 +38,8 @@ class AvailabilityRule:
     rule_type: str  # RuleType value
     enforcement: str  # EnforcementLevel value
     params: dict[str, Any]
-    created_at: str = ""  # ISO 8601 UTC
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AvailabilityRule:
@@ -49,7 +50,7 @@ class AvailabilityRule:
             rule_type=data["rule_type"],
             enforcement=data["enforcement"],
             params=data.get("params", {}),
-            created_at=data.get("created_at", ""),
+            created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
 

@@ -2,6 +2,7 @@
 
 """Tests for Practice Mode REST endpoints."""
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,11 +59,11 @@ def sample_session():
         id="session-1",
         user_id="test-user-123",
         patient_id="practice-test-user-123",
-        session_date="2026-03-30T00:00:00Z",
+        session_date=datetime.fromisoformat("2026-03-30T00:00:00+00:00"),
         session_number=1,
         status=SessionStatus.SCHEDULED,
         transcript=Transcript(format="txt", content=""),
-        created_at="2026-03-30T00:00:00Z",
+        created_at=datetime.fromisoformat("2026-03-30T00:00:00+00:00"),
         source=SessionSource.PRACTICE,
         notes="topic_id=generalized_anxiety;mode=practice",
     )

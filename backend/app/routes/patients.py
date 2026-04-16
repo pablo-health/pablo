@@ -36,7 +36,7 @@ from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
 from ..services import AuditService, ExportService, get_audit_service
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def create_patient(
     - **date_of_birth**: Date of birth in ISO format (optional)
     - **diagnosis**: Current diagnosis (optional)
     """
-    now = utc_now_iso()
+    now = utc_now()
 
     patient = Patient(
         id=str(uuid.uuid4()),

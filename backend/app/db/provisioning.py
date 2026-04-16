@@ -11,9 +11,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
 from sqlalchemy import text
 
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
 from .models import Base
 from .platform_models import PlatformBase, PracticeRow
@@ -24,8 +27,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _now() -> str:
-    return utc_now_iso()
+def _now() -> datetime:
+    return utc_now()
 
 
 def ensure_schemas(engine: Engine) -> None:
@@ -46,6 +49,17 @@ def ensure_schemas(engine: Engine) -> None:
 
     # Create default practice schema and tables
     create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
+
+    # Migrate columns on all existing practice schemas
+    with engine.connect() as conn:
+        schemas = conn.execute(
+            text(
+                "SELECT schema_name FROM information_schema.schemata"
+                " WHERE schema_name LIKE 'practice_%'"
+            )
+        ).fetchall()
+    for (schema,) in schemas:
+        _migrate_practice_columns(engine, schema)
 
     # Ensure default practice exists in registry
     from sqlalchemy.orm import Session
@@ -89,13 +103,50 @@ def _migrate_platform_columns(engine: Engine) -> None:
         # subscriptions: grace extension
         f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS grace_extension_used BOOLEAN DEFAULT FALSE",
         f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS grace_extension_expires_at VARCHAR(50)",
-        # Widen all timestamp columns from VARCHAR(30) to 50
-        f"ALTER TABLE {practices} ALTER COLUMN created_at TYPE VARCHAR(50)",
-        f"ALTER TABLE {subs} ALTER COLUMN created_at TYPE VARCHAR(50)",
-        f"ALTER TABLE {subs} ALTER COLUMN updated_at TYPE VARCHAR(50)",
-        f"ALTER TABLE {PLATFORM_SCHEMA}.email_tenant_mappings"
-        " ALTER COLUMN created_at TYPE VARCHAR(50)",
     ]
+
+    # platform.users: new table columns (table created by create_all above)
+    users = f"{PLATFORM_SCHEMA}.users"
+    migrations.extend(
+        [
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS is_platform_admin BOOLEAN DEFAULT FALSE",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_accepted_at VARCHAR(50)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_version VARCHAR(10)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_legal_name VARCHAR(255)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_license_number VARCHAR(100)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_license_state VARCHAR(2)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_practice_name VARCHAR(255)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_business_address VARCHAR(500)",
+            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_full_text TEXT",
+        ]
+    )
+
+    # --- Migrate VARCHAR datetime columns to TIMESTAMP WITH TIME ZONE ---
+    etm = f"{PLATFORM_SCHEMA}.email_tenant_mappings"
+    allowed = f"{PLATFORM_SCHEMA}.allowed_emails"
+
+    def _alter_ts(table: str, col: str) -> str:
+        return (
+            f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMP WITH TIME ZONE"
+            f" USING CASE WHEN {col}::text = '' THEN NULL"
+            f" ELSE {col}::text::timestamptz END"
+        )
+
+    migrations.extend(
+        [
+            _alter_ts(practices, "created_at"),
+            _alter_ts(subs, "created_at"),
+            _alter_ts(subs, "updated_at"),
+            _alter_ts(subs, "trial_start"),
+            _alter_ts(subs, "grace_extension_expires_at"),
+            _alter_ts(etm, "created_at"),
+            _alter_ts(users, "created_at"),
+            _alter_ts(users, "mfa_enrolled_at"),
+            _alter_ts(users, "baa_accepted_at"),
+            _alter_ts(allowed, "added_at"),
+        ]
+    )
+
     with engine.connect() as conn:
         for stmt in migrations:
             conn.execute(text(stmt))
@@ -103,10 +154,100 @@ def _migrate_platform_columns(engine: Engine) -> None:
     logger.info("Platform column migrations applied")
 
 
+def _migrate_practice_columns(engine: Engine, schema_name: str) -> None:
+    """Add columns to existing practice schemas (idempotent)."""
+    ical = f"{schema_name}.ical_sync_configs"
+    gcal = f"{schema_name}.google_calendar_tokens"
+    sessions = f"{schema_name}.therapy_sessions"
+    migrations = [
+        f"ALTER TABLE {ical} ADD COLUMN IF NOT EXISTS consecutive_error_count INTEGER DEFAULT 0",
+        f"ALTER TABLE {gcal} ADD COLUMN IF NOT EXISTS consecutive_error_count INTEGER DEFAULT 0",
+        f"ALTER TABLE {gcal} ADD COLUMN IF NOT EXISTS last_sync_error TEXT",
+        f"ALTER TABLE {sessions} ADD COLUMN IF NOT EXISTS transcription_job_metadata JSONB",
+    ]
+
+    # --- Migrate VARCHAR datetime columns to TIMESTAMP WITH TIME ZONE ---
+    patients = f"{schema_name}.patients"
+    sessions = f"{schema_name}.therapy_sessions"
+    prompts = f"{schema_name}.ehr_prompts"
+    routes = f"{schema_name}.ehr_routes"
+    appts = f"{schema_name}.appointments"
+    rules = f"{schema_name}.availability_rules"
+    mappings = f"{schema_name}.ical_client_mappings"
+    profiles = f"{schema_name}.clinician_profiles"
+
+    def _alter_ts(table: str, col: str) -> str:
+        return (
+            f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMP WITH TIME ZONE"
+            f" USING CASE WHEN {col}::text = '' THEN NULL"
+            f" ELSE {col}::text::timestamptz END"
+        )
+
+    migrations.extend(
+        [
+            # patients
+            _alter_ts(patients, "last_session_date"),
+            _alter_ts(patients, "next_session_date"),
+            _alter_ts(patients, "created_at"),
+            _alter_ts(patients, "updated_at"),
+            # therapy_sessions
+            _alter_ts(sessions, "session_date"),
+            _alter_ts(sessions, "created_at"),
+            _alter_ts(sessions, "scheduled_at"),
+            _alter_ts(sessions, "started_at"),
+            _alter_ts(sessions, "ended_at"),
+            _alter_ts(sessions, "updated_at"),
+            _alter_ts(sessions, "processing_started_at"),
+            _alter_ts(sessions, "processing_completed_at"),
+            _alter_ts(sessions, "finalized_at"),
+            _alter_ts(sessions, "export_queued_at"),
+            _alter_ts(sessions, "export_reviewed_at"),
+            _alter_ts(sessions, "exported_at"),
+            # ehr_prompts
+            _alter_ts(prompts, "updated_at"),
+            # ehr_routes
+            _alter_ts(routes, "last_success"),
+            _alter_ts(routes, "created_at"),
+            _alter_ts(routes, "updated_at"),
+            # appointments
+            _alter_ts(appts, "start_at"),
+            _alter_ts(appts, "end_at"),
+            _alter_ts(appts, "created_at"),
+            _alter_ts(appts, "updated_at"),
+            # availability_rules
+            _alter_ts(rules, "created_at"),
+            _alter_ts(rules, "updated_at"),
+            # google_calendar_tokens
+            _alter_ts(gcal, "last_synced_at"),
+            _alter_ts(gcal, "connected_at"),
+            # ical_client_mappings
+            _alter_ts(mappings, "created_at"),
+            # ical_sync_configs
+            _alter_ts(ical, "last_synced_at"),
+            _alter_ts(ical, "connected_at"),
+            # clinician_profiles
+            _alter_ts(profiles, "joined_at"),
+        ]
+    )
+
+    with engine.connect() as conn:
+        for stmt in migrations:
+            savepoint = conn.begin_nested()
+            try:
+                conn.execute(text(stmt))
+                savepoint.commit()
+            except Exception:
+                # Table/column may not exist in this practice schema — skip safely
+                savepoint.rollback()
+        conn.commit()
+
+
 def create_practice_schema(engine: Engine, schema_name: str) -> None:
     """Create a new practice schema with all practice tables.
 
     Idempotent — can be called on existing schemas.
+    Enables Row-Level Security on tables with a user_id column
+    (skipped for the base template schema).
     """
     _validate_schema_name(schema_name)
     with engine.connect() as conn:
@@ -123,5 +264,18 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     # Reset schema to None (default) so future calls don't have stale schema
     for table in Base.metadata.sorted_tables:
         table.schema = None
+
+    # Add columns that may not exist on older practice schemas
+    _migrate_practice_columns(engine, schema_name)
+
+    # Enable RLS on all tables with a user_id column (HIPAA defense-in-depth).
+    # Skipped for the base 'practice' template schema.
+    if schema_name != DEFAULT_PRACTICE_SCHEMA:
+        from sqlalchemy.orm import Session as OrmSession
+
+        from . import enable_rls_on_schema
+
+        with OrmSession(engine) as session:
+            enable_rls_on_schema(session, schema_name)
 
     logger.info("Practice schema '%s' ready", schema_name)

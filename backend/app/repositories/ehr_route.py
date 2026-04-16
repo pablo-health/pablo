@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from ..models.ehr_route import EhrRoute
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 
 if TYPE_CHECKING:
     from google.cloud.firestore import Client as FirestoreClient
@@ -64,7 +64,7 @@ class FirestoreEhrRouteRepository(EhrRouteRepository):
         return EhrRoute.from_dict(data)
 
     def upsert(self, route: EhrRoute) -> EhrRoute:
-        now = utc_now_iso()
+        now = utc_now()
         if not route.created_at:
             route.created_at = now
         route.updated_at = now
@@ -88,7 +88,7 @@ class FirestoreEhrRouteRepository(EhrRouteRepository):
         route.steps[step_index].selector = selector
         route.steps[step_index].a11y_fingerprint = a11y_fingerprint
 
-        now = utc_now_iso()
+        now = utc_now()
         route.updated_at = now
         self._collection().document(ehr_system).update(
             {
@@ -101,7 +101,7 @@ class FirestoreEhrRouteRepository(EhrRouteRepository):
     def increment_success(self, ehr_system: str) -> None:
         from google.cloud.firestore import Increment  # type: ignore[attr-defined]  # noqa: PLC0415
 
-        now = utc_now_iso()
+        now = utc_now()
         self._collection().document(ehr_system).update(
             {
                 "success_count": Increment(1),
@@ -120,7 +120,7 @@ class InMemoryEhrRouteRepository(EhrRouteRepository):
         return self._routes.get(ehr_system)
 
     def upsert(self, route: EhrRoute) -> EhrRoute:
-        now = utc_now_iso()
+        now = utc_now()
         if not route.created_at:
             route.created_at = now
         route.updated_at = now
@@ -143,14 +143,14 @@ class InMemoryEhrRouteRepository(EhrRouteRepository):
 
         route.steps[step_index].selector = selector
         route.steps[step_index].a11y_fingerprint = a11y_fingerprint
-        route.updated_at = utc_now_iso()
+        route.updated_at = utc_now()
         return route
 
     def increment_success(self, ehr_system: str) -> None:
         route = self._routes.get(ehr_system)
         if route:
             route.success_count += 1
-            route.last_success = utc_now_iso()
+            route.last_success = utc_now()
 
     def seed(self, route: EhrRoute) -> None:
         """Seed test data without modifying timestamps."""

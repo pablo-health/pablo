@@ -66,6 +66,11 @@ test-integration:
 	fi
 	cd backend && poetry run pytest tests_integration/ -v
 
+test-integration-tenant:
+	@echo "Running multi-tenant isolation tests (requires Postgres)..."
+	cd backend && DATABASE_BACKEND=postgres MULTI_TENANCY_ENABLED=true \
+		poetry run pytest tests_integration/database/test_tenant_isolation.py -v
+
 # Run all tests (unit + integration)
 test-all:
 	@echo "Running all tests..."

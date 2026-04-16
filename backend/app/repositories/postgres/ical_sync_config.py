@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...db.models import ICalSyncConfigRow
-from ...utcnow import utc_now_iso
+from ...utcnow import utc_now
 from ..ical_sync_config import ICalSyncConfig
 
 if TYPE_CHECKING:
@@ -33,6 +33,11 @@ class PostgresICalSyncConfigRepository:
             .filter(ICalSyncConfigRow.user_id == user_id)
             .all()
         )
+        return [_row_to_config(r) for r in rows]
+
+    def list_all(self) -> list[ICalSyncConfig]:
+        """Return all configs across all users (for scheduled sync dispatch)."""
+        rows = self._session.query(ICalSyncConfigRow).all()
         return [_row_to_config(r) for r in rows]
 
     def save(self, config: ICalSyncConfig) -> None:
@@ -63,8 +68,9 @@ class PostgresICalSyncConfigRepository:
         doc_id = f"{user_id}_{ehr_system}"
         row = self._session.get(ICalSyncConfigRow, doc_id)
         if row:
-            row.last_synced_at = utc_now_iso()
+            row.last_synced_at = utc_now()
             row.last_sync_error = error
+            row.consecutive_error_count = (row.consecutive_error_count or 0) + 1 if error else 0
             self._session.flush()
 
 
@@ -76,4 +82,5 @@ def _row_to_config(row: ICalSyncConfigRow) -> ICalSyncConfig:
         last_synced_at=row.last_synced_at,
         last_sync_error=row.last_sync_error,
         connected_at=row.connected_at,
+        consecutive_error_count=row.consecutive_error_count or 0,
     )

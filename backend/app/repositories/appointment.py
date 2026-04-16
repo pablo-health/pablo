@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from google.cloud.firestore_v1.base_query import FieldFilter
@@ -30,8 +31,8 @@ class FirestoreAppointmentRepository(AppointmentRepository):
     def list_by_range(
         self,
         user_id: str,
-        start: str,
-        end: str,
+        start: str | datetime,
+        end: str | datetime,
     ) -> list[Appointment]:
         query = (
             self.collection.where(filter=FieldFilter("user_id", "==", user_id))
@@ -57,7 +58,7 @@ class FirestoreAppointmentRepository(AppointmentRepository):
         self,
         user_id: str,
         recurring_appointment_id: str,
-        after: str | None = None,
+        after: str | datetime | None = None,
     ) -> list[Appointment]:
         query = self.collection.where(filter=FieldFilter("user_id", "==", user_id)).where(
             filter=FieldFilter("recurring_appointment_id", "==", recurring_appointment_id)

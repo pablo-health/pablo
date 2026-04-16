@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from google.cloud.firestore_v1.base_query import FieldFilter
+from google.cloud.firestore_v1.transforms import Increment
 
 from ..utcnow import utc_now_iso
 
@@ -29,9 +31,10 @@ class ICalSyncConfig:
     user_id: str
     ehr_system: str  # "simplepractice" | "sessions_health"
     encrypted_feed_url: str  # AES-256-GCM encrypted
-    last_synced_at: str | None = None
+    last_synced_at: datetime | None = None
     last_sync_error: str | None = None
-    connected_at: str = ""
+    connected_at: datetime | None = None
+    consecutive_error_count: int = 0
 
     @property
     def doc_id(self) -> str:
@@ -45,6 +48,7 @@ class ICalSyncConfig:
             "last_synced_at": self.last_synced_at,
             "last_sync_error": self.last_sync_error,
             "connected_at": self.connected_at,
+            "consecutive_error_count": self.consecutive_error_count,
         }
 
     @classmethod
@@ -56,6 +60,7 @@ class ICalSyncConfig:
             last_synced_at=data.get("last_synced_at"),
             last_sync_error=data.get("last_sync_error"),
             connected_at=data.get("connected_at", ""),
+            consecutive_error_count=data.get("consecutive_error_count", 0),
         )
 
 
@@ -81,6 +86,10 @@ class ICalSyncConfigRepository:
         query = self._collection.where(filter=FieldFilter("user_id", "==", user_id))
         return [ICalSyncConfig.from_dict(doc.to_dict()) for doc in query.stream()]
 
+    def list_all(self) -> list[ICalSyncConfig]:
+        """Return all configs across all users (for scheduled sync dispatch)."""
+        return [ICalSyncConfig.from_dict(doc.to_dict()) for doc in self._collection.stream()]
+
     def save(self, config: ICalSyncConfig) -> None:
         self._collection.document(config.doc_id).set(config.to_dict())
 
@@ -100,9 +109,12 @@ class ICalSyncConfigRepository:
         error: str | None = None,
     ) -> None:
         doc_id = f"{user_id}_{ehr_system}"
-        self._collection.document(doc_id).update(
-            {
-                "last_synced_at": utc_now_iso(),
-                "last_sync_error": error,
-            }
-        )
+        update: dict[str, Any] = {
+            "last_synced_at": utc_now_iso(),
+            "last_sync_error": error,
+        }
+        if error:
+            update["consecutive_error_count"] = Increment(1)
+        else:
+            update["consecutive_error_count"] = 0
+        self._collection.document(doc_id).update(update)

@@ -16,12 +16,10 @@ import {
 } from "firebase/auth"
 import { initFirebase } from "./firebase"
 import { useConfig } from "./config"
-import { getCachedTenantId, clearCachedTenantId } from "./tenant"
 
 interface AuthContextValue {
   user: User | null
   loading: boolean
-  tenantId: string | null
   getIdToken: () => Promise<string | null>
 }
 
@@ -31,7 +29,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const config = useConfig()
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(!config.devMode)
-  const [tenantId, setTenantId] = useState<string | null>(getCachedTenantId)
 
   useEffect(() => {
     if (config.devMode) return
@@ -43,12 +40,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       appId: config.firebaseAppId,
     })
 
-    // Set tenant ID on auth instance if cached
-    const cached = getCachedTenantId()
-    if (cached) {
-      auth.tenantId = cached
-    }
-
     return onIdTokenChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         const idToken = await firebaseUser.getIdToken()
@@ -59,10 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         setUser(firebaseUser)
       } else {
-        // Clear server cookie and tenant cache
         await fetch("/api/logout")
-        clearCachedTenantId()
-        setTenantId(null)
         setUser(null)
       }
       setLoading(false)
@@ -75,16 +63,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user])
 
   return (
-    <AuthContext.Provider value={{ user, loading, tenantId, getIdToken }}>
+    <AuthContext.Provider value={{ user, loading, getIdToken }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
+const AUTH_DEFAULT: AuthContextValue = {
+  user: null,
+  loading: false,
+  getIdToken: async () => null,
+}
+
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error("useAuth must be used within AuthProvider")
-  }
-  return context
+  // Return a safe default outside of AuthProvider (tests, server components).
+  // loading=false means hooks fire immediately — correct for tests and dev mode.
+  return context ?? AUTH_DEFAULT
 }

@@ -6,6 +6,7 @@ import os
 
 os.environ["ENVIRONMENT"] = "development"
 
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -325,12 +326,14 @@ class TestMockSOAPGenerationService:
             user_id="u1",
             first_name="Jane",
             last_name="Doe",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
             diagnosis="Generalized Anxiety Disorder",
         )
         transcript = Transcript(format="txt", content="Sample transcript.")
-        result = mock_service.generate_soap_note(transcript, patient, "2024-06-01")
+        result = mock_service.generate_soap_note(
+            transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+        )
         narrative = result.to_narrative()
 
         # Subjective headers
@@ -366,12 +369,14 @@ class TestMockSOAPGenerationService:
             user_id="u1",
             first_name="Jane",
             last_name="Doe",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
             diagnosis="PTSD",
         )
         transcript = Transcript(format="txt", content="Sample.")
-        result = mock_service.generate_soap_note(transcript, patient, "2024-06-01")
+        result = mock_service.generate_soap_note(
+            transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+        )
         narrative = result.to_narrative()
 
         assert "PTSD" in narrative["subjective"]
@@ -385,11 +390,13 @@ class TestMockSOAPGenerationService:
             user_id="u1",
             first_name="Jane",
             last_name="Doe",
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         )
         transcript = Transcript(format="txt", content="Sample.")
-        result = mock_service.generate_soap_note(transcript, patient, "2024-06-01")
+        result = mock_service.generate_soap_note(
+            transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+        )
         narrative = result.to_narrative()
 
         assert "**Risk Assessment:**" in narrative["assessment"]

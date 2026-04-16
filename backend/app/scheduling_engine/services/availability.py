@@ -45,11 +45,13 @@ class AvailabilityEngine:
         self._rule_repo = rule_repo
         self._appt_repo = appointment_repo
 
-    def check_conflicts(self, user_id: str, start_at: str, end_at: str) -> list[Conflict]:
+    def check_conflicts(
+        self, user_id: str, start_at: str | datetime, end_at: str | datetime
+    ) -> list[Conflict]:
         """Check all availability rules for conflicts with a proposed time."""
         rules = self._rule_repo.list_by_user(user_id)
-        proposed_start = _parse_iso(start_at)
-        proposed_end = _parse_iso(end_at)
+        proposed_start = start_at if isinstance(start_at, datetime) else _parse_iso(start_at)
+        proposed_end = end_at if isinstance(end_at, datetime) else _parse_iso(end_at)
         conflicts: list[Conflict] = []
 
         for rule in rules:
@@ -239,7 +241,7 @@ class AvailabilityEngine:
         for appt in nearby:
             if appt.status == "cancelled":
                 continue
-            appt_end = _parse_iso(appt.end_at)
+            appt_end = appt.end_at
             if appt_end > buffer_start:
                 return Conflict(
                     rule=rule,
@@ -264,7 +266,7 @@ class AvailabilityEngine:
         for appt in nearby:
             if appt.status == "cancelled":
                 continue
-            appt_start = _parse_iso(appt.start_at)
+            appt_start = appt.start_at
             if appt_start < buffer_end:
                 return Conflict(
                     rule=rule,
@@ -379,8 +381,8 @@ class AvailabilityEngine:
         """Convert existing appointments (with buffers) to blocked minutes."""
         blocked: set[int] = set()
         for appt in appointments:
-            appt_start = _parse_iso(appt.start_at)
-            appt_end = _parse_iso(appt.end_at)
+            appt_start = appt.start_at
+            appt_end = appt.end_at
             start_min = appt_start.hour * 60 + appt_start.minute - buffer_before
             end_min = appt_end.hour * 60 + appt_end.minute + buffer_after
             start_min = max(start_min, 0)

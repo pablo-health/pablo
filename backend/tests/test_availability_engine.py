@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
@@ -27,13 +29,19 @@ def _rule(
         rule_type=rule_type,
         enforcement=enforcement,
         params=params,
-        created_at="2026-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
     )
 
 
+def _parse_dt(val: str | datetime) -> datetime:
+    if isinstance(val, datetime):
+        return val
+    return datetime.fromisoformat(val.replace("Z", "+00:00"))
+
+
 def _appt(
-    start_at: str,
-    end_at: str,
+    start_at: str | datetime,
+    end_at: str | datetime,
     *,
     appt_id: str = "appt-1",
     status: str = AppointmentStatus.CONFIRMED,
@@ -43,12 +51,12 @@ def _appt(
         user_id=USER_ID,
         patient_id="patient-1",
         title="Session",
-        start_at=start_at,
-        end_at=end_at,
+        start_at=_parse_dt(start_at),
+        end_at=_parse_dt(end_at),
         duration_minutes=50,
         status=status,
         session_type="individual",
-        created_at="2026-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
     )
 
 

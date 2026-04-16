@@ -9,6 +9,7 @@ The companion app strips patient names before calling the LLM fallback.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -67,9 +68,9 @@ class EhrRoute:
     route_name: str
     steps: list[EhrRouteStep] = field(default_factory=list)
     success_count: int = 0
-    last_success: str | None = None
-    created_at: str = ""
-    updated_at: str = ""
+    last_success: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EhrRoute:
@@ -81,8 +82,8 @@ class EhrRoute:
             steps=[EhrRouteStep.from_dict(s) for s in data.get("steps", [])],
             success_count=data.get("success_count", 0),
             last_success=data.get("last_success"),
-            created_at=data.get("created_at", ""),
-            updated_at=data.get("updated_at", ""),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -123,7 +124,7 @@ class EhrRouteResponse(BaseModel):
     route_name: str
     steps: list[EhrRouteStepResponse]
     success_count: int
-    last_success: str | None = None
+    last_success: datetime | None = None
 
     @classmethod
     def from_ehr_route(cls, route: EhrRoute) -> EhrRouteResponse:

@@ -11,6 +11,7 @@ Sub-modules:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -63,7 +64,7 @@ class UploadSessionRequest(BaseModel):
     """Request to upload a session transcript."""
 
     patient_id: str
-    session_date: str
+    session_date: datetime
     transcript: TranscriptModel
 
     @classmethod
@@ -93,7 +94,7 @@ class ScheduleSessionRequest(BaseModel):
     """Request to create a scheduled session (pre-recording)."""
 
     patient_id: str
-    scheduled_at: str
+    scheduled_at: datetime
     duration_minutes: int = Field(default=50, ge=1, le=480)
     video_link: str | None = None
     video_platform: VideoPlatform | None = None
@@ -111,7 +112,7 @@ class UpdateSessionStatusRequest(BaseModel):
 class UpdateSessionMetadataRequest(BaseModel):
     """Request to update session metadata (reschedule, change video link, etc.)."""
 
-    scheduled_at: str | None = None
+    scheduled_at: datetime | None = None
     video_link: str | None = None
     video_platform: VideoPlatform | None = None
     duration_minutes: int | None = Field(default=None, ge=1, le=480)
@@ -140,17 +141,17 @@ class TodaySessionResponse(BaseModel):
     patient_id: str
     patient: PatientSummary
     status: SessionStatus
-    scheduled_at: str | None = None
+    scheduled_at: datetime | None = None
     duration_minutes: int = 50
     video_link: str | None = None
     video_platform: str | None = None
     session_type: str = "individual"
     source: str = "companion"
     notes: str | None = None
-    started_at: str | None = None
-    ended_at: str | None = None
-    created_at: str
-    updated_at: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
 
 
 class TodaySessionListResponse(BaseModel):
@@ -167,22 +168,22 @@ class SessionResponse(BaseModel):
     user_id: str
     patient_id: str
     patient_name: str
-    session_date: str
+    session_date: datetime
     session_number: int
     status: SessionStatus
     transcript: TranscriptModel
-    created_at: str
+    created_at: datetime
     # Companion scheduling fields
-    scheduled_at: str | None = None
+    scheduled_at: datetime | None = None
     video_link: str | None = None
     video_platform: str | None = None
     session_type: str | None = None
     duration_minutes: int | None = None
     source: str | None = None
     notes: str | None = None
-    started_at: str | None = None
-    ended_at: str | None = None
-    updated_at: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    updated_at: datetime | None = None
     # Flat narrative SOAP note (for PDF/clipboard backward compat)
     soap_note: SOAPNoteModel | None = None
     soap_note_edited: SOAPNoteModel | None = None
@@ -193,9 +194,9 @@ class SessionResponse(BaseModel):
     quality_rating: int | None = None
     quality_rating_reason: str | None = None
     quality_rating_sections: list[str] | None = None
-    processing_started_at: str | None = None
-    processing_completed_at: str | None = None
-    finalized_at: str | None = None
+    processing_started_at: datetime | None = None
+    processing_completed_at: datetime | None = None
+    finalized_at: datetime | None = None
     error: str | None = None
     # PII-redacted versions for review and export
     redacted_transcript: str | None = None
@@ -204,10 +205,10 @@ class SessionResponse(BaseModel):
     naturalized_soap_note: SOAPNoteModel | None = None
     # Export queue tracking
     export_status: str = "not_queued"
-    export_queued_at: str | None = None
-    export_reviewed_at: str | None = None
+    export_queued_at: datetime | None = None
+    export_reviewed_at: datetime | None = None
     export_reviewed_by: str | None = None
-    exported_at: str | None = None
+    exported_at: datetime | None = None
 
     @staticmethod
     def from_session(session: TherapySession, patient_name: str) -> SessionResponse:
@@ -298,31 +299,32 @@ class TherapySession:
     id: str
     user_id: str
     patient_id: str
-    session_date: str
+    session_date: datetime
     session_number: int
     status: str
     transcript: Transcript
-    created_at: str
+    created_at: datetime
     # Companion scheduling fields
-    scheduled_at: str | None = None
+    scheduled_at: datetime | None = None
     video_link: str | None = None
     video_platform: str | None = None
     session_type: str | None = None
     duration_minutes: int | None = None
     source: str | None = None
     notes: str | None = None
-    started_at: str | None = None
-    ended_at: str | None = None
-    updated_at: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    updated_at: datetime | None = None
     audio_gcs_path: str | None = None
+    transcription_job_metadata: dict[str, Any] | None = None
     soap_note: SOAPNote | None = None
     soap_note_edited: SOAPNote | None = None
     quality_rating: int | None = None
     quality_rating_reason: str | None = None
     quality_rating_sections: list[str] | None = None  # SOAP sections needing improvement
-    processing_started_at: str | None = None
-    processing_completed_at: str | None = None
-    finalized_at: str | None = None
+    processing_started_at: datetime | None = None
+    processing_completed_at: datetime | None = None
+    finalized_at: datetime | None = None
     error: str | None = None
     # PII-redacted versions for export
     redacted_transcript: str | None = None  # Transcript with placeholders (<PERSON_1>)
@@ -331,10 +333,10 @@ class TherapySession:
     naturalized_soap_note: SOAPNote | None = None  # SOAP note with fake names (for export)
     # Export queue tracking
     export_status: str = "not_queued"  # ExportStatus enum value
-    export_queued_at: str | None = None  # ISO timestamp
-    export_reviewed_at: str | None = None  # ISO timestamp
+    export_queued_at: datetime | None = None
+    export_reviewed_at: datetime | None = None
     export_reviewed_by: str | None = None  # User ID who reviewed
-    exported_at: str | None = None  # ISO timestamp
+    exported_at: datetime | None = None
 
     @property
     def was_edited(self) -> bool:
@@ -390,6 +392,7 @@ class TherapySession:
             ended_at=data.get("ended_at"),
             updated_at=data.get("updated_at"),
             audio_gcs_path=data.get("audio_gcs_path"),
+            transcription_job_metadata=data.get("transcription_job_metadata"),
             soap_note=soap_note,
             soap_note_edited=soap_note_edited,
             quality_rating=data.get("quality_rating"),
@@ -432,6 +435,7 @@ class TherapySession:
             "ended_at": self.ended_at,
             "updated_at": self.updated_at,
             "audio_gcs_path": self.audio_gcs_path,
+            "transcription_job_metadata": self.transcription_job_metadata,
             "soap_note": self.soap_note.to_dict() if self.soap_note else None,
             "soap_note_edited": self.soap_note_edited.to_dict() if self.soap_note_edited else None,
             "quality_rating": self.quality_rating,

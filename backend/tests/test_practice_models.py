@@ -2,6 +2,8 @@
 
 """Tests for Practice Mode Pydantic models."""
 
+from datetime import datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -82,7 +84,7 @@ class TestPracticeSessionResponse:
             status="scheduled",
             ws_url="ws://localhost/ws",
             ws_ticket="test-ticket",
-            created_at="2026-03-30T00:00:00Z",
+            created_at=datetime.fromisoformat("2026-03-30T00:00:00+00:00"),
         )
         assert resp.session_id == "abc"
         assert resp.mode == PracticeMode.PRACTICE
@@ -96,7 +98,7 @@ class TestPracticeSessionDetailResponse:
             topic_name="Test",
             mode=PracticeMode.PRACTICE,
             status="scheduled",
-            created_at="2026-03-30T00:00:00Z",
+            created_at=datetime.fromisoformat("2026-03-30T00:00:00+00:00"),
         )
         assert resp.soap_note is None
         assert resp.duration_seconds is None

@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ..models import User, UserPreferences
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 
 
 class UserRepository(ABC):
@@ -48,7 +48,7 @@ class InMemoryUserRepository(UserRepository):
             id="user123",
             email="test@example.com",
             name="Test Therapist",
-            created_at=utc_now_iso(),
+            created_at=utc_now(),
             title="Dr.",
             credentials="PhD, LMFT",
         )

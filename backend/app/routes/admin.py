@@ -3,6 +3,7 @@
 """Admin API routes — user management and allowlist."""
 
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -31,10 +32,10 @@ class UserListItem(BaseModel):
     email: str
     name: str
     status: str
-    is_admin: bool
-    mfa_enrolled_at: str | None
-    baa_accepted_at: str | None
-    created_at: str
+    is_platform_admin: bool
+    mfa_enrolled_at: datetime | None
+    baa_accepted_at: datetime | None
+    created_at: datetime
 
 
 class UserListResponse(BaseModel):
@@ -81,7 +82,7 @@ def list_users(
             email=u.email,
             name=u.name,
             status=u.status,
-            is_admin=u.is_admin,
+            is_platform_admin=u.is_platform_admin,
             mfa_enrolled_at=u.mfa_enrolled_at,
             baa_accepted_at=u.baa_accepted_at,
             created_at=u.created_at,

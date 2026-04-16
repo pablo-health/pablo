@@ -22,8 +22,8 @@ COPY . .
 # the real key is injected via Cloud Run environment variables.
 RUN AUTH_COOKIE_SIGNATURE_KEY="build-time-placeholder-replaced-at-runtime" npm run build
 
-# Stage 2: Runner - Chainguard production image (0 CVEs, no shell, no package manager)
-FROM ghcr.io/pablo-health/base-node:2026-04-13 AS runner
+# Stage 2: Runner - Distroless production image (no shell, no package manager)
+FROM gcr.io/distroless/nodejs22-debian12:nonroot AS runner
 
 WORKDIR /app
 
@@ -31,9 +31,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY --from=builder --chown=nonroot:nonroot /app/.next/standalone ./
-COPY --from=builder --chown=nonroot:nonroot /app/.next/static ./.next/static
-COPY --from=builder --chown=nonroot:nonroot /app/public ./public
+COPY --from=builder --chown=65532:65532 /app/.next/standalone ./
+COPY --from=builder --chown=65532:65532 /app/.next/static ./.next/static
+COPY --from=builder --chown=65532:65532 /app/public ./public
 
 USER nonroot
 

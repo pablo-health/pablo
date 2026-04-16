@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
@@ -93,7 +94,15 @@ def sync_ical_calendar(
             updated=r.updated,
             deleted=r.deleted,
             unchanged=r.unchanged,
-            unmatched_events=[UnmatchedEvent(**e) for e in r.unmatched_events],
+            unmatched_events=[
+                UnmatchedEvent(
+                    ical_uid=e["ical_uid"],
+                    client_identifier=e["client_identifier"],
+                    start_at=datetime.fromisoformat(e["start_at"]),
+                    ehr_appointment_url=e.get("ehr_appointment_url", ""),
+                )
+                for e in r.unmatched_events
+            ],
             errors=r.errors,
         )
         for r in results

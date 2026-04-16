@@ -33,7 +33,7 @@ def test_user() -> User:
         id="user-123",
         email="test@example.com",
         name="Test User",
-        created_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
     )
 
 
@@ -45,8 +45,8 @@ def test_patient() -> Patient:
         user_id="user-123",
         first_name="John",
         last_name="Doe",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
     )
 
 
@@ -57,11 +57,11 @@ def test_session(test_patient: Patient) -> TherapySession:
         id="session-789",
         user_id="user-123",
         patient_id=test_patient.id,
-        session_date="2024-06-15T10:00:00Z",
+        session_date=datetime.fromisoformat("2024-06-15T10:00:00+00:00"),
         session_number=1,
         status=SessionStatus.PENDING_REVIEW,
         transcript=Transcript(format="plaintext", content="Test transcript"),
-        created_at="2024-06-15T11:00:00Z",
+        created_at=datetime.fromisoformat("2024-06-15T11:00:00+00:00"),
     )
 
 

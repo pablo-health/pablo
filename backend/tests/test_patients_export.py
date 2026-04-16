@@ -2,6 +2,7 @@
 
 """Tests for patient export API endpoint."""
 
+from datetime import datetime
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -26,8 +27,8 @@ def mock_user():
         id="user-456",
         email="test@example.com",
         name="Test User",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
     )
 
 

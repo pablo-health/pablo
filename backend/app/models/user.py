@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -18,7 +19,7 @@ class UpdateUserRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     title: str | None = Field(None, max_length=50)
     credentials: str | None = Field(None, max_length=100)
-    baa_accepted_at: str | None = None
+    baa_accepted_at: datetime | None = None
 
     @classmethod
     def validate_baa_date(cls, v: str | None) -> str | None:
@@ -38,6 +39,10 @@ class UserPreferences(BaseModel):
     working_hours_start: int = Field(default=8, ge=0, le=23)
     working_hours_end: int = Field(default=18, ge=1, le=24)
     calendar_default_view: str = "timeGridWeek"
+    timezone: str = Field(
+        default="America/New_York",
+        description="IANA timezone. Auto-detected from browser on first save.",
+    )
 
 
 class AcceptBAARequest(BaseModel):
@@ -56,7 +61,7 @@ class BAAStatusResponse(BaseModel):
     """Response containing BAA acceptance status."""
 
     accepted: bool
-    accepted_at: str | None = None
+    accepted_at: datetime | None = None
     version: str | None = None
     current_version: str
 
@@ -72,11 +77,11 @@ class User:
     id: str
     email: str
     name: str
-    created_at: str
+    created_at: datetime
     title: str | None = None
     credentials: str | None = None
     picture: str | None = None
-    baa_accepted_at: str | None = None
+    baa_accepted_at: datetime | None = None
     baa_version: str | None = None
     baa_legal_name: str | None = None
     baa_license_number: str | None = None
@@ -84,9 +89,15 @@ class User:
     baa_practice_name: str | None = None
     baa_business_address: str | None = None
     baa_full_text: str | None = None
-    is_admin: bool = False
+    is_platform_admin: bool = False
     status: str = "approved"
-    mfa_enrolled_at: str | None = None
+    mfa_enrolled_at: datetime | None = None
+    role: str = "clinician"
+
+    @property
+    def is_admin(self) -> bool:
+        """Backward-compat alias for is_platform_admin."""
+        return self.is_platform_admin
 
     @property
     def formal_name(self) -> str:
@@ -133,9 +144,10 @@ class User:
             baa_practice_name=data.get("baa_practice_name"),
             baa_business_address=data.get("baa_business_address"),
             baa_full_text=data.get("baa_full_text"),
-            is_admin=data.get("is_admin", False),
+            is_platform_admin=data.get("is_platform_admin", data.get("is_admin", False)),
             status=data.get("status", "approved"),
             mfa_enrolled_at=data.get("mfa_enrolled_at"),
+            role=data.get("role", "clinician"),
         )
 
     def to_dict(self) -> dict[str, Any]:

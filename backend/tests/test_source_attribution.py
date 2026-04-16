@@ -4,6 +4,7 @@
 
 import os
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
 os.environ["ENVIRONMENT"] = "development"
@@ -627,14 +628,14 @@ class TestSessionResponseWithSources:
             id="sess-1",
             user_id="u1",
             patient_id="p1",
-            session_date="2024-06-01",
+            session_date=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
             session_number=1,
             status="pending_review",
             transcript=Transcript(
                 format="txt",
                 content=("[00:01] Therapist: How are you?\n[00:06] Client: Better this week.\n"),
             ),
-            created_at="2024-06-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
             soap_note=SOAPNote(
                 subjective=SubjectiveNote(
                     chief_complaint=SOAPSentence(text="Feeling better.", source_segment_ids=[1]),
@@ -668,11 +669,11 @@ class TestSessionResponseWithSources:
             id="sess-2",
             user_id="u1",
             patient_id="p1",
-            session_date="2024-06-01",
+            session_date=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
             session_number=1,
             status="queued",
             transcript=Transcript(format="txt", content=""),
-            created_at="2024-06-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
         )
         resp = SessionResponse.from_session(session, "Jane Doe")
         assert resp.soap_note_structured is None

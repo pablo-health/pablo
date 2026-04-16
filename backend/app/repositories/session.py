@@ -56,15 +56,13 @@ class TherapySessionRepository(ABC):
         pass
 
 
-def _compute_day_boundaries(tz_name: str) -> tuple[str, str]:
-    """Compute ISO start/end of today in the given timezone, returned as UTC ISO strings."""
+def _compute_day_boundaries(tz_name: str) -> tuple[datetime, datetime]:
+    """Compute start/end of today in the given timezone, returned as UTC datetimes."""
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
     start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)
-    start_utc = start_of_day.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    end_utc = end_of_day.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    return start_utc, end_utc
+    return start_of_day.astimezone(UTC), end_of_day.astimezone(UTC)
 
 
 class InMemoryTherapySessionRepository(TherapySessionRepository):
@@ -121,7 +119,7 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
             and s.scheduled_at is not None
             and start_utc <= s.scheduled_at < end_utc
         ]
-        sessions.sort(key=lambda s: s.scheduled_at or "")
+        sessions.sort(key=lambda s: s.scheduled_at or datetime.min.replace(tzinfo=UTC))
         return sessions
 
     def get_session_number_for_patient(self, patient_id: str) -> int:

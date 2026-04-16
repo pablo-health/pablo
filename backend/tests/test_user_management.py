@@ -2,6 +2,7 @@
 
 """Tests for admin user management and allowlist endpoints."""
 
+from datetime import datetime
 from typing import Any
 
 from app.models import User
@@ -18,7 +19,7 @@ class TestAdminUserList:
                 id="user-2",
                 email="user2@example.com",
                 name="Second User",
-                created_at="2024-01-02T00:00:00Z",
+                created_at=datetime.fromisoformat("2024-01-02T00:00:00+00:00"),
             )
         )
 
@@ -39,7 +40,7 @@ class TestAdminDisableEnable:
             id="target-user",
             email="target@example.com",
             name="Target User",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         )
         mock_user_repo.update(target)
 
@@ -56,7 +57,7 @@ class TestAdminDisableEnable:
             id="disabled-user",
             email="disabled@example.com",
             name="Disabled User",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
             status="disabled",
         )
         mock_user_repo.update(target)

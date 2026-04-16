@@ -10,11 +10,12 @@ future syncs auto-resolve known clients.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 
 COLLECTION = "ical_client_mappings"
 
@@ -27,7 +28,7 @@ class ICalClientMapping:
     ehr_system: str
     client_identifier: str  # "J.A." or "SH00001"
     patient_id: str
-    created_at: str = ""
+    created_at: datetime | None = None
 
     @property
     def doc_id(self) -> str:
@@ -81,7 +82,7 @@ class ICalClientMappingRepository:
 
     def save(self, mapping: ICalClientMapping) -> None:
         if not mapping.created_at:
-            mapping.created_at = utc_now_iso()
+            mapping.created_at = utc_now()
         self._collection.document(mapping.doc_id).set(mapping.to_dict())
 
     def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool:

@@ -16,17 +16,10 @@ import {
   type MultiFactorError,
   type MultiFactorResolver,
 } from "firebase/auth"
-import { getFirebaseAuth, setFirebaseTenantId } from "@/lib/firebase"
+import { getFirebaseAuth } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
-import {
-  getCachedTenantId,
-  setCachedTenantId,
-  resolveTenant,
-} from "@/lib/tenant"
 
 const ALLOWED_SCHEMES = ["pablohealth", "therapyrecorder"]
-
-type NativeAuthStep = "email-resolve" | "sign-in"
 
 export default function NativeAuthPage() {
   const searchParams = useSearchParams()
@@ -43,29 +36,6 @@ export default function NativeAuthPage() {
   // MFA challenge state
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
   const [totpCode, setTotpCode] = useState("")
-
-  // Tenant resolution: prefer query param > localStorage cache > email-resolve step
-  // Note: setFirebaseTenantId cannot be called during render because Firebase
-  // is initialized in AuthProvider's useEffect (runs after first render).
-  // Instead, cache the tenant ID and set it on Firebase before each auth call.
-  const paramTenantId = searchParams.get("tenant_id")
-  const [step, setStep] = useState<NativeAuthStep>(() => {
-    if (paramTenantId) {
-      setCachedTenantId(paramTenantId)
-      return "sign-in"
-    }
-    if (getCachedTenantId()) {
-      return "sign-in"
-    }
-    return config.multiTenancyEnabled ? "email-resolve" : "sign-in"
-  })
-
-  const ensureTenantId = () => {
-    const cached = getCachedTenantId()
-    if (cached) {
-      setFirebaseTenantId(cached)
-    }
-  }
 
   // Validate redirect_uri
   const redirectUri = searchParams.get("redirect_uri")
@@ -205,31 +175,10 @@ export default function NativeAuthPage() {
     }
   }
 
-  // Step 1: Resolve tenant from email (multi-tenant, no cached tenantId)
-  const handleResolveEmail = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
-
-    try {
-      const { tenantId } = await resolveTenant(email, config.apiUrl)
-      if (tenantId) {
-        setFirebaseTenantId(tenantId)
-        setCachedTenantId(tenantId)
-      }
-      setStep("sign-in")
-    } catch {
-      setError("Unable to verify email. Please try again.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setLoading(true)
-    ensureTenantId()
 
     try {
       const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
@@ -258,7 +207,6 @@ export default function NativeAuthPage() {
     e.preventDefault()
     setError("")
     setLoading(true)
-    ensureTenantId()
 
     try {
       const credential = await createUserWithEmailAndPassword(
@@ -292,7 +240,6 @@ export default function NativeAuthPage() {
   const handleGoogleLogin = async () => {
     setError("")
     const auth = getFirebaseAuth()
-    ensureTenantId()
     const provider = new GoogleAuthProvider()
 
     try {
@@ -427,66 +374,6 @@ export default function NativeAuthPage() {
           >
             Back to Sign In
           </button>
-        </div>
-      </div>
-    )
-  }
-
-  // Email-First Tenant Resolution Screen
-  if (step === "email-resolve") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
-        <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
-          <div className="text-center">
-            <h1 className="text-4xl font-display font-bold text-primary-600">
-              Sign in to Pablo
-            </h1>
-            <p className="mt-3 text-neutral-600">
-              Enter your email to continue
-            </p>
-          </div>
-
-          <form onSubmit={handleResolveEmail} className="space-y-4">
-            <div>
-              <label
-                htmlFor="resolve-email"
-                className="block text-sm font-medium text-neutral-700 mb-1"
-              >
-                Email
-              </label>
-              <input
-                id="resolve-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                required
-                autoFocus
-              />
-            </div>
-
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Checking..." : "Continue"}
-            </button>
-          </form>
-
-          <div className="mt-6 pt-6 border-t border-neutral-200">
-            <p className="text-xs text-neutral-500 text-center leading-relaxed">
-              This platform is HIPAA compliant and uses industry-standard
-              encryption to protect your data
-            </p>
-          </div>
         </div>
       </div>
     )

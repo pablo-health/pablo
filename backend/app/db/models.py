@@ -11,7 +11,9 @@ stored as JSONB — they're always read/written as a whole and rarely queried.
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Integer, String, Text
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -20,34 +22,15 @@ class Base(DeclarativeBase):
     """Base class for all practice-schema ORM models."""
 
 
-class UserRow(Base):
-    __tablename__ = "users"
-
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
-    title: Mapped[str | None] = mapped_column(String(50))
-    credentials: Mapped[str | None] = mapped_column(String(100))
-    picture: Mapped[str | None] = mapped_column(Text)
-    baa_accepted_at: Mapped[str | None] = mapped_column(String(30))
-    baa_version: Mapped[str | None] = mapped_column(String(10))
-    baa_legal_name: Mapped[str | None] = mapped_column(String(255))
-    baa_license_number: Mapped[str | None] = mapped_column(String(100))
-    baa_license_state: Mapped[str | None] = mapped_column(String(2))
-    baa_practice_name: Mapped[str | None] = mapped_column(String(255))
-    baa_business_address: Mapped[str | None] = mapped_column(String(500))
-    baa_full_text: Mapped[str | None] = mapped_column(Text)
-    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
-    status: Mapped[str] = mapped_column(String(20), default="approved")
-    mfa_enrolled_at: Mapped[str | None] = mapped_column(String(30))
-
-
-class UserPreferencesRow(Base):
-    __tablename__ = "user_preferences"
+class ClinicianProfileRow(Base):
+    __tablename__ = "clinician_profiles"
 
     user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(50))
+    credentials: Mapped[str | None] = mapped_column(String(100))
+    role: Mapped[str] = mapped_column(String(20), default="clinician")
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class PatientRow(Base):
@@ -65,10 +48,10 @@ class PatientRow(Base):
     date_of_birth: Mapped[str | None] = mapped_column(String(10))
     diagnosis: Mapped[str | None] = mapped_column(Text)
     session_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_session_date: Mapped[str | None] = mapped_column(String(30))
-    next_session_date: Mapped[str | None] = mapped_column(String(30))
-    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
-    updated_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    last_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class TherapySessionRow(Base):
@@ -77,22 +60,26 @@ class TherapySessionRow(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    session_date: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    session_date: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
     session_number: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     transcript: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Companion scheduling fields
-    scheduled_at: Mapped[str | None] = mapped_column(String(30), index=True)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
     session_type: Mapped[str | None] = mapped_column(String(30))
     duration_minutes: Mapped[int | None] = mapped_column(Integer)
     source: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
-    started_at: Mapped[str | None] = mapped_column(String(30))
-    ended_at: Mapped[str | None] = mapped_column(String(30))
-    updated_at: Mapped[str | None] = mapped_column(String(30))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_gcs_path: Mapped[str | None] = mapped_column(Text)
     # SOAP notes stored as JSONB (complex nested structures)
     soap_note: Mapped[dict | None] = mapped_column(JSONB)
@@ -100,10 +87,12 @@ class TherapySessionRow(Base):
     quality_rating: Mapped[int | None] = mapped_column(Integer)
     quality_rating_reason: Mapped[str | None] = mapped_column(Text)
     quality_rating_sections: Mapped[list | None] = mapped_column(JSONB)
-    processing_started_at: Mapped[str | None] = mapped_column(String(30))
-    processing_completed_at: Mapped[str | None] = mapped_column(String(30))
-    finalized_at: Mapped[str | None] = mapped_column(String(30))
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processing_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+    # AssemblyAI transcript IDs for Cloud Task polling
+    transcription_job_metadata: Mapped[dict | None] = mapped_column(JSONB)
     # PII-redacted versions
     redacted_transcript: Mapped[str | None] = mapped_column(Text)
     naturalized_transcript: Mapped[str | None] = mapped_column(Text)
@@ -111,18 +100,10 @@ class TherapySessionRow(Base):
     naturalized_soap_note: Mapped[dict | None] = mapped_column(JSONB)
     # Export tracking
     export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
-    export_queued_at: Mapped[str | None] = mapped_column(String(30))
-    export_reviewed_at: Mapped[str | None] = mapped_column(String(30))
+    export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    export_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     export_reviewed_by: Mapped[str | None] = mapped_column(String(128))
-    exported_at: Mapped[str | None] = mapped_column(String(30))
-
-
-class AllowlistRow(Base):
-    __tablename__ = "allowed_emails"
-
-    email: Mapped[str] = mapped_column(String(255), primary_key=True)
-    added_by: Mapped[str] = mapped_column(String(255), nullable=False)
-    added_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class EhrPromptRow(Base):
@@ -131,7 +112,7 @@ class EhrPromptRow(Base):
     ehr_system: Mapped[str] = mapped_column(String(50), primary_key=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
     notes: Mapped[str] = mapped_column(Text, default="")
 
@@ -144,9 +125,9 @@ class EhrRouteRow(Base):
     route_name: Mapped[str] = mapped_column(String(255), nullable=False)
     steps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     success_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_success: Mapped[str | None] = mapped_column(String(30))
-    created_at: Mapped[str] = mapped_column(String(30), default="")
-    updated_at: Mapped[str] = mapped_column(String(30), default="")
+    last_success: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AppointmentRow(Base):
@@ -156,8 +137,8 @@ class AppointmentRow(Base):
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
-    start_at: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    end_at: Mapped[str] = mapped_column(String(30), nullable=False)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -183,8 +164,8 @@ class AppointmentRow(Base):
     # Reminders
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[str] = mapped_column(String(30), default="")
-    updated_at: Mapped[str | None] = mapped_column(String(30))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AvailabilityRuleRow(Base):
@@ -195,8 +176,8 @@ class AvailabilityRuleRow(Base):
     rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
     enforcement: Mapped[str] = mapped_column(String(10), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[str] = mapped_column(String(30), default="")
-    updated_at: Mapped[str | None] = mapped_column(String(30))
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class GoogleCalendarTokenRow(Base):
@@ -206,8 +187,10 @@ class GoogleCalendarTokenRow(Base):
     encrypted_tokens: Mapped[str] = mapped_column(Text, nullable=False)
     calendar_id: Mapped[str | None] = mapped_column(String(255))
     sync_token: Mapped[str | None] = mapped_column(Text)
-    last_synced_at: Mapped[str | None] = mapped_column(String(30))
-    connected_at: Mapped[str | None] = mapped_column(String(30))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_error: Mapped[str | None] = mapped_column(Text)
+    consecutive_error_count: Mapped[int] = mapped_column(default=0)
 
 
 class ICalClientMappingRow(Base):
@@ -218,7 +201,7 @@ class ICalClientMappingRow(Base):
     ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
     client_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     patient_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    created_at: Mapped[str] = mapped_column(String(30), default="")
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ICalSyncConfigRow(Base):
@@ -228,6 +211,7 @@ class ICalSyncConfigRow(Base):
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
     encrypted_feed_url: Mapped[str] = mapped_column(Text, nullable=False)
-    last_synced_at: Mapped[str | None] = mapped_column(String(30))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sync_error: Mapped[str | None] = mapped_column(Text)
-    connected_at: Mapped[str] = mapped_column(String(30), default="")
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_error_count: Mapped[int] = mapped_column(default=0)

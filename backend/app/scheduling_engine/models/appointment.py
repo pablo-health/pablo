@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -34,8 +35,8 @@ class Appointment:
     user_id: str
     patient_id: str
     title: str
-    start_at: str  # ISO 8601 UTC
-    end_at: str  # ISO 8601 UTC
+    start_at: datetime
+    end_at: datetime
     duration_minutes: int
     status: str  # AppointmentStatus value
     session_type: str  # individual | couples | group
@@ -67,8 +68,8 @@ class Appointment:
     reminder_24h_sent: bool = False
     reminder_1h_sent: bool = False
 
-    created_at: str = ""  # ISO 8601 UTC
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Appointment:
@@ -100,7 +101,7 @@ class Appointment:
             session_id=data.get("session_id"),
             reminder_24h_sent=data.get("reminder_24h_sent", False),
             reminder_1h_sent=data.get("reminder_1h_sent", False),
-            created_at=data.get("created_at", ""),
+            created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
 

@@ -2,19 +2,18 @@
 
 """Tests for Firebase authentication and Identity Platform multi-tenancy."""
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from app.auth.service import (
     TenantContext,
-    clear_tenant_cache,
-    extract_tenant_id,
+    _get_cached_token,
     get_current_user,
     get_current_user_id,
     get_tenant_context,
     require_mfa,
-    resolve_tenant_database,
     verify_firebase_token,
 )
 from app.models import User
@@ -36,36 +35,8 @@ class TestVerifyFirebaseToken:
             result = verify_firebase_token("valid-token")
 
             assert result["uid"] == "user123"
-            # Called twice: first without check_revoked for JWT verification,
-            # then with check_revoked for revocation check (non-tenant path)
-            assert mock_verify.call_count == 2
-            mock_verify.assert_any_call("valid-token", check_revoked=False)
-            mock_verify.assert_any_call("valid-token", check_revoked=True)
+            mock_verify.assert_called_once_with("valid-token", check_revoked=True)
             mock_firebase_init.assert_called_once()
-
-    def test_valid_tenant_token(self, mock_firebase_init: Any) -> None:
-        """Tenant-scoped tokens use the tenant-aware client for revocation check."""
-        with (
-            patch(VERIFY_PATCH) as mock_verify,
-            patch("app.auth.service.tenant_mgt") as mock_tenant_mgt,
-        ):
-            mock_verify.return_value = {
-                "uid": "user123",
-                "email": "test@example.com",
-                "firebase": {"tenant": "TestTenant-abc123"},
-            }
-            mock_tenant_client = mock_tenant_mgt.auth_for_tenant.return_value
-
-            result = verify_firebase_token("tenant-token")
-
-            assert result["uid"] == "user123"
-            # JWT verification (no revocation check)
-            mock_verify.assert_called_once_with("tenant-token", check_revoked=False)
-            # Revocation check via tenant-aware client
-            mock_tenant_mgt.auth_for_tenant.assert_called_once_with("TestTenant-abc123")
-            mock_tenant_client.verify_id_token.assert_called_once_with(
-                "tenant-token", check_revoked=True
-            )
 
     def test_expired_token(self) -> None:
         with patch(VERIFY_PATCH) as mock_verify:
@@ -108,6 +79,76 @@ class TestVerifyFirebaseToken:
             assert exc_info.value.detail["error"]["code"] == "USER_DISABLED"  # type: ignore[index]
 
 
+class TestTokenCaching:
+    """Test middleware token caching to avoid double verification."""
+
+    def test_returns_cached_token_when_raw_matches(self) -> None:
+        request = MagicMock()
+        request.state.verified_firebase_token_raw = "the-jwt"
+        request.state.decoded_firebase_token = {"uid": "cached-user"}
+
+        result = _get_cached_token(request, "the-jwt")
+        assert result == {"uid": "cached-user"}
+
+    def test_returns_none_when_raw_does_not_match(self) -> None:
+        request = MagicMock()
+        request.state.verified_firebase_token_raw = "old-jwt"
+        request.state.decoded_firebase_token = {"uid": "cached-user"}
+
+        result = _get_cached_token(request, "different-jwt")
+        assert result is None
+
+    def test_returns_none_when_no_cache(self) -> None:
+        request = MagicMock()
+        request.state = MagicMock(spec=[])  # state exists but has no cache attrs
+        result = _get_cached_token(request, "any-jwt")
+        assert result is None
+
+    def test_returns_none_when_request_is_none(self) -> None:
+        result = _get_cached_token(None, "any-jwt")
+        assert result is None
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_require_mfa_skips_verification_with_cache(self, mock_verify: MagicMock) -> None:
+        """require_mfa uses cached token instead of re-verifying."""
+        mock_request = MagicMock()
+        mock_request.state.verified_firebase_token_raw = "cached-token"
+        mock_request.state.decoded_firebase_token = {
+            "uid": "user123",
+            "firebase": {"sign_in_second_factor": "phone"},
+        }
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "cached-token"
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = True
+            result = require_mfa(mock_request, mock_credentials)
+
+        assert result["uid"] == "user123"
+        mock_verify.assert_not_called()
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_require_mfa_falls_back_without_cache(self, mock_verify: MagicMock) -> None:
+        """require_mfa calls verify_firebase_token when no cache present."""
+        mock_request = MagicMock()
+        mock_request.state = MagicMock(spec=[])  # state exists but no cache
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "uncached-token"
+        mock_verify.return_value = {
+            "uid": "user123",
+            "firebase": {"sign_in_second_factor": "phone"},
+        }
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = True
+            result = require_mfa(mock_request, mock_credentials)
+
+        assert result["uid"] == "user123"
+        mock_verify.assert_called_once_with("uncached-token")
+
+
 class TestGetCurrentUserId:
     """Test user ID extraction from Firebase token."""
 
@@ -117,7 +158,7 @@ class TestGetCurrentUserId:
         mock_credentials.credentials = "valid-token"
         mock_verify.return_value = {"uid": "user123", "email": "test@example.com"}
 
-        user_id = get_current_user_id(mock_credentials)
+        user_id = get_current_user_id(MagicMock(), mock_credentials)
 
         assert user_id == "user123"
 
@@ -128,7 +169,7 @@ class TestGetCurrentUserId:
         mock_verify.return_value = {"email": "test@example.com"}
 
         with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id(mock_credentials)
+            get_current_user_id(MagicMock(), mock_credentials)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail["error"]["code"] == "INVALID_TOKEN"  # type: ignore[index]
@@ -144,7 +185,7 @@ class TestGetCurrentUserId:
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id(mock_credentials)
+            get_current_user_id(MagicMock(), mock_credentials)
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -163,7 +204,7 @@ class TestRequireMfa:
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
-            result = require_mfa(mock_credentials)
+            result = require_mfa(MagicMock(), mock_credentials)
 
         assert result["uid"] == "user123"
 
@@ -177,7 +218,7 @@ class TestRequireMfa:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = True
             with pytest.raises(HTTPException) as exc_info:
-                require_mfa(mock_credentials)
+                require_mfa(MagicMock(), mock_credentials)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
@@ -191,7 +232,7 @@ class TestRequireMfa:
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = True
             mock_settings.return_value.require_mfa = True
-            result = require_mfa(mock_credentials)
+            result = require_mfa(MagicMock(), mock_credentials)
 
         assert result["uid"] == "user123"
 
@@ -212,7 +253,7 @@ class TestRequireMfa:
             mock_settings.return_value.require_mfa = True
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
-            result = require_mfa(mock_credentials)
+            result = require_mfa(MagicMock(), mock_credentials)
 
         assert result["uid"] == "e2e-user"
 
@@ -234,7 +275,7 @@ class TestRequireMfa:
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             with pytest.raises(HTTPException) as exc_info:
-                require_mfa(mock_credentials)
+                require_mfa(MagicMock(), mock_credentials)
 
         assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
 
@@ -256,7 +297,7 @@ class TestRequireMfa:
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             with pytest.raises(HTTPException) as exc_info:
-                require_mfa(mock_credentials)
+                require_mfa(MagicMock(), mock_credentials)
 
         assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
 
@@ -278,7 +319,7 @@ class TestRequireMfa:
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             with pytest.raises(HTTPException) as exc_info:
-                require_mfa(mock_credentials)
+                require_mfa(MagicMock(), mock_credentials)
 
         assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
 
@@ -291,7 +332,7 @@ class TestRequireMfa:
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
-            result = require_mfa(mock_credentials)
+            result = require_mfa(MagicMock(), mock_credentials)
 
         assert result["uid"] == "user123"
 
@@ -362,7 +403,7 @@ class TestGetCurrentUser:
             id="disabled-user",
             email="disabled@example.com",
             name="Disabled User",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
             status="disabled",
         )
         user_repo.update(disabled_user)
@@ -390,58 +431,24 @@ class TestGetCurrentUser:
         assert user.status == "approved"
 
 
-class TestExtractTenantId:
-    """Test tenant ID extraction from Identity Platform tokens."""
-
-    def test_extracts_tenant_from_token(self) -> None:
-        """Tenant-scoped tokens include firebase.tenant claim."""
-        decoded = {
-            "uid": "user123",
-            "email": "dr.smith@gmail.com",
-            "firebase": {
-                "tenant": "practice-a1b2c3",
-                "sign_in_provider": "google.com",
-            },
-        }
-        assert extract_tenant_id(decoded) == "practice-a1b2c3"
-
-    def test_returns_none_for_non_tenant_token(self) -> None:
-        """Non-tenant tokens (single-tenant mode) have no tenant claim."""
-        decoded = {
-            "uid": "user123",
-            "email": "dr.smith@gmail.com",
-            "firebase": {
-                "sign_in_provider": "google.com",
-            },
-        }
-        assert extract_tenant_id(decoded) is None
-
-    def test_returns_none_for_empty_firebase_claims(self) -> None:
-        decoded = {"uid": "user123", "firebase": {}}
-        assert extract_tenant_id(decoded) is None
-
-    def test_returns_none_when_firebase_key_missing(self) -> None:
-        decoded = {"uid": "user123"}
-        assert extract_tenant_id(decoded) is None
-
-
 class TestTenantContext:
     """Test TenantContext data class."""
 
     def test_single_tenant_defaults(self) -> None:
         ctx = TenantContext(user_id="user123")
         assert ctx.user_id == "user123"
-        assert ctx.tenant_id is None
+        assert ctx.practice_id is None
+        assert ctx.practice_schema is None
         assert ctx.firestore_db == "(default)"
 
-    def test_multi_tenant_context(self) -> None:
+    def test_practice_context(self) -> None:
         ctx = TenantContext(
             user_id="user123",
-            tenant_id="practice-a1b2c3",
-            firestore_db="tenant-a1b2c3",
+            practice_id="practice-a1b2c3",
+            practice_schema="practice_a1b2c3",
         )
-        assert ctx.tenant_id == "practice-a1b2c3"
-        assert ctx.firestore_db == "tenant-a1b2c3"
+        assert ctx.practice_id == "practice-a1b2c3"
+        assert ctx.practice_schema == "practice_a1b2c3"
 
     def test_frozen(self) -> None:
         ctx = TenantContext(user_id="user123")
@@ -450,43 +457,12 @@ class TestTenantContext:
 
 
 class TestTokenVerificationWithTenantClaims:
-    """Verify that verify_id_token handles tenant-scoped tokens correctly.
+    """Verify that tokens with legacy tenant claims still work.
 
-    Identity Platform tokens with tenant claims are verified identically
-    to non-tenant tokens — firebase_admin.auth.verify_id_token() handles
-    both transparently. These tests confirm backward compatibility.
+    Even though tenant-scoped verification is removed, tokens may still
+    contain firebase.tenant claims. These tests confirm that MFA and
+    user ID extraction still work correctly with such tokens.
     """
-
-    def test_tenant_scoped_token_verified_normally(self, mock_firebase_init: Any) -> None:
-        """Token with tenant claim uses tenant-aware client for revocation check."""
-        tenant_token_claims = {
-            "uid": "user123",
-            "email": "dr.smith@gmail.com",
-            "firebase": {
-                "tenant": "practice-a1b2c3",
-                "sign_in_provider": "google.com",
-                "sign_in_second_factor": "totp",
-            },
-        }
-
-        with (
-            patch(VERIFY_PATCH) as mock_verify,
-            patch("app.auth.service.tenant_mgt") as mock_tenant_mgt,
-        ):
-            mock_verify.return_value = tenant_token_claims
-
-            result = verify_firebase_token("tenant-scoped-token")
-
-            assert result["uid"] == "user123"
-            assert result["firebase"]["tenant"] == "practice-a1b2c3"
-            # JWT verification without revocation check
-            mock_verify.assert_called_once_with("tenant-scoped-token", check_revoked=False)
-            # Revocation check via tenant-aware client
-            mock_tenant_mgt.auth_for_tenant.assert_called_once_with("practice-a1b2c3")
-            mock_tenant_mgt.auth_for_tenant.return_value.verify_id_token.assert_called_once_with(
-                "tenant-scoped-token", check_revoked=True
-            )
-            mock_firebase_init.assert_called_once()
 
     def test_mfa_works_with_tenant_claim(self) -> None:
         """MFA enforcement works identically for tenant-scoped tokens."""
@@ -504,7 +480,7 @@ class TestTokenVerificationWithTenantClaims:
             with patch("app.auth.service.get_settings") as mock_settings:
                 mock_settings.return_value.is_development = False
                 mock_settings.return_value.require_mfa = True
-                result = require_mfa(mock_credentials)
+                result = require_mfa(MagicMock(), mock_credentials)
 
         assert result["firebase"]["tenant"] == "practice-a1b2c3"
         assert result["firebase"]["sign_in_second_factor"] == "totp"
@@ -525,7 +501,7 @@ class TestTokenVerificationWithTenantClaims:
                 mock_settings.return_value.is_development = False
                 mock_settings.return_value.require_mfa = True
                 with pytest.raises(HTTPException) as exc_info:
-                    require_mfa(mock_credentials)
+                    require_mfa(MagicMock(), mock_credentials)
 
         assert exc_info.value.detail["error"]["code"] == "MFA_REQUIRED"  # type: ignore[index]
 
@@ -539,76 +515,21 @@ class TestTokenVerificationWithTenantClaims:
                 "uid": "user123",
                 "firebase": {"tenant": "practice-a1b2c3"},
             }
-            user_id = get_current_user_id(mock_credentials)
+            user_id = get_current_user_id(MagicMock(), mock_credentials)
 
         assert user_id == "user123"
 
 
-class TestResolveTenantDatabase:
-    """Test tenant→database resolution with caching."""
-
-    def setup_method(self) -> None:
-        clear_tenant_cache()
-
-    def test_resolves_tenant_to_database(self) -> None:
-        admin_db = MagicMock()
-        doc = MagicMock()
-        doc.exists = True
-        doc.to_dict.return_value = {"firestore_database": "tenant-abc123"}
-        admin_db.collection("tenants").document("practice-abc").get.return_value = doc
-
-        result = resolve_tenant_database("practice-abc", admin_db)
-
-        assert result == "tenant-abc123"
-
-    def test_returns_none_for_unknown_tenant(self) -> None:
-        admin_db = MagicMock()
-        doc = MagicMock()
-        doc.exists = False
-        admin_db.collection("tenants").document("unknown").get.return_value = doc
-
-        result = resolve_tenant_database("unknown", admin_db)
-
-        assert result is None
-
-    def test_caches_resolved_tenant(self) -> None:
-        admin_db = MagicMock()
-        doc = MagicMock()
-        doc.exists = True
-        doc.to_dict.return_value = {"firestore_database": "tenant-cached"}
-        admin_db.collection("tenants").document("practice-cached").get.return_value = doc
-
-        # First call hits DB
-        resolve_tenant_database("practice-cached", admin_db)
-        # Second call should use cache
-        result = resolve_tenant_database("practice-cached", admin_db)
-
-        assert result == "tenant-cached"
-        # Only one DB call despite two resolves
-        admin_db.collection("tenants").document("practice-cached").get.assert_called_once()
-
-    def test_cache_expires(self) -> None:
-        admin_db = MagicMock()
-        doc = MagicMock()
-        doc.exists = True
-        doc.to_dict.return_value = {"firestore_database": "tenant-ttl"}
-        admin_db.collection("tenants").document("practice-ttl").get.return_value = doc
-
-        # t=0: write cache, t=400: expired, t=400: rewrite cache
-        with patch("app.auth.service.time.monotonic", side_effect=[0, 400, 400]):
-            resolve_tenant_database("practice-ttl", admin_db)
-            # Second call — cache expired (monotonic jumped past TTL)
-            resolve_tenant_database("practice-ttl", admin_db)
-
-        assert admin_db.collection("tenants").document("practice-ttl").get.call_count == 2
-
-
 class TestGetTenantContext:
-    """Test the get_tenant_context FastAPI dependency."""
+    """Test the get_tenant_context FastAPI dependency.
+
+    The context now resolves via _resolve_practice_from_email (Postgres lookup)
+    instead of JWT tenant claim + Firestore lookup.
+    """
 
     def test_single_tenant_mode_returns_default(self) -> None:
         """When multi_tenancy_enabled=False, returns default context."""
-        decoded = {"uid": "user123", "firebase": {"tenant": "practice-abc"}}
+        decoded = {"uid": "user123", "email": "dr@example.com", "firebase": {}}
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.multi_tenancy_enabled = False
@@ -617,20 +538,16 @@ class TestGetTenantContext:
 
         assert ctx == TenantContext(user_id="user123")
 
-    def test_multi_tenant_resolves_tenant_to_db(self) -> None:
-        """Tenant claim resolved to database name."""
-        decoded = {"uid": "user123", "firebase": {"tenant": "practice-abc"}}
-        clear_tenant_cache()
-
-        mock_admin_db = MagicMock()
-        doc = MagicMock()
-        doc.exists = True
-        doc.to_dict.return_value = {"firestore_database": "tenant-abc"}
-        mock_admin_db.collection("tenants").document("practice-abc").get.return_value = doc
+    def test_resolves_practice_from_email(self) -> None:
+        """Email resolved to practice via Postgres lookup."""
+        decoded = {"uid": "user123", "email": "dr@example.com", "firebase": {}}
 
         with (
             patch("app.auth.service.get_settings") as mock_settings,
-            patch("app.auth.service.get_admin_firestore_client", return_value=mock_admin_db),
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-abc", "practice_abc"),
+            ),
         ):
             mock_settings.return_value.multi_tenancy_enabled = True
 
@@ -638,78 +555,64 @@ class TestGetTenantContext:
 
         assert ctx == TenantContext(
             user_id="user123",
-            tenant_id="practice-abc",
-            firestore_db="tenant-abc",
+            practice_id="practice-abc",
+            practice_schema="practice_abc",
         )
 
-    def test_admin_without_tenant_gets_admin_db(self) -> None:
-        """Platform admin (no tenant claim + is_admin) gets admin-only access."""
-        decoded = {"uid": "admin-uid", "firebase": {}}
+    def test_admin_without_practice_gets_default_context(self) -> None:
+        """Platform admin with no practice mapping gets admin-only access."""
+        decoded = {"uid": "admin-uid", "email": "admin@pablo.health", "firebase": {}}
         user_repo = InMemoryUserRepository()
         admin_user = User(
             id="admin-uid",
             email="admin@pablo.health",
             name="Admin",
-            created_at="2024-01-01T00:00:00Z",
-            is_admin=True,
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            is_platform_admin=True,
         )
         user_repo.update(admin_user)
 
-        with patch("app.auth.service.get_settings") as mock_settings:
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+        ):
             mock_settings.return_value.multi_tenancy_enabled = True
-            mock_settings.return_value.admin_database = "(default)"
 
             ctx = get_tenant_context(decoded, user_repo)
 
-        assert ctx == TenantContext(user_id="admin-uid", firestore_db="(default)")
+        assert ctx == TenantContext(user_id="admin-uid")
 
-    def test_rejects_non_admin_without_tenant(self) -> None:
-        """Non-admin user with no tenant claim is rejected."""
-        decoded = {"uid": "user123", "firebase": {}}
+    def test_rejects_non_admin_without_practice(self) -> None:
+        """Non-admin user with no practice mapping is rejected."""
+        decoded = {"uid": "user123", "email": "user@example.com", "firebase": {}}
         user_repo = InMemoryUserRepository()
         regular_user = User(
             id="user123",
             email="user@example.com",
             name="User",
-            created_at="2024-01-01T00:00:00Z",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         )
         user_repo.update(regular_user)
 
-        with patch("app.auth.service.get_settings") as mock_settings:
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._resolve_practice_from_email", return_value=None),
+        ):
             mock_settings.return_value.multi_tenancy_enabled = True
 
             with pytest.raises(HTTPException) as exc_info:
                 get_tenant_context(decoded, user_repo)
 
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail["error"]["code"] == "MISSING_TENANT"  # type: ignore[index]
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail["error"]["code"] == "NO_PRACTICE"  # type: ignore[index]
 
-    def test_rejects_unknown_user_without_tenant(self) -> None:
-        """Unknown user (not in repo) with no tenant claim is rejected."""
-        decoded = {"uid": "unknown", "firebase": {}}
-
-        with patch("app.auth.service.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = True
-
-            with pytest.raises(HTTPException) as exc_info:
-                get_tenant_context(decoded, InMemoryUserRepository())
-
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail["error"]["code"] == "MISSING_TENANT"  # type: ignore[index]
-
-    def test_rejects_unknown_tenant(self) -> None:
-        """Valid tenant claim but tenant not in admin DB returns 403."""
-        decoded = {"uid": "user123", "firebase": {"tenant": "nonexistent"}}
-        clear_tenant_cache()
-
-        mock_admin_db = MagicMock()
-        doc = MagicMock()
-        doc.exists = False
-        mock_admin_db.collection("tenants").document("nonexistent").get.return_value = doc
+    def test_rejects_unknown_user_without_practice(self) -> None:
+        """Unknown user (not in repo) with no practice mapping is rejected."""
+        decoded = {"uid": "unknown", "email": "unknown@example.com", "firebase": {}}
 
         with (
             patch("app.auth.service.get_settings") as mock_settings,
-            patch("app.auth.service.get_admin_firestore_client", return_value=mock_admin_db),
+            patch("app.auth.service._resolve_practice_from_email", return_value=None),
         ):
             mock_settings.return_value.multi_tenancy_enabled = True
 
@@ -717,11 +620,11 @@ class TestGetTenantContext:
                 get_tenant_context(decoded, InMemoryUserRepository())
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-        assert exc_info.value.detail["error"]["code"] == "UNKNOWN_TENANT"  # type: ignore[index]
+        assert exc_info.value.detail["error"]["code"] == "NO_PRACTICE"  # type: ignore[index]
 
     def test_rejects_missing_uid(self) -> None:
         """Token without uid is rejected."""
-        decoded = {"firebase": {"tenant": "practice-abc"}}
+        decoded = {"email": "dr@example.com", "firebase": {}}
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.multi_tenancy_enabled = True

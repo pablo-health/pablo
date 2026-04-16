@@ -9,6 +9,7 @@ without redeploying the backend.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 
@@ -19,7 +20,7 @@ class EhrPrompt:
     ehr_system: str
     system_prompt: str
     version: int
-    updated_at: str
+    updated_at: datetime
     updated_by: str
     notes: str
 
@@ -30,7 +31,7 @@ class EhrPrompt:
             ehr_system=data["ehr_system"],
             system_prompt=data["system_prompt"],
             version=data.get("version", 1),
-            updated_at=data.get("updated_at", ""),
+            updated_at=data["updated_at"],
             updated_by=data.get("updated_by", ""),
             notes=data.get("notes", ""),
         )

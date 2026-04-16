@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...db.models import ICalClientMappingRow
-from ...utcnow import utc_now_iso
+from ...utcnow import utc_now
 from ..ical_client_mapping import ICalClientMapping
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ class PostgresICalClientMappingRepository:
 
     def save(self, mapping: ICalClientMapping) -> None:
         if not mapping.created_at:
-            mapping.created_at = utc_now_iso()
+            mapping.created_at = utc_now()
         row = self._session.get(ICalClientMappingRow, mapping.doc_id)
         if row is None:
             row = ICalClientMappingRow(doc_id=mapping.doc_id)

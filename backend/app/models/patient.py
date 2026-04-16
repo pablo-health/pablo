@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -99,10 +100,10 @@ class PatientResponse(BaseModel):
     date_of_birth: str | None = None
     diagnosis: str | None = None
     session_count: int
-    last_session_date: str | None = None
-    next_session_date: str | None = None
-    created_at: str
-    updated_at: str
+    last_session_date: datetime | None = None
+    next_session_date: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_patient(cls, patient: Patient) -> PatientResponse:
@@ -154,7 +155,7 @@ class PatientExportData(BaseModel):
 
     patient: PatientResponse
     sessions: list[dict[str, Any]]
-    exported_at: str
+    exported_at: datetime
     export_format: str
 
 
@@ -171,8 +172,8 @@ class Patient:
     user_id: str
     first_name: str
     last_name: str
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
     first_name_lower: str = ""
     last_name_lower: str = ""
     session_count: int = 0
@@ -181,8 +182,8 @@ class Patient:
     status: str = "active"
     date_of_birth: str | None = None
     diagnosis: str | None = None
-    last_session_date: str | None = None
-    next_session_date: str | None = None
+    last_session_date: datetime | None = None
+    next_session_date: datetime | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""

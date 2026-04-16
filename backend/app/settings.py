@@ -129,6 +129,16 @@ class Settings(BaseSettings):
         description="API description",
     )
 
+    # Stripe Settings (SaaS billing)
+    stripe_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Stripe API secret key for billing portal session creation",
+    )
+    app_url: str = Field(
+        default="http://localhost:3000",
+        description="Frontend app URL (used as return_url for Stripe portal)",
+    )
+
     # CORS Settings
     cors_origins: str = Field(
         default="http://localhost:3000",
@@ -312,7 +322,11 @@ class Settings(BaseSettings):
     )
     transcription_queue_location: str = Field(
         default="us-central1",
-        description="GCP region for Batch jobs",
+        description="GCP region for Batch jobs and Cloud Tasks",
+    )
+    transcription_task_queue: str = Field(
+        default="pablo-transcription",
+        description="Cloud Tasks queue name for transcription polling",
     )
 
     # NLI Model Settings
@@ -395,6 +409,24 @@ class Settings(BaseSettings):
     elevenlabs_therapist_voice_id: str = Field(
         default="pMsXgVXv3BLzUgSXRplE",
         description="ElevenLabs voice ID for AI therapist in demo mode (Serena)",
+    )
+
+    # Calendar Auto-Sync (Cloud Scheduler + Cloud Tasks)
+    calendar_auto_sync_enabled: bool = Field(
+        default=True,
+        description="Enable periodic calendar sync via Cloud Scheduler",
+    )
+    calendar_sync_max_consecutive_failures: int = Field(
+        default=5,
+        description="Disable auto-sync for a feed after this many consecutive failures",
+    )
+    calendar_sync_task_queue: str = Field(
+        default="pablo-calendar-sync",
+        description="Cloud Tasks queue name for calendar sync fan-out",
+    )
+    calendar_sync_task_location: str = Field(
+        default="us-central1",
+        description="Cloud Tasks queue region",
     )
 
     # Google Calendar Integration

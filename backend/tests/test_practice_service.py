@@ -2,6 +2,8 @@
 
 """Tests for PracticeService — topic catalog, session lifecycle, rate limiting."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from backend.app.models import SessionStatus, TherapySession, Transcript
@@ -134,11 +136,11 @@ class TestListSessions:
             id="non-practice",
             user_id="user-1",
             patient_id="practice-user-1",
-            session_date="2026-03-30T00:00:00Z",
+            session_date=datetime(2026, 3, 30, tzinfo=UTC),
             session_number=1,
             status="queued",
             transcript=Transcript(format="txt", content=""),
-            created_at="2026-03-30T00:00:00Z",
+            created_at=datetime(2026, 3, 30, tzinfo=UTC),
             source="web",
         )
         session_repo.create(non_practice)

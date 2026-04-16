@@ -9,9 +9,21 @@ import uuid
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from ..auth.service import TenantContext, get_tenant_context, require_active_subscription
+from ..auth.service import (
+    TenantContext,
+    get_tenant_context,
+    require_active_subscription,
+    require_baa_acceptance,
+)
+from ..models import (
+    AuditAction,
+    ScheduleSessionRequest,
+    SessionResponse,
+    User,
+)
+from ..models.enums import SessionSource, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -32,6 +44,10 @@ from ..models.scheduling import (
     UpdateAvailabilityRuleRequest,
 )
 from ..repositories import (
+    PatientRepository,
+    TherapySessionRepository,
+)
+from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
 from ..repositories import (
@@ -39,6 +55,12 @@ from ..repositories import (
 )
 from ..repositories import (
     get_google_calendar_token_repository as _gcal_token_repo_factory,
+)
+from ..repositories import (
+    get_patient_repository as _patient_repo_factory,
+)
+from ..repositories import (
+    get_session_repository as _session_repo_factory,
 )
 from ..scheduling_engine.exceptions import (
     AppointmentNotFoundError,
@@ -48,9 +70,17 @@ from ..scheduling_engine.exceptions import (
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
+from ..services import (
+    AuditService,
+    MeetingTranscriptionSOAPService,
+    PatientNotFoundError,
+    SessionService,
+    get_audit_service,
+)
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
+from .subscription import TrialLimitReachedError, check_and_count_trial_session
 
 # Native app schemes allowed for Google Calendar OAuth redirect
 _ALLOWED_GCAL_SCHEMES = {"pablohealth", "therapyrecorder"}
@@ -232,6 +262,116 @@ def cancel_appointment(
     return _to_response(appt)
 
 
+# --- Appointment → session link ---
+
+
+def _get_session_service(
+    _ctx: TenantContext = Depends(get_tenant_context),
+    session_repo: TherapySessionRepository = Depends(_session_repo_factory),
+    patient_repo: PatientRepository = Depends(_patient_repo_factory),
+) -> SessionService:
+    """Get session service for appointment→session linking.
+
+    Depends on get_tenant_context to ensure the practice schema is set
+    before any queries run (required for multi-tenant Postgres).
+    """
+    return SessionService(session_repo, patient_repo, MeetingTranscriptionSOAPService())
+
+
+@router.post(
+    "/api/appointments/{appointment_id}/start-session",
+    response_model=SessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def start_session_from_appointment(
+    appointment_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    service: SchedulingService = Depends(get_scheduling_service),
+    session_service: SessionService = Depends(_get_session_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> SessionResponse:
+    """Create a therapy session linked to a calendar appointment.
+
+    Used by the companion app when the therapist clicks 'Start Session'
+    on a calendar appointment. Copies appointment data into a new
+    therapy session and sets appointment.session_id to link them.
+    """
+    # 1. Fetch appointment
+    try:
+        appt = service.get_appointment(appointment_id, user.id)
+    except AppointmentNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+    # 2. Already has a session? → 409
+    if appt.session_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "detail": "Session already started for this appointment",
+                "session_id": appt.session_id,
+            },
+        )
+
+    # 3. Unmatched patient? → 400
+    if not appt.patient_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Appointment has no linked patient. Resolve the client match first.",
+        )
+
+    # 4. Trial limit check
+    try:
+        check_and_count_trial_session(user.email, get_settings())
+    except TrialLimitReachedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": {
+                    "code": "TRIAL_LIMIT_REACHED",
+                    "message": (
+                        f"You've used all {e.limit} free trial sessions. "
+                        "Subscribe to keep using Pablo."
+                    ),
+                    "details": {
+                        "sessions_used": e.used,
+                        "sessions_limit": e.limit,
+                    },
+                }
+            },
+        ) from None
+
+    # 5. Create session from appointment data
+    request = ScheduleSessionRequest(
+        patient_id=appt.patient_id,
+        scheduled_at=appt.start_at,
+        duration_minutes=appt.duration_minutes,
+        video_link=appt.video_link,
+        video_platform=VideoPlatform(appt.video_platform) if appt.video_platform else None,
+        session_type=(
+            SessionType(appt.session_type) if appt.session_type else SessionType.INDIVIDUAL
+        ),
+        source=SessionSource.COMPANION,
+        notes=appt.notes,
+    )
+
+    try:
+        session, patient = session_service.schedule_session(user.id, request)
+    except PatientNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Patient not found for this appointment.",
+        ) from None
+
+    # 6. Link appointment → session
+    service.update_appointment(appointment_id, user.id, session_id=session.id)
+
+    # 7. Audit
+    audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
+
+    return SessionResponse.from_session(session, patient.display_name)
+
+
 # --- Recurring appointment endpoints ---
 
 
@@ -406,7 +546,7 @@ def create_availability_rule(
             detail=f"Invalid enforcement: {request.enforcement}",
         ) from e
 
-    now = utc_now_iso()
+    now = utc_now()
     rule = AvailabilityRule(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
@@ -461,7 +601,7 @@ def update_availability_rule(
     if request.params is not None:
         rule.params = request.params
 
-    rule.updated_at = utc_now_iso()
+    rule.updated_at = utc_now()
     updated = rule_repo.update(rule)
     return _rule_to_response(updated)
 

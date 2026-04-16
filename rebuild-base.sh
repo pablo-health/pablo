@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Rebuild the backend base image (Python deps)
+# Rebuild the backend base image (Python deps + spaCy model)
 # Run this when pyproject.toml or poetry.lock changes.
 #
 # Usage:

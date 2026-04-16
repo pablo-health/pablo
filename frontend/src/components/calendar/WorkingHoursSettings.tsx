@@ -2,6 +2,7 @@
 
 "use client"
 
+import { useEffect } from "react"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -27,11 +28,30 @@ export function formatHour(hour: number): string {
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => i)
 
+const US_TIMEZONES = [
+  { value: "America/New_York", label: "Eastern (ET)" },
+  { value: "America/Chicago", label: "Central (CT)" },
+  { value: "America/Denver", label: "Mountain (MT)" },
+  { value: "America/Los_Angeles", label: "Pacific (PT)" },
+  { value: "America/Anchorage", label: "Alaska (AKT)" },
+  { value: "Pacific/Honolulu", label: "Hawaii (HT)" },
+]
+
 export function WorkingHoursSettings({
   preferences,
   onSave,
   isSaving,
 }: WorkingHoursSettingsProps) {
+  // Auto-detect timezone from browser on first render if still at default
+  useEffect(() => {
+    if (preferences.timezone === "America/New_York") {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone
+      if (detected && detected !== "America/New_York") {
+        onSave({ ...preferences, timezone: detected })
+      }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleStartChange = (value: string) => {
     const start = Number(value)
     if (start < preferences.working_hours_end) {
@@ -44,6 +64,10 @@ export function WorkingHoursSettings({
     if (end > preferences.working_hours_start) {
       onSave({ ...preferences, working_hours_end: end })
     }
+  }
+
+  const handleTimezoneChange = (value: string) => {
+    onSave({ ...preferences, timezone: value })
   }
 
   const TIMELINE_START = 6
@@ -99,6 +123,25 @@ export function WorkingHoursSettings({
               ).map((h) => (
                 <SelectItem key={h} value={String(h)}>
                   {formatHour(h)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="timezone">Timezone</Label>
+          <Select
+            value={preferences.timezone}
+            onValueChange={handleTimezoneChange}
+            disabled={isSaving}
+          >
+            <SelectTrigger id="timezone" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {US_TIMEZONES.map((tz) => (
+                <SelectItem key={tz.value} value={tz.value}>
+                  {tz.label}
                 </SelectItem>
               ))}
             </SelectContent>

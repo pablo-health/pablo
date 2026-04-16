@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import AcceptBAARequest, BAAStatusResponse, User, UserPreferences
 from ..repositories import UserRepository, get_user_repository
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now, utc_now_iso
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -83,7 +83,7 @@ def get_user_status(
     result: dict = {
         "status": user.status,
         "mfa_enrolled_at": user.mfa_enrolled_at,
-        "is_admin": user.is_admin,
+        "is_platform_admin": user.is_platform_admin,
         "name": user.name,
         "email": user.email,
     }
@@ -112,10 +112,10 @@ def record_mfa_enrollment(
     Uses get_current_user_no_mfa since this is called immediately after
     enrolling (before the user has signed in with MFA).
     """
-    now = utc_now_iso()
+    now = utc_now()
     user.mfa_enrolled_at = now
     user_repo.update(user)
-    return {"mfa_enrolled_at": now}
+    return {"mfa_enrolled_at": utc_now_iso()}
 
 
 @router.get("/me")
@@ -189,7 +189,7 @@ def accept_baa(
     baa_full_text = baa_path.read_text()
 
     # Update user with BAA acceptance
-    now = utc_now_iso()
+    now = utc_now()
     user.baa_accepted_at = now
     user.baa_version = request.version
     user.baa_legal_name = request.legal_name
@@ -203,7 +203,7 @@ def accept_baa(
 
     return BAAStatusResponse(
         accepted=True,
-        accepted_at=now,
+        accepted_at=utc_now(),
         version=request.version,
         current_version=request.version,
     )

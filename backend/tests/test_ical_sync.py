@@ -8,6 +8,7 @@ import base64
 import io
 import os
 import zipfile
+from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
@@ -15,7 +16,7 @@ from urllib.parse import urlparse
 import pytest
 from app.models.patient import Patient
 from app.repositories.ical_sync_config import ICalSyncConfig
-from app.utcnow import utc_now_iso
+from app.utcnow import utc_now
 
 if TYPE_CHECKING:
     from app.repositories.ical_client_mapping import ICalClientMapping
@@ -114,8 +115,8 @@ END:VEVENT
 END:VCALENDAR"""
 
 
-def _now() -> str:
-    return utc_now_iso()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _make_patient(patient_id: str, first: str, last: str, user_id: str = "user1") -> Patient:
@@ -251,8 +252,10 @@ class TestICalParsing:
         events = service._parse_events(SP_ICAL_DATA)
         e = next(e for e in events if e.uid == "3415461692")
         # 2:00 PM EDT = 6:00 PM UTC
-        assert "18:00:00" in e.start_at
-        assert "19:00:00" in e.end_at
+        assert e.start_at.hour == 18
+        assert e.start_at.minute == 0
+        assert e.end_at.hour == 19
+        assert e.end_at.minute == 0
 
 
 class TestClientMatching:

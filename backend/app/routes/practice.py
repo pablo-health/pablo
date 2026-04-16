@@ -17,10 +17,8 @@ from pydantic import BaseModel
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
-    resolve_tenant_database,
     verify_firebase_token,
 )
-from ..database import get_admin_firestore_client
 from ..models import UploadTranscriptToSessionRequest
 from ..models.practice import (
     CreatePracticeSessionRequest,
@@ -345,13 +343,12 @@ def end_practice_session(
 # --- WebSocket ---
 
 
-def _resolve_firestore_db(decoded_token: dict, settings: Settings) -> str:  # type: ignore[type-arg]
-    """Resolve Firestore database from token's tenant claim."""
-    tenant_id = decoded_token.get("firebase", {}).get("tenant")
-    if not tenant_id or not settings.multi_tenancy_enabled:
-        return "(default)"
-    admin_db = get_admin_firestore_client()
-    return resolve_tenant_database(tenant_id, admin_db) or "(default)"
+def _resolve_firestore_db(
+    _decoded_token: dict,  # type: ignore[type-arg]
+    _settings: Settings,
+) -> str:
+    """Resolve Firestore database — always default (per-tenant DBs removed)."""
+    return "(default)"
 
 
 @router.websocket("/ws")

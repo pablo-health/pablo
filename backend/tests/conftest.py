@@ -10,6 +10,7 @@ os.environ["ENVIRONMENT"] = "development"
 # Enable SaaS features so admin/tenant routes are registered for tests
 os.environ["PABLO_EDITION"] = "solo"
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -95,8 +96,8 @@ def mock_user(mock_user_id: str) -> User:
         id=mock_user_id,
         email="test@example.com",
         name="Test Therapist",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
     )
 
@@ -146,10 +147,10 @@ def admin_user() -> User:
         id="admin-user-123",
         email="admin@example.com",
         name="Admin User",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
-        is_admin=True,
+        is_platform_admin=True,
     )
 
 
