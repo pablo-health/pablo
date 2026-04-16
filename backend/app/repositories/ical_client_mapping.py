@@ -58,7 +58,8 @@ class ICalClientMappingRepository(ABC):
     ) -> ICalClientMapping | None: ...
 
     @abstractmethod
-    def list_by_user(self, user_id: str) -> list[ICalClientMapping]: ...
+    def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
+        pass
 
     @abstractmethod
     def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]: ...
