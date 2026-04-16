@@ -955,13 +955,26 @@ echo "  Backend:  ${SOURCE_BACKEND}"
 echo "  Frontend: ${SOURCE_FRONTEND}"
 echo ""
 
-echo -e "${YELLOW}Copying backend image...${NC}"
-gcloud artifacts docker images copy "$SOURCE_BACKEND" "$DEST_BACKEND" --quiet
+if ! command -v docker &>/dev/null; then
+    echo -e "${RED}docker is required to mirror container images.${NC}"
+    echo "Cloud Shell includes it by default. Locally, install Docker Desktop:"
+    echo "  https://docs.docker.com/get-docker/"
+    exit 1
+fi
+
+gcloud auth configure-docker "${REPO_LOCATION}-docker.pkg.dev" --quiet
+
+echo -e "${YELLOW}Mirroring backend image...${NC}"
+docker pull "$SOURCE_BACKEND"
+docker tag "$SOURCE_BACKEND" "$DEST_BACKEND"
+docker push "$DEST_BACKEND"
 echo -e "${GREEN}Backend image mirrored${NC}"
 
 echo ""
-echo -e "${YELLOW}Copying frontend image...${NC}"
-gcloud artifacts docker images copy "$SOURCE_FRONTEND" "$DEST_FRONTEND" --quiet
+echo -e "${YELLOW}Mirroring frontend image...${NC}"
+docker pull "$SOURCE_FRONTEND"
+docker tag "$SOURCE_FRONTEND" "$DEST_FRONTEND"
+docker push "$DEST_FRONTEND"
 echo -e "${GREEN}Frontend image mirrored${NC}"
 echo ""
 

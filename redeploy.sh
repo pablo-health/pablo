@@ -33,6 +33,15 @@ if [ -z "$PROJECT_ID" ]; then
     exit 1
 fi
 
+if ! command -v docker &>/dev/null; then
+    echo -e "${RED}Error: docker is required to mirror images.${NC}"
+    echo "Cloud Shell includes it by default. Locally, install Docker Desktop:"
+    echo "  https://docs.docker.com/get-docker/"
+    exit 1
+fi
+
+gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
 echo ""
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║          Pablo - Redeploy                                      ║${NC}"
@@ -56,7 +65,9 @@ mirror_and_deploy() {
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    gcloud artifacts docker images copy "$source" "$dest" --quiet
+    docker pull "$source"
+    docker tag "$source" "$dest"
+    docker push "$dest"
     echo -e "${GREEN}✓ ${service} image mirrored to Artifact Registry${NC}"
     echo ""
 
