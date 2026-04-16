@@ -27,7 +27,9 @@ Then run:
 ./setup-solo.sh
 ```
 
-The setup script walks you through everything: GCP project creation, Firestore, Firebase Auth, AI model selection, and Cloud Run deployment.
+The setup script walks you through everything: GCP project creation, Cloud SQL (PostgreSQL), Identity Platform auth with mandatory MFA, and Cloud Run deployment from pre-built container images.
+
+Pablo publishes signed container images to GitHub Container Registry on every release, so installs typically complete in under 10 minutes — no container builds on your machine or in your GCP project.
 
 ### Manual Deploy
 
@@ -55,9 +57,9 @@ docker compose up
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui |
-| Backend | FastAPI, Python 3.13, PostgreSQL/Firestore |
-| AI | Google Gemini or Anthropic Claude |
-| Infra | Docker, Google Cloud Run |
+| Backend | FastAPI, Python 3.13, PostgreSQL (Cloud SQL) |
+| AI | Google Gemini (via Vertex AI, default) or Anthropic Claude |
+| Infra | Google Cloud Run, pre-built images on `ghcr.io/pablo-health` |
 
 ## HIPAA Compliance
 
