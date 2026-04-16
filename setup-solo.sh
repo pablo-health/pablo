@@ -153,7 +153,7 @@ echo "This will enable:"
 echo "  - Cloud Run (hosting)"
 echo "  - Cloud Build (Docker image builds)"
 echo "  - Artifact Registry (image storage)"
-echo "  - Firestore (patient data)"
+echo "  - Cloud SQL (PostgreSQL database)"
 echo "  - Secret Manager (API keys and secrets)"
 echo "  - Cloud Logging (HIPAA audit logs)"
 echo "  - Vertex AI (SOAP note generation with Gemini)"
@@ -164,7 +164,7 @@ gcloud services enable \
     run.googleapis.com \
     cloudbuild.googleapis.com \
     artifactregistry.googleapis.com \
-    firestore.googleapis.com \
+    sqladmin.googleapis.com \
     secretmanager.googleapis.com \
     logging.googleapis.com \
     aiplatform.googleapis.com \
@@ -173,6 +173,9 @@ gcloud services enable \
     identitytoolkit.googleapis.com \
     firebase.googleapis.com \
     cloudbilling.googleapis.com \
+    cloudtasks.googleapis.com \
+    storage.googleapis.com \
+    batch.googleapis.com \
     --quiet
 
 echo -e "${GREEN}APIs enabled${NC}"
@@ -277,7 +280,7 @@ echo "Granting service account permissions..."
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
-    --role="roles/datastore.user" \
+    --role="roles/cloudsql.client" \
     --quiet 2>/dev/null || true
 
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
@@ -383,170 +386,173 @@ else
 fi
 
 # ============================================================================
-# STEP 5: Create Firestore database
+# STEP 5: Create Cloud SQL PostgreSQL database
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 5: Setting up Firestore database...${NC}"
+echo -e "${BLUE}Step 5: Setting up Cloud SQL PostgreSQL database...${NC}"
 echo ""
 
-FIRESTORE_EXISTS=$(gcloud firestore databases list --format="value(name)" 2>/dev/null | grep -c "(default)" || true)
+SQL_INSTANCE_NAME="pablo"
+SQL_DB_NAME="pablo"
+SQL_DB_USER="pablo"
+CONNECTION_NAME="${PROJECT_ID}:${REPO_LOCATION}:${SQL_INSTANCE_NAME}"
 
-if [ "$FIRESTORE_EXISTS" == "0" ]; then
-    echo "Creating Firestore database in Native mode..."
-    echo "  Location: nam5 (United States)"
-    echo "  Type: firestore-native (HIPAA-compliant)"
+# Check if Cloud SQL instance already exists
+INSTANCE_EXISTS=$(gcloud sql instances list \
+    --filter="name=${SQL_INSTANCE_NAME}" \
+    --format="value(name)" 2>/dev/null || echo "")
+
+if [ -n "$INSTANCE_EXISTS" ]; then
+    echo -e "${GREEN}Cloud SQL instance '${SQL_INSTANCE_NAME}' already exists${NC}"
+else
+    echo "Creating Cloud SQL PostgreSQL instance..."
+    echo "  Instance:  ${SQL_INSTANCE_NAME}"
+    echo "  Version:   PostgreSQL 16"
+    echo "  Tier:      db-f1-micro"
+    echo "  Region:    ${REPO_LOCATION}"
+    echo "  Disk:      10GB (auto-increase enabled)"
+    echo ""
+    echo -e "${YELLOW}This takes 3-5 minutes...${NC}"
     echo ""
 
-    if gcloud firestore databases create --location=nam5 --type=firestore-native --quiet 2>&1; then
-        echo -e "${GREEN}Firestore database created${NC}"
-        echo "Waiting for Firestore to be ready..."
-        sleep 10
+    if gcloud sql instances create "$SQL_INSTANCE_NAME" \
+        --database-version=POSTGRES_16 \
+        --tier=db-f1-micro \
+        --region="$REPO_LOCATION" \
+        --storage-size=10 \
+        --storage-auto-increase \
+        --assign-ip \
+        --quiet 2>&1; then
+        echo -e "${GREEN}Cloud SQL instance created${NC}"
     else
-        echo -e "${RED}Firestore creation failed!${NC}"
+        echo -e "${RED}Cloud SQL instance creation failed!${NC}"
         echo ""
-        echo "Please create Firestore manually:"
-        echo "  1. Visit: https://console.cloud.google.com/firestore?project=${PROJECT_ID}"
-        echo "  2. Choose 'Native Mode'"
-        echo "  3. Select location: nam5 (United States)"
-        echo "  4. Click 'Create Database'"
+        echo "Please create the instance manually:"
+        echo "  1. Visit: https://console.cloud.google.com/sql/instances?project=${PROJECT_ID}"
+        echo "  2. Click 'Create Instance' > 'PostgreSQL'"
+        echo "  3. Instance ID: ${SQL_INSTANCE_NAME}"
+        echo "  4. PostgreSQL 16, db-f1-micro, ${REPO_LOCATION}"
+        echo "  5. Click 'Create Instance'"
         echo ""
-        read -p "Press Enter after you've created the Firestore database..."
+        read -p "Press Enter after you've created the Cloud SQL instance..."
     fi
-
-    # Verify Firestore is available
-    echo "Verifying Firestore availability..."
-    RETRY_COUNT=0
-    MAX_RETRIES=12
-
-    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-        FIRESTORE_EXISTS=$(gcloud firestore databases list --format="value(name)" 2>/dev/null | grep -c "(default)" || echo "0")
-        if [ "$FIRESTORE_EXISTS" != "0" ]; then
-            echo -e "${GREEN}Firestore is ready${NC}"
-            break
-        fi
-        echo "Still waiting for Firestore... ($((RETRY_COUNT + 1))/$MAX_RETRIES)"
-        sleep 5
-        RETRY_COUNT=$((RETRY_COUNT + 1))
-    done
-
-    if [ "$FIRESTORE_EXISTS" == "0" ]; then
-        echo -e "${RED}Firestore is still not available. Cannot continue.${NC}"
-        echo "Please check the Firestore console and try again."
-        exit 1
-    fi
-else
-    echo -e "${GREEN}Firestore already configured${NC}"
 fi
 
-# Enable HIPAA audit logging for Firestore
+# Wait for instance to be ready
 echo ""
-echo "Enabling HIPAA audit logs for Firestore..."
+echo "Waiting for Cloud SQL instance to be ready..."
+RETRY_COUNT=0
+MAX_RETRIES=30
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    INSTANCE_STATE=$(gcloud sql instances describe "$SQL_INSTANCE_NAME" \
+        --format="value(state)" 2>/dev/null || echo "")
+    if [ "$INSTANCE_STATE" == "RUNNABLE" ]; then
+        echo -e "${GREEN}Cloud SQL instance is ready${NC}"
+        break
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    echo "  Instance state: ${INSTANCE_STATE:-pending}... ($((RETRY_COUNT * 10)) seconds)"
+    sleep 10
+done
+
+if [ "$INSTANCE_STATE" != "RUNNABLE" ]; then
+    echo -e "${RED}Cloud SQL instance is not ready after 5 minutes.${NC}"
+    echo "Check status: gcloud sql instances describe ${SQL_INSTANCE_NAME}"
+    exit 1
+fi
+
+# Generate a random password for the database user
+DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')
+
+# Create the pablo database user
+echo ""
+echo "Creating database user '${SQL_DB_USER}'..."
+if gcloud sql users list --instance="$SQL_INSTANCE_NAME" --format="value(name)" 2>/dev/null | grep -q "^${SQL_DB_USER}$"; then
+    echo -e "${GREEN}Database user '${SQL_DB_USER}' already exists${NC}"
+    # Check if we have the password stored already
+    if gcloud secrets describe pablo-db-password &>/dev/null; then
+        DB_PASSWORD=$(gcloud secrets versions access latest --secret=pablo-db-password 2>/dev/null)
+        echo "  Using existing password from Secret Manager"
+    else
+        echo -e "${YELLOW}Resetting password for existing user...${NC}"
+        gcloud sql users set-password "$SQL_DB_USER" \
+            --instance="$SQL_INSTANCE_NAME" \
+            --password="$DB_PASSWORD" \
+            --quiet
+    fi
+else
+    gcloud sql users create "$SQL_DB_USER" \
+        --instance="$SQL_INSTANCE_NAME" \
+        --password="$DB_PASSWORD" \
+        --quiet
+    echo -e "${GREEN}Database user '${SQL_DB_USER}' created${NC}"
+fi
+
+# Create the pablo database
+echo ""
+echo "Creating database '${SQL_DB_NAME}'..."
+DB_EXISTS=$(gcloud sql databases list --instance="$SQL_INSTANCE_NAME" \
+    --filter="name=${SQL_DB_NAME}" --format="value(name)" 2>/dev/null || echo "")
+
+if [ -n "$DB_EXISTS" ]; then
+    echo -e "${GREEN}Database '${SQL_DB_NAME}' already exists${NC}"
+else
+    gcloud sql databases create "$SQL_DB_NAME" \
+        --instance="$SQL_INSTANCE_NAME" \
+        --quiet
+    echo -e "${GREEN}Database '${SQL_DB_NAME}' created${NC}"
+fi
+
+# Store database password and connection URL as secrets
+echo ""
+echo "Storing database credentials in Secret Manager..."
+
+# Cloud SQL Auth Proxy connection URL (used by Cloud Run)
+DATABASE_URL="postgresql://${SQL_DB_USER}:${DB_PASSWORD}@/${SQL_DB_NAME}?host=/cloudsql/${CONNECTION_NAME}"
+
+if gcloud secrets describe pablo-db-password &>/dev/null; then
+    echo -e "${GREEN}pablo-db-password already exists — skipping${NC}"
+else
+    echo -n "$DB_PASSWORD" | gcloud secrets create pablo-db-password --data-file=-
+    gcloud secrets add-iam-policy-binding pablo-db-password \
+        --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+        --role="roles/secretmanager.secretAccessor" \
+        --quiet 2>/dev/null || true
+    echo -e "${GREEN}pablo-db-password stored${NC}"
+fi
+
+if gcloud secrets describe pablo-database-url &>/dev/null; then
+    echo -e "${GREEN}pablo-database-url already exists — updating${NC}"
+    echo -n "$DATABASE_URL" | gcloud secrets versions add pablo-database-url --data-file=-
+else
+    echo -n "$DATABASE_URL" | gcloud secrets create pablo-database-url --data-file=-
+    gcloud secrets add-iam-policy-binding pablo-database-url \
+        --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+        --role="roles/secretmanager.secretAccessor" \
+        --quiet 2>/dev/null || true
+    echo -e "${GREEN}pablo-database-url stored${NC}"
+fi
+
+echo ""
+echo "Cloud SQL connection name: ${CONNECTION_NAME}"
+echo ""
+
+# Enable HIPAA audit logging for Cloud SQL
+echo "Enabling HIPAA audit logs for Cloud SQL..."
 echo -e "${YELLOW}Note: Enable Data Access audit logs in Cloud Console for full HIPAA compliance${NC}"
 echo "  See: docs/SELF_HOSTING_HIPAA_GUIDE.md"
 echo ""
 
 # ============================================================================
-# STEP 5b: Deploy Firestore Indexes
+# STEP 5b: Database schema note
 # ============================================================================
 echo ""
-echo -e "${BLUE}Step 5b: Deploying Firestore indexes...${NC}"
+echo -e "${BLUE}Step 5b: Database schema...${NC}"
 echo ""
-
-create_index() {
-    local collection="$1"
-    shift
-    local field_args=()
-    for field in "$@"; do
-        field_args+=(--field-config="$field")
-    done
-
-    gcloud firestore indexes composite create \
-        --project="$PROJECT_ID" \
-        --collection-group="$collection" \
-        "${field_args[@]}" \
-        --async --quiet 2>&1 || true
-}
-
-# Check if indexes already exist by looking for the last index we create
-EXISTING_INDEXES=$(gcloud firestore indexes composite list --project="$PROJECT_ID" --format="value(fieldConfig)" 2>/dev/null || echo "")
-
-if echo "$EXISTING_INDEXES" | grep -q "session_number"; then
-    echo -e "${GREEN}Firestore indexes already exist — skipping${NC}"
-else
-    echo "Creating composite indexes..."
-    echo ""
-
-    echo "  patients (user_id + last_name + first_name)..."
-    create_index patients \
-        "field-path=user_id,order=ascending" \
-        "field-path=last_name_lower,order=ascending" \
-        "field-path=first_name_lower,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo "  patients (user_id + first_name + last_name)..."
-    create_index patients \
-        "field-path=user_id,order=ascending" \
-        "field-path=first_name_lower,order=ascending" \
-        "field-path=last_name_lower,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo "  therapy_sessions (user_id + session_date)..."
-    create_index therapy_sessions \
-        "field-path=user_id,order=ascending" \
-        "field-path=session_date,order=descending" \
-        "field-path=__name__,order=descending"
-
-    echo "  therapy_sessions (patient_id + user_id + session_date)..."
-    create_index therapy_sessions \
-        "field-path=patient_id,order=ascending" \
-        "field-path=user_id,order=ascending" \
-        "field-path=session_date,order=descending" \
-        "field-path=__name__,order=descending"
-
-    echo "  therapy_sessions (user_id + scheduled_at)..."
-    create_index therapy_sessions \
-        "field-path=user_id,order=ascending" \
-        "field-path=scheduled_at,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo "  therapy_sessions (patient_id + session_number)..."
-    create_index therapy_sessions \
-        "field-path=patient_id,order=ascending" \
-        "field-path=session_number,order=descending" \
-        "field-path=__name__,order=descending"
-
-    echo "  appointments (user_id + start_at)..."
-    create_index appointments \
-        "field-path=user_id,order=ascending" \
-        "field-path=start_at,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo "  appointments (user_id + patient_id + start_at)..."
-    create_index appointments \
-        "field-path=user_id,order=ascending" \
-        "field-path=patient_id,order=ascending" \
-        "field-path=start_at,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo "  appointments (user_id + recurring_appointment_id + start_at)..."
-    create_index appointments \
-        "field-path=user_id,order=ascending" \
-        "field-path=recurring_appointment_id,order=ascending" \
-        "field-path=start_at,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo "  availability_rules (user_id + created_at)..."
-    create_index availability_rules \
-        "field-path=user_id,order=ascending" \
-        "field-path=created_at,order=ascending" \
-        "field-path=__name__,order=ascending"
-
-    echo ""
-    echo -e "${YELLOW}Note: Index creation happens asynchronously (5-10 minutes)${NC}"
-    echo "  Check status: gcloud firestore indexes composite list --project=${PROJECT_ID}"
-fi
-echo ""
-echo -e "${GREEN}Firestore indexes ready${NC}"
+echo -e "${GREEN}Database tables will be created automatically on first backend startup.${NC}"
+echo "  The backend runs schema migrations (Alembic) during initialization."
+echo "  No manual schema setup required."
 echo ""
 
 # ============================================================================
@@ -1001,7 +1007,7 @@ echo -e "${BLUE}Step 10: Deploying to Cloud Run...${NC}"
 echo ""
 
 # Build secrets string for backend
-SECRETS_STRING="JWT_SECRET_KEY=JWT_SECRET_KEY:latest"
+SECRETS_STRING="JWT_SECRET_KEY=JWT_SECRET_KEY:latest,DATABASE_URL=pablo-database-url:latest"
 if [ -n "$ANTHROPIC_SECRET" ]; then
     SECRETS_STRING="${SECRETS_STRING},${ANTHROPIC_SECRET}"
 fi
@@ -1020,7 +1026,8 @@ gcloud run deploy pablo-backend \
     --max-instances=1 \
     --timeout=300 \
     --set-secrets="${SECRETS_STRING}" \
-    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*" \
+    --add-cloudsql-instances="${CONNECTION_NAME}" \
+    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*||DATABASE_BACKEND=postgres||TRANSCRIPTION_PROVIDER=assemblyai||TRANSCRIPTION_ENABLED=true" \
     --quiet
 
 BACKEND_URL=$(gcloud run services describe pablo-backend \
@@ -1125,28 +1132,38 @@ echo ""
 echo -e "${BLUE}Step 11: Creating your user account...${NC}"
 echo ""
 
-# Check if an admin user already exists in Firestore
-AUTH_TOKEN=$(gcloud auth print-access-token)
-EXISTING_ADMIN=$(curl -s \
-    "https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery" \
-    -H "Authorization: Bearer ${AUTH_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{
-        "structuredQuery": {
-            "from": [{"collectionId": "users"}],
-            "where": {"fieldFilter": {"field": {"fieldPath": "is_admin"}, "op": "EQUAL", "value": {"booleanValue": true}}},
-            "limit": 1
-        }
-    }' | python3 -c "
-import sys, json
-docs = json.load(sys.stdin)
-for d in docs:
-    fields = d.get('document', {}).get('fields', {})
-    email = fields.get('email', {}).get('stringValue', '')
-    if email:
-        print(email)
+# Wait for backend to be healthy
+echo "Waiting for backend to be healthy..."
+RETRY_COUNT=0
+MAX_RETRIES=12
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BACKEND_URL}/api/health" 2>/dev/null || echo "000")
+    if [ "$HEALTH_STATUS" == "200" ]; then
+        echo -e "${GREEN}Backend is healthy${NC}"
         break
-" 2>/dev/null)
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    echo "  Waiting for backend... ($((RETRY_COUNT * 5)) seconds)"
+    sleep 5
+done
+
+if [ "$HEALTH_STATUS" != "200" ]; then
+    echo -e "${YELLOW}Backend health check timed out — continuing anyway${NC}"
+fi
+echo ""
+
+# Check if an admin user already exists via the backend API
+AUTH_TOKEN=$(gcloud auth print-access-token)
+EXISTING_ADMIN=""
+
+# Try to check for existing admin via Cloud SQL
+EXISTING_ADMIN=$(gcloud sql connect "$SQL_INSTANCE_NAME" --database="$SQL_DB_NAME" --user="$SQL_DB_USER" --quiet 2>/dev/null <<SQL || echo ""
+SELECT email FROM users WHERE is_admin = true LIMIT 1;
+SQL
+)
+# Clean up psql output (remove headers/footers)
+EXISTING_ADMIN=$(echo "$EXISTING_ADMIN" | grep -E '^[^ ]+@[^ ]+$' | head -1 | tr -d ' ' || echo "")
 
 if [ -n "$EXISTING_ADMIN" ]; then
     echo -e "${GREEN}Admin user already exists (${EXISTING_ADMIN}) — skipping${NC}"
@@ -1161,25 +1178,9 @@ fi
 
 if [ -n "$ADMIN_EMAIL" ]; then
     ADMIN_EMAIL_LOWER=$(echo "${ADMIN_EMAIL}" | tr '[:upper:]' '[:lower:]')
-    SETUP_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-    # Add email to allowlist
-    echo "Adding to allowlist..."
-    curl -s -o /dev/null -w "" \
-        -X PATCH "https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/allowed_emails/${ADMIN_EMAIL_LOWER}?updateMask.fieldPaths=email&updateMask.fieldPaths=added_by&updateMask.fieldPaths=added_at" \
-        -H "Authorization: Bearer ${AUTH_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"fields\": {
-                \"email\": {\"stringValue\": \"${ADMIN_EMAIL_LOWER}\"},
-                \"added_by\": {\"stringValue\": \"setup-solo.sh\"},
-                \"added_at\": {\"stringValue\": \"${SETUP_TIMESTAMP}\"}
-            }
-        }"
-    echo -e "${GREEN}Email added to allowlist: ${ADMIN_EMAIL_LOWER}${NC}"
 
     # Create user via Identity Platform
-    echo "Creating user account..."
+    echo "Creating user account in Identity Platform..."
     ADMIN_CREATE_RESULT=$(curl -s \
         -X POST "https://identitytoolkit.googleapis.com/v1/projects/${PROJECT_ID}/accounts" \
         -H "Authorization: Bearer ${AUTH_TOKEN}" \
@@ -1199,24 +1200,46 @@ except: pass
 " 2>/dev/null)
 
     if [ -n "$ADMIN_UID" ]; then
-        echo -e "${GREEN}User created (uid: ${ADMIN_UID})${NC}"
+        echo -e "${GREEN}User created in Identity Platform (uid: ${ADMIN_UID})${NC}"
 
-        # Mark as admin in Firestore
-        echo "Setting admin flag..."
-        curl -s -o /dev/null -w "" \
-            -X PATCH "https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${ADMIN_UID}?updateMask.fieldPaths=email&updateMask.fieldPaths=is_admin&updateMask.fieldPaths=status&updateMask.fieldPaths=name&updateMask.fieldPaths=created_at" \
-            -H "Authorization: Bearer ${AUTH_TOKEN}" \
+        # Create admin user in PostgreSQL via Cloud SQL
+        echo "Setting admin flag in database..."
+        SETUP_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+        # Insert admin user and allowlist entry via the backend seed endpoint
+        SEED_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${BACKEND_URL}/api/ext/auth/seed-admin" \
             -H "Content-Type: application/json" \
             -d "{
-                \"fields\": {
-                    \"email\": {\"stringValue\": \"${ADMIN_EMAIL_LOWER}\"},
-                    \"is_admin\": {\"booleanValue\": true},
-                    \"status\": {\"stringValue\": \"approved\"},
-                    \"name\": {\"stringValue\": \"Admin\"},
-                    \"created_at\": {\"stringValue\": \"${SETUP_TIMESTAMP}\"}
-                }
-            }"
-        echo -e "${GREEN}Admin flag set${NC}"
+                \"uid\": \"${ADMIN_UID}\",
+                \"email\": \"${ADMIN_EMAIL_LOWER}\"
+            }" 2>/dev/null || echo "000")
+
+        if [ "$SEED_RESPONSE" == "200" ] || [ "$SEED_RESPONSE" == "201" ]; then
+            echo -e "${GREEN}Admin user created in database${NC}"
+        else
+            echo -e "${YELLOW}Could not seed admin via API (HTTP ${SEED_RESPONSE})${NC}"
+            echo ""
+            echo "Creating admin user directly in Cloud SQL..."
+            echo "  You may need to connect manually if this fails:"
+            echo "  gcloud sql connect ${SQL_INSTANCE_NAME} --database=${SQL_DB_NAME} --user=${SQL_DB_USER}"
+            echo ""
+
+            # Fall back to direct SQL insert
+            gcloud sql connect "$SQL_INSTANCE_NAME" \
+                --database="$SQL_DB_NAME" \
+                --user="$SQL_DB_USER" \
+                --quiet 2>/dev/null <<SQL || echo -e "${YELLOW}Direct SQL insert failed — please create admin user manually${NC}"
+INSERT INTO allowed_emails (email, added_by, added_at)
+VALUES ('${ADMIN_EMAIL_LOWER}', 'setup-solo.sh', '${SETUP_TIMESTAMP}')
+ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO users (id, email, is_admin, status, name, created_at)
+VALUES ('${ADMIN_UID}', '${ADMIN_EMAIL_LOWER}', true, 'approved', 'Admin', '${SETUP_TIMESTAMP}')
+ON CONFLICT (id) DO NOTHING;
+SQL
+            echo -e "${GREEN}Admin flag set${NC}"
+        fi
     else
         echo -e "${YELLOW}Could not create user (may already exist).${NC}"
         echo "  If re-running setup, the existing user is unchanged."
@@ -1242,21 +1265,22 @@ echo ""
 echo "  Project:   $PROJECT_ID"
 echo "  Region:    $REPO_LOCATION"
 echo "  AI Model:  $AI_MODEL"
+echo "  Database:  Cloud SQL PostgreSQL (${CONNECTION_NAME})"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "${BLUE}HIPAA Compliance${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "  TLS/HTTPS enforced"
-echo "  Data encrypted at rest (Firestore default AES-256)"
+echo "  Data encrypted at rest (Cloud SQL default AES-256)"
 echo "  Identity Platform with mandatory MFA (TOTP)"
 echo "  NIST 800-63B password policy (15+ chars)"
 echo "  Secrets in Secret Manager"
 echo ""
 echo -e "  ${YELLOW}You still need to:${NC}"
 echo "  - Sign your Google Cloud BAA"
-echo "  - Enable Cloud Audit Logs for Firestore"
-echo "  - Set up Firestore backups"
+echo "  - Enable Cloud Audit Logs for Cloud SQL"
+echo "  - Enable Cloud SQL automated backups"
 echo "  - See: docs/SELF_HOSTING_HIPAA_GUIDE.md"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1264,9 +1288,9 @@ echo -e "${BLUE}Estimated Monthly Cost${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "  Cloud Run:     \$8-25"
-echo "  Firestore:     \$1-5"
+echo "  Cloud SQL:     \$7-15"
 echo "  AI (per note):  \$0.10-0.40"
-echo "  Total (est.):  \$15-50/month"
+echo "  Total (est.):  \$20-55/month"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo -e "${BLUE}Next Steps${NC}"
@@ -1280,7 +1304,7 @@ echo "  5. Generate your first SOAP note"
 echo ""
 echo "  Updates:   git pull && ./redeploy.sh"
 echo "  Logs:      gcloud run services logs read pablo-backend --region=${REPO_LOCATION}"
-echo "  Firestore: https://console.cloud.google.com/firestore?project=${PROJECT_ID}"
+echo "  Database:  https://console.cloud.google.com/sql/instances/pablo?project=${PROJECT_ID}"
 echo ""
 echo -e "${GREEN}Thank you for using Pablo!${NC}"
 echo "  https://github.com/pablo-health/pablo"
