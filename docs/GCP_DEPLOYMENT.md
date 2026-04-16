@@ -56,7 +56,7 @@ The script is idempotent — rerunning it skips anything that already exists. In
 5. Creates a Cloud SQL PostgreSQL 16 instance (`db-f1-micro`, Enterprise edition) and the `pablo` database.
 6. Configures Identity Platform with mandatory TOTP MFA and a 15+ character password policy.
 7. Stores `DATABASE_URL`, `JWT_SECRET_KEY`, and Google OAuth credentials in Secret Manager.
-8. Mirrors pre-built backend and frontend images from `ghcr.io/pablo-health` into your Artifact Registry via `gcloud artifacts docker images copy` (no local Docker or Cloud Build required).
+8. Mirrors pre-built backend and frontend images from `ghcr.io/pablo-health` into your Artifact Registry (`docker pull` + `docker push`, no Cloud Build). Docker is required locally; Cloud Shell includes it by default.
 9. Deploys both services to Cloud Run, wired to the database and Identity Platform.
 10. Prints the frontend URL and next steps.
 
