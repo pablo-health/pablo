@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 
 from ...db.models import ICalSyncConfigRow
 from ...utcnow import utc_now
-from ..ical_sync_config import ICalSyncConfig
+from ..ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class PostgresICalSyncConfigRepository:
+class PostgresICalSyncConfigRepository(ICalSyncConfigRepository):
     """PostgreSQL implementation of ICalSyncConfigRepository."""
 
     def __init__(self, session: Session) -> None:

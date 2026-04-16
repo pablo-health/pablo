@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_ehr_route_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> EhrRouteRepository:
     """Get EHR route repository scoped to the tenant's database."""
     return _ehr_route_repo_factory()

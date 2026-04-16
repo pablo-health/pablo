@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""iCal feed URL configuration dataclass.
+"""iCal feed URL configuration repository interface and dataclass.
 
 HIPAA Compliance: iCal feed URLs contain embedded tokens that grant
 unauthenticated read access to therapist schedules (which may contain PHI).
@@ -9,6 +9,7 @@ URLs are encrypted at rest with AES-256-GCM before storage.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -52,3 +53,27 @@ class ICalSyncConfig:
             connected_at=data.get("connected_at", ""),
             consecutive_error_count=data.get("consecutive_error_count", 0),
         )
+
+
+class ICalSyncConfigRepository(ABC):
+    """Abstract interface for iCal sync config storage."""
+
+    @abstractmethod
+    def get(self, user_id: str, ehr_system: str) -> ICalSyncConfig | None: ...
+
+    @abstractmethod
+    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]: ...
+
+    @abstractmethod
+    def list_all(self) -> list[ICalSyncConfig]: ...
+
+    @abstractmethod
+    def save(self, config: ICalSyncConfig) -> None: ...
+
+    @abstractmethod
+    def delete(self, user_id: str, ehr_system: str) -> bool: ...
+
+    @abstractmethod
+    def update_sync_status(
+        self, user_id: str, ehr_system: str, *, error: str | None = None
+    ) -> None: ...

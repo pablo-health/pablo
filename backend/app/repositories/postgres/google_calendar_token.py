@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 
 from ...db.models import GoogleCalendarTokenRow
 from ...utcnow import utc_now
-from ..google_calendar_token import GoogleCalendarTokenDoc
+from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class PostgresGoogleCalendarTokenRepository:
+class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
     """PostgreSQL implementation of GoogleCalendarTokenRepository."""
 
     def __init__(self, session: Session) -> None:

@@ -5,9 +5,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from ..models.ehr_prompt import EhrPrompt
 from ..utcnow import utc_now
+
+if TYPE_CHECKING:
+    from ..models.ehr_prompt import EhrPrompt
 
 
 class EhrPromptRepository(ABC):

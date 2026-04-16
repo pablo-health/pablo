@@ -53,7 +53,7 @@ format:
 # Run unit tests with coverage
 test:
 	@echo "Running unit tests with coverage..."
-	cd backend && poetry run pytest tests/ --cov=app --cov-report=term-missing --cov-report=html
+	cd backend && DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo poetry run pytest tests/ --cov=app --cov-report=term-missing --cov-report=html
 
 # Run integration tests (requires PostgreSQL)
 test-integration:

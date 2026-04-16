@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Google Calendar OAuth token dataclass."""
+"""Google Calendar OAuth token repository interface and dataclass."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -46,3 +47,25 @@ class GoogleCalendarTokenDoc:
             last_sync_error=data.get("last_sync_error"),
             consecutive_error_count=data.get("consecutive_error_count", 0),
         )
+
+
+class GoogleCalendarTokenRepository(ABC):
+    """Abstract interface for Google Calendar token storage."""
+
+    @abstractmethod
+    def get(self, user_id: str) -> GoogleCalendarTokenDoc | None: ...
+
+    @abstractmethod
+    def list_all(self) -> list[GoogleCalendarTokenDoc]: ...
+
+    @abstractmethod
+    def save(self, token_doc: GoogleCalendarTokenDoc) -> None: ...
+
+    @abstractmethod
+    def update_sync_token(self, user_id: str, sync_token: str) -> None: ...
+
+    @abstractmethod
+    def delete(self, user_id: str) -> bool: ...
+
+    @abstractmethod
+    def exists(self, user_id: str) -> bool: ...

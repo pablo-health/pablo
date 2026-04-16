@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from ..models import Patient
 from ..utcnow import utc_now
 from .session import InMemoryTherapySessionRepository, TherapySessionRepository
+
+if TYPE_CHECKING:
+    from ..models import Patient
 
 
 class PatientRepository(ABC):

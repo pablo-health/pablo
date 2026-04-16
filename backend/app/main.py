@@ -74,7 +74,11 @@ if settings.database_backend == "postgres":
     from .db.middleware import DatabaseSessionMiddleware
     from .db.provisioning import ensure_schemas
 
-    ensure_schemas(get_engine())
+    try:
+        ensure_schemas(get_engine())
+    except Exception:
+        if settings.environment != "development":
+            raise
     app.add_middleware(DatabaseSessionMiddleware)
 
 # Security middleware - HIPAA TLS enforcement (order matters: security first)

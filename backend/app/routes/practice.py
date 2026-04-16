@@ -116,7 +116,7 @@ _ws_ticket_store = _WsTicketStore()
 
 
 def _get_practice_service(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PracticeService:
     return PracticeService(
         session_repo=_session_repo_factory(),

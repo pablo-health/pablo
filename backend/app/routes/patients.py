@@ -52,14 +52,14 @@ router = APIRouter(prefix="/api/patients", tags=["patients"])
 
 
 def get_patient_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
     return _patient_repo_factory()
 
 
 def get_therapy_session_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
     return _session_repo_factory()

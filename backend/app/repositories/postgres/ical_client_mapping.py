@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 
 from ...db.models import ICalClientMappingRow
 from ...utcnow import utc_now
-from ..ical_client_mapping import ICalClientMapping
+from ..ical_client_mapping import ICalClientMapping, ICalClientMappingRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class PostgresICalClientMappingRepository:
+class PostgresICalClientMappingRepository(ICalClientMappingRepository):
     """PostgreSQL implementation of ICalClientMappingRepository."""
 
     def __init__(self, session: Session) -> None:

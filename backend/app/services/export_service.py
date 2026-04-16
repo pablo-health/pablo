@@ -161,7 +161,7 @@ class ExportService:
             [
                 "Last Session",
                 str(patient.last_session_date.date()) if patient.last_session_date else "None",
-            ],  # noqa: E501
+            ],
             ["Record Created", str(patient.created_at.date()) if patient.created_at else "Unknown"],
         ]
 

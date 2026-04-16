@@ -46,7 +46,7 @@ router = APIRouter(
 
 
 def _get_service(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> ICalSyncService:
     return ICalSyncService(
         config_repo=_config_repo_factory(),

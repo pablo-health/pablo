@@ -63,7 +63,6 @@ from ..services.transcription_queue_service import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .subscription import TrialLimitReachedError, check_and_count_trial_session
 
 logger = logging.getLogger(__name__)
 
@@ -73,14 +72,14 @@ router = APIRouter(tags=["sessions"])
 
 
 def get_patient_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
     return _patient_repo_factory()
 
 
 def get_session_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
     return _session_repo_factory()
@@ -131,27 +130,6 @@ def upload_session(
     - **session_date**: ISO 8601 datetime of session
     - **transcript**: Transcript data (format and content)
     """
-    try:
-        check_and_count_trial_session(user.email, get_settings())
-    except TrialLimitReachedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={
-                "error": {
-                    "code": "TRIAL_LIMIT_REACHED",
-                    "message": (
-                        f"You've used all {e.limit} free trial sessions. "
-                        "Subscribe to keep using Pablo, or request a "
-                        "one-day extension if you need to finish today's sessions."
-                    ),
-                    "details": {
-                        "sessions_used": e.used,
-                        "sessions_limit": e.limit,
-                    },
-                }
-            },
-        ) from None
-
     try:
         session, patient = session_service.upload_session(patient_id, user.id, request)
     except PatientNotFoundError:
@@ -443,27 +421,6 @@ def schedule_session(
 ) -> SessionResponse:
     """Create a scheduled session (pre-recording)."""
     try:
-        check_and_count_trial_session(user.email, get_settings())
-    except TrialLimitReachedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={
-                "error": {
-                    "code": "TRIAL_LIMIT_REACHED",
-                    "message": (
-                        f"You've used all {e.limit} free trial sessions. "
-                        "Subscribe to keep using Pablo, or request a "
-                        "one-day extension if you need to finish today's sessions."
-                    ),
-                    "details": {
-                        "sessions_used": e.used,
-                        "sessions_limit": e.limit,
-                    },
-                }
-            },
-        ) from None
-
-    try:
         session, patient = session_service.schedule_session(user.id, request)
     except PatientNotFoundError:
         raise HTTPException(
@@ -618,7 +575,7 @@ async def upload_audio(
     therapist_audio: UploadFile,
     client_audio: UploadFile,
     _http_request: Request,
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
 ) -> dict[str, str]:

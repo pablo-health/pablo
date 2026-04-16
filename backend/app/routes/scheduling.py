@@ -80,7 +80,6 @@ from ..services import (
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .subscription import TrialLimitReachedError, check_and_count_trial_session
 
 # Native app schemes allowed for Google Calendar OAuth redirect
 _ALLOWED_GCAL_SCHEMES = {"pablohealth", "therapyrecorder"}
@@ -119,14 +118,14 @@ router = APIRouter(tags=["scheduling"], dependencies=[Depends(require_active_sub
 
 
 def get_appointment_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> AppointmentRepository:
     """Get appointment repository scoped to the tenant's database."""
     return _appt_repo_factory()
 
 
 def get_availability_rule_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> AvailabilityRuleRepository:
     """Get availability rule repository scoped to the tenant's database."""
     return _rule_repo_factory()
@@ -320,28 +319,7 @@ def start_session_from_appointment(
             detail="Appointment has no linked patient. Resolve the client match first.",
         )
 
-    # 4. Trial limit check
-    try:
-        check_and_count_trial_session(user.email, get_settings())
-    except TrialLimitReachedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail={
-                "error": {
-                    "code": "TRIAL_LIMIT_REACHED",
-                    "message": (
-                        f"You've used all {e.limit} free trial sessions. "
-                        "Subscribe to keep using Pablo."
-                    ),
-                    "details": {
-                        "sessions_used": e.used,
-                        "sessions_limit": e.limit,
-                    },
-                }
-            },
-        ) from None
-
-    # 5. Create session from appointment data
+    # 4. Create session from appointment data
     request = ScheduleSessionRequest(
         patient_id=appt.patient_id,
         scheduled_at=appt.start_at,
@@ -628,7 +606,7 @@ def delete_availability_rule(
 
 
 def get_google_calendar_service(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
     token_repo = _gcal_token_repo_factory()
