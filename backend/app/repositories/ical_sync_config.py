@@ -61,27 +61,21 @@ class ICalSyncConfigRepository(ABC):
     @abstractmethod
     def get(self, user_id: str, ehr_system: str) -> ICalSyncConfig | None:
         pass
+
+    @abstractmethod
+    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
         pass
 
-    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
-        pass
-    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
-        pass
-    def list_all(self) -> list[ICalSyncConfig]:
-        pass
     @abstractmethod
     def list_all(self) -> list[ICalSyncConfig]:
+        pass
+
+    @abstractmethod
     def save(self, config: ICalSyncConfig) -> None:
         pass
 
     @abstractmethod
     def delete(self, user_id: str, ehr_system: str) -> bool:
-        pass
-        pass
-
-    @abstractmethod
-    def delete(self, user_id: str, ehr_system: str) -> bool:
-    ) -> None:
         pass
 
     @abstractmethod
