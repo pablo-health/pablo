@@ -35,7 +35,6 @@ from app.services.session_service import (
     SessionService,
 )
 from app.services.soap_generation_service import SOAPGenerationService
-from app.utcnow import utc_now_iso
 
 
 @pytest.fixture
@@ -76,8 +75,8 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
         user_id=user_id,
         first_name="Jane",
         last_name="Smith",
-        created_at=datetime.now(UTC).isoformat(),
-        updated_at=datetime.now(UTC).isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         session_count=0,
     )
     patient_repo.create(p)
@@ -98,10 +97,10 @@ def _make_session(
     user_id: str,
     patient_id: str,
     status: str = SessionStatus.SCHEDULED,
-    scheduled_at: str | None = None,
+    scheduled_at: datetime | None = None,
 ) -> TherapySession:
     """Helper to create a session in a given status."""
-    now = utc_now_iso()
+    now = datetime.now(UTC)
     session = TherapySession(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -131,7 +130,7 @@ class TestScheduleSession:
     ) -> None:
         req = ScheduleSessionRequest(
             patient_id=patient.id,
-            scheduled_at="2026-03-07T14:00:00Z",
+            scheduled_at=datetime.fromisoformat("2026-03-07T14:00:00+00:00"),
             duration_minutes=50,
             video_link="https://zoom.us/j/123",
             video_platform=VideoPlatform.ZOOM,
@@ -140,7 +139,7 @@ class TestScheduleSession:
 
         assert session.status == SessionStatus.SCHEDULED
         assert session.patient_id == patient.id
-        assert session.scheduled_at == "2026-03-07T14:00:00Z"
+        assert session.scheduled_at == datetime(2026, 3, 7, 14, 0, tzinfo=UTC)
         assert session.video_link == "https://zoom.us/j/123"
         assert session.video_platform == "zoom"
         assert session.duration_minutes == 50
@@ -151,7 +150,7 @@ class TestScheduleSession:
     def test_patient_not_found(self, service: SessionService, user_id: str) -> None:
         req = ScheduleSessionRequest(
             patient_id="nonexistent",
-            scheduled_at="2026-03-07T14:00:00Z",
+            scheduled_at=datetime.fromisoformat("2026-03-07T14:00:00+00:00"),
         )
         with pytest.raises(PatientNotFoundError):
             service.schedule_session(user_id, req)
@@ -290,12 +289,14 @@ class TestUpdateSessionMetadata:
         patient: Patient,
     ) -> None:
         session = _make_session(session_repo, user_id, patient.id, SessionStatus.SCHEDULED)
-        req = UpdateSessionMetadataRequest(scheduled_at="2026-03-08T15:00:00Z")
+        req = UpdateSessionMetadataRequest(
+            scheduled_at=datetime.fromisoformat("2026-03-08T15:00:00+00:00")
+        )
 
         updated, _ = service.update_session_metadata(session.id, user_id, req)
 
-        assert updated.scheduled_at == "2026-03-08T15:00:00Z"
-        assert updated.session_date == "2026-03-08T15:00:00Z"
+        assert updated.scheduled_at == datetime(2026, 3, 8, 15, 0, tzinfo=UTC)
+        assert updated.session_date == datetime(2026, 3, 8, 15, 0, tzinfo=UTC)
 
     def test_terminal_status_raises(
         self,
@@ -374,25 +375,24 @@ class TestListTodaySessions:
         patient: Patient,
     ) -> None:
         now = datetime.now(UTC)
-        today_iso = now.isoformat().replace("+00:00", "Z")
-        yesterday_iso = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        tomorrow_iso = (now + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        yesterday = now - timedelta(days=1)
+        tomorrow = now + timedelta(days=1)
 
-        _make_session(session_repo, user_id, patient.id, scheduled_at=today_iso)
-        _make_session(session_repo, user_id, patient.id, scheduled_at=yesterday_iso)
-        _make_session(session_repo, user_id, patient.id, scheduled_at=tomorrow_iso)
+        _make_session(session_repo, user_id, patient.id, scheduled_at=now)
+        _make_session(session_repo, user_id, patient.id, scheduled_at=yesterday)
+        _make_session(session_repo, user_id, patient.id, scheduled_at=tomorrow)
 
         today_sessions = session_repo.list_today_by_user(user_id, "UTC")
 
         assert len(today_sessions) == 1
-        assert today_sessions[0].scheduled_at == today_iso
+        assert today_sessions[0].scheduled_at == now
 
     def test_respects_user_isolation(
         self,
         session_repo: InMemoryTherapySessionRepository,
         patient: Patient,
     ) -> None:
-        now = utc_now_iso()
+        now = datetime.now(UTC)
         _make_session(session_repo, "user-a", patient.id, scheduled_at=now)
         _make_session(session_repo, "user-b", patient.id, scheduled_at=now)
 

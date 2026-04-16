@@ -11,7 +11,6 @@ export interface RuntimeConfig {
   devMode: boolean
   dataMode: string
   enableLocalAuth: boolean
-  multiTenancyEnabled: boolean
   firebaseProjectId: string
   firebaseApiKey: string
   firebaseAuthDomain: string

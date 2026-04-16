@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ...db.models import AppointmentRow
@@ -24,7 +25,9 @@ class PostgresAppointmentRepository(AppointmentRepository):
             return None
         return _row_to_appointment(row)
 
-    def list_by_range(self, user_id: str, start: str, end: str) -> list[Appointment]:
+    def list_by_range(
+        self, user_id: str, start: str | datetime, end: str | datetime
+    ) -> list[Appointment]:
         rows = (
             self._session.query(AppointmentRow)
             .filter(
@@ -50,7 +53,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
         return [_row_to_appointment(r) for r in rows]
 
     def list_by_recurring_id(
-        self, user_id: str, recurring_appointment_id: str, after: str | None = None
+        self, user_id: str, recurring_appointment_id: str, after: str | datetime | None = None
     ) -> list[Appointment]:
         query = self._session.query(AppointmentRow).filter(
             AppointmentRow.user_id == user_id,

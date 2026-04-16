@@ -4,7 +4,7 @@ import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 
 const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
-const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native"]
+const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token"]
 
 const CSP_POLICY = [
   "default-src 'self'",
@@ -36,15 +36,10 @@ export default async function middleware(request: NextRequest) {
     return addSecurityHeaders(NextResponse.next())
   }
 
-  // Pass tenant ID dynamically so the library preserves firebase.tenant in all tokens.
-  // Without this, the library's custom token exchange strips the tenant claim.
-  const tenantId = request.cookies.get("X-Tenant-ID")?.value
-
   return authMiddleware(request, {
     loginPath,
     logoutPath,
     ...authConfig,
-    ...(tenantId && { tenantId }),
 
     handleValidToken: async (_tokens, headers) => {
       const { pathname } = request.nextUrl

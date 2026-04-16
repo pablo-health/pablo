@@ -100,14 +100,14 @@ class AuditLogEntry:
     changes: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         data = asdict(self)
-        # Remove None values for cleaner Firestore documents
+        # Remove None values for cleaner documents
         return {k: v for k, v in data.items() if v is not None}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AuditLogEntry":
-        """Create AuditLogEntry from Firestore document."""
+        """Create AuditLogEntry from dictionary."""
         return cls(
             id=data["id"],
             timestamp=data["timestamp"],

@@ -72,12 +72,12 @@ def sample_appointment() -> Appointment:
         user_id="user-001",
         patient_id="patient-001",
         title="Session with Patient",
-        start_at=now.isoformat().replace("+00:00", "Z"),
-        end_at=(now + timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
+        start_at=now,
+        end_at=now + timedelta(hours=1),
         duration_minutes=60,
         status="confirmed",
         session_type="individual",
-        created_at=now.isoformat().replace("+00:00", "Z"),
+        created_at=now,
     )
 
 
@@ -187,11 +187,11 @@ class TestOAuthFlow:
     ) -> None:
         mock_flow = MagicMock()
         mock_creds = MagicMock()
-        mock_creds.token = "ya29.access"  # noqa: S105
-        mock_creds.refresh_token = "1//refresh"  # noqa: S105
-        mock_creds.token_uri = "https://oauth2.googleapis.com/token"  # noqa: S105
+        mock_creds.token = "ya29.access"
+        mock_creds.refresh_token = "1//refresh"
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
         mock_creds.client_id = "test-client-id"
-        mock_creds.client_secret = "test-client-secret"  # noqa: S105
+        mock_creds.client_secret = "test-client-secret"
         mock_flow.credentials = mock_creds
         mock_build_flow.return_value = mock_flow
 
@@ -207,8 +207,8 @@ class TestOAuthFlow:
         assert saved_doc.calendar_id == "primary@gmail.com"
         assert saved_doc.encrypted_tokens != ""
         decrypted = decrypt_tokens(saved_doc.encrypted_tokens)
-        assert decrypted["token"] == "ya29.access"  # noqa: S105
-        assert decrypted["refresh_token"] == "1//refresh"  # noqa: S105
+        assert decrypted["token"] == "ya29.access"
+        assert decrypted["refresh_token"] == "1//refresh"
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +224,8 @@ class TestAppointmentMapping:
 
         assert "Patient" not in event["summary"]
         assert event["summary"] == "Therapy Session"
-        assert event["start"]["dateTime"] == sample_appointment.start_at
-        assert event["end"]["dateTime"] == sample_appointment.end_at
+        assert event["start"]["dateTime"] == sample_appointment.start_at.isoformat()
+        assert event["end"]["dateTime"] == sample_appointment.end_at.isoformat()
         assert event["extendedProperties"]["private"]["pablo_appointment_id"] == "appt-001"
 
     def test_appointment_to_event_with_video_link(
@@ -277,13 +277,13 @@ class TestSyncStatus:
             user_id="user-001",
             encrypted_tokens="encrypted-data",
             calendar_id="user@gmail.com",
-            last_synced_at="2026-01-01T00:00:00Z",
-            connected_at="2026-01-01T00:00:00Z",
+            last_synced_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
+            connected_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
         )
         result = calendar_service.get_sync_status("user-001")
         assert result["connected"] is True
         assert result["calendar_id"] == "user@gmail.com"
-        assert result["last_synced_at"] == "2026-01-01T00:00:00Z"
+        assert result["last_synced_at"] == datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
 
 # ---------------------------------------------------------------------------
@@ -392,14 +392,14 @@ class TestReminderService:
             user_id="user-001",
             patient_id="patient-001",
             title="Session",
-            start_at=start.isoformat().replace("+00:00", "Z"),
-            end_at=end.isoformat().replace("+00:00", "Z"),
+            start_at=start,
+            end_at=end,
             duration_minutes=60,
             status=appt_status,
             session_type="individual",
             reminder_24h_sent=reminder_24h_sent,
             reminder_1h_sent=reminder_1h_sent,
-            created_at=now.isoformat().replace("+00:00", "Z"),
+            created_at=now,
         )
 
     def test_sends_24h_reminder(self, appointment_repo: MagicMock) -> None:

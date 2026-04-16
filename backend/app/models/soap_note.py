@@ -324,7 +324,7 @@ class SOAPNote:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore persistence (structured format)."""
+        """Convert to dictionary for persistence (structured format)."""
         return asdict(self)
 
     @classmethod

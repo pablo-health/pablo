@@ -13,7 +13,6 @@ export async function GET() {
     dataMode: IS_PRODUCTION ? 'api' : (process.env.DATA_MODE || 'mock'),
     enableLocalAuth: IS_PRODUCTION ? false : process.env.ENABLE_LOCAL_AUTH === 'true',
     pabloEdition: process.env.PABLO_EDITION || 'core',
-    multiTenancyEnabled: process.env.MULTI_TENANCY_ENABLED === 'true',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseApiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '',
     firebaseAuthDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '',

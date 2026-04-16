@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -18,12 +19,12 @@ USER_ID = "user-1"
 PATIENT_ID = "patient-1"
 
 
-def _appt_data(**overrides: str | int | None) -> dict[str, str | int | None]:
-    defaults: dict[str, str | int | None] = {
+def _appt_data(**overrides: Any) -> dict[str, Any]:
+    defaults: dict[str, Any] = {
         "patient_id": PATIENT_ID,
         "title": "Weekly Session",
-        "start_at": "2026-03-17T14:00:00Z",
-        "end_at": "2026-03-17T14:50:00Z",
+        "start_at": datetime.fromisoformat("2026-03-17T14:00:00+00:00"),
+        "end_at": datetime.fromisoformat("2026-03-17T14:50:00+00:00"),
         "duration_minutes": 50,
     }
     defaults.update(overrides)

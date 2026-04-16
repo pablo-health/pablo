@@ -1,18 +1,13 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Firestore repository for encrypted Google Calendar OAuth tokens."""
+"""Google Calendar OAuth token repository interface and dataclass."""
 
 from __future__ import annotations
 
-import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
-
-from ..utcnow import utc_now_iso
-
-logger = logging.getLogger(__name__)
-
-COLLECTION = "google_calendar_tokens"
 
 
 @dataclass
@@ -23,8 +18,10 @@ class GoogleCalendarTokenDoc:
     encrypted_tokens: str  # base64 AES-256-GCM encrypted
     calendar_id: str | None = None
     sync_token: str | None = None
-    last_synced_at: str | None = None
-    connected_at: str | None = None
+    last_synced_at: datetime | None = None
+    connected_at: datetime | None = None
+    last_sync_error: str | None = None
+    consecutive_error_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -34,6 +31,8 @@ class GoogleCalendarTokenDoc:
             "sync_token": self.sync_token,
             "last_synced_at": self.last_synced_at,
             "connected_at": self.connected_at,
+            "last_sync_error": self.last_sync_error,
+            "consecutive_error_count": self.consecutive_error_count,
         }
 
     @classmethod
@@ -45,45 +44,34 @@ class GoogleCalendarTokenDoc:
             sync_token=data.get("sync_token"),
             last_synced_at=data.get("last_synced_at"),
             connected_at=data.get("connected_at"),
+            last_sync_error=data.get("last_sync_error"),
+            consecutive_error_count=data.get("consecutive_error_count", 0),
         )
 
 
-class GoogleCalendarTokenRepository:
-    """Stores and retrieves encrypted Google Calendar OAuth tokens in Firestore.
+class GoogleCalendarTokenRepository(ABC):
+    """Abstract interface for Google Calendar token storage."""
 
-    HIPAA: Tokens are encrypted with AES-256-GCM before reaching this layer.
-    This repository stores only the encrypted blob — it never sees plaintext tokens.
-    """
-
-    def __init__(self, db: Any) -> None:
-        self._db = db
-        self._collection = db.collection(COLLECTION)
-
+    @abstractmethod
     def get(self, user_id: str) -> GoogleCalendarTokenDoc | None:
-        doc = self._collection.document(user_id).get()
-        if not doc.exists:
-            return None
-        return GoogleCalendarTokenDoc.from_dict(doc.to_dict())
+        raise NotImplementedError
 
+    @abstractmethod
+    def list_all(self) -> list[GoogleCalendarTokenDoc]:
+        raise NotImplementedError
+
+    @abstractmethod
     def save(self, token_doc: GoogleCalendarTokenDoc) -> None:
-        self._collection.document(token_doc.user_id).set(token_doc.to_dict())
+        raise NotImplementedError
 
+    @abstractmethod
     def update_sync_token(self, user_id: str, sync_token: str) -> None:
-        now = utc_now_iso()
-        self._collection.document(user_id).update(
-            {
-                "sync_token": sync_token,
-                "last_synced_at": now,
-            }
-        )
+        raise NotImplementedError
 
+    @abstractmethod
     def delete(self, user_id: str) -> bool:
-        doc = self._collection.document(user_id).get()
-        if not doc.exists:
-            return False
-        self._collection.document(user_id).delete()
-        return True
+        raise NotImplementedError
 
+    @abstractmethod
     def exists(self, user_id: str) -> bool:
-        doc = self._collection.document(user_id).get()
-        return doc.exists  # type: ignore[no-any-return]
+        raise NotImplementedError

@@ -2,6 +2,7 @@
 
 """Tests for pagination on list endpoints."""
 
+from datetime import UTC, datetime
 from typing import Any
 
 from app.models import TherapySession
@@ -33,11 +34,11 @@ def _create_sessions(
                 id=f"session-{i}",
                 user_id=user_id,
                 patient_id=patient_id,
-                session_date=f"2026-01-{i + 1:02d}T10:00:00Z",
+                session_date=datetime(2026, 1, i + 1, 10, 0, 0, tzinfo=UTC),
                 session_number=i + 1,
                 status="finalized",
                 transcript=Transcript(format="txt", content="test"),
-                created_at=f"2026-01-{i + 1:02d}T10:00:00Z",
+                created_at=datetime(2026, 1, i + 1, 10, 0, 0, tzinfo=UTC),
             )
         )
 

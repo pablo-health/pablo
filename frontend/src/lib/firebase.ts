@@ -27,14 +27,3 @@ export function getFirebaseAuth(): Auth {
   }
   return _auth
 }
-
-/**
- * Set the tenant ID on the Firebase Auth instance.
- * Must be called BEFORE signInWithPopup/signInWithEmailAndPassword.
- * When set, the resulting JWT will include a firebase.tenant claim.
- * Pass null to clear (for platform admin auth).
- */
-export function setFirebaseTenantId(tenantId: string | null): void {
-  const auth = getFirebaseAuth()
-  auth.tenantId = tenantId
-}

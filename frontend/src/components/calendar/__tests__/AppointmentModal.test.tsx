@@ -145,6 +145,7 @@ describe("AppointmentModal", () => {
       working_hours_start: 8,
       working_hours_end: 18,
       calendar_default_view: "timeGridWeek",
+      timezone: "America/New_York",
     }
 
     it("uses preference duration for new appointments", () => {

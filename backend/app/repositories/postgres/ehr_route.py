@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from ...db.models import EhrRouteRow
 from ...models.ehr_route import EhrRoute, EhrRouteStep
-from ...utcnow import utc_now_iso
+from ...utcnow import utc_now
 from ..ehr_route import EhrRouteRepository
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class PostgresEhrRouteRepository(EhrRouteRepository):
         return _row_to_route(row)
 
     def upsert(self, route: EhrRoute) -> EhrRoute:
-        now = utc_now_iso()
+        now = utc_now()
         if not route.created_at:
             route.created_at = now
         route.updated_at = now
@@ -60,7 +60,7 @@ class PostgresEhrRouteRepository(EhrRouteRepository):
             raise IndexError(msg)
         steps[step_index]["selector"] = selector
         steps[step_index]["a11y_fingerprint"] = a11y_fingerprint
-        now = utc_now_iso()
+        now = utc_now()
         row.steps = steps
         row.updated_at = now
         self._session.flush()
@@ -70,7 +70,7 @@ class PostgresEhrRouteRepository(EhrRouteRepository):
         row = self._session.query(EhrRouteRow).filter_by(ehr_system=ehr_system).first()
         if row:
             row.success_count += 1
-            row.last_success = utc_now_iso()
+            row.last_success = utc_now()
             self._session.flush()
 
 

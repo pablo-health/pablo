@@ -29,7 +29,7 @@ from ..models import (
     UploadTranscriptToSessionRequest,
 )
 from ..repositories import PatientRepository, TherapySessionRepository
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 from .soap_generation_service import SOAPGenerationService
 
 logger = logging.getLogger(__name__)
@@ -102,8 +102,8 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 TERMINAL_STATUSES = {SessionStatus.FINALIZED, SessionStatus.CANCELLED, SessionStatus.FAILED}
 
 
-def _now() -> str:
-    return utc_now_iso()
+def _now() -> datetime:
+    return utc_now()
 
 
 class SessionService:
@@ -124,7 +124,7 @@ class SessionService:
     def _update_next_session_date(self, patient: Patient, user_id: str) -> None:
         """Recompute and persist next_session_date from scheduled sessions."""
         sessions = self.session_repo.list_by_patient(patient.id, user_id)
-        now = datetime.now(UTC).isoformat()
+        now = datetime.now(UTC)
         future = [
             s.scheduled_at or s.session_date
             for s in sessions

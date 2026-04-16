@@ -6,7 +6,6 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { signOut } from "firebase/auth"
 import { getFirebaseAuth } from "@/lib/firebase"
-import { clearCachedTenantId } from "@/lib/tenant"
 import Image from "next/image"
 import { UserCircle, LogOut } from "lucide-react"
 
@@ -28,9 +27,7 @@ export function Header({ user }: HeaderProps) {
     } catch {
       // Firebase not initialized (dev mode) — just redirect
     }
-    // Clear server cookie and tenant cache before navigating
     await fetch("/api/logout")
-    clearCachedTenantId()
     router.push("/login")
   }
 

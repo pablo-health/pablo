@@ -7,6 +7,7 @@ import logging
 import os
 import tempfile
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 
 from meeting_transcription.pipeline import combine_transcript_words
@@ -39,7 +40,7 @@ class SOAPGenerationService(ABC):
 
     @abstractmethod
     def generate_soap_note(
-        self, transcript: Transcript, patient: Patient, session_date: str
+        self, transcript: Transcript, patient: Patient, session_date: datetime
     ) -> SOAPNote:
         """
         Generate SOAP note from transcript.
@@ -47,7 +48,7 @@ class SOAPGenerationService(ABC):
         Args:
             transcript: Session transcript
             patient: Patient information (for context)
-            session_date: Date of session in ISO format
+            session_date: Date of session
 
         Returns:
             Generated SOAP note
@@ -80,7 +81,7 @@ class MeetingTranscriptionSOAPService(SOAPGenerationService):
         self.therapist_name = therapist_name or "Therapist"
 
     def generate_soap_note(
-        self, transcript: Transcript, patient: Patient, session_date: str
+        self, transcript: Transcript, patient: Patient, session_date: datetime
     ) -> SOAPNote:
         """Generate SOAP note using meeting-transcription pipeline."""
         from backend.plugins.mental_health.plugin import (  # type: ignore[import-untyped,import-not-found]
@@ -100,7 +101,7 @@ class MeetingTranscriptionSOAPService(SOAPGenerationService):
         # Metadata for SOAP generation
         metadata = {
             "client_name": "the client",
-            "session_date": session_date.split("T", maxsplit=1)[0],  # Extract date part
+            "session_date": session_date.isoformat().split("T", maxsplit=1)[0],  # Extract date part
             "session_number": "1",  # Will be set correctly in route
             "therapist_name": self.therapist_name,
         }
@@ -326,7 +327,7 @@ class MockSOAPGenerationService(SOAPGenerationService):
         self,
         transcript: Transcript,  # noqa: ARG002
         patient: Patient,
-        session_date: str,  # noqa: ARG002
+        session_date: datetime,  # noqa: ARG002
     ) -> SOAPNote:
         """Generate mock SOAP note with realistic structured content."""
         diagnosis = patient.diagnosis or "General mental health concerns"

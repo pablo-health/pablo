@@ -4,7 +4,11 @@
 Main FastAPI application for Pablo.
 """
 
+import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +39,23 @@ if settings.is_development:
         "Do NOT use ENVIRONMENT=development in production."
     )
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Manage background tasks across the application lifecycle."""
+    task = None
+    if settings.calendar_auto_sync_enabled and not settings.is_saas:
+        from .background_sync import calendar_sync_loop
+
+        task = asyncio.create_task(calendar_sync_loop())
+        logger.info("Started background calendar sync (every 15 min)")
+    yield
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 app = FastAPI(
     title=settings.api_title,
     description=settings.api_description,
@@ -43,6 +64,7 @@ app = FastAPI(
     docs_url="/docs" if settings.is_development else None,
     redoc_url="/redoc" if settings.is_development else None,
     openapi_url="/openapi.json" if settings.is_development else None,
+    lifespan=lifespan,
 )
 
 # PostgreSQL session middleware (must be added before security middleware

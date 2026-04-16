@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Any
+
 import pytest
 from app.scheduling_engine.exceptions import AppointmentNotFoundError, InvalidAppointmentError
 from app.scheduling_engine.models.appointment import AppointmentStatus
@@ -14,13 +17,13 @@ USER_ID = "user-1"
 PATIENT_ID = "patient-1"
 
 
-def _appt_data(**overrides: str | int | None) -> dict[str, str | int | None]:
+def _appt_data(**overrides: Any) -> dict[str, Any]:
     """Build appointment data dict with sensible defaults."""
-    defaults: dict[str, str | int | None] = {
+    defaults: dict[str, Any] = {
         "patient_id": PATIENT_ID,
         "title": "Session",
-        "start_at": "2026-03-20T14:00:00Z",
-        "end_at": "2026-03-20T14:50:00Z",
+        "start_at": datetime.fromisoformat("2026-03-20T14:00:00+00:00"),
+        "end_at": datetime.fromisoformat("2026-03-20T14:50:00+00:00"),
         "duration_minutes": 50,
     }
     defaults.update(overrides)
@@ -93,21 +96,25 @@ class TestListAppointments:
         service.create_appointment(
             USER_ID,
             data=_appt_data(
-                title="Monday", start_at="2026-03-16T14:00:00Z", end_at="2026-03-16T14:50:00Z"
+                title="Monday",
+                start_at=datetime.fromisoformat("2026-03-16T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-16T14:50:00+00:00"),
             ),
         )
         service.create_appointment(
             USER_ID,
             data=_appt_data(
-                title="Wednesday", start_at="2026-03-18T14:00:00Z", end_at="2026-03-18T14:50:00Z"
+                title="Wednesday",
+                start_at=datetime.fromisoformat("2026-03-18T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T14:50:00+00:00"),
             ),
         )
         service.create_appointment(
             USER_ID,
             data=_appt_data(
                 title="Next Monday",
-                start_at="2026-03-23T14:00:00Z",
-                end_at="2026-03-23T14:50:00Z",
+                start_at=datetime.fromisoformat("2026-03-23T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-23T14:50:00+00:00"),
             ),
         )
         results = service.list_appointments(USER_ID, "2026-03-16T00:00:00Z", "2026-03-20T00:00:00Z")
@@ -119,13 +126,17 @@ class TestListAppointments:
         service.create_appointment(
             USER_ID,
             data=_appt_data(
-                title="Mine", start_at="2026-03-18T14:00:00Z", end_at="2026-03-18T14:50:00Z"
+                title="Mine",
+                start_at=datetime.fromisoformat("2026-03-18T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T14:50:00+00:00"),
             ),
         )
         service.create_appointment(
             "other-user",
             data=_appt_data(
-                title="Theirs", start_at="2026-03-18T15:00:00Z", end_at="2026-03-18T15:50:00Z"
+                title="Theirs",
+                start_at=datetime.fromisoformat("2026-03-18T15:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T15:50:00+00:00"),
             ),
         )
         results = service.list_appointments(USER_ID, "2026-03-18T00:00:00Z", "2026-03-19T00:00:00Z")
@@ -179,8 +190,8 @@ class TestListPatientAppointments:
             data=_appt_data(
                 patient_id="patient-a",
                 title="Session A",
-                start_at="2026-03-18T14:00:00Z",
-                end_at="2026-03-18T14:50:00Z",
+                start_at=datetime.fromisoformat("2026-03-18T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T14:50:00+00:00"),
             ),
         )
         service.create_appointment(
@@ -188,8 +199,8 @@ class TestListPatientAppointments:
             data=_appt_data(
                 patient_id="patient-b",
                 title="Session B",
-                start_at="2026-03-18T15:00:00Z",
-                end_at="2026-03-18T15:50:00Z",
+                start_at=datetime.fromisoformat("2026-03-18T15:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T15:50:00+00:00"),
             ),
         )
         results = service.list_patient_appointments(USER_ID, "patient-a")

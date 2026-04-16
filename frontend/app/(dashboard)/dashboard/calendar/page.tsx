@@ -13,10 +13,12 @@ import {
   type ICalConnectionStatus,
   type ICalSyncResponse,
 } from "@/lib/api/scheduling"
+import { useAuth } from "@/lib/auth-context"
 import { Loader2, RefreshCw } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 export default function CalendarPage() {
+  const { loading: authLoading } = useAuth()
   const { data: preferences } = usePreferences()
   const saveMutation = useSavePreferences()
   const lastSavedView = useRef<string | undefined>(undefined)
@@ -31,10 +33,11 @@ export default function CalendarPage() {
   const syncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   useEffect(() => {
+    if (authLoading) return
     getICalSyncStatus()
       .then((s) => setSyncStatus(s.connections))
       .catch(() => {})
-  }, [])
+  }, [authLoading])
 
   // Sync lastSavedView ref when preferences load asynchronously
   useEffect(() => {

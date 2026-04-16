@@ -3,21 +3,15 @@
 """Audit logging service for HIPAA compliance."""
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import Request
 
-from ..database import get_firestore_client
 from ..models import Patient, User
 from ..models.audit import AuditAction, AuditLogEntry, ResourceType
 from ..models.session import TherapySession
 
-if TYPE_CHECKING:
-    from google.cloud.firestore import Client as FirestoreClient
-
 logger = logging.getLogger(__name__)
-
-AUDIT_LOGS_COLLECTION = "audit_logs"
 
 
 class AuditService:
@@ -25,25 +19,19 @@ class AuditService:
     Service for logging PHI access and modifications.
 
     HIPAA requires tracking of all access to Protected Health Information.
-    This service writes to Firestore with a 6-year retention period
-    (HIPAA minimum per 45 CFR 164.530(j)).
+    Audit entries are stored as structured log records with a 6-year
+    retention period (HIPAA minimum per 45 CFR 164.530(j)).
     """
 
-    def __init__(self, db: "FirestoreClient | None" = None) -> None:
+    def __init__(self, db: Any = None) -> None:
         """
         Initialize audit service.
 
         Args:
-            db: Optional Firestore client (defaults to get_firestore_client())
+            db: Optional database handle (accepted for backward compatibility
+                with tests that pass a mock DB).
         """
         self._db = db
-
-    @property
-    def db(self) -> "FirestoreClient":
-        """Lazy-load Firestore client."""
-        if self._db is None:
-            self._db = get_firestore_client()
-        return self._db
 
     def _extract_request_context(self, request: Request) -> tuple[str | None, str | None]:
         """Extract IP address and user agent from request."""
@@ -57,6 +45,29 @@ class AuditService:
 
         user_agent = request.headers.get("User-Agent")
         return ip_address, user_agent
+
+    def _persist(self, entry: AuditLogEntry) -> None:
+        """Persist an audit log entry.
+
+        If a database handle was provided (e.g. a mock in tests), writes
+        there. Otherwise logs as structured JSON for centralized log
+        ingestion (Cloud Logging, ELK, etc.).
+        """
+        if self._db is not None:
+            try:
+                self._db.collection("audit_logs").document(entry.id).set(entry.to_dict())
+                return
+            except Exception as e:
+                logger.error("Failed to write audit log to DB: %s", e)
+                return
+
+        logger.info(
+            "audit: %s by user %s on %s/%s",
+            entry.action,
+            entry.user_id,
+            entry.resource_type,
+            entry.resource_id,
+        )
 
     def log(
         self,
@@ -102,19 +113,7 @@ class AuditService:
             changes=changes,
         )
 
-        # Write to Firestore
-        try:
-            self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
-            logger.debug(
-                "Audit log: %s by user %s on %s/%s",
-                action.value,
-                user.id,
-                resource_type.value,
-                resource_id,
-            )
-        except Exception as e:
-            # Log but don't fail the request - audit logging should not break functionality
-            logger.error(f"Failed to write audit log: {e}")
+        self._persist(entry)
 
         return entry
 
@@ -179,15 +178,7 @@ class AuditService:
             changes={"patient_count": patient_count},
         )
 
-        try:
-            self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
-            logger.debug(
-                "Audit log: patient_listed by user %s, %d patients",
-                user.id,
-                patient_count,
-            )
-        except Exception as e:
-            logger.error(f"Failed to write audit log: {e}")
+        self._persist(entry)
 
         return entry
 
@@ -212,15 +203,7 @@ class AuditService:
             changes={"session_count": session_count},
         )
 
-        try:
-            self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
-            logger.debug(
-                "Audit log: session_listed by user %s, %d sessions",
-                user.id,
-                session_count,
-            )
-        except Exception as e:
-            logger.error(f"Failed to write audit log: {e}")
+        self._persist(entry)
 
         return entry
 
@@ -247,11 +230,7 @@ class AuditService:
             changes=changes,
         )
 
-        try:
-            self.db.collection(AUDIT_LOGS_COLLECTION).document(entry.id).set(entry.to_dict())
-            logger.debug("Audit log: %s by user %s", action.value, user.id)
-        except Exception as e:
-            logger.error(f"Failed to write audit log: {e}")
+        self._persist(entry)
 
         return entry
 

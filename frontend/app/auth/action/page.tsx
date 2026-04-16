@@ -22,7 +22,6 @@ function AuthActionContent() {
   const oobCode = searchParams.get("oobCode")
   const continueUrl = searchParams.get("continueUrl")
   const apiKey = searchParams.get("apiKey")
-  const tenantId = searchParams.get("tenantId")
 
   const [status, setStatus] = useState<Status>("loading")
   const [message, setMessage] = useState("")
@@ -49,11 +48,6 @@ function AuthActionContent() {
       projectId,
       appId,
     })
-
-    const auth = getFirebaseAuth()
-    if (tenantId) {
-      auth.tenantId = tenantId
-    }
 
     handleAction(mode, oobCode)
     // eslint-disable-next-line react-hooks/exhaustive-deps

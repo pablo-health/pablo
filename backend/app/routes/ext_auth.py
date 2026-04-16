@@ -2,10 +2,8 @@
 
 """External auth endpoints — called by Firebase blocking functions.
 
-These endpoints replace direct Firestore reads in beforeCreate/beforeSignIn
-blocking functions. The blocking functions call these via OIDC-authenticated
-HTTP instead of reading Firestore directly, so auth gatekeeping works
-regardless of whether the backend uses Firestore or PostgreSQL.
+The blocking functions call these via OIDC-authenticated HTTP so auth
+gatekeeping works with the PostgreSQL backend.
 
 Security: OIDC service-to-service auth in production, unauthenticated in dev.
 """

@@ -9,6 +9,7 @@ The companion app strips patient names before calling the LLM fallback.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field
 from .enums import EhrSystem  # noqa: TC001 — Pydantic needs these at runtime
 
 # ---------------------------------------------------------------------------
-# Domain dataclasses (Firestore serialization)
+# Domain dataclasses
 # ---------------------------------------------------------------------------
 
 
@@ -32,7 +33,7 @@ class EhrRouteStep:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EhrRouteStep:
-        """Create from Firestore document."""
+        """Create from dictionary."""
         return cls(
             action=data["action"],
             selector=data["selector"],
@@ -42,7 +43,7 @@ class EhrRouteStep:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         d: dict[str, Any] = {
             "action": self.action,
             "selector": self.selector,
@@ -59,7 +60,7 @@ class EhrRoute:
     """Complete navigation route for an EHR system.
 
     Shared across all therapists on the same EHR within a tenant.
-    Document ID in Firestore = ehr_system value.
+    Primary key = ehr_system value.
     """
 
     id: str
@@ -67,13 +68,13 @@ class EhrRoute:
     route_name: str
     steps: list[EhrRouteStep] = field(default_factory=list)
     success_count: int = 0
-    last_success: str | None = None
-    created_at: str = ""
-    updated_at: str = ""
+    last_success: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EhrRoute:
-        """Create from Firestore document."""
+        """Create from dictionary."""
         return cls(
             id=data["id"],
             ehr_system=data["ehr_system"],
@@ -81,12 +82,12 @@ class EhrRoute:
             steps=[EhrRouteStep.from_dict(s) for s in data.get("steps", [])],
             success_count=data.get("success_count", 0),
             last_success=data.get("last_success"),
-            created_at=data.get("created_at", ""),
-            updated_at=data.get("updated_at", ""),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         d: dict[str, Any] = {
             "id": self.id,
             "ehr_system": self.ehr_system,
@@ -123,7 +124,7 @@ class EhrRouteResponse(BaseModel):
     route_name: str
     steps: list[EhrRouteStepResponse]
     success_count: int
-    last_success: str | None = None
+    last_success: datetime | None = None
 
     @classmethod
     def from_ehr_route(cls, route: EhrRoute) -> EhrRouteResponse:

@@ -20,7 +20,7 @@ import re
 import uuid
 import zipfile
 from dataclasses import dataclass, field
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -31,7 +31,7 @@ from ..models.enums import EhrSystem
 from ..repositories.ical_client_mapping import ICalClientMapping, ICalClientMappingRepository
 from ..repositories.ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
 from ..scheduling_engine.models.appointment import Appointment, AppointmentStatus
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
@@ -52,8 +52,8 @@ _SP_FULLNAME_RE = re.compile(r"^(.+?)\s+Appointment$")
 _SH_CODE_RE = re.compile(r"^SH(\d+)$")
 
 
-def _now() -> str:
-    return utc_now_iso()
+def _now() -> datetime:
+    return utc_now()
 
 
 @dataclass
@@ -62,8 +62,8 @@ class ParsedEvent:
 
     uid: str
     summary: str
-    start_at: str  # ISO 8601 UTC
-    end_at: str  # ISO 8601 UTC
+    start_at: datetime
+    end_at: datetime
     duration_minutes: int
     url: str | None = None  # video link (SP) or event link (SH)
 
@@ -94,7 +94,7 @@ class ConnectionStatus:
 
     ehr_system: str
     connected: bool
-    last_synced_at: str | None = None
+    last_synced_at: datetime | None = None
     last_sync_error: str | None = None
 
 
@@ -288,7 +288,22 @@ class ICalSyncService:
         # Create or update
         for uid, event in feed_events.items():
             if uid in existing_by_uid:
-                updated = self._update_if_changed(existing_by_uid[uid], event, config.ehr_system)
+                existing = existing_by_uid[uid]
+                updated = self._update_if_changed(existing, event, config.ehr_system)
+
+                # Re-attempt matching for previously unmatched appointments
+                if not existing.patient_id:
+                    client_id = self._extract_client_identifier(config.ehr_system, event.summary)
+                    patient_id = self._match_patient(
+                        config.ehr_system, client_id, mappings, all_patients
+                    )
+                    if patient_id:
+                        existing.patient_id = patient_id
+                        existing.notes = f"ical_client:{client_id}"
+                        existing.updated_at = _now()
+                        self._appt_repo.update(existing)
+                        updated = True
+
                 if updated:
                     result.updated += 1
                 else:
@@ -310,7 +325,7 @@ class ICalSyncService:
                         {
                             "ical_uid": uid,
                             "client_identifier": client_id or "unknown",
-                            "start_at": event.start_at,
+                            "start_at": event.start_at.isoformat(),
                             "ehr_appointment_url": self._derive_appointment_url(
                                 config.ehr_system, uid, event.url
                             )
@@ -379,8 +394,8 @@ class ICalSyncService:
                 ParsedEvent(
                     uid=uid,
                     summary=summary,
-                    start_at=start_utc.isoformat().replace("+00:00", "Z"),
-                    end_at=end_utc.isoformat().replace("+00:00", "Z"),
+                    start_at=start_utc,
+                    end_at=end_utc,
                     duration_minutes=duration,
                     url=url,
                 )
@@ -426,6 +441,10 @@ class ICalSyncService:
         if ehr_system == EhrSystem.SIMPLEPRACTICE:
             return self._match_sp_patient(client_identifier, patients)
 
+        # Sessions Health: try matching by full name (when calendar uses names, not SH codes)
+        if ehr_system == EhrSystem.SESSIONS_HEALTH:
+            return self._match_by_full_name(client_identifier, patients)
+
         return ""
 
     def _match_sp_patient(self, identifier: str, patients: list[Patient]) -> str:
@@ -448,6 +467,10 @@ class ICalSyncService:
             return ""
 
         # Full name format: "Jane Adams"
+        return self._match_by_full_name(identifier, patients)
+
+    def _match_by_full_name(self, identifier: str, patients: list[Patient]) -> str:
+        """Match a full name identifier to a patient. Only matches if exactly one patient found."""
         _min_name_parts = 2
         parts = identifier.split()
         if len(parts) >= _min_name_parts:

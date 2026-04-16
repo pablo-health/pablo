@@ -2,6 +2,7 @@
 
 """Practice Mode models — request/response schemas and domain types."""
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
@@ -69,7 +70,7 @@ class PracticeSessionResponse(BaseModel):
     status: str
     ws_url: str
     ws_ticket: str
-    created_at: str
+    created_at: datetime
 
 
 class PracticeSessionDetailResponse(BaseModel):
@@ -81,9 +82,9 @@ class PracticeSessionDetailResponse(BaseModel):
     mode: PracticeMode
     status: str
     duration_seconds: int | None = None
-    started_at: str | None = None
-    ended_at: str | None = None
-    created_at: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    created_at: datetime
     soap_note: SOAPNoteModel | None = None
 
 
@@ -94,9 +95,9 @@ class PracticeSessionListItem(BaseModel):
     mode: PracticeMode
     status: str
     duration_seconds: int | None = None
-    started_at: str | None = None
-    ended_at: str | None = None
-    created_at: str
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    created_at: datetime
     has_soap_note: bool = False
 
 

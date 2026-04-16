@@ -4,7 +4,7 @@
 
 HIPAA Compliance: OAuth tokens provide access to therapist calendars which
 may contain PHI (patient names in appointment titles). Tokens are encrypted
-at rest with AES-256-GCM before storage in Firestore.
+at rest with AES-256-GCM before storage in the database.
 """
 
 from __future__ import annotations

@@ -53,34 +53,3 @@ class InMemoryAllowlistRepository(AllowlistRepository):
 
     def list_all(self) -> list[dict[str, Any]]:
         return list(self._entries.values())
-
-
-class FirestoreAllowlistRepository(AllowlistRepository):
-    """Firestore implementation of AllowlistRepository."""
-
-    def __init__(self, db: Any) -> None:
-        self.db = db
-        self.collection = db.collection("allowed_emails")
-
-    def is_allowed(self, email: str) -> bool:
-        doc = self.collection.document(email.lower()).get()
-        return bool(doc.exists)
-
-    def add(self, email: str, added_by: str) -> None:
-        self.collection.document(email.lower()).set(
-            {
-                "email": email.lower(),
-                "added_by": added_by,
-                "added_at": utc_now_iso(),
-            }
-        )
-
-    def remove(self, email: str) -> bool:
-        doc_ref = self.collection.document(email.lower())
-        if doc_ref.get().exists:
-            doc_ref.delete()
-            return True
-        return False
-
-    def list_all(self) -> list[dict[str, Any]]:
-        return [doc.to_dict() for doc in self.collection.stream()]

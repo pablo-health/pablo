@@ -158,8 +158,11 @@ class ExportService:
             ["Date of Birth", patient.date_of_birth or "Not provided"],
             ["Diagnosis", patient.diagnosis or "Not provided"],
             ["Total Sessions", str(patient.session_count)],
-            ["Last Session", patient.last_session_date or "None"],
-            ["Record Created", patient.created_at.split("T")[0]],
+            [
+                "Last Session",
+                str(patient.last_session_date.date()) if patient.last_session_date else "None",
+            ],
+            ["Record Created", str(patient.created_at.date()) if patient.created_at else "Unknown"],
         ]
 
         patient_table = Table(patient_data, colWidths=[2 * inch, 4.5 * inch])

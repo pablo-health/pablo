@@ -14,11 +14,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
 from ..repositories.google_calendar_token import (
     GoogleCalendarTokenDoc,
     GoogleCalendarTokenRepository,
 )
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now, utc_now_iso
 from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
@@ -38,8 +41,8 @@ SCOPES = [
 _DEFAULT_EVENT_SUMMARY = "Therapy Session"
 
 
-def _now() -> str:
-    return utc_now_iso()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _build_flow(
@@ -246,7 +249,7 @@ class GoogleCalendarService:
                 kwargs["syncToken"] = token_doc.sync_token
             else:
                 # First sync: only get future events
-                kwargs["timeMin"] = _now()
+                kwargs["timeMin"] = utc_now_iso()
 
             result = service.events().list(**kwargs).execute()
             next_sync_token = result.get("nextSyncToken")
@@ -340,11 +343,11 @@ class GoogleCalendarService:
         event: dict[str, Any] = {
             "summary": _DEFAULT_EVENT_SUMMARY,
             "start": {
-                "dateTime": appointment.start_at,
+                "dateTime": appointment.start_at.isoformat(),
                 "timeZone": "UTC",
             },
             "end": {
-                "dateTime": appointment.end_at,
+                "dateTime": appointment.end_at.isoformat(),
                 "timeZone": "UTC",
             },
             "description": f"Session type: {appointment.session_type}",

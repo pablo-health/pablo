@@ -10,7 +10,6 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from firebase_admin import auth as firebase_auth
-from firebase_admin import tenant_mgt
 from pydantic import BaseModel
 
 from ..auth.firebase_init import initialize_firebase_app
@@ -87,18 +86,9 @@ def create_native_code(
         )
 
     # Verify the Firebase id_token before issuing a code.
-    # Two-pass: first verify JWT signature (no revocation check), then
-    # re-verify with the tenant-scoped client so check_revoked can find
-    # the user record (tenant users are invisible to the parent project).
     initialize_firebase_app()
     try:
-        decoded_token = firebase_auth.verify_id_token(request.id_token, check_revoked=False)
-        tenant_id = decoded_token.get("firebase", {}).get("tenant")
-        if tenant_id:
-            tenant_client = tenant_mgt.auth_for_tenant(tenant_id)
-            tenant_client.verify_id_token(request.id_token, check_revoked=True)
-        else:
-            firebase_auth.verify_id_token(request.id_token, check_revoked=True)
+        decoded_token = firebase_auth.verify_id_token(request.id_token, check_revoked=True)
     except Exception as err:
         logger.warning("Native code request with invalid id_token")
         logger.debug("id_token verification detail: %s", err)

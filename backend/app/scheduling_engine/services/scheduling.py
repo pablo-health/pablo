@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from datetime import date as date_type
 from typing import TYPE_CHECKING
 
-from ...utcnow import utc_now_iso
+from ...utcnow import utc_now
 from ..exceptions import AppointmentNotFoundError, InvalidAppointmentError, InvalidRecurrenceError
 from ..models.appointment import Appointment, AppointmentStatus, RecurrenceFrequency
 from .recurrence import RecurrenceGenerator
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from ..repositories.appointment import AppointmentRepository
 
 
-def _now() -> str:
-    return utc_now_iso()
+def _now() -> datetime:
+    return utc_now()
 
 
 def _to_utc(iso_str: str) -> str:
@@ -43,7 +43,7 @@ class SchedulingService:
         self,
         user_id: str,
         *,
-        data: dict[str, str | int | None],
+        data: dict[str, str | int | datetime | None],
     ) -> Appointment:
         """Create a single appointment.
 
@@ -53,13 +53,24 @@ class SchedulingService:
         patient_id = data.get("patient_id", "")
         if not patient_id:
             raise InvalidAppointmentError("patient_id is required")
-        start_at = data.get("start_at", "")
-        end_at = data.get("end_at", "")
+        start_at = data.get("start_at")
+        end_at = data.get("end_at")
         if not start_at or not end_at:
             raise InvalidAppointmentError("start_at and end_at are required")
         duration_minutes = data.get("duration_minutes", 0)
         if not isinstance(duration_minutes, int) or duration_minutes <= 0:
             raise InvalidAppointmentError("duration_minutes must be positive")
+
+        start_dt = (
+            start_at
+            if isinstance(start_at, datetime)
+            else datetime.fromisoformat(str(start_at).replace("Z", "+00:00"))
+        )
+        end_dt = (
+            end_at
+            if isinstance(end_at, datetime)
+            else datetime.fromisoformat(str(end_at).replace("Z", "+00:00"))
+        )
 
         now = _now()
         appointment = Appointment(
@@ -67,8 +78,8 @@ class SchedulingService:
             user_id=user_id,
             patient_id=str(patient_id),
             title=str(data.get("title", "")),
-            start_at=str(start_at),
-            end_at=str(end_at),
+            start_at=start_dt,
+            end_at=end_dt,
             duration_minutes=duration_minutes,
             status=AppointmentStatus.CONFIRMED,
             session_type=str(data.get("session_type", "individual")),
@@ -111,6 +122,7 @@ class SchedulingService:
             "video_platform",
             "notes",
             "status",
+            "session_id",
         }
         for field, value in updates.items():
             if field not in allowed_fields:
@@ -143,7 +155,7 @@ class SchedulingService:
         self,
         user_id: str,
         *,
-        data: dict[str, str | int | None],
+        data: dict[str, str | int | datetime | None],
         recurrence: dict[str, str | int | None],
     ) -> list[Appointment]:
         """Create a recurring appointment series using fan-out pattern.
@@ -204,8 +216,8 @@ class SchedulingService:
                 user_id=user_id,
                 patient_id=str(patient_id),
                 title=str(data.get("title", "")),
-                start_at=occ_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                end_at=occ_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                start_at=occ_start,
+                end_at=occ_end,
                 duration_minutes=duration_minutes,
                 status=AppointmentStatus.CONFIRMED,
                 session_type=str(data.get("session_type", "individual")),

@@ -17,6 +17,7 @@ function createPreferences(overrides: Partial<UserPreferences> = {}): UserPrefer
     working_hours_start: 8,
     working_hours_end: 18,
     calendar_default_view: "week",
+    timezone: "America/New_York",
     ...overrides,
   }
 }
