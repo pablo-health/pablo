@@ -59,21 +59,27 @@ class ICalSyncConfigRepository(ABC):
     """Abstract interface for iCal sync config storage."""
 
     @abstractmethod
-    def get(self, user_id: str, ehr_system: str) -> ICalSyncConfig | None: ...
+    def get(self, user_id: str, ehr_system: str) -> ICalSyncConfig | None:
+        pass
 
     @abstractmethod
-    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]: ...
+    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
+        pass
 
     @abstractmethod
-    def list_all(self) -> list[ICalSyncConfig]: ...
+    def list_all(self) -> list[ICalSyncConfig]:
+        pass
 
     @abstractmethod
-    def save(self, config: ICalSyncConfig) -> None: ...
+    def save(self, config: ICalSyncConfig) -> None:
+        pass
 
     @abstractmethod
-    def delete(self, user_id: str, ehr_system: str) -> bool: ...
+    def delete(self, user_id: str, ehr_system: str) -> bool:
+        pass
 
     @abstractmethod
     def update_sync_status(
         self, user_id: str, ehr_system: str, *, error: str | None = None
-    ) -> None: ...
+    ) -> None:
+        pass
