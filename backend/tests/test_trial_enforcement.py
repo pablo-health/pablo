@@ -12,7 +12,7 @@ from app.routes.subscription import (
 )
 
 
-def _mock_settings(*, is_saas: bool = True, db_backend: str = "firestore") -> MagicMock:
+def _mock_settings(*, is_saas: bool = True, db_backend: str = "postgres") -> MagicMock:
     settings = MagicMock()
     settings.is_saas = is_saas
     settings.database_backend = db_backend

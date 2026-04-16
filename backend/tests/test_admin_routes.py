@@ -44,15 +44,15 @@ def non_admin_user() -> User:
 
 @pytest.fixture
 def mock_audit_service() -> AuditService:
-    """Create a mock audit service that doesn't write to Firestore."""
+    """Create a mock audit service for testing."""
     mock_db = MagicMock()
     mock_db.collection.return_value.document.return_value.set = MagicMock()
     return AuditService(mock_db)
 
 
 @pytest.fixture
-def mock_firestore_session() -> dict[str, Any]:
-    """Create a mock Firestore session document."""
+def mock_session_data() -> dict[str, Any]:
+    """Create a mock session document."""
     return {
         "id": "session-123",
         "user_id": "user-123",

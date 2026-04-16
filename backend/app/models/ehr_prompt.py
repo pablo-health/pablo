@@ -2,7 +2,7 @@
 
 """EHR system prompt model.
 
-Per-EHR system prompts stored in Firestore so they can be updated
+Per-EHR system prompts stored in the database so they can be updated
 without redeploying the backend.
 """
 
@@ -26,7 +26,7 @@ class EhrPrompt:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EhrPrompt:
-        """Create from Firestore document."""
+        """Create from dictionary."""
         return cls(
             ehr_system=data["ehr_system"],
             system_prompt=data["system_prompt"],
@@ -37,7 +37,7 @@ class EhrPrompt:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         return {
             "ehr_system": self.ehr_system,
             "system_prompt": self.system_prompt,

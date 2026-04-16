@@ -5,15 +5,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
 
 from ..models.ehr_prompt import EhrPrompt
 from ..utcnow import utc_now
-
-if TYPE_CHECKING:
-    from google.cloud.firestore import Client as FirestoreClient
-
-EHR_PROMPTS_COLLECTION = "ehr_prompts"
 
 
 class EhrPromptRepository(ABC):
@@ -26,30 +20,6 @@ class EhrPromptRepository(ABC):
     @abstractmethod
     def upsert(self, prompt: EhrPrompt) -> EhrPrompt:
         """Create or update an EHR prompt."""
-
-
-class FirestoreEhrPromptRepository(EhrPromptRepository):
-    """Firestore implementation of EhrPromptRepository."""
-
-    def __init__(self, db: FirestoreClient) -> None:
-        self._db = db
-
-    def _collection(self) -> Any:
-        return self._db.collection(EHR_PROMPTS_COLLECTION)
-
-    def get(self, ehr_system: str) -> EhrPrompt | None:
-        doc = self._collection().document(ehr_system).get()
-        if not doc.exists:
-            return None
-        data = doc.to_dict()
-        data["ehr_system"] = doc.id
-        return EhrPrompt.from_dict(data)
-
-    def upsert(self, prompt: EhrPrompt) -> EhrPrompt:
-        now = utc_now()
-        prompt.updated_at = now
-        self._collection().document(prompt.ehr_system).set(prompt.to_dict())
-        return prompt
 
 
 class InMemoryEhrPromptRepository(EhrPromptRepository):

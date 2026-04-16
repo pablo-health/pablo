@@ -1,19 +1,12 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Firestore repository for encrypted Google Calendar OAuth tokens."""
+"""Google Calendar OAuth token dataclass."""
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-
-from ..utcnow import utc_now
-
-logger = logging.getLogger(__name__)
-
-COLLECTION = "google_calendar_tokens"
 
 
 @dataclass
@@ -53,50 +46,3 @@ class GoogleCalendarTokenDoc:
             last_sync_error=data.get("last_sync_error"),
             consecutive_error_count=data.get("consecutive_error_count", 0),
         )
-
-
-class GoogleCalendarTokenRepository:
-    """Stores and retrieves encrypted Google Calendar OAuth tokens in Firestore.
-
-    HIPAA: Tokens are encrypted with AES-256-GCM before reaching this layer.
-    This repository stores only the encrypted blob — it never sees plaintext tokens.
-    """
-
-    def __init__(self, db: Any) -> None:
-        self._db = db
-        self._collection = db.collection(COLLECTION)
-
-    def get(self, user_id: str) -> GoogleCalendarTokenDoc | None:
-        doc = self._collection.document(user_id).get()
-        if not doc.exists:
-            return None
-        return GoogleCalendarTokenDoc.from_dict(doc.to_dict())
-
-    def list_all(self) -> list[GoogleCalendarTokenDoc]:
-        """Return all token docs across all users (for scheduled sync dispatch)."""
-        return [
-            GoogleCalendarTokenDoc.from_dict(doc.to_dict()) for doc in self._collection.stream()
-        ]
-
-    def save(self, token_doc: GoogleCalendarTokenDoc) -> None:
-        self._collection.document(token_doc.user_id).set(token_doc.to_dict())
-
-    def update_sync_token(self, user_id: str, sync_token: str) -> None:
-        now = utc_now()
-        self._collection.document(user_id).update(
-            {
-                "sync_token": sync_token,
-                "last_synced_at": now,
-            }
-        )
-
-    def delete(self, user_id: str) -> bool:
-        doc = self._collection.document(user_id).get()
-        if not doc.exists:
-            return False
-        self._collection.document(user_id).delete()
-        return True
-
-    def exists(self, user_id: str) -> bool:
-        doc = self._collection.document(user_id).get()
-        return doc.exists  # type: ignore[no-any-return]

@@ -155,14 +155,7 @@ class Settings(BaseSettings):
         description=(
             "Enable Identity Platform multi-tenancy. "
             "When enabled, JWTs must contain a firebase.tenant claim "
-            "and requests are routed to per-practice Firestore databases."
-        ),
-    )
-    admin_database: str = Field(
-        default="(default)",
-        description=(
-            "Firestore database for the admin/control plane "
-            "(tenant mappings, allowlist, provisioning log)."
+            "and requests are routed to per-practice PostgreSQL schemas."
         ),
     )
 
@@ -197,30 +190,22 @@ class Settings(BaseSettings):
     )
 
     # Database Backend
-    database_backend: Literal["firestore", "postgres"] = Field(
-        default="firestore",
-        description=(
-            "Primary database backend. "
-            "'firestore' = Google Cloud Firestore (default, used by Pablo Solo/Core). "
-            "'postgres' = PostgreSQL with schema-per-practice multi-tenancy."
-        ),
+    database_backend: Literal["postgres"] = Field(
+        default="postgres",
+        description="Primary database backend (PostgreSQL with schema-per-practice multi-tenancy).",
     )
     database_url: str = Field(
         default="",
         description=(
-            "PostgreSQL connection URL. Required when database_backend=postgres. "
+            "PostgreSQL connection URL. "
             "Format: postgresql://user:pass@host:port/dbname"
         ),
     )
 
-    # Database Settings (Google Cloud Firestore)
+    # Google Cloud
     gcp_project_id: str = Field(
         default="",
-        description="GCP project ID for Firestore",
-    )
-    firestore_database: str = Field(
-        default="(default)",
-        description="Firestore database name",
+        description="GCP project ID",
     )
 
     # Firebase Authentication

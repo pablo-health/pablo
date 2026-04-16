@@ -39,9 +39,6 @@ class TenantContext:
     user_id: str
     practice_id: str | None = None
     practice_schema: str | None = None
-    # Backward compat: routes still pass firestore_db to repo factories.
-    # Always "(default)" now that per-tenant Firestore DBs are removed.
-    firestore_db: str = "(default)"
 
 
 def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | None:
@@ -256,25 +253,24 @@ def get_tenant_context(
             # CRITICAL: Switch the DB session to this tenant's schema.
             # Without this, all queries hit the default 'practice' schema,
             # violating tenant isolation (HIPAA).
-            if settings.database_backend == "postgres":
-                from ..db import get_db_session, set_tenant_schema
+            from ..db import get_db_session, set_tenant_schema
 
-                session = get_db_session()
-                set_tenant_schema(session, schema_name)
+            session = get_db_session()
+            set_tenant_schema(session, schema_name)
 
-                # RLS defense-in-depth: set the current user ID as a
-                # transaction-scoped session variable so PostgreSQL
-                # row-level security policies can enforce per-clinician
-                # isolation within the tenant schema.
-                # Uses set_config() instead of SET LOCAL because SET
-                # doesn't support bind parameters. The third arg (true)
-                # makes it transaction-local — auto-cleared on commit.
-                from sqlalchemy import text
+            # RLS defense-in-depth: set the current user ID as a
+            # transaction-scoped session variable so PostgreSQL
+            # row-level security policies can enforce per-clinician
+            # isolation within the tenant schema.
+            # Uses set_config() instead of SET LOCAL because SET
+            # doesn't support bind parameters. The third arg (true)
+            # makes it transaction-local — auto-cleared on commit.
+            from sqlalchemy import text
 
-                session.execute(
-                    text("SELECT set_config('app.current_user_id', :uid, true)"),
-                    {"uid": str(user_id)},
-                )
+            session.execute(
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
+                {"uid": str(user_id)},
+            )
             return TenantContext(
                 user_id=str(user_id),
                 practice_id=practice_id,

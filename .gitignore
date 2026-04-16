@@ -31,9 +31,8 @@ node_modules/
 # Next.js
 .next/
 
-# Firebase emulator data
+# Firebase
 firebase-debug.log
-firestore-debug.log
 ui-debug.log
 
 # NLI training data and model artifacts

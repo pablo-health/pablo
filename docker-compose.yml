@@ -15,9 +15,8 @@ services:
       - ENVIRONMENT=development
       - CORS_ORIGINS=["http://localhost:3001","http://localhost:3002","http://localhost:3000"]
       - CORS_ALLOW_CREDENTIALS=true
-      - FIRESTORE_EMULATOR_HOST=firebase-emulators:8080
-      - FIREBASE_AUTH_EMULATOR_HOST=firebase-emulators:9099
-      - FIREBASE_STORAGE_EMULATOR_HOST=firebase-emulators:9199
+      - DATABASE_BACKEND=postgres
+      - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
       - GCP_PROJECT_ID=demo-therapy-platform
       - FIREBASE_PROJECT_ID=demo-therapy-platform
       - REQUIRE_BAA=false
@@ -29,23 +28,8 @@ services:
       - PRACTICE_ENABLED=true
       - PRACTICE_DAILY_SESSION_LIMIT=999
     depends_on:
-      - firebase-emulators
-    networks:
-      - therapy-net
-
-  firebase-emulators:
-    build:
-      context: .  # This stays as current dir since it doesn't need meeting-transcription
-      dockerfile: Dockerfile.firebase
-    ports:
-      - "4000:4000"   # Firebase UI
-      - "8080:8080"   # Firestore
-      - "9099:9099"   # Auth
-      - "9199:9199"   # Storage
-    volumes:
-      - ./firebase.json:/app/firebase.json
-      - ./firestore.rules:/app/firestore.rules
-      - firebase-data:/app/.firebase  # Persist emulator data
+      postgres:
+        condition: service_healthy
     networks:
       - therapy-net
 
@@ -72,5 +56,4 @@ networks:
     driver: bridge
 
 volumes:
-  firebase-data:
   postgres-data:

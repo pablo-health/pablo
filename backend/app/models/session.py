@@ -350,7 +350,7 @@ class TherapySession:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TherapySession:
-        """Create TherapySession from Firestore document."""
+        """Create TherapySession from dictionary."""
         transcript_data = data["transcript"]
         transcript = Transcript(
             format=transcript_data["format"], content=transcript_data["content"]
@@ -414,7 +414,7 @@ class TherapySession:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert TherapySession to dictionary for Firestore."""
+        """Convert TherapySession to dictionary."""
         return {
             "id": self.id,
             "user_id": self.user_id,

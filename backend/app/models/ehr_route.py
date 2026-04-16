@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from .enums import EhrSystem  # noqa: TC001 — Pydantic needs these at runtime
 
 # ---------------------------------------------------------------------------
-# Domain dataclasses (Firestore serialization)
+# Domain dataclasses
 # ---------------------------------------------------------------------------
 
 
@@ -33,7 +33,7 @@ class EhrRouteStep:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EhrRouteStep:
-        """Create from Firestore document."""
+        """Create from dictionary."""
         return cls(
             action=data["action"],
             selector=data["selector"],
@@ -43,7 +43,7 @@ class EhrRouteStep:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         d: dict[str, Any] = {
             "action": self.action,
             "selector": self.selector,
@@ -60,7 +60,7 @@ class EhrRoute:
     """Complete navigation route for an EHR system.
 
     Shared across all therapists on the same EHR within a tenant.
-    Document ID in Firestore = ehr_system value.
+    Primary key = ehr_system value.
     """
 
     id: str
@@ -74,7 +74,7 @@ class EhrRoute:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EhrRoute:
-        """Create from Firestore document."""
+        """Create from dictionary."""
         return cls(
             id=data["id"],
             ehr_system=data["ehr_system"],
@@ -87,7 +87,7 @@ class EhrRoute:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         d: dict[str, Any] = {
             "id": self.id,
             "ehr_system": self.ehr_system,

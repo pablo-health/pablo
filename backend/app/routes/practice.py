@@ -49,7 +49,7 @@ from ..services.practice_service import (
 from ..services.practice_session_manager import HEADER_SIZE, ConversationEntry, get_session_manager
 from ..services.session_service import SessionService
 from ..services.soap_generation_service import MeetingTranscriptionSOAPService
-from ..settings import Settings, get_settings
+from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,6 @@ class _WsTicket:
     user_id: str
     decoded_token: dict[str, object]
     expires_at: datetime
-    firestore_db: str = "(default)"
 
 
 @dataclass
@@ -85,7 +84,6 @@ class _WsTicketStore:
         self,
         user_id: str,
         decoded_token: dict[str, object],
-        firestore_db: str = "(default)",
     ) -> str:
         self._purge_expired()
         ticket = secrets.token_urlsafe(32)
@@ -93,7 +91,6 @@ class _WsTicketStore:
             user_id=user_id,
             decoded_token=decoded_token,
             expires_at=datetime.now(UTC) + _WS_TICKET_TTL,
-            firestore_db=firestore_db,
         )
         return ticket
 
@@ -122,8 +119,8 @@ def _get_practice_service(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> PracticeService:
     return PracticeService(
-        session_repo=_session_repo_factory(firestore_db=ctx.firestore_db),
-        patient_repo=_patient_repo_factory(firestore_db=ctx.firestore_db),
+        session_repo=_session_repo_factory(),
+        patient_repo=_patient_repo_factory(),
         settings=get_settings(),
     )
 
@@ -218,7 +215,6 @@ def create_practice_session(
     ticket = _ws_ticket_store.create(
         ctx.user_id,
         {"uid": ctx.user_id},
-        firestore_db=ctx.firestore_db,
     )
 
     return PracticeSessionResponse(
@@ -252,7 +248,6 @@ def create_ws_ticket(
     ticket = _ws_ticket_store.create(
         ctx.user_id,
         {"uid": ctx.user_id},
-        firestore_db=ctx.firestore_db,
     )
     return _WsTicketResponse(ticket=ticket)
 
@@ -343,14 +338,6 @@ def end_practice_session(
 # --- WebSocket ---
 
 
-def _resolve_firestore_db(
-    _decoded_token: dict,  # type: ignore[type-arg]
-    _settings: Settings,
-) -> str:
-    """Resolve Firestore database — always default (per-tenant DBs removed)."""
-    return "(default)"
-
-
 @router.websocket("/ws")
 async def practice_websocket(
     websocket: WebSocket,
@@ -386,14 +373,12 @@ async def practice_websocket(
     # Authenticate — prefer ticket, fall back to token (deprecated)
     user_id: str | None = None
     decoded_token: dict[str, object] = {}
-    firestore_db: str = "(default)"
 
     if ticket:
         ws_ticket = _ws_ticket_store.exchange(ticket)
         if ws_ticket:
             user_id = ws_ticket.user_id
             decoded_token = ws_ticket.decoded_token
-            firestore_db = ws_ticket.firestore_db
     elif token:
         logger.warning("WebSocket connected with ?token= (deprecated) — migrate to ?ticket=")
         try:
@@ -418,11 +403,8 @@ async def practice_websocket(
     await websocket.send_json({"type": "auth_result", "status": "ok", "user_id": user_id})
 
     try:
-        if not ticket:
-            # Only re-resolve for deprecated ?token= path
-            firestore_db = _resolve_firestore_db(decoded_token, settings)
-        session_repo = _session_repo_factory(firestore_db=firestore_db)
-        patient_repo = _patient_repo_factory(firestore_db=firestore_db)
+        session_repo = _session_repo_factory()
+        patient_repo = _patient_repo_factory()
         practice_svc = PracticeService(
             session_repo=session_repo,
             patient_repo=patient_repo,

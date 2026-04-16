@@ -12,7 +12,7 @@ help:
 	@echo "  make lint              - Run linters (ruff + mypy)"
 	@echo "  make format            - Auto-format code with ruff"
 	@echo "  make test              - Run unit tests with coverage"
-	@echo "  make test-integration  - Run integration tests (requires Firestore emulator)"
+	@echo "  make test-integration  - Run integration tests (requires PostgreSQL)"
 	@echo "  make test-all          - Run both unit and integration tests"
 	@echo "  make check             - Run lint + test (CI-style)"
 	@echo "  make clean             - Clean generated files"
@@ -55,31 +55,19 @@ test:
 	@echo "Running unit tests with coverage..."
 	cd backend && poetry run pytest tests/ --cov=app --cov-report=term-missing --cov-report=html
 
-# Run integration tests (requires Firestore emulator)
+# Run integration tests (requires PostgreSQL)
 test-integration:
 	@echo "Running integration tests..."
-	@if [ -z "$$FIRESTORE_EMULATOR_HOST" ]; then \
-		echo "Error: FIRESTORE_EMULATOR_HOST not set"; \
-		echo "Start emulator with: firebase emulators:start --only firestore"; \
-		echo "Then set: export FIRESTORE_EMULATOR_HOST=localhost:8080"; \
-		exit 1; \
-	fi
 	cd backend && poetry run pytest tests_integration/ -v
 
 test-integration-tenant:
 	@echo "Running multi-tenant isolation tests (requires Postgres)..."
-	cd backend && DATABASE_BACKEND=postgres MULTI_TENANCY_ENABLED=true \
+	cd backend && MULTI_TENANCY_ENABLED=true \
 		poetry run pytest tests_integration/database/test_tenant_isolation.py -v
 
 # Run all tests (unit + integration)
 test-all:
 	@echo "Running all tests..."
-	@if [ -z "$$FIRESTORE_EMULATOR_HOST" ]; then \
-		echo "Error: FIRESTORE_EMULATOR_HOST not set"; \
-		echo "Start emulator with: firebase emulators:start --only firestore"; \
-		echo "Then set: export FIRESTORE_EMULATOR_HOST=localhost:8080"; \
-		exit 1; \
-	fi
 	cd backend && poetry run pytest tests/ tests_integration/ --cov=app --cov-report=term-missing --cov-report=html
 
 # Run all checks (lint + test)
@@ -167,8 +155,8 @@ docker-logs-frontend:
 docker-logs-backend:
 	docker compose logs -f backend
 
-docker-logs-firebase:
-	docker compose logs -f firebase-emulators
+docker-logs-postgres:
+	docker compose logs -f postgres
 
 # Open shell in backend container
 docker-shell-backend:

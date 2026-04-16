@@ -14,7 +14,7 @@ from app.services.audit_service import AuditService
 
 @pytest.fixture
 def mock_db() -> MagicMock:
-    """Create mock Firestore client."""
+    """Create mock database client."""
     db = MagicMock()
     db.collection.return_value.document.return_value.set = MagicMock()
     return db
@@ -160,7 +160,7 @@ class TestAuditLogEntry:
 class TestAuditService:
     """Tests for AuditService."""
 
-    def test_log_patient_action_writes_to_firestore(
+    def test_log_patient_action_writes_to_db(
         self,
         audit_service: AuditService,
         mock_db: MagicMock,
@@ -168,7 +168,7 @@ class TestAuditService:
         test_patient: Patient,
         mock_request: MagicMock,
     ) -> None:
-        """log_patient_action should write entry to Firestore."""
+        """log_patient_action should write entry to the database."""
         entry = audit_service.log_patient_action(
             AuditAction.PATIENT_VIEWED,
             test_user,
@@ -176,7 +176,7 @@ class TestAuditService:
             test_patient,
         )
 
-        # Verify Firestore was called
+        # Verify DB was called
         mock_db.collection.assert_called_with("audit_logs")
         mock_db.collection().document.assert_called_with(entry.id)
         mock_db.collection().document().set.assert_called_once()
@@ -213,7 +213,7 @@ class TestAuditService:
 
         assert entry.changes == changes
 
-    def test_log_session_action_writes_to_firestore(
+    def test_log_session_action_writes_to_db(
         self,
         audit_service: AuditService,
         test_user: User,
@@ -221,7 +221,7 @@ class TestAuditService:
         test_session: TherapySession,
         mock_request: MagicMock,
     ) -> None:
-        """log_session_action should write entry to Firestore."""
+        """log_session_action should write entry to the database."""
         entry = audit_service.log_session_action(
             AuditAction.SESSION_VIEWED,
             test_user,
@@ -327,7 +327,7 @@ class TestAuditService:
 
         assert entry.ip_address == "10.0.0.1"
 
-    def test_firestore_error_does_not_raise(
+    def test_db_error_does_not_raise(
         self,
         audit_service: AuditService,
         mock_db: MagicMock,
@@ -335,8 +335,8 @@ class TestAuditService:
         test_patient: Patient,
         mock_request: MagicMock,
     ) -> None:
-        """Firestore errors should be logged but not raised."""
-        mock_db.collection().document().set.side_effect = Exception("Firestore error")
+        """Database errors should be logged but not raised."""
+        mock_db.collection().document().set.side_effect = Exception("DB error")
 
         # Should not raise
         entry = audit_service.log_patient_action(

@@ -43,7 +43,7 @@ class AvailabilityRule:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AvailabilityRule:
-        """Create AvailabilityRule from Firestore document."""
+        """Create AvailabilityRule from dictionary."""
         return cls(
             id=data["id"],
             user_id=data["user_id"],
@@ -55,7 +55,7 @@ class AvailabilityRule:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         return {
             "id": self.id,
             "user_id": self.user_id,

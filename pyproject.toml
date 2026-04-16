@@ -22,7 +22,6 @@ pydantic-settings = "^2.13.1"
 python-dotenv = "^1.2.2"
 
 # Google Cloud (for GCP deployment)
-google-cloud-firestore = "^2.23.0"
 google-cloud-secret-manager = "^2.27.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
@@ -195,7 +194,7 @@ ignore = [
 "security/**/*.py" = [
     "PLC0415",  # Allow lazy imports (MCP tool functions defer imports to avoid startup cost)
     "PLR0913",  # Allow many arguments (internal test orchestration functions)
-    "PLR0911",  # Allow many returns (Firestore value type converters)
+    "PLR0911",  # Allow many returns (value type converters)
     "PLR2004",  # Allow magic values (HTTP status codes are self-documenting)
     "S603",     # Allow subprocess calls (gcloud CLI for rules drift check)
     "S607",     # Allow partial executable paths (gcloud)

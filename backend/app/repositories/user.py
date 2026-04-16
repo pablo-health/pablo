@@ -3,7 +3,6 @@
 """User repository implementations."""
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from ..models import User, UserPreferences
 from ..utcnow import utc_now
@@ -68,35 +67,4 @@ class InMemoryUserRepository(UserRepository):
 
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
         self._preferences[user_id] = prefs
-        return prefs
-
-
-class FirestoreUserRepository(UserRepository):
-    """Firestore implementation of UserRepository."""
-
-    def __init__(self, db: Any) -> None:
-        self.db = db
-        self.collection = db.collection("users")
-
-    def get(self, user_id: str) -> User | None:
-        doc = self.collection.document(user_id).get()
-        if doc.exists:
-            return User.from_dict(doc.to_dict())
-        return None
-
-    def update(self, user: User) -> User:
-        self.collection.document(user.id).set(user.to_dict())
-        return user
-
-    def list_all(self) -> list[User]:
-        return [User.from_dict(doc.to_dict()) for doc in self.collection.stream()]
-
-    def get_preferences(self, user_id: str) -> UserPreferences:
-        doc = self.db.collection("user_preferences").document(user_id).get()
-        if doc.exists:
-            return UserPreferences(**doc.to_dict())
-        return UserPreferences()
-
-    def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
-        self.db.collection("user_preferences").document(user_id).set(prefs.model_dump())
         return prefs

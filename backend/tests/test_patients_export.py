@@ -38,7 +38,7 @@ def client(mock_export_service, mock_user):
     app = FastAPI()
     app.include_router(router)
 
-    # Mock patient repo so export route's repo dependency doesn't hit Firestore
+    # Mock patient repo so export route's repo dependency doesn't hit the database
     mock_repo = Mock()
     mock_repo.get.return_value = Mock(id="patient-123", first_name="John", last_name="Doe")
 

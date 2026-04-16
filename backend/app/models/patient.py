@@ -204,7 +204,7 @@ class Patient:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Patient:
-        """Create Patient from Firestore document."""
+        """Create Patient from dictionary."""
         first = data["first_name"]
         last = data["last_name"]
         return cls(
@@ -227,7 +227,7 @@ class Patient:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert Patient to dictionary for Firestore."""
+        """Convert Patient to dictionary."""
         return asdict(self)
 
     def to_api_dict(self) -> dict[str, Any]:

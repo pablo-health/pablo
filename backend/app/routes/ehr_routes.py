@@ -54,7 +54,7 @@ def get_ehr_route_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> EhrRouteRepository:
     """Get EHR route repository scoped to the tenant's database."""
-    return _ehr_route_repo_factory(firestore_db=ctx.firestore_db)
+    return _ehr_route_repo_factory()
 
 
 def get_ehr_prompt_repository() -> EhrPromptRepository:

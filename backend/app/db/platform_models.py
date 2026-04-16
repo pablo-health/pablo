@@ -44,10 +44,7 @@ class PracticeRow(PlatformBase):
 
 
 class EmailTenantMappingRow(PlatformBase):
-    """Maps email → tenant_id for pre-auth tenant resolution.
-
-    Replaces Firestore email_tenants collection.
-    """
+    """Maps email → tenant_id for pre-auth tenant resolution."""
 
     __tablename__ = "email_tenant_mappings"
     __table_args__ = {"schema": PLATFORM_SCHEMA}

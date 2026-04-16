@@ -127,7 +127,7 @@ class User:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> User:
-        """Create User from Firestore document."""
+        """Create User from dictionary."""
         return cls(
             id=data["id"],
             email=data["email"],
@@ -151,5 +151,5 @@ class User:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert User to dictionary for Firestore."""
+        """Convert User to dictionary."""
         return asdict(self)

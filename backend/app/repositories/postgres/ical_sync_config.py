@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 class PostgresICalSyncConfigRepository:
-    """PostgreSQL implementation — same interface as the Firestore version."""
+    """PostgreSQL implementation of ICalSyncConfigRepository."""
 
     def __init__(self, session: Session) -> None:
         self._session = session

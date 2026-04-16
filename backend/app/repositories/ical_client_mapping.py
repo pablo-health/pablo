@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Firestore repository for iCal client identifier to Pablo patient mappings.
+"""iCal client identifier to Pablo patient mapping dataclass.
 
 Maps EHR-specific client identifiers (SimplePractice initials like "J.A.",
 Sessions Health codes like "SH00001") to Pablo patient IDs. Persisted so
@@ -12,12 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-
-from google.cloud.firestore_v1.base_query import FieldFilter
-
-from ..utcnow import utc_now
-
-COLLECTION = "ical_client_mappings"
 
 
 @dataclass
@@ -52,43 +46,3 @@ class ICalClientMapping:
             patient_id=data["patient_id"],
             created_at=data.get("created_at", ""),
         )
-
-
-class ICalClientMappingRepository:
-    """Stores client identifier to patient mappings in Firestore."""
-
-    def __init__(self, db: Any) -> None:
-        self._db = db
-        self._collection = db.collection(COLLECTION)
-
-    def get(
-        self, user_id: str, ehr_system: str, client_identifier: str
-    ) -> ICalClientMapping | None:
-        doc_id = f"{user_id}_{ehr_system}_{client_identifier}"
-        doc = self._collection.document(doc_id).get()
-        if not doc.exists:
-            return None
-        return ICalClientMapping.from_dict(doc.to_dict())
-
-    def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
-        query = self._collection.where(filter=FieldFilter("user_id", "==", user_id))
-        return [ICalClientMapping.from_dict(doc.to_dict()) for doc in query.stream()]
-
-    def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]:
-        query = self._collection.where(filter=FieldFilter("user_id", "==", user_id)).where(
-            filter=FieldFilter("ehr_system", "==", ehr_system)
-        )
-        return [ICalClientMapping.from_dict(doc.to_dict()) for doc in query.stream()]
-
-    def save(self, mapping: ICalClientMapping) -> None:
-        if not mapping.created_at:
-            mapping.created_at = utc_now()
-        self._collection.document(mapping.doc_id).set(mapping.to_dict())
-
-    def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool:
-        doc_id = f"{user_id}_{ehr_system}_{client_identifier}"
-        doc = self._collection.document(doc_id).get()
-        if not doc.exists:
-            return False
-        self._collection.document(doc_id).delete()
-        return True

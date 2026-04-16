@@ -122,14 +122,14 @@ def get_appointment_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> AppointmentRepository:
     """Get appointment repository scoped to the tenant's database."""
-    return _appt_repo_factory(firestore_db=ctx.firestore_db)
+    return _appt_repo_factory()
 
 
 def get_availability_rule_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> AvailabilityRuleRepository:
     """Get availability rule repository scoped to the tenant's database."""
-    return _rule_repo_factory(firestore_db=ctx.firestore_db)
+    return _rule_repo_factory()
 
 
 def get_scheduling_service(
@@ -631,8 +631,8 @@ def get_google_calendar_service(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
-    token_repo = _gcal_token_repo_factory(firestore_db=ctx.firestore_db)
-    appt_repo = _appt_repo_factory(firestore_db=ctx.firestore_db)
+    token_repo = _gcal_token_repo_factory()
+    appt_repo = _appt_repo_factory()
     settings = get_settings()
     return GoogleCalendarService(
         token_repo=token_repo,

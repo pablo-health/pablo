@@ -73,7 +73,7 @@ class Appointment:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Appointment:
-        """Create Appointment from Firestore document."""
+        """Create Appointment from dictionary."""
         return cls(
             id=data["id"],
             user_id=data["user_id"],
@@ -106,7 +106,7 @@ class Appointment:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for Firestore storage."""
+        """Convert to dictionary for storage."""
         return {
             "id": self.id,
             "user_id": self.user_id,

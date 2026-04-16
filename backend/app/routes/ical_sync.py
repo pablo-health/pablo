@@ -49,10 +49,10 @@ def _get_service(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> ICalSyncService:
     return ICalSyncService(
-        config_repo=_config_repo_factory(firestore_db=ctx.firestore_db),
-        appointment_repo=_appt_repo_factory(firestore_db=ctx.firestore_db),
-        patient_repo=_patient_repo_factory(firestore_db=ctx.firestore_db),
-        mapping_repo=_mapping_repo_factory(firestore_db=ctx.firestore_db),
+        config_repo=_config_repo_factory(),
+        appointment_repo=_appt_repo_factory(),
+        patient_repo=_patient_repo_factory(),
+        mapping_repo=_mapping_repo_factory(),
     )
 
 

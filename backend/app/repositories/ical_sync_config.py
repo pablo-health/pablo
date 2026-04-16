@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Firestore repository for encrypted iCal feed URL configuration.
+"""iCal feed URL configuration dataclass.
 
 HIPAA Compliance: iCal feed URLs contain embedded tokens that grant
 unauthenticated read access to therapist schedules (which may contain PHI).
@@ -9,19 +9,9 @@ URLs are encrypted at rest with AES-256-GCM before storage.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-
-from google.cloud.firestore_v1.base_query import FieldFilter
-from google.cloud.firestore_v1.transforms import Increment
-
-from ..utcnow import utc_now_iso
-
-logger = logging.getLogger(__name__)
-
-COLLECTION = "ical_sync_configs"
 
 
 @dataclass
@@ -62,59 +52,3 @@ class ICalSyncConfig:
             connected_at=data.get("connected_at", ""),
             consecutive_error_count=data.get("consecutive_error_count", 0),
         )
-
-
-class ICalSyncConfigRepository:
-    """Stores encrypted iCal feed URLs in Firestore.
-
-    One document per user per EHR system, keyed as {user_id}_{ehr_system}.
-    Supports therapists connected to multiple EHR systems simultaneously.
-    """
-
-    def __init__(self, db: Any) -> None:
-        self._db = db
-        self._collection = db.collection(COLLECTION)
-
-    def get(self, user_id: str, ehr_system: str) -> ICalSyncConfig | None:
-        doc_id = f"{user_id}_{ehr_system}"
-        doc = self._collection.document(doc_id).get()
-        if not doc.exists:
-            return None
-        return ICalSyncConfig.from_dict(doc.to_dict())
-
-    def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
-        query = self._collection.where(filter=FieldFilter("user_id", "==", user_id))
-        return [ICalSyncConfig.from_dict(doc.to_dict()) for doc in query.stream()]
-
-    def list_all(self) -> list[ICalSyncConfig]:
-        """Return all configs across all users (for scheduled sync dispatch)."""
-        return [ICalSyncConfig.from_dict(doc.to_dict()) for doc in self._collection.stream()]
-
-    def save(self, config: ICalSyncConfig) -> None:
-        self._collection.document(config.doc_id).set(config.to_dict())
-
-    def delete(self, user_id: str, ehr_system: str) -> bool:
-        doc_id = f"{user_id}_{ehr_system}"
-        doc = self._collection.document(doc_id).get()
-        if not doc.exists:
-            return False
-        self._collection.document(doc_id).delete()
-        return True
-
-    def update_sync_status(
-        self,
-        user_id: str,
-        ehr_system: str,
-        *,
-        error: str | None = None,
-    ) -> None:
-        doc_id = f"{user_id}_{ehr_system}"
-        update: dict[str, Any] = {
-            "last_synced_at": utc_now_iso(),
-            "last_sync_error": error,
-        }
-        if error:
-            update["consecutive_error_count"] = Increment(1)
-        else:
-            update["consecutive_error_count"] = 0
-        self._collection.document(doc_id).update(update)

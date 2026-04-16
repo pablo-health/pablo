@@ -420,7 +420,7 @@ class TestGetCurrentUser:
         assert exc_info.value.detail["error"]["code"] == "USER_DISABLED"  # type: ignore[index]
 
     def test_existing_user_without_status_defaults_approved(self) -> None:
-        """Existing Firestore docs without status field default to approved."""
+        """Existing records without status field default to approved."""
         data = {
             "id": "legacy-user",
             "email": "legacy@example.com",
@@ -439,7 +439,6 @@ class TestTenantContext:
         assert ctx.user_id == "user123"
         assert ctx.practice_id is None
         assert ctx.practice_schema is None
-        assert ctx.firestore_db == "(default)"
 
     def test_practice_context(self) -> None:
         ctx = TenantContext(
@@ -523,8 +522,7 @@ class TestTokenVerificationWithTenantClaims:
 class TestGetTenantContext:
     """Test the get_tenant_context FastAPI dependency.
 
-    The context now resolves via _resolve_practice_from_email (Postgres lookup)
-    instead of JWT tenant claim + Firestore lookup.
+    The context resolves via _resolve_practice_from_email (Postgres lookup).
     """
 
     def test_single_tenant_mode_returns_default(self) -> None:

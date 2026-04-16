@@ -76,14 +76,14 @@ def get_patient_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
-    return _patient_repo_factory(firestore_db=ctx.firestore_db)
+    return _patient_repo_factory()
 
 
 def get_session_repository(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
-    return _session_repo_factory(firestore_db=ctx.firestore_db)
+    return _session_repo_factory()
 
 
 def get_soap_generation_service() -> SOAPGenerationService:
@@ -732,7 +732,7 @@ async def upload_audio(
     is_practice = settings.pablo_edition == "practice"
     queue_service.enqueue_transcription(
         session_id=session_id,
-        tenant_db=ctx.firestore_db,
+        tenant_db="(default)",
         user_id=user.id,
         gcs_path=session.audio_gcs_path,
         priority=is_practice,
