@@ -15,7 +15,7 @@ You need a BAA with every vendor that handles PHI on your behalf.
 **How to sign the Google Cloud BAA:**
 1. Go to Google Cloud Console > Settings > Compliance
 2. Review and accept the BAA
-3. This covers Firestore, Cloud Run, and all GCP services you use
+3. This covers Cloud SQL, Cloud Run, and all GCP services you use
 
 **How to sign the AI provider BAA:**
 - **Google Gemini**: Covered by the Google Cloud BAA
@@ -27,7 +27,7 @@ HIPAA requires that only authorized individuals can access PHI.
 
 | | Self-Hosted | Pablo Solo |
 |---|---|---|
-| Authentication | You configure Firebase Auth | Pre-configured |
+| Authentication | You configure Identity Platform | Pre-configured |
 | MFA | You enable TOTP or use IAP | Mandatory TOTP |
 | User management | You manage the allowlist | We manage it |
 
@@ -41,7 +41,7 @@ HIPAA requires that only authorized individuals can access PHI.
 | | Self-Hosted | Pablo Solo |
 |---|---|---|
 | In transit | Cloud Run provides automatic TLS | Same |
-| At rest | Firestore encrypts by default (AES-256) | Same |
+| At rest | Cloud SQL encrypts by default (AES-256) | Same |
 | OAuth tokens | AES-256 encrypted (you generate the key) | We manage the key |
 
 **What you need to do:**
@@ -60,7 +60,7 @@ HIPAA requires audit trails for PHI access.
 | Log retention | You configure retention policy | We manage it |
 
 **What you need to do:**
-1. Enable Data Access audit logs for Firestore in GCP Console
+1. Enable Data Access audit logs for Cloud SQL in GCP Console
 2. Set a log retention period (HIPAA requires minimum 6 years)
 3. Restrict access to logs to authorized personnel
 
@@ -68,12 +68,12 @@ HIPAA requires audit trails for PHI access.
 
 | | Self-Hosted | Pablo Solo |
 |---|---|---|
-| Database backups | You configure Firestore exports | Automated daily |
+| Database backups | You enable Cloud SQL automated backups | Automated daily |
 | Backup testing | You verify restores work | We verify |
 | Recovery plan | You document and test it | We maintain it |
 
 **What you need to do:**
-1. Set up scheduled Firestore exports to Cloud Storage
+1. Enable Cloud SQL automated backups (daily) and point-in-time recovery
 2. Test restoring from backup at least annually
 3. Document your recovery procedure
 
@@ -123,9 +123,9 @@ We will never spam you or share your information. This is solely for your protec
 - [ ] Configured authentication (MFA or IAP)
 - [ ] Verified HTTPS enforcement is active
 - [ ] Generated and stored encryption keys in Secret Manager
-- [ ] Enabled Cloud Audit Logs for Firestore
+- [ ] Enabled Cloud Audit Logs for Cloud SQL
 - [ ] Set log retention to 6+ years
-- [ ] Configured Firestore backup exports
+- [ ] Enabled Cloud SQL automated backups and point-in-time recovery
 - [ ] Tested restore from backup
 - [ ] Documented your disaster recovery plan
 - [ ] Registered your deployment at pablo.health/register

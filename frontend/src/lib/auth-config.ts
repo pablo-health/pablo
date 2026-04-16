@@ -42,7 +42,7 @@ function getServiceAccount(): ServiceAccount | undefined {
 }
 
 export const authConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
+  apiKey: process.env.FIREBASE_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
   cookieName: "AuthToken",
   cookieSignatureKeys: getCookieSignatureKeys(),
   cookieSerializeOptions: {
