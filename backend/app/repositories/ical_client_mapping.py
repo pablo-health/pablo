@@ -55,17 +55,21 @@ class ICalClientMappingRepository(ABC):
     @abstractmethod
     def get(
         self, user_id: str, ehr_system: str, client_identifier: str
-    ) -> ICalClientMapping | None: ...
+    ) -> ICalClientMapping | None:
+        pass
 
     @abstractmethod
     def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
         pass
 
     @abstractmethod
-    def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]: ...
+    def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]:
+        pass
 
     @abstractmethod
-    def save(self, mapping: ICalClientMapping) -> None: ...
+    def save(self, mapping: ICalClientMapping) -> None:
+        pass
 
     @abstractmethod
-    def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool: ...
+    def delete(self, user_id: str, ehr_system: str, client_identifier: str) -> bool:
+        pass
