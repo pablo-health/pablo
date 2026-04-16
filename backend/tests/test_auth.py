@@ -16,6 +16,7 @@ from app.auth.service import (
     require_mfa,
     verify_firebase_token,
 )
+from app.db import _request_session
 from app.models import User
 from app.repositories import InMemoryAllowlistRepository, InMemoryUserRepository
 from fastapi import HTTPException, status
@@ -549,7 +550,13 @@ class TestGetTenantContext:
         ):
             mock_settings.return_value.multi_tenancy_enabled = True
 
-            ctx = get_tenant_context(decoded, InMemoryUserRepository())
+            # Set request-scoped DB session (normally done by middleware)
+            mock_session = MagicMock()
+            token = _request_session.set(mock_session)
+            try:
+                ctx = get_tenant_context(decoded, InMemoryUserRepository())
+            finally:
+                _request_session.reset(token)
 
         assert ctx == TenantContext(
             user_id="user123",

@@ -9,14 +9,25 @@ import os
 os.environ["ENVIRONMENT"] = "development"
 # Enable SaaS features so admin/tenant routes are registered for tests
 os.environ["PABLO_EDITION"] = "solo"
+# Provide a dummy DATABASE_URL so settings validation passes (never actually connected to)
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import pytest
-from app.auth.firebase_init import initialize_firebase_app
-from app.auth.service import (
+# Patch database engine/session before importing app (which triggers ensure_schemas at import)
+_mock_session_instance = MagicMock()
+_mock_session_factory = MagicMock(return_value=_mock_session_instance)
+_mock_engine = MagicMock()
+
+patch("app.db.get_engine", return_value=_mock_engine).start()
+patch("app.db.get_session_factory", return_value=_mock_session_factory).start()
+patch("app.db.provisioning.ensure_schemas", return_value=None).start()
+
+import pytest  # noqa: E402
+from app.auth.firebase_init import initialize_firebase_app  # noqa: E402
+from app.auth.service import (  # noqa: E402
     get_current_user,
     get_current_user_id,
     get_current_user_no_mfa,
@@ -25,9 +36,9 @@ from app.auth.service import (
     require_baa_acceptance,
     require_mfa,
 )
-from app.main import app
-from app.models import User
-from app.repositories import (
+from app.main import app  # noqa: E402
+from app.models import User  # noqa: E402
+from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
@@ -37,20 +48,20 @@ from app.repositories import (
     get_allowlist_repository,
     get_user_repository,
 )
-from app.routes.ehr_routes import (
+from app.routes.ehr_routes import (  # noqa: E402
     get_ehr_navigation_service,
     get_ehr_prompt_repository,
     get_ehr_route_repository,
 )
-from app.routes.patients import get_patient_repository, get_therapy_session_repository
-from app.routes.sessions import (
+from app.routes.patients import get_patient_repository, get_therapy_session_repository  # noqa: E402
+from app.routes.sessions import (  # noqa: E402
     get_patient_repository as get_sessions_patient_repository,
 )
-from app.routes.sessions import (
+from app.routes.sessions import (  # noqa: E402
     get_session_repository,
 )
-from app.services import AuditService, MockEhrNavigationService, get_audit_service
-from fastapi.testclient import TestClient
+from app.services import AuditService, MockEhrNavigationService, get_audit_service  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
