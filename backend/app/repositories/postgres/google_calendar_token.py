@@ -7,15 +7,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...db.models import GoogleCalendarTokenRow
-from ...utcnow import utc_now_iso
-from ..google_calendar_token import GoogleCalendarTokenDoc
+from ...utcnow import utc_now
+from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-class PostgresGoogleCalendarTokenRepository:
-    """PostgreSQL implementation — same interface as the Firestore version."""
+class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
+    """PostgreSQL implementation of GoogleCalendarTokenRepository."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -24,14 +24,12 @@ class PostgresGoogleCalendarTokenRepository:
         row = self._session.get(GoogleCalendarTokenRow, user_id)
         if row is None:
             return None
-        return GoogleCalendarTokenDoc(
-            user_id=row.user_id,
-            encrypted_tokens=row.encrypted_tokens,
-            calendar_id=row.calendar_id,
-            sync_token=row.sync_token,
-            last_synced_at=row.last_synced_at,
-            connected_at=row.connected_at,
-        )
+        return _row_to_doc(row)
+
+    def list_all(self) -> list[GoogleCalendarTokenDoc]:
+        """Return all token docs across all users (for scheduled sync dispatch)."""
+        rows = self._session.query(GoogleCalendarTokenRow).all()
+        return [_row_to_doc(row) for row in rows]
 
     def save(self, token_doc: GoogleCalendarTokenDoc) -> None:
         row = self._session.get(GoogleCalendarTokenRow, token_doc.user_id)
@@ -48,7 +46,7 @@ class PostgresGoogleCalendarTokenRepository:
     def update_sync_token(self, user_id: str, sync_token: str) -> None:
         row = self._session.get(GoogleCalendarTokenRow, user_id)
         if row:
-            now = utc_now_iso()
+            now = utc_now()
             row.sync_token = sync_token
             row.last_synced_at = now
             self._session.flush()
@@ -64,3 +62,16 @@ class PostgresGoogleCalendarTokenRepository:
     def exists(self, user_id: str) -> bool:
         row = self._session.get(GoogleCalendarTokenRow, user_id)
         return row is not None
+
+
+def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
+    return GoogleCalendarTokenDoc(
+        user_id=row.user_id,
+        encrypted_tokens=row.encrypted_tokens,
+        calendar_id=row.calendar_id,
+        sync_token=row.sync_token,
+        last_synced_at=row.last_synced_at,
+        connected_at=row.connected_at,
+        last_sync_error=getattr(row, "last_sync_error", None),
+        consecutive_error_count=getattr(row, "consecutive_error_count", 0) or 0,
+    )

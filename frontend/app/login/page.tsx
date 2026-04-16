@@ -3,7 +3,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   signInWithPopup,
   signInWithRedirect,
@@ -17,133 +17,80 @@ import {
   type MultiFactorError,
   type MultiFactorResolver,
 } from "firebase/auth"
-import { getFirebaseAuth, setFirebaseTenantId } from "@/lib/firebase"
+import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
-import { useConfig } from "@/lib/config"
-import {
-  getCachedTenantId,
-  setCachedTenantId,
-  clearCachedTenantId,
-  resolveTenant,
-  signupPractice,
-} from "@/lib/tenant"
 
-type LoginStep =
-  | "email-resolve"
-  | "sign-in"
-  | "register-practice"
-  | "mfa"
-  | "verify-email"
+type LoginStep = "sign-in" | "mfa" | "verify-email"
+
+function getUrlParam(name: string): string {
+  if (typeof window === "undefined") return ""
+  const params = new URLSearchParams(window.location.search)
+  return params.get(name) || ""
+}
 
 export default function LoginPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const config = useConfig()
   const { user, loading: authLoading } = useAuth()
 
-  // Check for query params from marketing signup redirect
-  const paramEmail = searchParams.get("email") || ""
-  const paramTenantId = searchParams.get("tenant_id") || ""
-
-  const [email, setEmail] = useState(paramEmail)
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [practiceName, setPracticeName] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
   const [resetSent, setResetSent] = useState(false)
   const [resendSent, setResendSent] = useState(false)
-  const [isSignUp, setIsSignUp] = useState(!!paramTenantId)
-  const [resolvedTenantId, setResolvedTenantId] = useState<string | null>(
-    paramTenantId || getCachedTenantId
-  )
+  const [isSignUp, setIsSignUp] = useState(false)
 
-  // Tenant resolution state — skip email-resolve if tenant provided via query param,
-  // cached, or in single-tenant mode
-  const [step, setStep] = useState<LoginStep>(() => {
-    if (paramTenantId || !config.multiTenancyEnabled || getCachedTenantId()) {
-      return "sign-in"
+  const [step, setStep] = useState<LoginStep>("sign-in")
+
+  // Show notice when redirected from idle timeout
+  useEffect(() => {
+    const reason = getUrlParam("reason")
+    if (reason === "idle_timeout") {
+      setError("You were signed out due to inactivity.")
+      window.history.replaceState({}, "", "/login")
     }
-    return "email-resolve"
-  })
+  }, [])
+
+  // Exchange setup token from marketing signup to pre-fill email
+  useEffect(() => {
+    const setupToken = getUrlParam("setup")
+    if (!setupToken) return
+
+    // Clean the URL immediately so the token isn't in browser history
+    window.history.replaceState({}, "", "/login")
+
+    fetch("/api/auth/exchange-setup-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: setupToken }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.email) {
+          setEmail(data.email)
+          setIsSignUp(true)
+          // Override browser autofill by setting DOM value directly after a tick
+          setTimeout(() => {
+            const emailEl = document.getElementById("email") as HTMLInputElement | null
+            if (emailEl) emailEl.value = data.email
+            document.getElementById("password")?.focus()
+          }, 200)
+        }
+      })
+      .catch(() => {})  // Token expired or invalid — user types email manually
+  }, [])
 
   // MFA challenge state
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
   const [totpCode, setTotpCode] = useState("")
 
-  // If tenant_id was provided via query param (from marketing signup), cache it
+  // Redirect to dashboard when already authenticated (but not during signup flow)
   useEffect(() => {
-    if (paramTenantId) {
-      ensureTenantId(paramTenantId)
-    }
-  }, [paramTenantId]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Redirect to dashboard when already authenticated
-  useEffect(() => {
-    if (user && !authLoading) {
+    if (user && !authLoading && step !== "verify-email" && !isSignUp) {
       router.push("/dashboard")
     }
-  }, [user, authLoading, router])
-
-  const ensureTenantId = (tenantId: string | null) => {
-    if (tenantId) {
-      setFirebaseTenantId(tenantId)
-      setCachedTenantId(tenantId)
-      setResolvedTenantId(tenantId)
-    }
-  }
-
-  // Step 1: Resolve tenant from email
-  const handleResolveEmail = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
-
-    try {
-      const { tenantId, isAdmin } = await resolveTenant(email, config.apiUrl)
-      if (tenantId) {
-        ensureTenantId(tenantId)
-        setStep("sign-in")
-      } else if (isAdmin) {
-        // Platform admin — sign in at project level (no tenant)
-        setFirebaseTenantId(null)
-        clearCachedTenantId()
-        setStep("sign-in")
-      } else if (config.multiTenancyEnabled) {
-        // No tenant found — offer to register a new practice
-        setStep("register-practice")
-      } else {
-        setStep("sign-in")
-      }
-    } catch {
-      setError("Unable to verify email. Please try again.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // Register a new practice
-  const handleRegisterPractice = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
-
-    try {
-      const tenantId = await signupPractice(email, practiceName, config.apiUrl)
-      if (tenantId) {
-        ensureTenantId(tenantId)
-        setIsSignUp(true)
-        setStep("sign-in")
-      } else {
-        setError(
-          "Unable to register practice. Your email may not be on the allowlist. Contact your administrator."
-        )
-      }
-    } catch {
-      setError("Failed to register practice. Please try again.")
-    } finally {
-      setLoading(false)
-    }
-  }
+  }, [user, authLoading, router, step, isSignUp])
 
   const handleMfaRequired = (err: MultiFactorError) => {
     const resolver = getMultiFactorResolver(getFirebaseAuth(), err)
@@ -198,12 +145,6 @@ export default function LoginPage() {
     setError("")
     setLoading(true)
 
-    // Ensure tenantId is set before sign-in
-    const cached = getCachedTenantId()
-    if (cached) {
-      setFirebaseTenantId(cached)
-    }
-
     try {
       const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
       const idToken = await credential.user.getIdToken()
@@ -238,13 +179,13 @@ export default function LoginPage() {
   const handleEmailSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
-    setLoading(true)
 
-    // Ensure tenantId is set before sign-up
-    const cached = getCachedTenantId()
-    if (cached) {
-      setFirebaseTenantId(cached)
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.")
+      return
     }
+
+    setLoading(true)
 
     try {
       const credential = await createUserWithEmailAndPassword(
@@ -278,13 +219,6 @@ export default function LoginPage() {
   const handleGoogleLogin = async () => {
     setError("")
     const auth = getFirebaseAuth()
-
-    // Ensure tenantId is set before Google sign-in
-    const cached = getCachedTenantId()
-    if (cached) {
-      auth.tenantId = cached
-    }
-
     const provider = new GoogleAuthProvider()
 
     try {
@@ -331,17 +265,6 @@ export default function LoginPage() {
       // Don't reveal whether email exists (security)
       setResetSent(true)
     }
-  }
-
-  const handleStartOver = () => {
-    clearCachedTenantId()
-    setResolvedTenantId(null)
-    setError("")
-    setEmail("")
-    setPassword("")
-    setPracticeName("")
-    setIsSignUp(false)
-    setStep("email-resolve")
   }
 
   // MFA Challenge Screen
@@ -487,134 +410,7 @@ export default function LoginPage() {
     )
   }
 
-  // Register Practice Screen (no tenant found for this email)
-  if (step === "register-practice") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
-        <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
-          <div className="text-center">
-            <h1 className="text-4xl font-display font-bold text-primary-600">
-              Pablo
-            </h1>
-            <p className="mt-3 text-neutral-600">
-              No practice found for <strong>{email}</strong>
-            </p>
-            <p className="mt-1 text-sm text-neutral-500">
-              Register a new practice to get started, or use a different email if
-              you already have an account.
-            </p>
-          </div>
-
-          <form onSubmit={handleRegisterPractice} className="space-y-4">
-            <div>
-              <label
-                htmlFor="practice-name"
-                className="block text-sm font-medium text-neutral-700 mb-1"
-              >
-                Practice Name
-              </label>
-              <input
-                id="practice-name"
-                type="text"
-                value={practiceName}
-                onChange={(e) => setPracticeName(e.target.value)}
-                placeholder="e.g. Sunrise Behavioral Health"
-                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                required
-                autoFocus
-                minLength={2}
-                maxLength={100}
-              />
-            </div>
-
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Setting up your practice..." : "Register Practice"}
-            </button>
-          </form>
-
-          <button
-            type="button"
-            onClick={handleStartOver}
-            className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
-          >
-            Use a different email
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // Email-First Tenant Resolution Screen (new browser, no cached tenantId)
-  if (step === "email-resolve") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
-        <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
-          <div className="text-center">
-            <h1 className="text-4xl font-display font-bold text-primary-600">
-              Pablo
-            </h1>
-            <p className="mt-3 text-neutral-600">
-              Enter your email to continue
-            </p>
-          </div>
-
-          <form onSubmit={handleResolveEmail} className="space-y-4">
-            <div>
-              <label
-                htmlFor="resolve-email"
-                className="block text-sm font-medium text-neutral-700 mb-1"
-              >
-                Email
-              </label>
-              <input
-                id="resolve-email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                required
-                autoFocus
-              />
-            </div>
-
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Checking..." : "Continue"}
-            </button>
-          </form>
-
-          <div className="mt-6 pt-6 border-t border-neutral-200">
-            <p className="text-xs text-neutral-500 text-center leading-relaxed">
-              This platform is HIPAA compliant and uses industry-standard
-              encryption to protect your data
-            </p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Main Sign-In Screen (tenant resolved or single-tenant mode)
+  // Main Sign-In Screen
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
       <div className="w-full max-w-md space-y-8 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
@@ -623,13 +419,10 @@ export default function LoginPage() {
             Pablo
           </h1>
           <p className="mt-3 text-neutral-600">
-            HIPAA-compliant therapy session management
+            {isSignUp
+              ? "Create your account to get started"
+              : "HIPAA-compliant therapy session management"}
           </p>
-          {config.multiTenancyEnabled && resolvedTenantId && (
-            <p className="mt-1 text-sm text-neutral-500">
-              Signing in as {email}
-            </p>
-          )}
         </div>
 
         <div className="mt-8 space-y-4">
@@ -660,19 +453,40 @@ export default function LoginPage() {
                 htmlFor="password"
                 className="block text-sm font-medium text-neutral-700 mb-1"
               >
-                Password
+                {isSignUp ? "Create Password" : "Password"}
               </label>
               <input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={isSignUp ? "Choose a password (min 15 chars)" : "Password"}
+                placeholder={isSignUp ? "Min 15 characters" : "Password"}
                 className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 required
                 minLength={isSignUp ? 15 : undefined}
               />
             </div>
+
+            {isSignUp && (
+              <div>
+                <label
+                  htmlFor="confirmPassword"
+                  className="block text-sm font-medium text-neutral-700 mb-1"
+                >
+                  Confirm Password
+                </label>
+                <input
+                  id="confirmPassword"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter your password"
+                  className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  required
+                  minLength={15}
+                />
+              </div>
+            )}
 
             {error && (
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
@@ -717,6 +531,7 @@ export default function LoginPage() {
                 onClick={() => {
                   setIsSignUp(!isSignUp)
                   setError("")
+                  setConfirmPassword("")
                 }}
                 className="text-primary-600 hover:text-primary-700 hover:underline"
               >
@@ -763,16 +578,6 @@ export default function LoginPage() {
             </svg>
             Sign in with Google
           </button>
-
-          {config.multiTenancyEnabled && (
-            <button
-              type="button"
-              onClick={handleStartOver}
-              className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
-            >
-              Use a different email
-            </button>
-          )}
 
           <p className="mt-6 text-center text-sm text-neutral-500">
             By signing in, you agree to our Terms of Service and Privacy Policy

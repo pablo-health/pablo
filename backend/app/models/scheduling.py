@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -14,8 +15,8 @@ class CreateAppointmentRequest(BaseModel):
 
     patient_id: str
     title: str
-    start_at: str  # ISO 8601 UTC
-    end_at: str  # ISO 8601 UTC
+    start_at: datetime
+    end_at: datetime
     duration_minutes: int = Field(ge=1, le=480)
     session_type: str = "individual"
     video_link: str | None = None
@@ -28,8 +29,8 @@ class CreateRecurringAppointmentRequest(BaseModel):
 
     patient_id: str
     title: str
-    start_at: str
-    end_at: str
+    start_at: datetime
+    end_at: datetime
     duration_minutes: int = Field(ge=1, le=480)
     session_type: str = "individual"
     video_link: str | None = None
@@ -56,8 +57,8 @@ class UpdateAppointmentRequest(BaseModel):
 
     title: str | None = None
     patient_id: str | None = None
-    start_at: str | None = None
-    end_at: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
     duration_minutes: int | None = Field(default=None, ge=1, le=480)
     session_type: str | None = None
     video_link: str | None = None
@@ -72,8 +73,8 @@ class AppointmentResponse(BaseModel):
     user_id: str
     patient_id: str
     title: str
-    start_at: str
-    end_at: str
+    start_at: datetime
+    end_at: datetime
     duration_minutes: int
     status: str
     session_type: str
@@ -91,8 +92,8 @@ class AppointmentResponse(BaseModel):
     ical_sync_status: str | None = None
     ehr_appointment_url: str | None = None
     session_id: str | None = None
-    created_at: str
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class AppointmentListResponse(BaseModel):
@@ -129,8 +130,8 @@ class AvailabilityRuleResponse(BaseModel):
     rule_type: str
     enforcement: str
     params: dict[str, Any]
-    created_at: str
-    updated_at: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class AvailabilityRuleListResponse(BaseModel):
@@ -143,8 +144,8 @@ class AvailabilityRuleListResponse(BaseModel):
 class CheckConflictsRequest(BaseModel):
     """Request to check scheduling conflicts."""
 
-    start_at: str  # ISO 8601 UTC
-    end_at: str  # ISO 8601 UTC
+    start_at: datetime
+    end_at: datetime
 
 
 class ConflictResponse(BaseModel):
@@ -192,7 +193,7 @@ class GoogleCalendarStatusResponse(BaseModel):
 
     connected: bool
     calendar_id: str | None = None
-    last_synced_at: str | None = None
+    last_synced_at: datetime | None = None
 
 
 # --- iCal sync models ---
@@ -210,7 +211,7 @@ class UnmatchedEvent(BaseModel):
 
     ical_uid: str
     client_identifier: str
-    start_at: str
+    start_at: datetime
     ehr_appointment_url: str = ""
 
 
@@ -230,7 +231,7 @@ class ICalConnectionStatus(BaseModel):
 
     ehr_system: str
     connected: bool
-    last_synced_at: str | None = None
+    last_synced_at: datetime | None = None
     last_sync_error: str | None = None
 
 

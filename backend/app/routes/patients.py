@@ -36,7 +36,7 @@ from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
 from ..services import AuditService, ExportService, get_audit_service
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -52,17 +52,17 @@ router = APIRouter(prefix="/api/patients", tags=["patients"])
 
 
 def get_patient_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
-    return _patient_repo_factory(firestore_db=ctx.firestore_db)
+    return _patient_repo_factory()
 
 
 def get_therapy_session_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
-    return _session_repo_factory(firestore_db=ctx.firestore_db)
+    return _session_repo_factory()
 
 
 def get_export_service(
@@ -92,7 +92,7 @@ def create_patient(
     - **date_of_birth**: Date of birth in ISO format (optional)
     - **diagnosis**: Current diagnosis (optional)
     """
-    now = utc_now_iso()
+    now = utc_now()
 
     patient = Patient(
         id=str(uuid.uuid4()),

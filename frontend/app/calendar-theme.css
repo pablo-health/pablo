@@ -64,21 +64,20 @@
 
 /* === Time Slots === */
 .fc .fc-timegrid-slot {
-  background-color: var(--color-neutral-50);
+  background-color: transparent;
+}
+
+.fc .fc-timegrid-col {
+  background-color: white;
 }
 
 .fc .fc-timegrid-col.fc-day-today {
   background-color: var(--color-primary-50) !important;
-  opacity: 0.6;
 }
 
-/* Business hours override — white for active work time */
+/* Non-business hours — subtle cream tint */
 .fc .fc-non-business {
   background-color: var(--color-neutral-50);
-}
-
-.fc .fc-timegrid-col:not(.fc-day-today) {
-  background-color: white;
 }
 
 /* === Now Indicator === */

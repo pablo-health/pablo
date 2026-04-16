@@ -3,6 +3,7 @@
 """Comprehensive tests for Patient API endpoints."""
 
 import time
+from datetime import datetime
 from typing import Any
 
 from app.auth.service import get_current_user_id, require_baa_acceptance
@@ -138,8 +139,8 @@ def test_get_patient_other_user_returns_404(
         id="user2",
         email="user2@example.com",
         name="Test User 2",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
     )
     app.dependency_overrides[get_current_user_id] = lambda: "user2"
@@ -163,8 +164,8 @@ def test_list_patients_only_returns_own_patients(
         id="user2",
         email="user2@example.com",
         name="Test User 2",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
     )
     app.dependency_overrides[get_current_user_id] = lambda: "user2"
@@ -192,8 +193,8 @@ def test_update_patient_other_user_returns_404(
         id="user2",
         email="user2@example.com",
         name="Test User 2",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
     )
     app.dependency_overrides[get_current_user_id] = lambda: "user2"
@@ -216,8 +217,8 @@ def test_delete_patient_other_user_returns_404(
         id="user2",
         email="user2@example.com",
         name="Test User 2",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
     )
     app.dependency_overrides[get_current_user_id] = lambda: "user2"
@@ -484,11 +485,11 @@ def test_delete_patient_cascades_to_sessions(
                 id=f"session-{i}",
                 user_id=mock_user_id,
                 patient_id=patient_id,
-                session_date="2026-01-15T10:00:00Z",
+                session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
                 session_number=i + 1,
                 status="finalized",
                 transcript=Transcript(format="txt", content="test"),
-                created_at="2026-01-15T10:00:00Z",
+                created_at=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
             )
         )
 
@@ -527,11 +528,11 @@ def test_delete_patient_cascade_does_not_affect_other_patients_sessions(
             id="session-p1",
             user_id=mock_user_id,
             patient_id=patient1_id,
-            session_date="2026-01-15T10:00:00Z",
+            session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
             session_number=1,
             status="finalized",
             transcript=Transcript(format="txt", content="test"),
-            created_at="2026-01-15T10:00:00Z",
+            created_at=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
         )
     )
     mock_session_repo.create(
@@ -539,11 +540,11 @@ def test_delete_patient_cascade_does_not_affect_other_patients_sessions(
             id="session-p2",
             user_id=mock_user_id,
             patient_id=patient2_id,
-            session_date="2026-01-15T10:00:00Z",
+            session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
             session_number=1,
             status="finalized",
             transcript=Transcript(format="txt", content="test"),
-            created_at="2026-01-15T10:00:00Z",
+            created_at=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
         )
     )
 

@@ -14,7 +14,7 @@ from ..models.enums import SessionSource
 from ..models.practice import CreatePracticeSessionRequest, PracticeTopic
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..settings import Settings
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 from .practice_session_manager import ConversationEntry
 
 logger = logging.getLogger(__name__)
@@ -128,11 +128,11 @@ class PracticeService:
             if existing.first_name == "Pablo":
                 existing.first_name = "Pablo Practice"
                 existing.first_name_lower = "pablo practice"
-                existing.updated_at = utc_now_iso()
+                existing.updated_at = utc_now()
                 return self._patient_repo.update(existing)
             return existing
 
-        now = utc_now_iso()
+        now = utc_now()
         patient = Patient(
             id=patient_id,
             user_id=user_id,
@@ -152,9 +152,10 @@ class PracticeService:
         """Count practice sessions created today (UTC)."""
         sessions = self._session_repo.list_by_patient(patient_id, user_id)
         today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        today_iso = today_start.isoformat().replace("+00:00", "Z")
         return sum(
-            1 for s in sessions if s.source == SessionSource.PRACTICE and s.created_at >= today_iso
+            1
+            for s in sessions
+            if s.source == SessionSource.PRACTICE and s.created_at >= today_start
         )
 
     def _has_active_session(self, user_id: str, patient_id: str) -> bool:
@@ -173,13 +174,15 @@ class PracticeService:
                 continue
 
             # Auto-cancel stale SCHEDULED sessions that never started
-            if s.status == SessionStatus.SCHEDULED and s.created_at:
-                created = datetime.fromisoformat(s.created_at.replace("Z", "+00:00"))
-                if (now - created).total_seconds() > stale_threshold_seconds:
-                    logger.info("Auto-cancelling stale practice session %s", s.id)
-                    s.status = SessionStatus.CANCELLED
-                    self._session_repo.update(s)
-                    continue
+            if (
+                s.status == SessionStatus.SCHEDULED
+                and s.created_at
+                and (now - s.created_at).total_seconds() > stale_threshold_seconds
+            ):
+                logger.info("Auto-cancelling stale practice session %s", s.id)
+                s.status = SessionStatus.CANCELLED
+                self._session_repo.update(s)
+                continue
 
             return True
         return False
@@ -204,7 +207,7 @@ class PracticeService:
         if self._has_active_session(user_id, patient.id):
             raise PracticeConcurrentLimitError
 
-        now = utc_now_iso()
+        now = utc_now()
         session_number = self._session_repo.get_session_number_for_patient(patient.id)
 
         session = TherapySession(
@@ -249,7 +252,7 @@ class PracticeService:
         if session.status != SessionStatus.SCHEDULED:
             raise PracticeSessionNotEndableError(session.status)
 
-        now = utc_now_iso()
+        now = utc_now()
         session.status = SessionStatus.IN_PROGRESS
         session.started_at = now
         session.updated_at = now
@@ -265,14 +268,12 @@ class PracticeService:
         if session.status not in endable:
             raise PracticeSessionNotEndableError(session.status)
 
-        now = utc_now_iso()
+        now = utc_now()
         session.status = SessionStatus.RECORDING_COMPLETE
         session.ended_at = now
         session.updated_at = now
 
         if session.started_at:
-            started = datetime.fromisoformat(session.started_at.replace("Z", "+00:00"))
-            ended = datetime.fromisoformat(now.replace("Z", "+00:00"))
-            session.duration_minutes = int((ended - started).total_seconds() // 60)
+            session.duration_minutes = int((now - session.started_at).total_seconds() // 60)
 
         return self._session_repo.update(session)

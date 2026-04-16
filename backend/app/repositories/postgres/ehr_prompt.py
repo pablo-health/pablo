@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from ...db.models import EhrPromptRow
 from ...models.ehr_prompt import EhrPrompt
-from ...utcnow import utc_now_iso
+from ...utcnow import utc_now
 from ..ehr_prompt import EhrPromptRepository
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class PostgresEhrPromptRepository(EhrPromptRepository):
         return _row_to_prompt(row)
 
     def upsert(self, prompt: EhrPrompt) -> EhrPrompt:
-        now = utc_now_iso()
+        now = utc_now()
         prompt.updated_at = now
         row = self._session.get(EhrPromptRow, prompt.ehr_system)
         if row is None:

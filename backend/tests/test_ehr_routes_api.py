@@ -2,6 +2,7 @@
 
 """Tests for EHR navigation route endpoints."""
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import patch
 
@@ -44,9 +45,9 @@ def _seed_simplepractice_route(mock_ehr_route_repo: InMemoryEhrRouteRepository) 
             ),
         ],
         success_count=847,
-        last_success="2026-03-23T17:00:00Z",
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-03-23T17:00:00Z",
+        last_success=datetime.fromisoformat("2026-03-23T17:00:00+00:00"),
+        created_at=datetime.fromisoformat("2026-01-01T00:00:00+00:00"),
+        updated_at=datetime.fromisoformat("2026-03-23T17:00:00+00:00"),
     )
     mock_ehr_route_repo.seed(route)
 

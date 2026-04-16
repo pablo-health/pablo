@@ -2,6 +2,7 @@
 
 """Tests for ExportService."""
 
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -21,9 +22,9 @@ def mock_patient():
         date_of_birth="1980-01-15",
         diagnosis="Generalized Anxiety Disorder",
         session_count=2,
-        last_session_date="2024-01-15",
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-15T00:00:00Z",
+        last_session_date=datetime.fromisoformat("2024-01-15T00:00:00+00:00"),
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        updated_at=datetime.fromisoformat("2024-01-15T00:00:00+00:00"),
     )
 
 
@@ -35,7 +36,7 @@ def mock_sessions():
             id="session-1",
             user_id="user-456",
             patient_id="patient-123",
-            session_date="2024-01-15",
+            session_date=datetime.fromisoformat("2024-01-15T00:00:00+00:00"),
             session_number=2,
             status="finalized",
             transcript=Transcript(format="txt", content="Patient discussed anxiety."),
@@ -49,16 +50,16 @@ def mock_sessions():
             ),
             soap_note_edited=None,
             quality_rating=4,
-            created_at="2024-01-15T10:00:00Z",
-            processing_started_at="2024-01-15T10:01:00Z",
-            processing_completed_at="2024-01-15T10:05:00Z",
-            finalized_at="2024-01-15T10:10:00Z",
+            created_at=datetime.fromisoformat("2024-01-15T10:00:00+00:00"),
+            processing_started_at=datetime.fromisoformat("2024-01-15T10:01:00+00:00"),
+            processing_completed_at=datetime.fromisoformat("2024-01-15T10:05:00+00:00"),
+            finalized_at=datetime.fromisoformat("2024-01-15T10:10:00+00:00"),
         ),
         TherapySession(
             id="session-2",
             user_id="user-456",
             patient_id="patient-123",
-            session_date="2024-01-08",
+            session_date=datetime.fromisoformat("2024-01-08T00:00:00+00:00"),
             session_number=1,
             status="finalized",
             transcript=Transcript(format="txt", content="Initial intake session."),
@@ -79,10 +80,10 @@ def mock_sessions():
                 }
             ),
             quality_rating=5,
-            created_at="2024-01-08T10:00:00Z",
-            processing_started_at="2024-01-08T10:01:00Z",
-            processing_completed_at="2024-01-08T10:05:00Z",
-            finalized_at="2024-01-08T10:10:00Z",
+            created_at=datetime.fromisoformat("2024-01-08T10:00:00+00:00"),
+            processing_started_at=datetime.fromisoformat("2024-01-08T10:01:00+00:00"),
+            processing_completed_at=datetime.fromisoformat("2024-01-08T10:05:00+00:00"),
+            finalized_at=datetime.fromisoformat("2024-01-08T10:10:00+00:00"),
         ),
     ]
 

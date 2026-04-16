@@ -92,7 +92,9 @@ export function CalendarView({
     scrollToHour(Math.round(currentHour) + SCROLL_STEP_HOURS)
   }, [scrollToHour])
 
-  const events = (data?.data ?? []).map((appt) => {
+  const appointments = data?.data ?? []
+
+  const events = appointments.map((appt) => {
     const colors = STATUS_COLORS[appt.status] ?? STATUS_COLORS.confirmed
     return {
       id: appt.id,
@@ -105,6 +107,10 @@ export function CalendarView({
       extendedProps: appt,
     }
   })
+
+  const unmatchedCount = appointments.filter(
+    (appt) => appt.patient_id === "" && appt.notes?.startsWith("ical_client:")
+  ).length
 
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
     setDateRange({
@@ -176,6 +182,15 @@ export function CalendarView({
       <div className="sr-only" aria-live="polite" role="status">
         {dateRangeText}
       </div>
+      {unmatchedCount > 0 && (
+        <div
+          className="rounded-lg px-4 py-2.5 mb-3 text-sm font-medium"
+          style={{ backgroundColor: "var(--color-primary-100)", color: "var(--color-primary-800)" }}
+          role="status"
+        >
+          {unmatchedCount} appointment{unmatchedCount === 1 ? "" : "s"} from your EHR need patient matching
+        </div>
+      )}
       <div className="relative">
         <div className="absolute right-2 top-14 z-10 flex flex-col gap-1">
           <button
@@ -208,8 +223,9 @@ export function CalendarView({
           headerToolbar={{
             left: "prev,next today",
             center: "title",
-            right: `${onCreateNew ? "newAppointment " : ""}timeGridWeek,timeGridDay`,
+            right: `${onCreateNew ? "newAppointment " : ""}dayGridMonth,timeGridWeek,timeGridDay`,
           }}
+          buttonText={{ month: "month", week: "week", day: "day" }}
           viewDidMount={handleViewMount}
           selectable
           editable

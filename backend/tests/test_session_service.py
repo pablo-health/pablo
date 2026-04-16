@@ -69,8 +69,8 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
         user_id=user_id,
         first_name="John",
         last_name="Doe",
-        created_at=datetime.now(UTC).isoformat(),
-        updated_at=datetime.now(UTC).isoformat(),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
         session_count=0,
         last_session_date=None,
     )
@@ -97,11 +97,11 @@ def _make_pending_session(
         id=str(uuid.uuid4()),
         user_id=user_id,
         patient_id=patient_id,
-        session_date="2026-01-15T10:00:00Z",
+        session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
         session_number=1,
         status=SessionStatus.PENDING_REVIEW,
         transcript=Transcript(format="txt", content="Test content"),
-        created_at=datetime.now(UTC).isoformat(),
+        created_at=datetime.now(UTC),
         soap_note=SOAPNote.from_dict(
             {
                 "subjective": "S",
@@ -125,11 +125,11 @@ def _make_finalized_session(
         id=str(uuid.uuid4()),
         user_id=user_id,
         patient_id=patient_id,
-        session_date="2026-01-15T10:00:00Z",
+        session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
         session_number=1,
         status=SessionStatus.FINALIZED,
         transcript=Transcript(format="txt", content="Test content"),
-        created_at=datetime.now(UTC).isoformat(),
+        created_at=datetime.now(UTC),
         soap_note=SOAPNote.from_dict(
             {
                 "subjective": "S",
@@ -139,7 +139,7 @@ def _make_finalized_session(
             }
         ),
         quality_rating=5,
-        finalized_at=datetime.now(UTC).isoformat(),
+        finalized_at=datetime.now(UTC),
     )
     session_repo.create(session)
     return session
@@ -154,7 +154,7 @@ class TestUploadSession:
     ) -> None:
         request = UploadSessionRequest(
             patient_id=patient.id,
-            session_date="2026-01-15T10:00:00Z",
+            session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
             transcript=TranscriptModel(format=TranscriptFormat.TXT, content="Test transcript"),
         )
 
@@ -165,7 +165,7 @@ class TestUploadSession:
         assert session.patient_id == patient.id
         assert session.user_id == user_id
         assert returned_patient.session_count == 1
-        assert returned_patient.last_session_date == "2026-01-15T10:00:00Z"
+        assert returned_patient.last_session_date == datetime(2026, 1, 15, 10, 0, tzinfo=UTC)
 
     def test_patient_not_found(
         self,
@@ -174,7 +174,7 @@ class TestUploadSession:
     ) -> None:
         request = UploadSessionRequest(
             patient_id="nonexistent-patient",
-            session_date="2026-01-15T10:00:00Z",
+            session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
             transcript=TranscriptModel(format=TranscriptFormat.TXT, content="Test transcript"),
         )
 
@@ -193,7 +193,7 @@ class TestUploadSession:
 
         request = UploadSessionRequest(
             patient_id=patient.id,
-            session_date="2026-01-15T10:00:00Z",
+            session_date=datetime.fromisoformat("2026-01-15T10:00:00+00:00"),
             transcript=TranscriptModel(format=TranscriptFormat.TXT, content="Test transcript"),
         )
 
@@ -214,7 +214,7 @@ class TestUploadSession:
     ) -> None:
         request = UploadSessionRequest(
             patient_id=patient.id,
-            session_date="2026-02-01T10:00:00Z",
+            session_date=datetime.fromisoformat("2026-02-01T10:00:00+00:00"),
             transcript=TranscriptModel(format=TranscriptFormat.TXT, content="Test"),
         )
 
@@ -223,7 +223,7 @@ class TestUploadSession:
         updated = patient_repo.get(patient.id, user_id)
         assert updated is not None
         assert updated.session_count == 1
-        assert updated.last_session_date == "2026-02-01T10:00:00Z"
+        assert updated.last_session_date == datetime(2026, 2, 1, 10, 0, tzinfo=UTC)
 
 
 class TestFinalizeSession:

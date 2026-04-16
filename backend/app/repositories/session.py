@@ -4,10 +4,7 @@
 
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from zoneinfo import ZoneInfo
-
-from google.cloud.firestore_v1.base_query import FieldFilter
 
 from ..models import TherapySession
 
@@ -56,15 +53,13 @@ class TherapySessionRepository(ABC):
         pass
 
 
-def _compute_day_boundaries(tz_name: str) -> tuple[str, str]:
-    """Compute ISO start/end of today in the given timezone, returned as UTC ISO strings."""
+def _compute_day_boundaries(tz_name: str) -> tuple[datetime, datetime]:
+    """Compute start/end of today in the given timezone, returned as UTC datetimes."""
     tz = ZoneInfo(tz_name)
     now_local = datetime.now(tz)
     start_of_day = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)
-    start_utc = start_of_day.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    end_utc = end_of_day.astimezone(UTC).isoformat().replace("+00:00", "Z")
-    return start_utc, end_utc
+    return start_of_day.astimezone(UTC), end_of_day.astimezone(UTC)
 
 
 class InMemoryTherapySessionRepository(TherapySessionRepository):
@@ -121,7 +116,7 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
             and s.scheduled_at is not None
             and start_utc <= s.scheduled_at < end_utc
         ]
-        sessions.sort(key=lambda s: s.scheduled_at or "")
+        sessions.sort(key=lambda s: s.scheduled_at or datetime.min.replace(tzinfo=UTC))
         return sessions
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
@@ -130,85 +125,3 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         if not patient_sessions:
             return 1
         return max(s.session_number for s in patient_sessions) + 1
-
-
-class FirestoreTherapySessionRepository(TherapySessionRepository):
-    """Firestore implementation of TherapySessionRepository."""
-
-    def __init__(self, db: Any) -> None:
-        """Initialize with Firestore client."""
-        self.db = db
-        self.collection = db.collection("therapy_sessions")
-
-    def get(self, session_id: str, user_id: str) -> TherapySession | None:
-        """Get session by ID, ensuring it belongs to the user."""
-        doc = self.collection.document(session_id).get()
-        if doc.exists:
-            session = TherapySession.from_dict(doc.to_dict())
-            # Ensure multi-tenant isolation
-            if session.user_id == user_id:
-                return session
-        return None
-
-    def list_by_patient(self, patient_id: str, user_id: str) -> list[TherapySession]:
-        """List all therapy sessions for a patient, ensuring user has access."""
-        query = (
-            self.collection.where(filter=FieldFilter("patient_id", "==", patient_id))
-            .where(filter=FieldFilter("user_id", "==", user_id))
-            .order_by("session_date", direction="DESCENDING")
-        )
-        return [TherapySession.from_dict(doc.to_dict()) for doc in query.stream()]
-
-    def list_by_user(
-        self, user_id: str, *, page: int = 1, page_size: int = 20
-    ) -> tuple[list[TherapySession], int]:
-        """List therapy sessions for a user with pagination."""
-        base_query = self.collection.where(filter=FieldFilter("user_id", "==", user_id))
-
-        # Server-side count via Firestore aggregation
-        count_result = base_query.count().get()
-        total = count_result[0][0].value if count_result and count_result[0] else 0
-
-        # Server-side pagination
-        offset = (page - 1) * page_size
-        paginated_query = (
-            base_query.order_by("session_date", direction="DESCENDING")
-            .offset(offset)
-            .limit(page_size)
-        )
-        sessions = [TherapySession.from_dict(doc.to_dict()) for doc in paginated_query.stream()]
-        return sessions, total
-
-    def create(self, session: TherapySession) -> TherapySession:
-        """Create a new therapy session."""
-        self.collection.document(session.id).set(session.to_dict())
-        return session
-
-    def update(self, session: TherapySession) -> TherapySession:
-        """Update an existing therapy session."""
-        self.collection.document(session.id).set(session.to_dict())
-        return session
-
-    def list_today_by_user(self, user_id: str, tz_name: str = "UTC") -> list[TherapySession]:
-        """List today's sessions for a user using Firestore range query."""
-        start_utc, end_utc = _compute_day_boundaries(tz_name)
-        query = (
-            self.collection.where(filter=FieldFilter("user_id", "==", user_id))
-            .where(filter=FieldFilter("scheduled_at", ">=", start_utc))
-            .where(filter=FieldFilter("scheduled_at", "<", end_utc))
-            .order_by("scheduled_at")
-        )
-        return [TherapySession.from_dict(doc.to_dict()) for doc in query.stream()]
-
-    def get_session_number_for_patient(self, patient_id: str) -> int:
-        """Get the next session number for a patient."""
-        query = (
-            self.collection.where(filter=FieldFilter("patient_id", "==", patient_id))
-            .order_by("session_number", direction="DESCENDING")
-            .limit(1)
-        )
-        docs = list(query.stream())
-        if not docs:
-            return 1
-        latest_session = TherapySession.from_dict(docs[0].to_dict())
-        return latest_session.session_number + 1

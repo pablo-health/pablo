@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
@@ -45,13 +46,13 @@ router = APIRouter(
 
 
 def _get_service(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> ICalSyncService:
     return ICalSyncService(
-        config_repo=_config_repo_factory(firestore_db=ctx.firestore_db),
-        appointment_repo=_appt_repo_factory(firestore_db=ctx.firestore_db),
-        patient_repo=_patient_repo_factory(firestore_db=ctx.firestore_db),
-        mapping_repo=_mapping_repo_factory(firestore_db=ctx.firestore_db),
+        config_repo=_config_repo_factory(),
+        appointment_repo=_appt_repo_factory(),
+        patient_repo=_patient_repo_factory(),
+        mapping_repo=_mapping_repo_factory(),
     )
 
 
@@ -93,7 +94,15 @@ def sync_ical_calendar(
             updated=r.updated,
             deleted=r.deleted,
             unchanged=r.unchanged,
-            unmatched_events=[UnmatchedEvent(**e) for e in r.unmatched_events],
+            unmatched_events=[
+                UnmatchedEvent(
+                    ical_uid=e["ical_uid"],
+                    client_identifier=e["client_identifier"],
+                    start_at=datetime.fromisoformat(e["start_at"]),
+                    ehr_appointment_url=e.get("ehr_appointment_url", ""),
+                )
+                for e in r.unmatched_events
+            ],
             errors=r.errors,
         )
         for r in results

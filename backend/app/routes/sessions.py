@@ -6,7 +6,6 @@ Session API routes.
 Thin HTTP handlers that delegate business logic to SessionService.
 """
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -63,28 +62,27 @@ from ..services.transcription_queue_service import (
     TranscriptionQueueService,
 )
 from ..settings import get_settings
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 
 logger = logging.getLogger(__name__)
 
 # Background transcription tasks — prevent garbage collection
-_background_tasks: set[asyncio.Task[None]] = set()
 
 router = APIRouter(tags=["sessions"])
 
 
 def get_patient_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
-    return _patient_repo_factory(firestore_db=ctx.firestore_db)
+    return _patient_repo_factory()
 
 
 def get_session_repository(
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
-    return _session_repo_factory(firestore_db=ctx.firestore_db)
+    return _session_repo_factory()
 
 
 def get_soap_generation_service() -> SOAPGenerationService:
@@ -97,8 +95,12 @@ def _build_eval_export_service() -> "EvalExportService | None":
     settings = get_settings()
     if not settings.is_saas:
         return None
-    from ..services.eval_export_service import EvalExportService
-    from ..services.pii_redaction_service import PIIRedactionService
+    try:
+        from ..services.eval_export_service import EvalExportService
+        from ..services.pii_redaction_service import PIIRedactionService
+    except ImportError:
+        logger.warning("presidio_analyzer not installed — eval export disabled")
+        return None
 
     return EvalExportService(PIIRedactionService(), settings)
 
@@ -573,7 +575,7 @@ async def upload_audio(
     therapist_audio: UploadFile,
     client_audio: UploadFile,
     _http_request: Request,
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
 ) -> dict[str, str]:
@@ -599,11 +601,19 @@ async def upload_audio(
             detail={"detail": "Session not found", "error_code": "NOT_FOUND"},
         )
 
-    if session.status != SessionStatus.RECORDING_COMPLETE:
+    _retryable_statuses = {
+        SessionStatus.RECORDING_COMPLETE,
+        SessionStatus.TRANSCRIBING,
+        SessionStatus.FAILED,
+    }
+    if session.status not in _retryable_statuses:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "detail": f"Session must be in 'recording_complete' status, got '{session.status}'",
+                "detail": (
+                    f"Session must be in 'recording_complete', 'transcribing', "
+                    f"or 'failed' status, got '{session.status}'"
+                ),
                 "error_code": "INVALID_STATUS",
             },
         )
@@ -627,24 +637,32 @@ async def upload_audio(
 
     # Transition to transcribing
     session.status = SessionStatus.TRANSCRIBING
-    session.updated_at = utc_now_iso()
+    session.updated_at = utc_now()
 
     if settings.transcription_provider == "assemblyai":
-        # AssemblyAI: upload directly to their API, no GCS needed
+        # AssemblyAI: upload + submit (fast), then enqueue Cloud Task for polling.
+        # This survives Cloud Run instance restarts — no more in-process polling.
+        aai_service = AssemblyAiTranscriptionService(settings)
+        job_metadata = await aai_service.submit_dual_channel(
+            therapist_audio=therapist_data,
+            client_audio=client_data,
+        )
+
+        # Store job metadata so the polling Cloud Task knows which jobs to check
+        session.transcription_job_metadata = {
+            "provider": "assemblyai",
+            "jobs": job_metadata,
+        }
         session_repo.update(session)
 
-        aai_service = AssemblyAiTranscriptionService(settings)
-        task = asyncio.create_task(
-            aai_service.transcribe_dual_channel(
-                therapist_audio=therapist_data,
-                client_audio=client_data,
-                session_id=session_id,
-                tenant_db=ctx.firestore_db,
-                user_id=user.id,
-            )
+        # Enqueue Cloud Task to poll for results (HIPAA: no schema_name in payload)
+        from ..services.cloud_tasks_service import enqueue_cloud_task
+
+        enqueue_cloud_task(
+            queue_name=settings.transcription_task_queue,
+            endpoint_path="/api/internal/transcription-poll",
+            payload={"session_id": session_id, "user_id": user.id},
         )
-        _background_tasks.add(task)
-        task.add_done_callback(_background_tasks.discard)
 
         return {
             "id": session.id,
@@ -671,7 +689,7 @@ async def upload_audio(
     is_practice = settings.pablo_edition == "practice"
     queue_service.enqueue_transcription(
         session_id=session_id,
-        tenant_db=ctx.firestore_db,
+        tenant_db="(default)",
         user_id=user.id,
         gcs_path=session.audio_gcs_path,
         priority=is_practice,

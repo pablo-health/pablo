@@ -14,7 +14,6 @@ import { getFirebaseAuth } from "@/lib/firebase"
  * Set by ConfigProvider on app initialization (client-side only)
  */
 let runtimeApiUrl = 'http://localhost:8000'
-let runtimeTenantId = ''
 
 /**
  * Set the API URL at runtime
@@ -22,15 +21,6 @@ let runtimeTenantId = ''
  */
 export function setApiUrl(url: string) {
   runtimeApiUrl = url
-}
-
-/**
- * Set the tenant ID header for server-side API calls.
- * Called by dashboard layout when tenant cookie is present.
- * This compensates for next-firebase-auth-edge stripping firebase.tenant from refreshed tokens.
- */
-export function setTenantHeader(tenantId: string) {
-  runtimeTenantId = tenantId
 }
 
 /**
@@ -106,11 +96,6 @@ export async function apiClient<T>(
 
   if (authToken) {
     headers["Authorization"] = `Bearer ${authToken}`
-  }
-
-  // Include tenant ID header for server-side calls where token may lack firebase.tenant
-  if (runtimeTenantId) {
-    headers["X-Tenant-ID"] = runtimeTenantId
   }
 
   try {

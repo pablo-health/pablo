@@ -1,9 +1,8 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Firebase authentication service with Identity Platform multi-tenancy support."""
+"""Firebase authentication service with practice-based access control."""
 
 import logging
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,9 +10,7 @@ from typing import Any
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
-from firebase_admin import tenant_mgt
 
-from ..database import get_admin_firestore_client
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -22,50 +19,45 @@ from ..repositories import (
     get_user_repository,
 )
 from ..settings import get_settings
-from ..utcnow import utc_now_iso
+from ..utcnow import utc_now
 from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
-TENANT_CACHE_TTL = 300  # 5 minutes
-
 
 @dataclass(frozen=True)
 class TenantContext:
-    """Authenticated user context with optional tenant information.
+    """Authenticated user context with practice information.
 
-    When multi-tenancy is enabled, tenant_id is extracted from the
-    firebase.tenant JWT claim and resolved to a Firestore database name.
+    For SaaS mode, the user's email is resolved to a practice via
+    the platform.email_tenant_mappings table. The practice_schema
+    determines which Postgres schema to query.
     """
 
     user_id: str
-    tenant_id: str | None = None
-    firestore_db: str = "(default)"
+    practice_id: str | None = None
+    practice_schema: str | None = None
 
 
-@dataclass
-class _TenantCacheEntry:
-    database_name: str
-    status: str
-    expires_at: float
+def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | None:
+    """Return middleware-cached decoded token if it matches the current JWT.
 
-    @property
-    def is_expired(self) -> bool:
-        return time.monotonic() > self.expires_at
-
-
-_tenant_cache: dict[str, _TenantCacheEntry] = {}
+    The DatabaseSessionMiddleware verifies the Firebase token during schema
+    resolution and caches the result on request.state. This avoids a second
+    round-trip to Firebase (revocation check + crypto) in the dependency chain.
+    """
+    if request is None:
+        return None
+    cached_raw = getattr(request.state, "verified_firebase_token_raw", None)
+    if cached_raw is not None and cached_raw == token:
+        return request.state.decoded_firebase_token  # type: ignore[no-any-return]
+    return None
 
 
 def verify_firebase_token(token: str) -> dict[str, Any]:
-    """
-    Verify a Firebase ID token.
-
-    For tenant-scoped tokens (Identity Platform), the revocation check must use
-    the tenant-aware auth client. Otherwise get_user() fails with UserNotFoundError
-    because tenant users don't exist in the parent project's user store.
+    """Verify a Firebase ID token (project-level, single-pass).
 
     Args:
         token: The Firebase ID token to verify
@@ -78,17 +70,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
     """
     initialize_firebase_app()
     try:
-        # First verify the JWT signature and claims (no revocation check yet)
-        decoded_token: dict[str, Any] = firebase_auth.verify_id_token(token, check_revoked=False)
-
-        # Now do the revocation/disabled check with the correct auth client
-        tenant_id = decoded_token.get("firebase", {}).get("tenant")
-        if tenant_id:
-            tenant_client = tenant_mgt.auth_for_tenant(tenant_id)
-            tenant_client.verify_id_token(token, check_revoked=True)
-        else:
-            firebase_auth.verify_id_token(token, check_revoked=True)
-
+        decoded_token: dict[str, Any] = firebase_auth.verify_id_token(token, check_revoked=True)
         return decoded_token
     except firebase_auth.ExpiredIdTokenError as err:
         raise HTTPException(
@@ -136,54 +118,12 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         ) from err
 
 
-def extract_tenant_id(decoded_token: dict[str, Any]) -> str | None:
-    """Extract the tenant ID from a decoded Firebase/Identity Platform token.
-
-    Identity Platform tokens include a `firebase.tenant` claim when the user
-    authenticated against a specific tenant. Returns None for non-tenant tokens
-    (single-tenant mode or admin users).
-    """
-    tenant: str | None = decoded_token.get("firebase", {}).get("tenant")
-    return tenant
-
-
-def resolve_tenant_database(tenant_id: str, admin_db: Any) -> str | None:
-    """Resolve a tenant ID to its Firestore database name.
-
-    Uses an in-memory cache with TTL to avoid hitting the admin DB on every request.
-    Returns None if the tenant doesn't exist or is disabled.
-    """
-    entry = _tenant_cache.get(tenant_id)
-    if entry and not entry.is_expired:
-        if entry.status != "active":
-            return None
-        return entry.database_name
-
-    doc = admin_db.collection("tenants").document(tenant_id).get()
-    if not doc.exists:
-        return None
-
-    data = doc.to_dict()
-    db_name: str = data["firestore_database"]
-    tenant_status: str = data.get("status", "active")
-
-    _tenant_cache[tenant_id] = _TenantCacheEntry(
-        database_name=db_name,
-        status=tenant_status,
-        expires_at=time.monotonic() + TENANT_CACHE_TTL,
-    )
-
-    if tenant_status != "active":
-        return None
-    return db_name
-
-
 def clear_tenant_cache() -> None:
-    """Clear the tenant→DB cache. Useful for testing."""
-    _tenant_cache.clear()
+    """No-op. Kept for backward compatibility with tests and admin routes."""
 
 
 def get_current_user_id(
+    request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> str:
     """
@@ -192,6 +132,7 @@ def get_current_user_id(
     This is a FastAPI dependency that can be injected into route handlers.
 
     Args:
+        request: The current HTTP request (for middleware token cache)
         auth_credentials: HTTP Bearer token credentials from the Authorization header
 
     Returns:
@@ -201,7 +142,9 @@ def get_current_user_id(
         HTTPException: If authentication fails
     """
     token = auth_credentials.credentials
-    decoded_token = verify_firebase_token(token)
+    decoded_token = _get_cached_token(request, token)
+    if decoded_token is None:
+        decoded_token = verify_firebase_token(token)
     user_id = decoded_token.get("uid")
 
     if not user_id:
@@ -220,6 +163,7 @@ def get_current_user_id(
 
 
 def require_mfa(
+    request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict[str, Any]:
     """
@@ -235,7 +179,9 @@ def require_mfa(
         HTTPException: 403 if MFA not used when required
     """
     token = auth_credentials.credentials
-    decoded_token = verify_firebase_token(token)
+    decoded_token = _get_cached_token(request, token)
+    if decoded_token is None:
+        decoded_token = verify_firebase_token(token)
 
     settings = get_settings()
     if not settings.require_mfa:
@@ -277,9 +223,9 @@ def get_tenant_context(
 ) -> TenantContext:
     """FastAPI dependency: resolve authenticated user to a TenantContext.
 
-    In single-tenant mode (multi_tenancy_enabled=False), returns a default context.
-    In multi-tenant mode, extracts the tenant from the JWT and resolves to a DB name.
-    Platform admins (no tenant claim + is_admin) get admin-only access.
+    In single-tenant mode, returns a default context.
+    In SaaS mode, resolves the user's email to a practice via Postgres.
+    Platform admins without a practice mapping get admin-only access.
     """
     user_id = decoded_token.get("uid")
     if not user_id:
@@ -298,45 +244,84 @@ def get_tenant_context(
     if not settings.multi_tenancy_enabled:
         return TenantContext(user_id=str(user_id))
 
-    tenant_id = extract_tenant_id(decoded_token)
-    if not tenant_id:
-        # No tenant claim — check if platform admin
-        user = user_repo.get(str(user_id))
-        if user and user.is_admin:
+    # Resolve practice from user's email
+    email = _extract_email(decoded_token)
+    if email:
+        practice = _resolve_practice_from_email(email)
+        if practice:
+            practice_id, schema_name = practice
+            # CRITICAL: Switch the DB session to this tenant's schema.
+            # Without this, all queries hit the default 'practice' schema,
+            # violating tenant isolation (HIPAA).
+            from ..db import get_db_session, set_tenant_schema
+
+            session = get_db_session()
+            set_tenant_schema(session, schema_name)
+
+            # RLS defense-in-depth: set the current user ID as a
+            # transaction-scoped session variable so PostgreSQL
+            # row-level security policies can enforce per-clinician
+            # isolation within the tenant schema.
+            # Uses set_config() instead of SET LOCAL because SET
+            # doesn't support bind parameters. The third arg (true)
+            # makes it transaction-local — auto-cleared on commit.
+            from sqlalchemy import text
+
+            session.execute(
+                text("SELECT set_config('app.current_user_id', :uid, true)"),
+                {"uid": str(user_id)},
+            )
             return TenantContext(
                 user_id=str(user_id),
-                firestore_db=settings.admin_database,
+                practice_id=practice_id,
+                practice_schema=schema_name,
             )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": "MISSING_TENANT",
-                    "message": "Tenant claim required",
-                    "details": {},
-                }
-            },
-        )
 
-    admin_db = get_admin_firestore_client()
-    db_name = resolve_tenant_database(tenant_id, admin_db)
-    if not db_name:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "error": {
-                    "code": "UNKNOWN_TENANT",
-                    "message": "Tenant not found",
-                    "details": {},
-                }
-            },
-        )
+    # No practice mapping — check if platform admin
+    user = user_repo.get(str(user_id))
+    if user and user.is_admin:
+        return TenantContext(user_id=str(user_id))
 
-    return TenantContext(
-        user_id=str(user_id),
-        tenant_id=tenant_id,
-        firestore_db=db_name,
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "error": {
+                "code": "NO_PRACTICE",
+                "message": "No practice associated with this account",
+                "details": {},
+            }
+        },
     )
+
+
+def _extract_email(decoded_token: dict[str, Any]) -> str:
+    """Extract email from a decoded Firebase token, with fallbacks."""
+    email = decoded_token.get("email", "")
+    if not email:
+        firebase_claims = decoded_token.get("firebase", {})
+        identities = firebase_claims.get("identities", {})
+        email_list = identities.get("email", [])
+        if email_list:
+            email = email_list[0]
+    return email.lower() if email else ""
+
+
+def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
+    """Look up practice_id and schema_name from the platform schema.
+
+    Returns (practice_id, schema_name) or None if not found.
+    """
+    from ..db import create_standalone_session
+    from ..db.platform_models import EmailTenantMappingRow, PracticeRow
+
+    with create_standalone_session() as db:
+        mapping = db.get(EmailTenantMappingRow, email)
+        if not mapping:
+            return None
+        practice = db.get(PracticeRow, mapping.practice_id)
+        if not practice or not practice.is_active:
+            return None
+        return (practice.id, practice.schema_name)
 
 
 def get_current_user_no_mfa(
@@ -345,28 +330,26 @@ def get_current_user_no_mfa(
     user_repo: UserRepository = Depends(get_user_repository),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> User:
-    """
-    Get current user with token verification but WITHOUT MFA enforcement.
+    """Get current user with token verification but WITHOUT MFA enforcement.
 
     Used by pre-MFA-enrollment endpoints (e.g., /api/users/me/status)
     so the dashboard layout can check if MFA enrollment is needed.
+
+    No tenant schema resolution needed — user_repo reads from platform.users.
     """
-    decoded_token = verify_firebase_token(auth_credentials.credentials)
-    tenant_id_header = request.headers.get("X-Tenant-ID")
-    return _resolve_user(decoded_token, user_repo, allowlist_repo, tenant_id_header)
+    token = auth_credentials.credentials
+    decoded_token = _get_cached_token(request, token)
+    if decoded_token is None:
+        decoded_token = verify_firebase_token(token)
+    return _resolve_user(decoded_token, user_repo, allowlist_repo)
 
 
 def _resolve_user(
     decoded_token: dict[str, Any],
     user_repo: UserRepository,
     allowlist_repo: AllowlistRepository,
-    tenant_id_header: str | None = None,
 ) -> User:
-    """
-    Resolve a user from a decoded token, auto-provisioning on first login.
-
-    Shared logic for get_current_user and get_current_user_no_mfa.
-    """
+    """Resolve a user from a decoded token, auto-provisioning on first login."""
     user_id = decoded_token.get("uid")
 
     if not user_id:
@@ -383,49 +366,13 @@ def _resolve_user(
 
     user = user_repo.get(str(user_id))
     if not user:
-        email = decoded_token.get("email", "")
+        email = _extract_email(decoded_token)
 
-        # Fallback: token may lack email claim after refresh by next-firebase-auth-edge.
-        # Try firebase.identities first, then look up from Firebase Auth directly.
-        if not email:
-            firebase_claims = decoded_token.get("firebase", {})
-            identities = firebase_claims.get("identities", {})
-            email_list = identities.get("email", [])
-            if email_list:
-                email = email_list[0]
-
+        # Fallback: look up email from Firebase Auth if token lacks it
         if not email:
             try:
-                token_tenant = decoded_token.get("firebase", {}).get("tenant")
-                if token_tenant and tenant_id_header and token_tenant != tenant_id_header:
-                    logger.warning(
-                        "Tenant mismatch rejected: JWT tenant=%s, header tenant=%s, uid=%s",
-                        token_tenant,
-                        tenant_id_header,
-                        user_id,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail={
-                            "error": {
-                                "code": "TENANT_MISMATCH",
-                                "message": "Token tenant does not match request tenant",
-                                "details": {},
-                            }
-                        },
-                    )
-                tenant_id = token_tenant or tenant_id_header
-                logger.info(
-                    "Email lookup: uid=%s, tenant_source=%s",
-                    user_id,
-                    "jwt" if token_tenant else ("header" if tenant_id_header else "none"),
-                )
-                if tenant_id:
-                    tenant_auth = tenant_mgt.auth_for_tenant(tenant_id)
-                    fb_user = tenant_auth.get_user(str(user_id))
-                else:
-                    fb_user = firebase_auth.get_user(str(user_id))
-                email = fb_user.email or ""
+                fb_user = firebase_auth.get_user(str(user_id))
+                email = (fb_user.email or "").lower()
                 logger.info("Resolved email from Firebase Auth: uid=%s", user_id)
             except Exception as exc:
                 logger.warning(
@@ -454,14 +401,13 @@ def _resolve_user(
             id=str(user_id),
             email=email,
             name=decoded_token.get("name", decoded_token.get("email", "User")),
-            created_at=utc_now_iso(),
+            created_at=utc_now(),
             picture=decoded_token.get("picture"),
             status="approved",
         )
         user_repo.update(user)
         logger.info("Auto-provisioned user %s", user.id)
 
-    # Check user status
     if user.status == "disabled":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -483,18 +429,13 @@ def get_current_user(
     user_repo: UserRepository = Depends(get_user_repository),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> User:
-    """
-    Get the current authenticated user, auto-provisioning on first login.
+    """Get the current authenticated user, auto-provisioning on first login.
 
     Depends on require_mfa to avoid double token verification.
     Checks client version, allowlist before provisioning, and user status after lookup.
-
-    Raises:
-        HTTPException: If authentication fails, client is outdated, or user is not allowed
     """
     check_client_version(request)
-    tenant_id_header = request.headers.get("X-Tenant-ID")
-    return _resolve_user(decoded_token, user_repo, allowlist_repo, tenant_id_header)
+    return _resolve_user(decoded_token, user_repo, allowlist_repo)
 
 
 def require_active_subscription(

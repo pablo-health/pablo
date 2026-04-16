@@ -9,20 +9,21 @@
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
 import { get, post, put } from "./client"
 
+
 interface UserProfile {
   id: string
   email: string
   name: string
   status: string
   mfa_enrolled_at: string | null
-  is_admin: boolean
+  is_platform_admin: boolean
   baa_accepted_at: string | null
 }
 
 interface UserStatus {
   status: string
   mfa_enrolled_at: string | null
-  is_admin: boolean
+  is_platform_admin: boolean
   name: string
   email: string
 }
@@ -141,6 +142,7 @@ export interface UserPreferences {
   working_hours_start: number
   working_hours_end: number
   calendar_default_view: string
+  timezone: string
 }
 
 export async function getPreferences(

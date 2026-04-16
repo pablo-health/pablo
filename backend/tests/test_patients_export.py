@@ -2,6 +2,7 @@
 
 """Tests for patient export API endpoint."""
 
+from datetime import datetime
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -26,8 +27,8 @@ def mock_user():
         id="user-456",
         email="test@example.com",
         name="Test User",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
     )
 
 
@@ -37,7 +38,7 @@ def client(mock_export_service, mock_user):
     app = FastAPI()
     app.include_router(router)
 
-    # Mock patient repo so export route's repo dependency doesn't hit Firestore
+    # Mock patient repo so export route's repo dependency doesn't hit the database
     mock_repo = Mock()
     mock_repo.get.return_value = Mock(id="patient-123", first_name="John", last_name="Doe")
 

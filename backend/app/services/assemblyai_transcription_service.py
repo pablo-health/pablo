@@ -13,7 +13,6 @@ This both reduces billable duration and ensures reliable recognition of
 synthetic voices and accented speech that long-silence files can confuse.
 """
 
-import asyncio
 import io
 import logging
 import struct
@@ -33,6 +32,48 @@ ASSEMBLYAI_API_BASE = "https://api.assemblyai.com/v2"
 _POLL_INTERVAL_SECONDS = 5
 _POLL_TIMEOUT_SECONDS = 1800  # 30 min
 _SAMPLE_WIDTH_16BIT = 2
+# Default PCM format from companion app (AudioCaptureKit)
+_DEFAULT_PCM_SAMPLE_RATE = 48000
+_DEFAULT_PCM_CHANNELS = 2
+
+
+def _ensure_wav(audio_data: bytes) -> bytes:
+    """Wrap raw PCM in a WAV header if needed.
+
+    The companion app sends raw 48kHz/16-bit/stereo PCM with no header.
+    AssemblyAI and the VAD both need a recognizable WAV container.
+    Stereo is downmixed to mono since each channel is a separate speaker.
+    """
+    # Already a WAV? Return as-is.
+    if audio_data[:4] == b"RIFF":
+        return audio_data
+
+    # Raw PCM → mono WAV
+    n_channels = _DEFAULT_PCM_CHANNELS
+    bytes_per_sample = _SAMPLE_WIDTH_16BIT
+    frame_size = n_channels * bytes_per_sample
+
+    # Trim to whole frames
+    n_frames = len(audio_data) // frame_size
+    trimmed = audio_data[: n_frames * frame_size]
+
+    # Downmix stereo to mono by averaging channels
+    samples = struct.unpack(f"<{n_frames * n_channels}h", trimmed)
+    mono = struct.pack(
+        f"<{n_frames}h",
+        *((samples[i] + samples[i + 1]) // 2 for i in range(0, len(samples), n_channels)),
+    )
+
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(bytes_per_sample)
+        wf.setframerate(_DEFAULT_PCM_SAMPLE_RATE)
+        wf.writeframes(mono)
+
+    duration = n_frames / _DEFAULT_PCM_SAMPLE_RATE
+    logger.info("Wrapped raw PCM as WAV: %.1fs, %d frames, stereo→mono", duration, n_frames)
+    return buf.getvalue()
 
 
 # --- VAD: split audio into speech regions ---
@@ -143,12 +184,16 @@ def _extract_speech_regions(
 class AssemblyAiTranscriptionService:
     """Batch transcription via AssemblyAI's async API.
 
-    Flow: VAD split → upload regions → transcribe each → offset timestamps → merge → callback.
+    Two-phase flow for Cloud Tasks resilience:
+    1. Submit: VAD split → upload regions → submit to AssemblyAI → return job metadata
+    2. Poll:   Check each transcript_id → merge when all complete → process result
+
+    The submit phase runs in the request context (fast, seconds).
+    The poll phase runs as a Cloud Task with automatic retries.
     """
 
     def __init__(self, settings: Settings) -> None:
         self._api_key = settings.assemblyai_api_key.get_secret_value()
-        self._backend_url = settings.transcription_backend_callback_url
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": self._api_key}
@@ -179,154 +224,106 @@ class AssemblyAiTranscriptionService:
         logger.info("Submitted AssemblyAI job: id=%s", data["id"])
         return data["id"]  # type: ignore[no-any-return]
 
-    async def _poll_until_complete(
-        self, client: httpx.AsyncClient, transcript_id: str
-    ) -> _JsonDict:
-        url = f"{ASSEMBLYAI_API_BASE}/transcript/{transcript_id}"
-        elapsed = 0.0
-        while elapsed < _POLL_TIMEOUT_SECONDS:
-            response = await client.get(url, headers=self._headers(), timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            if data["status"] == "completed":
-                return data  # type: ignore[no-any-return]
-            if data["status"] == "error":
-                raise RuntimeError(f"AssemblyAI failed: {data.get('error', 'unknown')}")
-            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
-            elapsed += _POLL_INTERVAL_SECONDS
-        raise TimeoutError(f"AssemblyAI timed out after {_POLL_TIMEOUT_SECONDS}s")
-
-    async def _transcribe_region(
-        self,
-        client: httpx.AsyncClient,
-        region: _SpeechRegion,
-        speaker: str,
-    ) -> list[_JsonDict]:
-        """Transcribe a single speech region and offset timestamps to original positions."""
-        upload_url = await self._upload_audio(client, region.wav_data)
-        transcript_id = await self._submit_transcription(client, upload_url)
-        result = await self._poll_until_complete(client, transcript_id)
-
-        words = result.get("words", [])
-        if not words:
-            text = result.get("text", "").strip()
-            if text:
-                return [
-                    {
-                        "start": region.original_offset,
-                        "end": region.original_offset,
-                        "speaker": speaker,
-                        "text": text,
-                    }
-                ]
-            return []
-
-        return _words_to_utterances(
-            [
-                {
-                    "start": region.original_offset + w["start"] / 1000,
-                    "end": region.original_offset + w["end"] / 1000,
-                    "speaker": speaker,
-                    "text": w["text"],
-                }
-                for w in words
-            ],
-            speaker,
-        )
-
-    async def _transcribe_channel(
+    async def _submit_channel_regions(
         self, client: httpx.AsyncClient, audio_data: bytes, speaker: str
     ) -> list[_JsonDict]:
-        """Split channel into speech regions, transcribe each, combine results."""
-        regions = _extract_speech_regions(audio_data)
+        """VAD split + upload + submit for one channel. Returns job metadata per region."""
+        wav_data = _ensure_wav(audio_data)
+        regions = _extract_speech_regions(wav_data)
 
-        # Transcribe all regions concurrently
-        tasks = [self._transcribe_region(client, region, speaker) for region in regions]
-        results = await asyncio.gather(*tasks)
+        jobs: list[_JsonDict] = []
+        for region in regions:
+            upload_url = await self._upload_audio(client, region.wav_data)
+            transcript_id = await self._submit_transcription(client, upload_url)
+            jobs.append(
+                {
+                    "transcript_id": transcript_id,
+                    "speaker": speaker,
+                    "original_offset": region.original_offset,
+                }
+            )
 
-        all_utterances: list[_JsonDict] = []
-        for utterances in results:
-            all_utterances.extend(utterances)
+        logger.info("Channel %s: submitted %d regions to AssemblyAI", speaker, len(jobs))
+        return jobs
 
-        logger.info(
-            "Channel %s: %d regions → %d utterances", speaker, len(regions), len(all_utterances)
-        )
-        return all_utterances
-
-    async def transcribe_dual_channel(
+    async def submit_dual_channel(
         self,
         therapist_audio: bytes,
         client_audio: bytes,
-        session_id: str,
-        tenant_db: str,
-        user_id: str,
-    ) -> None:
-        """Transcribe both channels in parallel, merge, and callback to backend."""
-        try:
-            async with httpx.AsyncClient() as client:
-                therapist_task = self._transcribe_channel(client, therapist_audio, "Therapist")
-                client_task = self._transcribe_channel(client, client_audio, "Client")
-                therapist_segments, client_segments = await asyncio.gather(
-                    therapist_task, client_task
-                )
+    ) -> list[_JsonDict]:
+        """Upload and submit both channels. Returns job metadata for Cloud Task polling.
 
-            transcript = _merge_segments(therapist_segments, client_segments)
-            await self._callback_to_backend(session_id, tenant_db, user_id, transcript)
-            logger.info("AssemblyAI transcription complete: session=%s", session_id)
-
-        except Exception:
-            logger.exception("AssemblyAI transcription failed: session=%s", session_id)
-
-    async def transcribe_single_channel(
-        self,
-        audio_data: bytes,
-        session_id: str,
-        tenant_db: str,
-        user_id: str,
-    ) -> None:
-        """Transcribe a single audio file and callback to backend."""
-        try:
-            async with httpx.AsyncClient() as client:
-                segments = await self._transcribe_channel(client, audio_data, "Speaker")
-
-            transcript = _merge_segments(segments)
-            await self._callback_to_backend(session_id, tenant_db, user_id, transcript)
-            logger.info("AssemblyAI transcription complete: session=%s", session_id)
-
-        except Exception:
-            logger.exception("AssemblyAI transcription failed: session=%s", session_id)
-
-    async def _callback_to_backend(
-        self,
-        session_id: str,
-        tenant_db: str,
-        user_id: str,
-        transcript: str,
-    ) -> None:
-        url = f"{self._backend_url}/api/internal/transcription-complete"
-        headers: dict[str, str] = {}
-
-        # In production, use IAM identity token for service-to-service auth
-        try:
-            import google.auth.transport.requests
-            import google.oauth2.id_token
-
-            auth_req = google.auth.transport.requests.Request()
-            token = google.oauth2.id_token.fetch_id_token(auth_req, self._backend_url)
-            headers["Authorization"] = f"Bearer {token}"
-        except Exception:
-            logger.debug("Could not fetch ID token for callback (dev mode?)")
-
-        payload = {
-            "session_id": session_id,
-            "tenant_db": tenant_db,
-            "user_id": user_id,
-            "transcript_content": transcript,
-            "transcript_format": "vtt",
-        }
+        This is the fast phase — runs in the request context. Returns a list of
+        dicts with {transcript_id, speaker, original_offset} for each region.
+        """
         async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=payload, headers=headers, timeout=300)
-            response.raise_for_status()
+            therapist_jobs = await self._submit_channel_regions(
+                client, therapist_audio, "Therapist"
+            )
+            client_jobs = await self._submit_channel_regions(client, client_audio, "Client")
+
+        all_jobs = therapist_jobs + client_jobs
+        logger.info("Submitted %d AssemblyAI jobs for dual-channel transcription", len(all_jobs))
+        return all_jobs
+
+    @staticmethod
+    def check_job_status(api_key: str, transcript_id: str) -> tuple[str, _JsonDict | None]:
+        """Check the status of a single AssemblyAI transcript (synchronous).
+
+        Returns (status, result_data) where status is "completed", "error",
+        or "processing". result_data is the full response when completed.
+        """
+        import httpx as httpx_sync
+
+        url = f"{ASSEMBLYAI_API_BASE}/transcript/{transcript_id}"
+        response = httpx_sync.get(url, headers={"Authorization": api_key}, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if data["status"] == "completed":
+            return ("completed", data)
+        if data["status"] == "error":
+            return ("error", data)
+        return ("processing", None)
+
+    @staticmethod
+    def process_completed_jobs(jobs_with_results: list[tuple[_JsonDict, _JsonDict]]) -> str:
+        """Merge completed AssemblyAI results into a VTT-format transcript.
+
+        Args:
+            jobs_with_results: list of (job_metadata, assemblyai_result) tuples.
+        """
+        all_utterances: list[_JsonDict] = []
+        for job_meta, result in jobs_with_results:
+            speaker = job_meta["speaker"]
+            offset = job_meta["original_offset"]
+            words = result.get("words", [])
+            if not words:
+                text = result.get("text", "").strip()
+                if text:
+                    all_utterances.append(
+                        {
+                            "start": offset,
+                            "end": offset,
+                            "speaker": speaker,
+                            "text": text,
+                        }
+                    )
+                continue
+            all_utterances.extend(
+                _words_to_utterances(
+                    [
+                        {
+                            "start": offset + w["start"] / 1000,
+                            "end": offset + w["end"] / 1000,
+                            "speaker": speaker,
+                            "text": w["text"],
+                        }
+                        for w in words
+                    ],
+                    speaker,
+                )
+            )
+        return _merge_segments(all_utterances)
 
 
 # --- Utilities ---

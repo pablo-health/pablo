@@ -1,6 +1,6 @@
 [project]
 name = "pablo"
-version = "1.0.0"
+version = "0.9.0"
 description = "Therapy session management platform with AI-powered SOAP note generation"
 authors = [{name = "Kurt Niemi", email = "kurt@pablo.health"}]
 readme = "README.md"
@@ -22,7 +22,6 @@ pydantic-settings = "^2.13.1"
 python-dotenv = "^1.2.2"
 
 # Google Cloud (for GCP deployment)
-google-cloud-firestore = "^2.23.0"
 google-cloud-secret-manager = "^2.27.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
@@ -43,7 +42,9 @@ reportlab = "^4.4.10"
 # Meeting Transcription Pipeline
 meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcription.git"}
 
-# NLI Verification (source attribution confidence scoring)
+# NLI Verification — onnxruntime only; sentence-transformers (+ torch)
+# moved to optional nli group since verification is gated by
+# ENABLE_EMBEDDING_VERIFICATION env var.
 onnxruntime = ">=1.18.0"
 
 # iCal calendar feed parsing
@@ -52,13 +53,21 @@ icalendar = "^6.0.0"
 # Real-time audio (Practice Mode)
 httpx = ">=0.28.0"
 
-# PII Redaction
-faker = "^40.12.0"
+# Security: pin transitive dep floor (CVE fixes in 3.13.4)
+aiohttp = ">=3.13.4"
+
 email-validator = "^2.3.0"
-python-multipart = "^0.0.22"
+python-multipart = ">=0.0.26"
 google-cloud-storage = "^2.18.0"
 google-cloud-tasks = "^2.22.0"
 google-cloud-batch = "^0.21.0"
+
+
+[tool.poetry.group.pii]
+optional = true
+
+[tool.poetry.group.pii.dependencies]
+faker = "^40.12.0"
 
 
 
@@ -118,6 +127,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "backend/tests/**/*.py" = [
     "S101",     # Allow assert in tests
+    "S105",     # Allow hardcoded passwords (test fixtures with token-like attribute names)
     "ARG001",   # Allow unused function args (pytest fixtures)
     "ARG002",   # Allow unused method args (pytest fixtures)
     "PLR0913",  # Allow many arguments (pytest fixture injection)
@@ -128,9 +138,30 @@ ignore = [
     "ARG001",   # Allow unused function args (pytest fixtures)
     "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
 ]
+"backend/app/models/**/*.py" = [
+    "TC003",    # datetime import needed at runtime for Pydantic/dataclass field validation
+]
+"backend/app/db/models.py" = [
+    "TC003",    # datetime import needed at runtime for SQLAlchemy Mapped[] resolution
+]
+"backend/app/db/platform_models.py" = [
+    "TC003",    # datetime import needed at runtime for SQLAlchemy Mapped[] resolution
+]
+"backend/app/db/saas_models.py" = [
+    "TC003",    # datetime import needed at runtime for SQLAlchemy Mapped[] resolution
+]
+"backend/app/repositories/**/*.py" = [
+    "TC003",    # datetime import needed at runtime for dataclass field definitions
+]
+"backend/app/scheduling_engine/**/*.py" = [
+    "TC003",    # datetime import needed at runtime for dataclass field definitions
+]
 "backend/app/routes/**/*.py" = [
     "PLR0913",  # Allow many arguments (FastAPI Depends injection)
     "PLC0415",  # Lazy imports for conditional SaaS features and circular import avoidance
+]
+"backend/app/main.py" = [
+    "PLC0415",  # Lazy import of background_sync (conditional, behind calendar_auto_sync guard)
 ]
 "backend/app/auth/service.py" = [
     "PLC0415",  # Lazy import of subscription module (SaaS-only, behind is_saas guard)
@@ -163,7 +194,7 @@ ignore = [
 "security/**/*.py" = [
     "PLC0415",  # Allow lazy imports (MCP tool functions defer imports to avoid startup cost)
     "PLR0913",  # Allow many arguments (internal test orchestration functions)
-    "PLR0911",  # Allow many returns (Firestore value type converters)
+    "PLR0911",  # Allow many returns (value type converters)
     "PLR2004",  # Allow magic values (HTTP status codes are self-documenting)
     "S603",     # Allow subprocess calls (gcloud CLI for rules drift check)
     "S607",     # Allow partial executable paths (gcloud)

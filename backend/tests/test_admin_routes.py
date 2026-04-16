@@ -2,6 +2,7 @@
 
 """Tests for Admin API endpoints."""
 
+from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,10 +21,10 @@ def admin_user() -> User:
         id="admin-user-123",
         email="admin@example.com",
         name="Admin User",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
-        is_admin=True,
+        is_platform_admin=True,
     )
 
 
@@ -34,24 +35,24 @@ def non_admin_user() -> User:
         id="user-123",
         email="user@example.com",
         name="Regular User",
-        created_at="2024-01-01T00:00:00Z",
-        baa_accepted_at="2024-01-01T00:00:00Z",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         baa_version="2024-01-01",
-        is_admin=False,
+        is_platform_admin=False,
     )
 
 
 @pytest.fixture
 def mock_audit_service() -> AuditService:
-    """Create a mock audit service that doesn't write to Firestore."""
+    """Create a mock audit service for testing."""
     mock_db = MagicMock()
     mock_db.collection.return_value.document.return_value.set = MagicMock()
     return AuditService(mock_db)
 
 
 @pytest.fixture
-def mock_firestore_session() -> dict[str, Any]:
-    """Create a mock Firestore session document."""
+def mock_session_data() -> dict[str, Any]:
+    """Create a mock session document."""
     return {
         "id": "session-123",
         "user_id": "user-123",

@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 from app.services.auth_code_store import InMemoryAuthCodeStore
 
-FAKE_TOKEN = "test-token-value"  # noqa: S105
+FAKE_TOKEN = "test-token-value"
 FAKE_REFRESH = "test-refresh-value"
 FAKE_URI = "pablohealth://cb"
 

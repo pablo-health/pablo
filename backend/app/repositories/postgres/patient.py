@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 from ...db.models import PatientRow, TherapySessionRow
 from ...models import Patient
-from ...utcnow import utc_now_iso
+from ...utcnow import utc_now
 from ..patient import PatientRepository
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ class PostgresPatientRepository(PatientRepository):
         return patient
 
     def update(self, patient: Patient) -> Patient:
-        patient.updated_at = utc_now_iso()
+        patient.updated_at = utc_now()
         patient.first_name_lower = patient.first_name.lower()
         patient.last_name_lower = patient.last_name.lower()
         row = self._session.get(PatientRow, patient.id)

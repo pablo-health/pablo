@@ -9,7 +9,7 @@ import { mockUser } from "@/lib/mockData"
 import { getBAAStatus, getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
-import { setTenantHeader } from "@/lib/api/client"
+import { IdleTimeout } from "@/components/IdleTimeout"
 
 export const dynamic = "force-dynamic"
 
@@ -36,13 +36,6 @@ export default async function DashboardLayout({
     const { decodedToken } = tokens
     token = tokens.token
 
-    // Pass tenant ID to backend API calls (token may lack firebase.tenant after refresh)
-    const cookieStore = await cookies()
-    const tenantCookie = cookieStore.get("X-Tenant-ID")
-    if (tenantCookie?.value) {
-      setTenantHeader(tenantCookie.value)
-    }
-
     // Check user status and MFA enrollment
     // Uses /api/users/me/status which does NOT require MFA (pre-enrollment check)
     // SECURITY: Fail-closed — any error blocks access
@@ -56,7 +49,7 @@ export default async function DashboardLayout({
         email: userStatus.email || decodedToken.email,
         image: decodedToken.picture,
       }
-      isAdmin = userStatus.is_admin
+      isAdmin = userStatus.is_platform_admin
 
       // Disabled users cannot access the platform
       if (userStatus.status === "disabled") {
@@ -103,6 +96,7 @@ export default async function DashboardLayout({
           <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
         </main>
       </div>
+      <IdleTimeout />
     </div>
   )
 }

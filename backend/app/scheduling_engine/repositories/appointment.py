@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -22,10 +23,10 @@ class AppointmentRepository(ABC):
     def list_by_range(
         self,
         user_id: str,
-        start: str,
-        end: str,
+        start: str | datetime,
+        end: str | datetime,
     ) -> list[Appointment]:
-        """List appointments for a user within a date range (ISO 8601 strings)."""
+        """List appointments for a user within a date range."""
 
     @abstractmethod
     def list_by_patient(
@@ -40,7 +41,7 @@ class AppointmentRepository(ABC):
         self,
         user_id: str,
         recurring_appointment_id: str,
-        after: str | None = None,
+        after: str | datetime | None = None,
     ) -> list[Appointment]:
         """List all occurrences of a recurring series, optionally after a date."""
 
@@ -84,14 +85,22 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     def list_by_range(
         self,
         user_id: str,
-        start: str,
-        end: str,
+        start: str | datetime,
+        end: str | datetime,
     ) -> list[Appointment]:
+        start_dt = (
+            start
+            if isinstance(start, datetime)
+            else datetime.fromisoformat(start.replace("Z", "+00:00"))
+        )
+        end_dt = (
+            end if isinstance(end, datetime) else datetime.fromisoformat(end.replace("Z", "+00:00"))
+        )
         return sorted(
             [
                 a
                 for a in self._appointments.values()
-                if a.user_id == user_id and a.start_at >= start and a.start_at < end
+                if a.user_id == user_id and a.start_at >= start_dt and a.start_at < end_dt
             ],
             key=lambda a: a.start_at,
         )
@@ -114,7 +123,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         self,
         user_id: str,
         recurring_appointment_id: str,
-        after: str | None = None,
+        after: str | datetime | None = None,
     ) -> list[Appointment]:
         results = [
             a
@@ -122,7 +131,12 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             if a.user_id == user_id and a.recurring_appointment_id == recurring_appointment_id
         ]
         if after:
-            results = [a for a in results if a.start_at >= after]
+            after_dt = (
+                after
+                if isinstance(after, datetime)
+                else datetime.fromisoformat(after.replace("Z", "+00:00"))
+            )
+            results = [a for a in results if a.start_at >= after_dt]
         return sorted(results, key=lambda a: a.start_at)
 
     def list_by_ical_source(
