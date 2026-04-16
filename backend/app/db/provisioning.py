@@ -73,6 +73,7 @@ def ensure_schemas(engine: Engine) -> None:
                     id="default",
                     name="Default Practice",
                     schema_name=DEFAULT_PRACTICE_SCHEMA,
+                    owner_email="",
                     owner_user_id="",
                     product="pablo",
                     created_at=_now(),
