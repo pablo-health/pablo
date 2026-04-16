@@ -14,9 +14,9 @@ export async function GET() {
     enableLocalAuth: IS_PRODUCTION ? false : process.env.ENABLE_LOCAL_AUTH === 'true',
     pabloEdition: process.env.PABLO_EDITION || 'core',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
-    firebaseApiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '',
-    firebaseAuthDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '',
-    firebaseAppId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '',
+    firebaseApiKey: process.env.FIREBASE_API_KEY || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || '',
+    firebaseAuthDomain: process.env.FIREBASE_AUTH_DOMAIN || process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || '',
+    firebaseAppId: process.env.FIREBASE_APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '',
     ratingFeedbackRequiredBelow: parseInt(process.env.RATING_FEEDBACK_REQUIRED_BELOW || '5', 10),
     showVerificationBadges: process.env.SHOW_VERIFICATION_BADGES === 'true',
   })
