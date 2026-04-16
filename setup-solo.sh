@@ -965,14 +965,14 @@ fi
 gcloud auth configure-docker "${REPO_LOCATION}-docker.pkg.dev" --quiet
 
 echo -e "${YELLOW}Mirroring backend image...${NC}"
-docker pull "$SOURCE_BACKEND"
+docker pull --platform linux/amd64 "$SOURCE_BACKEND"
 docker tag "$SOURCE_BACKEND" "$DEST_BACKEND"
 docker push "$DEST_BACKEND"
 echo -e "${GREEN}Backend image mirrored${NC}"
 
 echo ""
 echo -e "${YELLOW}Mirroring frontend image...${NC}"
-docker pull "$SOURCE_FRONTEND"
+docker pull --platform linux/amd64 "$SOURCE_FRONTEND"
 docker tag "$SOURCE_FRONTEND" "$DEST_FRONTEND"
 docker push "$DEST_FRONTEND"
 echo -e "${GREEN}Frontend image mirrored${NC}"
