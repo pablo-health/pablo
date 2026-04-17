@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 if TYPE_CHECKING:
     from ..services.eval_export_service import EvalExportService  # type: ignore[import-not-found]
 
+from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import (
     AuditAction,
@@ -132,27 +133,8 @@ def upload_session(
     """
     try:
         session, patient = session_service.upload_session(patient_id, user.id, request)
-    except PatientNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Patient not found",
-                    "details": {"patient_id": patient_id},
-                }
-            },
-        ) from None
-    except SOAPGenerationFailedError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": {
-                    "code": "SOAP_GENERATION_FAILED",
-                    "message": "Failed to generate SOAP note. Please try again.",
-                }
-            },
-        ) from None
+    except PatientNotFoundError as e:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id}) from e
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
@@ -211,9 +193,8 @@ def get_today_sessions(
     try:
         sessions = session_repo.list_today_by_user(user.id, timezone)
     except KeyError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"detail": f"Invalid timezone: {timezone}", "field": "timezone"},
+        raise BadRequestError(
+            f"Invalid timezone: {timezone}", {"field": "timezone"}
         ) from None
 
     # Batch-fetch patients to avoid N+1
@@ -272,16 +253,7 @@ def get_session(
     session = session_repo.get(session_id, user.id)
 
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Session not found",
-                    "details": {"session_id": session_id},
-                }
-            },
-        )
+        raise NotFoundError("Session not found", {"session_id": session_id})
 
     patient = patient_repo.get(session.patient_id, user.id)
     patient_name = patient.display_name if patient else "Unknown"
@@ -313,28 +285,14 @@ def finalize_session(
     """
     try:
         session, patient = session_service.finalize_session(session_id, user.id, request)
-    except SessionNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Session not found",
-                    "details": {"session_id": session_id},
-                }
-            },
-        ) from None
+    except SessionNotFoundError as e:
+        raise NotFoundError("Session not found", {"session_id": session_id}) from e
     except InvalidSessionStatusError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "INVALID_STATUS",
-                    "message": f"Cannot finalize session with status '{e.current_status}'",
-                    "details": {"current_status": e.current_status},
-                }
-            },
-        ) from None
+        raise BadRequestError(
+            f"Cannot finalize session with status '{e.current_status}'",
+            {"current_status": e.current_status},
+            code="INVALID_STATUS",
+        ) from e
 
     patient_name = patient.display_name if patient else "Unknown"
 
@@ -371,28 +329,14 @@ def update_session_rating(
     """
     try:
         session, patient, old_rating = session_service.update_rating(session_id, user.id, request)
-    except SessionNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Session not found",
-                    "details": {"session_id": session_id},
-                }
-            },
-        ) from None
-    except InvalidSessionStatusError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "INVALID_STATUS",
-                    "message": "Can only update rating for finalized sessions",
-                    "details": {"current_status": "not_finalized"},
-                }
-            },
-        ) from None
+    except SessionNotFoundError as e:
+        raise NotFoundError("Session not found", {"session_id": session_id}) from e
+    except InvalidSessionStatusError as e:
+        raise BadRequestError(
+            "Can only update rating for finalized sessions",
+            {"current_status": "not_finalized"},
+            code="INVALID_STATUS",
+        ) from e
 
     patient_name = patient.display_name if patient else "Unknown"
 
@@ -422,11 +366,8 @@ def schedule_session(
     """Create a scheduled session (pre-recording)."""
     try:
         session, patient = session_service.schedule_session(user.id, request)
-    except PatientNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"detail": "Patient not found", "error_code": "PATIENT_NOT_FOUND"},
-        ) from None
+    except PatientNotFoundError as e:
+        raise NotFoundError("Patient not found", code="PATIENT_NOT_FOUND") from e
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
@@ -445,27 +386,17 @@ def update_session_status(
     """Transition session status with state machine validation."""
     try:
         session, patient = session_service.transition_status(session_id, user.id, request)
-    except SessionNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"detail": "Session not found", "error_code": "NOT_FOUND"},
-        ) from None
+    except SessionNotFoundError as e:
+        raise NotFoundError("Session not found") from e
     except SessionAlreadyInStatusError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "detail": f"Session is already in status '{e.status}'",
-                "error_code": "ALREADY_IN_STATUS",
-            },
-        ) from None
+        raise ConflictError(
+            f"Session is already in status '{e.status}'", code="ALREADY_IN_STATUS"
+        ) from e
     except InvalidStatusTransitionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "detail": f"Cannot transition from '{e.current}' to '{e.target}'",
-                "error_code": "INVALID_STATUS_TRANSITION",
-            },
-        ) from None
+        raise BadRequestError(
+            f"Cannot transition from '{e.current}' to '{e.target}'",
+            code="INVALID_STATUS_TRANSITION",
+        ) from e
 
     patient_name = patient.display_name if patient else "Unknown"
 
@@ -493,19 +424,13 @@ def update_session_metadata(
     """Update session metadata (reschedule, change video link, etc.)."""
     try:
         session, patient = session_service.update_session_metadata(session_id, user.id, request)
-    except SessionNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"detail": "Session not found", "error_code": "NOT_FOUND"},
-        ) from None
+    except SessionNotFoundError as e:
+        raise NotFoundError("Session not found") from e
     except SessionInTerminalStatusError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "detail": f"Cannot modify session in terminal status '{e.status}'",
-                "error_code": "TERMINAL_STATUS",
-            },
-        ) from None
+        raise BadRequestError(
+            f"Cannot modify session in terminal status '{e.status}'",
+            code="TERMINAL_STATUS",
+        ) from e
 
     patient_name = patient.display_name if patient else "Unknown"
     return SessionResponse.from_session(session, patient_name)
@@ -523,28 +448,17 @@ def upload_transcript_to_session(
     """Upload a transcript to an existing session and trigger SOAP pipeline."""
     try:
         session = session_service.upload_transcript_to_session(session_id, user.id, request)
-    except SessionNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"detail": "Session not found", "error_code": "NOT_FOUND"},
-        ) from None
+    except SessionNotFoundError as e:
+        raise NotFoundError("Session not found") from e
     except InvalidSessionStatusError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "detail": f"Session must be in 'recording_complete' status, "
-                f"got '{e.current_status}'",
-                "error_code": "INVALID_STATUS",
-            },
-        ) from None
-    except SOAPGenerationFailedError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "detail": "SOAP generation failed. Please try again.",
-                "error_code": "SOAP_GENERATION_FAILED",
-            },
-        ) from None
+        raise BadRequestError(
+            f"Session must be in 'recording_complete' status, got '{e.current_status}'",
+            code="INVALID_STATUS",
+        ) from e
+    except SOAPGenerationFailedError as e:
+        raise ServerError(
+            "SOAP generation failed. Please try again.", code="SOAP_GENERATION_FAILED"
+        ) from e
 
     return {
         "id": session.id,
@@ -596,10 +510,7 @@ async def upload_audio(
 
     session = session_repo.get(session_id, user.id)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"detail": "Session not found", "error_code": "NOT_FOUND"},
-        )
+        raise NotFoundError("Session not found")
 
     _retryable_statuses = {
         SessionStatus.RECORDING_COMPLETE,
@@ -607,15 +518,10 @@ async def upload_audio(
         SessionStatus.FAILED,
     }
     if session.status not in _retryable_statuses:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "detail": (
-                    f"Session must be in 'recording_complete', 'transcribing', "
-                    f"or 'failed' status, got '{session.status}'"
-                ),
-                "error_code": "INVALID_STATUS",
-            },
+        raise BadRequestError(
+            f"Session must be in 'recording_complete', 'transcribing', "
+            f"or 'failed' status, got '{session.status}'",
+            code="INVALID_STATUS",
         )
 
     for label, f in [("therapist_audio", therapist_audio), ("client_audio", client_audio)]:

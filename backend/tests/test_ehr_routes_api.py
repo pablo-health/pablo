@@ -146,7 +146,7 @@ def test_get_ehr_route_not_found(client: Any) -> None:
     response = client.get("/api/ehr-routes/simplepractice")
 
     assert response.status_code == 404
-    assert "No route found" in response.json()["detail"]
+    assert "No route found" in response.json()["error"]["message"]
 
 
 def test_get_ehr_route_invalid_system(client: Any) -> None:
@@ -181,7 +181,7 @@ def test_update_step_index_out_of_range(
     )
 
     assert response.status_code == 422
-    assert "out of range" in response.json()["detail"]
+    assert "out of range" in response.json()["error"]["message"]
 
 
 def test_ehr_navigate_rate_limit_exceeded(client: Any) -> None:

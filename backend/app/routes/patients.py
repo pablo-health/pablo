@@ -11,9 +11,10 @@ import uuid
 from enum import StrEnum
 from typing import cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import JSONResponse, Response
 
+from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import (
     AuditAction,
@@ -173,16 +174,7 @@ def get_patient(
     patient = repo.get(patient_id, user.id)
 
     if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Patient not found",
-                    "details": {"patient_id": patient_id},
-                }
-            },
-        )
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, patient)
     return PatientResponse.from_patient(patient)
@@ -214,16 +206,7 @@ def update_patient(
     patient = repo.get(patient_id, user.id)
 
     if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Patient not found",
-                    "details": {"patient_id": patient_id},
-                }
-            },
-        )
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     # Track changes for audit log
     changes: dict[str, dict[str, str | None]] = {}
@@ -276,16 +259,7 @@ def delete_patient(
     patient = repo.get(patient_id, user.id)
 
     if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Patient not found",
-                    "details": {"patient_id": patient_id},
-                }
-            },
-        )
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     # Log before deletion (patient won't exist after)
     audit.log_patient_action(AuditAction.PATIENT_DELETED, user, request, patient)
@@ -294,16 +268,7 @@ def delete_patient(
     deleted = repo.delete(patient_id, user.id)
 
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "Failed to delete patient",
-                    "details": {},
-                }
-            },
-        )
+        raise ServerError("Failed to delete patient")
 
     session_word = "session" if session_count == 1 else "sessions"
     return DeletePatientResponse(
@@ -332,30 +297,16 @@ def export_patient_data(
     # Get patient for audit log
     patient = repo.get(patient_id, user.id)
     if not patient:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": "Patient not found",
-                    "details": {"patient_id": patient_id},
-                }
-            },
-        )
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     try:
         export_data = export_service.get_patient_export_data(patient_id, user.id, format)
     except ValueError as e:
         logger.error("Patient export failed: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "INVALID_REQUEST",
-                    "message": "Invalid export request. Check the format parameter.",
-                    "details": {"format": format},
-                }
-            },
+        raise BadRequestError(
+            "Invalid export request. Check the format parameter.",
+            {"format": format},
+            code="INVALID_REQUEST",
         ) from e
 
     audit.log_patient_action(

@@ -140,7 +140,7 @@ class TestNativeCodeExchange:
             json={"code": code, "redirect_uri": "http://localhost:9999/evil"},
         )
         assert resp.status_code == 400
-        assert "mismatch" in resp.json()["detail"]
+        assert "mismatch" in resp.json()["error"]["message"]
 
     def test_exchange_single_use(self, client: TestClient) -> None:
         create_resp = client.post(

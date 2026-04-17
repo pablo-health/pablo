@@ -5,9 +5,10 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 
+from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import require_admin
 from ..models import User
 from ..repositories import (
@@ -101,20 +102,10 @@ def disable_user(
     """Disable a user account."""
     target = user_repo.get(user_id)
     if not target:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": "NOT_FOUND", "message": "User not found", "details": {}}},
-        )
+        raise NotFoundError("User not found")
     if target.id == admin.id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "CANNOT_DISABLE_SELF",
-                    "message": "You cannot disable your own account",
-                    "details": {},
-                }
-            },
+        raise BadRequestError(
+            "You cannot disable your own account", code="CANNOT_DISABLE_SELF"
         )
     target.status = "disabled"
     user_repo.update(target)
@@ -131,10 +122,7 @@ def enable_user(
     """Re-enable a disabled user account."""
     target = user_repo.get(user_id)
     if not target:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": "NOT_FOUND", "message": "User not found", "details": {}}},
-        )
+        raise NotFoundError("User not found")
     target.status = "approved"
     user_repo.update(target)
     logger.info("Admin %s enabled user %s", admin.id, target.id)
@@ -182,11 +170,6 @@ def remove_from_allowlist(
 ) -> dict[str, str]:
     """Remove an email from the allowlist."""
     if not allowlist_repo.remove(email):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {"code": "NOT_FOUND", "message": "Email not in allowlist", "details": {}}
-            },
-        )
+        raise NotFoundError("Email not in allowlist")
     logger.info("Admin %s removed email from allowlist", admin.id)
     return {"message": "Email removed from allowlist", "email": email.lower()}

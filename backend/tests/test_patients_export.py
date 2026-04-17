@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, Mock
 
 import pytest
+from app.api_errors import register_exception_handlers
 from app.auth.service import require_baa_acceptance
 from app.models import User
 from app.routes.patients import get_export_service, get_patient_repository, router
@@ -36,6 +37,7 @@ def mock_user():
 def client(mock_export_service, mock_user):
     """Create a test client with mocked dependencies."""
     app = FastAPI()
+    register_exception_handlers(app)
     app.include_router(router)
 
     # Mock patient repo so export route's repo dependency doesn't hit the database
@@ -128,9 +130,9 @@ def test_export_patient_not_found(client, mock_export_service):
 
     assert response.status_code == 400
     data = response.json()
-    assert data["detail"]["error"]["code"] == "INVALID_REQUEST"
+    assert data["error"]["code"] == "INVALID_REQUEST"
     # Error message should be generic, not leaking internal details
-    assert "Invalid export request" in data["detail"]["error"]["message"]
+    assert "Invalid export request" in data["error"]["message"]
 
 
 def test_export_unsupported_format(client, mock_export_service):
@@ -143,9 +145,9 @@ def test_export_unsupported_format(client, mock_export_service):
 
     assert response.status_code == 400
     data = response.json()
-    assert data["detail"]["error"]["code"] == "INVALID_REQUEST"
+    assert data["error"]["code"] == "INVALID_REQUEST"
     # Error message should be generic, not leaking internal details
-    assert "Invalid export request" in data["detail"]["error"]["message"]
+    assert "Invalid export request" in data["error"]["message"]
 
 
 def test_export_multi_tenant_security(client, mock_export_service):

@@ -8,10 +8,11 @@ These endpoints do NOT require authentication — they run before the user has a
 import logging
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Request
 from firebase_admin import auth as firebase_auth
 from pydantic import BaseModel
 
+from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
 from ..auth.firebase_init import initialize_firebase_app
 from ..rate_limit import require_rate_limit
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
@@ -80,10 +81,7 @@ def create_native_code(
     check_client_version(http_request)
 
     if not _is_valid_native_redirect_uri(request.redirect_uri):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid redirect_uri.",
-        )
+        raise BadRequestError("Invalid redirect_uri.")
 
     # Verify the Firebase id_token before issuing a code.
     initialize_firebase_app()
@@ -92,25 +90,15 @@ def create_native_code(
     except Exception as err:
         logger.warning("Native code request with invalid id_token")
         logger.debug("id_token verification detail: %s", err)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired id_token.",
-        ) from err
+        raise UnauthorizedError("Invalid or expired id_token.") from err
 
     # Enforce MFA: reject tokens without a completed second factor
     settings = get_settings()
     if settings.require_mfa and not settings.is_development and settings.auth_mode != "iap":
         firebase_claims = decoded_token.get("firebase", {})
         if not firebase_claims.get("sign_in_second_factor"):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "error": {
-                        "code": "MFA_REQUIRED",
-                        "message": "Multi-factor authentication is required",
-                        "details": {},
-                    }
-                },
+            raise ForbiddenError(
+                "Multi-factor authentication is required", code="MFA_REQUIRED"
             )
 
     code = create_auth_code(
@@ -132,16 +120,10 @@ def exchange_native_code(
     """
     entry = exchange_auth_code(request.code)
     if entry is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired authorization code.",
-        )
+        raise BadRequestError("Invalid or expired authorization code.")
     # Validate redirect_uri matches what was bound at code creation
     if entry.redirect_uri != request.redirect_uri:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="redirect_uri mismatch.",
-        )
+        raise BadRequestError("redirect_uri mismatch.")
     return ExchangeAuthCodeResponse(
         id_token=entry.id_token,
         refresh_token=entry.refresh_token,

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .eval_export_service import EvalExportService  # type: ignore[import-not-found]
 
+from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError, ServerError
 from ..models import (
     FinalizeSessionRequest,
     Patient,
@@ -35,53 +36,76 @@ from .soap_generation_service import SOAPGenerationService
 logger = logging.getLogger(__name__)
 
 
-class SessionServiceError(Exception):
+class SessionServiceError(APIError):
     """Base exception for session service errors."""
 
 
-class PatientNotFoundError(SessionServiceError):
+class PatientNotFoundError(NotFoundError):
     """Raised when a patient is not found."""
 
 
-class SessionNotFoundError(SessionServiceError):
+class SessionNotFoundError(NotFoundError):
     """Raised when a session is not found."""
 
 
-class InvalidSessionStatusError(SessionServiceError):
+class InvalidSessionStatusError(BadRequestError):
     """Raised when a session is in the wrong status for an operation."""
+
+    code = "INVALID_SESSION_STATUS"
 
     def __init__(self, current_status: str, expected: str) -> None:
         self.current_status = current_status
-        super().__init__(f"Expected status '{expected}', got '{current_status}'")
+        super().__init__(
+            f"Expected status '{expected}', got '{current_status}'",
+            {"current_status": current_status, "expected": expected},
+        )
 
 
-class SOAPGenerationFailedError(SessionServiceError):
+class SOAPGenerationFailedError(ServerError):
     """Raised when SOAP generation fails."""
 
+    code = "SOAP_GENERATION_FAILED"
+    default_message = "Failed to generate SOAP note. Please try again."
 
-class InvalidStatusTransitionError(SessionServiceError):
+
+class InvalidStatusTransitionError(BadRequestError):
     """Raised when a session status transition is not allowed."""
+
+    code = "INVALID_STATUS_TRANSITION"
 
     def __init__(self, current: str, target: str) -> None:
         self.current = current
         self.target = target
-        super().__init__(f"Cannot transition from '{current}' to '{target}'")
+        super().__init__(
+            f"Cannot transition from '{current}' to '{target}'",
+            {"current": current, "target": target},
+        )
 
 
-class SessionAlreadyInStatusError(SessionServiceError):
+class SessionAlreadyInStatusError(ConflictError):
     """Raised when a session is already in the target status (409)."""
 
+    code = "SESSION_ALREADY_IN_STATUS"
+
     def __init__(self, status: str) -> None:
         self.status = status
-        super().__init__(f"Session is already in status '{status}'")
+        super().__init__(
+            f"Session is already in status '{status}'",
+            {"status": status},
+        )
 
 
-class SessionInTerminalStatusError(SessionServiceError):
+class SessionInTerminalStatusError(ConflictError):
     """Raised when trying to modify a session in a terminal status."""
 
+    code = "SESSION_IN_TERMINAL_STATUS"
+
     def __init__(self, status: str) -> None:
         self.status = status
-        super().__init__(f"Cannot modify session in terminal status '{status}'")
+        super().__init__(
+            f"Cannot modify session in terminal status '{status}'",
+            {"status": status},
+        )
 
 
 # Valid status transitions (state machine)
