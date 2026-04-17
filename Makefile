@@ -82,9 +82,7 @@ clean:
 	find . -type d -name .mypy_cache -exec rm -rf {} + 2>/dev/null || true
 	rm -rf htmlcov/ .coverage
 
-# ============================================================================
 # PostgreSQL Database Commands
-# ============================================================================
 
 # Start just the PostgreSQL container
 db-up:
@@ -128,9 +126,7 @@ db-dev-proxy:
 	@echo "Connect with: DATABASE_URL=postgresql://pablo:PASSWORD@localhost:5433/pablo"
 	cloud-sql-proxy pablohealth-dev:us-central1:pablo-dev --port 5433
 
-# ============================================================================
 # Docker Development Commands
-# ============================================================================
 
 # Start all Docker services
 docker-up:

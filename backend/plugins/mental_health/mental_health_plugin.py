@@ -29,9 +29,7 @@ class MentalHealthPlugin(BasePromptablePlugin):
         self.risk_assessment_required = True
         self.hipaa_compliant_mode = True
 
-    # ========================================================================
     # TranscriptPlugin Protocol Implementation
-    # ========================================================================
 
     @property
     def name(self) -> str:
@@ -92,9 +90,7 @@ class MentalHealthPlugin(BasePromptablePlugin):
         self.risk_assessment_required = settings.get("risk_assessment_required", True)
         self.hipaa_compliant_mode = settings.get("hipaa_compliant_mode", True)
 
-    # ========================================================================
     # BasePromptablePlugin Implementation (REQUIRED)
-    # ========================================================================
 
     def get_extraction_prompt(self, transcript_text: str, metadata: dict[str, Any]) -> str:
         """
@@ -423,9 +419,7 @@ from this therapy session transcript.
 
         return outputs
 
-    # ========================================================================
     # BasePromptablePlugin Optional Overrides
-    # ========================================================================
 
     def _format_transcript_for_prompt(self, chunked_data: dict[str, Any]) -> str:
         """Format transcript with [Sn] segment indices for source linking.

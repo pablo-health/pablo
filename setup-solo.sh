@@ -23,9 +23,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# ============================================================================
 # STEP 1: Check for billing accounts
-# ============================================================================
 echo -e "${BLUE}Step 1: Checking billing accounts...${NC}"
 echo ""
 
@@ -62,9 +60,7 @@ else
     echo -e "${GREEN}Using billing account: $BILLING_ACCOUNT${NC}"
 fi
 
-# ============================================================================
 # STEP 2: Create or select project
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 2: Project setup...${NC}"
 echo ""
@@ -143,9 +139,7 @@ echo ""
 echo "Setting active project to: $PROJECT_ID"
 gcloud config set project "$PROJECT_ID"
 
-# ============================================================================
 # STEP 3: Enable required APIs
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 3: Enabling required APIs...${NC}"
 echo ""
@@ -179,9 +173,7 @@ gcloud services enable \
 
 echo -e "${GREEN}APIs enabled${NC}"
 
-# ============================================================================
 # STEP 3b: Configure permissions
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 3b: Configuring permissions...${NC}"
 echo ""
@@ -332,9 +324,7 @@ if [ "$PERMISSIONS_GRANTED" -eq "1" ] || [ "$NEEDS_PROPAGATION_CHECK" -eq "1" ];
     echo ""
 fi
 
-# ============================================================================
 # STEP 4: Create Artifact Registry repository
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 4: Creating Artifact Registry repository...${NC}"
 echo ""
@@ -360,9 +350,7 @@ else
     echo -e "${GREEN}Artifact Registry repository already exists${NC}"
 fi
 
-# ============================================================================
 # STEP 5: Create Cloud SQL PostgreSQL database
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 5: Setting up Cloud SQL PostgreSQL database...${NC}"
 echo ""
@@ -562,9 +550,7 @@ echo -e "${YELLOW}Note: Enable Data Access audit logs in Cloud Console for full 
 echo "  See: docs/SELF_HOSTING_HIPAA_GUIDE.md"
 echo ""
 
-# ============================================================================
 # STEP 5b: Database schema note
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 5b: Database schema...${NC}"
 echo ""
@@ -573,9 +559,7 @@ echo "  The backend runs schema migrations (Alembic) during initialization."
 echo "  No manual schema setup required."
 echo ""
 
-# ============================================================================
 # STEP 6: Initialize Identity Platform (Firebase Auth with MFA)
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 6: Setting up Identity Platform (authentication with MFA)...${NC}"
 echo ""
@@ -862,9 +846,7 @@ AI_MODEL="google:gemini-3.1-pro-preview"
 GOOGLE_REGION="global"
 ANTHROPIC_SECRET=""
 
-# ============================================================================
 # STEP 7: Generate secrets
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 7: Generating secrets...${NC}"
 echo ""
@@ -893,9 +875,7 @@ ensure_secret AUTH_COOKIE_SIGNATURE_KEY
 echo ""
 echo -e "${GREEN}All secrets ready${NC}"
 
-# ============================================================================
 # STEP 7b: Set up Google OAuth credentials
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 7b: Setting up Google OAuth credentials...${NC}"
 echo ""
@@ -974,9 +954,7 @@ else
 fi
 echo -e "${GREEN}Google OAuth registered with Identity Platform${NC}"
 
-# ============================================================================
 # STEP 8: Mirror pre-built container images from ghcr.io
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 8: Mirroring container images from ghcr.io...${NC}"
 echo ""
@@ -1019,9 +997,7 @@ docker push "$DEST_FRONTEND"
 echo -e "${GREEN}Frontend image mirrored${NC}"
 echo ""
 
-# ============================================================================
 # STEP 9: Deploy to Cloud Run
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 9: Deploying to Cloud Run...${NC}"
 echo ""
@@ -1088,9 +1064,7 @@ gcloud run services update pablo-frontend \
 echo -e "${GREEN}Frontend deployed: ${FRONTEND_URL}${NC}"
 echo ""
 
-# ============================================================================
 # Add frontend domain to Identity Platform + update CORS
-# ============================================================================
 
 echo "Adding frontend domain to Identity Platform authorized domains..."
 FRONTEND_DOMAIN=$(echo "$FRONTEND_URL" | sed 's|https://||')
@@ -1183,9 +1157,7 @@ gcloud run services update pablo-backend \
 
 echo -e "${GREEN}CORS + OIDC verification configured${NC}"
 
-# ============================================================================
 # STEP 10: Create your user
-# ============================================================================
 echo ""
 echo -e "${BLUE}Step 10: Creating your user account...${NC}"
 echo ""
@@ -1308,9 +1280,7 @@ SQL
     echo ""
 fi
 
-# ============================================================================
 # SUCCESS
-# ============================================================================
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║                   DEPLOYMENT COMPLETE                        ║"

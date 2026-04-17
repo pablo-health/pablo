@@ -29,9 +29,7 @@ export function useAuthQuery<
   })
 }
 
-// ---------------------------------------------------------------------------
 // useAuthMutation
-// ---------------------------------------------------------------------------
 
 type InvalidateKeysFn<TVariables, TData> = (
   variables: TVariables,
