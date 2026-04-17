@@ -1375,6 +1375,23 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         echo "  Cloud Run Job pipeline-heartbeat already exists"
     fi
 
+    # On-demand HIPAA attestation document generator
+    if ! gcloud run jobs describe hipaa-attestation --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Deploying Cloud Run Job: hipaa-attestation"
+        gcloud run jobs create hipaa-attestation \
+            --project="$PROJECT_ID" \
+            --region="$REPO_LOCATION" \
+            --image="$BACKEND_IMAGE" \
+            --service-account="$BACKEND_SA" \
+            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},PABLO_VERSION=${PABLO_VERSION:-unknown}" \
+            --set-secrets="DATABASE_URL=pablo-database-url:latest" \
+            --command="python3.13" \
+            --args="-m,backend.app.jobs.hipaa_attestation" \
+            --max-retries=1 --task-timeout=5m >/dev/null
+    else
+        echo "  Cloud Run Job hipaa-attestation already exists"
+    fi
+
     # Pentest job (uses the pentest image which extends backend image)
     if ! gcloud run jobs describe pentest --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
         if gcloud artifacts docker images describe "$PENTEST_IMAGE" >/dev/null 2>&1; then
@@ -1440,6 +1457,18 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --schedule="0 9 * * 1" \
             --time-zone="$USER_TZ" \
             --uri="${JOB_RUN_URL_BASE}/pipeline-heartbeat:run" \
+            --http-method=POST \
+            --oauth-service-account-email="$SCHEDULER_SA" >/dev/null
+    fi
+
+    if ! gcloud scheduler jobs describe hipaa-attestation-quarterly --location="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Creating scheduler: hipaa-attestation-quarterly (1st of Jan/Apr/Jul/Oct 05:00 $USER_TZ)"
+        gcloud scheduler jobs create http hipaa-attestation-quarterly \
+            --project="$PROJECT_ID" \
+            --location="$REPO_LOCATION" \
+            --schedule="0 5 1 1,4,7,10 *" \
+            --time-zone="$USER_TZ" \
+            --uri="${JOB_RUN_URL_BASE}/hipaa-attestation:run" \
             --http-method=POST \
             --oauth-service-account-email="$SCHEDULER_SA" >/dev/null
     fi
