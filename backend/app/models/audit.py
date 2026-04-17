@@ -52,9 +52,31 @@ class ResourceType(StrEnum):
     EHR_ROUTE = "ehr_route"
 
 
-# Retention period for audit logs (HIPAA requires minimum 6 years, but
-# 180 days is sufficient for breach investigation in pilot phase)
-AUDIT_LOG_RETENTION_DAYS = 180
+# HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
+# typical state medical-record retention laws.
+AUDIT_LOG_RETENTION_DAYS = 2555
+
+
+# Field names whose *values* must never appear in audit_logs. The set is
+# consumed by tests and by AuditRepository.metadata_for_review() to assert
+# that the audit table (and any payload derived from it) stays PHI-free.
+PHI_FIELD_NAMES: frozenset[str] = frozenset(
+    {
+        "user_name",
+        "user_email",
+        "patient_name",
+        "first_name",
+        "last_name",
+        "email",
+        "phone",
+        "date_of_birth",
+        "dob",
+        "diagnosis",
+        "address",
+        "ssn",
+        "mrn",
+    }
+)
 
 
 @dataclass
@@ -62,8 +84,10 @@ class AuditLogEntry:
     """
     Audit log entry for HIPAA compliance tracking.
 
-    Denormalized design stores user/patient names at time of action
-    for standalone queryability without joins.
+    PHI-free by design. No denormalized names, emails, or free-text clinical
+    data. The `changes` field stores field-name diffs for UPDATE actions
+    (e.g. ``{"changed_fields": ["first_name", "diagnosis"]}``) — never the
+    old/new values themselves.
     """
 
     # Auto-generated fields
@@ -79,30 +103,28 @@ class AuditLogEntry:
 
     # Who performed the action
     user_id: str = ""
-    user_email: str = ""
-    user_name: str = ""
 
     # What action was performed
     action: str = ""  # AuditAction value
     resource_type: str = ""  # ResourceType value
     resource_id: str = ""
 
-    # Denormalized context for readability
+    # Opaque context IDs (non-PHI)
     patient_id: str | None = None
-    patient_name: str | None = None
     session_id: str | None = None
 
     # Request context
     ip_address: str | None = None
     user_agent: str | None = None
 
-    # For updates: what changed (optional)
+    # Non-PHI structured data only: field-name diffs, counts, enum transitions.
+    # Callers must never put PHI values here. AuditService enforces this via
+    # the PHI_FIELD_NAMES assertion.
     changes: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
         data = asdict(self)
-        # Remove None values for cleaner documents
         return {k: v for k, v in data.items() if v is not None}
 
     @classmethod
@@ -113,13 +135,10 @@ class AuditLogEntry:
             timestamp=data["timestamp"],
             expires_at=data["expires_at"],
             user_id=data["user_id"],
-            user_email=data["user_email"],
-            user_name=data["user_name"],
             action=data["action"],
             resource_type=data["resource_type"],
             resource_id=data["resource_id"],
             patient_id=data.get("patient_id"),
-            patient_name=data.get("patient_name"),
             session_id=data.get("session_id"),
             ip_address=data.get("ip_address"),
             user_agent=data.get("user_agent"),

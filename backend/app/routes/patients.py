@@ -208,35 +208,38 @@ def update_patient(
     if not patient:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
-    # Track changes for audit log
-    changes: dict[str, dict[str, str | None]] = {}
+    # Track which fields changed for audit (names only — values would be PHI).
+    changed_fields: list[str] = []
 
-    # Update only provided fields
     if request.first_name is not None:
-        changes["first_name"] = {"old": patient.first_name, "new": request.first_name}
+        changed_fields.append("first_name")
         patient.first_name = request.first_name
     if request.last_name is not None:
-        changes["last_name"] = {"old": patient.last_name, "new": request.last_name}
+        changed_fields.append("last_name")
         patient.last_name = request.last_name
     if request.email is not None:
-        changes["email"] = {"old": patient.email, "new": request.email}
+        changed_fields.append("email")
         patient.email = request.email
     if request.phone is not None:
-        changes["phone"] = {"old": patient.phone, "new": request.phone}
+        changed_fields.append("phone")
         patient.phone = request.phone
     if request.status is not None:
-        changes["status"] = {"old": patient.status, "new": request.status}
+        changed_fields.append("status")
         patient.status = request.status
     if request.date_of_birth is not None:
-        changes["date_of_birth"] = {"old": patient.date_of_birth, "new": request.date_of_birth}
+        changed_fields.append("date_of_birth")
         patient.date_of_birth = request.date_of_birth
     if request.diagnosis is not None:
-        changes["diagnosis"] = {"old": patient.diagnosis, "new": request.diagnosis}
+        changed_fields.append("diagnosis")
         patient.diagnosis = request.diagnosis
 
     patient = repo.update(patient)
     audit.log_patient_action(
-        AuditAction.PATIENT_UPDATED, user, http_request, patient, changes=changes
+        AuditAction.PATIENT_UPDATED,
+        user,
+        http_request,
+        patient,
+        changes={"changed_fields": changed_fields},
     )
     return PatientResponse.from_patient(patient)
 
