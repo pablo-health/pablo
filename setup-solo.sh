@@ -964,12 +964,15 @@ echo ""
 PABLO_VERSION="${PABLO_VERSION:-latest}"
 SOURCE_BACKEND="ghcr.io/pablo-health/backend:${PABLO_VERSION}"
 SOURCE_FRONTEND="ghcr.io/pablo-health/frontend:${PABLO_VERSION}"
+SOURCE_PENTEST="ghcr.io/pablo-health/pentest:${PABLO_VERSION}"
 DEST_BACKEND="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/backend:${PABLO_VERSION}"
 DEST_FRONTEND="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/frontend:${PABLO_VERSION}"
+DEST_PENTEST="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/pentest:${PABLO_VERSION}"
 
 echo "  Version:  ${PABLO_VERSION}"
 echo "  Backend:  ${SOURCE_BACKEND}"
 echo "  Frontend: ${SOURCE_FRONTEND}"
+echo "  Pentest:  ${SOURCE_PENTEST}"
 echo ""
 
 if ! command -v docker &>/dev/null; then
@@ -993,6 +996,19 @@ docker pull --platform linux/amd64 "$SOURCE_FRONTEND"
 docker tag "$SOURCE_FRONTEND" "$DEST_FRONTEND"
 docker push "$DEST_FRONTEND"
 echo -e "${GREEN}Frontend image mirrored${NC}"
+echo ""
+
+# Pentest image extends the backend image and powers the weekly pentest
+# Cloud Run Job in Step 11. Skip gracefully if the release didn't publish
+# one (e.g. pinned to a pre-pentest version) — Step 11 degrades cleanly.
+echo -e "${YELLOW}Mirroring pentest image...${NC}"
+if docker pull --platform linux/amd64 "$SOURCE_PENTEST" 2>/dev/null; then
+    docker tag "$SOURCE_PENTEST" "$DEST_PENTEST"
+    docker push "$DEST_PENTEST"
+    echo -e "${GREEN}Pentest image mirrored${NC}"
+else
+    echo -e "${YELLOW}Pentest image not published at ${PABLO_VERSION} — skipping (weekly pentest job will be skipped in Step 11)${NC}"
+fi
 echo ""
 
 # STEP 9: Deploy to Cloud Run
@@ -1114,21 +1130,34 @@ echo ""
 # backend/app/routes/ext_auth.py:_verify_blocking_function_token.
 echo "Updating backend CORS + OIDC verification config..."
 
-# Discover the Firebase blocking function runtime SA. Try the deployed
-# function first; fall back to the default Cloud Functions gen2 compute SA
-# (which is what blocking functions run as unless the operator overrode it).
+# Discover the Firebase blocking function runtime SA. One `functions list`
+# call (filtered by name) returns whatever blocking function is actually
+# deployed with its real SA — no casing guesses. Fall back to the default
+# Cloud Functions gen2 compute SA if none exists.
+#
+# Wrapped in a 10s watchdog: GCP API calls occasionally hang (not fail),
+# and macOS lacks `timeout(1)`, so we DIY it with a backgrounded child.
 BLOCKING_FN_SA=""
-for FN_NAME in beforecreate beforeCreate beforesignin beforeSignIn; do
-    SA=$(gcloud functions describe "$FN_NAME" \
-        --gen2 \
-        --region="$REPO_LOCATION" \
-        --format="value(serviceConfig.serviceAccountEmail)" 2>/dev/null || echo "")
-    if [ -n "$SA" ]; then
-        BLOCKING_FN_SA="$SA"
-        echo "  Blocking function SA (from deployed $FN_NAME): $BLOCKING_FN_SA"
-        break
-    fi
-done
+echo "  Looking up deployed blocking function (10s max)..."
+LIST_TMP=$(mktemp)
+gcloud functions list \
+    --gen2 \
+    --regions="$REPO_LOCATION" \
+    --filter="name~(beforeCreate|beforeSignIn|beforecreate|beforesignin)$" \
+    --format="value(serviceConfig.serviceAccountEmail)" \
+    --limit=1 >"$LIST_TMP" 2>/dev/null &
+GPID=$!
+( sleep 10; kill -TERM "$GPID" 2>/dev/null ) &
+WPID=$!
+wait "$GPID" 2>/dev/null || true
+kill "$WPID" 2>/dev/null || true
+wait "$WPID" 2>/dev/null || true
+BLOCKING_FN_SA=$(head -n 1 "$LIST_TMP" 2>/dev/null || echo "")
+rm -f "$LIST_TMP"
+
+if [ -n "$BLOCKING_FN_SA" ]; then
+    echo "  Blocking function SA (from deployed function): $BLOCKING_FN_SA"
+fi
 
 if [ -z "$BLOCKING_FN_SA" ]; then
     PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" \
@@ -1185,13 +1214,16 @@ echo ""
 AUTH_TOKEN=$(gcloud auth print-access-token)
 EXISTING_ADMIN=""
 
-# Try to check for existing admin via Cloud SQL
+# Try to check for existing admin via Cloud SQL. Use psql's unaligned
+# tuples-only mode so the output is just the email — no header row, no
+# row-count footer, no leading whitespace for a regex to trip over.
 EXISTING_ADMIN=$(gcloud sql connect "$SQL_INSTANCE_NAME" --database="$SQL_DB_NAME" --user="$SQL_DB_USER" --quiet 2>/dev/null <<SQL || echo ""
+\pset format unaligned
+\pset tuples_only on
 SELECT email FROM users WHERE is_admin = true LIMIT 1;
 SQL
 )
-# Clean up psql output (remove headers/footers)
-EXISTING_ADMIN=$(echo "$EXISTING_ADMIN" | grep -E '^[^ ]+@[^ ]+$' | head -1 | tr -d ' ' || echo "")
+EXISTING_ADMIN=$(echo "$EXISTING_ADMIN" | grep -Eo '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' | head -1 || echo "")
 
 if [ -n "$EXISTING_ADMIN" ]; then
     echo -e "${GREEN}Admin user already exists (${EXISTING_ADMIN}) — skipping${NC}"
@@ -1308,7 +1340,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --location="$REPO_LOCATION" \
             --uniform-bucket-level-access >/dev/null
         gcloud storage buckets update "gs://${COMPLIANCE_BUCKET}" \
-            --retention-period=220752000 >/dev/null  # 7 years in seconds
+            --retention-period=7y >/dev/null
         echo -e "${GREEN}    Bucket created${NC} (run 'gcloud storage buckets update --lock-retention-period' when you're ready to make it irreversible)"
     else
         echo "  Compliance bucket already exists"
@@ -1316,7 +1348,11 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
 
     BACKEND_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend:${PABLO_VERSION:-latest}"
     PENTEST_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/pablo/pentest:${PABLO_VERSION:-latest}"
-    BACKEND_SA="pablo-backend@${PROJECT_ID}.iam.gserviceaccount.com"
+    # Run compliance jobs as the same SA the backend Cloud Run service uses.
+    # setup-solo deploys the backend on the default gen2 compute SA
+    # (${PROJECT_NUMBER}-compute@), not a dedicated pablo-backend@ SA —
+    # keeping the jobs on the same identity avoids a second actAs grant.
+    BACKEND_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
     # Grant the backend SA access to read audit_logs and write to the bucket
     gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
@@ -1402,7 +1438,8 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
                 --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5" \
                 --max-retries=0 --task-timeout=50m >/dev/null
         else
-            echo -e "${YELLOW}  Pentest image not found — skipping Cloud Run Job. Build + push with 'make pentest-image-push' first.${NC}"
+            echo -e "${YELLOW}  Pentest image not found in Artifact Registry — skipping Cloud Run Job.${NC}"
+            echo -e "${YELLOW}  Mirrored in Step 8 from ghcr.io/pablo-health/pentest:\${PABLO_VERSION}; re-run setup-solo pinned to a release that publishes it.${NC}"
         fi
     else
         echo "  Cloud Run Job pentest already exists"
@@ -1415,10 +1452,27 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         gcloud iam service-accounts create pablo-scheduler \
             --project="$PROJECT_ID" \
             --display-name="Pablo Cloud Scheduler" >/dev/null
-        gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-            --member="serviceAccount:${SCHEDULER_SA}" \
-            --role="roles/run.invoker" --condition=None >/dev/null
+
+        # IAM has eventual consistency — the SA isn't immediately visible to
+        # policy bindings. Poll until describe succeeds (up to ~30s) before
+        # attempting the binding, or the very next gcloud call will fail with
+        # "Service account ... does not exist".
+        echo "  Waiting for scheduler SA to propagate..."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            if gcloud iam service-accounts describe "$SCHEDULER_SA" \
+                --project="$PROJECT_ID" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 3
+        done
     fi
+
+    # Always (re)apply the invoker binding — gcloud treats this as idempotent,
+    # and gating it on the create path above would leave re-runs broken if the
+    # binding ever failed after the SA was created (as it did once for you).
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:${SCHEDULER_SA}" \
+        --role="roles/run.invoker" --condition=None >/dev/null
 
     USER_TZ="${USER_TIMEZONE:-America/Los_Angeles}"
     JOB_RUN_URL_BASE="https://${REPO_LOCATION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs"
