@@ -37,6 +37,9 @@ export function Header({ user }: HeaderProps) {
         <div className="relative">
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
+            aria-label="Open user menu"
+            aria-haspopup="menu"
+            aria-expanded={isMenuOpen}
             className="flex items-center gap-3 hover:bg-neutral-50 rounded-lg px-3 py-2 transition-all duration-200 hover:shadow-sm"
           >
             {user.image ? (

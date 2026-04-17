@@ -13,7 +13,7 @@ and environment-specific configurations for PHI protection.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, ValidationInfo, field_validator
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -280,14 +280,6 @@ class Settings(BaseSettings):
         le=1.0,
         description="Probability (0.0-1.0) of queueing high-rated sessions",
     )
-
-    @field_validator("high_rating_threshold")
-    @classmethod
-    def validate_thresholds(cls, v: int, info: ValidationInfo) -> int:
-        """Ensure high threshold is greater than low threshold."""
-        if "low_rating_threshold" in info.data and v <= info.data["low_rating_threshold"]:
-            raise ValueError("high_rating_threshold must be greater than low_rating_threshold")
-        return v
 
     # Google Cloud Secret Manager (optional, for production)
     use_secret_manager: bool = Field(

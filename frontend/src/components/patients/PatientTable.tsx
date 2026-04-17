@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useState, useMemo } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Pencil, Trash2, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -27,18 +27,12 @@ import { usePatientList, useDeletePatient } from "@/hooks/usePatients"
 import type { PatientResponse } from "@/types/patients"
 import { PatientForm } from "./PatientForm"
 
-// Debounce hook
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value)
 
-  useMemo(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value)
-    }, delay)
-
-    return () => {
-      clearTimeout(handler)
-    }
+  useEffect(() => {
+    const handler = setTimeout(() => setDebouncedValue(value), delay)
+    return () => clearTimeout(handler)
   }, [value, delay])
 
   return debouncedValue
@@ -190,6 +184,7 @@ export function PatientTable() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            aria-label={`Edit patient ${patient.first_name} ${patient.last_name}`}
                             onClick={() => handleEditPatient(patient)}
                           >
                             <Pencil className="w-4 h-4" />
@@ -197,6 +192,7 @@ export function PatientTable() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            aria-label={`Delete patient ${patient.first_name} ${patient.last_name}`}
                             onClick={() => handleDeleteClick(patient)}
                           >
                             <Trash2 className="w-4 h-4 text-red-500" />

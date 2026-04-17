@@ -315,7 +315,7 @@ export default function NativeAuthPage() {
                 className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
                 maxLength={6}
                 required
-                autoComplete="off"
+                autoComplete="one-time-code"
                 autoFocus
               />
             </div>
@@ -406,6 +406,7 @@ export default function NativeAuthPage() {
               <input
                 id="email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
@@ -424,6 +425,7 @@ export default function NativeAuthPage() {
               <input
                 id="password"
                 type="password"
+                autoComplete={isSignUp ? "new-password" : "current-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={isSignUp ? "Choose a password (min 15 chars)" : "Password"}
