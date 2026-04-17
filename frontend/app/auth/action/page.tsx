@@ -12,6 +12,7 @@ import {
   verifyPasswordResetCode,
 } from "firebase/auth"
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
+import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
 type Status = "loading" | "success" | "error" | "reset-form"
@@ -147,114 +148,89 @@ function AuthActionContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-primary-50 via-neutral-50 to-secondary-50">
-      <div className="w-full max-w-md space-y-6 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
-        <div className="text-center">
-          <h1 className="text-4xl font-display font-bold text-primary-600">Pablo</h1>
-          <h2 className="mt-3 text-xl font-semibold text-neutral-800">
-            {mode ? title[mode] || "Account Action" : "Account Action"}
-          </h2>
-        </div>
-
-        {status === "loading" && (
-          <div className="flex justify-center py-8">
-            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600" />
-          </div>
-        )}
-
-        {status === "success" && (
-          <div className="space-y-4">
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <p className="text-sm text-green-800">{message}</p>
-            </div>
-            <a
-              href={continueUrl || "/login"}
-              className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
-            >
-              Continue to Sign In
-            </a>
-          </div>
-        )}
-
-        {status === "error" && (
-          <div className="space-y-4">
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-600">{message}</p>
-            </div>
-            <a
-              href="/login"
-              className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
-            >
-              Back to Sign In
-            </a>
-          </div>
-        )}
-
-        {status === "reset-form" && (
-          <form onSubmit={handlePasswordReset} className="space-y-4">
-            <p className="text-sm text-neutral-600 text-center">
-              Enter a new password for <strong>{resetEmail}</strong>
-            </p>
-
-            <div>
-              <label htmlFor="new-password" className="block text-sm font-medium text-neutral-700 mb-1">
-                New Password
-              </label>
-              <input
-                id="new-password"
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Min 15 characters"
-                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                required
-                minLength={15}
-                autoFocus
-              />
-            </div>
-
-            <div>
-              <label htmlFor="confirm-password" className="block text-sm font-medium text-neutral-700 mb-1">
-                Confirm Password
-              </label>
-              <input
-                id="confirm-password"
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Confirm password"
-                className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                required
-                minLength={15}
-              />
-            </div>
-
-            {message && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{message}</p>
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {submitting ? "Resetting..." : "Reset Password"}
-            </button>
-          </form>
-        )}
-
-        <div className="pt-4 border-t border-neutral-200">
-          <p className="text-xs text-neutral-500 text-center leading-relaxed">
-            This platform is HIPAA compliant and uses industry-standard encryption to protect your
-            data
-          </p>
-        </div>
+    <AuthCard className="w-full max-w-md space-y-6 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
+      <div className="text-center">
+        <h1 className="text-4xl font-display font-bold text-primary-600">Pablo</h1>
+        <h2 className="mt-3 text-xl font-semibold text-neutral-800">
+          {mode ? title[mode] || "Account Action" : "Account Action"}
+        </h2>
       </div>
-    </div>
+
+      {status === "loading" && (
+        <div className="flex justify-center py-8">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary-600" />
+        </div>
+      )}
+
+      {status === "success" && (
+        <div className="space-y-4">
+          <AuthFeedback variant="success" padding="4">
+            {message}
+          </AuthFeedback>
+          <a
+            href={continueUrl || "/login"}
+            className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+          >
+            Continue to Sign In
+          </a>
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="space-y-4">
+          <AuthFeedback variant="error" padding="4">
+            {message}
+          </AuthFeedback>
+          <a
+            href="/login"
+            className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
+          >
+            Back to Sign In
+          </a>
+        </div>
+      )}
+
+      {status === "reset-form" && (
+        <form onSubmit={handlePasswordReset} className="space-y-4">
+          <p className="text-sm text-neutral-600 text-center">
+            Enter a new password for <strong>{resetEmail}</strong>
+          </p>
+
+          <AuthInput
+            id="new-password"
+            label="New Password"
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            placeholder="Min 15 characters"
+            required
+            minLength={15}
+            autoFocus
+          />
+
+          <AuthInput
+            id="confirm-password"
+            label="Confirm Password"
+            type="password"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            placeholder="Confirm password"
+            required
+            minLength={15}
+          />
+
+          {message && <AuthFeedback variant="error">{message}</AuthFeedback>}
+
+          <AuthPrimaryButton type="submit" disabled={submitting}>
+            {submitting ? "Resetting..." : "Reset Password"}
+          </AuthPrimaryButton>
+        </form>
+      )}
+
+      <AuthFooter spacing="compact" />
+    </AuthCard>
   )
 }
 
