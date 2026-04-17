@@ -31,6 +31,9 @@ node_modules/
 # Next.js
 .next/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Firebase
 firebase-debug.log
 ui-debug.log
