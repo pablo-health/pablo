@@ -391,7 +391,6 @@ else
         --storage-size=10 \
         --storage-auto-increase \
         --assign-ip \
-        --backup \
         --backup-start-time=08:00 \
         --backup-location="$REPO_LOCATION" \
         --enable-point-in-time-recovery \
@@ -451,7 +450,6 @@ PITR_ENABLED=$(gcloud sql instances describe "$SQL_INSTANCE_NAME" \
 if [ "$BACKUP_ENABLED" != "True" ] || [ "$PITR_ENABLED" != "True" ]; then
     echo "  Patching instance to enable backups + PITR..."
     gcloud sql instances patch "$SQL_INSTANCE_NAME" \
-        --backup \
         --backup-start-time=08:00 \
         --backup-location="$REPO_LOCATION" \
         --enable-point-in-time-recovery \
