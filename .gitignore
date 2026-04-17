@@ -39,5 +39,6 @@ ui-debug.log
 backend/data/*.jsonl
 backend/data/nli-therapy-*
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings (keep shared skills in repo)
+.claude/settings.local.json
+.claude/settings.json

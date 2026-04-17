@@ -71,6 +71,49 @@ This project handles sensitive clinical data and follows these security practice
 - **CI enforcement**: All security checks run on every PR
 - **HIPAA-compliant infrastructure** when deployed
 
+## Dependency Vulnerability Management
+
+Pablo's HIPAA posture treats third-party vulnerabilities the same as first-party ones: risk-assess on detection, patch inside an SLA, and document any exception. This section is the written policy that satisfies 45 CFR §164.308(a)(1)(ii)(B) (risk management) and §164.308(a)(5)(ii)(B) (protection from malicious software) for dependencies.
+
+### Detection
+
+- `npm audit` runs in CI for every PR (frontend + marketing).
+- GitHub Dependabot alerts on `package-lock.json`, `pyproject.toml` / `poetry.lock`, and Dockerfiles.
+- Trivy scans built container images.
+
+A failing CI audit blocks merge. That gate is the primary control.
+
+### Patch SLA
+
+Measured from the time the advisory becomes publicly known (CVE publication or Dependabot alert timestamp, whichever is earlier):
+
+| Severity | SLA | Trigger |
+|---|---|---|
+| **Critical** | Patch and release within **7 days** | RCE, auth bypass, direct PHI exposure, or any advisory reachable in our code path |
+| **High** | Patch within **30 days** | Exploitable under realistic authenticated attack, or in a reachable code path |
+| **Moderate** | Patch within **90 days** | Usually bundled into the next routine dependency sweep |
+| **Low / Informational** | Next routine sweep | No dedicated tracking required |
+
+If a patch exists and is a non-breaking upgrade (e.g., `npm audit fix` works cleanly), the evidence of compliance is the commit and the passing CI run. **No separate memo is required** — the patch *is* the record.
+
+### When analysis IS required
+
+A written note in `docs/pentest/VULNERABILITY_EXCEPTIONS.md` is required only when:
+
+1. **We can't patch inside the SLA** — no upgrade path, breaking change blocked by pinned peer, etc. Record the compensating control and the revisit date.
+2. **We choose not to patch** — false positive, advisory doesn't apply to our usage (e.g., a parser advisory on bytes we never feed untrusted input to). Record *why*.
+3. **The advisory is Critical** — a one-line note confirming the code path is reachable/not-reachable from PHI-touching routes. This is the only case where we add paperwork even to a patched Critical, because if exploited before the patch landed it could trigger §164.410 breach analysis.
+
+For Moderate/High advisories that are patched inside SLA, the commit message is enough. Do not waste cycles on per-CVE memos.
+
+### If a vulnerability is exploited in our environment
+
+This is the §164.308(a)(6)(ii) ("response and reporting") path, not this policy. Open a security incident, preserve logs, and run the §164.402 four-factor breach analysis. If ePHI was accessed, §164.410 notification timelines apply.
+
+### Exception log
+
+Current exceptions: see [docs/pentest/VULNERABILITY_EXCEPTIONS.md](docs/pentest/VULNERABILITY_EXCEPTIONS.md).
+
 ## Staying Notified
 
 To receive security notifications:
