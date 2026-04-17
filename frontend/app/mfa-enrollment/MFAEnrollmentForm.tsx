@@ -19,6 +19,7 @@ import { QRCodeSVG } from "qrcode.react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { post } from "@/lib/api/client"
+import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
 export function MFAEnrollmentForm() {
   const router = useRouter()
@@ -225,21 +226,15 @@ export function MFAEnrollmentForm() {
               </p>
             </div>
 
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
+            {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
 
             {verificationEmailSent && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm text-green-700">
-                  Verification email sent. Check your inbox and spam folder.
-                </p>
-              </div>
+              <AuthFeedback variant="success">
+                Verification email sent. Check your inbox and spam folder.
+              </AuthFeedback>
             )}
 
-            <button
+            <AuthPrimaryButton
               onClick={async () => {
                 const currentUser = getFirebaseAuth().currentUser
                 if (!currentUser) return
@@ -257,7 +252,7 @@ export function MFAEnrollmentForm() {
               className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
             >
               {verificationEmailSent ? "Email Sent" : "Resend Verification Email"}
-            </button>
+            </AuthPrimaryButton>
 
             <button
               onClick={() => {
@@ -276,53 +271,47 @@ export function MFAEnrollmentForm() {
               For security, please verify your identity before setting up MFA.
             </p>
             {error && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
+              <AuthFeedback variant="error" padding="4">
+                {error}
+              </AuthFeedback>
             )}
             {isPasswordUser ? (
               <form onSubmit={handleReauthenticate} className="space-y-4">
-                <div>
-                  <label
-                    htmlFor="reauth-password"
-                    className="block text-sm font-medium text-neutral-700 mb-1"
-                  >
-                    Enter your password to continue
-                  </label>
-                  <input
-                    id="reauth-password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={reauthPassword}
-                    onChange={(e) => setReauthPassword(e.target.value)}
-                    placeholder="Your password"
-                    className="w-full px-4 py-2 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    required
-                    autoFocus
-                  />
-                </div>
-                <button
+                <AuthInput
+                  id="reauth-password"
+                  label="Enter your password to continue"
+                  type="password"
+                  autoComplete="current-password"
+                  value={reauthPassword}
+                  onChange={(e) => setReauthPassword(e.target.value)}
+                  placeholder="Your password"
+                  required
+                  autoFocus
+                />
+                <AuthPrimaryButton
                   type="submit"
                   disabled={generating || !reauthPassword}
                   className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
                 >
                   {generating ? "Verifying..." : "Verify Identity"}
-                </button>
+                </AuthPrimaryButton>
               </form>
             ) : (
-              <button
+              <AuthPrimaryButton
                 onClick={() => handleReauthenticate()}
                 disabled={generating}
                 className="w-full bg-primary-600 text-white px-4 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50"
               >
                 {generating ? "Verifying..." : "Verify Identity with Google"}
-              </button>
+              </AuthPrimaryButton>
             )}
           </div>
         ) : error ? (
           <div className="py-8">
-            <div className="p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
-              <p className="text-sm text-red-600">{error}</p>
+            <div className="mb-4">
+              <AuthFeedback variant="error" padding="4">
+                {error}
+              </AuthFeedback>
             </div>
             <button
               onClick={() => window.location.reload()}
@@ -415,41 +404,29 @@ export function MFAEnrollmentForm() {
           </p>
 
           <form onSubmit={handleEnroll} className="space-y-4">
-            <div>
-              <label
-                htmlFor="verification-code"
-                className="block text-sm font-medium text-neutral-700 mb-1"
-              >
-                Verification Code
-              </label>
-              <input
-                id="verification-code"
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                value={verificationCode}
-                onChange={handleCodeChange}
-                placeholder="000000"
-                className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
-                maxLength={6}
-                required
-                autoComplete="one-time-code"
-              />
-            </div>
+            <AuthInput
+              id="verification-code"
+              label="Verification Code"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={verificationCode}
+              onChange={handleCodeChange}
+              placeholder="000000"
+              className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
+              maxLength={6}
+              required
+              autoComplete="one-time-code"
+            />
 
-            {error && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-sm text-red-600">{error}</p>
-              </div>
-            )}
+            {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
 
-            <button
+            <AuthPrimaryButton
               type="submit"
               disabled={loading || verificationCode.length !== 6}
-              className="w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "Verifying..." : "Enable MFA"}
-            </button>
+            </AuthPrimaryButton>
           </form>
         </div>
 
