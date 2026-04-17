@@ -40,6 +40,18 @@ class AuditRepository(ABC):
         """Persist a new audit log entry. Never updates existing entries."""
 
     @abstractmethod
+    def earliest_create_for_patients(
+        self, patient_ids: set[str]
+    ) -> dict[str, datetime | None]:
+        """Return earliest PATIENT_CREATED timestamp per patient_id.
+
+        Used by the review service to suppress care-team checks during
+        the new-patient intake window. Cheap: one indexed query, no
+        join. Returns None for patient_ids with no PATIENT_CREATED row
+        in audit history.
+        """
+
+    @abstractmethod
     def metadata_for_review(
         self, window_hours: int = 24, baseline_days: int = DEFAULT_BASELINE_DAYS
     ) -> list[dict]:
@@ -71,6 +83,21 @@ class InMemoryAuditRepository(AuditRepository):
 
     def append(self, entry: AuditLogEntry) -> None:
         self._entries.append(entry)
+
+    def earliest_create_for_patients(
+        self, patient_ids: set[str]
+    ) -> dict[str, datetime | None]:
+        out: dict[str, datetime | None] = dict.fromkeys(patient_ids)
+        for e in self._entries:
+            if e.action != "patient_created" or not e.patient_id:
+                continue
+            if e.patient_id not in patient_ids:
+                continue
+            ts = _parse_iso(e.timestamp)
+            current = out[e.patient_id]
+            if current is None or ts < current:
+                out[e.patient_id] = ts
+        return out
 
     def metadata_for_review(
         self, window_hours: int = 24, baseline_days: int = DEFAULT_BASELINE_DAYS

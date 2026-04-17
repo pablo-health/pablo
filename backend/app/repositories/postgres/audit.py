@@ -34,6 +34,24 @@ class PostgresAuditRepository(AuditRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def earliest_create_for_patients(
+        self, patient_ids: set[str]
+    ) -> dict[str, datetime | None]:
+        out: dict[str, datetime | None] = dict.fromkeys(patient_ids)
+        if not patient_ids:
+            return out
+        rows = self._session.execute(
+            select(AuditLogRow.patient_id, func.min(AuditLogRow.timestamp))
+            .where(
+                AuditLogRow.action == "patient_created",
+                AuditLogRow.patient_id.in_(patient_ids),
+            )
+            .group_by(AuditLogRow.patient_id)
+        ).all()
+        for patient_id, earliest in rows:
+            out[patient_id] = earliest
+        return out
+
     def append(self, entry: AuditLogEntry) -> None:
         row = AuditLogRow(
             id=entry.id,

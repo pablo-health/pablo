@@ -33,28 +33,43 @@ metadata from a therapy documentation platform. The input is PHI-free:
 opaque UUIDs, timestamps, action strings, IPs, user agents, and
 field-name diffs.
 
-Each row is pre-enriched with ``is_novel_user_patient``: true when this
-user has >= 7 days of prior audit history AND has NOT accessed this
-patient in the preceding 90 days AND did not create that patient in
-the same window. This is the single novelty signal worth trusting —
-IP and user-agent novelty were dropped because DHCP / mobile / VPN /
-browser-update churn makes them noise.
+The payload has two parts:
+
+1. ``entries`` — per-row audit data enriched with three booleans:
+   - ``is_novel_user_patient``: true when this user has >= 7 days of
+     prior audit history AND has NOT accessed this patient in the
+     preceding 90 days AND did not create that patient in the same
+     window. Workhorse insider-snooping signal.
+   - ``is_same_last_name``: true when the user's surname matches the
+     patient's last name. High-signal relationship flag — a therapist
+     accessing a potential relative's record should always be noted,
+     even if treatment is legitimate. Usually MEDIUM severity unless
+     combined with other flags.
+   - ``is_no_treatment_relationship``: true when a PATIENT_VIEWED or
+     SESSION_VIEWED happened but there's no scheduled appointment
+     within ±7 days and no finalized session within ±1 day, AND the
+     patient has existed > 14 days, AND the user has >= 5 historical
+     appointments (system warmup). Strong insider-snooping signal.
+
+2. ``user_aggregates`` — per-user alerts that don't fit the per-row
+   shape. Each has an ``alert`` type:
+   - ``bulk_delete``: user deleted > 3 patients in the window.
+   - ``high_export_rate``: user's export count today exceeds their
+     own 90-day P95 baseline (only fires with >= 14 days of baseline).
 
 Warmup note: a brand-new install, a first-week user, or a user
-returning after > 7 days away will have ``is_novel_user_patient`` =
-FALSE for every row — that means "we don't have enough history to
-judge them yet," NOT "all clear." If most rows have it false, mention
-in the report that the baseline is shallow and novelty checks aren't
-meaningful yet; focus on the other anomaly types below.
+returning after > 7 days away will have most flags FALSE. That means
+"we don't have enough history to judge," NOT "all clear." If most
+rows are flag-less, say so in the report and focus on the other
+anomaly types below.
 
 Your job is to narrate anomalies a human reviewer would care about.
 Look for:
 - Off-hours PHI access (02:00-05:00 local)
 - Bulk reads by one user in a short window
-- Rows where ``is_novel_user_patient`` is true — users accessing
-  patient records they haven't touched in 90d
-- Rows where ``is_novel_user_ip`` or ``is_novel_user_agent`` is true —
-  new infrastructure for an existing user (possible impossible-geo)
+- Rows where any of ``is_novel_user_patient``, ``is_same_last_name``,
+  or ``is_no_treatment_relationship`` are true
+- Any ``user_aggregates`` alerts (bulk_delete, high_export_rate)
 - Cross-tenant patterns (if multiple user_ids touch the same patient_id)
 - Unusual action sequences (e.g. LIST -> VIEW -> EXPORT chains)
 
@@ -80,10 +95,14 @@ def run(
 
     logger.info("Starting HIPAA log review — window_hours=%d", window_hours)
 
-    payload = _load_audit_metadata(window_hours)
-    logger.info("Loaded %d audit rows for review", len(payload))
+    payload = _load_review_payload(window_hours)
+    logger.info(
+        "Loaded %d audit rows + %d user aggregates for review",
+        len(payload["entries"]),
+        len(payload["user_aggregates"]),
+    )
 
-    if not payload:
+    if not payload["entries"] and not payload["user_aggregates"]:
         logger.info("No audit activity in window — skipping model call")
         report = "# HIPAA Log Review\n\nNo audit activity in the review window.\n"
         severity = "NONE"
@@ -100,20 +119,36 @@ def run(
     return 0
 
 
-def _load_audit_metadata(window_hours: int) -> list[dict[str, Any]]:
-    """Load last `window_hours` of audit rows as PHI-free dicts."""
+def _load_review_payload(window_hours: int) -> dict[str, Any]:
+    """Compose the full review payload from all relevant repositories."""
     from ..db import create_standalone_session  # noqa: PLC0415
+    from ..repositories.postgres.appointment import (  # noqa: PLC0415
+        PostgresAppointmentRepository,
+    )
     from ..repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
+    from ..repositories.postgres.patient import PostgresPatientRepository  # noqa: PLC0415
+    from ..repositories.postgres.session import (  # noqa: PLC0415
+        PostgresTherapySessionRepository,
+    )
+    from ..repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
+    from ..services.audit_review_service import AuditReviewService  # noqa: PLC0415
 
     session = create_standalone_session()
     try:
-        repo = PostgresAuditRepository(session)
-        return repo.metadata_for_review(window_hours=window_hours)
+        service = AuditReviewService(
+            audit_repo=PostgresAuditRepository(session),
+            patient_repo=PostgresPatientRepository(session),
+            user_repo=PostgresUserRepository(session),
+            appointment_repo=PostgresAppointmentRepository(session),
+            session_repo=PostgresTherapySessionRepository(session),
+        )
+        payload = service.compute_payload(window_hours=window_hours)
+        return payload.to_dict()
     finally:
         session.close()
 
 
-def _ask_claude(payload: list[dict[str, Any]]) -> str:
+def _ask_claude(payload: dict[str, Any]) -> str:
     """Send payload to Claude on Vertex AI and return the markdown report.
 
     Uses the Anthropic SDK's Vertex adapter — inference runs inside GCP,
