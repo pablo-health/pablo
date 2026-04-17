@@ -26,9 +26,7 @@ from app.services.verification_signals import SignalResult, SignalVerdict, Verif
 if TYPE_CHECKING:
     from app.services.verification_signals import SignalContext
 
-# ---------------------------------------------------------------------------
 # Qualifier dictionaries
-# ---------------------------------------------------------------------------
 
 QUALIFIERS: dict[str, dict[str, list[str]]] = {
     "frequency": {
@@ -129,9 +127,7 @@ class HedgingSignal(VerificationSignal):
         )
 
 
-# ---------------------------------------------------------------------------
 # Qualifier extraction
-# ---------------------------------------------------------------------------
 
 
 def _extract_qualifiers(text: str) -> dict[str, str]:

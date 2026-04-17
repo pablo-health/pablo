@@ -45,9 +45,7 @@ from ..settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # Dependency injection
-# ---------------------------------------------------------------------------
 
 
 def get_ehr_route_repository(
@@ -77,9 +75,7 @@ def get_ehr_navigation_service(
     )
 
 
-# ---------------------------------------------------------------------------
 # Routers
-# ---------------------------------------------------------------------------
 
 route_router = APIRouter(
     prefix="/api/ehr-routes",
@@ -92,9 +88,7 @@ navigate_router = APIRouter(
 )
 
 
-# ---------------------------------------------------------------------------
 # GET /api/ehr-routes/{ehr_system}
-# ---------------------------------------------------------------------------
 
 
 @route_router.get("/{ehr_system}")
@@ -113,9 +107,7 @@ def get_ehr_route(
     return EhrRouteResponse.from_ehr_route(route)
 
 
-# ---------------------------------------------------------------------------
 # PATCH /api/ehr-routes/{ehr_system}/steps/{step_index}
-# ---------------------------------------------------------------------------
 
 
 @route_router.patch("/{ehr_system}/steps/{step_index}")
@@ -152,9 +144,7 @@ def update_ehr_route_step(
     return EhrRouteResponse.from_ehr_route(updated)
 
 
-# ---------------------------------------------------------------------------
 # POST /api/ehr-navigate
-# ---------------------------------------------------------------------------
 
 
 @navigate_router.post("/api/ehr-navigate")

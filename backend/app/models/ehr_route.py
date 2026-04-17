@@ -16,9 +16,7 @@ from pydantic import BaseModel, Field
 
 from .enums import EhrSystem  # noqa: TC001 — Pydantic needs these at runtime
 
-# ---------------------------------------------------------------------------
 # Domain dataclasses
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -102,9 +100,7 @@ class EhrRoute:
         return d
 
 
-# ---------------------------------------------------------------------------
 # Pydantic request/response models (API contract with Swift companion app)
-# ---------------------------------------------------------------------------
 
 
 class EhrRouteStepResponse(BaseModel):

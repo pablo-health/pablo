@@ -26,9 +26,7 @@ from app.services.token_encryption import (
 )
 from app.settings import get_settings
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -81,9 +79,7 @@ def sample_appointment() -> Appointment:
     )
 
 
-# ---------------------------------------------------------------------------
 # Token Encryption Tests
-# ---------------------------------------------------------------------------
 
 
 class TestTokenEncryption:
@@ -146,9 +142,7 @@ class TestTokenEncryption:
         assert len(key_bytes) == 32
 
 
-# ---------------------------------------------------------------------------
 # OAuth URL Generation Tests
-# ---------------------------------------------------------------------------
 
 
 class TestOAuthFlow:
@@ -211,9 +205,7 @@ class TestOAuthFlow:
         assert decrypted["refresh_token"] == "1//refresh"
 
 
-# ---------------------------------------------------------------------------
 # Appointment -> Google Event Mapping Tests
-# ---------------------------------------------------------------------------
 
 
 class TestAppointmentMapping:
@@ -250,9 +242,7 @@ class TestAppointmentMapping:
         assert "Anxiety" not in event["summary"]
 
 
-# ---------------------------------------------------------------------------
 # Sync Status Tests
-# ---------------------------------------------------------------------------
 
 
 class TestSyncStatus:
@@ -286,9 +276,7 @@ class TestSyncStatus:
         assert result["last_synced_at"] == datetime.fromisoformat("2026-01-01T00:00:00+00:00")
 
 
-# ---------------------------------------------------------------------------
 # Push Appointment Tests
-# ---------------------------------------------------------------------------
 
 
 class TestPushAppointment:
@@ -341,9 +329,7 @@ class TestPushAppointment:
         assert result is None
 
 
-# ---------------------------------------------------------------------------
 # Disconnect Tests
-# ---------------------------------------------------------------------------
 
 
 class TestDisconnect:
@@ -367,9 +353,7 @@ class TestDisconnect:
         assert calendar_service.disconnect("user-001") is False
 
 
-# ---------------------------------------------------------------------------
 # Reminder Service Tests
-# ---------------------------------------------------------------------------
 
 
 class TestReminderService:
