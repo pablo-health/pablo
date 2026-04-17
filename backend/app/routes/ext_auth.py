@@ -41,11 +41,25 @@ class CheckStatusResponse(BaseModel):
     disabled: bool
 
 
+_GOOGLE_ISSUERS = ("https://accounts.google.com", "accounts.google.com")
+
+
 def _verify_blocking_function_token(request: Request) -> None:
     """Verify OIDC token from Firebase blocking function.
 
     In development mode, authentication is skipped.
-    In production, verifies the Google-signed OIDC identity token.
+
+    In production, verifies the Google-signed OIDC identity token with four
+    layers of defense:
+      1. Signature — token is signed by Google.
+      2. Audience — token targets this backend (settings.backend_base_url).
+      3. Issuer — iss is an accepted Google identity issuer.
+      4. Caller — token's email claim matches the configured blocking
+         function service account.
+
+    If audience / caller SA are unconfigured (self-hosted installs that
+    haven't set the env vars yet), those checks are skipped and a warning
+    is logged. Signature + issuer + email_verified checks always run.
     """
     settings = get_settings()
     if settings.is_development:
@@ -59,15 +73,55 @@ def _verify_blocking_function_token(request: Request) -> None:
         )
 
     token = auth_header.removeprefix("Bearer ")
+    expected_audience = settings.backend_base_url or None
+    expected_caller = settings.blocking_function_service_account or None
+
     try:
         request_adapter = google.auth.transport.requests.Request()
-        google.oauth2.id_token.verify_token(token, request_adapter)
+        claims = google.oauth2.id_token.verify_token(
+            token,
+            request_adapter,
+            audience=expected_audience,
+        )
     except Exception as err:
         logger.warning("Blocking function OIDC verification failed: %s", err)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid service identity token",
         ) from err
+
+    if claims.get("iss") not in _GOOGLE_ISSUERS:
+        logger.warning("Rejected blocking function token: issuer=%s", claims.get("iss"))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid service identity token",
+        )
+
+    if not claims.get("email_verified"):
+        logger.warning("Rejected blocking function token: email not verified")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid service identity token",
+        )
+
+    if expected_caller and claims.get("email") != expected_caller:
+        logger.warning(
+            "Rejected blocking function token: caller=%s expected=%s",
+            claims.get("email"),
+            expected_caller,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid service identity token",
+        )
+
+    if expected_audience is None or expected_caller is None:
+        logger.warning(
+            "Blocking function OIDC checks are partial: "
+            "backend_base_url=%s blocking_function_service_account=%s",
+            "set" if expected_audience else "UNSET",
+            "set" if expected_caller else "UNSET",
+        )
 
 
 @router.post("/check-allowlist", response_model=CheckAllowlistResponse)

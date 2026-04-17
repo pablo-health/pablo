@@ -189,6 +189,30 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Firebase Blocking Function OIDC Verification
+    # The blocking functions (beforeCreate / beforeSignIn) call this backend
+    # with a Google-signed OIDC token. We verify audience + issuer + caller
+    # email to ensure only the configured blocking function SA can reach the
+    # /api/ext/auth endpoints.
+    backend_base_url: str = Field(
+        default="",
+        description=(
+            "This service's public base URL. Used as the expected audience "
+            "for OIDC tokens from Firebase blocking functions. "
+            "Example: https://pablo-backend-xxx-uc.a.run.app. "
+            "If empty, audience is not enforced (logged as a warning on startup)."
+        ),
+    )
+    blocking_function_service_account: str = Field(
+        default="",
+        description=(
+            "Service account email of the Firebase blocking function runtime. "
+            "When set, only tokens minted by this SA are accepted on "
+            "/api/ext/auth endpoints. If empty, caller identity is not "
+            "enforced (logged as a warning on startup)."
+        ),
+    )
+
     # Database Backend
     database_backend: Literal["postgres"] = Field(
         default="postgres",
