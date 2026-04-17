@@ -118,10 +118,6 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         ) from err
 
 
-def clear_tenant_cache() -> None:
-    """No-op. Kept for backward compatibility with tests and admin routes."""
-
-
 def get_current_user_id(
     request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
