@@ -7,10 +7,15 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import distinct, select
+from sqlalchemy import distinct, func, select
 
 from ...db.models import AuditLogRow
-from ..audit import DEFAULT_BASELINE_DAYS, AuditRepository, _assert_phi_free
+from ..audit import (
+    DEFAULT_BASELINE_DAYS,
+    MIN_USER_BASELINE_DAYS,
+    AuditRepository,
+    _assert_phi_free,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -53,6 +58,7 @@ class PostgresAuditRepository(AuditRepository):
         now = datetime.now(UTC)
         window_start = now - timedelta(hours=window_hours)
         baseline_start = now - timedelta(days=baseline_days)
+        min_baseline_cutoff = now - timedelta(days=MIN_USER_BASELINE_DAYS)
 
         window_rows = (
             self._session.query(AuditLogRow)
@@ -61,11 +67,21 @@ class PostgresAuditRepository(AuditRepository):
             .all()
         )
 
-        # One query per dimension against the baseline window. Returns
-        # only distinct tuples — cheap, and none of it is PHI. Novelty is
-        # only meaningful when the user has prior baseline activity for
-        # that dimension; otherwise (brand-new install, brand-new user,
-        # user returning after > baseline_days) we'd spam false positives.
+        # Users whose earliest audit activity predates MIN_USER_BASELINE_DAYS.
+        # Only these users get novelty checks — protects first-week users,
+        # returning-from-long-absence users, and brand-new installs from
+        # spurious flags against a thin baseline.
+        users_with_sufficient_baseline = {
+            row[0]
+            for row in self._session.execute(
+                select(AuditLogRow.user_id)
+                .group_by(AuditLogRow.user_id)
+                .having(func.min(AuditLogRow.timestamp) < min_baseline_cutoff)
+            ).all()
+        }
+
+        # Distinct (user, patient) pairs seen in the baseline window. None of
+        # this is PHI; IDs only.
         known_user_patient = set(
             self._session.execute(
                 select(distinct(AuditLogRow.user_id), AuditLogRow.patient_id).where(
@@ -75,31 +91,8 @@ class PostgresAuditRepository(AuditRepository):
                 )
             ).all()
         )
-        users_with_patient_baseline = {pair[0] for pair in known_user_patient}
-        known_user_ip = set(
-            self._session.execute(
-                select(distinct(AuditLogRow.user_id), AuditLogRow.ip_address).where(
-                    AuditLogRow.timestamp >= baseline_start,
-                    AuditLogRow.timestamp < window_start,
-                    AuditLogRow.ip_address.is_not(None),
-                )
-            ).all()
-        )
-        users_with_ip_baseline = {pair[0] for pair in known_user_ip}
-        known_user_agent = set(
-            self._session.execute(
-                select(distinct(AuditLogRow.user_id), AuditLogRow.user_agent).where(
-                    AuditLogRow.timestamp >= baseline_start,
-                    AuditLogRow.timestamp < window_start,
-                    AuditLogRow.user_agent.is_not(None),
-                )
-            ).all()
-        )
-        users_with_ua_baseline = {pair[0] for pair in known_user_agent}
 
-        # PATIENT_CREATED in this window suppresses novelty for that pair —
-        # users accessing patients they just created in the same window
-        # is expected, not suspicious.
+        # Same-window creates suppress novelty (user just made the patient).
         created_in_window = {
             (r.user_id, r.patient_id)
             for r in window_rows
@@ -111,19 +104,9 @@ class PostgresAuditRepository(AuditRepository):
             entry = _row_to_dict(row)
             entry["is_novel_user_patient"] = bool(
                 row.patient_id
-                and row.user_id in users_with_patient_baseline
+                and row.user_id in users_with_sufficient_baseline
                 and (row.user_id, row.patient_id) not in known_user_patient
                 and (row.user_id, row.patient_id) not in created_in_window
-            )
-            entry["is_novel_user_ip"] = bool(
-                row.ip_address
-                and row.user_id in users_with_ip_baseline
-                and (row.user_id, row.ip_address) not in known_user_ip
-            )
-            entry["is_novel_user_agent"] = bool(
-                row.user_agent
-                and row.user_id in users_with_ua_baseline
-                and (row.user_id, row.user_agent) not in known_user_agent
             )
             out.append(entry)
 

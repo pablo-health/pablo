@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 # 90d" checkpoint. Configurable per-call.
 DEFAULT_BASELINE_DAYS = 90
 
+# Minimum baseline history a user must have before any novelty flag can
+# fire for them. Avoids spamming first-week users (their browser
+# changes, device switches, and initial patient imports all look novel
+# against a one-day baseline). Also protects returning users who were
+# away for > baseline_days from getting flagged on re-entry.
+MIN_USER_BASELINE_DAYS = 7
+
 
 class AuditRepository(ABC):
     """Abstract audit log repository."""
@@ -38,17 +45,16 @@ class AuditRepository(ABC):
     ) -> list[dict]:
         """Return audit rows from the last `window_hours` as plain dicts.
 
-        Each row is enriched with boolean flags that compare against a
-        preceding `baseline_days` history so the reviewer can spot
-        first-time patterns without the caller shipping 90 days of raw
-        audit data to an LLM:
+        Each row is enriched with ``is_novel_user_patient``: true when
+        this user has >= MIN_USER_BASELINE_DAYS of prior activity AND
+        has NOT accessed this patient in the preceding `baseline_days`
+        AND did not create that patient in the same window.
 
-          - ``is_novel_user_patient``: (user_id, patient_id) never seen
-            in the baseline window.
-          - ``is_novel_user_ip``: (user_id, ip_address) never seen in
-            the baseline window.
-          - ``is_novel_user_agent``: (user_id, user_agent) never seen
-            in the baseline window.
+        IP and user-agent novelty are intentionally not included — they
+        generate too many false positives for legitimate therapists
+        (DHCP rotation, mobile / CGNAT, VPN, browser auto-updates,
+        multi-device workflows). Raw IP and user_agent are still in the
+        row for evidence / forensics; we just don't flag on them.
 
         The result is asserted PHI-free: no field name in
         PHI_FIELD_NAMES ever appears as a key in any row (including
@@ -72,6 +78,7 @@ class InMemoryAuditRepository(AuditRepository):
         now = datetime.now(UTC)
         window_start = now - timedelta(hours=window_hours)
         baseline_start = now - timedelta(days=baseline_days)
+        min_baseline_cutoff = now - timedelta(days=MIN_USER_BASELINE_DAYS)
 
         window_rows: list[AuditLogEntry] = []
         baseline_rows: list[AuditLogEntry] = []
@@ -82,30 +89,25 @@ class InMemoryAuditRepository(AuditRepository):
             elif ts >= baseline_start:
                 baseline_rows.append(e)
 
-        # Per-dimension known-pair sets, plus per-user "has any baseline
-        # activity in this dimension" sets. Novelty only applies when the
-        # user actually has baseline activity for that dimension —
-        # otherwise we have no basis to claim "this is new" (brand-new
-        # install, brand-new user, or user returning after > baseline_days
-        # all look like "no baseline" and would spam false positives).
+        # Users whose earliest audit row predates MIN_USER_BASELINE_DAYS.
+        # Only these users get novelty checks — protects first-week users,
+        # returning-from-long-absence users, and brand-new installs from
+        # spurious flags against a thin baseline.
+        earliest_activity: dict[str, datetime] = {}
+        for e in self._entries:
+            ts = _parse_iso(e.timestamp)
+            prev = earliest_activity.get(e.user_id)
+            if prev is None or ts < prev:
+                earliest_activity[e.user_id] = ts
+        users_with_sufficient_baseline = {
+            uid for uid, earliest in earliest_activity.items() if earliest < min_baseline_cutoff
+        }
+
         known_user_patient = {
             (e.user_id, e.patient_id) for e in baseline_rows if e.patient_id
         }
-        users_with_patient_baseline = {
-            e.user_id for e in baseline_rows if e.patient_id
-        }
-        known_user_ip = {(e.user_id, e.ip_address) for e in baseline_rows if e.ip_address}
-        users_with_ip_baseline = {e.user_id for e in baseline_rows if e.ip_address}
-        known_user_agent = {
-            (e.user_id, e.user_agent) for e in baseline_rows if e.user_agent
-        }
-        users_with_ua_baseline = {e.user_id for e in baseline_rows if e.user_agent}
 
-        # If the same (user, patient) pair shows up as PATIENT_CREATED
-        # in the window, subsequent access is expected — don't flag it
-        # as novel. Avoids spamming "novel access" for patients the user
-        # just created. No DB join needed; the audit log carries the
-        # creation event itself.
+        # Same-window creates suppress novelty (user just made the patient).
         created_in_window = {
             (e.user_id, e.patient_id)
             for e in window_rows
@@ -117,19 +119,9 @@ class InMemoryAuditRepository(AuditRepository):
             row = asdict(e)
             row["is_novel_user_patient"] = bool(
                 e.patient_id
-                and e.user_id in users_with_patient_baseline
+                and e.user_id in users_with_sufficient_baseline
                 and (e.user_id, e.patient_id) not in known_user_patient
                 and (e.user_id, e.patient_id) not in created_in_window
-            )
-            row["is_novel_user_ip"] = bool(
-                e.ip_address
-                and e.user_id in users_with_ip_baseline
-                and (e.user_id, e.ip_address) not in known_user_ip
-            )
-            row["is_novel_user_agent"] = bool(
-                e.user_agent
-                and e.user_id in users_with_ua_baseline
-                and (e.user_id, e.user_agent) not in known_user_agent
             )
             out.append(row)
 

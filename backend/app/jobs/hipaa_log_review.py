@@ -33,24 +33,19 @@ metadata from a therapy documentation platform. The input is PHI-free:
 opaque UUIDs, timestamps, action strings, IPs, user agents, and
 field-name diffs.
 
-Each row is pre-enriched with two booleans computed against a 90-day
-historical baseline (so you don't need to infer them from the 24h
-window alone):
-- ``is_novel_user_patient``: true when this user has prior baseline
-  activity AND has NOT accessed this patient in the preceding 90 days
-  AND did not create that patient in the same window.
-- ``is_novel_user_agent``: true when this user has prior baseline
-  activity AND has NOT used this user-agent in the preceding 90 days.
+Each row is pre-enriched with ``is_novel_user_patient``: true when this
+user has >= 7 days of prior audit history AND has NOT accessed this
+patient in the preceding 90 days AND did not create that patient in
+the same window. This is the single novelty signal worth trusting —
+IP and user-agent novelty were dropped because DHCP / mobile / VPN /
+browser-update churn makes them noise.
 
-(``is_novel_user_ip`` is also computed but NOT reliable for solo
-therapists — DHCP, mobile data, and VPN rotation cause legitimate IP
-churn that would generate constant false positives. Ignore it for v1.)
-
-Warmup note: a brand-new install or a user with no baseline activity
-will have all flags FALSE — that means "we don't have enough history
-to judge," NOT "all clear." If most rows have all flags False, mention
+Warmup note: a brand-new install, a first-week user, or a user
+returning after > 7 days away will have ``is_novel_user_patient`` =
+FALSE for every row — that means "we don't have enough history to
+judge them yet," NOT "all clear." If most rows have it false, mention
 in the report that the baseline is shallow and novelty checks aren't
-meaningful yet; focus on other anomaly types.
+meaningful yet; focus on the other anomaly types below.
 
 Your job is to narrate anomalies a human reviewer would care about.
 Look for:
