@@ -12,13 +12,14 @@ import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
   GoogleAuthProvider,
-  TotpMultiFactorGenerator,
   getMultiFactorResolver,
   type MultiFactorError,
   type MultiFactorResolver,
+  type UserCredential,
 } from "firebase/auth"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
+import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
   AuthCard,
   AuthDivider,
@@ -27,8 +28,10 @@ import {
   AuthGoogleButton,
   AuthHeader,
   AuthInput,
-  AuthOutlineButton,
+  AuthLinkButton,
   AuthPrimaryButton,
+  MfaChallengeScreen,
+  VerifyEmailScreen,
 } from "@/components/auth"
 
 type LoginStep = "sign-in" | "mfa" | "verify-email"
@@ -51,8 +54,10 @@ export default function LoginPage() {
   const [resetSent, setResetSent] = useState(false)
   const [resendSent, setResendSent] = useState(false)
   const [isSignUp, setIsSignUp] = useState(false)
+  const [verifyEmailError, setVerifyEmailError] = useState("")
 
   const [step, setStep] = useState<LoginStep>("sign-in")
+  const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
 
   // Show notice when redirected from idle timeout
   useEffect(() => {
@@ -92,10 +97,6 @@ export default function LoginPage() {
       .catch(() => {})  // Token expired or invalid — user types email manually
   }, [])
 
-  // MFA challenge state
-  const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
-  const [totpCode, setTotpCode] = useState("")
-
   // Redirect to dashboard when already authenticated (but not during signup flow)
   useEffect(() => {
     if (user && !authLoading && step !== "verify-email" && !isSignUp) {
@@ -110,45 +111,13 @@ export default function LoginPage() {
     setError("")
   }
 
-  const handleMfaVerify = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!mfaResolver) return
-
-    setError("")
-    setLoading(true)
-
-    try {
-      const totpHint = mfaResolver.hints.find(
-        (hint) => hint.factorId === TotpMultiFactorGenerator.FACTOR_ID
-      )
-
-      if (!totpHint) {
-        setError("No TOTP factor found. Please contact support.")
-        return
-      }
-
-      const assertion = TotpMultiFactorGenerator.assertionForSignIn(
-        totpHint.uid,
-        totpCode
-      )
-
-      const credential = await mfaResolver.resolveSignIn(assertion)
-      const idToken = await credential.user.getIdToken()
-      await fetch("/api/login", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
-      })
-      router.push("/dashboard")
-    } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code === "auth/invalid-verification-code") {
-        setError("Invalid verification code. Please try again.")
-      } else {
-        setError("MFA verification failed. Please try again.")
-      }
-    } finally {
-      setLoading(false)
-    }
+  const finishLogin = async (credential: UserCredential) => {
+    const idToken = await credential.user.getIdToken()
+    await fetch("/api/login", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+    router.push("/dashboard")
   }
 
   const handleEmailLogin = async (e: React.FormEvent) => {
@@ -158,29 +127,13 @@ export default function LoginPage() {
 
     try {
       const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
-      const idToken = await credential.user.getIdToken()
-      await fetch("/api/login", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
-      })
-      router.push("/dashboard")
+      await finishLogin(credential)
     } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code === "auth/multi-factor-auth-required") {
+      const outcome = firebaseAuthErrorOutcome(err, "sign-in")
+      if (outcome.kind === "mfa-required") {
         handleMfaRequired(err as MultiFactorError)
-      } else if (
-        code === "auth/invalid-credential" ||
-        code === "auth/user-not-found" ||
-        code === "auth/wrong-password" ||
-        code === "auth/user-disabled"
-      ) {
-        setError("Invalid email or password")
-      } else if (code === "auth/too-many-requests") {
-        setError("Too many attempts. Please try again later.")
-      } else if (code === "auth/network-request-failed") {
-        setError("Network error. Please check your connection and try again.")
-      } else {
-        setError("Login failed. Please try again.")
+      } else if (outcome.kind === "message") {
+        setError(outcome.message)
       }
     } finally {
       setLoading(false)
@@ -209,19 +162,8 @@ export default function LoginPage() {
       })
       setStep("verify-email")
     } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code === "auth/email-already-in-use") {
-        setError("An account with this email already exists. Try signing in.")
-      } else if (code === "auth/weak-password" || code === "auth/password-does-not-meet-requirements") {
-        setError("Password must be at least 15 characters.")
-      } else if (code === "auth/admin-restricted-operation") {
-        setError("Sign-up is restricted. Please contact your administrator.")
-      } else if (code === "auth/blocking-function-error-response") {
-        const message = (err as { message?: string }).message
-        setError(message || "Sign-up blocked by administrator.")
-      } else {
-        setError(`Sign-up failed (${code || "unknown"}). Please try again.`)
-      }
+      const outcome = firebaseAuthErrorOutcome(err, "sign-up")
+      if (outcome.kind === "message") setError(outcome.message)
     } finally {
       setLoading(false)
     }
@@ -234,31 +176,16 @@ export default function LoginPage() {
 
     try {
       const result = await signInWithPopup(auth, provider)
-      // Sync cookie before navigating (don't race with onIdTokenChanged)
-      const idToken = await result.user.getIdToken()
-      await fetch("/api/login", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
-      })
-      router.push("/dashboard")
+      await finishLogin(result)
     } catch (err) {
-      const code = (err as { code?: string }).code
-      const message = (err as { message?: string }).message
-      console.error("Google sign-in error:", code)
-      if (code === "auth/multi-factor-auth-required") {
+      const outcome = firebaseAuthErrorOutcome(err, "google")
+      if (outcome.kind === "mfa-required") {
         handleMfaRequired(err as MultiFactorError)
-      } else if (
-        code === "auth/popup-closed-by-user" ||
-        code === "auth/cancelled-popup-request"
-      ) {
-        // Benign popup errors, do nothing
-      } else if (code === "auth/popup-blocked") {
+      } else if (outcome.kind === "popup-blocked") {
         console.log("Popup blocked, falling back to redirect")
         await signInWithRedirect(auth, provider)
-      } else if (code === "auth/blocking-function-error-response") {
-        setError(message || "Sign-in blocked by administrator.")
-      } else {
-        setError(`Google sign-in failed (${code || "unknown"}). Please try again.`)
+      } else if (outcome.kind === "message") {
+        setError(outcome.message)
       }
     }
   }
@@ -278,62 +205,25 @@ export default function LoginPage() {
     }
   }
 
-  // MFA Challenge Screen
   if (step === "mfa" && mfaResolver) {
     return (
-      <AuthCard>
-        <AuthHeader
-          title="Two-Factor Authentication"
-          subtitle="Enter the code from your authenticator app"
-        />
-        <form onSubmit={handleMfaVerify} className="space-y-4">
-          <AuthInput
-            id="totp-code"
-            label="Verification Code"
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            value={totpCode}
-            onChange={(e) =>
-              setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-            }
-            placeholder="000000"
-            className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
-            maxLength={6}
-            required
-            autoComplete="one-time-code"
-            autoFocus
-          />
-
-          {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
-
-          <AuthPrimaryButton type="submit" disabled={loading || totpCode.length !== 6}>
-            {loading ? "Verifying..." : "Verify"}
-          </AuthPrimaryButton>
-
-          <button
-            type="button"
-            onClick={() => {
-              setMfaResolver(null)
-              setTotpCode("")
-              setError("")
-              setStep("sign-in")
-            }}
-            className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
-          >
-            Back to sign in
-          </button>
-        </form>
-      </AuthCard>
+      <MfaChallengeScreen
+        resolver={mfaResolver}
+        onSuccess={finishLogin}
+        onCancel={() => {
+          setMfaResolver(null)
+          setError("")
+          setStep("sign-in")
+        }}
+      />
     )
   }
 
-  // Email Verification Sent Screen
   if (step === "verify-email") {
     const handleResendVerification = async () => {
       const auth = getFirebaseAuth()
       if (!auth.currentUser) {
-        setError("Session expired. Please sign up again.")
+        setVerifyEmailError("Session expired. Please sign up again.")
         return
       }
       try {
@@ -342,51 +232,27 @@ export default function LoginPage() {
         })
         setResendSent(true)
       } catch {
-        setError("Failed to resend. Please wait a minute and try again.")
+        setVerifyEmailError("Failed to resend. Please wait a minute and try again.")
       }
     }
 
     return (
-      <AuthCard>
-        <AuthHeader
-          title="Check Your Email"
-          subtitle={
-            <>
-              We sent a verification link to <strong>{email}</strong>. Please
-              verify your email before signing in.
-            </>
-          }
-        />
-
-        {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
-
-        {resendSent && (
-          <AuthFeedback variant="success">
-            Verification email resent. Check your inbox and spam folder.
-          </AuthFeedback>
-        )}
-
-        <div className="space-y-3">
-          <AuthOutlineButton onClick={handleResendVerification} disabled={resendSent}>
-            {resendSent ? "Email Resent" : "Resend Verification Email"}
-          </AuthOutlineButton>
-
-          <AuthPrimaryButton
-            onClick={() => {
-              setIsSignUp(false)
-              setResendSent(false)
-              setError("")
-              setStep("sign-in")
-            }}
-          >
-            Back to Sign In
-          </AuthPrimaryButton>
-        </div>
-      </AuthCard>
+      <VerifyEmailScreen
+        email={email}
+        error={verifyEmailError}
+        resent={resendSent}
+        onResend={handleResendVerification}
+        onBack={() => {
+          setIsSignUp(false)
+          setResendSent(false)
+          setVerifyEmailError("")
+          setError("")
+          setStep("sign-in")
+        }}
+      />
     )
   }
 
-  // Main Sign-In Screen
   return (
     <AuthCard>
       <AuthHeader
@@ -461,25 +327,19 @@ export default function LoginPage() {
 
           <div className="flex items-center justify-between text-sm">
             {!isSignUp && (
-              <button
-                type="button"
-                onClick={handleForgotPassword}
-                className="text-primary-600 hover:text-primary-700 hover:underline"
-              >
+              <AuthLinkButton onClick={handleForgotPassword}>
                 Forgot password?
-              </button>
+              </AuthLinkButton>
             )}
-            <button
-              type="button"
+            <AuthLinkButton
               onClick={() => {
                 setIsSignUp(!isSignUp)
                 setError("")
                 setConfirmPassword("")
               }}
-              className="text-primary-600 hover:text-primary-700 hover:underline"
             >
               {isSignUp ? "Already have an account?" : "Create account"}
-            </button>
+            </AuthLinkButton>
           </div>
         </form>
 

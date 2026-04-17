@@ -11,13 +11,13 @@ import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
   GoogleAuthProvider,
-  TotpMultiFactorGenerator,
   getMultiFactorResolver,
   type MultiFactorError,
   type MultiFactorResolver,
 } from "firebase/auth"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
+import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
   AuthCard,
   AuthDivider,
@@ -26,7 +26,10 @@ import {
   AuthGoogleButton,
   AuthHeader,
   AuthInput,
+  AuthLinkButton,
   AuthPrimaryButton,
+  MfaChallengeScreen,
+  VerifyEmailScreen,
 } from "@/components/auth"
 
 const ALLOWED_SCHEMES = ["pablohealth", "therapyrecorder"]
@@ -42,10 +45,7 @@ export default function NativeAuthPage() {
   const [isSignUp, setIsSignUp] = useState(false)
   const [verificationSent, setVerificationSent] = useState(false)
   const [redirecting, setRedirecting] = useState(false)
-
-  // MFA challenge state
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
-  const [totpCode, setTotpCode] = useState("")
 
   // Validate redirect_uri
   const redirectUri = searchParams.get("redirect_uri")
@@ -140,42 +140,6 @@ export default function NativeAuthPage() {
     setError("")
   }
 
-  const handleMfaVerify = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!mfaResolver) return
-
-    setError("")
-    setLoading(true)
-
-    try {
-      const totpHint = mfaResolver.hints.find(
-        (hint) => hint.factorId === TotpMultiFactorGenerator.FACTOR_ID
-      )
-
-      if (!totpHint) {
-        setError("No TOTP factor found. Please contact support.")
-        return
-      }
-
-      const assertion = TotpMultiFactorGenerator.assertionForSignIn(
-        totpHint.uid,
-        totpCode
-      )
-
-      const result = await mfaResolver.resolveSignIn(assertion)
-      await redirectToApp(result.user)
-    } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code === "auth/invalid-verification-code") {
-        setError("Invalid verification code. Please try again.")
-      } else {
-        setError("MFA verification failed. Please try again.")
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
@@ -185,19 +149,11 @@ export default function NativeAuthPage() {
       const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
       await redirectToApp(credential.user)
     } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code === "auth/multi-factor-auth-required") {
+      const outcome = firebaseAuthErrorOutcome(err, "sign-in")
+      if (outcome.kind === "mfa-required") {
         handleMfaRequired(err as MultiFactorError)
-      } else if (
-        code === "auth/invalid-credential" ||
-        code === "auth/user-not-found" ||
-        code === "auth/wrong-password"
-      ) {
-        setError("Invalid email or password")
-      } else if (code === "auth/too-many-requests") {
-        setError("Too many attempts. Please try again later.")
-      } else {
-        setError("Login failed. Please try again.")
+      } else if (outcome.kind === "message") {
+        setError(outcome.message)
       }
     } finally {
       setLoading(false)
@@ -220,19 +176,8 @@ export default function NativeAuthPage() {
       })
       setVerificationSent(true)
     } catch (err) {
-      const code = (err as { code?: string }).code
-      if (code === "auth/email-already-in-use") {
-        setError("An account with this email already exists. Try signing in.")
-      } else if (code === "auth/weak-password" || code === "auth/password-does-not-meet-requirements") {
-        setError("Password must be at least 15 characters.")
-      } else if (code === "auth/admin-restricted-operation") {
-        setError("Sign-up is restricted. Please contact your administrator.")
-      } else if (code === "auth/blocking-function-error-response") {
-        const message = (err as { message?: string }).message
-        setError(message || "Sign-up blocked by administrator.")
-      } else {
-        setError(`Sign-up failed (${code || "unknown"}). Please try again.`)
-      }
+      const outcome = firebaseAuthErrorOutcome(err, "sign-up")
+      if (outcome.kind === "message") setError(outcome.message)
     } finally {
       setLoading(false)
     }
@@ -247,21 +192,13 @@ export default function NativeAuthPage() {
       const credential = await signInWithPopup(auth, provider)
       await redirectToApp(credential.user)
     } catch (err) {
-      const code = (err as { code?: string }).code
-      const message = (err as { message?: string }).message
-      if (code === "auth/multi-factor-auth-required") {
+      const outcome = firebaseAuthErrorOutcome(err, "google")
+      if (outcome.kind === "mfa-required") {
         handleMfaRequired(err as MultiFactorError)
-      } else if (
-        code === "auth/popup-closed-by-user" ||
-        code === "auth/cancelled-popup-request"
-      ) {
-        // Benign popup errors, do nothing
-      } else if (code === "auth/popup-blocked") {
+      } else if (outcome.kind === "popup-blocked") {
         setError("Popup was blocked by your browser. Please allow popups for this site.")
-      } else if (code === "auth/blocking-function-error-response") {
-        setError(message || "Sign-in blocked by administrator.")
-      } else {
-        setError(`Google sign-in failed (${code || "unknown"}). Please try again.`)
+      } else if (outcome.kind === "message") {
+        setError(outcome.message)
       }
     }
   }
@@ -281,77 +218,28 @@ export default function NativeAuthPage() {
     }
   }
 
-  // MFA Challenge Screen
   if (mfaResolver) {
     return (
-      <AuthCard>
-        <AuthHeader
-          title="Two-Factor Authentication"
-          subtitle="Enter the code from your authenticator app"
-        />
-        <form onSubmit={handleMfaVerify} className="space-y-4">
-          <AuthInput
-            id="totp-code"
-            label="Verification Code"
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            value={totpCode}
-            onChange={(e) =>
-              setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))
-            }
-            placeholder="000000"
-            className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
-            maxLength={6}
-            required
-            autoComplete="one-time-code"
-            autoFocus
-          />
-
-          {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
-
-          <AuthPrimaryButton type="submit" disabled={loading || totpCode.length !== 6}>
-            {loading ? "Verifying..." : "Verify"}
-          </AuthPrimaryButton>
-
-          <button
-            type="button"
-            onClick={() => {
-              setMfaResolver(null)
-              setTotpCode("")
-              setError("")
-            }}
-            className="w-full text-sm text-primary-600 hover:text-primary-700 hover:underline"
-          >
-            Back to sign in
-          </button>
-        </form>
-      </AuthCard>
+      <MfaChallengeScreen
+        resolver={mfaResolver}
+        onSuccess={(credential) => redirectToApp(credential.user)}
+        onCancel={() => {
+          setMfaResolver(null)
+          setError("")
+        }}
+      />
     )
   }
 
-  // Email Verification Sent Screen
   if (verificationSent) {
     return (
-      <AuthCard>
-        <AuthHeader
-          title="Check Your Email"
-          subtitle={
-            <>
-              We sent a verification link to <strong>{email}</strong>. Please
-              verify your email before signing in.
-            </>
-          }
-        />
-        <AuthPrimaryButton
-          onClick={() => {
-            setVerificationSent(false)
-            setIsSignUp(false)
-          }}
-        >
-          Back to Sign In
-        </AuthPrimaryButton>
-      </AuthCard>
+      <VerifyEmailScreen
+        email={email}
+        onBack={() => {
+          setVerificationSent(false)
+          setIsSignUp(false)
+        }}
+      />
     )
   }
 
@@ -411,24 +299,18 @@ export default function NativeAuthPage() {
 
           <div className="flex items-center justify-between text-sm">
             {!isSignUp && (
-              <button
-                type="button"
-                onClick={handleForgotPassword}
-                className="text-primary-600 hover:text-primary-700 hover:underline"
-              >
+              <AuthLinkButton onClick={handleForgotPassword}>
                 Forgot password?
-              </button>
+              </AuthLinkButton>
             )}
-            <button
-              type="button"
+            <AuthLinkButton
               onClick={() => {
                 setIsSignUp(!isSignUp)
                 setError("")
               }}
-              className="text-primary-600 hover:text-primary-700 hover:underline"
             >
               {isSignUp ? "Already have an account?" : "Create account"}
-            </button>
+            </AuthLinkButton>
           </div>
         </form>
 
