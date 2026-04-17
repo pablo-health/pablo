@@ -9,8 +9,9 @@ import uuid
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
+from ..api_errors import BadRequestError, ConflictError, NotFoundError
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -193,7 +194,7 @@ def create_appointment(
             data=request.model_dump(),
         )
     except InvalidAppointmentError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise BadRequestError(str(e)) from e
     return _to_response(appt)
 
 
@@ -222,7 +223,7 @@ def get_appointment(
     try:
         appt = service.get_appointment(appointment_id, ctx.user_id)
     except AppointmentNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise NotFoundError(str(e)) from e
     return _to_response(appt)
 
 
@@ -238,9 +239,9 @@ def update_appointment(
     try:
         appt = service.update_appointment(appointment_id, ctx.user_id, **updates)
     except AppointmentNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise BadRequestError(str(e)) from e
     return _to_response(appt)
 
 
@@ -257,7 +258,7 @@ def cancel_appointment(
     try:
         appt = service.cancel_appointment(appointment_id, ctx.user_id)
     except AppointmentNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise NotFoundError(str(e)) from e
     return _to_response(appt)
 
 
@@ -300,23 +301,19 @@ def start_session_from_appointment(
     try:
         appt = service.get_appointment(appointment_id, user.id)
     except AppointmentNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise NotFoundError(str(e)) from e
 
     # 2. Already has a session? → 409
     if appt.session_id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "detail": "Session already started for this appointment",
-                "session_id": appt.session_id,
-            },
+        raise ConflictError(
+            "Session already started for this appointment",
+            {"session_id": appt.session_id},
         )
 
     # 3. Unmatched patient? → 400
     if not appt.patient_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Appointment has no linked patient. Resolve the client match first.",
+        raise BadRequestError(
+            "Appointment has no linked patient. Resolve the client match first."
         )
 
     # 4. Create session from appointment data
@@ -335,11 +332,8 @@ def start_session_from_appointment(
 
     try:
         session, patient = session_service.schedule_session(user.id, request)
-    except PatientNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Patient not found for this appointment.",
-        ) from None
+    except PatientNotFoundError as e:
+        raise NotFoundError("Patient not found for this appointment.") from e
 
     # 6. Link appointment → session
     service.update_appointment(appointment_id, user.id, session_id=session.id)
@@ -376,7 +370,7 @@ def create_recurring_appointment(
             },
         )
     except (InvalidAppointmentError, InvalidRecurrenceError) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise BadRequestError(str(e)) from e
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
@@ -398,9 +392,9 @@ def edit_series(
     try:
         appointments = service.edit_future_occurrences(appointment_id, ctx.user_id, **updates)
     except AppointmentNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise BadRequestError(str(e)) from e
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
@@ -420,9 +414,9 @@ def cancel_series(
     try:
         appointments = service.cancel_future_occurrences(appointment_id, ctx.user_id)
     except AppointmentNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+        raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+        raise BadRequestError(str(e)) from e
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
@@ -511,18 +505,12 @@ def create_availability_rule(
     try:
         RuleType(request.rule_type)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid rule_type: {request.rule_type}",
-        ) from e
+        raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
 
     try:
         EnforcementLevel(request.enforcement)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid enforcement: {request.enforcement}",
-        ) from e
+        raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
 
     now = utc_now()
     rule = AvailabilityRule(
@@ -551,29 +539,20 @@ def update_availability_rule(
     """Update an existing availability rule."""
     rule = rule_repo.get(rule_id, ctx.user_id)
     if not rule:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Rule not found: {rule_id}",
-        )
+        raise NotFoundError(f"Rule not found: {rule_id}")
 
     if request.rule_type is not None:
         try:
             RuleType(request.rule_type)
         except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid rule_type: {request.rule_type}",
-            ) from e
+            raise BadRequestError(f"Invalid rule_type: {request.rule_type}") from e
         rule.rule_type = request.rule_type
 
     if request.enforcement is not None:
         try:
             EnforcementLevel(request.enforcement)
         except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid enforcement: {request.enforcement}",
-            ) from e
+            raise BadRequestError(f"Invalid enforcement: {request.enforcement}") from e
         rule.enforcement = request.enforcement
 
     if request.params is not None:
@@ -596,10 +575,7 @@ def delete_availability_rule(
     """Delete an availability rule."""
     deleted = rule_repo.delete(rule_id, ctx.user_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Rule not found: {rule_id}",
-        )
+        raise NotFoundError(f"Rule not found: {rule_id}")
 
 
 # --- Google Calendar endpoints ---
@@ -631,10 +607,7 @@ def google_calendar_authorize(
 ) -> GoogleCalendarAuthResponse:
     """Get Google OAuth authorization URL to connect calendar."""
     if not _is_valid_gcal_redirect_uri(redirect_uri):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid redirect_uri",
-        )
+        raise BadRequestError("Invalid redirect_uri")
     auth_url = service.get_auth_url(ctx.user_id, redirect_uri)
     return GoogleCalendarAuthResponse(auth_url=auth_url)
 
@@ -648,18 +621,12 @@ def google_calendar_callback(
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens."""
     if not _is_valid_gcal_redirect_uri(redirect_uri):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid redirect_uri",
-        )
+        raise BadRequestError("Invalid redirect_uri")
     try:
         service.handle_callback(ctx.user_id, code, redirect_uri)
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OAuth callback failed",
-        ) from e
+        raise BadRequestError("OAuth callback failed") from e
     return {"status": "connected"}
 
 
@@ -671,10 +638,7 @@ def google_calendar_disconnect(
     """Disconnect Google Calendar and remove stored tokens."""
     deleted = service.disconnect(ctx.user_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Google Calendar not connected",
-        )
+        raise NotFoundError("Google Calendar not connected")
     return {"status": "disconnected"}
 
 

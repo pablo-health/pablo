@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api_errors import register_exception_handlers
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
 from .routes import (
     admin,
@@ -66,6 +67,8 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.is_development else None,
     lifespan=lifespan,
 )
+
+register_exception_handlers(app)
 
 # PostgreSQL session middleware (must be added before security middleware
 # so it wraps the request lifecycle inside the security layer)

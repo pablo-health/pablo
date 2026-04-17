@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 
+from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import TenantContext, get_tenant_context, require_active_subscription
 from ..models.scheduling import (
     ConfigureICalRequest,
@@ -66,7 +67,7 @@ def configure_ical_feed(
     try:
         result = service.configure(ctx.user_id, request.ehr_system, request.feed_url)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise BadRequestError(str(exc)) from exc
     except Exception as exc:
         logger.exception("Failed to configure iCal feed")
         raise HTTPException(
@@ -137,10 +138,7 @@ def disconnect_ical_feed(
 ) -> dict[str, str]:
     """Remove a configured iCal feed URL."""
     if not service.disconnect(ctx.user_id, ehr_system):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No {ehr_system} connection found",
-        )
+        raise NotFoundError(f"No {ehr_system} connection found")
     return {"message": f"Disconnected {ehr_system}"}
 
 
@@ -172,17 +170,13 @@ async def import_clients(
 ) -> ImportClientsResponse:
     """Import clients from a CSV file or zipped export folder."""
     if not file.filename:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No file provided",
-        )
+        raise BadRequestError("No file provided")
 
     # Validate file extension
     suffix = Path(file.filename).suffix.lower()
     if suffix not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported file type. Allowed: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+        raise BadRequestError(
+            f"Unsupported file type. Allowed: {', '.join(sorted(_ALLOWED_EXTENSIONS))}"
         )
 
     # Enforce size limit (read in chunks to avoid OOM on huge uploads)

@@ -82,7 +82,7 @@ class TestAdminDisableEnable:
 
         response = client.patch(f"/api/admin/users/{mock_user.id}/disable")
         assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "CANNOT_DISABLE_SELF"
+        assert response.json()["error"]["code"] == "CANNOT_DISABLE_SELF"
 
 
 class TestAllowlistCRUD:
