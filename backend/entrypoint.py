@@ -9,8 +9,15 @@ Optional observability (env-var-gated, no-op if unconfigured):
   SENTRY_DSN            → Sentry error tracking
 Both are initialized before uvicorn imports the app so auto-instrumentation
 has a chance to patch.
+
+Optional runtime extension (env-var-gated, no-op if unset):
+  PABLO_RUNTIME_EXTENSION → dotted module path imported after observability
+  and before uvicorn starts. Extensions can register additional routers,
+  dependency overrides, or startup hooks on the FastAPI app. The module is
+  imported solely for its side effects.
 """
 
+import importlib
 import logging
 import os
 
@@ -75,8 +82,18 @@ def _init_sentry() -> None:
     logger.info("Sentry initialized (PII scrubbing on, traces at 5%% default)")
 
 
+def _load_runtime_extension() -> None:
+    """Import the optional runtime-extension module named by env var, if any."""
+    module_path = os.environ.get("PABLO_RUNTIME_EXTENSION")
+    if not module_path:
+        return
+    importlib.import_module(module_path)
+    logger.info("Loaded runtime extension: %s", module_path)
+
+
 _init_new_relic()
 _init_sentry()
+_load_runtime_extension()
 
 import uvicorn  # noqa: E402 — must follow observability init
 
