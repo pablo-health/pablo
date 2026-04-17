@@ -302,7 +302,7 @@ export default function LoginPage() {
                 className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
                 maxLength={6}
                 required
-                autoComplete="off"
+                autoComplete="one-time-code"
                 autoFocus
               />
             </div>
@@ -440,6 +440,7 @@ export default function LoginPage() {
               <input
                 id="email"
                 type="email"
+                autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
@@ -458,6 +459,7 @@ export default function LoginPage() {
               <input
                 id="password"
                 type="password"
+                autoComplete={isSignUp ? "new-password" : "current-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={isSignUp ? "Min 15 characters" : "Password"}
@@ -478,6 +480,7 @@ export default function LoginPage() {
                 <input
                   id="confirmPassword"
                   type="password"
+                  autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="Re-enter your password"

@@ -203,6 +203,7 @@ function AuthActionContent() {
               <input
                 id="new-password"
                 type="password"
+                autoComplete="new-password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="Min 15 characters"
@@ -220,6 +221,7 @@ function AuthActionContent() {
               <input
                 id="confirm-password"
                 type="password"
+                autoComplete="new-password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Confirm password"

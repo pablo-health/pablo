@@ -45,7 +45,7 @@ A HIPAA-compliant web application that helps therapists generate SOAP notes from
 
 - **Frontend:** Single-page application (SPA) with Next.js App Router
 - **Backend:** RESTful API with FastAPI
-- **Data:** Document-based NoSQL (Firestore)
+- **Data:** Relational (PostgreSQL via Cloud SQL, SQLAlchemy + Alembic)
 - **Auth:** Firebase Authentication with JWT tokens
 - **AI:** Meeting-transcription pipeline with mental health plugin
 

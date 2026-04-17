@@ -292,6 +292,7 @@ export function MFAEnrollmentForm() {
                   <input
                     id="reauth-password"
                     type="password"
+                    autoComplete="current-password"
                     value={reauthPassword}
                     onChange={(e) => setReauthPassword(e.target.value)}
                     placeholder="Your password"
@@ -432,7 +433,7 @@ export function MFAEnrollmentForm() {
                 className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
                 maxLength={6}
                 required
-                autoComplete="off"
+                autoComplete="one-time-code"
               />
             </div>
 

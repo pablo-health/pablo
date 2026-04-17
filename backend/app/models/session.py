@@ -41,8 +41,6 @@ from .soap_note import (
     SubjectiveNote,
     SubjectiveNoteModel,
 )
-from .soap_note import _to_sentence as _bcompat_to_sentence
-from .soap_note import _to_sentence_list as _bcompat_to_sentence_list
 from .transcript import (
     Transcript,
     TranscriptModel,
@@ -50,12 +48,6 @@ from .transcript import (
     parse_transcript_segments,
 )
 from .validators import validate_iso_date
-
-# Backward-compatible aliases for old private names used by tests
-_to_sentence = _bcompat_to_sentence
-_to_sentence_list = _bcompat_to_sentence_list
-_parse_transcript_segments = parse_transcript_segments
-
 
 # --- API request/response models ---
 

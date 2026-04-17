@@ -23,10 +23,9 @@ from app.models.session import (
     SessionResponse,
     SOAPSentenceModel,
     TherapySession,
-    _parse_transcript_segments,
-    _to_sentence,
-    _to_sentence_list,
 )
+from app.models.soap_note import _to_sentence, _to_sentence_list
+from app.models.transcript import parse_transcript_segments as _parse_transcript_segments
 from app.services.source_attribution_service import (
     _extract_json,
     _parse_segment_ids,

@@ -64,7 +64,7 @@ Out of scope:
 
 This project handles sensitive clinical data and follows these security practices:
 
-- **Encryption**: PHI encrypted at rest and in transit
+- **Encryption**: PHI encrypted in transit (TLS 1.2+ enforced) and at rest at the Cloud SQL disk layer using Google-managed keys (optionally CMEK). Application-layer field encryption is not currently used; access control is enforced at the query layer (tenant scoping + audit logging).
 - **Secrets management**: All secrets managed via environment variables (never committed)
 - **Dependency scanning**: Automated via [Trivy](https://github.com/aquasecurity/trivy) and [Dependabot](https://github.com/pablo-health/pablo/security/dependabot)
 - **Static analysis**: [CodeQL](https://github.com/pablo-health/pablo/security/code-scanning) (SAST) and Trivy misconfiguration scanning

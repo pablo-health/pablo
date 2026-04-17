@@ -121,6 +121,12 @@ class SessionService:
         self.soap_service = soap_service
         self.eval_export_service = eval_export_service
 
+    def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:
+        patient = self.patient_repo.get(patient_id, user_id)
+        if patient is None:
+            raise PatientNotFoundError(f"Patient {patient_id} not found")
+        return patient
+
     def _update_next_session_date(self, patient: Patient, user_id: str) -> None:
         """Recompute and persist next_session_date from scheduled sessions."""
         sessions = self.session_repo.list_by_patient(patient.id, user_id)
@@ -256,9 +262,9 @@ class SessionService:
                 session = self.eval_export_service.queue_session_for_export(session)
                 session = self.session_repo.update(session)
 
-        patient = self.patient_repo.get(session.patient_id, user_id)
+        patient = self._get_patient_or_raise(session.patient_id, user_id)
 
-        return session, patient  # type: ignore[return-value]
+        return session, patient
 
     def update_rating(
         self,
@@ -293,9 +299,9 @@ class SessionService:
         )
         session = self.session_repo.update(session)
 
-        patient = self.patient_repo.get(session.patient_id, user_id)
+        patient = self._get_patient_or_raise(session.patient_id, user_id)
 
-        return session, patient, old_rating  # type: ignore[return-value]
+        return session, patient, old_rating
 
     def schedule_session(
         self,
@@ -381,10 +387,10 @@ class SessionService:
         session.updated_at = now
         session = self.session_repo.update(session)
 
-        patient = self.patient_repo.get(session.patient_id, user_id)
-        if patient and target in {SessionStatus.CANCELLED, SessionStatus.IN_PROGRESS}:
+        patient = self._get_patient_or_raise(session.patient_id, user_id)
+        if target in {SessionStatus.CANCELLED, SessionStatus.IN_PROGRESS}:
             self._update_next_session_date(patient, user_id)
-        return session, patient  # type: ignore[return-value]
+        return session, patient
 
     def update_session_metadata(
         self,
@@ -422,8 +428,8 @@ class SessionService:
         session.updated_at = _now()
         session = self.session_repo.update(session)
 
-        patient = self.patient_repo.get(session.patient_id, user_id)
-        return session, patient  # type: ignore[return-value]
+        patient = self._get_patient_or_raise(session.patient_id, user_id)
+        return session, patient
 
     def upload_transcript_to_session(
         self,
