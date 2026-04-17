@@ -142,10 +142,108 @@ class TestNoveltyFlags:
         assert len(rows) == 1
         assert rows[0]["is_novel_user_ip"] is True
 
-    def test_baseline_excludes_window_itself(self) -> None:
-        """A pair seen only *within* the review window should still be novel."""
+    def test_brand_new_install_does_not_spam_novelty(self) -> None:
+        """Day-one install with no baseline must NOT flag everything novel.
+
+        This was the original bug: empty baseline → "(u, p) not in {}" → True
+        for every row. A new therapist importing 20 patients on day one
+        would get 20 false-positive 'novel access' findings.
+        """
         repo = InMemoryAuditRepository()
-        # Two rows in the same 24h window, same (user, patient) — neither sets baseline
+        # Brand-new user accesses 20 patients today, no prior history at all
+        for i in range(20):
+            repo.append(
+                AuditLogEntry(
+                    user_id="new-user",
+                    action="patient_viewed",
+                    resource_type="patient",
+                    resource_id=f"p{i}",
+                    patient_id=f"p{i}",
+                    ip_address="10.0.0.1",
+                )
+            )
+        rows = repo.metadata_for_review(window_hours=24)
+        assert len(rows) == 20
+        # No baseline exists for this user — none of these should be novel
+        assert not any(r["is_novel_user_patient"] for r in rows)
+        assert not any(r["is_novel_user_ip"] for r in rows)
+
+    def test_brand_new_user_alongside_established_users(self) -> None:
+        """A new user joining a busy install must not get spammed."""
+        repo = InMemoryAuditRepository()
+        # Established user with baseline activity
+        repo.append(
+            AuditLogEntry(
+                user_id="established",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="p1",
+                patient_id="p1",
+                ip_address="10.0.0.1",
+                timestamp=_iso(datetime.now(UTC) - timedelta(days=30)),
+            )
+        )
+        # Brand-new user appears today
+        repo.append(
+            AuditLogEntry(
+                user_id="newcomer",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="p2",
+                patient_id="p2",
+                ip_address="10.0.0.2",
+            )
+        )
+        rows = repo.metadata_for_review(window_hours=24)
+        newcomer_row = next(r for r in rows if r["user_id"] == "newcomer")
+        # No baseline for the newcomer — flags must not fire
+        assert newcomer_row["is_novel_user_patient"] is False
+        assert newcomer_row["is_novel_user_ip"] is False
+
+    def test_patient_created_in_window_suppresses_novelty(self) -> None:
+        """User creating a patient and immediately accessing it isn't suspicious."""
+        repo = InMemoryAuditRepository()
+        # Established user with baseline so novelty checks are even active
+        repo.append(
+            AuditLogEntry(
+                user_id="u",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="old",
+                patient_id="old",
+                timestamp=_iso(datetime.now(UTC) - timedelta(days=10)),
+            )
+        )
+        # Today: user creates a new patient and views them
+        repo.append(
+            AuditLogEntry(
+                user_id="u",
+                action="patient_created",
+                resource_type="patient",
+                resource_id="new",
+                patient_id="new",
+            )
+        )
+        repo.append(
+            AuditLogEntry(
+                user_id="u",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="new",
+                patient_id="new",
+            )
+        )
+        rows = repo.metadata_for_review(window_hours=24)
+        new_patient_rows = [r for r in rows if r["patient_id"] == "new"]
+        assert len(new_patient_rows) == 2
+        # Neither the create nor the immediate view should be flagged novel
+        assert not any(r["is_novel_user_patient"] for r in new_patient_rows)
+
+    def test_baseline_excludes_window_itself(self) -> None:
+        """A pair seen only *within* the review window stays unflagged when
+        the user has no prior baseline (warmup case)."""
+        repo = InMemoryAuditRepository()
+        # Two rows in the same 24h window, same (user, patient) — no baseline
         repo.append(
             AuditLogEntry(
                 user_id="u",
@@ -167,5 +265,5 @@ class TestNoveltyFlags:
             )
         )
         rows = repo.metadata_for_review(window_hours=24)
-        # Both rows should be flagged novel — the pair isn't in any prior baseline
-        assert all(r["is_novel_user_patient"] for r in rows)
+        # No baseline for this user → no novelty claims (warmup behavior)
+        assert not any(r["is_novel_user_patient"] for r in rows)

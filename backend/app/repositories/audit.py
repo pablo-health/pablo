@@ -82,25 +82,54 @@ class InMemoryAuditRepository(AuditRepository):
             elif ts >= baseline_start:
                 baseline_rows.append(e)
 
+        # Per-dimension known-pair sets, plus per-user "has any baseline
+        # activity in this dimension" sets. Novelty only applies when the
+        # user actually has baseline activity for that dimension —
+        # otherwise we have no basis to claim "this is new" (brand-new
+        # install, brand-new user, or user returning after > baseline_days
+        # all look like "no baseline" and would spam false positives).
         known_user_patient = {
             (e.user_id, e.patient_id) for e in baseline_rows if e.patient_id
         }
+        users_with_patient_baseline = {
+            e.user_id for e in baseline_rows if e.patient_id
+        }
         known_user_ip = {(e.user_id, e.ip_address) for e in baseline_rows if e.ip_address}
+        users_with_ip_baseline = {e.user_id for e in baseline_rows if e.ip_address}
         known_user_agent = {
             (e.user_id, e.user_agent) for e in baseline_rows if e.user_agent
+        }
+        users_with_ua_baseline = {e.user_id for e in baseline_rows if e.user_agent}
+
+        # If the same (user, patient) pair shows up as PATIENT_CREATED
+        # in the window, subsequent access is expected — don't flag it
+        # as novel. Avoids spamming "novel access" for patients the user
+        # just created. No DB join needed; the audit log carries the
+        # creation event itself.
+        created_in_window = {
+            (e.user_id, e.patient_id)
+            for e in window_rows
+            if e.action == "patient_created" and e.patient_id
         }
 
         out = []
         for e in window_rows:
             row = asdict(e)
             row["is_novel_user_patient"] = bool(
-                e.patient_id and (e.user_id, e.patient_id) not in known_user_patient
+                e.patient_id
+                and e.user_id in users_with_patient_baseline
+                and (e.user_id, e.patient_id) not in known_user_patient
+                and (e.user_id, e.patient_id) not in created_in_window
             )
             row["is_novel_user_ip"] = bool(
-                e.ip_address and (e.user_id, e.ip_address) not in known_user_ip
+                e.ip_address
+                and e.user_id in users_with_ip_baseline
+                and (e.user_id, e.ip_address) not in known_user_ip
             )
             row["is_novel_user_agent"] = bool(
-                e.user_agent and (e.user_id, e.user_agent) not in known_user_agent
+                e.user_agent
+                and e.user_id in users_with_ua_baseline
+                and (e.user_id, e.user_agent) not in known_user_agent
             )
             out.append(row)
 

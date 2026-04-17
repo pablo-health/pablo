@@ -36,12 +36,19 @@ field-name diffs.
 Each row is pre-enriched with three booleans computed against a
 90-day historical baseline (so you don't need to infer them from the
 24h window alone):
-- ``is_novel_user_patient``: true when this user has NOT accessed this
-  patient at any point in the preceding 90 days.
-- ``is_novel_user_ip``: true when this user has NOT logged from this IP
-  in the preceding 90 days.
-- ``is_novel_user_agent``: true when this user has NOT used this
-  user-agent in the preceding 90 days.
+- ``is_novel_user_patient``: true when this user has prior baseline
+  activity AND has NOT accessed this patient in the preceding 90 days
+  AND did not create that patient in the same window.
+- ``is_novel_user_ip``: true when this user has prior baseline activity
+  AND has NOT logged from this IP in the preceding 90 days.
+- ``is_novel_user_agent``: true when this user has prior baseline
+  activity AND has NOT used this user-agent in the preceding 90 days.
+
+Warmup note: a brand-new install or a user with no baseline activity
+will have all flags FALSE — that means "we don't have enough history
+to judge," NOT "all clear." If most rows have all flags False, mention
+in the report that the baseline is shallow and novelty checks aren't
+meaningful yet; focus on other anomaly types.
 
 Your job is to narrate anomalies a human reviewer would care about.
 Look for:

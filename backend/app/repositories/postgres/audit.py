@@ -62,7 +62,10 @@ class PostgresAuditRepository(AuditRepository):
         )
 
         # One query per dimension against the baseline window. Returns
-        # only distinct tuples — cheap, and none of it is PHI.
+        # only distinct tuples — cheap, and none of it is PHI. Novelty is
+        # only meaningful when the user has prior baseline activity for
+        # that dimension; otherwise (brand-new install, brand-new user,
+        # user returning after > baseline_days) we'd spam false positives.
         known_user_patient = set(
             self._session.execute(
                 select(distinct(AuditLogRow.user_id), AuditLogRow.patient_id).where(
@@ -72,6 +75,7 @@ class PostgresAuditRepository(AuditRepository):
                 )
             ).all()
         )
+        users_with_patient_baseline = {pair[0] for pair in known_user_patient}
         known_user_ip = set(
             self._session.execute(
                 select(distinct(AuditLogRow.user_id), AuditLogRow.ip_address).where(
@@ -81,6 +85,7 @@ class PostgresAuditRepository(AuditRepository):
                 )
             ).all()
         )
+        users_with_ip_baseline = {pair[0] for pair in known_user_ip}
         known_user_agent = set(
             self._session.execute(
                 select(distinct(AuditLogRow.user_id), AuditLogRow.user_agent).where(
@@ -90,18 +95,35 @@ class PostgresAuditRepository(AuditRepository):
                 )
             ).all()
         )
+        users_with_ua_baseline = {pair[0] for pair in known_user_agent}
+
+        # PATIENT_CREATED in this window suppresses novelty for that pair —
+        # users accessing patients they just created in the same window
+        # is expected, not suspicious.
+        created_in_window = {
+            (r.user_id, r.patient_id)
+            for r in window_rows
+            if r.action == "patient_created" and r.patient_id
+        }
 
         out = []
         for row in window_rows:
             entry = _row_to_dict(row)
             entry["is_novel_user_patient"] = bool(
-                row.patient_id and (row.user_id, row.patient_id) not in known_user_patient
+                row.patient_id
+                and row.user_id in users_with_patient_baseline
+                and (row.user_id, row.patient_id) not in known_user_patient
+                and (row.user_id, row.patient_id) not in created_in_window
             )
             entry["is_novel_user_ip"] = bool(
-                row.ip_address and (row.user_id, row.ip_address) not in known_user_ip
+                row.ip_address
+                and row.user_id in users_with_ip_baseline
+                and (row.user_id, row.ip_address) not in known_user_ip
             )
             entry["is_novel_user_agent"] = bool(
-                row.user_agent and (row.user_id, row.user_agent) not in known_user_agent
+                row.user_agent
+                and row.user_id in users_with_ua_baseline
+                and (row.user_id, row.user_agent) not in known_user_agent
             )
             out.append(entry)
 
