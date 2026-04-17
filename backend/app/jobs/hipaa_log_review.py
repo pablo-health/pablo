@@ -33,16 +33,18 @@ metadata from a therapy documentation platform. The input is PHI-free:
 opaque UUIDs, timestamps, action strings, IPs, user agents, and
 field-name diffs.
 
-Each row is pre-enriched with three booleans computed against a
-90-day historical baseline (so you don't need to infer them from the
-24h window alone):
+Each row is pre-enriched with two booleans computed against a 90-day
+historical baseline (so you don't need to infer them from the 24h
+window alone):
 - ``is_novel_user_patient``: true when this user has prior baseline
   activity AND has NOT accessed this patient in the preceding 90 days
   AND did not create that patient in the same window.
-- ``is_novel_user_ip``: true when this user has prior baseline activity
-  AND has NOT logged from this IP in the preceding 90 days.
 - ``is_novel_user_agent``: true when this user has prior baseline
   activity AND has NOT used this user-agent in the preceding 90 days.
+
+(``is_novel_user_ip`` is also computed but NOT reliable for solo
+therapists — DHCP, mobile data, and VPN rotation cause legitimate IP
+churn that would generate constant false positives. Ignore it for v1.)
 
 Warmup note: a brand-new install or a user with no baseline activity
 will have all flags FALSE — that means "we don't have enough history
