@@ -386,10 +386,15 @@ else
     echo "  Tier:      db-f1-micro"
     echo "  Region:    ${REPO_LOCATION}"
     echo "  Disk:      10GB (auto-increase enabled)"
+    echo "  Backups:   daily at 08:00 UTC, 30-day retention, PITR 7 days"
     echo ""
     echo -e "${YELLOW}This takes 5-10 minutes...${NC}"
     echo ""
 
+    # Backup config is HIPAA-relevant — daily backups + 7-day PITR give a
+    # defensible RPO for PHI under §164.308(a)(7)(ii)(A). Applied here at
+    # create time and re-enforced below via `instances patch` so re-running
+    # setup against an existing instance heals misconfiguration.
     if gcloud sql instances create "$SQL_INSTANCE_NAME" \
         --database-version=POSTGRES_16 \
         --edition=ENTERPRISE \
@@ -398,6 +403,12 @@ else
         --storage-size=10 \
         --storage-auto-increase \
         --assign-ip \
+        --backup \
+        --backup-start-time=08:00 \
+        --backup-location="$REPO_LOCATION" \
+        --enable-point-in-time-recovery \
+        --retained-backups-count=30 \
+        --retained-transaction-log-days=7 \
         --quiet 2>&1; then
         echo -e "${GREEN}Cloud SQL instance created${NC}"
     else
@@ -437,6 +448,36 @@ if [ "$INSTANCE_STATE" != "RUNNABLE" ]; then
     echo -e "${RED}Cloud SQL instance is not ready after 5 minutes.${NC}"
     echo "Check status: gcloud sql instances describe ${SQL_INSTANCE_NAME}"
     exit 1
+fi
+
+# Enforce backup + PITR config on every run. Idempotent no-op when already
+# correctly configured. Guards against instances created before this flag
+# block existed, or drift from the Cloud Console.
+echo ""
+echo "Verifying backup configuration (HIPAA: daily backups + 7d PITR)..."
+BACKUP_ENABLED=$(gcloud sql instances describe "$SQL_INSTANCE_NAME" \
+    --format="value(settings.backupConfiguration.enabled)" 2>/dev/null || echo "")
+PITR_ENABLED=$(gcloud sql instances describe "$SQL_INSTANCE_NAME" \
+    --format="value(settings.backupConfiguration.pointInTimeRecoveryEnabled)" 2>/dev/null || echo "")
+
+if [ "$BACKUP_ENABLED" != "True" ] || [ "$PITR_ENABLED" != "True" ]; then
+    echo "  Patching instance to enable backups + PITR..."
+    gcloud sql instances patch "$SQL_INSTANCE_NAME" \
+        --backup \
+        --backup-start-time=08:00 \
+        --backup-location="$REPO_LOCATION" \
+        --enable-point-in-time-recovery \
+        --retained-backups-count=30 \
+        --retained-transaction-log-days=7 \
+        --quiet 2>&1 || {
+            echo -e "${RED}Failed to enable backups.${NC}" >&2
+            echo "  HIPAA requires daily backups. Enable manually:" >&2
+            echo "  https://console.cloud.google.com/sql/instances/${SQL_INSTANCE_NAME}/backups?project=${PROJECT_ID}" >&2
+            exit 1
+        }
+    echo -e "${GREEN}Backup configuration enforced${NC}"
+else
+    echo -e "${GREEN}Backups + PITR already enabled${NC}"
 fi
 
 # Generate a random password for the database user
@@ -1095,14 +1136,52 @@ echo ""
 read -p "Press Enter after you've updated the OAuth redirect URIs..."
 echo ""
 
-# Update backend CORS
-echo "Updating backend CORS configuration..."
+# Update backend CORS + OIDC audience + blocking-function caller SA.
+# The backend pins these on every /api/ext/auth call to block tokens from
+# any other service account in any other GCP project. See
+# backend/app/routes/ext_auth.py:_verify_blocking_function_token.
+echo "Updating backend CORS + OIDC verification config..."
+
+# Discover the Firebase blocking function runtime SA. Try the deployed
+# function first; fall back to the default Cloud Functions gen2 compute SA
+# (which is what blocking functions run as unless the operator overrode it).
+BLOCKING_FN_SA=""
+for FN_NAME in beforecreate beforeCreate beforesignin beforeSignIn; do
+    SA=$(gcloud functions describe "$FN_NAME" \
+        --gen2 \
+        --region="$REPO_LOCATION" \
+        --format="value(serviceConfig.serviceAccountEmail)" 2>/dev/null || echo "")
+    if [ -n "$SA" ]; then
+        BLOCKING_FN_SA="$SA"
+        echo "  Blocking function SA (from deployed $FN_NAME): $BLOCKING_FN_SA"
+        break
+    fi
+done
+
+if [ -z "$BLOCKING_FN_SA" ]; then
+    PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" \
+        --format="value(projectNumber)" 2>/dev/null || echo "")
+    if [ -n "$PROJECT_NUMBER" ]; then
+        BLOCKING_FN_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+        echo "  Blocking function SA (default gen2 compute): $BLOCKING_FN_SA"
+        echo -e "  ${YELLOW}If you deploy blocking functions with a custom SA, update BLOCKING_FUNCTION_SERVICE_ACCOUNT on pablo-backend.${NC}"
+    else
+        echo -e "  ${YELLOW}Could not determine blocking function SA — skipping caller check.${NC}"
+        echo -e "  ${YELLOW}Set BLOCKING_FUNCTION_SERVICE_ACCOUNT on pablo-backend once the SA is known.${NC}"
+    fi
+fi
+
+ENV_VAR_UPDATES="CORS_ORIGINS=${FRONTEND_URL},BACKEND_BASE_URL=${BACKEND_URL}"
+if [ -n "$BLOCKING_FN_SA" ]; then
+    ENV_VAR_UPDATES="${ENV_VAR_UPDATES},BLOCKING_FUNCTION_SERVICE_ACCOUNT=${BLOCKING_FN_SA}"
+fi
+
 gcloud run services update pablo-backend \
     --region="$REPO_LOCATION" \
-    --update-env-vars="CORS_ORIGINS=${FRONTEND_URL}" \
+    --update-env-vars="${ENV_VAR_UPDATES}" \
     --quiet
 
-echo -e "${GREEN}CORS configured${NC}"
+echo -e "${GREEN}CORS + OIDC verification configured${NC}"
 
 # ============================================================================
 # STEP 10: Create your user
@@ -1181,34 +1260,32 @@ except: pass
     if [ -n "$ADMIN_UID" ]; then
         echo -e "${GREEN}User created in Identity Platform (uid: ${ADMIN_UID})${NC}"
 
-        # Create admin user in PostgreSQL via Cloud SQL
+        # Validate email and uid format before interpolating into SQL.
+        # Admin bootstrap runs once at install time over Cloud SQL IAM — the
+        # only caller with cloudsql.instances.connect on this project is the
+        # operator. Validation here is belt-and-suspenders against a mistyped
+        # or maliciously crafted email/UID.
+        if ! [[ "$ADMIN_EMAIL_LOWER" =~ ^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$ ]]; then
+            echo -e "${RED}Invalid admin email format: ${ADMIN_EMAIL_LOWER}${NC}" >&2
+            exit 1
+        fi
+        if ! [[ "$ADMIN_UID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo -e "${RED}Invalid Identity Platform UID format: ${ADMIN_UID}${NC}" >&2
+            exit 1
+        fi
+
+        # Seed admin via Cloud SQL IAM. This is the authenticated bootstrap
+        # path — only the operator running setup (who holds
+        # cloudsql.instances.connect on this project) can perform it. An
+        # HTTP bootstrap endpoint would have to accept unauthenticated
+        # writes during a first-run window; we avoid that trust boundary.
         echo "Setting admin flag in database..."
         SETUP_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-        # Insert admin user and allowlist entry via the backend seed endpoint
-        SEED_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "${BACKEND_URL}/api/ext/auth/seed-admin" \
-            -H "Content-Type: application/json" \
-            -d "{
-                \"uid\": \"${ADMIN_UID}\",
-                \"email\": \"${ADMIN_EMAIL_LOWER}\"
-            }" 2>/dev/null || echo "000")
-
-        if [ "$SEED_RESPONSE" == "200" ] || [ "$SEED_RESPONSE" == "201" ]; then
-            echo -e "${GREEN}Admin user created in database${NC}"
-        else
-            echo -e "${YELLOW}Could not seed admin via API (HTTP ${SEED_RESPONSE})${NC}"
-            echo ""
-            echo "Creating admin user directly in Cloud SQL..."
-            echo "  You may need to connect manually if this fails:"
-            echo "  gcloud sql connect ${SQL_INSTANCE_NAME} --database=${SQL_DB_NAME} --user=${SQL_DB_USER}"
-            echo ""
-
-            # Fall back to direct SQL insert
-            gcloud sql connect "$SQL_INSTANCE_NAME" \
-                --database="$SQL_DB_NAME" \
-                --user="$SQL_DB_USER" \
-                --quiet 2>/dev/null <<SQL || echo -e "${YELLOW}Direct SQL insert failed — please create admin user manually${NC}"
+        if gcloud sql connect "$SQL_INSTANCE_NAME" \
+            --database="$SQL_DB_NAME" \
+            --user="$SQL_DB_USER" \
+            --quiet 2>/dev/null <<SQL
 INSERT INTO allowed_emails (email, added_by, added_at)
 VALUES ('${ADMIN_EMAIL_LOWER}', 'setup-solo.sh', '${SETUP_TIMESTAMP}')
 ON CONFLICT (email) DO NOTHING;
@@ -1217,7 +1294,12 @@ INSERT INTO users (id, email, is_admin, status, name, created_at)
 VALUES ('${ADMIN_UID}', '${ADMIN_EMAIL_LOWER}', true, 'approved', 'Admin', '${SETUP_TIMESTAMP}')
 ON CONFLICT (id) DO NOTHING;
 SQL
-            echo -e "${GREEN}Admin flag set${NC}"
+        then
+            echo -e "${GREEN}Admin user created in database${NC}"
+        else
+            echo -e "${YELLOW}Could not seed admin via Cloud SQL. Connect manually with:${NC}" >&2
+            echo "  gcloud sql connect ${SQL_INSTANCE_NAME} --database=${SQL_DB_NAME} --user=${SQL_DB_USER}" >&2
+            exit 1
         fi
     else
         echo -e "${YELLOW}Could not create user (may already exist).${NC}"
