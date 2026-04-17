@@ -222,5 +222,55 @@ ensure_policy "Pablo compliance routine HIGH finding" "$(cat <<JSON
 JSON
 )"
 
+# Weekly pipeline heartbeat — matches the synthetic drill emitted by
+# pipeline_heartbeat job. Separate alert policy so the email subject
+# is distinct from real HIGH findings; same notification channel.
+ensure_policy "Pablo compliance pipeline heartbeat (weekly drill)" "$(cat <<JSON
+{
+  "displayName": "Pablo compliance pipeline heartbeat (weekly drill)",
+  "combiner": "OR",
+  "conditions": [{
+    "displayName": "Weekly heartbeat reached log sink",
+    "conditionMatchedLog": {
+      "filter": "resource.type=\"cloud_run_job\" AND severity=\"ERROR\" AND jsonPayload.alert_type=\"pipeline_heartbeat\""
+    }
+  }],
+  "notificationChannels": ["$CHANNEL_ID"],
+  "alertStrategy": {
+    "notificationRateLimit": {"period": "3600s"},
+    "autoClose": "7200s"
+  },
+  "documentation": {
+    "content": "This is the weekly synthetic drill from pipeline_heartbeat. If you stop receiving it, the compliance pipeline is broken — investigate Cloud Run Job runs, the log sink, and this alert policy.",
+    "mimeType": "text/markdown"
+  }
+}
+JSON
+)"
+
+# "Job stopped running" — fires when hipaa-log-review Cloud Run Job
+# hasn't completed successfully in > 30 hours (1 day + 6h slack).
+# Belt-and-suspenders against silent job failures.
+ensure_policy "Pablo HIPAA log-review job is stale" "$(cat <<JSON
+{
+  "displayName": "Pablo HIPAA log-review job is stale",
+  "combiner": "OR",
+  "conditions": [{
+    "displayName": "No successful completion in 30h",
+    "conditionAbsent": {
+      "filter": "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"hipaa-log-review\" AND metric.type=\"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result=\"succeeded\"",
+      "aggregations": [{
+        "alignmentPeriod": "3600s",
+        "perSeriesAligner": "ALIGN_SUM"
+      }],
+      "duration": "108000s"
+    }
+  }],
+  "notificationChannels": ["$CHANNEL_ID"],
+  "alertStrategy": {"autoClose": "86400s"}
+}
+JSON
+)"
+
 info "Simple monitoring tier configured."
 info "Alerts will be sent to: $NOTIFY_EMAIL"

@@ -83,17 +83,29 @@ information. If the input is empty or too sparse, say so and stop.
 """
 
 
+MONTHLY_WINDOW_HOURS = 24 * 30
+
+
 def run(
     window_hours: int = 24,
     gcs_bucket: str | None = None,
 ) -> int:
-    """Entry point. Returns exit code (0 on success, non-zero on failure)."""
+    """Entry point. Returns exit code (0 on success, non-zero on failure).
+
+    Set REVIEW_WINDOW_HOURS=720 (30 days) to run the monthly rollup
+    review instead of the daily — same code, wider lens. The prompt
+    detects long windows and asks the model to look for slow-burn
+    patterns instead of point-in-time anomalies.
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     gcs_bucket = gcs_bucket or os.environ.get("COMPLIANCE_REPORT_BUCKET")
     window_hours = int(os.environ.get("REVIEW_WINDOW_HOURS", window_hours))
 
-    logger.info("Starting HIPAA log review — window_hours=%d", window_hours)
+    review_mode = "monthly" if window_hours >= MONTHLY_WINDOW_HOURS else "daily"
+    logger.info(
+        "Starting HIPAA log review — window_hours=%d mode=%s", window_hours, review_mode
+    )
 
     payload = _load_review_payload(window_hours)
     logger.info(
@@ -107,10 +119,10 @@ def run(
         report = "# HIPAA Log Review\n\nNo audit activity in the review window.\n"
         severity = "NONE"
     else:
-        report = _ask_claude(payload)
+        report = _ask_claude(payload, review_mode=review_mode)
         severity = _parse_severity(report)
 
-    report_path = _write_report(report, gcs_bucket)
+    report_path = _write_report(report, gcs_bucket, review_mode=review_mode)
     logger.info("Report written to %s (severity=%s)", report_path, severity)
 
     if severity == "HIGH":
@@ -148,13 +160,22 @@ def _load_review_payload(window_hours: int) -> dict[str, Any]:
         session.close()
 
 
-def _ask_claude(payload: dict[str, Any]) -> str:
+def _ask_claude(payload: dict[str, Any], review_mode: str = "daily") -> str:
     """Send payload to Claude on Vertex AI and return the markdown report.
 
     Uses the Anthropic SDK's Vertex adapter — inference runs inside GCP,
     so PHI (if it ever leaks into the payload despite the repo guard)
     stays under the GCP BAA.
     """
+    system_prompt = SYSTEM_PROMPT
+    if review_mode == "monthly":
+        system_prompt += (
+            "\n\nMONTHLY ROLLUP MODE: the window is 30 days, not 24 hours. "
+            "Focus on slow-burn patterns that daily reviews would miss — e.g., a user "
+            "steadily accumulating access to new patients over weeks, gradual shifts "
+            "in hour-of-day distribution, sustained elevated export rates. Point-in-time "
+            "flags still matter but lean heavier on trends."
+        )
     try:
         from anthropic import AnthropicVertex  # type: ignore[import-not-found]  # noqa: PLC0415
         from anthropic.types import TextBlock  # type: ignore[import-not-found]  # noqa: PLC0415
@@ -176,7 +197,7 @@ def _ask_claude(payload: dict[str, Any]) -> str:
     resp = client.messages.create(
         model=model,
         max_tokens=4096,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
     )
     parts = [b.text for b in resp.content if isinstance(b, TextBlock)]
@@ -191,10 +212,10 @@ def _parse_severity(report: str) -> str:
     return "NONE"
 
 
-def _write_report(report: str, gcs_bucket: str | None) -> str:
+def _write_report(report: str, gcs_bucket: str | None, review_mode: str = "daily") -> str:
     """Write report to GCS if configured, else print to stdout. Returns a URI."""
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
-    filename = f"hipaa-log-review/{ts}.md"
+    filename = f"hipaa-log-review/{review_mode}/{ts}.md"
 
     if not gcs_bucket:
         logger.warning("COMPLIANCE_REPORT_BUCKET unset — printing report to stdout")
