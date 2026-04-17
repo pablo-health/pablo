@@ -203,3 +203,56 @@ docker-rebuild:
 # Show status of Docker containers
 docker-status:
 	docker compose ps
+
+# ─── Scheduled routines — local runs (Mac arm64 + amd64) ──────────────────
+#
+# These targets let you run the HIPAA log-review and pentest jobs on your
+# laptop using the same Docker images that Cloud Run Jobs runs in prod.
+# Auth comes from your local gcloud Application Default Credentials —
+# mount ~/.config/gcloud so the container sees them.
+
+ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+PLATFORM ?= linux/$(ARCH)
+PABLO_BACKEND_IMAGE ?= ghcr.io/pablo-health/backend:main
+PABLO_PENTEST_IMAGE ?= ghcr.io/pablo-health/pentest:main
+
+# Local HIPAA log review (prints report to stdout — does not upload to GCS)
+hipaa-review-local:
+	@test -n "$$GCP_PROJECT_ID" || (echo "Set GCP_PROJECT_ID first"; exit 1)
+	docker run --rm --platform $(PLATFORM) \
+		-v $$HOME/.config/gcloud:/root/.config/gcloud:ro \
+		-e GCP_PROJECT_ID=$$GCP_PROJECT_ID \
+		-e VERTEX_REGION=us-east5 \
+		-e REVIEW_WINDOW_HOURS=24 \
+		-e DATABASE_URL=$$DATABASE_URL \
+		$(PABLO_BACKEND_IMAGE) \
+		python3.13 -m backend.app.jobs.hipaa_log_review
+
+# Local pentest (prints report to stdout). Requires gcloud auth + the
+# pentest image built or pulled locally.
+pentest-local:
+	@test -n "$$GCP_PROJECT_ID" || (echo "Set GCP_PROJECT_ID first"; exit 1)
+	docker run --rm --platform $(PLATFORM) \
+		-v $$HOME/.config/gcloud:/root/.config/gcloud:ro \
+		-e GCP_PROJECT_ID=$$GCP_PROJECT_ID \
+		-e VERTEX_REGION=us-east5 \
+		$(PABLO_PENTEST_IMAGE)
+
+# Build the pentest image locally for the current arch (fast iteration).
+# Uses the local backend image as the base rather than pulling from GHCR.
+pentest-image-local:
+	docker build --platform $(PLATFORM) \
+		-t pablo-pentest:local \
+		--build-arg BASE_IMAGE=pablo-backend:local \
+		-f backend/Dockerfile.pentest .
+
+# Build + push multi-arch pentest image to GHCR (use for manual publishes
+# outside the release workflow). Requires `docker buildx` + GHCR auth.
+pentest-image-push:
+	@test -n "$$REGISTRY" || (echo "Set REGISTRY=ghcr.io/<owner>"; exit 1)
+	@test -n "$$TAG" || (echo "Set TAG=vX.Y.Z or TAG=main"; exit 1)
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-f backend/Dockerfile.pentest \
+		--build-arg BASE_IMAGE=$$REGISTRY/backend:$$TAG \
+		-t $$REGISTRY/pentest:$$TAG \
+		--push .

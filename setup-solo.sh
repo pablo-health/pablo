@@ -1280,6 +1280,155 @@ SQL
     echo ""
 fi
 
+# STEP 11: Compliance bucket + scheduled routines (HIPAA log review + pentest)
+echo ""
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}STEP 11: HIPAA compliance routines (optional, recommended)${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo "Schedules two Cloud Run Jobs:"
+echo "  - hipaa-log-review (daily 07:00 local) — reviews audit log for anomalies"
+echo "  - pentest          (weekly Sun 02:00) — owner-authorized pentest"
+echo "Reports land in gs://${PROJECT_ID}-compliance-reports/ with 7yr retention lock."
+echo ""
+read -p "Enable HIPAA compliance routines? [Y/n]: " ENABLE_ROUTINES
+ENABLE_ROUTINES="${ENABLE_ROUTINES:-Y}"
+
+if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
+    gcloud services enable \
+        run.googleapis.com \
+        cloudscheduler.googleapis.com \
+        storage.googleapis.com \
+        aiplatform.googleapis.com \
+        --project="$PROJECT_ID" --quiet >/dev/null
+
+    COMPLIANCE_BUCKET="${PROJECT_ID}-compliance-reports"
+    if ! gcloud storage buckets describe "gs://${COMPLIANCE_BUCKET}" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Creating compliance-reports bucket with 7-year retention lock"
+        gcloud storage buckets create "gs://${COMPLIANCE_BUCKET}" \
+            --project="$PROJECT_ID" \
+            --location="$REPO_LOCATION" \
+            --uniform-bucket-level-access >/dev/null
+        gcloud storage buckets update "gs://${COMPLIANCE_BUCKET}" \
+            --retention-period=220752000 >/dev/null  # 7 years in seconds
+        echo -e "${GREEN}    Bucket created${NC} (run 'gcloud storage buckets update --lock-retention-period' when you're ready to make it irreversible)"
+    else
+        echo "  Compliance bucket already exists"
+    fi
+
+    BACKEND_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend:${PABLO_VERSION:-latest}"
+    PENTEST_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/pablo/pentest:${PABLO_VERSION:-latest}"
+    BACKEND_SA="pablo-backend@${PROJECT_ID}.iam.gserviceaccount.com"
+
+    # Grant the backend SA access to read audit_logs and write to the bucket
+    gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
+        --member="serviceAccount:${BACKEND_SA}" \
+        --role="roles/storage.objectCreator" --condition=None >/dev/null 2>&1 || true
+
+    # HIPAA log review job
+    if ! gcloud run jobs describe hipaa-log-review --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Deploying Cloud Run Job: hipaa-log-review"
+        gcloud run jobs create hipaa-log-review \
+            --project="$PROJECT_ID" \
+            --region="$REPO_LOCATION" \
+            --image="$BACKEND_IMAGE" \
+            --service-account="$BACKEND_SA" \
+            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5,REVIEW_WINDOW_HOURS=24" \
+            --set-secrets="DATABASE_URL=pablo-database-url:latest" \
+            --command="python3.13" \
+            --args="-m,backend.app.jobs.hipaa_log_review" \
+            --max-retries=2 --task-timeout=15m >/dev/null
+    else
+        echo "  Cloud Run Job hipaa-log-review already exists"
+    fi
+
+    # Pentest job (uses the pentest image which extends backend image)
+    if ! gcloud run jobs describe pentest --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        if gcloud artifacts docker images describe "$PENTEST_IMAGE" >/dev/null 2>&1; then
+            echo "  Deploying Cloud Run Job: pentest"
+            gcloud run jobs create pentest \
+                --project="$PROJECT_ID" \
+                --region="$REPO_LOCATION" \
+                --image="$PENTEST_IMAGE" \
+                --service-account="$BACKEND_SA" \
+                --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5" \
+                --max-retries=0 --task-timeout=50m >/dev/null
+        else
+            echo -e "${YELLOW}  Pentest image not found — skipping Cloud Run Job. Build + push with 'make pentest-image-push' first.${NC}"
+        fi
+    else
+        echo "  Cloud Run Job pentest already exists"
+    fi
+
+    # Cloud Scheduler triggers
+    SCHEDULER_SA="${SCHEDULER_SA:-pablo-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"
+    if ! gcloud iam service-accounts describe "$SCHEDULER_SA" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Creating scheduler service account"
+        gcloud iam service-accounts create pablo-scheduler \
+            --project="$PROJECT_ID" \
+            --display-name="Pablo Cloud Scheduler" >/dev/null
+        gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="serviceAccount:${SCHEDULER_SA}" \
+            --role="roles/run.invoker" --condition=None >/dev/null
+    fi
+
+    USER_TZ="${USER_TIMEZONE:-America/Los_Angeles}"
+    JOB_RUN_URL_BASE="https://${REPO_LOCATION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT_ID}/jobs"
+
+    if ! gcloud scheduler jobs describe hipaa-log-review-daily --location="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Creating scheduler: hipaa-log-review-daily (07:00 $USER_TZ)"
+        gcloud scheduler jobs create http hipaa-log-review-daily \
+            --project="$PROJECT_ID" \
+            --location="$REPO_LOCATION" \
+            --schedule="0 7 * * *" \
+            --time-zone="$USER_TZ" \
+            --uri="${JOB_RUN_URL_BASE}/hipaa-log-review:run" \
+            --http-method=POST \
+            --oauth-service-account-email="$SCHEDULER_SA" >/dev/null
+    fi
+
+    if ! gcloud scheduler jobs describe pentest-weekly --location="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Creating scheduler: pentest-weekly (Sunday 02:00 $USER_TZ)"
+        gcloud scheduler jobs create http pentest-weekly \
+            --project="$PROJECT_ID" \
+            --location="$REPO_LOCATION" \
+            --schedule="0 2 * * 0" \
+            --time-zone="$USER_TZ" \
+            --uri="${JOB_RUN_URL_BASE}/pentest:run" \
+            --http-method=POST \
+            --oauth-service-account-email="$SCHEDULER_SA" >/dev/null
+    fi
+
+    echo -e "${GREEN}  Routines enabled${NC}"
+else
+    echo "  Skipped. Run ./scripts/routines/setup-routines.sh later to enable."
+fi
+
+# STEP 12: Monitoring (GCP-native, optional but recommended)
+echo ""
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${BLUE}STEP 12: Monitoring (optional, recommended)${NC}"
+echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+echo "Adds Cloud Monitoring uptime checks + alert policies with email"
+echo "notifications. No third-party accounts required; stays under your"
+echo "existing GCP BAA."
+echo ""
+read -p "Enable GCP monitoring? [Y/n]: " ENABLE_MONITORING
+ENABLE_MONITORING="${ENABLE_MONITORING:-Y}"
+
+if [[ "$ENABLE_MONITORING" =~ ^[Yy]$ ]]; then
+    read -p "  Email for alerts: " ALERT_EMAIL
+    if [[ -n "$ALERT_EMAIL" ]]; then
+        ./scripts/monitoring/setup.sh \
+            "$PROJECT_ID" "$BACKEND_URL" "$FRONTEND_URL" "$ALERT_EMAIL"
+    else
+        echo "  No email provided; skipped. Run scripts/monitoring/setup.sh later."
+    fi
+else
+    echo "  Skipped. Run scripts/monitoring/setup.sh later to enable."
+fi
+
 # SUCCESS
 echo ""
 echo "╔════════════════════════════════════════════════════════════════╗"

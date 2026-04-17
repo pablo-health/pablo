@@ -215,3 +215,30 @@ class ICalSyncConfigRow(Base):
     last_sync_error: Mapped[str | None] = mapped_column(Text)
     connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
+
+
+class AuditLogRow(Base):
+    """HIPAA audit log entry.
+
+    Schema is intentionally PHI-free: IDs only, no denormalized names or
+    emails. The `changes` JSONB stores field-name diffs (not values) and
+    non-PHI structured data like counts and enum transitions. Routine
+    log-review jobs can query this table directly without a sanitizing view.
+    """
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    patient_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    session_id: Mapped[str | None] = mapped_column(String(128))
+    ip_address: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    changes: Mapped[dict | None] = mapped_column(JSONB)
