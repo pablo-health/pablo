@@ -33,12 +33,24 @@ metadata from a therapy documentation platform. The input is PHI-free:
 opaque UUIDs, timestamps, action strings, IPs, user agents, and
 field-name diffs.
 
+Each row is pre-enriched with three booleans computed against a
+90-day historical baseline (so you don't need to infer them from the
+24h window alone):
+- ``is_novel_user_patient``: true when this user has NOT accessed this
+  patient at any point in the preceding 90 days.
+- ``is_novel_user_ip``: true when this user has NOT logged from this IP
+  in the preceding 90 days.
+- ``is_novel_user_agent``: true when this user has NOT used this
+  user-agent in the preceding 90 days.
+
 Your job is to narrate anomalies a human reviewer would care about.
 Look for:
 - Off-hours PHI access (02:00-05:00 local)
 - Bulk reads by one user in a short window
-- Access to patient records by users with no prior access in 90d
-- New IPs / user agents / impossible-geo patterns per user
+- Rows where ``is_novel_user_patient`` is true — users accessing
+  patient records they haven't touched in 90d
+- Rows where ``is_novel_user_ip`` or ``is_novel_user_agent`` is true —
+  new infrastructure for an existing user (possible impossible-geo)
 - Cross-tenant patterns (if multiple user_ids touch the same patient_id)
 - Unusual action sequences (e.g. LIST -> VIEW -> EXPORT chains)
 
