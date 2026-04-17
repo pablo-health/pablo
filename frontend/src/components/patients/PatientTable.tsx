@@ -184,6 +184,7 @@ export function PatientTable() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            aria-label={`Edit patient ${patient.first_name} ${patient.last_name}`}
                             onClick={() => handleEditPatient(patient)}
                           >
                             <Pencil className="w-4 h-4" />
@@ -191,6 +192,7 @@ export function PatientTable() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            aria-label={`Delete patient ${patient.first_name} ${patient.last_name}`}
                             onClick={() => handleDeleteClick(patient)}
                           >
                             <Trash2 className="w-4 h-4 text-red-500" />
