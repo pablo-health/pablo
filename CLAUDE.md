@@ -10,7 +10,7 @@ AI-powered therapy documentation — SOAP note generation from session transcrip
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui |
-| Backend | FastAPI, Python 3.13, Firestore |
+| Backend | FastAPI, Python 3.13, PostgreSQL (Cloud SQL) |
 | Infra | Docker, Google Cloud Run, GitHub Actions CI/CD |
 
 ## Engineering Philosophy

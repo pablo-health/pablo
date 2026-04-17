@@ -46,7 +46,7 @@ cd pablo
 cd backend && poetry install && poetry run uvicorn app.main:app --reload
 
 # Frontend
-cd frontend && pnpm install && pnpm dev
+cd frontend && npm ci && npm run dev
 
 # Or use Docker
 docker compose up
