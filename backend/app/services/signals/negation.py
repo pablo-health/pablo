@@ -24,9 +24,7 @@ from app.services.verification_signals import SignalResult, SignalVerdict, Verif
 if TYPE_CHECKING:
     from app.services.verification_signals import SignalContext
 
-# ---------------------------------------------------------------------------
 # Negation cue dictionaries
-# ---------------------------------------------------------------------------
 
 NEGATION_CUES: dict[str, list[str]] = {
     "explicit": ["no ", "not ", "n't ", "never ", "neither ", "nor "],
@@ -177,9 +175,7 @@ class NegationSignal(VerificationSignal):
             detail="No polarity flip detected",
         )
 
-    # ------------------------------------------------------------------
     # Tier 1: Regex
-    # ------------------------------------------------------------------
 
     def _regex_check(self, claim_text: str, segment_text: str) -> SignalResult | None:
         claim_lower = claim_text.lower()
@@ -212,9 +208,7 @@ class NegationSignal(VerificationSignal):
         # Both negated or neither: no flip
         return None
 
-    # ------------------------------------------------------------------
     # Tier 2: negspacy (NegEx)
-    # ------------------------------------------------------------------
 
     def _negspacy_check(self, claim_text: str, segment_text: str) -> SignalResult | None:
         """Use negspacy for implicit negation patterns regex might miss."""
@@ -238,9 +232,7 @@ class NegationSignal(VerificationSignal):
         return None
 
 
-# ---------------------------------------------------------------------------
 # Module-level helpers
-# ---------------------------------------------------------------------------
 
 _negspacy_nlp: Any = None
 

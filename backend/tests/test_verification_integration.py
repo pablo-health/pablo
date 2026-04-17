@@ -27,9 +27,7 @@ from app.services.source_verification_service import (
     VerificationResult,
 )
 
-# ---------------------------------------------------------------------------
 # Shared fixtures
-# ---------------------------------------------------------------------------
 
 TRANSCRIPT_SEGMENTS = [
     "How have you been feeling since our last session?",
@@ -130,9 +128,7 @@ def _run_verification(
     return results
 
 
-# ---------------------------------------------------------------------------
 # Full pipeline integration tests
-# ---------------------------------------------------------------------------
 
 
 class TestFullPipelineIntegration:
@@ -220,9 +216,7 @@ class TestFullPipelineIntegration:
         assert len(results) == len(claims)
 
 
-# ---------------------------------------------------------------------------
 # Edge cases
-# ---------------------------------------------------------------------------
 
 
 class TestEdgeCases:
@@ -321,9 +315,7 @@ class TestEdgeCases:
         assert all(s.confidence_score == 0.93 for s in claims.values())
 
 
-# ---------------------------------------------------------------------------
 # Serialization round-trip with confidence
-# ---------------------------------------------------------------------------
 
 
 class TestSerializationRoundTrip:

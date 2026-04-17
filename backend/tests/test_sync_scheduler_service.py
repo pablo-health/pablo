@@ -15,9 +15,7 @@ from app.services.sync_scheduler_service import (
     _is_within_working_hours,
 )
 
-# ---------------------------------------------------------------------------
 # Fixtures
-# ---------------------------------------------------------------------------
 
 
 def _make_service(
@@ -82,9 +80,7 @@ def _make_google_token(
     )
 
 
-# ---------------------------------------------------------------------------
 # _is_within_working_hours tests
-# ---------------------------------------------------------------------------
 
 
 class TestIsWithinWorkingHours:
@@ -162,9 +158,7 @@ class TestIsWithinWorkingHours:
             assert _is_within_working_hours(prefs) is True
 
 
-# ---------------------------------------------------------------------------
 # dispatch() tests
-# ---------------------------------------------------------------------------
 
 
 class TestDispatch:
@@ -233,9 +227,7 @@ class TestDispatch:
         assert summary.errors == 1
 
 
-# ---------------------------------------------------------------------------
 # execute() tests
-# ---------------------------------------------------------------------------
 
 
 class TestExecute:

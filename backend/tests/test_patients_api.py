@@ -13,9 +13,7 @@ from app.models.transcript import Transcript
 from fastapi import status
 from fastapi.testclient import TestClient
 
-# ============================================================================
 # Priority 1: CRUD Happy Path Tests
-# ============================================================================
 
 
 def test_create_patient_success(client: TestClient, sample_patient_data: dict[str, Any]) -> None:
@@ -121,9 +119,7 @@ def test_delete_patient_success(client: TestClient, sample_patient_data: dict[st
     assert get_response.status_code == status.HTTP_404_NOT_FOUND
 
 
-# ============================================================================
 # Priority 2: Multi-Tenant Isolation Tests
-# ============================================================================
 
 
 def test_get_patient_other_user_returns_404(
@@ -228,9 +224,7 @@ def test_delete_patient_other_user_returns_404(
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
-# ============================================================================
 # Priority 3: Validation & Error Handling Tests
-# ============================================================================
 
 
 def test_create_patient_missing_first_name(client: TestClient) -> None:
@@ -295,9 +289,7 @@ def test_delete_patient_not_found(client: TestClient) -> None:
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
-# ============================================================================
 # Priority 4: Search Functionality Tests
-# ============================================================================
 
 
 def test_list_patients_search_by_last_name(client: TestClient) -> None:
@@ -399,9 +391,7 @@ def test_list_patients_valid_search_by_values(client: TestClient) -> None:
     assert data["data"][0]["last_name"] == "Smith"
 
 
-# ============================================================================
 # Priority 5: Data Integrity Tests
-# ============================================================================
 
 
 def test_create_patient_generates_id_and_timestamps(

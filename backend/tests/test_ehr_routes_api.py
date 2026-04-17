@@ -10,9 +10,7 @@ from app.models.ehr_route import EhrRoute, EhrRouteStep
 from app.repositories import InMemoryEhrRouteRepository
 from fastapi import HTTPException, status
 
-# ============================================================================
 # Helpers
-# ============================================================================
 
 
 def _seed_simplepractice_route(mock_ehr_route_repo: InMemoryEhrRouteRepository) -> None:
@@ -52,9 +50,7 @@ def _seed_simplepractice_route(mock_ehr_route_repo: InMemoryEhrRouteRepository) 
     mock_ehr_route_repo.seed(route)
 
 
-# ============================================================================
 # Happy Path Tests
-# ============================================================================
 
 
 def test_get_ehr_route_success(
@@ -143,9 +139,7 @@ def test_ehr_navigate_with_previous_actions(client: Any) -> None:
     assert data["action"] in ("click", "navigate", "wait", "fill", "none")
 
 
-# ============================================================================
 # Error Handling Tests
-# ============================================================================
 
 
 def test_get_ehr_route_not_found(client: Any) -> None:
@@ -216,9 +210,7 @@ def test_ehr_navigate_rate_limit_exceeded(client: Any) -> None:
         assert response.status_code == 429
 
 
-# ============================================================================
 # Validation Tests
-# ============================================================================
 
 
 def test_ehr_navigate_invalid_ehr_system(client: Any) -> None:
@@ -272,9 +264,7 @@ def test_ehr_navigate_goal_too_long(client: Any) -> None:
     assert response.status_code == 422
 
 
-# ============================================================================
 # Route Learning Tests
-# ============================================================================
 
 
 def test_update_step_preserves_unchanged_fields(

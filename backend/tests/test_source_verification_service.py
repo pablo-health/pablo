@@ -31,9 +31,7 @@ SEGMENTS = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Mock signals for testing
-# ---------------------------------------------------------------------------
 
 
 class _PassSignal(VerificationSignal):
@@ -129,9 +127,7 @@ class _TrackingSignal(VerificationSignal):
         )
 
 
-# ---------------------------------------------------------------------------
 # Helpers
-# ---------------------------------------------------------------------------
 
 
 def _make_service(
@@ -151,9 +147,7 @@ def _make_service(
     ), nli
 
 
-# ---------------------------------------------------------------------------
 # NLI fallback tests (backward compatibility)
-# ---------------------------------------------------------------------------
 
 
 class TestNLIFallbackHighConfidence:
@@ -334,9 +328,7 @@ class TestVerificationResultDefaults:
         assert r.signal_used == ""
 
 
-# ---------------------------------------------------------------------------
 # CandidateResult tests
-# ---------------------------------------------------------------------------
 
 
 class TestCandidateResult:
@@ -372,9 +364,7 @@ class TestCandidateResult:
         assert len(cr.segment_embeddings) == len(SEGMENTS)
 
 
-# ---------------------------------------------------------------------------
 # Hybrid verification tests
-# ---------------------------------------------------------------------------
 
 
 class TestHybridVerifyPASSShortCircuit:
