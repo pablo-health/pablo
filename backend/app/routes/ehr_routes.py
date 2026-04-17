@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from ..api_errors import NotFoundError, UnprocessableEntityError
 from ..auth.service import (
     TenantContext,
     get_current_user,
@@ -106,10 +107,7 @@ def get_ehr_route(
     """Get cached navigation route for an EHR system."""
     route = repo.get(ehr_system.value)
     if not route:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No route found for EHR system '{ehr_system}'",
-        )
+        raise NotFoundError(f"No route found for EHR system '{ehr_system}'")
     return EhrRouteResponse.from_ehr_route(route)
 
 
@@ -139,16 +137,10 @@ def update_ehr_route_step(
             a11y_fingerprint=request.a11y_fingerprint,
         )
     except IndexError as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(err),
-        ) from err
+        raise UnprocessableEntityError(str(err)) from err
 
     if updated is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No route found for EHR system '{ehr_system}'",
-        )
+        raise NotFoundError(f"No route found for EHR system '{ehr_system}'")
     return EhrRouteResponse.from_ehr_route(updated)
 
 
@@ -174,10 +166,7 @@ async def ehr_navigate(
     try:
         return await service.navigate(request)
     except LookupError as err:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(err),
-        ) from err
+        raise NotFoundError(str(err)) from err
     except (ValueError, RuntimeError) as err:
         logger.exception("EHR navigate failed for user %s", user.id)
         raise HTTPException(

@@ -149,7 +149,7 @@ def test_get_patient_other_user_returns_404(
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     data = response.json()
-    assert data["detail"]["error"]["code"] == "NOT_FOUND"
+    assert data["error"]["code"] == "NOT_FOUND"
 
 
 def test_list_patients_only_returns_own_patients(
@@ -281,11 +281,10 @@ def test_get_patient_not_found(client: TestClient) -> None:
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     data = response.json()
-    assert "detail" in data
-    assert "error" in data["detail"]
-    assert data["detail"]["error"]["code"] == "NOT_FOUND"
-    assert data["detail"]["error"]["message"] == "Patient not found"
-    assert "patient_id" in data["detail"]["error"]["details"]
+    assert "error" in data
+    assert data["error"]["code"] == "NOT_FOUND"
+    assert data["error"]["message"] == "Patient not found"
+    assert "patient_id" in data["error"]["details"]
 
 
 def test_delete_patient_not_found(client: TestClient) -> None:

@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
+from ..api_errors import ConflictError, NotFoundError
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -170,7 +171,7 @@ def get_topic(
     """Get a single practice topic by ID."""
     topic = service.get_topic(topic_id)
     if not topic:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+        raise NotFoundError("Topic not found")
     return PracticeTopicResponse(
         id=topic.id,
         name=topic.name,
@@ -194,9 +195,7 @@ def create_practice_session(
     try:
         session, topic = service.create_session(ctx.user_id, request)
     except PracticeTopicNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found"
-        ) from None
+        raise NotFoundError("Topic not found") from None
     except PracticeDailyLimitError as e:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -291,7 +290,7 @@ def get_practice_session(
     """Get full detail for a practice session."""
     session = service.get_session(session_id, ctx.user_id)
     if not session:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+        raise NotFoundError("Session not found")
 
     topic_id, mode = _parse_session_metadata(session.notes)
     topic = service.get_topic(topic_id)
@@ -320,14 +319,9 @@ def end_practice_session(
     try:
         session = service.end_session(session_id, ctx.user_id)
     except PracticeSessionNotFoundError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
-        ) from None
+        raise NotFoundError("Session not found") from None
     except PracticeSessionNotEndableError as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot end session in status '{e.current_status}'",
-        ) from None
+        raise ConflictError(f"Cannot end session in status '{e.current_status}'") from None
 
     duration = (session.duration_minutes or 0) * 60 if session.duration_minutes else None
     return EndPracticeSessionResponse(

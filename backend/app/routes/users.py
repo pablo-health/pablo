@@ -9,9 +9,10 @@ Implements user profile management and BAA (Business Associate Agreement) accept
 import re
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
+from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import AcceptBAARequest, BAAStatusResponse, User, UserPreferences
 from ..repositories import UserRepository, get_user_repository
@@ -40,30 +41,16 @@ def _resolve_baa_path(version: str) -> Path:
     no matching BAA file exists on disk.
     """
     if not BAA_VERSION_PATTERN.match(version):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "INVALID_VERSION",
-                    "message": "BAA version must be a date in YYYY-MM-DD format",
-                    "details": {"version": version},
-                }
-            },
+        raise BadRequestError(
+            "BAA version must be a date in YYYY-MM-DD format",
+            {"version": version},
+            code="INVALID_VERSION",
         )
 
     available = _get_available_baa_files()
     baa_path = available.get(version)
     if baa_path is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={
-                "error": {
-                    "code": "NOT_FOUND",
-                    "message": f"BAA version {version} not found",
-                    "details": {"version": version},
-                }
-            },
-        )
+        raise NotFoundError(f"BAA version {version} not found", {"version": version})
 
     return baa_path
 
@@ -173,16 +160,7 @@ def accept_baa(
     - version: BAA version being accepted
     """
     if not request.accepted:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": {
-                    "code": "BAD_REQUEST",
-                    "message": "BAA must be accepted",
-                    "details": {},
-                }
-            },
-        )
+        raise BadRequestError("BAA must be accepted")
 
     # Load the full BAA text for audit trail
     baa_path = _resolve_baa_path(request.version)
