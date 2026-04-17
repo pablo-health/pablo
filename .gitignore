@@ -45,3 +45,7 @@ backend/data/nli-therapy-*
 # Claude Code local settings (keep shared skills in repo)
 .claude/settings.local.json
 .claude/settings.json
+
+# Operator-local scripts and notes (never committed; common convention
+# for keeping environment-specific automation alongside the checkout).
+local/
