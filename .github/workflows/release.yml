@@ -110,7 +110,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
@@ -133,13 +132,12 @@ jobs:
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push (amd64 + arm64)
+      - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: .
           file: backend/Dockerfile.pentest
           push: true
-          platforms: linux/amd64,linux/arm64
           build-args: |
             BASE_IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/backend:${{ github.sha }}
           tags: ${{ steps.tags.outputs.tags }}
