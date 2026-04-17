@@ -560,19 +560,16 @@ def require_admin(
 
 
 def get_baa_version() -> str:
-    """
-    Get the current BAA version identifier.
+    """Return the latest BAA version, or "" if no BAA files are bundled.
 
-    Dynamically determines the latest version by finding the most recent
-    BAA-{version}.md file in the baa/ directory.
+    SaaS builds ship baa/BAA-YYYY-MM-DD.md and require acceptance.
+    Core (OSS) self-hosters sign their BAA directly with their cloud
+    provider — no BAA files are bundled and the in-app flow is disabled.
     """
     baa_dir = Path(__file__).parent.parent.parent / "baa"
+    if not baa_dir.is_dir():
+        return ""
     baa_files = sorted(baa_dir.glob("BAA-*.md"), reverse=True)
-
     if not baa_files:
-        raise RuntimeError("No BAA files found in baa/ directory")
-
-    # Extract version from filename: BAA-2024-01-01.md -> 2024-01-01
-    latest_file = baa_files[0]
-    version = latest_file.stem.replace("BAA-", "")
-    return version
+        return ""
+    return baa_files[0].stem.removeprefix("BAA-")
