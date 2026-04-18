@@ -1,24 +1,25 @@
-# Backend Production Dockerfile (self-contained)
+# Backend Production Dockerfile
 #
-# Two-stage build using only public images so this works for self-hosters:
-#   1. Builder stage: install Python deps + spaCy model under python:3.13-slim
-#   2. Runtime stage: copy installed packages into a fresh python:3.13-slim
+# Two-stage build on Chainguard Python images (Wolfi-based, daily patches,
+# typically zero known CVEs). The security.yml workflow already scans
+# these upstream bases — this Dockerfile is what makes that scan
+# meaningful by actually using them.
+#
+# psycopg2-binary bundles libpq statically, so the runtime stage needs
+# no OS packages — we use the distroless-style runtime variant.
 #
 # trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
 
 # ---------- Stage 1: Builder ----------
-FROM python:3.13-slim AS builder
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+USER root
 
-ENV POETRY_HOME="/opt/poetry"
-ENV PATH="$POETRY_HOME/bin:$PATH"
-RUN curl -sSL https://install.python-poetry.org | python3 -
+# pip-install Poetry into the system python (no virtualenv); Chainguard
+# :latest-dev already ships Python + pip.
+RUN pip install --no-cache-dir poetry
 
 COPY pyproject.toml poetry.lock ./
 
@@ -27,32 +28,28 @@ RUN poetry config virtualenvs.create false \
 
 
 # ---------- Stage 2: Runtime ----------
-FROM python:3.13-slim
+FROM cgr.dev/chainguard/python:latest
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 65532 nonroot
+# Installed Python packages and console scripts from the builder. The
+# Chainguard runtime image already ships a nonroot user (uid 65532) —
+# no useradd needed.
+COPY --from=builder /usr/lib/python3.14/site-packages /usr/lib/python3.14/site-packages
+COPY --from=builder /usr/bin/uvicorn /usr/bin/uvicorn
 
-# Installed Python packages and console scripts from the builder
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
-
-# Application code and repo-root config
+# Application code
 COPY --chown=nonroot:nonroot backend/ ./backend/
 COPY --chown=nonroot:nonroot min_client_versions.json ./
 COPY --chown=nonroot:nonroot backend/entrypoint.py ./entrypoint.py
-
-USER nonroot
 
 EXPOSE 8000
 
 ENV PYTHONUNBUFFERED=1
 ENV ENVIRONMENT=production
 
+# Chainguard runtime has ENTRYPOINT=["python"], so CMD is just args.
 # Single worker required: the in-memory auth code store (native app
 # code exchange) is process-local and cannot be shared across workers.
 # Move to Redis-backed store before scaling to multiple workers.
-CMD ["python3.13", "entrypoint.py"]
+CMD ["entrypoint.py"]
