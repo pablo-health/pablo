@@ -249,21 +249,29 @@ JSON
 )"
 
 # "Job stopped running" — fires when hipaa-log-review Cloud Run Job
-# hasn't completed successfully in > 30 hours (1 day + 6h slack).
+# hasn't completed successfully in ~30 hours (1 day + 6h slack).
 # Belt-and-suspenders against silent job failures.
+#
+# We use conditionThreshold (not conditionAbsent) because GCP caps
+# conditionAbsent.duration at 23h30m — too short for a daily job without
+# false positives near the next scheduled run. With a 24h alignment window
+# and COMPARISON_LT 1, the metric reads 0 iff the job hasn't succeeded in
+# the trailing day; duration=6h delays firing by the slack window.
 ensure_policy "Pablo HIPAA log-review job is stale" "$(cat <<JSON
 {
   "displayName": "Pablo HIPAA log-review job is stale",
   "combiner": "OR",
   "conditions": [{
-    "displayName": "No successful completion in 30h",
-    "conditionAbsent": {
+    "displayName": "No successful completion in 24h (+6h slack)",
+    "conditionThreshold": {
       "filter": "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"hipaa-log-review\" AND metric.type=\"run.googleapis.com/job/completed_execution_count\" AND metric.labels.result=\"succeeded\"",
       "aggregations": [{
-        "alignmentPeriod": "3600s",
+        "alignmentPeriod": "86400s",
         "perSeriesAligner": "ALIGN_SUM"
       }],
-      "duration": "108000s"
+      "comparison": "COMPARISON_LT",
+      "thresholdValue": 1,
+      "duration": "21600s"
     }
   }],
   "notificationChannels": ["$CHANNEL_ID"],

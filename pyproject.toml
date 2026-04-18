@@ -245,7 +245,6 @@ module = [
     "icalendar.*",
     "sqlalchemy.*",
     "alembic.*",
-    "elevenlabs.*",
     "httpx.*",
     "websockets.*",
 ]
