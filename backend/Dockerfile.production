@@ -9,6 +9,8 @@
 # no OS packages — we use the distroless-style runtime variant.
 #
 # trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
+# trivy:ignore:DS-0001 — Chainguard free tier does not publish version-pinned tags;
+#   :latest is the supported channel. security.yml re-scans this base daily.
 
 # ---------- Stage 1: Builder ----------
 FROM cgr.dev/chainguard/python:latest-dev AS builder
@@ -47,6 +49,10 @@ EXPOSE 8000
 
 ENV PYTHONUNBUFFERED=1
 ENV ENVIRONMENT=production
+
+# Chainguard :latest already runs as nonroot (uid 65532) by default, but
+# declare it explicitly so static scanners (Trivy DS-0002) don't flag it.
+USER nonroot
 
 # Chainguard runtime has ENTRYPOINT=["python"], so CMD is just args.
 # Single worker required: the in-memory auth code store (native app
