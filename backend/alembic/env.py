@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
 from app.db.models import Base
 from app.db.platform_models import PlatformBase
-import app.db.saas_models as _saas_models  # noqa: F401  # register SaaS models with PlatformBase
 from app.settings import get_settings
 
 config = context.config
