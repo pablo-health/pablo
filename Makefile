@@ -229,30 +229,31 @@ hipaa-review-local:
 		python3.13 -m backend.app.jobs.hipaa_log_review
 
 # Local pentest (prints report to stdout). Requires gcloud auth + the
-# pentest image built or pulled locally.
+# pentest image built or pulled locally. Pinned to amd64 — the release
+# workflow only publishes amd64, and Mac M-series runs fine under
+# Docker Desktop's emulation.
 pentest-local:
 	@test -n "$$GCP_PROJECT_ID" || (echo "Set GCP_PROJECT_ID first"; exit 1)
-	docker run --rm --platform $(PLATFORM) \
+	docker run --rm --platform linux/amd64 \
 		-v $$HOME/.config/gcloud:/root/.config/gcloud:ro \
 		-e GCP_PROJECT_ID=$$GCP_PROJECT_ID \
 		-e VERTEX_REGION=us-east5 \
 		$(PABLO_PENTEST_IMAGE)
 
-# Build the pentest image locally for the current arch (fast iteration).
-# Uses the local backend image as the base rather than pulling from GHCR.
+# Build the pentest image locally (amd64 only — matches the release
+# workflow and Cloud Run Job target). The image is self-contained; it
+# no longer inherits from the backend image.
 pentest-image-local:
-	docker build --platform $(PLATFORM) \
+	docker build --platform linux/amd64 \
 		-t pablo-pentest:local \
-		--build-arg BASE_IMAGE=pablo-backend:local \
 		-f backend/Dockerfile.pentest .
 
-# Build + push multi-arch pentest image to GHCR (use for manual publishes
+# Build + push the pentest image to GHCR (use for manual publishes
 # outside the release workflow). Requires `docker buildx` + GHCR auth.
 pentest-image-push:
 	@test -n "$$REGISTRY" || (echo "Set REGISTRY=ghcr.io/<owner>"; exit 1)
 	@test -n "$$TAG" || (echo "Set TAG=vX.Y.Z or TAG=main"; exit 1)
-	docker buildx build --platform linux/amd64,linux/arm64 \
+	docker buildx build --platform linux/amd64 \
 		-f backend/Dockerfile.pentest \
-		--build-arg BASE_IMAGE=$$REGISTRY/backend:$$TAG \
 		-t $$REGISTRY/pentest:$$TAG \
 		--push .
