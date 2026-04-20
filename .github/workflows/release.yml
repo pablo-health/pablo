@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -141,3 +142,83 @@ jobs:
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha,scope=pentest
           cache-to: type=gha,mode=max,scope=pentest
+
+  deploy-oss:
+    name: Deploy to pablo-oss
+    needs: [backend, frontend, pentest]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.OSS_GCP_PROJECT_ID || 'pablohealth-oss' }}
+      GCP_REGION: ${{ vars.OSS_GCP_REGION || 'us-central1' }}
+      GCP_AR_REPO: ${{ vars.OSS_GCP_AR_REPO || 'pablo' }}
+    steps:
+      - name: Resolve version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry + GHCR
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Mirror images ghcr.io → Artifact Registry
+        id: mirror
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          AR_BASE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}"
+
+          for name in backend frontend pentest; do
+            SRC="ghcr.io/${{ env.OWNER }}/${name}:${VERSION}"
+            DST="${AR_BASE}/${name}:${VERSION}"
+            echo "Mirroring ${SRC} → ${DST}"
+            docker pull --platform linux/amd64 "$SRC"
+            docker tag "$SRC" "$DST"
+            docker push "$DST"
+          done
+
+          {
+            echo "backend_image=${AR_BASE}/backend:${VERSION}"
+            echo "frontend_image=${AR_BASE}/frontend:${VERSION}"
+            echo "pentest_image=${AR_BASE}/pentest:${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy pablo-backend (Cloud Run service)
+        run: |
+          gcloud run services update pablo-backend \
+            --image="${{ steps.mirror.outputs.backend_image }}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --quiet
+
+      - name: Deploy pablo-frontend (Cloud Run service)
+        run: |
+          gcloud run services update pablo-frontend \
+            --image="${{ steps.mirror.outputs.frontend_image }}" \
+            --region="${GCP_REGION}" \
+            --project="${GCP_PROJECT_ID}" \
+            --quiet
+
+      - name: Update pentest (Cloud Run job)
+        run: |
+          if gcloud run jobs describe pentest \
+               --region="${GCP_REGION}" \
+               --project="${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+            gcloud run jobs update pentest \
+              --image="${{ steps.mirror.outputs.pentest_image }}" \
+              --region="${GCP_REGION}" \
+              --project="${GCP_PROJECT_ID}" \
+              --quiet
+          else
+            echo "pentest job not found in ${GCP_PROJECT_ID} — skipping (run setup-solo.sh Step 11 to create it)"
+          fi
