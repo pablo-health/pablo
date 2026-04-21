@@ -17,7 +17,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
 from app.db.models import Base
 from app.db.platform_models import PlatformBase
-import app.db.saas_models as _saas_models  # noqa: F401  # register SaaS models with PlatformBase
 from app.settings import get_settings
 
 config = context.config
@@ -60,20 +59,20 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
-        # Ensure schemas exist
+    # Bootstrap schemas + platform tables in their own committed transaction,
+    # then open a fresh connection for alembic. Mixing manual connection.commit()
+    # with alembic's context.begin_transaction() on the same connection causes
+    # the final run_migrations()/stamp write to be rolled back under SQLAlchemy 2.x.
+    with connectable.begin() as connection:
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DEFAULT_PRACTICE_SCHEMA}"))
-        connection.commit()
-
-        # Create platform tables directly (not versioned — small, stable set)
         platform_metadata.create_all(connection)
-        connection.commit()
 
-        # Run practice-schema migrations
+    with connectable.connect() as connection:
         connection.execute(
             text(f"SET search_path = {DEFAULT_PRACTICE_SCHEMA}, {PLATFORM_SCHEMA}, public")
         )
+        connection.commit()
 
         context.configure(
             connection=connection,
