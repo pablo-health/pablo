@@ -48,7 +48,7 @@ meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcr
 onnxruntime = ">=1.18.0"
 
 # iCal calendar feed parsing
-icalendar = "^6.0.0"
+icalendar = "^7.0.3"
 
 # Real-time audio (Practice Mode)
 httpx = ">=0.28.0"
