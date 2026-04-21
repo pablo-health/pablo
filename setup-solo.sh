@@ -1451,16 +1451,35 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         echo "  Pentest identity SA already exists"
     fi
 
-    # Grant *only* Firebase Auth admin. No project-wide owner/editor.
-    # Retry on the transient "does not exist" race just after creation.
-    for attempt in 1 2 3 4 5; do
-        if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-            --member="serviceAccount:${PENTEST_SA}" \
-            --role="roles/firebaseauth.admin" --condition=None >/dev/null 2>&1; then
-            break
-        fi
-        [[ $attempt -eq 5 ]] && { echo -e "${RED}  ✗ Pentest SA binding failed${NC}"; exit 1; }
-        sleep $((attempt * 5))
+    # Roles the pentest Job needs, scoped only to this SA. Expanding
+    # beyond firebaseauth.admin here is intentional — each role maps to
+    # a specific collector step that existed only on the live SA until
+    # now (accreted over runs on pablohealth-oss):
+    #   aiplatform.user          — Gemini/Vertex inference for the LLM narrative
+    #   cloudsql.client          — cloud-sql-proxy connect for §13 audit_logs probe
+    #   cloudsql.viewer          — instances.describe for discover_targets
+    #   run.viewer               — services.describe for backend_image discovery
+    #   secretmanager.secretAccessor — pablo-db-password read for the SQL probe
+    #   firebaseauth.admin       — create/enroll/delete ephemeral pentest users
+    PENTEST_ROLES=(
+        "roles/firebaseauth.admin"
+        "roles/aiplatform.user"
+        "roles/cloudsql.client"
+        "roles/cloudsql.viewer"
+        "roles/run.viewer"
+        "roles/secretmanager.secretAccessor"
+    )
+    for role in "${PENTEST_ROLES[@]}"; do
+        # Retry on the transient "does not exist" race just after SA creation.
+        for attempt in 1 2 3 4 5; do
+            if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+                --member="serviceAccount:${PENTEST_SA}" \
+                --role="$role" --condition=None >/dev/null 2>&1; then
+                break
+            fi
+            [[ $attempt -eq 5 ]] && { echo -e "${RED}  ✗ Pentest SA binding failed for $role${NC}"; exit 1; }
+            sleep $((attempt * 5))
+        done
     done
 
     # Pentest job (uses the pentest image which extends backend image)
