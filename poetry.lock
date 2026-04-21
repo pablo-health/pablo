@@ -2269,22 +2269,19 @@ files = [
 
 [[package]]
 name = "icalendar"
-version = "6.3.2"
-description = "iCalendar parser/generator"
+version = "7.0.3"
+description = "RFC 5545 compatible parser and generator of iCalendar files"
 optional = false
-python-versions = ">=3.8"
+python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "icalendar-6.3.2-py3-none-any.whl", hash = "sha256:d400e9c9bb8c025e5a3c77c236941bb690494be52528a0b43cc7e8b7c9505064"},
-    {file = "icalendar-6.3.2.tar.gz", hash = "sha256:e0c10ecbfcebe958d33af7d491f6e6b7580d11d475f2eeb29532d0424f9110a1"},
+    {file = "icalendar-7.0.3-py3-none-any.whl", hash = "sha256:8c9fea6d3a89671bba8b6938d8565b4d0ec465c6a2796ef0f92790dcb9e627cd"},
+    {file = "icalendar-7.0.3.tar.gz", hash = "sha256:95027ece087ab87184d765f03761f25875821f74cdd18d3b57e9c868216d8fde"},
 ]
 
 [package.dependencies]
 python-dateutil = "*"
-tzdata = "*"
-
-[package.extras]
-test = ["coverage", "hypothesis", "pytest", "pytz"]
+tzdata = ">=2025.3"
 
 [[package]]
 name = "idna"
@@ -5927,4 +5924,4 @@ test = ["pytest"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.15"
-content-hash = "4bad5b2ac2b465d389d4c1843033539313c79242c33a357094bb26d361dc8527"
+content-hash = "0269d3d7c427083f5f52be8fa14fa4c5f00a7a5125bb0ffbf2e6daa297ddfb25"
