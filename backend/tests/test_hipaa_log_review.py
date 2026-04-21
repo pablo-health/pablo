@@ -6,7 +6,7 @@ The Claude/Vertex call itself is not tested here (integration-only); we
 assert the orchestration logic around it.
 """
 
-import logging
+import json
 from unittest.mock import MagicMock, patch
 
 from app.jobs import hipaa_log_review
@@ -44,17 +44,17 @@ class TestWriteReport:
 
 class TestNotifyHighFinding:
     def test_logs_structured_error_for_cloud_monitoring(
-        self, caplog, monkeypatch  # type: ignore[no-untyped-def]
+        self, capsys, monkeypatch  # type: ignore[no-untyped-def]
     ) -> None:
-        """The primary notification is a structured ERROR log that Cloud
-        Monitoring's log-based alert policy matches on."""
+        """Cloud Monitoring's alert policy filters on jsonPayload.alert_type —
+        logger.extra={} emits textPayload, so we write JSON to stdout directly."""
         monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
-        with caplog.at_level(logging.ERROR, logger="hipaa_log_review"):
-            hipaa_log_review._notify_high_finding("gs://bucket/report.md")
-        assert any(r.levelno == logging.ERROR for r in caplog.records)
-        rec = next(r for r in caplog.records if r.levelno == logging.ERROR)
-        assert getattr(rec, "alert_type", None) == "hipaa_review_high"
-        assert getattr(rec, "report", None) == "gs://bucket/report.md"
+        hipaa_log_review._notify_high_finding("gs://bucket/report.md")
+        out = capsys.readouterr().out.strip()
+        payload = json.loads(out)
+        assert payload["severity"] == "ERROR"
+        assert payload["alert_type"] == "hipaa_review_high"
+        assert payload["report"] == "gs://bucket/report.md"
 
     def test_webhook_silent_when_unset(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)

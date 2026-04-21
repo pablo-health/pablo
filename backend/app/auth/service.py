@@ -377,9 +377,22 @@ def _resolve_user(
                     exc,
                 )
 
-        # Defense-in-depth: check allowlist before auto-provisioning
+        # Defense-in-depth: check allowlist before auto-provisioning.
+        # The ephemeral pentest users (pentestuser-<8hex>@pablo.health)
+        # are test-only identities created on every pentest run — they
+        # get a dedicated bypass so the pentest Cloud Run Job doesn't
+        # need write access to `platform.allowed_emails` (the
+        # read-only-DB rule for pentests). The prefix is reserved: real
+        # signups matching this pattern are rejected upstream.
+        from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
+
         settings = get_settings()
-        if settings.restrict_signups and (not email or not allowlist_repo.is_allowed(email)):
+        is_pentest_user = bool(email and PENTEST_EMAIL_PATTERN.match(email))
+        if (
+            settings.restrict_signups
+            and not is_pentest_user
+            and (not email or not allowlist_repo.is_allowed(email))
+        ):
             logger.warning("Blocked non-allowlisted user: uid=%s", user_id)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
