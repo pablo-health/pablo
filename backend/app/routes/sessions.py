@@ -470,6 +470,7 @@ def upload_transcript_to_session(
 # --- Audio upload for server-side transcription ---
 
 _MAX_AUDIO_SIZE = 500 * 1024 * 1024  # 500 MB
+_AUDIO_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MiB
 _ALLOWED_AUDIO_TYPES = {
     "audio/wav",
     "audio/wave",
@@ -481,6 +482,23 @@ _ALLOWED_AUDIO_TYPES = {
     "audio/flac",
     "application/octet-stream",
 }
+
+
+async def _read_bounded(upload: UploadFile, label: str) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(_AUDIO_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_AUDIO_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.post("/api/sessions/{session_id}/upload-audio")
@@ -531,15 +549,8 @@ async def upload_audio(
                 detail=f"Unsupported audio type for {label}: {f.content_type}",
             )
 
-    therapist_data = await therapist_audio.read()
-    client_data = await client_audio.read()
-
-    for label, data in [("therapist_audio", therapist_data), ("client_audio", client_data)]:
-        if len(data) > _MAX_AUDIO_SIZE:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
-            )
+    therapist_data = await _read_bounded(therapist_audio, "therapist_audio")
+    client_data = await _read_bounded(client_audio, "client_audio")
 
     # Transition to transcribing
     session.status = SessionStatus.TRANSCRIBING
