@@ -244,11 +244,14 @@ def _notify_high_finding(report_path: str) -> None:
     is set (Slack/Discord/generic incoming-webhook/paging vendor), the
     report URL is POSTed there as JSON. Silent no-op if unset.
     """
-    logger.error(
-        "alert_type=hipaa_review_high report=%s — review findings",
-        report_path,
-        extra={"alert_type": "hipaa_review_high", "report": report_path},
-    )
+    payload = {
+        "severity": "ERROR",
+        "message": f"alert_type=hipaa_review_high report={report_path} — review findings",
+        "alert_type": "hipaa_review_high",
+        "report": report_path,
+    }
+    sys.stdout.write(json.dumps(payload) + "\n")
+    sys.stdout.flush()
     webhook = os.environ.get("ALERT_WEBHOOK_URL")
     if webhook:
         _post_webhook(webhook, report_path, alert_source="hipaa-log-review")
