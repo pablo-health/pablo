@@ -1426,23 +1426,79 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         echo "  Cloud Run Job hipaa-attestation already exists"
     fi
 
+    # Pentest identity SA — dedicated, minimum-privilege SA for the pentest
+    # Cloud Run Job. The job creates ephemeral MFA-enrolled Firebase users on
+    # each run (see backend/app/jobs/pentest_identity.py), which requires
+    # roles/firebaseauth.admin. Granting that to the shared compute SA would
+    # broaden blast radius to every Cloud Run service in the project, so we
+    # bind it to a dedicated SA used only by the pentest Job.
+    # See docs/compliance/pentest-identity-sa.md for the rationale.
+    PENTEST_SA_NAME="pentest-identity"
+    PENTEST_SA="${PENTEST_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+    if ! gcloud iam service-accounts describe "$PENTEST_SA" --project="$PROJECT_ID" >/dev/null 2>&1; then
+        echo "  Creating pentest identity service account (dedicated, least-privilege)"
+        gcloud iam service-accounts create "$PENTEST_SA_NAME" \
+            --project="$PROJECT_ID" \
+            --display-name="Pablo pentest identity bootstrap" \
+            --description="Creates, enrolls TOTP on, and deletes ephemeral Firebase users used by the automated pentest. Bound to the 'pentest' Cloud Run Job only — do not reuse." >/dev/null
+
+        # IAM has two consistency horizons: `describe` can succeed well
+        # before `add-iam-policy-binding` sees the SA. Keep a 15s floor
+        # (observed failure on pablohealth-prod without it).
+        echo "  Waiting for pentest SA to propagate..."
+        sleep 15
+    else
+        echo "  Pentest identity SA already exists"
+    fi
+
+    # Grant *only* Firebase Auth admin. No project-wide owner/editor.
+    # Retry on the transient "does not exist" race just after creation.
+    for attempt in 1 2 3 4 5; do
+        if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="serviceAccount:${PENTEST_SA}" \
+            --role="roles/firebaseauth.admin" --condition=None >/dev/null 2>&1; then
+            break
+        fi
+        [[ $attempt -eq 5 ]] && { echo -e "${RED}  ✗ Pentest SA binding failed${NC}"; exit 1; }
+        sleep $((attempt * 5))
+    done
+
     # Pentest job (uses the pentest image which extends backend image)
     if ! gcloud run jobs describe pentest --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
         if gcloud artifacts docker images describe "$PENTEST_IMAGE" >/dev/null 2>&1; then
-            echo "  Deploying Cloud Run Job: pentest"
+            echo "  Deploying Cloud Run Job: pentest (as $PENTEST_SA)"
             gcloud run jobs create pentest \
                 --project="$PROJECT_ID" \
                 --region="$REPO_LOCATION" \
                 --image="$PENTEST_IMAGE" \
-                --service-account="$BACKEND_SA" \
+                --service-account="$PENTEST_SA" \
                 --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5" \
                 --max-retries=0 --task-timeout=50m >/dev/null
+            # Bucket write access for the pentest report upload.
+            gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
+                --member="serviceAccount:${PENTEST_SA}" \
+                --role="roles/storage.objectCreator" --condition=None >/dev/null 2>&1 || true
         else
             echo -e "${YELLOW}  Pentest image not found in Artifact Registry — skipping Cloud Run Job.${NC}"
             echo -e "${YELLOW}  Mirrored in Step 8 from ghcr.io/pablo-health/pentest:\${PABLO_VERSION}; re-run setup-solo pinned to a release that publishes it.${NC}"
         fi
     else
-        echo "  Cloud Run Job pentest already exists"
+        # Job already exists — re-bind to the dedicated SA in case an older
+        # setup run created it on the shared compute SA. Idempotent.
+        CURRENT_PENTEST_SA=$(gcloud run jobs describe pentest \
+            --project="$PROJECT_ID" --region="$REPO_LOCATION" \
+            --format="value(spec.template.spec.template.spec.serviceAccountName)" 2>/dev/null || echo "")
+        if [[ "$CURRENT_PENTEST_SA" != "$PENTEST_SA" ]]; then
+            echo "  Migrating pentest Job from '${CURRENT_PENTEST_SA:-<default>}' to $PENTEST_SA"
+            gcloud run jobs update pentest \
+                --project="$PROJECT_ID" --region="$REPO_LOCATION" \
+                --service-account="$PENTEST_SA" >/dev/null
+            gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
+                --member="serviceAccount:${PENTEST_SA}" \
+                --role="roles/storage.objectCreator" --condition=None >/dev/null 2>&1 || true
+        else
+            echo "  Cloud Run Job pentest already exists (on dedicated SA)"
+        fi
     fi
 
     # Cloud Scheduler triggers
