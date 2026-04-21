@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
+from firebase_admin import auth as firebase_auth
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
@@ -93,14 +94,28 @@ def record_mfa_enrollment(
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> dict[str, str]:
     """
-    Record that the user has completed MFA enrollment on the client side.
+    Record that the user has completed MFA enrollment.
 
     Called by the frontend after successful TOTP enrollment via Firebase.
-    Uses get_current_user_no_mfa since this is called immediately after
-    enrolling (before the user has signed in with MFA).
+    Verifies enrollment server-side against the Firebase Admin SDK — the
+    client's claim is not sufficient on its own, or an attacker could
+    mint a bogus ``mfa_enrolled_at`` timestamp and poison compliance
+    metrics.
     """
-    now = utc_now()
-    user.mfa_enrolled_at = now
+    try:
+        fb_user = firebase_auth.get_user(str(user.id))
+    except firebase_auth.UserNotFoundError as exc:
+        raise NotFoundError("Firebase user not found") from exc
+
+    enrolled_factors = getattr(fb_user, "multi_factor", None)
+    enrolled = list(enrolled_factors.enrolled_factors) if enrolled_factors else []
+    if not any(getattr(f, "factor_id", "") == "totp" for f in enrolled):
+        raise BadRequestError(
+            "No TOTP factor enrolled for this user in Firebase",
+            code="MFA_NOT_ENROLLED",
+        )
+
+    user.mfa_enrolled_at = utc_now()
     user_repo.update(user)
     return {"mfa_enrolled_at": utc_now_iso()}
 
