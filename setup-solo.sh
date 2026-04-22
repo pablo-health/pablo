@@ -1367,7 +1367,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --region="$REPO_LOCATION" \
             --image="$BACKEND_IMAGE" \
             --service-account="$BACKEND_SA" \
-            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5,REVIEW_WINDOW_HOURS=24" \
+            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=24" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
             --command="python3.13" \
             --args="-m,backend.app.jobs.hipaa_log_review" \
@@ -1384,7 +1384,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --region="$REPO_LOCATION" \
             --image="$BACKEND_IMAGE" \
             --service-account="$BACKEND_SA" \
-            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5,REVIEW_WINDOW_HOURS=720" \
+            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=720" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
             --command="python3.13" \
             --args="-m,backend.app.jobs.hipaa_log_review" \
@@ -1491,7 +1491,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
                 --region="$REPO_LOCATION" \
                 --image="$PENTEST_IMAGE" \
                 --service-account="$PENTEST_SA" \
-                --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=us-east5" \
+                --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global" \
                 --max-retries=0 --task-timeout=50m >/dev/null
             # Bucket write access for the pentest report upload.
             gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
