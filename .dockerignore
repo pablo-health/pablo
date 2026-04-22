@@ -14,6 +14,9 @@ README.md
 docs/
 *.md
 LICENSE
+# …but ship the BAA manifest into the pentest image — it's consumed at
+# runtime by the pentest collector (see Dockerfile.pentest).
+!docs/compliance/baa-manifest.yaml
 
 # CI/CD
 .circleci
