@@ -40,6 +40,15 @@ class AuditRepository(ABC):
         """Persist a new audit log entry. Never updates existing entries."""
 
     @abstractmethod
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        """Return this user's own audit rows, newest first."""
+
+    @abstractmethod
     def earliest_create_for_patients(
         self, patient_ids: set[str]
     ) -> dict[str, datetime | None]:
@@ -84,6 +93,18 @@ class InMemoryAuditRepository(AuditRepository):
     def append(self, entry: AuditLogEntry) -> None:
         self._entries.append(entry)
 
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        rows = [e for e in self._entries if e.user_id == user_id]
+        if since is not None:
+            rows = [e for e in rows if datetime.fromisoformat(e.timestamp) > since]
+        rows.sort(key=lambda e: e.timestamp, reverse=True)
+        return rows[:limit]
+
     def earliest_create_for_patients(
         self, patient_ids: set[str]
     ) -> dict[str, datetime | None]:
@@ -93,7 +114,7 @@ class InMemoryAuditRepository(AuditRepository):
                 continue
             if e.patient_id not in patient_ids:
                 continue
-            ts = _parse_iso(e.timestamp)
+            ts = datetime.fromisoformat(e.timestamp)
             current = out[e.patient_id]
             if current is None or ts < current:
                 out[e.patient_id] = ts
@@ -110,7 +131,7 @@ class InMemoryAuditRepository(AuditRepository):
         window_rows: list[AuditLogEntry] = []
         baseline_rows: list[AuditLogEntry] = []
         for e in self._entries:
-            ts = _parse_iso(e.timestamp)
+            ts = datetime.fromisoformat(e.timestamp)
             if ts >= window_start:
                 window_rows.append(e)
             elif ts >= baseline_start:
@@ -122,7 +143,7 @@ class InMemoryAuditRepository(AuditRepository):
         # spurious flags against a thin baseline.
         earliest_activity: dict[str, datetime] = {}
         for e in self._entries:
-            ts = _parse_iso(e.timestamp)
+            ts = datetime.fromisoformat(e.timestamp)
             prev = earliest_activity.get(e.user_id)
             if prev is None or ts < prev:
                 earliest_activity[e.user_id] = ts
@@ -158,10 +179,6 @@ class InMemoryAuditRepository(AuditRepository):
     # Test helpers — not part of the interface
     def all(self) -> list[AuditLogEntry]:
         return list(self._entries)
-
-
-def _parse_iso(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def _assert_phi_free(rows: list[dict]) -> None:

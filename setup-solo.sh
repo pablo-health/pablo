@@ -1486,7 +1486,11 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         done
     done
 
-    # Pentest job (uses the pentest image which extends backend image)
+    # Pentest job (uses the pentest image which extends backend image).
+    # PENTEST_RUNNER_AUDIENCE = backend URL: the value the runner passes to
+    # `gcloud auth print-identity-token --audiences` when calling
+    # /api/admin/pentest/* endpoints. Must match the backend's
+    # PENTEST_RUNNER_AUDIENCE setting (configured below).
     if ! gcloud run jobs describe pentest --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
         if gcloud artifacts docker images describe "$PENTEST_IMAGE" >/dev/null 2>&1; then
             echo "  Deploying Cloud Run Job: pentest (as $PENTEST_SA)"
@@ -1495,7 +1499,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
                 --region="$REPO_LOCATION" \
                 --image="$PENTEST_IMAGE" \
                 --service-account="$PENTEST_SA" \
-                --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global" \
+                --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,PENTEST_RUNNER_AUDIENCE=${BACKEND_URL}" \
                 --max-retries=0 --task-timeout=50m >/dev/null
             # Bucket write access for the pentest report upload.
             gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
@@ -1522,7 +1526,21 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         else
             echo "  Cloud Run Job pentest already exists (on dedicated SA)"
         fi
+        # Always (re)apply the audience env var — idempotent, brings older
+        # job revisions in line with the OIDC admin endpoints.
+        gcloud run jobs update pentest \
+            --project="$PROJECT_ID" --region="$REPO_LOCATION" \
+            --update-env-vars="PENTEST_RUNNER_AUDIENCE=${BACKEND_URL}" >/dev/null
     fi
+
+    # Tell the backend which SA email to accept on /api/admin/pentest/*.
+    # The audience pins the OIDC token's `aud` claim to this backend URL,
+    # so a token leaked from a different audience can't be replayed here.
+    gcloud run services update pablo-backend \
+        --project="$PROJECT_ID" \
+        --region="$REPO_LOCATION" \
+        --update-env-vars="PENTEST_RUNNER_SA_EMAIL=${PENTEST_SA},PENTEST_RUNNER_AUDIENCE=${BACKEND_URL}" \
+        --quiet >/dev/null
 
     # Cloud Scheduler triggers
     SCHEDULER_SA="${SCHEDULER_SA:-pablo-scheduler@${PROJECT_ID}.iam.gserviceaccount.com}"

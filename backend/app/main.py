@@ -17,6 +17,7 @@ from .api_errors import register_exception_handlers
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
 from .routes import (
     admin,
+    admin_pentest,
     auth,
     ehr_routes,
     ext_auth,
@@ -105,6 +106,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(ext_auth.router)
 app.include_router(admin.router)
+app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(scheduling.router)
