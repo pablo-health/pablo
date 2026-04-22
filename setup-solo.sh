@@ -1016,10 +1016,85 @@ echo ""
 echo -e "${BLUE}Step 9: Deploying to Cloud Run...${NC}"
 echo ""
 
+# ---------------------------------------------------------------------
+# Transcription provider — HIPAA-safe guided choice
+# ---------------------------------------------------------------------
+# Session audio is PHI. Pablo supports two backends:
+#   - assemblyai: lower ops, but requires a direct BAA with AssemblyAI.
+#   - whisper:    self-hosted on Cloud Batch + T4 GPU; covered by the
+#                 Google Cloud BAA so no third-party BAA is needed.
+#                 Requires GPU quota, a worker image, and a few pieces
+#                 of infra this script does not yet provision. Tracked
+#                 for a future iteration; for now whisper is advisory.
+# Until the whisper infra lands, we prompt the operator to choose
+# assemblyai consciously and confirm a BAA is in place. We never deploy
+# with PHI flowing to AssemblyAI without an explicit acknowledgement.
+if gcloud secrets describe pablo-assemblyai-api-key --project="$PROJECT_ID" >/dev/null 2>&1; then
+    # Re-run of setup-solo against an existing Solo install. Trust the
+    # operator's prior choice; they've already been through the prompt.
+    TRANSCRIPTION_PROVIDER_CHOICE="assemblyai"
+    echo -e "${GREEN}AssemblyAI API key already in Secret Manager — reusing it.${NC}"
+else
+    echo -e "${YELLOW}Transcription provider selection${NC}"
+    echo "Session audio is PHI. Pick how Pablo should transcribe it:"
+    echo "  1) AssemblyAI   — requires a signed direct BAA with AssemblyAI."
+    echo "  2) Whisper      — self-hosted on Cloud Batch GPUs (no third-party BAA needed)."
+    echo "                    Not yet provisioned by setup-solo.sh; tracked for a future release."
+    echo ""
+    read -rp "Choose [1/2, default 1]: " TRANSCRIPTION_CHOICE_INPUT
+    TRANSCRIPTION_CHOICE_INPUT="${TRANSCRIPTION_CHOICE_INPUT:-1}"
+    case "$TRANSCRIPTION_CHOICE_INPUT" in
+        1)
+            TRANSCRIPTION_PROVIDER_CHOICE="assemblyai"
+            echo ""
+            echo -e "${YELLOW}AssemblyAI requires a signed Business Associate Agreement before any real patient audio is uploaded.${NC}"
+            echo "  The default free/trial tier does NOT include a BAA."
+            echo "  Contact AssemblyAI sales to request one: https://www.assemblyai.com/legal/business-associate-agreement"
+            echo ""
+            read -rp "Type 'I have a signed AssemblyAI BAA' to continue, or anything else to abort: " BAA_ACK
+            if [ "$BAA_ACK" != "I have a signed AssemblyAI BAA" ]; then
+                echo -e "${RED}Aborting deploy. Self-hosting without a BAA on a path that carries PHI would be a HIPAA § 164.504(e) violation.${NC}"
+                echo "Options:"
+                echo "  - Sign the AssemblyAI BAA, then re-run this script."
+                echo "  - Or wait for the whisper/self-hosted transcription path to ship."
+                exit 1
+            fi
+            echo ""
+            read -rsp "Paste your AssemblyAI API key (input hidden): " ASSEMBLYAI_API_KEY_VALUE
+            echo ""
+            if [ -z "$ASSEMBLYAI_API_KEY_VALUE" ]; then
+                echo -e "${RED}Empty API key. Aborting.${NC}"
+                exit 1
+            fi
+            echo -n "$ASSEMBLYAI_API_KEY_VALUE" | gcloud secrets create pablo-assemblyai-api-key \
+                --project="$PROJECT_ID" \
+                --replication-policy=automatic \
+                --data-file=- >/dev/null
+            unset ASSEMBLYAI_API_KEY_VALUE BAA_ACK
+            echo -e "${GREEN}AssemblyAI API key stored in Secret Manager.${NC}"
+            ;;
+        2)
+            echo -e "${RED}The whisper path requires GPU quota, a worker container image, and a transcription-worker service account that setup-solo.sh does not yet provision.${NC}"
+            echo "Tracked as a follow-up — for now, either:"
+            echo "  - Re-run this script and choose AssemblyAI (with a signed BAA), or"
+            echo "  - Provision the whisper infra manually and set TRANSCRIPTION_PROVIDER=whisper after deploy."
+            exit 1
+            ;;
+        *)
+            echo -e "${RED}Unrecognized choice: $TRANSCRIPTION_CHOICE_INPUT. Aborting.${NC}"
+            exit 1
+            ;;
+    esac
+fi
+echo ""
+
 # Build secrets string for backend
 SECRETS_STRING="JWT_SECRET_KEY=JWT_SECRET_KEY:latest,DATABASE_URL=pablo-database-url:latest"
 if [ -n "$ANTHROPIC_SECRET" ]; then
     SECRETS_STRING="${SECRETS_STRING},${ANTHROPIC_SECRET}"
+fi
+if [ "$TRANSCRIPTION_PROVIDER_CHOICE" = "assemblyai" ]; then
+    SECRETS_STRING="${SECRETS_STRING},ASSEMBLYAI_API_KEY=pablo-assemblyai-api-key:latest"
 fi
 
 # Deploy backend
@@ -1037,7 +1112,7 @@ gcloud run deploy pablo-backend \
     --timeout=300 \
     --set-secrets="${SECRETS_STRING}" \
     --add-cloudsql-instances="${CONNECTION_NAME}" \
-    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*||DATABASE_BACKEND=postgres||TRANSCRIPTION_PROVIDER=assemblyai||TRANSCRIPTION_ENABLED=true||GOOGLE_GENAI_USE_VERTEXAI=true||VERTEX_REGION=global||RESTRICT_SIGNUPS=true" \
+    --set-env-vars="^||^GCP_PROJECT_ID=${PROJECT_ID}||FIREBASE_PROJECT_ID=${PROJECT_ID}||ENVIRONMENT=production||ENFORCE_HTTPS=true||AI_MODEL=${AI_MODEL}||GOOGLE_CLOUD_PROJECT=${PROJECT_ID}||GOOGLE_REGION=${GOOGLE_REGION:-global}||GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}||TRUSTED_PROXY_IPS=*||DATABASE_BACKEND=postgres||TRANSCRIPTION_PROVIDER=${TRANSCRIPTION_PROVIDER_CHOICE}||TRANSCRIPTION_ENABLED=true||GOOGLE_GENAI_USE_VERTEXAI=true||VERTEX_REGION=global||RESTRICT_SIGNUPS=true" \
     --quiet
 
 BACKEND_URL=$(gcloud run services describe pablo-backend \

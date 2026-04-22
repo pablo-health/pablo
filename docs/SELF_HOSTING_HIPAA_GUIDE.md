@@ -33,7 +33,14 @@ Session audio is PHI. Pablo supports two transcription backends, chosen via the 
 
 If you deploy with `TRANSCRIPTION_PROVIDER=assemblyai` and no signed BAA, session audio leaving Pablo for AssemblyAI is a §164.504(e) impermissible disclosure and a §164.402 Breach. The `whisper` path keeps every byte inside your GCP project.
 
-> **Note on `setup-solo.sh`:** the script currently sets `TRANSCRIPTION_PROVIDER=assemblyai` at deploy time and does not prompt for the AssemblyAI API key. If you intend to use AssemblyAI, set `ASSEMBLYAI_API_KEY` in Secret Manager yourself and confirm your BAA is signed before first session upload. If you prefer the `whisper` path, update the `gcloud run services update pablo-backend --update-env-vars=TRANSCRIPTION_PROVIDER=whisper` after the initial deploy.
+**How `setup-solo.sh` handles this:**
+
+During Step 9 (Cloud Run deploy), the script prompts you to choose a transcription provider:
+
+- If you pick **AssemblyAI**, the script requires you to type `I have a signed AssemblyAI BAA` verbatim before continuing, then prompts for the API key (input hidden), stores it in Secret Manager as `pablo-assemblyai-api-key`, and wires the secret into the backend deploy. There is no way to deploy onto the AssemblyAI path without the explicit BAA acknowledgement.
+- If you pick **Whisper**, the script currently aborts with instructions, because the whisper path needs Cloud Batch + GPU + a worker container image that `setup-solo.sh` does not yet provision. That provisioning is tracked as a follow-up; once it lands, `whisper` will become the default.
+
+On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the script reuses it without re-prompting.
 
 ## 2. Access Control
 
