@@ -9,8 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from ..models.audit import PHI_FIELD_NAMES, AuditAction, AuditLogEntry, ResourceType
 from ..repositories.audit import AuditRepository, InMemoryAuditRepository
+from ..request_context import extract_request_context
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from fastapi import Request
 
     from ..models import Patient, User
@@ -29,16 +32,6 @@ class AuditService:
 
     def __init__(self, repo: AuditRepository) -> None:
         self._repo = repo
-
-    def _extract_request_context(self, request: Request) -> tuple[str | None, str | None]:
-        """Extract IP address and user agent from request."""
-        ip_address = request.headers.get("X-Forwarded-For")
-        if ip_address:
-            ip_address = ip_address.split(",")[0].strip()
-        else:
-            ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("User-Agent")
-        return ip_address, user_agent
 
     def _persist(self, entry: AuditLogEntry) -> None:
         if entry.changes is not None:
@@ -66,7 +59,7 @@ class AuditService:
         changes: dict[str, Any] | None = None,
     ) -> AuditLogEntry:
         """Log an audit event."""
-        ip_address, user_agent = self._extract_request_context(request)
+        ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
             action=action.value,
@@ -125,7 +118,7 @@ class AuditService:
         request: Request,
         patient_count: int,
     ) -> AuditLogEntry:
-        ip_address, user_agent = self._extract_request_context(request)
+        ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
             action=AuditAction.PATIENT_LISTED.value,
@@ -144,7 +137,7 @@ class AuditService:
         request: Request,
         session_count: int,
     ) -> AuditLogEntry:
-        ip_address, user_agent = self._extract_request_context(request)
+        ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
             action=AuditAction.SESSION_LISTED.value,
@@ -157,6 +150,34 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        return self._repo.list_for_user(user_id=user_id, since=since, limit=limit)
+
+    def log_self_audit_view(
+        self,
+        user: User,
+        request: Request,
+        returned_count: int,
+    ) -> AuditLogEntry:
+        """Meta-audit: record that the user read their own audit log."""
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=AuditAction.SELF_AUDIT_VIEWED.value,
+            resource_type=ResourceType.SELF.value,
+            resource_id=user.id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes={"returned_count": returned_count},
+        )
+        self._persist(entry)
+        return entry
+
     def log_admin_action(
         self,
         action: AuditAction,
@@ -165,7 +186,7 @@ class AuditService:
         resource_id: str = "",
         changes: dict[str, Any] | None = None,
     ) -> AuditLogEntry:
-        ip_address, user_agent = self._extract_request_context(request)
+        ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
             action=action.value,

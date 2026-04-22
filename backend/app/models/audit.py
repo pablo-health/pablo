@@ -43,6 +43,9 @@ class AuditAction(StrEnum):
     # EHR navigation
     EHR_NAVIGATE = "ehr_navigate"
 
+    # User reading their own audit trail (meta-audit).
+    SELF_AUDIT_VIEWED = "self_audit_viewed"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -50,6 +53,7 @@ class ResourceType(StrEnum):
     PATIENT = "patient"
     SESSION = "session"
     EHR_ROUTE = "ehr_route"
+    SELF = "self"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

@@ -159,6 +159,26 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Pentest runner (Google service-account OIDC auth)
+    pentest_runner_sa_email: str = Field(
+        default="",
+        description=(
+            "Service-account email the pentest runner uses. "
+            "OIDC tokens whose `email` claim matches this value are "
+            "accepted by /api/admin/pentest/* endpoints. Empty = no runner "
+            "configured (endpoints return 503)."
+        ),
+    )
+    pentest_runner_audience: str = Field(
+        default="",
+        description=(
+            "Expected `aud` claim on pentest-runner OIDC tokens. "
+            "Must equal the URL the runner passes to "
+            "`--audiences` when minting its ID token (typically the "
+            "Cloud Run service URL)."
+        ),
+    )
+
     # Pablo Edition (feature gating)
     pablo_edition: Literal["core", "solo", "practice"] = Field(
         default="core",
