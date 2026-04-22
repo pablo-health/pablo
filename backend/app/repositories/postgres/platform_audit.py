@@ -25,8 +25,8 @@ class PostgresPlatformAuditRepository(PlatformAuditRepository):
     def append(self, entry: PlatformAuditLogEntry) -> None:
         row = PlatformAuditLogRow(
             id=entry.id,
-            timestamp=_parse_iso(entry.timestamp),
-            expires_at=_parse_iso(entry.expires_at),
+            timestamp=datetime.fromisoformat(entry.timestamp),
+            expires_at=datetime.fromisoformat(entry.expires_at),
             actor_user_id=entry.actor_user_id,
             action=entry.action,
             resource_type=entry.resource_type,
@@ -52,10 +52,6 @@ class PostgresPlatformAuditRepository(PlatformAuditRepository):
             .all()
         )
         return [_row_to_entry(row) for row in rows]
-
-
-def _parse_iso(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def _row_to_entry(row: PlatformAuditLogRow) -> PlatformAuditLogEntry:

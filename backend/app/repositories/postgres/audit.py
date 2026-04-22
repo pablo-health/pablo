@@ -87,8 +87,8 @@ class PostgresAuditRepository(AuditRepository):
     def append(self, entry: AuditLogEntry) -> None:
         row = AuditLogRow(
             id=entry.id,
-            timestamp=_parse_iso(entry.timestamp),
-            expires_at=_parse_iso(entry.expires_at),
+            timestamp=datetime.fromisoformat(entry.timestamp),
+            expires_at=datetime.fromisoformat(entry.expires_at),
             user_id=entry.user_id,
             action=entry.action,
             resource_type=entry.resource_type,
@@ -162,10 +162,6 @@ class PostgresAuditRepository(AuditRepository):
 
         _assert_phi_free(out)
         return out
-
-
-def _parse_iso(ts: str) -> datetime:
-    return datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
 def _row_to_dict(row: AuditLogRow) -> dict:

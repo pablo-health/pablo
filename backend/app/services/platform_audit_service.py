@@ -16,6 +16,7 @@ from ..repositories.platform_audit import (
     InMemoryPlatformAuditRepository,
     PlatformAuditRepository,
 )
+from ..request_context import extract_request_context
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -27,18 +28,6 @@ class PlatformAuditService:
     def __init__(self, repo: PlatformAuditRepository) -> None:
         self._repo = repo
 
-    def _extract_request_context(
-        self, request: Request | None
-    ) -> tuple[str | None, str | None]:
-        if request is None:
-            return None, None
-        ip = request.headers.get("X-Forwarded-For")
-        if ip:
-            ip = ip.split(",")[0].strip()
-        else:
-            ip = request.client.host if request.client else None
-        return ip, request.headers.get("User-Agent")
-
     def log_tenant_action(
         self,
         action: PlatformAuditAction,
@@ -48,7 +37,7 @@ class PlatformAuditService:
         request: Request | None = None,
         details: dict[str, Any] | None = None,
     ) -> PlatformAuditLogEntry:
-        ip, ua = self._extract_request_context(request)
+        ip, ua = extract_request_context(request)
         entry = PlatformAuditLogEntry(
             actor_user_id=actor_user_id,
             action=action.value,

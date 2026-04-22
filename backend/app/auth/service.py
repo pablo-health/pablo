@@ -536,12 +536,7 @@ def require_baa_acceptance(
 
 
 def _verify_google_oidc_token(token: str, audience: str) -> dict[str, object]:
-    """Verify a Google-signed OIDC ID token and return its claims.
-
-    Raises ValueError on any verification failure (bad signature, wrong
-    audience, expired, wrong issuer). The caller translates that into a
-    403.
-    """
+    """Verify a Google-signed OIDC ID token, returning its claims. Raises ValueError on failure."""
     from google.auth.transport import requests as google_requests  # noqa: PLC0415
     from google.oauth2 import id_token as google_id_token  # noqa: PLC0415
 
