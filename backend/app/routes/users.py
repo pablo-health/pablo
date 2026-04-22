@@ -7,16 +7,19 @@ Implements user profile management and BAA (Business Associate Agreement) accept
 """
 
 import re
+from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from firebase_admin import auth as firebase_auth
+from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import AcceptBAARequest, BAAStatusResponse, User, UserPreferences
 from ..repositories import UserRepository, get_user_repository
+from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -251,3 +254,76 @@ def save_preferences(
 ) -> UserPreferences:
     """Save user preferences (full replace)."""
     return user_repo.save_preferences(user.id, prefs)
+
+
+class AuditLogItem(BaseModel):
+    """One row in the user's own audit trail.
+
+    Intentionally omits ``user_id`` (implicit — it's you), ``changes``
+    (the only field that could carry PHI-adjacent data despite the
+    field-name guard, and users don't need it), and ``expires_at``
+    (internal retention metadata).
+    """
+
+    id: str
+    timestamp: str
+    action: str
+    resource_type: str
+    resource_id: str
+    patient_id: str | None = None
+    session_id: str | None = None
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+
+class AuditLogResponse(BaseModel):
+    data: list[AuditLogItem]
+    limit: int
+
+
+AUDIT_LOG_MAX_LIMIT = 500
+
+
+@router.get("/me/audit-log", response_model=AuditLogResponse)
+def list_my_audit_log(
+    request: Request,
+    since: datetime | None = Query(
+        None,
+        description=(
+            "ISO-8601 timestamp — return only rows strictly after this. "
+            "Use the timestamp of the last row from a prior call to page forward."
+        ),
+    ),
+    limit: int = Query(100, ge=1, le=AUDIT_LOG_MAX_LIMIT),
+    user: User = Depends(get_current_user),
+    audit: AuditService = Depends(get_audit_service),
+) -> AuditLogResponse:
+    """Return the caller's own audit rows, newest first.
+
+    Scoped to ``user_id = current user`` — never accepts a user_id
+    parameter. Tenant boundary is enforced by the session's
+    search_path (set by ``DatabaseSessionMiddleware``). The access
+    itself is audited (``self_audit_viewed``) so reads of the audit
+    stream are themselves traceable.
+    """
+    entries = audit.list_for_user(user_id=user.id, since=since, limit=limit)
+    audit.log_self_audit_view(
+        user=user, request=request, returned_count=len(entries)
+    )
+    return AuditLogResponse(
+        data=[
+            AuditLogItem(
+                id=e.id,
+                timestamp=e.timestamp,
+                action=e.action,
+                resource_type=e.resource_type,
+                resource_id=e.resource_id,
+                patient_id=e.patient_id,
+                session_id=e.session_id,
+                ip_address=e.ip_address,
+                user_agent=e.user_agent,
+            )
+            for e in entries
+        ],
+        limit=limit,
+    )

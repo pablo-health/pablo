@@ -52,6 +52,38 @@ class PostgresAuditRepository(AuditRepository):
             out[patient_id] = earliest
         return out
 
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        from ...models.audit import AuditLogEntry  # noqa: PLC0415
+
+        query = select(AuditLogRow).where(AuditLogRow.user_id == user_id)
+        if since is not None:
+            query = query.where(AuditLogRow.timestamp > since)
+        query = query.order_by(AuditLogRow.timestamp.desc()).limit(limit)
+
+        rows = self._session.execute(query).scalars().all()
+        return [
+            AuditLogEntry(
+                id=row.id,
+                timestamp=row.timestamp.isoformat().replace("+00:00", "Z"),
+                expires_at=row.expires_at.isoformat().replace("+00:00", "Z"),
+                user_id=row.user_id,
+                action=row.action,
+                resource_type=row.resource_type,
+                resource_id=row.resource_id,
+                patient_id=row.patient_id,
+                session_id=row.session_id,
+                ip_address=row.ip_address,
+                user_agent=row.user_agent,
+                changes=row.changes,
+            )
+            for row in rows
+        ]
+
     def append(self, entry: AuditLogEntry) -> None:
         row = AuditLogRow(
             id=entry.id,

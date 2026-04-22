@@ -40,6 +40,22 @@ class AuditRepository(ABC):
         """Persist a new audit log entry. Never updates existing entries."""
 
     @abstractmethod
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        """Return this user's own audit rows, newest first.
+
+        Used by ``GET /api/users/me/audit-log`` so a clinician (and the
+        pentest closed-loop check) can read their own trail without
+        touching anyone else's. Tenant isolation is already enforced by
+        the session's search_path; the ``user_id`` filter is the
+        intra-tenant boundary.
+        """
+
+    @abstractmethod
     def earliest_create_for_patients(
         self, patient_ids: set[str]
     ) -> dict[str, datetime | None]:
@@ -83,6 +99,18 @@ class InMemoryAuditRepository(AuditRepository):
 
     def append(self, entry: AuditLogEntry) -> None:
         self._entries.append(entry)
+
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        rows = [e for e in self._entries if e.user_id == user_id]
+        if since is not None:
+            rows = [e for e in rows if _parse_iso(e.timestamp) > since]
+        rows.sort(key=lambda e: e.timestamp, reverse=True)
+        return rows[:limit]
 
     def earliest_create_for_patients(
         self, patient_ids: set[str]

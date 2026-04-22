@@ -11,6 +11,8 @@ from ..models.audit import PHI_FIELD_NAMES, AuditAction, AuditLogEntry, Resource
 from ..repositories.audit import AuditRepository, InMemoryAuditRepository
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from fastapi import Request
 
     from ..models import Patient, User
@@ -153,6 +155,40 @@ class AuditService:
             ip_address=ip_address,
             user_agent=user_agent,
             changes={"session_count": session_count},
+        )
+        self._persist(entry)
+        return entry
+
+    def list_for_user(
+        self,
+        user_id: str,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[AuditLogEntry]:
+        """Return this user's own recent audit rows. See repo doc for shape."""
+        return self._repo.list_for_user(user_id=user_id, since=since, limit=limit)
+
+    def log_self_audit_view(
+        self,
+        user: User,
+        request: Request,
+        returned_count: int,
+    ) -> AuditLogEntry:
+        """Record that the user read their own audit log.
+
+        The meta-audit: auditing the audit is a HIPAA expectation when
+        the audit itself is reachable via the API surface. Non-PHI by
+        construction — just a count, no row contents leak into changes.
+        """
+        ip_address, user_agent = self._extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=AuditAction.SELF_AUDIT_VIEWED.value,
+            resource_type=ResourceType.SELF.value,
+            resource_id=user.id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes={"returned_count": returned_count},
         )
         self._persist(entry)
         return entry
