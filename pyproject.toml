@@ -252,6 +252,8 @@ module = [
     "httpx.*",
     "websockets.*",
     "pyotp.*",
+    "yaml",
+    "yaml.*",
 ]
 ignore_missing_imports = true
 
