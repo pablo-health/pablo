@@ -535,29 +535,95 @@ def require_baa_acceptance(
     return user
 
 
-PENTEST_RUNNER_EMAIL = "pablo-pentest-runner@pablo.health"
+def _verify_google_oidc_token(token: str, audience: str) -> dict[str, object]:
+    """Verify a Google-signed OIDC ID token and return its claims.
 
-
-def require_pentest_runner(
-    user: User = Depends(get_current_user),
-) -> User:
-    """Gate pentest-admin endpoints to the pentest runner identity only.
-
-    Narrower than require_admin by design. No dev-mode bypass.
-    TODO(security): migrate to Google SA OIDC + Cloud Run internal ingress.
+    Raises ValueError on any verification failure (bad signature, wrong
+    audience, expired, wrong issuer). The caller translates that into a
+    403.
     """
-    if user.email.lower() != PENTEST_RUNNER_EMAIL:
+    from google.auth.transport import requests as google_requests  # noqa: PLC0415
+    from google.oauth2 import id_token as google_id_token  # noqa: PLC0415
+
+    claims = google_id_token.verify_oauth2_token(
+        token, google_requests.Request(), audience=audience
+    )
+    issuer = claims.get("iss")
+    if issuer not in ("https://accounts.google.com", "accounts.google.com"):
+        msg = f"unexpected issuer {issuer!r}"
+        raise ValueError(msg)
+    if not claims.get("email_verified"):
+        msg = "email_verified claim missing or false"
+        raise ValueError(msg)
+    return claims
+
+
+def require_pentest_runner(request: Request) -> str:
+    """Gate pentest-admin endpoints to the pentest-runner service account.
+
+    Expects a Google-signed OIDC ID token minted for the runner SA with
+    ``audience`` matching ``settings.pentest_runner_audience``. Returns
+    the SA email on success (used as the audit actor id). Cloud Run
+    ingress should additionally be restricted to internal-and-LB so
+    these endpoints are unreachable from the public internet.
+    """
+    settings = get_settings()
+    if not settings.pentest_runner_sa_email or not settings.pentest_runner_audience:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": "PENTEST_RUNNER_NOT_CONFIGURED",
+                    "message": "Pentest runner identity is not configured.",
+                    "details": {},
+                }
+            },
+        )
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "PENTEST_RUNNER_REQUIRED",
+                    "message": "Missing bearer token.",
+                    "details": {},
+                }
+            },
+        )
+    token = auth_header[7:]
+
+    try:
+        claims = _verify_google_oidc_token(
+            token, audience=settings.pentest_runner_audience
+        )
+    except Exception as exc:
+        logger.warning("Pentest runner OIDC verification failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "error": {
                     "code": "PENTEST_RUNNER_REQUIRED",
-                    "message": "Pentest operations require the pentest runner identity.",
+                    "message": "Invalid pentest runner token.",
+                    "details": {},
+                }
+            },
+        ) from exc
+
+    email = str(claims.get("email", "")).lower()
+    if email != settings.pentest_runner_sa_email.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "PENTEST_RUNNER_REQUIRED",
+                    "message": "Token does not belong to the pentest runner.",
                     "details": {},
                 }
             },
         )
-    return user
+    return email
 
 
 def require_admin(
