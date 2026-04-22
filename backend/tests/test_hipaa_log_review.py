@@ -41,6 +41,26 @@ class TestWriteReport:
             "report body", content_type="text/markdown"
         )
 
+    def test_tenant_schema_partitions_gcs_path(self) -> None:
+        """Per-tenant GCS prefix keeps one practice's reports out of another's."""
+        mock_client = MagicMock()
+        with patch("google.cloud.storage.Client", return_value=mock_client):
+            uri = hipaa_log_review._write_report(
+                "r", gcs_bucket="b", tenant_schema="practice_abc123"
+            )
+        assert "/hipaa-log-review/practice_abc123/daily/" in uri
+        mock_client.bucket.return_value.blob.assert_called_once()
+        blob_path = mock_client.bucket.return_value.blob.call_args.args[0]
+        assert blob_path.startswith("hipaa-log-review/practice_abc123/daily/")
+
+    def test_tenant_schema_in_stdout_path_when_no_bucket(self, capsys) -> None:  # type: ignore[no-untyped-def]
+        uri = hipaa_log_review._write_report(
+            "r", gcs_bucket=None, tenant_schema="practice_xyz"
+        )
+        assert uri.startswith("stdout://hipaa-log-review/practice_xyz/daily/")
+        assert uri.endswith(".md")
+        capsys.readouterr()  # drain
+
 
 class TestNotifyHighFinding:
     def test_logs_structured_error_for_cloud_monitoring(
@@ -75,3 +95,105 @@ class TestNotifyHighFinding:
         body = req.data.decode()
         assert "HIGH" in body
         assert "gs://bucket/report.md" in body
+
+    def test_tenant_schema_included_in_stdout_payload(
+        self, capsys, monkeypatch  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Alert routing needs the schema name to page the right tenant owner."""
+        monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+        hipaa_log_review._notify_high_finding(
+            "gs://bucket/report.md", tenant_schema="practice_abc123"
+        )
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["tenant_schema"] == "practice_abc123"
+        assert "schema=practice_abc123" in payload["message"]
+
+    def test_tenant_schema_included_in_webhook_body(
+        self, monkeypatch  # type: ignore[no-untyped-def]
+    ) -> None:
+        monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://example.com/hook")
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.__enter__ = MagicMock(return_value=mock_response)
+        mock_response.__exit__ = MagicMock(return_value=False)
+        with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+            hipaa_log_review._notify_high_finding(
+                "gs://bucket/report.md", tenant_schema="practice_xyz"
+            )
+        body = json.loads(mock_urlopen.call_args.args[0].data.decode())
+        assert body["tenant_schema"] == "practice_xyz"
+        assert "practice_xyz" in body["text"]
+
+
+class TestMultiTenantRun:
+    """run() must iterate every practice schema, isolating failures."""
+
+    def test_each_tenant_gets_its_own_review(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        calls: list[str] = []
+
+        def fake_review(
+            practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
+        ) -> None:
+            calls.append(practice_schema)
+
+        with (
+            patch.object(
+                hipaa_log_review,
+                "_list_practice_schemas",
+                return_value=["practice_a", "practice_b", "practice_c"],
+            ),
+            patch.object(hipaa_log_review, "_review_tenant", side_effect=fake_review),
+        ):
+            exit_code = hipaa_log_review.run()
+
+        assert exit_code == 0
+        assert calls == ["practice_a", "practice_b", "practice_c"]
+
+    def test_one_tenant_failure_does_not_abort_others(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """HIPAA § 164.308(a)(1)(ii)(D) says review must run; one broken tenant
+        must not skip the rest. Exit code reflects partial failure."""
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        calls: list[str] = []
+
+        def flaky(
+            practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
+        ) -> None:
+            calls.append(practice_schema)
+            if practice_schema == "practice_b":
+                msg = "synthetic failure"
+                raise RuntimeError(msg)
+
+        with (
+            patch.object(
+                hipaa_log_review,
+                "_list_practice_schemas",
+                return_value=["practice_a", "practice_b", "practice_c"],
+            ),
+            patch.object(hipaa_log_review, "_review_tenant", side_effect=flaky),
+        ):
+            exit_code = hipaa_log_review.run()
+
+        assert exit_code == 1
+        assert calls == ["practice_a", "practice_b", "practice_c"]
+
+    def test_empty_tenant_skips_model_call(self) -> None:
+        """Empty payload → canned no-activity report, no LLM invocation."""
+        empty_payload = {"entries": [], "user_aggregates": []}
+        with (
+            patch.object(
+                hipaa_log_review, "_load_review_payload", return_value=empty_payload
+            ),
+            patch.object(hipaa_log_review, "_ask_claude") as mock_ask,
+            patch.object(hipaa_log_review, "_write_report", return_value="stdout://x"),
+            patch.object(hipaa_log_review, "_notify_high_finding") as mock_notify,
+        ):
+            hipaa_log_review._review_tenant(
+                practice_schema="practice_empty",
+                window_hours=24,
+                review_mode="daily",
+                gcs_bucket=None,
+            )
+
+        mock_ask.assert_not_called()
+        mock_notify.assert_not_called()
