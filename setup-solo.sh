@@ -1360,6 +1360,10 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
         --role="roles/storage.objectCreator" --condition=None >/dev/null 2>&1 || true
 
     # HIPAA log review job (daily)
+    # Invoked as `python -m app.jobs.hipaa_log_review` with PYTHONPATH=/app/backend.
+    # Matches the pentest runner's import pattern (#59) — the previous
+    # `-m backend.app.jobs.*` form fails because `backend/__init__.py` doesn't
+    # exist, so `backend` is not an importable package.
     if ! gcloud run jobs describe hipaa-log-review --region="$REPO_LOCATION" --project="$PROJECT_ID" >/dev/null 2>&1; then
         echo "  Deploying Cloud Run Job: hipaa-log-review"
         gcloud run jobs create hipaa-log-review \
@@ -1367,10 +1371,10 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --region="$REPO_LOCATION" \
             --image="$BACKEND_IMAGE" \
             --service-account="$BACKEND_SA" \
-            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=24" \
+            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=24,PYTHONPATH=/app/backend" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
             --command="python3.13" \
-            --args="-m,backend.app.jobs.hipaa_log_review" \
+            --args="-m,app.jobs.hipaa_log_review" \
             --max-retries=2 --task-timeout=15m >/dev/null
     else
         echo "  Cloud Run Job hipaa-log-review already exists"
@@ -1384,10 +1388,10 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --region="$REPO_LOCATION" \
             --image="$BACKEND_IMAGE" \
             --service-account="$BACKEND_SA" \
-            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=720" \
+            --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=720,PYTHONPATH=/app/backend" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
             --command="python3.13" \
-            --args="-m,backend.app.jobs.hipaa_log_review" \
+            --args="-m,app.jobs.hipaa_log_review" \
             --max-retries=2 --task-timeout=30m >/dev/null
     else
         echo "  Cloud Run Job hipaa-log-review-monthly already exists"
