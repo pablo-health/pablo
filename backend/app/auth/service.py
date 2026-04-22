@@ -535,6 +535,45 @@ def require_baa_acceptance(
     return user
 
 
+PENTEST_RUNNER_EMAIL = "pablo-pentest-runner@pablo.health"
+
+
+def require_pentest_runner(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Gate pentest-admin endpoints to the dedicated runner identity.
+
+    Deliberately narrower than ``require_admin``: a generic platform
+    admin should not be able to provision pentest tenants or toggle
+    pentest-tenant lifecycle. Only the pre-provisioned Firebase user
+    ``pablo-pentest-runner@pablo.health`` passes this check.
+
+    No dev-mode bypass — tests should use
+    ``app.dependency_overrides[require_pentest_runner]`` instead of a
+    relaxed production check.
+
+    TODO(security): migrate to Google service-account OIDC tokens +
+    Cloud Run ``ingress=internal-and-cloud-load-balancing``. Firebase
+    email auth gives "only this identity can call," not "only this
+    machine can call" — a stolen password/TOTP works from anywhere.
+    OIDC + internal ingress cryptographically binds the call to the
+    pentest runner service account AND blocks public-internet reach.
+    Track in the audit-hardening epic.
+    """
+    if user.email.lower() != PENTEST_RUNNER_EMAIL:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "PENTEST_RUNNER_REQUIRED",
+                    "message": "Pentest operations require the pentest runner identity.",
+                    "details": {},
+                }
+            },
+        )
+    return user
+
+
 def require_admin(
     user: User = Depends(get_current_user),
 ) -> User:
