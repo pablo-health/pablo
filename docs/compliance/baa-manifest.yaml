@@ -1,0 +1,84 @@
+# Business Associate Agreement manifest
+#
+# Authoritative list of subprocessors that receive (or may receive) PHI
+# from Pablo, and the BAA coverage backing each one. Consumed by the
+# weekly pentest: §3 of the report cross-references every outbound
+# hostname grep'd from `backend/` against this file. A hostname covered
+# here clears to §6a as a positive control; anything not listed lands
+# as a CRITICAL candidate in §6 (see SKILL.md severity rubric).
+#
+# This document is also the source of truth for the BAA registry an
+# OCR reviewer would ask for under § 164.308(b)(3) and § 164.314(a).
+# Keep it current when a subprocessor is added, removed, or changes
+# BAA status.
+#
+# Schema:
+#   subprocessors[].name            — vendor name (human-readable)
+#   subprocessors[].covered_by      — one of:
+#                                       google-cloud-baa      (Google Cloud BAA umbrella)
+#                                       direct-baa            (we signed a direct BAA)
+#                                       no-phi                (domain is reachable but never carries PHI)
+#   subprocessors[].domains         — hostnames matched against grep'd egress
+#   subprocessors[].baa_signed      — ISO date the BAA took effect (nullable for no-phi)
+#   subprocessors[].baa_reference   — internal pointer (locker, contract id, filename)
+#   subprocessors[].notes           — free-text scope / usage description
+#
+# Last reviewed: 2026-04-22
+
+subprocessors:
+  - name: Google Cloud Platform
+    covered_by: google-cloud-baa
+    domains:
+      - googleapis.com
+      - run.app
+      - a.run.app
+      - cloudsql.googleapis.com
+      - storage.googleapis.com
+      - secretmanager.googleapis.com
+      - identitytoolkit.googleapis.com
+      - securetoken.google.com
+      - aiplatform.googleapis.com
+      - vertex.ai
+      - pkg.dev
+    baa_signed: null  # Set to the effective date from your Google Cloud BAA
+    baa_reference: "Google Cloud BAA — see admin console → Billing → Agreements"
+    notes: >-
+      Covers Cloud Run, Cloud SQL, Cloud Storage, Secret Manager,
+      Identity Platform / Firebase Auth, and Vertex AI (Claude +
+      Gemini inference). The Google Cloud BAA does NOT cover public
+      generativelanguage.googleapis.com (Gemini direct) or
+      api.anthropic.com — those are separately non-covered.
+
+  - name: AssemblyAI
+    covered_by: direct-baa
+    domains:
+      - api.assemblyai.com
+      - upload.assemblyai.com
+    baa_signed: null  # Set to the effective date of the direct BAA
+    baa_reference: "Direct BAA with AssemblyAI — see contracts locker"
+    notes: >-
+      Batch transcription provider. Receives session audio (PHI)
+      when transcription_provider='assemblyai'. BAA covers storage,
+      processing, and subprocessor use.
+
+  - name: GitHub (ghcr.io)
+    covered_by: no-phi
+    domains:
+      - ghcr.io
+      - github.com
+      - api.github.com
+    baa_signed: null
+    baa_reference: null
+    notes: >-
+      Container registry and source hosting. No PHI transits this
+      path — images are code + deps only, git content is code.
+
+  - name: PyPI
+    covered_by: no-phi
+    domains:
+      - pypi.org
+      - files.pythonhosted.org
+    baa_signed: null
+    baa_reference: null
+    notes: >-
+      Python package index. Build-time only, no PHI.
