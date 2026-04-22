@@ -257,14 +257,7 @@ def save_preferences(
 
 
 class AuditLogItem(BaseModel):
-    """One row in the user's own audit trail.
-
-    Intentionally omits ``user_id`` (implicit — it's you), ``changes``
-    (the only field that could carry PHI-adjacent data despite the
-    field-name guard, and users don't need it), and ``expires_at``
-    (internal retention metadata).
-    """
-
+    # Omits user_id (implicit), changes (PHI-adjacent), and expires_at.
     id: str
     timestamp: str
     action: str
@@ -288,24 +281,13 @@ AUDIT_LOG_MAX_LIMIT = 500
 def list_my_audit_log(
     request: Request,
     since: datetime | None = Query(
-        None,
-        description=(
-            "ISO-8601 timestamp — return only rows strictly after this. "
-            "Use the timestamp of the last row from a prior call to page forward."
-        ),
+        None, description="Return rows strictly after this ISO-8601 timestamp."
     ),
     limit: int = Query(100, ge=1, le=AUDIT_LOG_MAX_LIMIT),
     user: User = Depends(get_current_user),
     audit: AuditService = Depends(get_audit_service),
 ) -> AuditLogResponse:
-    """Return the caller's own audit rows, newest first.
-
-    Scoped to ``user_id = current user`` — never accepts a user_id
-    parameter. Tenant boundary is enforced by the session's
-    search_path (set by ``DatabaseSessionMiddleware``). The access
-    itself is audited (``self_audit_viewed``) so reads of the audit
-    stream are themselves traceable.
-    """
+    """Return the caller's own audit rows, newest first."""
     entries = audit.list_for_user(user_id=user.id, since=since, limit=limit)
     audit.log_self_audit_view(
         user=user, request=request, returned_count=len(entries)

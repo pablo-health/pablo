@@ -19,13 +19,6 @@ if TYPE_CHECKING:
 
 
 class PostgresPlatformAuditRepository(PlatformAuditRepository):
-    """Postgres-backed platform audit stream.
-
-    Writes through ``append()``; never mutates. Row lifecycle matches
-    the per-tenant audit stream (retention + expires_at). Reads via
-    ``recent()`` are used by admin tooling; routine callers only write.
-    """
-
     def __init__(self, session: Session) -> None:
         self._session = session
 

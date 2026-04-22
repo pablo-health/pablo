@@ -1,12 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Tests for platform audit models, repository, and service.
-
-The platform audit stream is PHI-free by construction (admin actions
-only touch tenant IDs and schema names). These tests pin the contract
-that append/read round-trips preserve the expected fields and that
-tenant lifecycle helpers populate the right shape.
-"""
+"""Tests for platform audit models, repository, and service."""
 
 from unittest.mock import MagicMock
 
@@ -85,7 +79,7 @@ class TestPlatformAuditService:
         assert entry.user_agent is None
 
     def test_repo_failure_bubbles(self) -> None:
-        """Silent audit misses are a HIPAA gap; persist failures must surface."""
+        # Silent audit misses are a HIPAA gap; persist failures must surface.
         repo = MagicMock()
         repo.append.side_effect = RuntimeError("db down")
         service = PlatformAuditService(repo)

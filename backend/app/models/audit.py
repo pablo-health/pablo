@@ -43,9 +43,7 @@ class AuditAction(StrEnum):
     # EHR navigation
     EHR_NAVIGATE = "ehr_navigate"
 
-    # Self-service introspection — the user reading their own audit trail.
-    # Used by the pentest closed-loop verification and any future user-
-    # facing "your activity" view.
+    # User reading their own audit trail (meta-audit).
     SELF_AUDIT_VIEWED = "self_audit_viewed"
 
 
@@ -55,7 +53,7 @@ class ResourceType(StrEnum):
     PATIENT = "patient"
     SESSION = "session"
     EHR_ROUTE = "ehr_route"
-    SELF = "self"  # for SELF_AUDIT_VIEWED — resource_id is the user's own id
+    SELF = "self"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

@@ -90,17 +90,9 @@ def run(
     window_hours: int = 24,
     gcs_bucket: str | None = None,
 ) -> int:
-    """Entry point. Returns exit code (0 on success, non-zero if any tenant fails).
+    """Entry point. Returns 0 on success, non-zero if any tenant failed.
 
-    Set REVIEW_WINDOW_HOURS=720 (30 days) to run the monthly rollup
-    review instead of the daily — same code, wider lens. The prompt
-    detects long windows and asks the model to look for slow-burn
-    patterns instead of point-in-time anomalies.
-
-    Each practice schema is reviewed independently: its own payload,
-    its own Claude call, its own per-tenant report in GCS, its own
-    alert. Isolation matches the HIPAA posture — no tenant's ePHI
-    metadata crosses into another tenant's review context.
+    REVIEW_WINDOW_HOURS=720 switches to the monthly rollup review.
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -141,14 +133,8 @@ def run(
 
 
 def _list_practice_schemas(*, include_pentest: bool = False) -> list[str]:
-    """Return practice schemas the review job should process.
-
-    Joins ``information_schema.schemata`` with ``platform.practices`` so
-    pentest-flagged tenants can be excluded from the nightly anomaly
-    review. The template ``practice`` schema is unflagged (it has no
-    corresponding registry row under multi-tenancy) and is included
-    in single-tenant deployments by falling through the LEFT JOIN.
-    """
+    # LEFT JOIN so the single-tenant 'practice' schema (no registry row)
+    # isn't dropped.
     from sqlalchemy import text  # noqa: PLC0415
 
     from ..db import get_engine  # noqa: PLC0415
@@ -171,18 +157,8 @@ def _list_practice_schemas(*, include_pentest: bool = False) -> list[str]:
 
 
 def _assert_schema_flag_consistency() -> list[str]:
-    r"""Cross-check schema naming against the ``is_pentest`` flag.
-
-    Two invariants the CHECK constraint and trigger enforce at write
-    time. This function re-verifies them at review time to catch any
-    out-of-band tampering (superuser UPDATE, manual SQL, etc.):
-
-    1. Every ``practice_pentest_*`` schema has ``is_pentest = TRUE``.
-    2. Every ``is_pentest = TRUE`` row has a matching schema name.
-
-    Returns a list of human-readable violation strings. Empty list on
-    the happy path.
-    """
+    # Re-verify invariants the CHECK/trigger enforce at write time;
+    # superuser UPDATE or manual SQL could bypass them.
     from sqlalchemy import text  # noqa: PLC0415
 
     from ..db import get_engine  # noqa: PLC0415
@@ -222,14 +198,13 @@ def _assert_schema_flag_consistency() -> list[str]:
 def _notify_invariant_violations(
     violations: list[str], gcs_bucket: str | None
 ) -> None:
-    """Surface invariant violations as a HIGH finding in its own report."""
     body = "# HIPAA Log Review — Platform Invariant Violations\n\n"
     body += "**Severity: HIGH**\n\n"
     body += (
-        "Schema-name / ``is_pentest`` flag divergence detected. Expected "
-        "behavior is for the DB CHECK + trigger to make this impossible; "
-        "seeing this report means someone bypassed them (superuser UPDATE, "
-        "direct SQL). Investigate immediately.\n\n"
+        "Schema-name / ``is_pentest`` flag divergence detected. DB "
+        "CHECK + trigger should make this impossible; if you see this "
+        "report, something bypassed them (superuser UPDATE or direct SQL). "
+        "Investigate immediately.\n\n"
     )
     body += "## Violations\n\n"
     for v in violations:
@@ -246,7 +221,6 @@ def _review_tenant(
     review_mode: str,
     gcs_bucket: str | None,
 ) -> None:
-    """Run a single tenant's review end-to-end."""
     payload = _load_review_payload(practice_schema, window_hours)
     logger.info(
         "schema=%s entries=%d aggregates=%d",
@@ -274,7 +248,6 @@ def _review_tenant(
 
 
 def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, Any]:
-    """Compose the review payload for one practice schema."""
     from ..db import create_standalone_session  # noqa: PLC0415
     from ..repositories.postgres.appointment import (  # noqa: PLC0415
         PostgresAppointmentRepository,
@@ -360,11 +333,7 @@ def _write_report(
     review_mode: str = "daily",
     tenant_schema: str | None = None,
 ) -> str:
-    """Write report to GCS if configured, else print to stdout. Returns a URI.
-
-    When ``tenant_schema`` is set, reports are partitioned per tenant so
-    each practice's review history is isolated in its own GCS prefix.
-    """
+    """Write report to GCS if configured, else stdout. Returns the URI."""
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     if tenant_schema:
         filename = f"hipaa-log-review/{tenant_schema}/{review_mode}/{ts}.md"
@@ -391,16 +360,7 @@ def _write_report(
 
 
 def _notify_high_finding(report_path: str, tenant_schema: str | None = None) -> None:
-    """Emit a structured ERROR log so Cloud Monitoring's log-based alert fires.
-
-    Operators wire the email channel in ``scripts/monitoring/setup.sh``.
-    An optional secondary channel is available: if ``ALERT_WEBHOOK_URL``
-    is set (Slack/Discord/generic incoming-webhook/paging vendor), the
-    report URL is POSTed there as JSON. Silent no-op if unset.
-
-    ``tenant_schema`` is surfaced in the alert payload so downstream
-    routing can page the right operator for multi-tenant deployments.
-    """
+    """Emit structured ERROR log for Cloud Monitoring + optional webhook POST."""
     schema_fragment = f" schema={tenant_schema}" if tenant_schema else ""
     payload: dict[str, str] = {
         "severity": "ERROR",
@@ -434,12 +394,6 @@ def _post_webhook(
     alert_source: str,
     tenant_schema: str | None = None,
 ) -> None:
-    """POST a minimal JSON body to the configured webhook.
-
-    Body shape is generic — Slack, Discord, PagerDuty Events v2, and most
-    other webhook sinks accept arbitrary JSON. Operator picks the sink
-    by setting ALERT_WEBHOOK_URL; this function doesn't care which.
-    """
     import urllib.request  # noqa: PLC0415
 
     schema_fragment = f" ({tenant_schema})" if tenant_schema else ""

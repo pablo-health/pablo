@@ -46,14 +46,7 @@ class AuditRepository(ABC):
         since: datetime | None = None,
         limit: int = 100,
     ) -> list[AuditLogEntry]:
-        """Return this user's own audit rows, newest first.
-
-        Used by ``GET /api/users/me/audit-log`` so a clinician (and the
-        pentest closed-loop check) can read their own trail without
-        touching anyone else's. Tenant isolation is already enforced by
-        the session's search_path; the ``user_id`` filter is the
-        intra-tenant boundary.
-        """
+        """Return this user's own audit rows, newest first."""
 
     @abstractmethod
     def earliest_create_for_patients(

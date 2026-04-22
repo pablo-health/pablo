@@ -165,7 +165,6 @@ class AuditService:
         since: datetime | None = None,
         limit: int = 100,
     ) -> list[AuditLogEntry]:
-        """Return this user's own recent audit rows. See repo doc for shape."""
         return self._repo.list_for_user(user_id=user_id, since=since, limit=limit)
 
     def log_self_audit_view(
@@ -174,12 +173,7 @@ class AuditService:
         request: Request,
         returned_count: int,
     ) -> AuditLogEntry:
-        """Record that the user read their own audit log.
-
-        The meta-audit: auditing the audit is a HIPAA expectation when
-        the audit itself is reachable via the API surface. Non-PHI by
-        construction — just a count, no row contents leak into changes.
-        """
+        """Meta-audit: record that the user read their own audit log."""
         ip_address, user_agent = self._extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,

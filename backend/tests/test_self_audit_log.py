@@ -1,13 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Tests for GET /api/users/me/audit-log and its repository plumbing.
-
-Contract pins:
-- Response is scoped to the caller; a user_id query param is not accepted.
-- ``changes`` never leaks into the response body.
-- The read itself gets audited (``self_audit_viewed`` meta-audit row).
-- ``since`` filters strictly after the timestamp; ``limit`` is bounded.
-"""
+"""Tests for GET /api/users/me/audit-log and its repository plumbing."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -68,8 +61,6 @@ class TestListForUser:
 
 
 class TestSelfAuditViewRoute:
-    """Endpoint wiring — scoping and meta-audit."""
-
     def test_returns_only_caller_rows(
         self, client, mock_user_id, mock_audit_service  # type: ignore[no-untyped-def]
     ) -> None:
@@ -112,8 +103,7 @@ class TestSelfAuditViewRoute:
     def test_user_id_param_not_accepted(
         self, client, mock_user_id  # type: ignore[no-untyped-def]
     ) -> None:
-        """Defense: even if a caller passes user_id=other, the route
-        ignores it and returns only their own rows."""
+        # Even if a caller passes user_id=other, results are still the caller's own.
         resp = client.get("/api/users/me/audit-log?user_id=other-user")
         assert resp.status_code == 200  # unrecognized param ignored by FastAPI
         # No cross-tenant data returned (repo is empty for our mock user)
