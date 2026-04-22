@@ -4,6 +4,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from app.models.platform_audit import (
     PlatformAuditAction,
     PlatformAuditLogEntry,
@@ -83,18 +84,13 @@ class TestPlatformAuditService:
         repo = MagicMock()
         repo.append.side_effect = RuntimeError("db down")
         service = PlatformAuditService(repo)
-        try:
+        with pytest.raises(RuntimeError, match="db down"):
             service.log_tenant_action(
                 action=PlatformAuditAction.TENANT_PROVISIONED,
                 actor_user_id="a",
                 tenant_schema="s",
                 tenant_id="t",
             )
-        except RuntimeError as exc:
-            assert "db down" in str(exc)
-        else:
-            msg = "expected RuntimeError to propagate"
-            raise AssertionError(msg)
 
 
 class TestInMemoryRepo:

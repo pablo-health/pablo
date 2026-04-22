@@ -16,9 +16,11 @@ def extract_request_context(
     """Return (ip_address, user_agent) from a Request, or (None, None)."""
     if request is None:
         return None, None
-    ip = request.headers.get("X-Forwarded-For")
-    if ip:
-        ip = ip.split(",")[0].strip()
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        ip = forwarded.split(",")[0].strip()
+    elif request.client:
+        ip = request.client.host
     else:
-        ip = request.client.host if request.client else None
+        ip = None
     return ip, request.headers.get("User-Agent")

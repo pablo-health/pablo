@@ -17,15 +17,19 @@ def bundle_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def targets() -> collectors.Targets:
-    t = collectors.Targets()
-    t.backend_url = "https://backend.example.com"
-    return t
+    return collectors.Targets(
+        project_id="test-project",
+        backend_url="https://backend.example.com",
+    )
 
 
 @pytest.fixture
 def creds() -> SimpleNamespace:
     return SimpleNamespace(
-        user_a=SimpleNamespace(id_token="fake.jwt.token", email="pentestuser-1@pablo.health")
+        user_a=SimpleNamespace(
+            id_token="fake.jwt.token",  # noqa: S106 — fixture value; attribute name must match real creds shape
+            email="pentestuser-1@pablo.health",
+        )
     )
 
 
@@ -47,7 +51,7 @@ class TestClosedLoopAuditCollector:
 
     def test_skipped_without_backend_url(self, bundle_dir, creds) -> None:
         artifact = collectors.collect_closed_loop_audit(
-            bundle_dir, collectors.Targets(), creds
+            bundle_dir, collectors.Targets(project_id="test-project"), creds
         )
         assert artifact.status == "skipped"
 

@@ -40,7 +40,6 @@ class PostgresPlatformAuditRepository(PlatformAuditRepository):
         self._session.flush()
 
     def recent(self, limit: int = 100) -> list[PlatformAuditLogEntry]:
-        from ...models.platform_audit import PlatformAuditLogEntry  # noqa: PLC0415
 
         rows = (
             self._session.execute(

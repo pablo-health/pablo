@@ -64,8 +64,8 @@ def get_platform_audit_service() -> PlatformAuditService:
     # In-memory fallback for dev/test harnesses without Postgres; never
     # production — entries are lost on restart.
     try:
-        from ..db import get_db_session  # noqa: PLC0415
-        from ..repositories.postgres.platform_audit import (  # noqa: PLC0415
+        from ..db import get_db_session
+        from ..repositories.postgres.platform_audit import (
             PostgresPlatformAuditRepository,
         )
 
