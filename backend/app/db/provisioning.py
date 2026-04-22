@@ -122,6 +122,14 @@ def _migrate_platform_columns(engine: Engine) -> None:
         ]
     )
 
+    # platform.practices.is_pentest — column, CHECK, and immutability
+    # trigger. The migration owns these too; this block is the
+    # belt-and-suspenders for environments that bypass alembic.
+    migrations.append(
+        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS is_pentest"
+        " BOOLEAN NOT NULL DEFAULT FALSE"
+    )
+
     # --- Migrate VARCHAR datetime columns to TIMESTAMP WITH TIME ZONE ---
     etm = f"{PLATFORM_SCHEMA}.email_tenant_mappings"
     allowed = f"{PLATFORM_SCHEMA}.allowed_emails"
@@ -159,7 +167,62 @@ def _migrate_platform_columns(engine: Engine) -> None:
                 # tables like platform.subscriptions in the OSS build) — skip.
                 savepoint.rollback()
         conn.commit()
+    _ensure_pentest_tenant_guards(engine)
     logger.info("Platform column migrations applied")
+
+
+def _ensure_pentest_tenant_guards(engine: Engine) -> None:
+    """Apply the is_pentest CHECK constraint and immutability trigger.
+
+    Idempotent: drops-and-recreates the constraint and trigger so
+    repeated boots converge on the intended state. The migration
+    (``f1c8d4a92b65``) owns the canonical definition; this block
+    guarantees it exists in environments that bypass alembic.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    statements = [
+        # CHECK: is_pentest=TRUE only when schema name follows convention.
+        "ALTER TABLE platform.practices"
+        " DROP CONSTRAINT IF EXISTS practices_pentest_schema_name",
+        "ALTER TABLE platform.practices"
+        " ADD CONSTRAINT practices_pentest_schema_name"
+        r" CHECK (is_pentest = FALSE OR schema_name LIKE 'practice\_pentest\_%' ESCAPE '\')",
+        # Immutability trigger — flag can only be set at INSERT.
+        """
+        CREATE OR REPLACE FUNCTION platform.practices_pentest_immutable()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            IF OLD.is_pentest IS DISTINCT FROM NEW.is_pentest THEN
+                RAISE EXCEPTION
+                    'is_pentest is immutable; drop and recreate the tenant'
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            RETURN NEW;
+        END;
+        $$
+        """,
+        "DROP TRIGGER IF EXISTS practices_pentest_immutable ON platform.practices",
+        "CREATE TRIGGER practices_pentest_immutable"
+        " BEFORE UPDATE OF is_pentest ON platform.practices"
+        " FOR EACH ROW"
+        " EXECUTE FUNCTION platform.practices_pentest_immutable()",
+    ]
+
+    with engine.connect() as conn:
+        for stmt in statements:
+            savepoint = conn.begin_nested()
+            try:
+                conn.execute(text(stmt))
+                savepoint.commit()
+            except Exception:
+                logger.exception("Pentest guard step failed: %s", stmt.split()[0:3])
+                savepoint.rollback()
+        conn.commit()
 
 
 def _migrate_practice_columns(engine: Engine, schema_name: str) -> None:

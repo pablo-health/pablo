@@ -109,7 +109,14 @@ def run(
 
     review_mode = "monthly" if window_hours >= MONTHLY_WINDOW_HOURS else "daily"
 
-    schemas = _list_practice_schemas()
+    invariant_violations = _assert_schema_flag_consistency()
+    if invariant_violations:
+        logger.error(
+            "Schema/flag invariant violations detected: %s", invariant_violations
+        )
+        _notify_invariant_violations(invariant_violations, gcs_bucket=gcs_bucket)
+
+    schemas = _list_practice_schemas(include_pentest=False)
     logger.info(
         "Starting HIPAA log review — window_hours=%d mode=%s tenants=%d",
         window_hours,
@@ -133,28 +140,104 @@ def run(
     return exit_code
 
 
-def _list_practice_schemas() -> list[str]:
-    """Return every schema that may contain an ``audit_logs`` table.
+def _list_practice_schemas(*, include_pentest: bool = False) -> list[str]:
+    """Return practice schemas the review job should process.
 
-    Matches both the legacy single-tenant ``practice`` schema and any
-    per-practice ``practice_<id>`` schemas provisioned by
-    ``create_practice_schema``. Schemas with no activity in the window
-    produce a "no activity" report — intentional, as evidence of the
-    review actually running.
+    Joins ``information_schema.schemata`` with ``platform.practices`` so
+    pentest-flagged tenants can be excluded from the nightly anomaly
+    review. The template ``practice`` schema is unflagged (it has no
+    corresponding registry row under multi-tenancy) and is included
+    in single-tenant deployments by falling through the LEFT JOIN.
     """
     from sqlalchemy import text  # noqa: PLC0415
 
     from ..db import get_engine  # noqa: PLC0415
 
+    sql = (
+        "SELECT s.schema_name "
+        "FROM information_schema.schemata AS s "
+        "LEFT JOIN platform.practices AS p "
+        "  ON p.schema_name = s.schema_name "
+        "WHERE s.schema_name = 'practice' "
+        "   OR s.schema_name LIKE 'practice_%' "
+    )
+    if not include_pentest:
+        sql += "AND (p.is_pentest IS NULL OR p.is_pentest = FALSE) "
+    sql += "ORDER BY s.schema_name"
+
     with get_engine().connect() as conn:
-        rows = conn.execute(
+        rows = conn.execute(text(sql)).fetchall()
+    return [r[0] for r in rows]
+
+
+def _assert_schema_flag_consistency() -> list[str]:
+    r"""Cross-check schema naming against the ``is_pentest`` flag.
+
+    Two invariants the CHECK constraint and trigger enforce at write
+    time. This function re-verifies them at review time to catch any
+    out-of-band tampering (superuser UPDATE, manual SQL, etc.):
+
+    1. Every ``practice_pentest_*`` schema has ``is_pentest = TRUE``.
+    2. Every ``is_pentest = TRUE`` row has a matching schema name.
+
+    Returns a list of human-readable violation strings. Empty list on
+    the happy path.
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    from ..db import get_engine  # noqa: PLC0415
+
+    violations: list[str] = []
+    with get_engine().connect() as conn:
+        mismatched_schemas = conn.execute(
             text(
-                "SELECT schema_name FROM information_schema.schemata "
-                "WHERE schema_name = 'practice' OR schema_name LIKE 'practice_%' "
-                "ORDER BY schema_name"
+                r"SELECT s.schema_name"
+                r" FROM information_schema.schemata s"
+                r" LEFT JOIN platform.practices p"
+                r"   ON p.schema_name = s.schema_name"
+                r" WHERE s.schema_name LIKE 'practice\_pentest\_%' ESCAPE '\'"
+                r"   AND (p.is_pentest IS NULL OR p.is_pentest = FALSE)"
             )
         ).fetchall()
-    return [r[0] for r in rows]
+        for (schema,) in mismatched_schemas:
+            violations.append(
+                f"schema={schema} matches pentest pattern but is_pentest is not TRUE"
+            )
+
+        mismatched_flags = conn.execute(
+            text(
+                r"SELECT schema_name"
+                r" FROM platform.practices"
+                r" WHERE is_pentest = TRUE"
+                r"   AND schema_name NOT LIKE 'practice\_pentest\_%' ESCAPE '\'"
+            )
+        ).fetchall()
+        for (schema,) in mismatched_flags:
+            violations.append(
+                f"schema={schema} has is_pentest=TRUE but does not match pentest pattern"
+            )
+    return violations
+
+
+def _notify_invariant_violations(
+    violations: list[str], gcs_bucket: str | None
+) -> None:
+    """Surface invariant violations as a HIGH finding in its own report."""
+    body = "# HIPAA Log Review — Platform Invariant Violations\n\n"
+    body += "**Severity: HIGH**\n\n"
+    body += (
+        "Schema-name / ``is_pentest`` flag divergence detected. Expected "
+        "behavior is for the DB CHECK + trigger to make this impossible; "
+        "seeing this report means someone bypassed them (superuser UPDATE, "
+        "direct SQL). Investigate immediately.\n\n"
+    )
+    body += "## Violations\n\n"
+    for v in violations:
+        body += f"- {v}\n"
+    report_path = _write_report(
+        body, gcs_bucket, review_mode="invariants", tenant_schema=None
+    )
+    _notify_high_finding(report_path, tenant_schema=None)
 
 
 def _review_tenant(

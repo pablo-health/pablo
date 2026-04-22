@@ -41,6 +41,14 @@ class PracticeRow(PlatformBase):
     status: Mapped[str] = mapped_column(String(20), default="active")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Marks an ephemeral pentest tenant. Guarded by a CHECK constraint
+    # (requires schema_name matching 'practice_pentest_%') and a BEFORE
+    # UPDATE trigger (flag is immutable after INSERT). The nightly
+    # anomaly review skips pentest tenants; they get known-answer
+    # verification instead.
+    is_pentest: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
 
 class EmailTenantMappingRow(PlatformBase):
@@ -118,3 +126,30 @@ class PlatformAllowedEmailRow(PlatformBase):
     practice_id: Mapped[str | None] = mapped_column(String(128))
     added_by: Mapped[str] = mapped_column(String(255), nullable=False)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlatformAuditLogRow(PlatformBase):
+    """Platform-level audit stream — separate from per-tenant audit_logs.
+
+    Records administrative operations (tenant lifecycle, pentest tenant
+    provisioning, flag changes) that span tenants. PHI-free by
+    construction: actors are operator/runner IDs; resources are
+    tenants and config rows.
+    """
+
+    __tablename__ = "platform_audit_logs"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    tenant_schema: Mapped[str | None] = mapped_column(String(128), index=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45))
+    user_agent: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSONB)

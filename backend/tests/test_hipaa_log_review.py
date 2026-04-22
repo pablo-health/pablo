@@ -139,6 +139,9 @@ class TestMultiTenantRun:
 
         with (
             patch.object(
+                hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]
+            ),
+            patch.object(
                 hipaa_log_review,
                 "_list_practice_schemas",
                 return_value=["practice_a", "practice_b", "practice_c"],
@@ -149,6 +152,42 @@ class TestMultiTenantRun:
 
         assert exit_code == 0
         assert calls == ["practice_a", "practice_b", "practice_c"]
+
+    def test_pentest_tenants_excluded_by_default(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """run() must call _list_practice_schemas with include_pentest=False
+        so pentest tenants skip the anomaly review path."""
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        with (
+            patch.object(
+                hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]
+            ),
+            patch.object(
+                hipaa_log_review, "_list_practice_schemas", return_value=[]
+            ) as mock_list,
+            patch.object(hipaa_log_review, "_review_tenant"),
+        ):
+            hipaa_log_review.run()
+        mock_list.assert_called_once_with(include_pentest=False)
+
+    def test_invariant_violations_fire_high_alert(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """Consistency check runs first — divergence → HIGH report even
+        if every per-tenant review that follows is clean."""
+        monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
+        with (
+            patch.object(
+                hipaa_log_review,
+                "_assert_schema_flag_consistency",
+                return_value=["schema=practice_abc matches pentest pattern..."],
+            ),
+            patch.object(
+                hipaa_log_review, "_notify_invariant_violations"
+            ) as mock_notify,
+            patch.object(
+                hipaa_log_review, "_list_practice_schemas", return_value=[]
+            ),
+        ):
+            hipaa_log_review.run()
+        mock_notify.assert_called_once()
 
     def test_one_tenant_failure_does_not_abort_others(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         """HIPAA § 164.308(a)(1)(ii)(D) says review must run; one broken tenant
@@ -165,6 +204,9 @@ class TestMultiTenantRun:
                 raise RuntimeError(msg)
 
         with (
+            patch.object(
+                hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]
+            ),
             patch.object(
                 hipaa_log_review,
                 "_list_practice_schemas",
