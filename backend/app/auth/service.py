@@ -559,14 +559,7 @@ def _verify_google_oidc_token(token: str, audience: str) -> dict[str, object]:
 
 
 def require_pentest_runner(request: Request) -> str:
-    """Gate pentest-admin endpoints to the pentest-runner service account.
-
-    Expects a Google-signed OIDC ID token minted for the runner SA with
-    ``audience`` matching ``settings.pentest_runner_audience``. Returns
-    the SA email on success (used as the audit actor id). Cloud Run
-    ingress should additionally be restricted to internal-and-LB so
-    these endpoints are unreachable from the public internet.
-    """
+    """Gate pentest-admin endpoints to the pentest-runner service account."""
     settings = get_settings()
     if not settings.pentest_runner_sa_email or not settings.pentest_runner_audience:
         raise HTTPException(
