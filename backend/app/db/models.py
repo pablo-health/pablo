@@ -81,9 +81,15 @@ class TherapySessionRow(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_gcs_path: Mapped[str | None] = mapped_column(Text)
-    # SOAP notes stored as JSONB (complex nested structures)
-    soap_note: Mapped[dict | None] = mapped_column(JSONB)
-    soap_note_edited: Mapped[dict | None] = mapped_column(JSONB)
+    # Note-type registry key (soap, dap, birp, narrative, meeting, ...).
+    # Picks the schema/prompt used to render note_content.
+    note_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="soap", default="soap"
+    )
+    # Generated + clinician-edited notes stored as JSONB. Shape varies by
+    # note_type; the registry owns validation.
+    note_content: Mapped[dict | None] = mapped_column(JSONB)
+    note_content_edited: Mapped[dict | None] = mapped_column(JSONB)
     quality_rating: Mapped[int | None] = mapped_column(Integer)
     quality_rating_reason: Mapped[str | None] = mapped_column(Text)
     quality_rating_sections: Mapped[list | None] = mapped_column(JSONB)
