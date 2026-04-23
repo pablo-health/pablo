@@ -73,7 +73,7 @@ from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import (
     AuditService,
-    MeetingTranscriptionSOAPService,
+    MeetingTranscriptionNoteService,
     PatientNotFoundError,
     SessionService,
     get_audit_service,
@@ -275,7 +275,7 @@ def _get_session_service(
     Depends on get_tenant_context to ensure the practice schema is set
     before any queries run (required for multi-tenant Postgres).
     """
-    return SessionService(session_repo, patient_repo, MeetingTranscriptionSOAPService())
+    return SessionService(session_repo, patient_repo, MeetingTranscriptionNoteService())
 
 
 @router.post(
@@ -312,9 +312,7 @@ def start_session_from_appointment(
 
     # 3. Unmatched patient? → 400
     if not appt.patient_id:
-        raise BadRequestError(
-            "Appointment has no linked patient. Resolve the client match first."
-        )
+        raise BadRequestError("Appointment has no linked patient. Resolve the client match first.")
 
     # 4. Create session from appointment data
     request = ScheduleSessionRequest(
