@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api_errors import register_exception_handlers
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
+from .notes import get_default_registry, register_builtin_note_types
 from .routes import (
     admin,
     admin_pentest,
@@ -70,6 +71,10 @@ app = FastAPI(
 )
 
 register_exception_handlers(app)
+
+# Populate the note-type registry with OSS built-ins (SOAP + Narrative).
+# SaaS overlays register premium formats against the same default registry.
+register_builtin_note_types(get_default_registry())
 
 # PostgreSQL session middleware (must be added before security middleware
 # so it wraps the request lifecycle inside the security layer)
