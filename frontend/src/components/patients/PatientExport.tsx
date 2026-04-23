@@ -4,7 +4,8 @@
 
 import { useState } from "react"
 import { Download, FileJson, FileText, X, Loader2, CheckCircle } from "lucide-react"
-import { mockPatients, mockSessions } from "@/lib/mockData"
+import { usePatient } from "@/hooks/usePatients"
+import { useSessionList } from "@/hooks/useSessions"
 
 interface PatientExportProps {
   patientId: string
@@ -20,11 +21,13 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>("json")
   const [progress, setProgress] = useState(0)
 
+  const { data: patient } = usePatient(patientId)
+  const { data: sessionsData } = useSessionList()
+
   const handleExport = async () => {
     setStep("exporting")
     setProgress(0)
 
-    // Simulate export progress
     const progressInterval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
@@ -35,12 +38,10 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
       })
     }, 200)
 
-    // Simulate export delay
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
-    // Get mock data
-    const patient = mockPatients.find((p) => p.id === patientId)
-    const sessions = mockSessions.filter((s) => s.patientId === patientId)
+    const sessions =
+      sessionsData?.data.filter((s) => s.patient_id === patientId) ?? []
 
     const exportData = {
       patient,
@@ -63,7 +64,6 @@ export function PatientExport({ patientId, patientName }: PatientExportProps) {
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
     } else {
-      // For PDF, create a simple text-based version (in real app would use PDF library)
       const pdfContent = `
 PATIENT DATA EXPORT
 ===================
@@ -72,22 +72,21 @@ Export Date: ${new Date().toLocaleDateString()}
 
 Patient Information:
 -------------------
-Name: ${patient?.firstName} ${patient?.lastName}
-Email: ${patient?.email}
-Phone: ${patient?.phone}
-Date of Birth: ${patient?.dateOfBirth ? new Date(patient.dateOfBirth).toLocaleDateString() : "N/A"}
+Name: ${patient?.first_name} ${patient?.last_name}
+Email: ${patient?.email ?? "N/A"}
+Phone: ${patient?.phone ?? "N/A"}
+Date of Birth: ${patient?.date_of_birth ? new Date(patient.date_of_birth).toLocaleDateString() : "N/A"}
 Status: ${patient?.status}
+Diagnosis: ${patient?.diagnosis ?? "N/A"}
 
 Session History (${sessions.length} sessions):
 -------------------
 ${sessions
   .map(
     (s, i) => `
-${i + 1}. ${new Date(s.date).toLocaleDateString()} - ${s.startTime}
-   Type: ${s.type}
-   Duration: ${s.duration} min
+${i + 1}. ${new Date(s.session_date).toLocaleString()}
+   Session #: ${s.session_number}
    Status: ${s.status}
-   Notes: ${s.notes || "No notes"}
 `
   )
   .join("\n")}

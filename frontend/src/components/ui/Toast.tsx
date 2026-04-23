@@ -10,7 +10,14 @@
  */
 
 import { X } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react"
 
 export type ToastType = "error" | "success" | "info" | "warning"
 
@@ -21,14 +28,6 @@ export interface ToastProps {
   onClose: () => void
 }
 
-/**
- * Toast notification component
- *
- * @param message - The message to display
- * @param type - Type of toast (error, success, info, warning). Default: "error"
- * @param duration - Auto-dismiss duration in milliseconds. Default: 5000 (5 seconds)
- * @param onClose - Callback when toast is closed
- */
 export function Toast({
   message,
   type = "error",
@@ -39,19 +38,16 @@ export function Toast({
 
   const handleClose = useCallback(() => {
     setIsVisible(false)
-    // Wait for slide-out animation before removing
     setTimeout(() => {
       onClose()
     }, 300)
   }, [onClose])
 
   useEffect(() => {
-    // Trigger slide-in animation after a brief delay to ensure CSS transition works
     const animationTimer = setTimeout(() => {
       setIsVisible(true)
     }, 10)
 
-    // Auto-dismiss after duration
     const dismissTimer = setTimeout(() => {
       handleClose()
     }, duration)
@@ -62,7 +58,6 @@ export function Toast({
     }
   }, [duration, handleClose])
 
-  // Color scheme based on type
   const colors = {
     error: "bg-red-50 border-red-200 text-red-800",
     success: "bg-green-50 border-green-200 text-green-800",
@@ -104,34 +99,35 @@ export function Toast({
   )
 }
 
-/**
- * Toast Container for managing multiple toasts
- */
 interface ToastMessage {
   id: string
   message: string
   type: ToastType
 }
 
-export function ToastContainer() {
+interface ToastContextValue {
+  showToast: (message: string, type?: ToastType) => void
+}
+
+const ToastContext = createContext<ToastContextValue | null>(null)
+
+export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
-  const addToast = (message: string, type: ToastType = "error") => {
-    const id = Date.now().toString()
+  const showToast = useCallback((message: string, type: ToastType = "error") => {
+    const id = Date.now().toString() + Math.random().toString(36).slice(2)
     setToasts((prev) => [...prev, { id, message, type }])
-  }
-
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id))
-  }
-
-  // Expose addToast function globally for easy access
-  useEffect(() => {
-    ;(window as unknown as { showToast: typeof addToast }).showToast = addToast
   }, [])
 
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id))
+  }, [])
+
+  const value = useMemo(() => ({ showToast }), [showToast])
+
   return (
-    <>
+    <ToastContext.Provider value={value}>
+      {children}
       {toasts.map((toast, index) => (
         <div
           key={toast.id}
@@ -145,18 +141,14 @@ export function ToastContainer() {
           />
         </div>
       ))}
-    </>
+    </ToastContext.Provider>
   )
 }
 
-/**
- * Helper function to show a toast notification
- *
- * Usage:
- * import { showToast } from '@/components/ui/Toast'
- * showToast('Error message', 'error')
- */
-export function showToast(message: string, type: ToastType = "error") {
-  const event = new CustomEvent("showToast", { detail: { message, type } })
-  window.dispatchEvent(event)
+export function useToast(): ToastContextValue {
+  const ctx = useContext(ToastContext)
+  if (!ctx) {
+    throw new Error("useToast must be used within a ToastProvider")
+  }
+  return ctx
 }

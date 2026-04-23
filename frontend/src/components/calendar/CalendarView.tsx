@@ -14,10 +14,10 @@ import { usePatientList } from "@/hooks/usePatients"
 import { ChevronUp, ChevronDown, User, Users } from "lucide-react"
 
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  confirmed: { bg: "#C2D9E5", text: "#3D5F71" },
-  completed: { bg: "#C2DBC6", text: "#3D5640" },
-  cancelled: { bg: "#E8D5B5", text: "#553F33" },
-  no_show: { bg: "#FECACA", text: "#991B1B" },
+  confirmed: { bg: "var(--color-accent-200)", text: "var(--color-accent-700)" },
+  completed: { bg: "var(--color-secondary-200)", text: "var(--color-secondary-700)" },
+  cancelled: { bg: "var(--color-neutral-200)", text: "var(--color-neutral-700)" },
+  no_show: { bg: "var(--color-danger-100)", text: "var(--color-danger-800)" },
 }
 
 interface CalendarViewProps {
@@ -52,6 +52,13 @@ export function CalendarView({
   const { data: patientData } = usePatientList()
   const updateMutation = useUpdateAppointment()
 
+  // FullCalendar v6 doesn't expose its root DOM element in public types; reach into the internal elRef.
+  const calendarEl = useCallback(
+    (): HTMLElement | null =>
+      (calendarRef.current as unknown as { elRef?: { current: HTMLElement | null } })?.elRef?.current ?? null,
+    [],
+  )
+
   const patientMap = useMemo(() => {
     const map = new Map<string, string>()
     for (const p of patientData?.data ?? []) {
@@ -61,36 +68,33 @@ export function CalendarView({
   }, [patientData])
 
   const scrollToHour = useCallback((hour: number) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (calendarRef.current as any)?.elRef?.current as HTMLElement | null
+    const el = calendarEl()
     if (!el) return
     const scroller = el.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null
     if (!scroller) return
     const slotHeight = scroller.scrollHeight / 24
     scroller.scrollTo({ top: slotHeight * Math.max(0, Math.min(23, hour)), behavior: "smooth" })
-  }, [])
+  }, [calendarEl])
 
   const handleScrollEarlier = useCallback(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (calendarRef.current as any)?.elRef?.current as HTMLElement | null
+    const el = calendarEl()
     if (!el) return
     const scroller = el.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null
     if (!scroller) return
     const slotHeight = scroller.scrollHeight / 24
     const currentHour = scroller.scrollTop / slotHeight
     scrollToHour(Math.round(currentHour) - SCROLL_STEP_HOURS)
-  }, [scrollToHour])
+  }, [scrollToHour, calendarEl])
 
   const handleScrollLater = useCallback(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const el = (calendarRef.current as any)?.elRef?.current as HTMLElement | null
+    const el = calendarEl()
     if (!el) return
     const scroller = el.querySelector(".fc-scroller-liquid-absolute") as HTMLElement | null
     if (!scroller) return
     const slotHeight = scroller.scrollHeight / 24
     const currentHour = scroller.scrollTop / slotHeight
     scrollToHour(Math.round(currentHour) + SCROLL_STEP_HOURS)
-  }, [scrollToHour])
+  }, [scrollToHour, calendarEl])
 
   const appointments = data?.data ?? []
 
