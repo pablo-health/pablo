@@ -25,6 +25,22 @@ jobs:
       - name: Check version sync
         run: bash scripts/check-version-sync.sh
 
+  migration-lint:
+    name: Models ship with migrations
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Check models ship with migrations (guardrail #4)
+        run: python .claude/skills/migration-lint/check.py --base origin/${{ github.base_ref }}
+
   backend:
     name: Backend checks
     runs-on: ubuntu-latest
