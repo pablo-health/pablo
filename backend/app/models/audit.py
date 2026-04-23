@@ -26,8 +26,21 @@ class AuditAction(StrEnum):
     SESSION_CREATED = "session_created"
     SESSION_LISTED = "session_listed"
     SESSION_VIEWED = "session_viewed"
+    SESSION_UPDATED = "session_updated"
     SESSION_FINALIZED = "session_finalized"
     SESSION_RATING_UPDATED = "session_rating_updated"
+    SESSION_TRANSCRIPT_UPLOADED = "session_transcript_uploaded"
+    SESSION_AUDIO_UPLOADED = "session_audio_uploaded"
+
+    # Appointment operations
+    APPOINTMENT_CREATED = "appointment_created"
+    APPOINTMENT_LISTED = "appointment_listed"
+    APPOINTMENT_VIEWED = "appointment_viewed"
+    APPOINTMENT_UPDATED = "appointment_updated"
+    APPOINTMENT_CANCELLED = "appointment_cancelled"
+    APPOINTMENT_SERIES_CREATED = "appointment_series_created"
+    APPOINTMENT_SERIES_UPDATED = "appointment_series_updated"
+    APPOINTMENT_SERIES_CANCELLED = "appointment_series_cancelled"
 
     # Admin operations
     EXPORT_QUEUE_VIEWED = "export_queue_viewed"
@@ -52,6 +65,7 @@ class ResourceType(StrEnum):
 
     PATIENT = "patient"
     SESSION = "session"
+    APPOINTMENT = "appointment"
     EHR_ROUTE = "ehr_route"
     SELF = "self"
 

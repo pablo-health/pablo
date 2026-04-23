@@ -50,20 +50,36 @@ def _verify_blocking_function_token(request: Request) -> None:
     In development mode, authentication is skipped.
 
     In production, verifies the Google-signed OIDC identity token with four
-    layers of defense:
+    layers of defense — all required, fail-closed:
       1. Signature — token is signed by Google.
       2. Audience — token targets this backend (settings.backend_base_url).
       3. Issuer — iss is an accepted Google identity issuer.
       4. Caller — token's email claim matches the configured blocking
          function service account.
 
-    If audience / caller SA are unconfigured (self-hosted installs that
-    haven't set the env vars yet), those checks are skipped and a warning
-    is logged. Signature + issuer + email_verified checks always run.
+    If audience / caller SA are unconfigured, the endpoint returns 503 rather
+    than skipping the check. Any Google-signed OIDC token would otherwise pass
+    the signature + issuer + email_verified gates, which would allow any
+    Google principal to invoke the blocking endpoint.
     """
     settings = get_settings()
     if settings.is_development:
         return
+
+    expected_audience = settings.backend_base_url or None
+    expected_caller = settings.blocking_function_service_account or None
+
+    if expected_audience is None or expected_caller is None:
+        logger.error(
+            "Blocking function OIDC checks misconfigured: "
+            "backend_base_url=%s blocking_function_service_account=%s",
+            "set" if expected_audience else "UNSET",
+            "set" if expected_caller else "UNSET",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Blocking function auth is not configured for this deployment",
+        )
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -73,8 +89,6 @@ def _verify_blocking_function_token(request: Request) -> None:
         )
 
     token = auth_header.removeprefix("Bearer ")
-    expected_audience = settings.backend_base_url or None
-    expected_caller = settings.blocking_function_service_account or None
 
     try:
         request_adapter = google.auth.transport.requests.Request()
@@ -104,7 +118,7 @@ def _verify_blocking_function_token(request: Request) -> None:
             detail="Invalid service identity token",
         )
 
-    if expected_caller and claims.get("email") != expected_caller:
+    if claims.get("email") != expected_caller:
         logger.warning(
             "Rejected blocking function token: caller=%s expected=%s",
             claims.get("email"),
@@ -113,14 +127,6 @@ def _verify_blocking_function_token(request: Request) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid service identity token",
-        )
-
-    if expected_audience is None or expected_caller is None:
-        logger.warning(
-            "Blocking function OIDC checks are partial: "
-            "backend_base_url=%s blocking_function_service_account=%s",
-            "set" if expected_audience else "UNSET",
-            "set" if expected_caller else "UNSET",
         )
 
 

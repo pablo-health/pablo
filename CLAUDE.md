@@ -56,16 +56,37 @@ make format     # Auto-fix formatting
    touch patients, sessions, soap_notes, or appointments must take
    `audit: AuditService = Depends(get_audit_service)` and call the
    matching `audit.log_*` helper before returning. PHI access without
-   an audit entry is a HIPAA § 164.312(b) gap.
-2. **No raw SQL in route handlers.** Route handlers in
+   an audit entry is a HIPAA § 164.312(b) gap. Enforced in CI by
+   `backend/tests/test_route_audit_guardrails.py`.
+2. **No underscore-prefixed `_audit` / `_http_request` parameters.**
+   The `_` prefix tells Python and every linter the value is
+   intentionally unused — a silent bypass of guardrail #1. If the
+   route genuinely doesn't need audit, it probably isn't a PHI route;
+   talk to a human before adding one with that pattern. Enforced at
+   pre-commit time by `scripts/check_audit_params.py` and in CI.
+3. **No raw SQL in route handlers.** Route handlers in
    `backend/app/routes/` must not call `session.execute(select(...))`
    directly — go through `backend/app/repositories/`. Keeps tenant
    scoping and error shapes in one place.
-3. **Models and migrations ship together.** Every change to a
+4. **Models and migrations ship together.** Every change to a
    SQLAlchemy model in `backend/app/db/models.py` (or
    `platform_models.py`) must include a same-commit Alembic migration.
    Don't land a model change and "add the migration later" — that
    boots a broken dev env for everyone else.
-4. **PHI never enters stdout.** No `logger.info("... {patient_name}
+5. **PHI never enters stdout.** No `logger.info("... {patient_name}
    ...")` or `print(patient.*)` in `backend/app/`. Use `AuditService`
    for intentional PHI-adjacent records; keep everything else PHI-free.
+6. **Mock data never ships.** Imports from frontend `mockData.ts` (or
+   equivalent) in a component that is mounted in production routes
+   are forbidden. Mock data lives behind `process.env.NODE_ENV !==
+   'production'` or inside `src/test/`.
+7. **Type-cast escape hatches require a reason.** Every `as any`,
+   `as unknown as X`, `@ts-ignore`, `@ts-expect-error`, or
+   `# type: ignore` must be followed by a one-line comment naming the
+   library limitation or refactor debt it represents. Three or more
+   identical casts in a file is a refactor obligation, not a lint
+   exception.
+8. **`make check` passes locally before you push.** CI is the
+   backstop, not the primary loop. Pre-commit hooks (see
+   `.pre-commit-config.yaml`) catch the cheap regressions so you don't
+   wait on CI to learn you forgot to run ruff.

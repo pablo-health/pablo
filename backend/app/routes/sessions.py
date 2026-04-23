@@ -193,9 +193,7 @@ def get_today_sessions(
     try:
         sessions = session_repo.list_today_by_user(user.id, timezone)
     except KeyError:
-        raise BadRequestError(
-            f"Invalid timezone: {timezone}", {"field": "timezone"}
-        ) from None
+        raise BadRequestError(f"Invalid timezone: {timezone}", {"field": "timezone"}) from None
 
     # Batch-fetch patients to avoid N+1
     patient_ids = list({s.patient_id for s in sessions})
@@ -415,11 +413,11 @@ def update_session_status(
 @router.patch("/api/sessions/{session_id}")
 def update_session_metadata(
     session_id: str,
-    _http_request: Request,
+    http_request: Request,
     request: UpdateSessionMetadataRequest,
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
-    _audit: AuditService = Depends(get_audit_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """Update session metadata (reschedule, change video link, etc.)."""
     try:
@@ -433,17 +431,26 @@ def update_session_metadata(
         ) from e
 
     patient_name = patient.display_name if patient else "Unknown"
+    changed_fields = sorted(request.model_dump(exclude_unset=True).keys())
+    audit.log_session_action(
+        AuditAction.SESSION_UPDATED,
+        user,
+        http_request,
+        session,
+        patient,
+        changes={"changed_fields": changed_fields},
+    )
     return SessionResponse.from_session(session, patient_name)
 
 
 @router.post("/api/sessions/{session_id}/transcript")
 def upload_transcript_to_session(
     session_id: str,
-    _http_request: Request,
+    http_request: Request,
     request: UploadTranscriptToSessionRequest,
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
-    _audit: AuditService = Depends(get_audit_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """Upload a transcript to an existing session and trigger SOAP pipeline."""
     try:
@@ -460,6 +467,13 @@ def upload_transcript_to_session(
             "SOAP generation failed. Please try again.", code="SOAP_GENERATION_FAILED"
         ) from e
 
+    audit.log_session_action(
+        AuditAction.SESSION_TRANSCRIPT_UPLOADED,
+        user,
+        http_request,
+        session,
+        changes={"format": request.format},
+    )
     return {
         "id": session.id,
         "status": session.status,
@@ -506,10 +520,11 @@ async def upload_audio(
     session_id: str,
     therapist_audio: UploadFile,
     client_audio: UploadFile,
-    _http_request: Request,
+    http_request: Request,
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """Upload dual-channel audio for server-side Whisper transcription.
 
@@ -581,6 +596,13 @@ async def upload_audio(
             payload={"session_id": session_id, "user_id": user.id},
         )
 
+        audit.log_session_action(
+            AuditAction.SESSION_AUDIO_UPLOADED,
+            user,
+            http_request,
+            session,
+            changes={"provider": "assemblyai", "channels": 2},
+        )
         return {
             "id": session.id,
             "status": session.status,
@@ -613,6 +635,13 @@ async def upload_audio(
     )
 
     queue_type = "priority" if is_practice else "standard"
+    audit.log_session_action(
+        AuditAction.SESSION_AUDIO_UPLOADED,
+        user,
+        http_request,
+        session,
+        changes={"provider": "whisper", "queue": queue_type, "channels": 2},
+    )
     return {
         "id": session.id,
         "status": session.status,

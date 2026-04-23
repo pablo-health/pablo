@@ -19,8 +19,7 @@ BLOCKING_FN_SA = "firebase-blocking-fn@pablo-test.iam.gserviceaccount.com"
 def _make_request(headers: dict[str, str] | None = None) -> Request:
     """Build a minimal ASGI Request with the given headers."""
     raw_headers = [
-        (k.lower().encode("latin-1"), v.encode("latin-1"))
-        for k, v in (headers or {}).items()
+        (k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in (headers or {}).items()
     ]
     scope = {
         "type": "http",
@@ -87,9 +86,7 @@ def test_non_bearer_authorization_rejected(patch_settings: MagicMock) -> None:
     assert exc.value.status_code == 403
 
 
-def test_invalid_signature_rejected(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
+def test_invalid_signature_rejected(patch_settings: MagicMock, patch_verify: MagicMock) -> None:
     patch_settings.return_value = _prod_settings()
     patch_verify.side_effect = ValueError("invalid signature")
     with pytest.raises(HTTPException) as exc:
@@ -97,9 +94,7 @@ def test_invalid_signature_rejected(
     assert exc.value.status_code == 403
 
 
-def test_wrong_audience_rejected(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
+def test_wrong_audience_rejected(patch_settings: MagicMock, patch_verify: MagicMock) -> None:
     """verify_token raises when audience mismatches — we must propagate 403."""
     patch_settings.return_value = _prod_settings()
     patch_verify.side_effect = ValueError("audience mismatch")
@@ -110,9 +105,7 @@ def test_wrong_audience_rejected(
     assert kwargs["audience"] == BACKEND_URL
 
 
-def test_wrong_issuer_rejected(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
+def test_wrong_issuer_rejected(patch_settings: MagicMock, patch_verify: MagicMock) -> None:
     patch_settings.return_value = _prod_settings()
     patch_verify.return_value = _valid_claims(iss="https://evil.example.com")
     with pytest.raises(HTTPException) as exc:
@@ -120,9 +113,7 @@ def test_wrong_issuer_rejected(
     assert exc.value.status_code == 403
 
 
-def test_email_not_verified_rejected(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
+def test_email_not_verified_rejected(patch_settings: MagicMock, patch_verify: MagicMock) -> None:
     patch_settings.return_value = _prod_settings()
     patch_verify.return_value = _valid_claims(email_verified=False)
     with pytest.raises(HTTPException) as exc:
@@ -142,9 +133,7 @@ def test_wrong_caller_service_account_rejected(
     assert exc.value.status_code == 403
 
 
-def test_happy_path_all_checks_pass(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
+def test_happy_path_all_checks_pass(patch_settings: MagicMock, patch_verify: MagicMock) -> None:
     patch_settings.return_value = _prod_settings()
     patch_verify.return_value = _valid_claims()
     _verify_blocking_function_token(_make_request({"authorization": "Bearer tok"}))
@@ -153,32 +142,29 @@ def test_happy_path_all_checks_pass(
     assert kwargs["audience"] == BACKEND_URL
 
 
-def test_unset_audience_skips_that_check_but_still_validates_others(
+def test_unset_audience_fails_closed_with_503(
     patch_settings: MagicMock, patch_verify: MagicMock
 ) -> None:
-    """Backward-compat: if backend_base_url is empty, audience isn't pinned,
-    but signature + issuer + caller + email_verified still run."""
+    """If backend_base_url is empty in production, the endpoint refuses to
+    authenticate anything. Any Google-signed OIDC token would otherwise
+    satisfy signature + issuer + email_verified, so fail closed.
+    """
     patch_settings.return_value = _prod_settings(backend_base_url="")
-    patch_verify.return_value = _valid_claims()
-    _verify_blocking_function_token(_make_request({"authorization": "Bearer tok"}))
-    _, kwargs = patch_verify.call_args
-    assert kwargs["audience"] is None
-
-
-def test_unset_caller_sa_skips_that_check_but_still_validates_others(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
-    patch_settings.return_value = _prod_settings(blocking_function_service_account="")
-    patch_verify.return_value = _valid_claims(email="anyone@example.com")
-    # Should pass because caller SA is unconfigured.
-    _verify_blocking_function_token(_make_request({"authorization": "Bearer tok"}))
-
-
-def test_unset_caller_sa_does_not_bypass_issuer_check(
-    patch_settings: MagicMock, patch_verify: MagicMock
-) -> None:
-    patch_settings.return_value = _prod_settings(blocking_function_service_account="")
-    patch_verify.return_value = _valid_claims(iss="https://evil.example.com")
     with pytest.raises(HTTPException) as exc:
         _verify_blocking_function_token(_make_request({"authorization": "Bearer tok"}))
-    assert exc.value.status_code == 403
+    assert exc.value.status_code == 503
+    # verify_token must not have been called — we reject before the crypto step.
+    patch_verify.assert_not_called()
+
+
+def test_unset_caller_sa_fails_closed_with_503(
+    patch_settings: MagicMock, patch_verify: MagicMock
+) -> None:
+    """If blocking_function_service_account is empty, we don't know which
+    caller we're expecting — refuse the request rather than accept any
+    Google-signed SA."""
+    patch_settings.return_value = _prod_settings(blocking_function_service_account="")
+    with pytest.raises(HTTPException) as exc:
+        _verify_blocking_function_token(_make_request({"authorization": "Bearer tok"}))
+    assert exc.value.status_code == 503
+    patch_verify.assert_not_called()

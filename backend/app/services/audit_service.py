@@ -150,6 +150,48 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_appointment_action(
+        self,
+        action: AuditAction,
+        user: User,
+        request: Request,
+        appointment_id: str,
+        patient_id: str | None = None,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=action.value,
+            resource_type=ResourceType.APPOINTMENT.value,
+            resource_id=appointment_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
+    def log_appointment_list(
+        self,
+        user: User,
+        request: Request,
+        appointment_count: int,
+    ) -> AuditLogEntry:
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=AuditAction.APPOINTMENT_LISTED.value,
+            resource_type=ResourceType.APPOINTMENT.value,
+            resource_id="list",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes={"appointment_count": appointment_count},
+        )
+        self._persist(entry)
+        return entry
+
     def list_for_user(
         self,
         user_id: str,
