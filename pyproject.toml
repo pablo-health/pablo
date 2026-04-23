@@ -14,9 +14,9 @@ packages = [{include = "backend"}]
 
 # Web Framework
 fastapi = ">=0.136.0"
-uvicorn = {extras = ["standard"], version = "^0.44.0"}
-pydantic = "^2.13.2"
-pydantic-settings = "^2.13.1"
+uvicorn = {extras = ["standard"], version = "^0.45.0"}
+pydantic = "^2.13.3"
+pydantic-settings = "^2.14.0"
 
 # Environment Variables
 python-dotenv = "^1.2.2"
@@ -31,7 +31,7 @@ pyjwt = {extras = ["crypto"], version = ">=2.12.0"}
 # PostgreSQL (schema-per-practice multi-tenancy)
 sqlalchemy = "^2.0.0"
 alembic = "^1.14.0"
-psycopg2-binary = "^2.9.0"
+psycopg2-binary = "^2.9.12"
 
 # Caching
 redis = "^5.0.0"
@@ -45,7 +45,7 @@ meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcr
 # NLI Verification — onnxruntime only; sentence-transformers (+ torch)
 # moved to optional nli group since verification is gated by
 # ENABLE_EMBEDDING_VERIFICATION env var.
-onnxruntime = ">=1.18.0"
+onnxruntime = ">=1.25.0"
 
 # iCal calendar feed parsing
 icalendar = "^7.0.3"
@@ -81,7 +81,7 @@ pytest-cov = "^7.0.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
 ruff = "^0.15.11"
-mypy = "^1.20.1"
+mypy = "^1.20.2"
 types-redis = "^4.6.0"
 pip-audit = "^2.7.0"
 mcp = "^1.27.0"
