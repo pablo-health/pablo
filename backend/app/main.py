@@ -23,6 +23,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    note_types,
     patients,
     scheduling,
     sessions,
@@ -119,6 +120,7 @@ app.include_router(sessions.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
+app.include_router(note_types.router)
 
 
 @app.get("/api/health")
