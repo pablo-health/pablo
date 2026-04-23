@@ -55,6 +55,10 @@
   --color-neutral-700: #553F33;
   --color-neutral-800: #3D2D24;
   --color-neutral-900: #2C1810;
+
+  /* Pablo Brand: Danger (used for destructive/no-show statuses — not in core palette) */
+  --color-danger-100: #FECACA;
+  --color-danger-800: #991B1B;
 }
 
 @layer base {

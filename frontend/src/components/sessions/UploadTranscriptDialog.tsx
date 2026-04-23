@@ -78,6 +78,7 @@ export function UploadTranscriptDialog({
     register,
     handleSubmit,
     setValue,
+    resetField,
     watch,
     reset,
     formState: { errors },
@@ -92,7 +93,7 @@ export function UploadTranscriptDialog({
     if (!file) {
       setSelectedFile(null)
       setFileError(null)
-      setValue("transcript_file", undefined as unknown as File)
+      resetField("transcript_file")
       return
     }
 
@@ -100,7 +101,7 @@ export function UploadTranscriptDialog({
     if (!validation.valid) {
       setFileError(validation.error!)
       setSelectedFile(null)
-      setValue("transcript_file", undefined as unknown as File)
+      resetField("transcript_file")
       return
     }
 
