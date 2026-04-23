@@ -32,6 +32,10 @@ class AuditAction(StrEnum):
     SESSION_TRANSCRIPT_UPLOADED = "session_transcript_uploaded"
     SESSION_AUDIO_UPLOADED = "session_audio_uploaded"
 
+    # iCal sync / EHR client import operations
+    CLIENT_RESOLVED = "client_resolved"
+    CLIENTS_IMPORTED = "clients_imported"
+
     # Appointment operations
     APPOINTMENT_CREATED = "appointment_created"
     APPOINTMENT_LISTED = "appointment_listed"

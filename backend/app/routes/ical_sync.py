@@ -8,10 +8,17 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 
 from ..api_errors import BadRequestError, NotFoundError
-from ..auth.service import TenantContext, get_tenant_context, require_active_subscription
+from ..auth.service import (
+    TenantContext,
+    get_tenant_context,
+    require_active_subscription,
+    require_baa_acceptance,
+)
+from ..models import AuditAction, User
+from ..models.audit import ResourceType
 from ..models.scheduling import (
     ConfigureICalRequest,
     ICalConfigureResponse,
@@ -34,6 +41,7 @@ from ..repositories import (
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
 )
+from ..services import AuditService, get_audit_service
 from ..services.ical_sync_service import ICalSyncService
 from ..settings import get_settings
 
@@ -145,8 +153,11 @@ def disconnect_ical_feed(
 @router.post("/resolve-client")
 def resolve_client(
     request: ResolveClientRequest,
+    http_request: Request,
     ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: ICalSyncService = Depends(_get_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """Manually map a client identifier to a Pablo patient."""
     service.resolve_client(
@@ -154,6 +165,14 @@ def resolve_client(
         request.ehr_system,
         request.client_identifier,
         request.patient_id,
+    )
+    audit.log(
+        action=AuditAction.CLIENT_RESOLVED,
+        user=user,
+        request=http_request,
+        resource_type=ResourceType.PATIENT,
+        resource_id=request.patient_id,
+        changes={"ehr_system": request.ehr_system},
     )
     return {"message": "Client mapped successfully"}
 
@@ -165,8 +184,11 @@ _ALLOWED_EXTENSIONS = {".csv", ".zip"}
 async def import_clients(
     ehr_system: str,
     file: UploadFile,
+    http_request: Request,
     ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: ICalSyncService = Depends(_get_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> ImportClientsResponse:
     """Import clients from a CSV file or zipped export folder."""
     if not file.filename:
@@ -194,6 +216,20 @@ async def import_clients(
     content = b"".join(chunks)
 
     result = service.import_clients(ctx.user_id, ehr_system, content, file.filename)
+    audit.log(
+        action=AuditAction.CLIENTS_IMPORTED,
+        user=user,
+        request=http_request,
+        resource_type=ResourceType.PATIENT,
+        resource_id="import",
+        changes={
+            "ehr_system": ehr_system,
+            "imported": result.imported,
+            "updated": result.updated,
+            "skipped": result.skipped,
+            "mappings_created": result.mappings_created,
+        },
+    )
     return ImportClientsResponse(
         imported=result.imported,
         updated=result.updated,
