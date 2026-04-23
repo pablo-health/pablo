@@ -51,3 +51,10 @@ repos:
         language: system
         files: ^backend/app/routes/.*\.py$
         pass_filenames: false
+
+      - id: migration-lint
+        name: "Models ship with migrations (guardrail #4)"
+        entry: python .claude/skills/migration-lint/check.py --staged
+        language: system
+        files: ^backend/(app/db/(models|platform_models)\.py|alembic/versions/.*\.py)$
+        pass_filenames: false
