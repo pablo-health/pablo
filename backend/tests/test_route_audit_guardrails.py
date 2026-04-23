@@ -37,6 +37,8 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/transcript",
     "/audio",
     "/soap",
+    "/resolve-client",
+    "/import-clients",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
