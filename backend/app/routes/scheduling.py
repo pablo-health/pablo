@@ -184,29 +184,43 @@ def _to_response(appt: Appointment) -> AppointmentResponse:
 )
 def create_appointment(
     request: CreateAppointmentRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     try:
         appt = service.create_appointment(
-            ctx.user_id,
+            user.id,
             data=request.model_dump(),
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_CREATED,
+        user,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+    )
     return _to_response(appt)
 
 
 @router.get("/api/appointments", response_model=AppointmentListResponse)
 def list_appointments(
+    http_request: Request,
     start: str = Query(..., description="Range start (ISO 8601)"),
     end: str = Query(..., description="Range end (ISO 8601)"),
-    ctx: TenantContext = Depends(get_tenant_context),
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentListResponse:
     """List appointments in a date range."""
-    appointments = service.list_appointments(ctx.user_id, start, end)
+    appointments = service.list_appointments(user.id, start, end)
+    audit.log_appointment_list(user, http_request, len(appointments))
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
@@ -216,14 +230,24 @@ def list_appointments(
 @router.get("/api/appointments/{appointment_id}", response_model=AppointmentResponse)
 def get_appointment(
     appointment_id: str,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentResponse:
     """Get a single appointment."""
     try:
-        appt = service.get_appointment(appointment_id, ctx.user_id)
+        appt = service.get_appointment(appointment_id, user.id)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_VIEWED,
+        user,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+    )
     return _to_response(appt)
 
 
@@ -231,17 +255,28 @@ def get_appointment(
 def update_appointment(
     appointment_id: str,
     request: UpdateAppointmentRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentResponse:
     """Update an appointment."""
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     try:
-        appt = service.update_appointment(appointment_id, ctx.user_id, **updates)
+        appt = service.update_appointment(appointment_id, user.id, **updates)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_UPDATED,
+        user,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={"changed_fields": sorted(updates.keys())},
+    )
     return _to_response(appt)
 
 
@@ -251,14 +286,24 @@ def update_appointment(
 )
 def cancel_appointment(
     appointment_id: str,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentResponse:
     """Cancel an appointment (soft delete — sets status to cancelled)."""
     try:
-        appt = service.cancel_appointment(appointment_id, ctx.user_id)
+        appt = service.cancel_appointment(appointment_id, user.id)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_CANCELLED,
+        user,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+    )
     return _to_response(appt)
 
 
@@ -312,9 +357,7 @@ def start_session_from_appointment(
 
     # 3. Unmatched patient? → 400
     if not appt.patient_id:
-        raise BadRequestError(
-            "Appointment has no linked patient. Resolve the client match first."
-        )
+        raise BadRequestError("Appointment has no linked patient. Resolve the client match first.")
 
     # 4. Create session from appointment data
     request = ScheduleSessionRequest(
@@ -354,13 +397,16 @@ def start_session_from_appointment(
 )
 def create_recurring_appointment(
     request: CreateRecurringAppointmentRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentListResponse:
     """Create a recurring appointment series."""
     try:
         appointments = service.create_recurring(
-            ctx.user_id,
+            user.id,
             data=request.model_dump(exclude={"frequency", "timezone", "end_date", "count"}),
             recurrence={
                 "frequency": request.frequency,
@@ -371,6 +417,15 @@ def create_recurring_appointment(
         )
     except (InvalidAppointmentError, InvalidRecurrenceError) as e:
         raise BadRequestError(str(e)) from e
+    first_appt_id = appointments[0].id if appointments else "series"
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_SERIES_CREATED,
+        user,
+        http_request,
+        first_appt_id,
+        patient_id=appointments[0].patient_id if appointments else None,
+        changes={"occurrence_count": len(appointments), "frequency": request.frequency},
+    )
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
@@ -384,17 +439,30 @@ def create_recurring_appointment(
 def edit_series(
     appointment_id: str,
     request: EditSeriesRequest,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentListResponse:
     """Edit all future occurrences in a recurring series."""
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     try:
-        appointments = service.edit_future_occurrences(appointment_id, ctx.user_id, **updates)
+        appointments = service.edit_future_occurrences(appointment_id, user.id, **updates)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_SERIES_UPDATED,
+        user,
+        http_request,
+        appointment_id,
+        changes={
+            "changed_fields": sorted(updates.keys()),
+            "occurrence_count": len(appointments),
+        },
+    )
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
@@ -407,16 +475,26 @@ def edit_series(
 )
 def cancel_series(
     appointment_id: str,
-    ctx: TenantContext = Depends(get_tenant_context),
+    http_request: Request,
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentListResponse:
     """Cancel all future occurrences in a recurring series."""
     try:
-        appointments = service.cancel_future_occurrences(appointment_id, ctx.user_id)
+        appointments = service.cancel_future_occurrences(appointment_id, user.id)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_SERIES_CANCELLED,
+        user,
+        http_request,
+        appointment_id,
+        changes={"occurrence_count": len(appointments)},
+    )
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
