@@ -17,8 +17,8 @@ from app.scheduling_engine.exceptions import AppointmentNotFoundError
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
+from app.services.note_generation_service import GeneratedNote, NoteGenerationService
 from app.services.session_service import PatientNotFoundError, SessionService
-from app.services.soap_generation_service import SOAPGenerationService
 from app.utcnow import utc_now
 
 USER_ID = "test-user-1"
@@ -98,8 +98,8 @@ def session_service(
     session_repo: InMemoryTherapySessionRepository,
     patient_repo: InMemoryPatientRepository,
 ) -> SessionService:
-    mock_soap = Mock(spec=SOAPGenerationService)
-    mock_soap.generate_soap_note.return_value = SOAPNote.from_dict(
+    mock_note_service = Mock(spec=NoteGenerationService)
+    soap_note = SOAPNote.from_dict(
         {
             "subjective": "s",
             "objective": "o",
@@ -107,7 +107,12 @@ def session_service(
             "plan": "p",
         }
     )
-    return SessionService(session_repo, patient_repo, mock_soap)
+    mock_note_service.generate_note.return_value = GeneratedNote(
+        note_type="soap",
+        content=soap_note.to_dict(),
+        soap_note=soap_note,
+    )
+    return SessionService(session_repo, patient_repo, mock_note_service)
 
 
 @pytest.fixture

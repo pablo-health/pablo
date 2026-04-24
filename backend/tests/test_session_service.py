@@ -21,6 +21,7 @@ from app.models.session import SOAPNote
 from app.models.soap_note import SOAPNoteModel
 from app.models.transcript import TranscriptModel
 from app.repositories import InMemoryPatientRepository, InMemoryTherapySessionRepository
+from app.services.note_generation_service import GeneratedNote, NoteGenerationService
 from app.services.session_service import (
     InvalidSessionStatusError,
     PatientNotFoundError,
@@ -28,7 +29,6 @@ from app.services.session_service import (
     SessionService,
     SOAPGenerationFailedError,
 )
-from app.services.soap_generation_service import SOAPGenerationService
 
 
 @pytest.fixture
@@ -44,15 +44,20 @@ def patient_repo(
 
 
 @pytest.fixture
-def mock_soap_service() -> Mock:
-    service = Mock(spec=SOAPGenerationService)
-    service.generate_soap_note.return_value = SOAPNote.from_dict(
+def mock_note_service() -> Mock:
+    service = Mock(spec=NoteGenerationService)
+    soap_note = SOAPNote.from_dict(
         {
             "subjective": "Patient reports anxiety.",
             "objective": "Patient appears nervous.",
             "assessment": "Generalized anxiety disorder.",
             "plan": "Continue weekly therapy.",
         }
+    )
+    service.generate_note.return_value = GeneratedNote(
+        note_type="soap",
+        content=soap_note.to_dict(),
+        soap_note=soap_note,
     )
     return service
 
@@ -82,9 +87,9 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
 def service(
     session_repo: InMemoryTherapySessionRepository,
     patient_repo: InMemoryPatientRepository,
-    mock_soap_service: Mock,
+    mock_note_service: Mock,
 ) -> SessionService:
-    return SessionService(session_repo, patient_repo, mock_soap_service)
+    return SessionService(session_repo, patient_repo, mock_note_service)
 
 
 def _make_pending_session(
@@ -186,10 +191,10 @@ class TestUploadSession:
         service: SessionService,
         patient: Patient,
         user_id: str,
-        mock_soap_service: Mock,
+        mock_note_service: Mock,
         session_repo: InMemoryTherapySessionRepository,
     ) -> None:
-        mock_soap_service.generate_soap_note.side_effect = RuntimeError("LLM error")
+        mock_note_service.generate_note.side_effect = RuntimeError("LLM error")
 
         request = UploadSessionRequest(
             patient_id=patient.id,

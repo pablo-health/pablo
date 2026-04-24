@@ -97,8 +97,10 @@ def _row_to_session(row: TherapySessionRow) -> TherapySession:
         format=row.transcript["format"],
         content=row.transcript["content"],
     )
-    soap_note = SOAPNote.from_dict(row.soap_note) if row.soap_note else None
-    soap_note_edited = SOAPNote.from_dict(row.soap_note_edited) if row.soap_note_edited else None
+    soap_note = SOAPNote.from_dict(row.note_content) if row.note_content else None
+    soap_note_edited = (
+        SOAPNote.from_dict(row.note_content_edited) if row.note_content_edited else None
+    )
     redacted_soap_note = (
         SOAPNote.from_dict(row.redacted_soap_note) if row.redacted_soap_note else None
     )
@@ -167,8 +169,10 @@ def _session_to_row(session: TherapySession, row: TherapySessionRow) -> None:
     row.ended_at = session.ended_at
     row.updated_at = session.updated_at
     row.audio_gcs_path = session.audio_gcs_path
-    row.soap_note = session.soap_note.to_dict() if session.soap_note else None
-    row.soap_note_edited = session.soap_note_edited.to_dict() if session.soap_note_edited else None
+    row.note_content = session.soap_note.to_dict() if session.soap_note else None
+    row.note_content_edited = (
+        session.soap_note_edited.to_dict() if session.soap_note_edited else None
+    )
     row.quality_rating = session.quality_rating
     row.quality_rating_reason = session.quality_rating_reason
     row.quality_rating_sections = session.quality_rating_sections

@@ -31,7 +31,7 @@ from ..models import (
 )
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
-from .soap_generation_service import SOAPGenerationService
+from .note_generation_service import NoteGenerationService
 
 logger = logging.getLogger(__name__)
 
@@ -137,12 +137,12 @@ class SessionService:
         self,
         session_repo: TherapySessionRepository,
         patient_repo: PatientRepository,
-        soap_service: SOAPGenerationService,
+        note_service: NoteGenerationService,
         eval_export_service: "EvalExportService | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
-        self.soap_service = soap_service
+        self.note_service = note_service
         self.eval_export_service = eval_export_service
 
     def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:
@@ -208,13 +208,13 @@ class SessionService:
         try:
             logger.info("Starting SOAP generation for session %s", session.id)
 
-            soap_note = self.soap_service.generate_soap_note(
-                session.transcript, patient, request.session_date
+            result = self.note_service.generate_note(
+                "soap", session.transcript, patient, request.session_date
             )
 
             logger.info("SOAP generation completed for session %s", session.id)
 
-            session.soap_note = soap_note
+            session.soap_note = result.soap_note
             session.status = SessionStatus.PENDING_REVIEW
             session.processing_completed_at = _now()
             session = self.session_repo.update(session)
@@ -496,13 +496,13 @@ class SessionService:
         try:
             logger.info("Starting SOAP generation for session %s", session.id)
 
-            soap_note = self.soap_service.generate_soap_note(
-                session.transcript, patient, session.session_date
+            result = self.note_service.generate_note(
+                "soap", session.transcript, patient, session.session_date
             )
 
             logger.info("SOAP generation completed for session %s", session.id)
 
-            session.soap_note = soap_note
+            session.soap_note = result.soap_note
             session.status = SessionStatus.PENDING_REVIEW
             session.processing_completed_at = _now()
             session = self.session_repo.update(session)

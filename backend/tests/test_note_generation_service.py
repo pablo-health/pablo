@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Unit tests for SOAP generation service conversion logic."""
+"""Unit tests for note generation service (SOAP + registry-driven types)."""
 
 import os
 
@@ -11,16 +11,18 @@ from typing import Any
 
 import pytest
 from app.models import Patient, SOAPNote, Transcript
-from app.services.soap_generation_service import (
-    MeetingTranscriptionSOAPService,
-    MockSOAPGenerationService,
+from app.notes import NoteTypeRegistry, register_builtin_note_types
+from app.services.note_generation_service import (
+    GeneratedNote,
+    MeetingTranscriptionNoteService,
+    MockNoteGenerationService,
 )
 
 
 @pytest.fixture
-def service() -> MeetingTranscriptionSOAPService:
-    """Create a MeetingTranscriptionSOAPService for testing conversion."""
-    return MeetingTranscriptionSOAPService(therapist_name="Dr. Test")
+def service() -> MeetingTranscriptionNoteService:
+    """Create a MeetingTranscriptionNoteService for testing conversion."""
+    return MeetingTranscriptionNoteService(therapist_name="Dr. Test")
 
 
 @pytest.fixture
@@ -73,7 +75,7 @@ def full_soap_json() -> dict[str, Any]:
 
 
 def test_all_subfields_preserved(
-    service: MeetingTranscriptionSOAPService, full_soap_json: dict[str, Any]
+    service: MeetingTranscriptionNoteService, full_soap_json: dict[str, Any]
 ) -> None:
     """Full JSON input produces structured SOAPNote with all sub-fields present."""
     result = service._convert_json_to_soap_note(full_soap_json)
@@ -135,7 +137,7 @@ def test_all_subfields_preserved(
 
 
 def test_missing_optional_fields_no_empty_headers(
-    service: MeetingTranscriptionSOAPService,
+    service: MeetingTranscriptionNoteService,
 ) -> None:
     """Only required fields present — no empty headers in narrative output."""
     minimal_json: dict[str, Any] = {
@@ -179,7 +181,7 @@ def test_missing_optional_fields_no_empty_headers(
 
 
 def test_empty_values_produce_no_artifacts(
-    service: MeetingTranscriptionSOAPService,
+    service: MeetingTranscriptionNoteService,
 ) -> None:
     """Empty strings and empty lists don't produce headers or bullet artifacts."""
     empty_json: dict[str, Any] = {
@@ -234,7 +236,7 @@ def test_empty_values_produce_no_artifacts(
 
 
 def test_risk_assessment_always_in_assessment(
-    service: MeetingTranscriptionSOAPService,
+    service: MeetingTranscriptionNoteService,
 ) -> None:
     """Risk assessment (legally required) appears in the Assessment section."""
     json_with_risk: dict[str, Any] = {
@@ -254,7 +256,7 @@ def test_risk_assessment_always_in_assessment(
 
 
 def test_list_formatting_as_bullets(
-    service: MeetingTranscriptionSOAPService,
+    service: MeetingTranscriptionNoteService,
 ) -> None:
     """List fields (symptoms, interventions, homework, next_steps) use bullet format."""
     json_with_lists: dict[str, Any] = {
@@ -295,7 +297,7 @@ def test_list_formatting_as_bullets(
 
 
 def test_completely_empty_sections(
-    service: MeetingTranscriptionSOAPService,
+    service: MeetingTranscriptionNoteService,
 ) -> None:
     """Missing sections produce empty strings in narrative, not errors."""
     result = service._convert_json_to_soap_note({})
@@ -308,19 +310,19 @@ def test_completely_empty_sections(
 
 
 def test_returns_soap_note_dataclass(
-    service: MeetingTranscriptionSOAPService, full_soap_json: dict[str, Any]
+    service: MeetingTranscriptionNoteService, full_soap_json: dict[str, Any]
 ) -> None:
     """Conversion returns a SOAPNote dataclass instance."""
     result = service._convert_json_to_soap_note(full_soap_json)
     assert isinstance(result, SOAPNote)
 
 
-class TestMockSOAPGenerationService:
-    """Tests for MockSOAPGenerationService output format."""
+class TestMockNoteGenerationService:
+    """Tests for MockNoteGenerationService output format."""
 
     def test_mock_returns_subfield_headers(self) -> None:
         """Mock output includes sub-field markdown headers matching real format."""
-        mock_service = MockSOAPGenerationService()
+        mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
             user_id="u1",
@@ -331,10 +333,10 @@ class TestMockSOAPGenerationService:
             diagnosis="Generalized Anxiety Disorder",
         )
         transcript = Transcript(format="txt", content="Sample transcript.")
-        result = mock_service.generate_soap_note(
-            transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+        result = mock_service.generate_note(
+            "soap", transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
         )
-        narrative = result.to_narrative()
+        narrative = result.soap_note.to_narrative()
 
         # Subjective headers
         assert "**Chief Complaint:**" in narrative["subjective"]
@@ -363,7 +365,7 @@ class TestMockSOAPGenerationService:
 
     def test_mock_includes_diagnosis_in_output(self) -> None:
         """Mock includes patient diagnosis in the output."""
-        mock_service = MockSOAPGenerationService()
+        mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
             user_id="u1",
@@ -374,17 +376,17 @@ class TestMockSOAPGenerationService:
             diagnosis="PTSD",
         )
         transcript = Transcript(format="txt", content="Sample.")
-        result = mock_service.generate_soap_note(
-            transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+        result = mock_service.generate_note(
+            "soap", transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
         )
-        narrative = result.to_narrative()
+        narrative = result.soap_note.to_narrative()
 
         assert "PTSD" in narrative["subjective"]
         assert "PTSD" in narrative["assessment"]
 
     def test_mock_risk_assessment_present(self) -> None:
         """Mock always includes risk assessment in Assessment section."""
-        mock_service = MockSOAPGenerationService()
+        mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
             user_id="u1",
@@ -394,9 +396,127 @@ class TestMockSOAPGenerationService:
             updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
         )
         transcript = Transcript(format="txt", content="Sample.")
-        result = mock_service.generate_soap_note(
-            transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+        result = mock_service.generate_note(
+            "soap", transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
         )
-        narrative = result.to_narrative()
+        narrative = result.soap_note.to_narrative()
 
         assert "**Risk Assessment:**" in narrative["assessment"]
+
+
+class TestNarrativeGeneration:
+    """End-to-end narrative generation driven off the registry."""
+
+    @pytest.fixture
+    def isolated_registry(self) -> NoteTypeRegistry:
+        reg = NoteTypeRegistry()
+        register_builtin_note_types(reg)
+        return reg
+
+    @pytest.fixture
+    def patient(self) -> Patient:
+        return Patient(
+            id="p1",
+            user_id="u1",
+            first_name="Jane",
+            last_name="Doe",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            diagnosis="Adjustment disorder",
+        )
+
+    def test_narrative_end_to_end_against_sample_transcript(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """Narrative generation composes a registry-driven prompt and returns
+        the LLM JSON coerced back into the registry shape."""
+        transcript = Transcript(
+            format="txt",
+            content=(
+                "[00:00] Therapist: How was your week?\n"
+                "[00:05] Client: Better. I used the breathing exercise twice."
+            ),
+        )
+
+        llm_response = {
+            "note": {
+                "body": (
+                    "Client reports an improved week with partial use of "
+                    "previously-taught breathing exercises. Engaged and "
+                    "oriented throughout the session."
+                )
+            }
+        }
+
+        captured: dict[str, Any] = {}
+
+        class _FakeLLM:
+            def call_structured(
+                self,
+                prompt: str,
+                response_schema: dict[str, Any],
+                **_: Any,
+            ) -> dict[str, Any]:
+                captured["prompt"] = prompt
+                captured["schema"] = response_schema
+                return llm_response
+
+        service = MeetingTranscriptionNoteService(
+            registry=isolated_registry,
+            llm_client_factory=_FakeLLM,
+        )
+        result = service.generate_note(
+            "narrative",
+            transcript,
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        assert isinstance(result, GeneratedNote)
+        assert result.note_type == "narrative"
+        assert result.soap_note is None
+        assert result.content == {
+            "note": {
+                "body": (
+                    "Client reports an improved week with partial use of "
+                    "previously-taught breathing exercises. Engaged and "
+                    "oriented throughout the session."
+                )
+            }
+        }
+        # Prompt is composed from the registry — contains the narrative field's ai_hint.
+        assert "narrative summary of the session" in captured["prompt"].lower()
+        # Schema reflects the registry shape (section → field).
+        assert captured["schema"]["properties"]["note"]["properties"]["body"] == {"type": "string"}
+
+    def test_unknown_note_type_raises(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        service = MeetingTranscriptionNoteService(registry=isolated_registry)
+        transcript = Transcript(format="txt", content="x")
+        with pytest.raises(KeyError):
+            service.generate_note(
+                "does-not-exist",
+                transcript,
+                patient,
+                datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+            )
+
+    def test_mock_narrative_returns_registry_shape(self, patient: Patient) -> None:
+        reg = NoteTypeRegistry()
+        register_builtin_note_types(reg)
+        service = MockNoteGenerationService(registry=reg)
+        transcript = Transcript(format="txt", content="x")
+
+        result = service.generate_note(
+            "narrative",
+            transcript,
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        assert result.note_type == "narrative"
+        assert result.soap_note is None
+        assert "note" in result.content
+        assert "body" in result.content["note"]
+        assert result.content["note"]["body"]
