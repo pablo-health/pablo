@@ -8,6 +8,7 @@ os.environ["ENVIRONMENT"] = "development"
 
 from datetime import datetime
 from typing import Any
+
 import pytest
 from app.models import Patient, SOAPNote, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
