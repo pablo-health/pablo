@@ -7,6 +7,12 @@ from .ehr_navigation_service import (
     MockEhrNavigationService,
 )
 from .export_service import ExportService
+from .note_generation_service import (
+    GeneratedNote,
+    MeetingTranscriptionNoteService,
+    MockNoteGenerationService,
+    NoteGenerationService,
+)
 from .session_service import (
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
@@ -17,11 +23,6 @@ from .session_service import (
     SessionService,
     SessionServiceError,
     SOAPGenerationFailedError,
-)
-from .soap_generation_service import (
-    MeetingTranscriptionSOAPService,
-    MockSOAPGenerationService,
-    SOAPGenerationService,
 )
 from .source_attribution_service import (
     build_attribution_prompt,
@@ -36,14 +37,15 @@ __all__ = [
     "EhrNavigationService",
     "ExportService",
     "GeminiEhrNavigationService",
+    "GeneratedNote",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
-    "MeetingTranscriptionSOAPService",
+    "MeetingTranscriptionNoteService",
     "MockEhrNavigationService",
-    "MockSOAPGenerationService",
+    "MockNoteGenerationService",
+    "NoteGenerationService",
     "PatientNotFoundError",
     "SOAPGenerationFailedError",
-    "SOAPGenerationService",
     "SessionAlreadyInStatusError",
     "SessionInTerminalStatusError",
     "SessionNotFoundError",

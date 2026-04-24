@@ -47,14 +47,14 @@ from ..services import (
     AuditService,
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
-    MeetingTranscriptionSOAPService,
+    MeetingTranscriptionNoteService,
+    NoteGenerationService,
     PatientNotFoundError,
     SessionAlreadyInStatusError,
     SessionInTerminalStatusError,
     SessionNotFoundError,
     SessionService,
     SOAPGenerationFailedError,
-    SOAPGenerationService,
     get_audit_service,
 )
 from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
@@ -86,9 +86,9 @@ def get_session_repository(
     return _session_repo_factory()
 
 
-def get_soap_generation_service() -> SOAPGenerationService:
-    """Get SOAP generation service instance."""
-    return MeetingTranscriptionSOAPService()
+def get_note_generation_service() -> NoteGenerationService:
+    """Get note generation service instance."""
+    return MeetingTranscriptionNoteService()
 
 
 def _build_eval_export_service() -> "EvalExportService | None":
@@ -109,10 +109,10 @@ def _build_eval_export_service() -> "EvalExportService | None":
 def get_session_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
-    soap_service: SOAPGenerationService = Depends(get_soap_generation_service),
+    note_service: NoteGenerationService = Depends(get_note_generation_service),
 ) -> SessionService:
     """Get session service instance with all dependencies."""
-    return SessionService(session_repo, patient_repo, soap_service, _build_eval_export_service())
+    return SessionService(session_repo, patient_repo, note_service, _build_eval_export_service())
 
 
 @router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_201_CREATED)
