@@ -72,7 +72,10 @@ jobs:
         run: poetry install --no-interaction --no-ansi
 
       - name: Audit Python dependencies
-        run: poetry run pip-audit --skip-editable
+        run: |
+          pipx inject poetry poetry-plugin-export
+          poetry export --only=main --without-hashes -f requirements.txt -o /tmp/requirements-audit.txt
+          poetry run pip-audit -r /tmp/requirements-audit.txt --no-deps --disable-pip
 
       - name: Lint (ruff + mypy)
         run: make lint
