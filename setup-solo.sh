@@ -1097,6 +1097,37 @@ if [ "$TRANSCRIPTION_PROVIDER_CHOICE" = "assemblyai" ]; then
     SECRETS_STRING="${SECRETS_STRING},ASSEMBLYAI_API_KEY=pablo-assemblyai-api-key:latest"
 fi
 
+# Provision dedicated pablo-backend runtime SA (least-privilege; mirrors prod
+# posture). Without this, the backend runs as the default gen2 compute SA which
+# carries roles/editor on the project — too much blast radius if a runtime
+# dependency is compromised.
+BACKEND_SA_NAME="pablo-backend"
+BACKEND_SA="${BACKEND_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+if ! gcloud iam service-accounts describe "$BACKEND_SA" --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Creating pablo-backend runtime service account...${NC}"
+    gcloud iam service-accounts create "$BACKEND_SA_NAME" \
+        --project="$PROJECT_ID" \
+        --display-name="Pablo Backend Runtime" \
+        --description="Runtime SA for pablo-backend Cloud Run service + compliance jobs. Least-privilege; do not reuse for unrelated workloads." >/dev/null
+
+    # Same propagation race the pentest SA hits (#1525-1528 below).
+    echo "  Waiting for pablo-backend SA to propagate..."
+    sleep 15
+fi
+
+for role in \
+    roles/aiplatform.user \
+    roles/cloudsql.client \
+    roles/datastore.user \
+    roles/iam.serviceAccountTokenCreator \
+    roles/identitytoolkit.admin \
+    roles/logging.logWriter \
+    roles/secretmanager.secretAccessor; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:${BACKEND_SA}" \
+        --role="$role" --condition=None >/dev/null 2>&1 || true
+done
+
 # Deploy backend
 echo -e "${YELLOW}Deploying backend...${NC}"
 gcloud run deploy pablo-backend \
@@ -1104,7 +1135,7 @@ gcloud run deploy pablo-backend \
     --region="$REPO_LOCATION" \
     --platform=managed \
     --allow-unauthenticated \
-    --service-account="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+    --service-account="${BACKEND_SA}" \
     --memory=4Gi \
     --cpu=2 \
     --min-instances=1 \
@@ -1423,11 +1454,9 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
 
     BACKEND_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/pablo/backend:${PABLO_VERSION:-latest}"
     PENTEST_IMAGE="${REPO_LOCATION}-docker.pkg.dev/${PROJECT_ID}/pablo/pentest:${PABLO_VERSION:-latest}"
-    # Run compliance jobs as the same SA the backend Cloud Run service uses.
-    # setup-solo deploys the backend on the default gen2 compute SA
-    # (${PROJECT_NUMBER}-compute@), not a dedicated pablo-backend@ SA —
-    # keeping the jobs on the same identity avoids a second actAs grant.
-    BACKEND_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+    # Compliance jobs run as the same dedicated pablo-backend SA as the
+    # service (provisioned earlier in this script). Same identity = same
+    # actAs grant set, and the jobs need the same DB/Vertex/Secret access.
 
     # Grant the backend SA access to read audit_logs and write to the bucket
     gcloud storage buckets add-iam-policy-binding "gs://${COMPLIANCE_BUCKET}" \
