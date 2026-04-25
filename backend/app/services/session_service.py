@@ -29,9 +29,18 @@ from ..models import (
     UploadSessionRequest,
     UploadTranscriptToSessionRequest,
 )
+from ..notes import get_default_registry
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
 from .note_generation_service import NoteGenerationService
+
+DEFAULT_NOTE_TYPE = "soap"
+
+
+class InvalidNoteTypeError(BadRequestError):
+    """Raised when a request specifies a note_type not in the registry."""
+
+    code = "INVALID_NOTE_TYPE"
 
 logger = logging.getLogger(__name__)
 
@@ -343,6 +352,10 @@ class SessionService:
         if not patient:
             raise PatientNotFoundError(f"Patient {request.patient_id} not found")
 
+        note_type = request.note_type or DEFAULT_NOTE_TYPE
+        if not get_default_registry().has(note_type):
+            raise InvalidNoteTypeError(f"Unknown note_type: {note_type!r}")
+
         now = _now()
         session_number = self.session_repo.get_session_number_for_patient(request.patient_id)
 
@@ -362,6 +375,7 @@ class SessionService:
             duration_minutes=request.duration_minutes,
             source=request.source.value,
             notes=request.notes,
+            note_type=note_type,
             updated_at=now,
         )
         session = self.session_repo.create(session)

@@ -18,7 +18,7 @@ from app.scheduling_engine.models.appointment import Appointment, AppointmentSta
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services.note_generation_service import GeneratedNote, NoteGenerationService
-from app.services.session_service import PatientNotFoundError, SessionService
+from app.services.session_service import InvalidNoteTypeError, PatientNotFoundError, SessionService
 from app.utcnow import utc_now
 
 USER_ID = "test-user-1"
@@ -266,6 +266,57 @@ class TestStartSessionFromAppointment:
         assert session.video_link is None
         assert session.video_platform is None
         assert session.notes is None
+
+
+class TestNoteTypeWiring:
+    """Tests that note_type flows through scheduling into the persisted session."""
+
+    def test_defaults_to_soap_when_omitted(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+        patient: Patient,
+    ) -> None:
+        """Omitting note_type falls back to SOAP."""
+        appt = _make_appointment(appt_repo)
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id,
+            scheduled_at=appt.start_at,
+        )
+        session, _ = session_service.schedule_session(USER_ID, request)
+        assert session.note_type == "soap"
+
+    def test_persists_explicit_note_type(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+        patient: Patient,
+    ) -> None:
+        """Passing note_type='narrative' creates a session with that note_type."""
+        appt = _make_appointment(appt_repo)
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id,
+            scheduled_at=appt.start_at,
+            note_type="narrative",
+        )
+        session, _ = session_service.schedule_session(USER_ID, request)
+        assert session.note_type == "narrative"
+
+    def test_rejects_unknown_note_type(
+        self,
+        appt_repo: InMemoryAppointmentRepository,
+        session_service: SessionService,
+        patient: Patient,
+    ) -> None:
+        """Unknown note_type → 400."""
+        appt = _make_appointment(appt_repo)
+        request = ScheduleSessionRequest(
+            patient_id=appt.patient_id,
+            scheduled_at=appt.start_at,
+            note_type="not-a-real-type",
+        )
+        with pytest.raises(InvalidNoteTypeError):
+            session_service.schedule_session(USER_ID, request)
 
 
 class TestSessionIdInAllowedFields:

@@ -93,6 +93,10 @@ class ScheduleSessionRequest(BaseModel):
     session_type: SessionType = SessionType.INDIVIDUAL
     source: SessionSource = SessionSource.COMPANION
     notes: str | None = None
+    note_type: str | None = Field(
+        default=None,
+        description="Note-type registry key (e.g. 'soap', 'narrative'). Defaults to 'soap'.",
+    )
 
 
 class UpdateSessionStatusRequest(BaseModel):
@@ -176,6 +180,7 @@ class SessionResponse(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     updated_at: datetime | None = None
+    note_type: str = "soap"
     # Flat narrative SOAP note (for PDF/clipboard backward compat)
     soap_note: SOAPNoteModel | None = None
     soap_note_edited: SOAPNoteModel | None = None
@@ -235,6 +240,7 @@ class SessionResponse(BaseModel):
             started_at=session.started_at,
             ended_at=session.ended_at,
             updated_at=session.updated_at,
+            note_type=session.note_type,
             soap_note=session.soap_note.to_narrative_model() if session.soap_note else None,
             soap_note_edited=(
                 session.soap_note_edited.to_narrative_model() if session.soap_note_edited else None
@@ -309,6 +315,7 @@ class TherapySession:
     updated_at: datetime | None = None
     audio_gcs_path: str | None = None
     transcription_job_metadata: dict[str, Any] | None = None
+    note_type: str = "soap"
     soap_note: SOAPNote | None = None
     soap_note_edited: SOAPNote | None = None
     quality_rating: int | None = None
@@ -385,6 +392,7 @@ class TherapySession:
             updated_at=data.get("updated_at"),
             audio_gcs_path=data.get("audio_gcs_path"),
             transcription_job_metadata=data.get("transcription_job_metadata"),
+            note_type=data.get("note_type", "soap"),
             soap_note=soap_note,
             soap_note_edited=soap_note_edited,
             quality_rating=data.get("quality_rating"),
@@ -428,6 +436,7 @@ class TherapySession:
             "updated_at": self.updated_at,
             "audio_gcs_path": self.audio_gcs_path,
             "transcription_job_metadata": self.transcription_job_metadata,
+            "note_type": self.note_type,
             "soap_note": self.soap_note.to_dict() if self.soap_note else None,
             "soap_note_edited": self.soap_note_edited.to_dict() if self.soap_note_edited else None,
             "quality_rating": self.quality_rating,

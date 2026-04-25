@@ -23,6 +23,29 @@ vi.mock("@/hooks/useAppointments", () => ({
   useCancelAppointment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+vi.mock("@/hooks/useNoteTypes", () => ({
+  useNoteTypes: () => ({
+    data: {
+      note_types: [
+        {
+          key: "soap",
+          label: "SOAP",
+          description: "Subjective / Objective / Assessment / Plan",
+          tier: "oss",
+          sections: [],
+        },
+        {
+          key: "narrative",
+          label: "Narrative",
+          description: "Free-form narrative note",
+          tier: "oss",
+          sections: [],
+        },
+      ],
+    },
+  }),
+}))
+
 vi.mock("@/lib/config", () => ({
   useConfig: () => ({ dataMode: "api" }),
 }))
@@ -193,6 +216,30 @@ describe("AppointmentModal", () => {
       )
       const durationInput = screen.getByLabelText("Duration (min)") as HTMLInputElement
       expect(durationInput.value).toBe("50")
+    })
+  })
+
+  describe("Note Type Picker", () => {
+    it("renders the picker with SOAP selected by default", () => {
+      render(
+        <AppointmentModal open onClose={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+      const trigger = screen.getByRole("combobox", { name: /note type/i })
+      expect(trigger).toHaveTextContent("SOAP")
+    })
+
+    it("lets the user pick another note type", async () => {
+      const user = userEvent.setup()
+      render(
+        <AppointmentModal open onClose={vi.fn()} />,
+        { wrapper: createWrapper() }
+      )
+      const trigger = screen.getByRole("combobox", { name: /note type/i })
+      await user.click(trigger)
+      const narrativeOption = screen.getByRole("option", { name: /narrative/i })
+      await user.click(narrativeOption)
+      expect(trigger).toHaveTextContent("Narrative")
     })
   })
 

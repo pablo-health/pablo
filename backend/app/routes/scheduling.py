@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Query, Request, status
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError
 from ..auth.service import (
@@ -40,6 +40,7 @@ from ..models.scheduling import (
     FreeSlotsResponse,
     GoogleCalendarAuthResponse,
     GoogleCalendarStatusResponse,
+    StartSessionFromAppointmentRequest,
     TimeSlotResponse,
     UpdateAppointmentRequest,
     UpdateAvailabilityRuleRequest,
@@ -331,6 +332,7 @@ def _get_session_service(
 def start_session_from_appointment(
     appointment_id: str,
     http_request: Request,
+    body: StartSessionFromAppointmentRequest | None = Body(default=None),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     session_service: SessionService = Depends(_get_session_service),
@@ -341,6 +343,10 @@ def start_session_from_appointment(
     Used by the companion app when the therapist clicks 'Start Session'
     on a calendar appointment. Copies appointment data into a new
     therapy session and sets appointment.session_id to link them.
+
+    Optional body field ``note_type`` selects the note-type registry
+    key for the session. When omitted, the session falls back to the
+    appointment's default (currently SOAP).
     """
     # 1. Fetch appointment
     try:
@@ -371,6 +377,7 @@ def start_session_from_appointment(
         ),
         source=SessionSource.COMPANION,
         notes=appt.notes,
+        note_type=body.note_type if body else None,
     )
 
     try:

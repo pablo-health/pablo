@@ -76,6 +76,14 @@ export const queryKeys = {
     preferences: () => [...queryKeys.user.all, "preferences"] as const,
   },
 
+  // Note-type catalog query keys
+  noteTypes: {
+    all: ["note-types"] as const,
+    list: () => [...queryKeys.noteTypes.all, "list"] as const,
+    detail: (key: string) =>
+      [...queryKeys.noteTypes.all, "detail", key] as const,
+  },
+
   // Admin query keys
   admin: {
     all: ["admin"] as const,

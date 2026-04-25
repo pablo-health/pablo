@@ -28,9 +28,11 @@ import {
   useUpdateAppointment,
   useCancelAppointment,
 } from "@/hooks/useAppointments"
+import { useNoteTypes } from "@/hooks/useNoteTypes"
 import type { AppointmentResponse } from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
+import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
 
 const SESSION_TYPE_LABELS: Record<string, string> = {
   individual: "Individual",
@@ -131,6 +133,8 @@ function AppointmentForm({
 }) {
   const { data: patientData } = usePatientList()
   const patients = patientData?.data ?? []
+  const { data: noteTypesData } = useNoteTypes()
+  const noteTypes = noteTypesData?.note_types ?? []
 
   const createMutation = useCreateAppointment()
   const updateMutation = useUpdateAppointment()
@@ -162,6 +166,7 @@ function AppointmentForm({
   const [videoLink, setVideoLink] = useState(appointment?.video_link ?? "")
   const [videoPlatform] = useState(defaultVideoPlatform)
   const [notes, setNotes] = useState(appointment?.notes ?? "")
+  const [noteType, setNoteType] = useState<string>(DEFAULT_NOTE_TYPE)
 
   const handlePatientChange = (id: string) => {
     setPatientId(id)
@@ -324,6 +329,29 @@ function AppointmentForm({
               placeholder="https://zoom.us/j/..."
             />
           </div>
+        </div>
+
+        <div className="grid gap-2">
+          <Label htmlFor="note-type">Note Type</Label>
+          <Select value={noteType} onValueChange={setNoteType}>
+            <SelectTrigger id="note-type">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {noteTypes.length === 0 ? (
+                <SelectItem value={DEFAULT_NOTE_TYPE}>SOAP</SelectItem>
+              ) : (
+                noteTypes.map((nt) => (
+                  <SelectItem key={nt.key} value={nt.key}>
+                    {nt.label}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-neutral-500">
+            Used when starting a session from this appointment.
+          </p>
         </div>
 
         {/* Notes */}

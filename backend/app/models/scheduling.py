@@ -10,6 +10,16 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class StartSessionFromAppointmentRequest(BaseModel):
+    """Optional body for starting a session from an appointment.
+
+    The note_type picks the registry key used for note generation; if
+    omitted the session falls back to the appointment default (SOAP).
+    """
+
+    note_type: str | None = None
+
+
 class CreateAppointmentRequest(BaseModel):
     """Request to create a single appointment."""
 
