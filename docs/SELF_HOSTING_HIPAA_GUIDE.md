@@ -10,16 +10,37 @@ You need a BAA with every vendor that handles PHI on your behalf.
 |---|---|---|
 | Cloud provider BAA | You sign directly with Google Cloud | We cover it |
 | AI model provider BAA | You sign with Google (Gemini) or Anthropic (Claude) | We cover it |
+| Transcription provider BAA | Depends on provider — see below | We cover it |
 | Pablo BAA | Not needed — you host it yourself | Included |
 
 **How to sign the Google Cloud BAA:**
 1. Go to Google Cloud Console > Settings > Compliance
 2. Review and accept the BAA
-3. This covers Cloud SQL, Cloud Run, and all GCP services you use
+3. This covers Cloud SQL, Cloud Run, Cloud Storage, Cloud Batch, and all GCP services you use
 
 **How to sign the AI provider BAA:**
 - **Google Gemini**: Covered by the Google Cloud BAA
 - **Anthropic Claude**: Contact Anthropic sales for a BAA if using their API directly
+
+**How to sign the transcription provider BAA:**
+
+Session audio is PHI. Pablo supports two transcription backends, chosen via the `TRANSCRIPTION_PROVIDER` environment variable:
+
+| Provider | Default | BAA requirement |
+|---|---|---|
+| `whisper` (recommended for self-host) | Yes, in `settings.py` | Already covered — Cloud Batch + Cloud Storage are under the Google Cloud BAA above. No separate vendor BAA needed. |
+| `assemblyai` | Opt-in | **You must sign a direct BAA with AssemblyAI before processing any real PHI.** Contact AssemblyAI sales to request one. The default free/trial tier does **not** include a BAA. |
+
+If you deploy with `TRANSCRIPTION_PROVIDER=assemblyai` and no signed BAA, session audio leaving Pablo for AssemblyAI is a §164.504(e) impermissible disclosure and a §164.402 Breach. The `whisper` path keeps every byte inside your GCP project.
+
+**How `setup-solo.sh` handles this:**
+
+During Step 9 (Cloud Run deploy), the script prompts you to choose a transcription provider:
+
+- If you pick **AssemblyAI**, the script requires you to type `I have a signed AssemblyAI BAA` verbatim before continuing, then prompts for the API key (input hidden), stores it in Secret Manager as `pablo-assemblyai-api-key`, and wires the secret into the backend deploy. There is no way to deploy onto the AssemblyAI path without the explicit BAA acknowledgement.
+- If you pick **Whisper**, the script currently aborts with instructions, because the whisper path needs Cloud Batch + GPU + a worker container image that `setup-solo.sh` does not yet provision. That provisioning is tracked as a follow-up; once it lands, `whisper` will become the default.
+
+On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the script reuses it without re-prompting.
 
 ## 2. Access Control
 
