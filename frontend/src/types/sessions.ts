@@ -59,6 +59,16 @@ export interface TranscriptModel {
 }
 
 /**
+ * Note-type registry key.
+ *
+ * OSS ships SOAP and Narrative; SaaS adds DAP / BIRP / meeting on top.
+ * Frontend treats this as an open string at runtime, but the OSS-known
+ * keys are listed for static narrowing on the discriminated NoteContent
+ * union below.
+ */
+export type NoteType = "soap" | "narrative"
+
+/**
  * SOAP Note model (narrative strings for display/PDF/clipboard)
  *
  * SOAP = Subjective, Objective, Assessment, Plan
@@ -69,6 +79,24 @@ export interface SOAPNoteModel {
   objective: string
   assessment: string
   plan: string
+}
+
+/**
+ * Polymorphic note content discriminated by `note_type`.
+ *
+ * Used by NoteViewer to render the right editor for the session's
+ * configured note type. SOAP keeps the historical four narrative
+ * strings; Narrative carries a single free-form `body`.
+ */
+export type NoteContent = SOAPNoteContent | NarrativeNoteContent
+
+export interface SOAPNoteContent extends SOAPNoteModel {
+  note_type: "soap"
+}
+
+export interface NarrativeNoteContent {
+  note_type: "narrative"
+  body: string
 }
 
 /**
@@ -162,6 +190,8 @@ export interface SessionResponse {
   status: SessionStatus
   transcript: TranscriptModel
   created_at: string
+  // Note-type registry key (defaults to "soap" on the backend).
+  note_type: NoteType
   // Flat narrative SOAP note (for PDF/clipboard backward compat)
   soap_note: SOAPNoteModel | null
   soap_note_edited: SOAPNoteModel | null

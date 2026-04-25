@@ -221,6 +221,7 @@ export const mockSessionResponses: SessionResponse[] = [
         "WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nTherapist: How have you been feeling since our last session?\n\n00:00:06.000 --> 00:00:15.000\nClient: Overall better. The breathing exercises have been helping with the panic attacks. I only had one this week instead of the usual three or four.\n\n00:00:16.000 --> 00:00:25.000\nTherapist: That's significant progress. Can you tell me more about the one panic attack that did occur?\n\n00:00:26.000 --> 00:00:40.000\nClient: It happened at work during a team meeting. I felt my heart racing and my palms got sweaty. But I used the grounding technique we practiced and it passed within a few minutes instead of lasting half an hour.\n\n00:00:41.000 --> 00:00:50.000\nTherapist: Excellent use of your coping tools. How did you feel afterward?\n\n00:00:51.000 --> 00:01:00.000\nClient: Honestly, I felt proud of myself. Before therapy, I would have left the meeting entirely. This time I stayed and even contributed to the discussion.",
     },
     created_at: "2026-02-10T14:00:00Z",
+    note_type: "soap",
     soap_note: {
       subjective:
         "**Chief Complaint:** Ongoing anxiety with panic attacks, reporting improvement\n\n**Mood/Affect:** Improved mood, feeling proud of coping progress\n\n**Symptoms:**\n- Panic attacks (reduced from 3-4/week to 1/week)\n- Heart racing and sweaty palms during attacks\n- Work-related anxiety triggers\n\n**Client Narrative:** Client reports significant reduction in panic attack frequency. Used grounding techniques during a work meeting to manage symptoms. Felt proud of being able to stay and participate rather than leaving.",
@@ -273,6 +274,7 @@ export const mockSessionResponses: SessionResponse[] = [
         "WEBVTT\n\n00:00:01.000 --> 00:00:06.000\nTherapist: Jamie, it's good to see you. How has your week been?\n\n00:00:07.000 --> 00:00:18.000\nClient: It's been a tough one. I had a disagreement with my partner about finances and it brought up a lot of old feelings.\n\n00:00:19.000 --> 00:00:28.000\nTherapist: I'm sorry to hear that. Can you walk me through what happened and what feelings came up for you?",
     },
     created_at: "2026-02-08T10:00:00Z",
+    note_type: "soap",
     soap_note: {
       subjective:
         "**Chief Complaint:** Relationship conflict triggering past emotional patterns\n\n**Mood/Affect:** Distressed, tearful at times\n\n**Symptoms:**\n- Emotional reactivity to financial disagreements\n- Rumination about past relationship patterns\n- Disrupted sleep (2 nights)\n\n**Client Narrative:** Client reports a significant argument with partner about finances that activated old attachment wounds. Describes feeling unheard and dismissed, connecting these feelings to childhood experiences.",
@@ -316,6 +318,7 @@ export const mockSessionResponses: SessionResponse[] = [
       content: "Therapist: Morgan, welcome back. How are things going with the new medication?\n\nClient: The side effects have mostly settled down. I'm sleeping better and my mood feels more stable overall.",
     },
     created_at: "2026-02-07T16:00:00Z",
+    note_type: "soap",
     soap_note: {
       subjective: "Client reports medication side effects have subsided. Sleep quality improved. Mood feels more stable.",
       objective: "Patient appeared well-rested and calm. Good eye contact. Speech normal rate and volume. Thought process organized.",
@@ -355,6 +358,7 @@ export const mockSessionResponses: SessionResponse[] = [
       content: "WEBVTT\n\n00:00:01.000 --> 00:00:08.000\nTherapist: Alex, how have things been since we last spoke?\n\n00:00:09.000 --> 00:00:20.000\nClient: I had three panic attacks this week. Two at work and one at the grocery store.",
     },
     created_at: "2026-02-03T14:00:00Z",
+    note_type: "soap",
     soap_note: {
       subjective:
         "**Chief Complaint:** Increased panic attack frequency\n\n**Mood/Affect:** Anxious and frustrated\n\n**Symptoms:**\n- 3 panic attacks this week\n- 2 at work, 1 at grocery store\n- Avoidance behaviors emerging\n\n**Client Narrative:** Client reports increased panic frequency. Feeling discouraged about lack of progress.",
