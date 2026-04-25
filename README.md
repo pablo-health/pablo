@@ -65,6 +65,11 @@ docker compose up
 
 Self-hosting Pablo means **you** are responsible for HIPAA compliance. See our [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md) for what you need to do.
 
+Two things worth flagging up front for self-hosters:
+
+1. **Sign the Google Cloud BAA** before you deploy. It's free, takes a few minutes, and covers Cloud Run / Cloud SQL / Cloud Storage / Cloud Batch / Secret Manager / Identity Platform / Vertex AI. Console → Settings → Compliance → Business Associate Agreement.
+2. **Pick your transcription provider and its BAA.** Pablo supports `whisper` (self-hosted on Cloud Batch, covered by the Google Cloud BAA — coming soon in `setup-solo.sh`) and `assemblyai` (lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent). Step 9 of `setup-solo.sh` prompts you to choose and refuses to deploy on the AssemblyAI path without an explicit BAA acknowledgement + API key. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#1-business-associate-agreement-baa).
+
 ## Want Managed Hosting?
 
 **Pablo Solo** ($19-24/mo) handles infrastructure, HIPAA compliance, BAA coverage, backups, and updates — so you can focus on your clients.
