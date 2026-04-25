@@ -19,7 +19,7 @@ import {
   TranscriptViewer,
   type TranscriptViewerHandle,
 } from "@/components/sessions/TranscriptViewer"
-import { SOAPViewer } from "@/components/sessions/SOAPViewer"
+import { NoteViewer } from "@/components/sessions/NoteViewer"
 import { QualityRating } from "@/components/sessions/QualityRating"
 import {
   QualityRatingWithFeedback,
@@ -28,7 +28,7 @@ import {
 import { FinalizeButton } from "@/components/sessions/FinalizeButton"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle } from "lucide-react"
-import type { SOAPNoteModel } from "@/types/sessions"
+import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
 
 const HIGHLIGHT_DURATION_MS = 4000
 
@@ -98,8 +98,18 @@ export default function SessionDetailPage({ params }: PageProps) {
     setLocalRatingFeedback(feedback)
   }
 
-  const handleSOAPSave = (editedNote: SOAPNoteModel) => {
-    setLocalSoapNoteEdited(editedNote)
+  const handleNoteSave = (edited: NoteContent) => {
+    if (edited.note_type === "soap") {
+      const soap: SOAPNoteModel = {
+        subjective: edited.subjective,
+        objective: edited.objective,
+        assessment: edited.assessment,
+        plan: edited.plan,
+      }
+      setLocalSoapNoteEdited(soap)
+    }
+    // Narrative editing flows through this same callback once the
+    // sessions API persists narrative content (follow-up work).
   }
 
   // Loading state
@@ -149,6 +159,14 @@ export default function SessionDetailPage({ params }: PageProps) {
       </div>
     )
   }
+
+  const editedSoap = localSoapNoteEdited ?? session.soap_note_edited
+  const noteContent: NoteContent | null = session.soap_note
+    ? { note_type: "soap", ...session.soap_note }
+    : null
+  const noteEditedContent: NoteContent | null = editedSoap
+    ? { note_type: "soap", ...editedSoap }
+    : null
 
   return (
     <div className="space-y-6">
@@ -202,14 +220,14 @@ export default function SessionDetailPage({ params }: PageProps) {
               )}
             </div>
 
-            {session.soap_note ? (
-              <SOAPViewer
+            {noteContent ? (
+              <NoteViewer
                 sessionId={session.id}
                 session={session}
-                soapNote={session.soap_note}
-                soapNoteEdited={localSoapNoteEdited ?? session.soap_note_edited}
+                note={noteContent}
+                noteEdited={noteEditedContent}
                 status={session.status}
-                onSave={handleSOAPSave}
+                onSave={handleNoteSave}
                 onClaimClick={handleClaimClick}
               />
             ) : (
