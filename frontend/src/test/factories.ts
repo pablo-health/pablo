@@ -51,6 +51,7 @@ export function createMockSession(
     status: "pending_review",
     transcript: { format: "vtt", content: "WEBVTT\n\n..." },
     created_at: "2024-01-15T14:30:00Z",
+    note_type: "soap",
     soap_note: null,
     soap_note_edited: null,
     soap_note_structured: null,

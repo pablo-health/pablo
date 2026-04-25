@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * SOAPViewer Component
+ * NoteViewer Component
  *
- * Display and edit SOAP notes as a scrollable document with all four sections.
- * Supports edit/view modes, PDF export, and tracks edited vs AI-generated versions.
- * Edit mode uses structured sub-field textareas via SubFieldEditor.
+ * Polymorphic clinical note viewer/editor. Branches on the session's
+ * `note_type` to render the right layout — SOAP keeps the historical
+ * four-section document; Narrative renders a single free-form body.
+ *
+ * Replaces SOAPViewer; SOAP rendering is preserved pixel-for-pixel.
  */
 
 "use client"
@@ -24,6 +26,9 @@ import {
 } from "@/components/ui/dialog"
 import { exportSOAPToPDF } from "@/lib/utils/pdfExport"
 import type {
+  NarrativeNoteContent,
+  NoteContent,
+  SOAPNoteContent,
   SOAPNoteModel,
   SOAPSentence,
   SessionStatus,
@@ -46,17 +51,55 @@ import {
 import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
 
-export interface SOAPViewerProps {
-  soapNote: SOAPNoteModel | null
-  soapNoteEdited: SOAPNoteModel | null
+export interface NoteViewerProps {
+  note: NoteContent | null
+  noteEdited: NoteContent | null
   sessionId: string
   session: SessionResponse
   status: SessionStatus
   readonly?: boolean
-  onSave?: (editedNote: SOAPNoteModel) => void
+  onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
   className?: string
 }
+
+export function NoteViewer(props: NoteViewerProps) {
+  const noteType = props.session.note_type
+  const display = props.noteEdited ?? props.note
+
+  if (display && display.note_type !== noteType) {
+    // Shouldn't happen, but never render the wrong editor against the wrong shape.
+    return null
+  }
+
+  if (noteType === "narrative") {
+    return (
+      <NarrativeNoteView
+        {...props}
+        note={asNarrative(props.note)}
+        noteEdited={asNarrative(props.noteEdited)}
+      />
+    )
+  }
+
+  return (
+    <SOAPNoteView
+      {...props}
+      note={asSOAP(props.note)}
+      noteEdited={asSOAP(props.noteEdited)}
+    />
+  )
+}
+
+function asSOAP(n: NoteContent | null): SOAPNoteContent | null {
+  return n && n.note_type === "soap" ? n : null
+}
+
+function asNarrative(n: NoteContent | null): NarrativeNoteContent | null {
+  return n && n.note_type === "narrative" ? n : null
+}
+
+// --- SOAP --------------------------------------------------------------
 
 const SOAP_SECTIONS = [
   { key: "subjective" as const, label: "Subjective" },
@@ -65,25 +108,29 @@ const SOAP_SECTIONS = [
   { key: "plan" as const, label: "Plan" },
 ] as const
 
-export function SOAPViewer({
-  soapNote,
-  soapNoteEdited,
-  sessionId,
+interface SOAPViewProps extends Omit<NoteViewerProps, "note" | "noteEdited"> {
+  note: SOAPNoteContent | null
+  noteEdited: SOAPNoteContent | null
+}
+
+function SOAPNoteView({
+  note,
+  noteEdited,
   session,
   status,
   readonly = false,
   onSave,
   onClaimClick,
   className,
-}: SOAPViewerProps) {
+}: SOAPViewProps) {
   const [editMode, setEditMode] = useState(false)
   const [editState, setEditState] = useState<StructuredEditState | null>(null)
   const [initialEditState, setInitialEditState] = useState<string>("")
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [clinicalObs, setClinicalObs] = useState<ClinicalObservation>(EMPTY_CLINICAL_OBSERVATION)
 
-  const displayNote = soapNoteEdited ?? soapNote
-  const isEdited = !!soapNoteEdited
+  const displayNote: SOAPNoteModel | null = noteEdited ?? note
+  const isEdited = !!noteEdited
   const canEdit = status === "pending_review" && !readonly
   const structured = session.soap_note_structured
 
@@ -109,7 +156,7 @@ export function SOAPViewer({
           ? `${narrative.objective}\n\n${obsText}`
           : obsText
       }
-      onSave?.(narrative)
+      onSave?.({ note_type: "soap", ...narrative })
       setEditMode(false)
       setEditState(null)
     }
@@ -132,7 +179,8 @@ export function SOAPViewer({
 
   const handlePDFExport = () => {
     if (displayNote) {
-      exportSOAPToPDF(session, displayNote)
+      const { subjective, objective, assessment, plan } = displayNote
+      exportSOAPToPDF(session, { subjective, objective, assessment, plan })
     }
   }
 
@@ -422,6 +470,144 @@ function NarrativeContent({ text }: { text: string }) {
           </p>
         </div>
       ))}
+    </div>
+  )
+}
+
+// --- Narrative ---------------------------------------------------------
+
+interface NarrativeViewProps extends Omit<NoteViewerProps, "note" | "noteEdited"> {
+  note: NarrativeNoteContent | null
+  noteEdited: NarrativeNoteContent | null
+}
+
+function NarrativeNoteView({
+  note,
+  noteEdited,
+  status,
+  readonly = false,
+  onSave,
+  className,
+}: NarrativeViewProps) {
+  const [editMode, setEditMode] = useState(false)
+  const [draft, setDraft] = useState<string>("")
+  const [initialDraft, setInitialDraft] = useState<string>("")
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
+
+  const displayNote = noteEdited ?? note
+  const isEdited = !!noteEdited
+  const canEdit = status === "pending_review" && !readonly
+
+  const hasUnsavedChanges = () => draft !== initialDraft
+
+  const enterEditMode = () => {
+    if (!displayNote) return
+    setDraft(displayNote.body)
+    setInitialDraft(displayNote.body)
+    setEditMode(true)
+  }
+
+  const handleSave = () => {
+    onSave?.({ note_type: "narrative", body: draft })
+    setEditMode(false)
+  }
+
+  const handleCancel = () => {
+    if (hasUnsavedChanges()) {
+      setShowConfirmDialog(true)
+    } else {
+      setEditMode(false)
+    }
+  }
+
+  const handleDiscardChanges = () => {
+    setEditMode(false)
+    setShowConfirmDialog(false)
+  }
+
+  if (!displayNote) {
+    return (
+      <div className={cn("card text-center py-12", className)}>
+        <p className="text-neutral-600">Narrative note not yet generated</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={cn("card space-y-4", className)}>
+      <div className="flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-neutral-900">Narrative Note</h3>
+          {isEdited ? (
+            <span className="px-2 py-1 bg-secondary-100 text-secondary-700 text-xs font-medium rounded">
+              Edited
+            </span>
+          ) : (
+            <span className="px-2 py-1 bg-primary-100 text-primary-700 text-xs font-medium rounded">
+              AI Generated
+            </span>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          {canEdit && !editMode && (
+            <Button size="sm" onClick={enterEditMode}>
+              <Edit className="w-4 h-4 mr-2" />
+              Edit
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="py-2">
+        {editMode ? (
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="w-full min-h-[320px] p-3 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
+            placeholder="Enter narrative note..."
+            aria-label="Narrative note body"
+          />
+        ) : displayNote.body.trim() ? (
+          <p className="text-sm text-neutral-900 whitespace-pre-wrap leading-relaxed">
+            {displayNote.body}
+          </p>
+        ) : (
+          <p className="text-sm text-neutral-500 italic">No content</p>
+        )}
+      </div>
+
+      {editMode && (
+        <div className="flex justify-end gap-2 pt-4 border-t border-neutral-200">
+          <Button variant="outline" onClick={handleCancel}>
+            <X className="w-4 h-4 mr-2" />
+            Cancel
+          </Button>
+          <Button onClick={handleSave}>
+            <Save className="w-4 h-4 mr-2" />
+            Save Changes
+          </Button>
+        </div>
+      )}
+
+      <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unsaved Changes</DialogTitle>
+            <DialogDescription>
+              You have unsaved changes. Are you sure you want to discard them?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowConfirmDialog(false)}>
+              Keep Editing
+            </Button>
+            <Button variant="destructive" onClick={handleDiscardChanges}>
+              Discard Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -32,10 +32,10 @@ vi.mock("@/components/sessions/TranscriptViewer", () => ({
   ),
 }))
 
-vi.mock("@/components/sessions/SOAPViewer", () => ({
-  SOAPViewer: ({ soapNote }: any) => (
+vi.mock("@/components/sessions/NoteViewer", () => ({
+  NoteViewer: ({ note }: any) => (
     <div data-testid="soap-viewer">
-      {soapNote?.subjective}
+      {note?.subjective}
     </div>
   ),
 }))

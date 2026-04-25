@@ -1,16 +1,18 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * SOAPViewer Component Tests
+ * NoteViewer Component Tests
  *
- * Comprehensive tests for the document view, structured sub-field editing,
- * clinician observation form, save/cancel flows, PDF export, and status modes.
+ * Covers SOAP rendering parity with the legacy SOAPViewer (document
+ * layout, structured sub-field editing, clinician observation form,
+ * save/cancel flows, PDF export, source verification, claim clicks)
+ * plus the new Narrative path (single-textarea editor + save flow).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
-import { SOAPViewer } from "../SOAPViewer"
-import type { SOAPNoteModel } from "@/types/sessions"
+import { NoteViewer } from "../NoteViewer"
+import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
 import {
   createMockSession,
   createMockSOAPNote,
@@ -61,18 +63,22 @@ const TOTAL_SUBFIELDS = Object.values(SECTION_SUBFIELDS)
 // ClinicalObservationForm adds 2 textareas + 4 text inputs (appearance, eye contact, psychomotor notes, attitude)
 const CLINICAL_OBS_TEXTBOXES = 6
 
+function asSoapContent(note: SOAPNoteModel | null): NoteContent | null {
+  return note ? { note_type: "soap", ...note } : null
+}
+
 function renderViewer(overrides: Record<string, unknown> = {}) {
   const defaults = {
-    soapNote: structuredNarrative,
-    soapNoteEdited: null,
+    note: asSoapContent(structuredNarrative),
+    noteEdited: null,
     sessionId: "session-123",
     session: mockSession,
     status: "pending_review" as const,
   }
-  return render(<SOAPViewer {...defaults} {...overrides} />)
+  return render(<NoteViewer {...defaults} {...overrides} />)
 }
 
-describe("SOAPViewer", () => {
+describe("NoteViewer (SOAP)", () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -114,14 +120,14 @@ describe("SOAPViewer", () => {
     })
 
     it("renders plain text without sub-field headings", () => {
-      renderViewer({ soapNote: plainNarrative })
+      renderViewer({ note: asSoapContent(plainNarrative) })
 
       expect(screen.getByText("Patient reports feeling better")).toBeInTheDocument()
       expect(screen.queryByText("Chief Complaint")).not.toBeInTheDocument()
     })
 
     it("shows empty state when no SOAP note", () => {
-      renderViewer({ soapNote: null })
+      renderViewer({ note: null })
 
       expect(screen.getByText("SOAP note not yet generated")).toBeInTheDocument()
     })
@@ -134,7 +140,7 @@ describe("SOAPViewer", () => {
 
     it("displays Edited badge when edited version exists", () => {
       renderViewer({
-        soapNoteEdited: structuredNarrative,
+        noteEdited: asSoapContent(structuredNarrative),
         status: "finalized",
       })
 
@@ -143,7 +149,7 @@ describe("SOAPViewer", () => {
 
     it("displays edited version when both original and edited exist", () => {
       const edited = createMockSOAPNote({ subjective: "Edited subjective" })
-      renderViewer({ soapNoteEdited: edited })
+      renderViewer({ noteEdited: asSoapContent(edited) })
 
       expect(screen.getByText("Edited subjective")).toBeInTheDocument()
     })
@@ -219,7 +225,7 @@ describe("SOAPViewer", () => {
     })
 
     it("populates plain text into catch-all sub-field", () => {
-      renderViewer({ soapNote: plainNarrative })
+      renderViewer({ note: asSoapContent(plainNarrative) })
       fireEvent.click(screen.getByText("Edit"))
 
       const textareas = screen.getAllByRole("textbox")
@@ -235,7 +241,9 @@ describe("SOAPViewer", () => {
       fireEvent.click(screen.getByText("Save Changes"))
 
       expect(mockOnSave).toHaveBeenCalledTimes(1)
-      const saved = mockOnSave.mock.calls[0][0] as SOAPNoteModel
+      const saved = mockOnSave.mock.calls[0][0] as NoteContent
+      expect(saved.note_type).toBe("soap")
+      if (saved.note_type !== "soap") return
       expect(saved.subjective).toContain("**Chief Complaint:** Anxiety about work")
       expect(saved.subjective).toContain("**Symptoms:**\n- Insomnia\n- Racing thoughts")
       expect(saved.objective).toContain("**Behavior:** Cooperative")
@@ -267,7 +275,8 @@ describe("SOAPViewer", () => {
 
       fireEvent.click(screen.getByText("Save Changes"))
 
-      const saved = mockOnSave.mock.calls[0][0] as SOAPNoteModel
+      const saved = mockOnSave.mock.calls[0][0] as NoteContent
+      if (saved.note_type !== "soap") throw new Error("expected soap")
       expect(saved.subjective).toContain("**Chief Complaint:** Depression symptoms")
     })
 
@@ -402,7 +411,7 @@ describe("SOAPViewer", () => {
     it("uses edited note for export when available", async () => {
       const { exportSOAPToPDF } = await import("@/lib/utils/pdfExport")
       const edited = createMockSOAPNote({ subjective: "Edited" })
-      renderViewer({ soapNoteEdited: edited })
+      renderViewer({ noteEdited: asSoapContent(edited) })
 
       fireEvent.click(screen.getByText("Export PDF"))
 
@@ -607,5 +616,134 @@ describe("SOAPViewer", () => {
       fireEvent.keyDown(clickable!, { key: " " })
       expect(mockOnClaimClick).toHaveBeenCalledWith([0, 1])
     })
+  })
+})
+
+describe("NoteViewer (Narrative)", () => {
+  const narrativeSession = createMockSession({
+    note_type: "narrative",
+    transcript: { format: "vtt", content: "Test" },
+  })
+
+  const narrativeContent: NoteContent = {
+    note_type: "narrative",
+    body: "Met with client to review progress on coping strategies; client reports steady improvement.",
+  }
+
+  function renderNarrative(overrides: Record<string, unknown> = {}) {
+    const defaults = {
+      note: narrativeContent,
+      noteEdited: null,
+      sessionId: "session-narr",
+      session: narrativeSession,
+      status: "pending_review" as const,
+    }
+    return render(<NoteViewer {...defaults} {...overrides} />)
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("renders the narrative body in view mode", () => {
+    renderNarrative()
+
+    expect(screen.getByText(/Met with client to review progress/)).toBeInTheDocument()
+  })
+
+  it("does not render SOAP section headers", () => {
+    renderNarrative()
+
+    expect(screen.queryByText("Subjective")).not.toBeInTheDocument()
+    expect(screen.queryByText("Objective")).not.toBeInTheDocument()
+    expect(screen.queryByText("Assessment")).not.toBeInTheDocument()
+    expect(screen.queryByText("Plan")).not.toBeInTheDocument()
+  })
+
+  it("shows empty state when no note", () => {
+    renderNarrative({ note: null })
+
+    expect(screen.getByText("Narrative note not yet generated")).toBeInTheDocument()
+  })
+
+  it("uses the edited body when provided", () => {
+    const edited: NoteContent = { note_type: "narrative", body: "Edited narrative body." }
+    renderNarrative({ noteEdited: edited })
+
+    expect(screen.getByText("Edited narrative body.")).toBeInTheDocument()
+    expect(screen.getByText("Edited")).toBeInTheDocument()
+  })
+
+  it("shows AI Generated badge when no edited version", () => {
+    renderNarrative()
+
+    expect(screen.getByText("AI Generated")).toBeInTheDocument()
+  })
+
+  it("shows a single textarea in edit mode pre-filled with the body", () => {
+    renderNarrative()
+
+    fireEvent.click(screen.getByText("Edit"))
+
+    const textareas = screen.getAllByRole("textbox")
+    expect(textareas).toHaveLength(1)
+    expect(textareas[0]).toHaveValue(narrativeContent.body)
+  })
+
+  it("calls onSave with the edited body on save", () => {
+    const onSave = vi.fn()
+    renderNarrative({ onSave })
+
+    fireEvent.click(screen.getByText("Edit"))
+    const textarea = screen.getByRole("textbox")
+    fireEvent.change(textarea, { target: { value: "New body text" } })
+    fireEvent.click(screen.getByText("Save Changes"))
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave).toHaveBeenCalledWith({ note_type: "narrative", body: "New body text" })
+  })
+
+  it("exits edit mode after saving", () => {
+    renderNarrative()
+
+    fireEvent.click(screen.getByText("Edit"))
+    fireEvent.click(screen.getByText("Save Changes"))
+
+    expect(screen.queryByText("Save Changes")).not.toBeInTheDocument()
+  })
+
+  it("hides Edit button when status is finalized", () => {
+    renderNarrative({ status: "finalized" })
+
+    expect(screen.queryByText("Edit")).not.toBeInTheDocument()
+  })
+
+  it("hides Edit button when readonly", () => {
+    renderNarrative({ readonly: true })
+
+    expect(screen.queryByText("Edit")).not.toBeInTheDocument()
+  })
+
+  it("prompts to discard when canceling with unsaved changes", async () => {
+    renderNarrative()
+
+    fireEvent.click(screen.getByText("Edit"))
+    const textarea = screen.getByRole("textbox")
+    fireEvent.change(textarea, { target: { value: "Modified" } })
+    fireEvent.click(screen.getByText("Cancel"))
+
+    await waitFor(() => {
+      expect(screen.getByText("Unsaved Changes")).toBeInTheDocument()
+    })
+  })
+
+  it("cancels cleanly when no edits made", () => {
+    renderNarrative()
+
+    fireEvent.click(screen.getByText("Edit"))
+    fireEvent.click(screen.getByText("Cancel"))
+
+    expect(screen.queryByText("Unsaved Changes")).not.toBeInTheDocument()
+    expect(screen.queryByText("Save Changes")).not.toBeInTheDocument()
   })
 })
