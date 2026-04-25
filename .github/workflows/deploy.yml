@@ -30,7 +30,7 @@ env:
   REGION: us-central1
   REGISTRY: us-central1-docker.pkg.dev/pablohealth-oss/pablo
   CLOUDSQL_INSTANCE: pablohealth-oss:us-central1:pablo
-  RUNTIME_SA: pablo-backend@pablohealth-oss.iam.gserviceaccount.com
+  RUNTIME_SA: 349958062694-compute@developer.gserviceaccount.com
 
 jobs:
   ci:
