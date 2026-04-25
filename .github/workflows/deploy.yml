@@ -1,0 +1,282 @@
+name: Deploy
+
+# Auto-deploys OSS to GCP project pablohealth-oss on every push to main.
+# Mirrors the structural pattern of the SaaS deploy.yml, adapted for the
+# single-environment OSS setup (no dev/prod split, no overlay build).
+#
+# release.yml continues to publish ghcr.io images for self-hosters; this
+# workflow targets the hosted OSS environment only.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: "Run alembic upgrade head before deploying backend"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  PROJECT: pablohealth-oss
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev/pablohealth-oss/pablo
+  CLOUDSQL_INSTANCE: pablohealth-oss:us-central1:pablo
+  RUNTIME_SA: pablo-backend@pablohealth-oss.iam.gserviceaccount.com
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build-backend:
+    name: Build Backend
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v4
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile.production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/backend:${{ github.sha }}
+            ${{ env.REGISTRY }}/backend:main
+          cache-from: type=gha,scope=oss-backend
+          cache-to: type=gha,mode=max,scope=oss-backend
+
+  build-frontend:
+    name: Build Frontend
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v4
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: frontend
+          file: frontend/Dockerfile.production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/frontend:${{ github.sha }}
+            ${{ env.REGISTRY }}/frontend:main
+          cache-from: type=gha,scope=oss-frontend
+          cache-to: type=gha,mode=max,scope=oss-frontend
+
+  build-pentest:
+    name: Build Pentest Image
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+          token_format: access_token
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v4
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build and push pentest
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile.pentest
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/pentest:${{ github.sha }}
+            ${{ env.REGISTRY }}/pentest:main
+          cache-from: type=gha,scope=oss-pentest
+          cache-to: type=gha,mode=max,scope=oss-pentest
+
+  migrate:
+    name: Run DB Migrations
+    needs: [build-backend]
+    if: inputs.run_migrations != false
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy pablo-migrate job at new SHA
+        run: |
+          gcloud run jobs deploy pablo-migrate \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" \
+            --image="${{ env.REGISTRY }}/backend:${{ github.sha }}" \
+            --service-account="${{ env.RUNTIME_SA }}" \
+            --set-cloudsql-instances="${{ env.CLOUDSQL_INSTANCE }}" \
+            --set-secrets="DATABASE_URL=pablo-database-url:latest" \
+            --set-env-vars="ENVIRONMENT=production,GCP_PROJECT_ID=${{ env.PROJECT }},GOOGLE_CLOUD_PROJECT=${{ env.PROJECT }}" \
+            --command="python" \
+            --args="backend/bin/migrate.py" \
+            --max-retries=0 --task-timeout=600 --cpu=1 --memory=512Mi --quiet
+
+      - name: Execute alembic upgrade head
+        run: |
+          gcloud run jobs execute pablo-migrate \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --wait
+
+  deploy-backend:
+    name: Deploy Backend
+    needs: [build-backend, migrate]
+    # `migrate` is skipped when run_migrations=false (workflow_dispatch
+    # opt-out). Keep this job alive in that case while still failing on
+    # an actual migrate failure.
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Update pablo-backend service
+        run: |
+          gcloud run services update pablo-backend \
+            --image="${{ env.REGISTRY }}/backend:${{ github.sha }}" \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
+
+          gcloud run services update-traffic pablo-backend \
+            --to-latest \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
+
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: [build-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Update pablo-frontend service
+        run: |
+          gcloud run services update pablo-frontend \
+            --image="${{ env.REGISTRY }}/frontend:${{ github.sha }}" \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
+
+          gcloud run services update-traffic pablo-frontend \
+            --to-latest \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
+
+  update-pentest-job:
+    name: Update Pentest Job
+    needs: [build-pentest]
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Update pentest Cloud Run job (skip if missing)
+        run: |
+          set -euo pipefail
+          if gcloud run jobs describe pentest \
+               --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" >/dev/null 2>&1; then
+            gcloud run jobs update pentest \
+              --image="${{ env.REGISTRY }}/pentest:${{ github.sha }}" \
+              --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
+          else
+            echo "pentest job not found in ${{ env.PROJECT }} — skipping (run setup-solo.sh Step 11 to create it)"
+          fi
+
+  smoke:
+    name: Smoke Tests
+    needs: [deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Probe backend /api/health
+        run: |
+          set -euo pipefail
+          URL=$(gcloud run services describe pablo-backend \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" \
+            --format='value(status.url)')
+          echo "Backend URL: ${URL}"
+          curl -fsS --max-time 30 "${URL}/api/health" | tee /tmp/health.json
+          echo
+
+      - name: Probe frontend root
+        run: |
+          set -euo pipefail
+          URL=$(gcloud run services describe pablo-frontend \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" \
+            --format='value(status.url)')
+          echo "Frontend URL: ${URL}"
+          curl -fsS --max-time 30 -o /dev/null -w "HTTP %{http_code}\n" "${URL}/"
