@@ -1,11 +1,7 @@
 name: Deploy
 
-# Auto-deploys OSS to GCP project pablohealth-oss on every push to main.
-# Mirrors the structural pattern of the SaaS deploy.yml, adapted for the
-# single-environment OSS setup (no dev/prod split, no overlay build).
-#
-# release.yml continues to publish ghcr.io images for self-hosters; this
-# workflow targets the hosted OSS environment only.
+# Auto-deploys OSS to pablohealth-oss on every push to main.
+# release.yml continues to publish ghcr.io images for self-hosters.
 
 on:
   push:
