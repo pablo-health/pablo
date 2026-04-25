@@ -128,6 +128,7 @@ def _row_to_session(row: TherapySessionRow) -> TherapySession:
         ended_at=row.ended_at,
         updated_at=row.updated_at,
         audio_gcs_path=row.audio_gcs_path,
+        note_type=row.note_type,
         soap_note=soap_note,
         soap_note_edited=soap_note_edited,
         quality_rating=row.quality_rating,
@@ -169,6 +170,7 @@ def _session_to_row(session: TherapySession, row: TherapySessionRow) -> None:
     row.ended_at = session.ended_at
     row.updated_at = session.updated_at
     row.audio_gcs_path = session.audio_gcs_path
+    row.note_type = session.note_type
     row.note_content = session.soap_note.to_dict() if session.soap_note else None
     row.note_content_edited = (
         session.soap_note_edited.to_dict() if session.soap_note_edited else None
