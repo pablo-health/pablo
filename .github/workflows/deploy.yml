@@ -191,6 +191,7 @@ jobs:
         run: |
           gcloud run services update pablo-backend \
             --image="${{ env.REGISTRY }}/backend:${{ github.sha }}" \
+            --update-env-vars="GIT_SHA=${{ github.sha }}" \
             --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
 
           gcloud run services update-traffic pablo-backend \
@@ -267,6 +268,12 @@ jobs:
           echo "Backend URL: ${URL}"
           curl -fsS --max-time 30 "${URL}/api/health" | tee /tmp/health.json
           echo
+          DEPLOYED_SHA=$(jq -r '.git_sha' /tmp/health.json)
+          if [ "${DEPLOYED_SHA}" != "${{ github.sha }}" ]; then
+            echo "::error::health endpoint reports git_sha=${DEPLOYED_SHA}, expected ${{ github.sha }} — traffic did not roll to the new revision"
+            exit 1
+          fi
+          echo "git_sha matches: ${DEPLOYED_SHA}"
 
       - name: Probe frontend root
         run: |

@@ -7,13 +7,16 @@ Main FastAPI application for Pablo.
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from .api_errors import register_exception_handlers
+from .db import get_engine
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
 from .notes import get_default_registry, register_builtin_note_types
 from .routes import (
@@ -127,11 +130,15 @@ app.include_router(note_types.router)
 def health_check() -> dict[str, object]:
     """Health check endpoint.
 
-    Returns server status and minimum required client versions
-    so clients can proactively check for updates.
+    Returns server status, deployed git SHA, and minimum required
+    client versions. Verifies DB connectivity — a failed SELECT 1
+    bubbles up as 5xx so deploy smoke tests catch broken bindings.
     """
+    with get_engine().connect() as conn:
+        conn.execute(text("SELECT 1"))
     return {
         "status": "healthy",
         "server_version": get_server_version(),
+        "git_sha": os.getenv("GIT_SHA", "unknown"),
         "min_client_versions": get_min_versions(),
     }
