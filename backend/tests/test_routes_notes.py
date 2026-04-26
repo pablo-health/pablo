@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""HTTP-level tests for /api/notes (pa-0nx.2)."""
+"""HTTP-level tests for /api/notes (pa-0nx.2 + pa-0nx.3)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from app.models import Note
-from app.repositories import InMemoryNotesRepository  # noqa: TC002 — runtime fixture type
+from app.main import app
+from app.models import Note, Patient, Transcript
+from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
+from app.repositories import (  # noqa: TC002 — runtime fixture type
+    InMemoryNotesRepository,
+    InMemoryPatientRepository,
+)
+from app.routes.notes import (
+    get_note_generation_service,
+)
+from app.services import GeneratedNote, NoteGenerationService
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
 _SOAP: dict[str, Any] = {
@@ -122,6 +131,181 @@ class TestSubmitForExport:
         note = _seed_note(mock_notes_repo)
         response = client.post(f"/api/notes/{note.id}/submit-export")
         assert response.status_code == 400
+
+
+def _seed_patient(
+    patient_repo: InMemoryPatientRepository,
+    *,
+    user_id: str,
+    patient_id: str = "patient-1",
+) -> Patient:
+    now = datetime.now(UTC)
+    patient = Patient(
+        id=patient_id,
+        user_id=user_id,
+        first_name="Jane",
+        last_name="Doe",
+        created_at=now,
+        updated_at=now,
+    )
+    return patient_repo.create(patient)
+
+
+class _StubGenerator(NoteGenerationService):
+    """Deterministic stub that records its call args."""
+
+    def __init__(self, content: dict[str, Any]) -> None:
+        self.content = content
+        self.last_call: dict[str, Any] | None = None
+
+    def generate_note(
+        self,
+        note_type: str,
+        transcript: Transcript,
+        patient: Patient,
+        session_date: datetime,
+    ) -> GeneratedNote:
+        self.last_call = {
+            "note_type": note_type,
+            "transcript": transcript,
+            "patient": patient,
+            "session_date": session_date,
+        }
+        return GeneratedNote(note_type=note_type, content=self.content)
+
+
+class TestCreateStandaloneNote:
+    def test_creates_note_without_dictation(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "soap"},
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["patient_id"] == patient.id
+        assert body["session_id"] is None
+        assert body["note_type"] == "soap"
+        assert body["content"] is None
+        assert body["content_edited"] is None
+
+        stored = mock_notes_repo.list_by_patient(patient.id)
+        assert len(stored) == 1
+        assert stored[0].session_id is None
+        assert stored[0].content is None
+
+    def test_creates_note_with_dictation_runs_generation(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        generated_content = {
+            "subjective": {"chief_complaint": "Generated content"},
+        }
+        stub = _StubGenerator(generated_content)
+        app.dependency_overrides[get_note_generation_service] = lambda: stub
+
+        try:
+            response = client.post(
+                f"/api/patients/{patient.id}/notes",
+                json={
+                    "note_type": "narrative",
+                    "dictation_transcript": {
+                        "format": "txt",
+                        "content": "Client reported...",
+                    },
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(get_note_generation_service, None)
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["content"] == generated_content
+        assert body["session_id"] is None
+        assert stub.last_call is not None
+        assert stub.last_call["note_type"] == "narrative"
+        assert stub.last_call["transcript"].content == "Client reported..."
+        assert stub.last_call["patient"].id == patient.id
+        # session_date defaulted to now → naive comparison: tz-aware datetime
+        assert stub.last_call["session_date"].tzinfo is not None
+
+    def test_unknown_note_type_returns_400(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "dap"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "UNKNOWN_NOTE_TYPE"
+
+    def test_authorizer_rejection_returns_403(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+
+        class _Deny(NoteTypeAuthorizer):
+            def is_allowed(self, user, note_type):  # type: ignore[no-untyped-def]
+                return False
+
+        deny_instance = _Deny()
+        app.dependency_overrides[get_note_type_authorizer] = lambda: deny_instance
+        try:
+            response = client.post(
+                f"/api/patients/{patient.id}/notes",
+                json={"note_type": "soap"},
+            )
+        finally:
+            app.dependency_overrides.pop(get_note_type_authorizer, None)
+
+        assert response.status_code == 403
+
+    def test_unknown_patient_returns_404(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/patients/does-not-exist/notes",
+            json={"note_type": "soap"},
+        )
+        assert response.status_code == 404
+
+    def test_accepts_initial_content_edited(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        edited = {"narrative": {"body": "Clinician started here"}}
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "narrative", "content_edited": edited},
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["content_edited"] == edited
+        assert body["content"] is None
 
 
 class TestRequiresAuth:
