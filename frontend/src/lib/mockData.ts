@@ -8,8 +8,10 @@
 import type {
   SessionResponse,
   SessionListResponse,
+  SOAPNoteModel,
   StructuredSOAPNoteModel,
 } from "@/types/sessions"
+import type { Note, NoteType } from "@/types/notes"
 
 export const mockUser = {
   id: "dev-user-001",
@@ -137,6 +139,40 @@ function s(text: string, ids: number[] = []) {
   return { text, source_segment_ids: ids, confidence_score: 0.0, confidence_level: "", possible_match_segment_ids: [] as number[], signal_used: "" }
 }
 
+function buildNote(opts: {
+  id: string
+  patient_id: string
+  session_id: string
+  created_at: string
+  updated_at?: string
+  note_type?: NoteType
+  content: SOAPNoteModel | StructuredSOAPNoteModel | null
+  finalized_at?: string | null
+  quality_rating?: number | null
+  quality_rating_reason?: string | null
+  quality_rating_sections?: string[] | null
+}): Note {
+  return {
+    id: opts.id,
+    patient_id: opts.patient_id,
+    session_id: opts.session_id,
+    note_type: opts.note_type ?? "soap",
+    content: opts.content as Record<string, unknown> | null,
+    content_edited: null,
+    finalized_at: opts.finalized_at ?? null,
+    quality_rating: opts.quality_rating ?? null,
+    quality_rating_reason: opts.quality_rating_reason ?? null,
+    quality_rating_sections: opts.quality_rating_sections ?? null,
+    export_status: "not_queued",
+    export_queued_at: null,
+    export_reviewed_at: null,
+    export_reviewed_by: null,
+    exported_at: null,
+    created_at: opts.created_at,
+    updated_at: opts.updated_at ?? opts.created_at,
+  }
+}
+
 /**
  * Structured SOAP note for session-001 with a mix of verified (sourced)
  * and unverified (no source_segment_ids) claims for testing source indicators.
@@ -221,19 +257,16 @@ export const mockSessionResponses: SessionResponse[] = [
         "WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nTherapist: How have you been feeling since our last session?\n\n00:00:06.000 --> 00:00:15.000\nClient: Overall better. The breathing exercises have been helping with the panic attacks. I only had one this week instead of the usual three or four.\n\n00:00:16.000 --> 00:00:25.000\nTherapist: That's significant progress. Can you tell me more about the one panic attack that did occur?\n\n00:00:26.000 --> 00:00:40.000\nClient: It happened at work during a team meeting. I felt my heart racing and my palms got sweaty. But I used the grounding technique we practiced and it passed within a few minutes instead of lasting half an hour.\n\n00:00:41.000 --> 00:00:50.000\nTherapist: Excellent use of your coping tools. How did you feel afterward?\n\n00:00:51.000 --> 00:01:00.000\nClient: Honestly, I felt proud of myself. Before therapy, I would have left the meeting entirely. This time I stayed and even contributed to the discussion.",
     },
     created_at: "2026-02-10T14:00:00Z",
-    note_type: "soap",
-    soap_note: {
-      subjective:
-        "**Chief Complaint:** Ongoing anxiety with panic attacks, reporting improvement\n\n**Mood/Affect:** Improved mood, feeling proud of coping progress\n\n**Symptoms:**\n- Panic attacks (reduced from 3-4/week to 1/week)\n- Heart racing and sweaty palms during attacks\n- Work-related anxiety triggers\n\n**Client Narrative:** Client reports significant reduction in panic attack frequency. Used grounding techniques during a work meeting to manage symptoms. Felt proud of being able to stay and participate rather than leaving.",
-      objective:
-        "**Appearance:** Well-groomed, appropriately dressed\n\n**Behavior:** Cooperative and engaged throughout session\n\n**Speech:** Normal rate, clear articulation\n\n**Thought Process:** Linear and goal-directed\n\n**Affect Observed:** Congruent with reported mood; brightened when discussing progress",
-      assessment:
-        "**Clinical Impression:** Generalized Anxiety Disorder with Panic Attacks, showing meaningful improvement\n\n**Progress:** Significant — panic frequency reduced by 75%, client successfully using coping tools in real-world situations\n\n**Risk Assessment:** No acute safety concerns; no suicidal or homicidal ideation\n\n**Functioning Level:** Moderate-Good; maintaining employment and social engagement",
-      plan:
-        "**Interventions Used:**\n- CBT cognitive restructuring\n- Reviewed grounding technique application\n- Reinforced breathing exercises\n\n**Homework Assignments:**\n- Continue daily breathing practice (5 min morning/evening)\n- Journal panic episodes with trigger/response/outcome\n\n**Next Steps:**\n- Introduce exposure hierarchy for work meeting anxiety\n- Explore additional workplace coping strategies\n\n**Next Session:** One week — February 17, 2026",
-    },
-    soap_note_edited: null,
-    soap_note_structured: session001Structured,
+    scheduled_at: null,
+    video_link: null,
+    video_platform: null,
+    session_type: null,
+    duration_minutes: null,
+    source: null,
+    notes: null,
+    started_at: null,
+    ended_at: null,
+    updated_at: null,
     transcript_segments: [
       { index: 0, speaker: "Therapist", text: "How have you been feeling since our last session?", start_time: 1, end_time: 5 },
       { index: 1, speaker: "Client", text: "Overall better. The breathing exercises have been helping with the panic attacks.", start_time: 6, end_time: 11 },
@@ -243,22 +276,18 @@ export const mockSessionResponses: SessionResponse[] = [
       { index: 5, speaker: "Therapist", text: "Excellent use of your coping tools. How did you feel afterward?", start_time: 41, end_time: 50 },
       { index: 6, speaker: "Client", text: "Honestly, I felt proud of myself. Before therapy, I would have left the meeting entirely. This time I stayed and even contributed to the discussion.", start_time: 51, end_time: 60 },
     ],
-    quality_rating: null,
-    quality_rating_reason: null,
-    quality_rating_sections: null,
     processing_started_at: "2026-02-10T14:01:00Z",
     processing_completed_at: "2026-02-10T14:01:12Z",
-    finalized_at: null,
     error: null,
     redacted_transcript: null,
     naturalized_transcript: null,
-    redacted_soap_note: null,
-    naturalized_soap_note: null,
-    export_status: "not_queued",
-    export_queued_at: null,
-    export_reviewed_at: null,
-    export_reviewed_by: null,
-    exported_at: null,
+    note: buildNote({
+      id: "note-001",
+      patient_id: "patient-001",
+      session_id: "session-001",
+      created_at: "2026-02-10T14:01:12Z",
+      content: session001Structured,
+    }),
   },
   {
     id: "session-002",
@@ -274,36 +303,42 @@ export const mockSessionResponses: SessionResponse[] = [
         "WEBVTT\n\n00:00:01.000 --> 00:00:06.000\nTherapist: Jamie, it's good to see you. How has your week been?\n\n00:00:07.000 --> 00:00:18.000\nClient: It's been a tough one. I had a disagreement with my partner about finances and it brought up a lot of old feelings.\n\n00:00:19.000 --> 00:00:28.000\nTherapist: I'm sorry to hear that. Can you walk me through what happened and what feelings came up for you?",
     },
     created_at: "2026-02-08T10:00:00Z",
-    note_type: "soap",
-    soap_note: {
-      subjective:
-        "**Chief Complaint:** Relationship conflict triggering past emotional patterns\n\n**Mood/Affect:** Distressed, tearful at times\n\n**Symptoms:**\n- Emotional reactivity to financial disagreements\n- Rumination about past relationship patterns\n- Disrupted sleep (2 nights)\n\n**Client Narrative:** Client reports a significant argument with partner about finances that activated old attachment wounds. Describes feeling unheard and dismissed, connecting these feelings to childhood experiences.",
-      objective:
-        "**Appearance:** Casually dressed, appeared tired\n\n**Behavior:** Engaged but emotionally activated\n\n**Speech:** Occasionally tremulous when discussing conflict\n\n**Thought Process:** Somewhat tangential when emotionally activated, refocused with prompting\n\n**Affect Observed:** Labile; shifted between sadness and frustration",
-      assessment:
-        "**Clinical Impression:** Adjustment Disorder with Mixed Anxiety and Depressed Mood; attachment pattern activation\n\n**Progress:** Moderate — client showing improved insight into patterns but still reactive\n\n**Risk Assessment:** No safety concerns\n\n**Functioning Level:** Moderate; relationship stress impacting sleep and daily functioning",
-      plan:
-        "**Interventions Used:**\n- Emotion-focused therapy techniques\n- Attachment pattern psychoeducation\n- Communication skills practice\n\n**Homework Assignments:**\n- Practice \"I feel\" statements with partner\n- Complete attachment style worksheet\n\n**Next Steps:**\n- Consider couples session if partner willing\n- Continue individual work on emotional regulation\n\n**Next Session:** One week — February 15, 2026",
-    },
-    soap_note_edited: null,
-    soap_note_structured: null,
+    scheduled_at: null,
+    video_link: null,
+    video_platform: null,
+    session_type: null,
+    duration_minutes: null,
+    source: null,
+    notes: null,
+    started_at: null,
+    ended_at: null,
+    updated_at: null,
     transcript_segments: null,
-    quality_rating: 4,
-    quality_rating_reason: "Accurate capture of session themes",
-    quality_rating_sections: [],
     processing_started_at: "2026-02-08T10:01:00Z",
     processing_completed_at: "2026-02-08T10:01:15Z",
-    finalized_at: "2026-02-08T10:30:00Z",
     error: null,
     redacted_transcript: null,
     naturalized_transcript: null,
-    redacted_soap_note: null,
-    naturalized_soap_note: null,
-    export_status: "not_queued",
-    export_queued_at: null,
-    export_reviewed_at: null,
-    export_reviewed_by: null,
-    exported_at: null,
+    note: buildNote({
+      id: "note-002",
+      patient_id: "patient-002",
+      session_id: "session-002",
+      created_at: "2026-02-08T10:01:15Z",
+      finalized_at: "2026-02-08T10:30:00Z",
+      quality_rating: 4,
+      quality_rating_reason: "Accurate capture of session themes",
+      quality_rating_sections: [],
+      content: {
+        subjective:
+          "**Chief Complaint:** Relationship conflict triggering past emotional patterns\n\n**Mood/Affect:** Distressed, tearful at times\n\n**Symptoms:**\n- Emotional reactivity to financial disagreements\n- Rumination about past relationship patterns\n- Disrupted sleep (2 nights)\n\n**Client Narrative:** Client reports a significant argument with partner about finances that activated old attachment wounds. Describes feeling unheard and dismissed, connecting these feelings to childhood experiences.",
+        objective:
+          "**Appearance:** Casually dressed, appeared tired\n\n**Behavior:** Engaged but emotionally activated\n\n**Speech:** Occasionally tremulous when discussing conflict\n\n**Thought Process:** Somewhat tangential when emotionally activated, refocused with prompting\n\n**Affect Observed:** Labile; shifted between sadness and frustration",
+        assessment:
+          "**Clinical Impression:** Adjustment Disorder with Mixed Anxiety and Depressed Mood; attachment pattern activation\n\n**Progress:** Moderate — client showing improved insight into patterns but still reactive\n\n**Risk Assessment:** No safety concerns\n\n**Functioning Level:** Moderate; relationship stress impacting sleep and daily functioning",
+        plan:
+          "**Interventions Used:**\n- Emotion-focused therapy techniques\n- Attachment pattern psychoeducation\n- Communication skills practice\n\n**Homework Assignments:**\n- Practice \"I feel\" statements with partner\n- Complete attachment style worksheet\n\n**Next Steps:**\n- Consider couples session if partner willing\n- Continue individual work on emotional regulation\n\n**Next Session:** One week — February 15, 2026",
+      },
+    }),
   },
   {
     id: "session-003",
@@ -318,32 +353,36 @@ export const mockSessionResponses: SessionResponse[] = [
       content: "Therapist: Morgan, welcome back. How are things going with the new medication?\n\nClient: The side effects have mostly settled down. I'm sleeping better and my mood feels more stable overall.",
     },
     created_at: "2026-02-07T16:00:00Z",
-    note_type: "soap",
-    soap_note: {
-      subjective: "Client reports medication side effects have subsided. Sleep quality improved. Mood feels more stable.",
-      objective: "Patient appeared well-rested and calm. Good eye contact. Speech normal rate and volume. Thought process organized.",
-      assessment: "Major Depressive Disorder, recurrent, in partial remission. Medication adjustment showing positive response.",
-      plan: "Continue current medication regimen. Follow up with psychiatrist in 2 weeks. Resume behavioral activation goals.",
-    },
-    soap_note_edited: null,
-    soap_note_structured: null,
+    scheduled_at: null,
+    video_link: null,
+    video_platform: null,
+    session_type: null,
+    duration_minutes: null,
+    source: null,
+    notes: null,
+    started_at: null,
+    ended_at: null,
+    updated_at: null,
     transcript_segments: null,
-    quality_rating: 5,
-    quality_rating_reason: null,
-    quality_rating_sections: null,
     processing_started_at: "2026-02-07T16:01:00Z",
     processing_completed_at: "2026-02-07T16:01:08Z",
-    finalized_at: "2026-02-07T16:20:00Z",
     error: null,
     redacted_transcript: null,
     naturalized_transcript: null,
-    redacted_soap_note: null,
-    naturalized_soap_note: null,
-    export_status: "not_queued",
-    export_queued_at: null,
-    export_reviewed_at: null,
-    export_reviewed_by: null,
-    exported_at: null,
+    note: buildNote({
+      id: "note-003",
+      patient_id: "patient-003",
+      session_id: "session-003",
+      created_at: "2026-02-07T16:01:08Z",
+      finalized_at: "2026-02-07T16:20:00Z",
+      quality_rating: 5,
+      content: {
+        subjective: "Client reports medication side effects have subsided. Sleep quality improved. Mood feels more stable.",
+        objective: "Patient appeared well-rested and calm. Good eye contact. Speech normal rate and volume. Thought process organized.",
+        assessment: "Major Depressive Disorder, recurrent, in partial remission. Medication adjustment showing positive response.",
+        plan: "Continue current medication regimen. Follow up with psychiatrist in 2 weeks. Resume behavioral activation goals.",
+      },
+    }),
   },
   {
     id: "session-004",
@@ -358,36 +397,40 @@ export const mockSessionResponses: SessionResponse[] = [
       content: "WEBVTT\n\n00:00:01.000 --> 00:00:08.000\nTherapist: Alex, how have things been since we last spoke?\n\n00:00:09.000 --> 00:00:20.000\nClient: I had three panic attacks this week. Two at work and one at the grocery store.",
     },
     created_at: "2026-02-03T14:00:00Z",
-    note_type: "soap",
-    soap_note: {
-      subjective:
-        "**Chief Complaint:** Increased panic attack frequency\n\n**Mood/Affect:** Anxious and frustrated\n\n**Symptoms:**\n- 3 panic attacks this week\n- 2 at work, 1 at grocery store\n- Avoidance behaviors emerging\n\n**Client Narrative:** Client reports increased panic frequency. Feeling discouraged about lack of progress.",
-      objective:
-        "**Appearance:** Well-groomed\n\n**Behavior:** Fidgety, difficulty maintaining stillness\n\n**Speech:** Slightly rapid\n\n**Thought Process:** Linear but preoccupied with worry\n\n**Affect Observed:** Anxious, congruent with report",
-      assessment:
-        "**Clinical Impression:** GAD with Panic Attacks — temporary setback likely related to work stressor\n\n**Progress:** Slight regression; introduced new coping strategies\n\n**Risk Assessment:** No safety concerns\n\n**Functioning Level:** Moderate",
-      plan:
-        "**Interventions Used:**\n- Breathing exercises (4-7-8 technique)\n- Grounding technique introduction\n\n**Homework Assignments:**\n- Practice grounding daily\n- Track panic triggers in journal\n\n**Next Steps:**\n- Review trigger patterns next session\n\n**Next Session:** One week",
-    },
-    soap_note_edited: null,
-    soap_note_structured: null,
+    scheduled_at: null,
+    video_link: null,
+    video_platform: null,
+    session_type: null,
+    duration_minutes: null,
+    source: null,
+    notes: null,
+    started_at: null,
+    ended_at: null,
+    updated_at: null,
     transcript_segments: null,
-    quality_rating: 4,
-    quality_rating_reason: null,
-    quality_rating_sections: null,
     processing_started_at: "2026-02-03T14:01:00Z",
     processing_completed_at: "2026-02-03T14:01:10Z",
-    finalized_at: "2026-02-03T14:25:00Z",
     error: null,
     redacted_transcript: null,
     naturalized_transcript: null,
-    redacted_soap_note: null,
-    naturalized_soap_note: null,
-    export_status: "not_queued",
-    export_queued_at: null,
-    export_reviewed_at: null,
-    export_reviewed_by: null,
-    exported_at: null,
+    note: buildNote({
+      id: "note-004",
+      patient_id: "patient-001",
+      session_id: "session-004",
+      created_at: "2026-02-03T14:01:10Z",
+      finalized_at: "2026-02-03T14:25:00Z",
+      quality_rating: 4,
+      content: {
+        subjective:
+          "**Chief Complaint:** Increased panic attack frequency\n\n**Mood/Affect:** Anxious and frustrated\n\n**Symptoms:**\n- 3 panic attacks this week\n- 2 at work, 1 at grocery store\n- Avoidance behaviors emerging\n\n**Client Narrative:** Client reports increased panic frequency. Feeling discouraged about lack of progress.",
+        objective:
+          "**Appearance:** Well-groomed\n\n**Behavior:** Fidgety, difficulty maintaining stillness\n\n**Speech:** Slightly rapid\n\n**Thought Process:** Linear but preoccupied with worry\n\n**Affect Observed:** Anxious, congruent with report",
+        assessment:
+          "**Clinical Impression:** GAD with Panic Attacks — temporary setback likely related to work stressor\n\n**Progress:** Slight regression; introduced new coping strategies\n\n**Risk Assessment:** No safety concerns\n\n**Functioning Level:** Moderate",
+        plan:
+          "**Interventions Used:**\n- Breathing exercises (4-7-8 technique)\n- Grounding technique introduction\n\n**Homework Assignments:**\n- Practice grounding daily\n- Track panic triggers in journal\n\n**Next Steps:**\n- Review trigger patterns next session\n\n**Next Session:** One week",
+      },
+    }),
   },
 ]
 

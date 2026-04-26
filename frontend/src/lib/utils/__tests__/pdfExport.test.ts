@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { exportSOAPToPDF } from "../pdfExport"
+import { exportSOAPToPDF, type PDFExportMetadata } from "../pdfExport"
 import { parseNarrativeBlocks } from "../narrativeParser"
 import type { SOAPNoteModel } from "@/types/sessions"
-import { createMockSession, createMockSOAPNote } from "@/test/factories"
+import { createMockSOAPNote } from "@/test/factories"
 
 // Mock jsPDF
 let mockOutput: ReturnType<typeof vi.fn>
@@ -42,12 +42,11 @@ vi.stubGlobal("URL", {
   revokeObjectURL: vi.fn(),
 })
 
-const mockSession = createMockSession({
-  status: "finalized",
-  transcript: { format: "vtt", content: "Test" },
-  quality_rating: 5,
-  finalized_at: "2024-01-15T15:00:00Z",
-})
+const mockSession: PDFExportMetadata = {
+  patient_name: "Doe, Jane",
+  session_number: 1,
+  session_date: "2024-01-15T14:30:00Z",
+}
 
 const mockSOAPNote: SOAPNoteModel = createMockSOAPNote({
   subjective: "Patient reports feeling better",
@@ -235,9 +234,9 @@ describe("exportSOAPToPDF", () => {
     expect(() => exportSOAPToPDF(mockSession, specialSOAP)).not.toThrow()
   })
 
-  it("generates unique filenames for different sessions", () => {
-    const session1 = { ...mockSession, id: "session-1" }
-    const session2 = { ...mockSession, id: "session-2" }
+  it("generates filenames derived from patient name and date", () => {
+    const meta1: PDFExportMetadata = { ...mockSession, patient_name: "Smith, Alice" }
+    const meta2: PDFExportMetadata = { ...mockSession, patient_name: "Jones, Bob" }
 
     const createdLinks: HTMLAnchorElement[] = []
     const createSpy = vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
@@ -246,12 +245,12 @@ describe("exportSOAPToPDF", () => {
       return el
     })
 
-    exportSOAPToPDF(session1, mockSOAPNote)
-    exportSOAPToPDF(session2, mockSOAPNote)
+    exportSOAPToPDF(meta1, mockSOAPNote)
+    exportSOAPToPDF(meta2, mockSOAPNote)
 
     const filenames = createdLinks.map((l) => l.download)
-    expect(filenames).toContain("soap-note-session-1.pdf")
-    expect(filenames).toContain("soap-note-session-2.pdf")
+    expect(filenames.some((f) => f.includes("smith"))).toBe(true)
+    expect(filenames.some((f) => f.includes("jones"))).toBe(true)
     createSpy.mockRestore()
   })
 

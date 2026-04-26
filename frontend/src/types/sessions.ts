@@ -3,9 +3,15 @@
 /**
  * Session API Types
  *
- * TypeScript types matching backend Session API contracts.
- * Field names use snake_case to match backend exactly.
+ * Sessions are recording-only artifacts (audio, transcript, status). The
+ * durable clinical Note lives on a separate ``notes`` table and is embedded
+ * here as ``note`` for the read paths the frontend already uses. See
+ * ``./notes.ts`` for the Note shape.
  */
+
+import type { Note, NoteType } from "./notes"
+
+export type { Note, NoteType, ExportStatus } from "./notes"
 
 /**
  * Session status enum
@@ -28,45 +34,12 @@ export type SessionStatus =
   | "finalized"
   | "failed"
 
-/**
- * Export status enum
- *
- * Lifecycle for evaluation session exports:
- * 1. not_queued - Default, not selected for export
- * 2. pending_review - Queued, awaiting manual review
- * 3. approved - Reviewed and approved for export
- * 4. exported - Successfully exported 
- * 5. skipped - Redaction failed or manually skipped
- */
-export type ExportStatus =
-  | "not_queued"
-  | "pending_review"
-  | "approved"
-  | "exported"
-  | "skipped"
-
-/**
- * Transcript format enum
- */
 export type TranscriptFormat = "vtt" | "json" | "txt"
 
-/**
- * Transcript model containing format and content
- */
 export interface TranscriptModel {
   format: TranscriptFormat
   content: string
 }
-
-/**
- * Note-type registry key.
- *
- * OSS ships SOAP and Narrative; SaaS adds DAP / BIRP / meeting on top.
- * Frontend treats this as an open string at runtime, but the OSS-known
- * keys are listed for static narrowing on the discriminated NoteContent
- * union below.
- */
-export type NoteType = "soap" | "narrative"
 
 /**
  * SOAP Note model (narrative strings for display/PDF/clipboard)
@@ -82,11 +55,9 @@ export interface SOAPNoteModel {
 }
 
 /**
- * Polymorphic note content discriminated by `note_type`.
- *
- * Used by NoteViewer to render the right editor for the session's
- * configured note type. SOAP keeps the historical four narrative
- * strings; Narrative carries a single free-form `body`.
+ * Polymorphic note content discriminated by `note_type`. The Note's
+ * ``content`` / ``content_edited`` JSONB columns deserialize into one of
+ * these shapes per the note-type registry.
  */
 export type NoteContent = SOAPNoteContent | NarrativeNoteContent
 
@@ -165,7 +136,11 @@ export interface TranscriptSegment {
 }
 
 /**
- * Full structured SOAP note with source references and derived narrative
+ * Full structured SOAP note with source references and derived narrative.
+ *
+ * Persisted under ``Note.content`` (and ``Note.content_edited`` when the
+ * clinician edits in-place). The frontend extracts the structured tree via
+ * the helpers in ``@/lib/utils/notes``.
  */
 export interface StructuredSOAPNoteModel {
   subjective: SubjectiveNote
@@ -176,9 +151,12 @@ export interface StructuredSOAPNoteModel {
 }
 
 /**
- * Session response from API
+ * Session response from API.
  *
- * Represents a therapy session with transcript, SOAP note, and metadata.
+ * Recording-only metadata (audio, transcript, status). Note content (SOAP
+ * body, edits, quality, export status) lives under ``note`` — frontend
+ * should read ``response.note.*`` rather than legacy flat fields, which no
+ * longer exist on the backend after pa-0nx.2.
  */
 export interface SessionResponse {
   id: string
@@ -190,33 +168,26 @@ export interface SessionResponse {
   status: SessionStatus
   transcript: TranscriptModel
   created_at: string
-  // Note-type registry key (defaults to "soap" on the backend).
-  note_type: NoteType
-  // Flat narrative SOAP note (for PDF/clipboard backward compat)
-  soap_note: SOAPNoteModel | null
-  soap_note_edited: SOAPNoteModel | null
-  // Structured SOAP note with source references
-  soap_note_structured: StructuredSOAPNoteModel | null
-  // Parsed transcript segments for source linking
+  // Companion scheduling fields
+  scheduled_at: string | null
+  video_link: string | null
+  video_platform: string | null
+  session_type: string | null
+  duration_minutes: number | null
+  source: string | null
+  notes: string | null
+  started_at: string | null
+  ended_at: string | null
+  updated_at: string | null
   transcript_segments: TranscriptSegment[] | null
-  quality_rating: number | null
-  quality_rating_reason: string | null
-  quality_rating_sections: string[] | null
   processing_started_at: string | null
   processing_completed_at: string | null
-  finalized_at: string | null
   error: string | null
-  // PII-redacted versions for review and export
+  // PII-redacted transcript variants
   redacted_transcript: string | null
   naturalized_transcript: string | null
-  redacted_soap_note: SOAPNoteModel | null
-  naturalized_soap_note: SOAPNoteModel | null
-  // Export queue tracking
-  export_status: ExportStatus
-  export_queued_at: string | null
-  export_reviewed_at: string | null
-  export_reviewed_by: string | null
-  exported_at: string | null
+  // Embedded note (None when this session has no generated note yet).
+  note: Note | null
 }
 
 /**
@@ -229,18 +200,12 @@ export interface SessionListResponse {
   page_size: number
 }
 
-/**
- * Request payload for uploading a session transcript
- */
 export interface UploadSessionRequest {
   patient_id: string
   session_date: string
   transcript: TranscriptModel
 }
 
-/**
- * Request payload for finalizing a session after review
- */
 export interface FinalizeSessionRequest {
   quality_rating: number
   quality_rating_reason?: string
@@ -248,9 +213,6 @@ export interface FinalizeSessionRequest {
   soap_note_edited?: SOAPNoteModel
 }
 
-/**
- * Request payload for updating a session's quality rating
- */
 export interface UpdateSessionRatingRequest {
   quality_rating: number
   quality_rating_reason?: string
@@ -269,22 +231,16 @@ export interface ExportQueueItem {
   quality_rating: number | null
   redacted_transcript: string | null
   redacted_soap_note: SOAPNoteModel | null
-  export_status: ExportStatus
+  export_status: import("./notes").ExportStatus
   export_queued_at: string | null
   finalized_at: string | null
 }
 
-/**
- * Paginated list of export queue items
- */
 export interface ExportQueueListResponse {
   data: ExportQueueItem[]
   total: number
 }
 
-/**
- * Request payload for export queue action
- */
 export interface ExportActionRequest {
   action: "approve" | "skip" | "flag"
   reason?: string
@@ -302,4 +258,83 @@ export interface ClinicalObservation {
   attitude: string
   non_verbal: string
   affect_observation: string
+}
+
+// --- Helpers ----------------------------------------------------------------
+
+/**
+ * Project a Note's polymorphic JSONB content into the discriminated
+ * ``NoteContent`` union the editor renders against. Returns ``null`` if the
+ * note has no content yet (e.g. pre-generation).
+ */
+export function noteContentFromNote(
+  note: Pick<Note, "note_type" | "content"> | null,
+): NoteContent | null {
+  return note ? projectContent(note.note_type, note.content) : null
+}
+
+/**
+ * Same projection for a Note's ``content_edited`` field.
+ */
+export function noteEditedContentFromNote(
+  note: Pick<Note, "note_type" | "content_edited"> | null,
+): NoteContent | null {
+  return note ? projectContent(note.note_type, note.content_edited) : null
+}
+
+/**
+ * Pull the ``StructuredSOAPNoteModel`` (with source references) out of a
+ * SOAP note's ``content`` JSONB if present.
+ */
+export function structuredSoapFromNote(
+  note: Pick<Note, "note_type" | "content"> | null,
+): StructuredSOAPNoteModel | null {
+  if (!note || note.note_type !== "soap" || !note.content) return null
+  const c = note.content as Record<string, unknown>
+  if (
+    typeof c.subjective === "object" &&
+    c.subjective !== null &&
+    "chief_complaint" in (c.subjective as Record<string, unknown>)
+  ) {
+    return note.content as unknown as StructuredSOAPNoteModel
+  }
+  return null
+}
+
+function projectContent(
+  noteType: NoteType,
+  raw: Record<string, unknown> | null | undefined,
+): NoteContent | null {
+  if (!raw) return null
+  if (noteType === "soap") {
+    const narrative = (raw.narrative ?? raw) as Record<string, unknown>
+    return {
+      note_type: "soap",
+      subjective: (narrative.subjective as string | undefined) ?? "",
+      objective: (narrative.objective as string | undefined) ?? "",
+      assessment: (narrative.assessment as string | undefined) ?? "",
+      plan: (narrative.plan as string | undefined) ?? "",
+    }
+  }
+  return {
+    note_type: "narrative",
+    body: (raw.body as string | undefined) ?? "",
+  }
+}
+
+/**
+ * Re-shape a discriminated ``NoteContent`` value back into the JSONB shape
+ * the backend expects under ``content_edited``.
+ */
+export function noteContentToJson(
+  content: NoteContent,
+): Record<string, unknown> {
+  if (content.note_type === "soap") {
+    const { note_type: _t, ...rest } = content
+    void _t
+    return { ...rest }
+  }
+  const { note_type: _t, ...rest } = content
+  void _t
+  return { ...rest }
 }

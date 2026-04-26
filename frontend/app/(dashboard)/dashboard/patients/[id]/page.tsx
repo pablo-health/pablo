@@ -3,9 +3,10 @@
 "use client"
 
 import { use } from "react"
-import { Users, Calendar, Phone, Mail, ArrowLeft } from "lucide-react"
+import { Users, Calendar, Phone, Mail, ArrowLeft, FileText } from "lucide-react"
 import Link from "next/link"
 import { PatientExport } from "@/components/patients/PatientExport"
+import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { usePatient } from "@/hooks/usePatients"
 
 interface PatientDetailPageProps {
@@ -93,10 +94,13 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
           <ArrowLeft className="w-5 h-5" />
           <span>Back to Patients</span>
         </Link>
-        <PatientExport
-          patientId={patient.id}
-          patientName={`${patient.first_name} ${patient.last_name}`}
-        />
+        <div className="flex items-center gap-2">
+          <NewNoteButton patientId={patient.id} />
+          <PatientExport
+            patientId={patient.id}
+            patientName={`${patient.first_name} ${patient.last_name}`}
+          />
+        </div>
       </div>
 
       {/* Patient Info Card */}
@@ -153,13 +157,23 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
         </div>
       </div>
 
-      {/* Sessions History */}
+      {/* Notes */}
       <div className="card">
-        <h2 className="text-xl font-display font-bold text-neutral-900 mb-4">
-          Session History
-        </h2>
-        <p className="text-neutral-500 text-center py-8">
-          Session history integration coming soon.
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-display font-bold text-neutral-900">
+            Notes
+          </h2>
+          <Link
+            href={`/dashboard/patients/${patient.id}/notes`}
+            className="text-sm text-primary-700 hover:text-primary-900 inline-flex items-center gap-1"
+          >
+            <FileText className="w-4 h-4" />
+            View all notes
+          </Link>
+        </div>
+        <p className="text-neutral-500 text-sm">
+          Click <strong>New note</strong> above to start a standalone note for
+          this patient, or open the notes list to review prior session notes.
         </p>
       </div>
     </div>

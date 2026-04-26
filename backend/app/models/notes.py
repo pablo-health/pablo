@@ -66,6 +66,13 @@ class NoteResponse(BaseModel):
         )
 
 
+class PatientNotesListResponse(BaseModel):
+    """Response model for ``GET /api/patients/{patient_id}/notes``."""
+
+    data: list[NoteResponse]
+    total: int
+
+
 class UpdateNoteEditsRequest(BaseModel):
     """Request body for ``PATCH /api/notes/{id}`` — clinician edits."""
 

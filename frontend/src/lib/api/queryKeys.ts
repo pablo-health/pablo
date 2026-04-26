@@ -76,6 +76,15 @@ export const queryKeys = {
     preferences: () => [...queryKeys.user.all, "preferences"] as const,
   },
 
+  // Note (clinical artifact) query keys
+  notes: {
+    all: ["notes"] as const,
+    detail: (noteId: string) =>
+      [...queryKeys.notes.all, "detail", noteId] as const,
+    byPatient: (patientId: string) =>
+      [...queryKeys.notes.all, "byPatient", patientId] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,
