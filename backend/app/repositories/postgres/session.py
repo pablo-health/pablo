@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import func
 
 from ...db.models import TherapySessionRow
-from ...models.session import SOAPNote, TherapySession, Transcript
+from ...models.session import TherapySession, Transcript
 from ..session import TherapySessionRepository, _compute_day_boundaries
 
 if TYPE_CHECKING:
@@ -97,17 +97,6 @@ def _row_to_session(row: TherapySessionRow) -> TherapySession:
         format=row.transcript["format"],
         content=row.transcript["content"],
     )
-    soap_note = SOAPNote.from_dict(row.note_content) if row.note_content else None
-    soap_note_edited = (
-        SOAPNote.from_dict(row.note_content_edited) if row.note_content_edited else None
-    )
-    redacted_soap_note = (
-        SOAPNote.from_dict(row.redacted_soap_note) if row.redacted_soap_note else None
-    )
-    naturalized_soap_note = (
-        SOAPNote.from_dict(row.naturalized_soap_note) if row.naturalized_soap_note else None
-    )
-
     return TherapySession(
         id=row.id,
         user_id=row.user_id,
@@ -128,25 +117,12 @@ def _row_to_session(row: TherapySessionRow) -> TherapySession:
         ended_at=row.ended_at,
         updated_at=row.updated_at,
         audio_gcs_path=row.audio_gcs_path,
-        note_type=row.note_type,
-        soap_note=soap_note,
-        soap_note_edited=soap_note_edited,
-        quality_rating=row.quality_rating,
-        quality_rating_reason=row.quality_rating_reason,
-        quality_rating_sections=row.quality_rating_sections,
+        transcription_job_metadata=row.transcription_job_metadata,
         processing_started_at=row.processing_started_at,
         processing_completed_at=row.processing_completed_at,
-        finalized_at=row.finalized_at,
         error=row.error,
         redacted_transcript=row.redacted_transcript,
         naturalized_transcript=row.naturalized_transcript,
-        redacted_soap_note=redacted_soap_note,
-        naturalized_soap_note=naturalized_soap_note,
-        export_status=row.export_status,
-        export_queued_at=row.export_queued_at,
-        export_reviewed_at=row.export_reviewed_at,
-        export_reviewed_by=row.export_reviewed_by,
-        exported_at=row.exported_at,
     )
 
 
@@ -170,28 +146,9 @@ def _session_to_row(session: TherapySession, row: TherapySessionRow) -> None:
     row.ended_at = session.ended_at
     row.updated_at = session.updated_at
     row.audio_gcs_path = session.audio_gcs_path
-    row.note_type = session.note_type
-    row.note_content = session.soap_note.to_dict() if session.soap_note else None
-    row.note_content_edited = (
-        session.soap_note_edited.to_dict() if session.soap_note_edited else None
-    )
-    row.quality_rating = session.quality_rating
-    row.quality_rating_reason = session.quality_rating_reason
-    row.quality_rating_sections = session.quality_rating_sections
+    row.transcription_job_metadata = session.transcription_job_metadata
     row.processing_started_at = session.processing_started_at
     row.processing_completed_at = session.processing_completed_at
-    row.finalized_at = session.finalized_at
     row.error = session.error
     row.redacted_transcript = session.redacted_transcript
     row.naturalized_transcript = session.naturalized_transcript
-    row.redacted_soap_note = (
-        session.redacted_soap_note.to_dict() if session.redacted_soap_note else None
-    )
-    row.naturalized_soap_note = (
-        session.naturalized_soap_note.to_dict() if session.naturalized_soap_note else None
-    )
-    row.export_status = session.export_status
-    row.export_queued_at = session.export_queued_at
-    row.export_reviewed_at = session.export_reviewed_at
-    row.export_reviewed_by = session.export_reviewed_by
-    row.exported_at = session.exported_at

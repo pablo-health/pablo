@@ -47,6 +47,7 @@ from ..models.scheduling import (
 )
 from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
 from ..repositories import (
+    NotesRepository,
     PatientRepository,
     TherapySessionRepository,
 )
@@ -58,6 +59,9 @@ from ..repositories import (
 )
 from ..repositories import (
     get_google_calendar_token_repository as _gcal_token_repo_factory,
+)
+from ..repositories import (
+    get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -76,6 +80,7 @@ from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import (
     AuditService,
     MeetingTranscriptionNoteService,
+    NoteService,
     PatientNotFoundError,
     SessionService,
     get_audit_service,
@@ -316,13 +321,19 @@ def _get_session_service(
     _ctx: TenantContext = Depends(get_tenant_context),
     session_repo: TherapySessionRepository = Depends(_session_repo_factory),
     patient_repo: PatientRepository = Depends(_patient_repo_factory),
+    notes_repo: NotesRepository = Depends(_notes_repo_factory),
 ) -> SessionService:
     """Get session service for appointment→session linking.
 
     Depends on get_tenant_context to ensure the practice schema is set
     before any queries run (required for multi-tenant Postgres).
     """
-    return SessionService(session_repo, patient_repo, MeetingTranscriptionNoteService())
+    return SessionService(
+        session_repo,
+        patient_repo,
+        MeetingTranscriptionNoteService(),
+        NoteService(notes_repo),
+    )
 
 
 @router.post(

@@ -13,6 +13,13 @@ from .note_generation_service import (
     MockNoteGenerationService,
     NoteGenerationService,
 )
+from .note_service import (
+    NoteAlreadyFinalizedError,
+    NoteNotFinalizedError,
+    NoteNotFoundError,
+    NoteService,
+    NoteServiceError,
+)
 from .session_service import (
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
@@ -43,7 +50,12 @@ __all__ = [
     "MeetingTranscriptionNoteService",
     "MockEhrNavigationService",
     "MockNoteGenerationService",
+    "NoteAlreadyFinalizedError",
     "NoteGenerationService",
+    "NoteNotFinalizedError",
+    "NoteNotFoundError",
+    "NoteService",
+    "NoteServiceError",
     "PatientNotFoundError",
     "SOAPGenerationFailedError",
     "SessionAlreadyInStatusError",

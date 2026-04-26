@@ -158,7 +158,12 @@ class TodaySessionListResponse(BaseModel):
 
 
 class SessionResponse(BaseModel):
-    """Response model for therapy session."""
+    """Response model for therapy session.
+
+    Note content (SOAP body, edits, quality, export status) lives under
+    ``note`` — see :class:`app.models.notes.NoteResponse`. Frontend should
+    read ``response.note.*`` rather than the legacy flat fields.
+    """
 
     id: str
     user_id: str
@@ -180,41 +185,31 @@ class SessionResponse(BaseModel):
     started_at: datetime | None = None
     ended_at: datetime | None = None
     updated_at: datetime | None = None
-    note_type: str = "soap"
-    # Flat narrative SOAP note (for PDF/clipboard backward compat)
-    soap_note: SOAPNoteModel | None = None
-    soap_note_edited: SOAPNoteModel | None = None
-    # Structured SOAP note with source references
-    soap_note_structured: StructuredSOAPNoteModel | None = None
     # Parsed transcript segments for source linking
     transcript_segments: list[TranscriptSegmentModel] | None = None
-    quality_rating: int | None = None
-    quality_rating_reason: str | None = None
-    quality_rating_sections: list[str] | None = None
     processing_started_at: datetime | None = None
     processing_completed_at: datetime | None = None
-    finalized_at: datetime | None = None
     error: str | None = None
-    # PII-redacted versions for review and export
+    # PII-redacted transcript variants
     redacted_transcript: str | None = None
     naturalized_transcript: str | None = None
-    redacted_soap_note: SOAPNoteModel | None = None
-    naturalized_soap_note: SOAPNoteModel | None = None
-    # Export queue tracking
-    export_status: str = "not_queued"
-    export_queued_at: datetime | None = None
-    export_reviewed_at: datetime | None = None
-    export_reviewed_by: str | None = None
-    exported_at: datetime | None = None
+    # Embedded note (None when this session has no generated note yet).
+    note: NoteResponse | None = None
 
     @staticmethod
-    def from_session(session: TherapySession, patient_name: str) -> SessionResponse:
-        """Convert TherapySession dataclass to API response model."""
-        structured = None
-        transcript_segments = None
+    def from_session(
+        session: TherapySession,
+        patient_name: str,
+        note: NoteResponse | None = None,
+    ) -> SessionResponse:
+        """Convert TherapySession dataclass to API response model.
 
-        if session.soap_note:
-            structured = session.soap_note.to_structured_model()
+        ``note`` is the embedded :class:`NoteResponse` for this session, if
+        a note has been generated. Callers fetch the note via
+        ``NotesRepository.get_by_session_id`` and pass it through.
+        """
+        transcript_segments = None
+        if note is not None and note.content is not None:
             transcript_segments = parse_transcript_segments(session.transcript.content)
 
         return SessionResponse(
@@ -240,37 +235,13 @@ class SessionResponse(BaseModel):
             started_at=session.started_at,
             ended_at=session.ended_at,
             updated_at=session.updated_at,
-            note_type=session.note_type,
-            soap_note=session.soap_note.to_narrative_model() if session.soap_note else None,
-            soap_note_edited=(
-                session.soap_note_edited.to_narrative_model() if session.soap_note_edited else None
-            ),
-            soap_note_structured=structured,
             transcript_segments=transcript_segments,
-            quality_rating=session.quality_rating,
-            quality_rating_reason=session.quality_rating_reason,
-            quality_rating_sections=session.quality_rating_sections,
             processing_started_at=session.processing_started_at,
             processing_completed_at=session.processing_completed_at,
-            finalized_at=session.finalized_at,
             error=session.error,
             redacted_transcript=session.redacted_transcript,
             naturalized_transcript=session.naturalized_transcript,
-            redacted_soap_note=(
-                session.redacted_soap_note.to_narrative_model()
-                if session.redacted_soap_note
-                else None
-            ),
-            naturalized_soap_note=(
-                session.naturalized_soap_note.to_narrative_model()
-                if session.naturalized_soap_note
-                else None
-            ),
-            export_status=session.export_status,
-            export_queued_at=session.export_queued_at,
-            export_reviewed_at=session.export_reviewed_at,
-            export_reviewed_by=session.export_reviewed_by,
-            exported_at=session.exported_at,
+            note=note,
         )
 
 
@@ -283,14 +254,27 @@ class SessionListResponse(BaseModel):
     page_size: int
 
 
+# Resolve SessionResponse's forward ref to NoteResponse. The local import
+# avoids a circular import at module load: notes.py imports nothing from
+# this module, but session.py is imported before notes.py from
+# ``app.models.__init__``, so we cannot import NoteResponse at the top.
+from .notes import NoteResponse  # noqa: E402, TC001
+
+SessionResponse.model_rebuild()
+
+
 # --- TherapySession dataclass ---
 
 
 @dataclass
 class TherapySession:
-    """Therapy session data model.
+    """Therapy session (recording-only) data model.
 
-    Represents a therapy session with transcript and SOAP note.
+    Represents the recording side of a therapy encounter — transcript,
+    audio, status. Note content lives on :class:`app.models.note.Note`
+    (see pa-0nx). At most one note exists per session, joined via
+    ``Note.session_id``.
+
     Status flow: queued -> processing -> pending_review -> finalized (or failed)
     """
 
@@ -315,37 +299,12 @@ class TherapySession:
     updated_at: datetime | None = None
     audio_gcs_path: str | None = None
     transcription_job_metadata: dict[str, Any] | None = None
-    note_type: str = "soap"
-    soap_note: SOAPNote | None = None
-    soap_note_edited: SOAPNote | None = None
-    quality_rating: int | None = None
-    quality_rating_reason: str | None = None
-    quality_rating_sections: list[str] | None = None  # SOAP sections needing improvement
     processing_started_at: datetime | None = None
     processing_completed_at: datetime | None = None
-    finalized_at: datetime | None = None
     error: str | None = None
-    # PII-redacted versions for export
-    redacted_transcript: str | None = None  # Transcript with placeholders (<PERSON_1>)
-    naturalized_transcript: str | None = None  # Transcript with fake names (for export)
-    redacted_soap_note: SOAPNote | None = None  # SOAP note with placeholders
-    naturalized_soap_note: SOAPNote | None = None  # SOAP note with fake names (for export)
-    # Export queue tracking
-    export_status: str = "not_queued"  # ExportStatus enum value
-    export_queued_at: datetime | None = None
-    export_reviewed_at: datetime | None = None
-    export_reviewed_by: str | None = None  # User ID who reviewed
-    exported_at: datetime | None = None
-
-    @property
-    def was_edited(self) -> bool:
-        """Return True if therapist edited the AI-generated note."""
-        return self.soap_note_edited is not None
-
-    @property
-    def final_soap_note(self) -> SOAPNote | None:
-        """Return the final SOAP note (edited if modified, otherwise AI-generated)."""
-        return self.soap_note_edited or self.soap_note
+    # PII-redacted transcript variants (note-side variants live on Note).
+    redacted_transcript: str | None = None
+    naturalized_transcript: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TherapySession:
@@ -354,22 +313,6 @@ class TherapySession:
         transcript = Transcript(
             format=transcript_data["format"], content=transcript_data["content"]
         )
-
-        soap_note = None
-        if data.get("soap_note"):
-            soap_note = SOAPNote.from_dict(data["soap_note"])
-
-        soap_note_edited = None
-        if data.get("soap_note_edited"):
-            soap_note_edited = SOAPNote.from_dict(data["soap_note_edited"])
-
-        redacted_soap_note = None
-        if data.get("redacted_soap_note"):
-            redacted_soap_note = SOAPNote.from_dict(data["redacted_soap_note"])
-
-        naturalized_soap_note = None
-        if data.get("naturalized_soap_note"):
-            naturalized_soap_note = SOAPNote.from_dict(data["naturalized_soap_note"])
 
         return cls(
             id=data["id"],
@@ -392,25 +335,11 @@ class TherapySession:
             updated_at=data.get("updated_at"),
             audio_gcs_path=data.get("audio_gcs_path"),
             transcription_job_metadata=data.get("transcription_job_metadata"),
-            note_type=data.get("note_type", "soap"),
-            soap_note=soap_note,
-            soap_note_edited=soap_note_edited,
-            quality_rating=data.get("quality_rating"),
-            quality_rating_reason=data.get("quality_rating_reason"),
-            quality_rating_sections=data.get("quality_rating_sections"),
             processing_started_at=data.get("processing_started_at"),
             processing_completed_at=data.get("processing_completed_at"),
-            finalized_at=data.get("finalized_at"),
             error=data.get("error"),
             redacted_transcript=data.get("redacted_transcript"),
             naturalized_transcript=data.get("naturalized_transcript"),
-            redacted_soap_note=redacted_soap_note,
-            naturalized_soap_note=naturalized_soap_note,
-            export_status=data.get("export_status", "not_queued"),
-            export_queued_at=data.get("export_queued_at"),
-            export_reviewed_at=data.get("export_reviewed_at"),
-            export_reviewed_by=data.get("export_reviewed_by"),
-            exported_at=data.get("exported_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -436,29 +365,11 @@ class TherapySession:
             "updated_at": self.updated_at,
             "audio_gcs_path": self.audio_gcs_path,
             "transcription_job_metadata": self.transcription_job_metadata,
-            "note_type": self.note_type,
-            "soap_note": self.soap_note.to_dict() if self.soap_note else None,
-            "soap_note_edited": self.soap_note_edited.to_dict() if self.soap_note_edited else None,
-            "quality_rating": self.quality_rating,
-            "quality_rating_reason": self.quality_rating_reason,
-            "quality_rating_sections": self.quality_rating_sections,
             "processing_started_at": self.processing_started_at,
             "processing_completed_at": self.processing_completed_at,
-            "finalized_at": self.finalized_at,
             "error": self.error,
             "redacted_transcript": self.redacted_transcript,
             "naturalized_transcript": self.naturalized_transcript,
-            "redacted_soap_note": (
-                self.redacted_soap_note.to_dict() if self.redacted_soap_note else None
-            ),
-            "naturalized_soap_note": (
-                self.naturalized_soap_note.to_dict() if self.naturalized_soap_note else None
-            ),
-            "export_status": self.export_status,
-            "export_queued_at": self.export_queued_at,
-            "export_reviewed_at": self.export_reviewed_at,
-            "export_reviewed_by": self.export_reviewed_by,
-            "exported_at": self.exported_at,
         }
 
 

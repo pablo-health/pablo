@@ -259,10 +259,6 @@ def _migrate_practice_columns(engine: Engine, schema_name: str) -> None:
             _alter_ts(sessions, "updated_at"),
             _alter_ts(sessions, "processing_started_at"),
             _alter_ts(sessions, "processing_completed_at"),
-            _alter_ts(sessions, "finalized_at"),
-            _alter_ts(sessions, "export_queued_at"),
-            _alter_ts(sessions, "export_reviewed_at"),
-            _alter_ts(sessions, "exported_at"),
             # ehr_prompts
             _alter_ts(prompts, "updated_at"),
             # ehr_routes

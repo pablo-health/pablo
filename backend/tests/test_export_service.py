@@ -2,12 +2,11 @@
 
 """Tests for ExportService."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
-from app.models import Patient, TherapySession, Transcript
-from app.models.session import SOAPNote
+from app.models import Note, Patient, TherapySession, Transcript
 from app.services import ExportService
 
 
@@ -30,7 +29,7 @@ def mock_patient():
 
 @pytest.fixture
 def mock_sessions():
-    """Create mock therapy sessions."""
+    """Create mock therapy sessions (recording-only after pa-0nx.2)."""
     return [
         TherapySession(
             id="session-1",
@@ -40,20 +39,9 @@ def mock_sessions():
             session_number=2,
             status="finalized",
             transcript=Transcript(format="txt", content="Patient discussed anxiety."),
-            soap_note=SOAPNote.from_dict(
-                {
-                    "subjective": "Patient reports feeling anxious.",
-                    "objective": "Patient appeared nervous.",
-                    "assessment": "Anxiety symptoms present.",
-                    "plan": "Continue therapy.",
-                }
-            ),
-            soap_note_edited=None,
-            quality_rating=4,
             created_at=datetime.fromisoformat("2024-01-15T10:00:00+00:00"),
             processing_started_at=datetime.fromisoformat("2024-01-15T10:01:00+00:00"),
             processing_completed_at=datetime.fromisoformat("2024-01-15T10:05:00+00:00"),
-            finalized_at=datetime.fromisoformat("2024-01-15T10:10:00+00:00"),
         ),
         TherapySession(
             id="session-2",
@@ -63,29 +51,57 @@ def mock_sessions():
             session_number=1,
             status="finalized",
             transcript=Transcript(format="txt", content="Initial intake session."),
-            soap_note=SOAPNote.from_dict(
-                {
-                    "subjective": "Patient seeking help for anxiety.",
-                    "objective": "Patient calm during intake.",
-                    "assessment": "Initial assessment complete.",
-                    "plan": "Schedule regular sessions.",
-                }
-            ),
-            soap_note_edited=SOAPNote.from_dict(
-                {
-                    "subjective": "Patient seeking help for anxiety (edited).",
-                    "objective": "Patient calm during intake (edited).",
-                    "assessment": "Initial assessment complete (edited).",
-                    "plan": "Schedule regular sessions (edited).",
-                }
-            ),
-            quality_rating=5,
             created_at=datetime.fromisoformat("2024-01-08T10:00:00+00:00"),
             processing_started_at=datetime.fromisoformat("2024-01-08T10:01:00+00:00"),
             processing_completed_at=datetime.fromisoformat("2024-01-08T10:05:00+00:00"),
-            finalized_at=datetime.fromisoformat("2024-01-08T10:10:00+00:00"),
         ),
     ]
+
+
+@pytest.fixture
+def mock_notes():
+    """Create mock notes — one unedited, one edited."""
+    return {
+        "session-1": Note(
+            id="note-1",
+            patient_id="patient-123",
+            session_id="session-1",
+            note_type="soap",
+            content={
+                "subjective": "Patient reports feeling anxious.",
+                "objective": "Patient appeared nervous.",
+                "assessment": "Anxiety symptoms present.",
+                "plan": "Continue therapy.",
+            },
+            content_edited=None,
+            quality_rating=4,
+            finalized_at=datetime.fromisoformat("2024-01-15T10:10:00+00:00"),
+            created_at=datetime.fromisoformat("2024-01-15T10:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-15T10:10:00+00:00"),
+        ),
+        "session-2": Note(
+            id="note-2",
+            patient_id="patient-123",
+            session_id="session-2",
+            note_type="soap",
+            content={
+                "subjective": "Patient seeking help for anxiety.",
+                "objective": "Patient calm during intake.",
+                "assessment": "Initial assessment complete.",
+                "plan": "Schedule regular sessions.",
+            },
+            content_edited={
+                "subjective": "Patient seeking help for anxiety (edited).",
+                "objective": "Patient calm during intake (edited).",
+                "assessment": "Initial assessment complete (edited).",
+                "plan": "Schedule regular sessions (edited).",
+            },
+            quality_rating=5,
+            finalized_at=datetime.fromisoformat("2024-01-08T10:10:00+00:00"),
+            created_at=datetime.fromisoformat("2024-01-08T10:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-08T10:10:00+00:00"),
+        ),
+    }
 
 
 @pytest.fixture
@@ -105,9 +121,17 @@ def mock_session_repo(mock_sessions):
 
 
 @pytest.fixture
-def export_service(mock_patient_repo, mock_session_repo):
+def mock_notes_repo(mock_notes):
+    """Create a mock notes repository keyed by session_id."""
+    repo = Mock()
+    repo.get_by_session_id.side_effect = mock_notes.get
+    return repo
+
+
+@pytest.fixture
+def export_service(mock_patient_repo, mock_session_repo, mock_notes_repo):
     """Create an ExportService instance."""
-    return ExportService(mock_patient_repo, mock_session_repo)
+    return ExportService(mock_patient_repo, mock_session_repo, mock_notes_repo)
 
 
 def test_export_json_format(export_service, mock_patient_repo, mock_session_repo):
@@ -186,9 +210,11 @@ def test_export_with_no_sessions(export_service, mock_patient_repo, mock_session
     assert len(result["sessions"]) == 0
 
 
-def test_session_to_export_dict_includes_all_fields(export_service, mock_sessions):
+def test_session_to_export_dict_includes_all_fields(export_service, mock_sessions, mock_notes):
     """Test that session export includes all relevant fields."""
-    session_dict = export_service._session_to_export_dict(mock_sessions[0])
+    session_dict = export_service._session_to_export_dict(
+        mock_sessions[0], mock_notes["session-1"]
+    )
 
     # Verify all expected fields are present (excluding internal metadata)
     assert "id" in session_dict
@@ -213,6 +239,16 @@ def test_session_to_export_dict_includes_all_fields(export_service, mock_session
     assert session_dict["transcript"]["content"] == "Patient discussed anxiety."
 
 
+def test_session_to_export_dict_with_no_note(export_service, mock_sessions):
+    """A session without a Note exports gracefully (all SOAP fields None)."""
+    session_dict = export_service._session_to_export_dict(mock_sessions[0], None)
+    assert session_dict["soap_note"] is None
+    assert session_dict["soap_note_edited"] is None
+    assert session_dict["final_soap_note"] is None
+    assert session_dict["was_edited"] is False
+    assert session_dict["finalized_at"] is None
+
+
 def test_multi_tenant_security(export_service, mock_patient_repo, mock_session_repo):
     """Test that export enforces multi-tenant security."""
     export_service.get_patient_export_data("patient-123", "user-456", "json")
@@ -220,3 +256,7 @@ def test_multi_tenant_security(export_service, mock_patient_repo, mock_session_r
     # Verify user_id is passed to both repositories
     mock_patient_repo.get.assert_called_once_with("patient-123", "user-456")
     mock_session_repo.list_by_patient.assert_called_once_with("patient-123", "user-456")
+
+
+# Avoid unused-fixture warnings.
+_ = UTC
