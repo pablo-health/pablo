@@ -25,6 +25,7 @@ from .ehr_route import (
     UpdateEhrRouteStepRequest,
 )
 from .enums import EhrAction, EhrSystem
+from .note import Note
 from .patient import (
     CreatePatientRequest,
     DeletePatientResponse,
@@ -120,6 +121,7 @@ __all__ = [
     "FreeSlotsResponse",
     "GoalNavigationRequest",
     "GoalNavigationResponse",
+    "Note",
     "ObjectiveNote",
     "Patient",
     "PatientExportData",

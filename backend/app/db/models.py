@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -110,6 +110,61 @@ class TherapySessionRow(Base):
     export_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     export_reviewed_by: Mapped[str | None] = mapped_column(String(128))
     exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class NoteRow(Base):
+    """Patient-owned clinical note (SOAP, DAP, narrative, etc.).
+
+    Notes are first-class and patient-scoped. ``session_id`` is nullable so a
+    note can exist without a recording (the standalone-note flow). When
+    present, ``UNIQUE(session_id) WHERE session_id IS NOT NULL`` preserves
+    today's 1:1 session↔note invariant. See pa-0nx (notes/sessions split).
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    session_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    note_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="soap", default="soap"
+    )
+    # AI-generated and clinician-edited note bodies. Shape varies by
+    # note_type; the registry owns validation. Mirrors the existing
+    # TherapySessionRow.note_content / note_content_edited columns.
+    content: Mapped[dict | None] = mapped_column(JSONB)
+    content_edited: Mapped[dict | None] = mapped_column(JSONB)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quality_rating: Mapped[int | None] = mapped_column(Integer)
+    quality_rating_reason: Mapped[str | None] = mapped_column(Text)
+    quality_rating_sections: Mapped[list | None] = mapped_column(JSONB)
+    # Export tracking — mirrors TherapySessionRow.export_*
+    export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
+    export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    export_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    export_reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # PII-redacted variants (extension-tier).
+    redacted_content: Mapped[dict | None] = mapped_column(JSONB)
+    naturalized_content: Mapped[dict | None] = mapped_column(JSONB)
+    redacted_export_payload: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ux_notes_session_id",
+            "session_id",
+            unique=True,
+            postgresql_where=text("session_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_notes_patient_finalized",
+            "patient_id",
+            "finalized_at",
+            postgresql_using="btree",
+        ),
+    )
 
 
 class EhrPromptRow(Base):
