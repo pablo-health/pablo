@@ -19,7 +19,7 @@ import {
 } from "../useSessions"
 import * as sessionsApi from "@/lib/api/sessions"
 import type { SessionResponse } from "@/types/sessions"
-import { createMockSession } from "@/test/factories"
+import { createMockNote, createMockSession } from "@/test/factories"
 
 vi.mock("@/lib/api/sessions")
 vi.mock("@/lib/config", () => ({
@@ -42,12 +42,14 @@ const createWrapper = () => {
 }
 
 const mockSession: SessionResponse = createMockSession({
-  soap_note: {
-    subjective: "Patient reports improved mood",
-    objective: "Patient appeared calm",
-    assessment: "Continued progress",
-    plan: "Continue weekly sessions",
-  },
+  note: createMockNote({
+    content: {
+      subjective: "Patient reports improved mood",
+      objective: "Patient appeared calm",
+      assessment: "Continued progress",
+      plan: "Continue weekly sessions",
+    },
+  }),
   processing_started_at: "2024-01-15T14:30:01Z",
   processing_completed_at: "2024-01-15T14:30:05Z",
 })
@@ -255,8 +257,11 @@ describe("useSessions hooks", () => {
       const finalizedSession: SessionResponse = {
         ...mockSession,
         status: "finalized",
-        quality_rating: 5,
-        finalized_at: "2024-01-15T14:35:00Z",
+        note: {
+          ...mockSession.note!,
+          quality_rating: 5,
+          finalized_at: "2024-01-15T14:35:00Z",
+        },
       }
 
       vi.mocked(sessionsApi.finalizeSession).mockResolvedValue(finalizedSession)
@@ -280,7 +285,7 @@ describe("useSessions hooks", () => {
           "session-123",
         ])
         expect(cachedData?.status).toBe("finalized")
-        expect(cachedData?.quality_rating).toBe(5)
+        expect(cachedData?.note?.quality_rating).toBe(5)
       })
     })
 
@@ -301,9 +306,12 @@ describe("useSessions hooks", () => {
       const finalizedSession: SessionResponse = {
         ...mockSession,
         status: "finalized",
-        quality_rating: 4,
-        soap_note_edited: editedSOAP,
-        finalized_at: "2024-01-15T14:35:00Z",
+        note: {
+          ...mockSession.note!,
+          quality_rating: 4,
+          content_edited: editedSOAP,
+          finalized_at: "2024-01-15T14:35:00Z",
+        },
       }
 
       vi.mocked(sessionsApi.finalizeSession).mockResolvedValue(finalizedSession)
@@ -325,7 +333,7 @@ describe("useSessions hooks", () => {
           "detail",
           "session-123",
         ])
-        expect(cachedData?.soap_note_edited).toEqual(editedSOAP)
+        expect(cachedData?.note?.content_edited).toEqual(editedSOAP)
       })
     })
 
@@ -376,7 +384,7 @@ describe("useSessions hooks", () => {
       const finalizedSession: SessionResponse = {
         ...mockSession,
         status: "finalized",
-        quality_rating: 5,
+        note: { ...mockSession.note!, quality_rating: 5 },
       }
 
       vi.mocked(sessionsApi.finalizeSession).mockResolvedValue(finalizedSession)
@@ -415,7 +423,7 @@ describe("useSessions hooks", () => {
       const finalizedSession: SessionResponse = {
         ...mockSession,
         status: "finalized",
-        quality_rating: 4,
+        note: { ...mockSession.note!, quality_rating: 4 },
       }
 
       queryClient.setQueryData(
@@ -425,7 +433,7 @@ describe("useSessions hooks", () => {
 
       const updatedSession: SessionResponse = {
         ...finalizedSession,
-        quality_rating: 5,
+        note: { ...finalizedSession.note!, quality_rating: 5 },
       }
 
       vi.mocked(sessionsApi.updateSessionRating).mockResolvedValue(
@@ -450,7 +458,7 @@ describe("useSessions hooks", () => {
           "detail",
           "session-123",
         ])
-        expect(cachedData?.quality_rating).toBe(5)
+        expect(cachedData?.note?.quality_rating).toBe(5)
       })
     })
 
@@ -462,7 +470,7 @@ describe("useSessions hooks", () => {
       const finalizedSession: SessionResponse = {
         ...mockSession,
         status: "finalized",
-        quality_rating: 4,
+        note: { ...mockSession.note!, quality_rating: 4 },
       }
 
       queryClient.setQueryData(
@@ -494,7 +502,7 @@ describe("useSessions hooks", () => {
           "detail",
           "session-123",
         ])
-        expect(cachedData?.quality_rating).toBe(4)
+        expect(cachedData?.note?.quality_rating).toBe(4)
       })
     })
 
@@ -506,7 +514,7 @@ describe("useSessions hooks", () => {
       const finalizedSession: SessionResponse = {
         ...mockSession,
         status: "finalized",
-        quality_rating: 4,
+        note: { ...mockSession.note!, quality_rating: 4 },
       }
 
       queryClient.setQueryData(
@@ -516,7 +524,7 @@ describe("useSessions hooks", () => {
 
       const updatedSession: SessionResponse = {
         ...finalizedSession,
-        quality_rating: 5,
+        note: { ...finalizedSession.note!, quality_rating: 5 },
       }
 
       vi.mocked(sessionsApi.updateSessionRating).mockResolvedValue(

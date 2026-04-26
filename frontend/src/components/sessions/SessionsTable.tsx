@@ -138,13 +138,13 @@ export function SessionsTable({ className }: SessionsTableProps) {
                   <SessionStatusBadge
                     status={session.status}
                     sessionId={session.id}
-                    timestamp={session.finalized_at}
+                    timestamp={session.note?.finalized_at ?? null}
                   />
                 </td>
                 <td className="px-4 py-4">
-                  {session.quality_rating !== null ? (
+                  {session.note?.quality_rating != null ? (
                     <QualityRating
-                      value={session.quality_rating}
+                      value={session.note.quality_rating}
                       readonly
                       size="sm"
                     />

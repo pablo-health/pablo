@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import * as useSessions from "@/hooks/useSessions"
-import { createMockSession } from "@/test/factories"
+import { createMockNote, createMockSession } from "@/test/factories"
 
 // Mock all child components
 vi.mock("@/components/sessions/SessionDetailHeader", () => ({
@@ -88,12 +88,12 @@ function TestSessionDetailPage({ sessionId }: { sessionId: string }) {
       <div data-testid="patient-name">{session.patient_name}</div>
       <div data-testid="session-number">Session #{session.session_number}</div>
       <div data-testid="status">{session.status}</div>
-      {session.soap_note && <div data-testid="has-soap">Has SOAP</div>}
-      {session.status === "pending_review" && session.soap_note && (
+      {session.note?.content && <div data-testid="has-soap">Has SOAP</div>}
+      {session.status === "pending_review" && session.note?.content && (
         <div data-testid="review-section">Review Section</div>
       )}
-      {session.status === "finalized" && session.quality_rating && (
-        <div data-testid="quality-display">Quality: {session.quality_rating}</div>
+      {session.status === "finalized" && session.note?.quality_rating && (
+        <div data-testid="quality-display">Quality: {session.note.quality_rating}</div>
       )}
     </div>
   )
@@ -110,12 +110,14 @@ describe("SessionDetailPage Integration", () => {
       content: "WEBVTT\n\n00:00.000 --> 00:05.000\nHello, how are you today?",
     },
     created_at: "2024-01-15T09:00:00Z",
-    soap_note: {
-      subjective: "Patient reports feeling anxious",
-      objective: "Patient appears nervous",
-      assessment: "Moderate anxiety",
-      plan: "Continue CBT",
-    },
+    note: createMockNote({
+      content: {
+        subjective: "Patient reports feeling anxious",
+        objective: "Patient appears nervous",
+        assessment: "Moderate anxiety",
+        plan: "Continue CBT",
+      },
+    }),
     processing_started_at: "2024-01-15T09:01:00Z",
     processing_completed_at: "2024-01-15T09:05:00Z",
   })
@@ -234,7 +236,7 @@ describe("SessionDetailPage Integration", () => {
 
     it("does not show review section without SOAP note", () => {
       vi.spyOn(useSessions, "useSession").mockReturnValue({
-        data: { ...mockSession, soap_note: null },
+        data: { ...mockSession, note: null },
         isLoading: false,
         error: null,
       } as any)
@@ -253,8 +255,11 @@ describe("SessionDetailPage Integration", () => {
         data: {
           ...mockSession,
           status: "finalized",
-          quality_rating: 5,
-          finalized_at: "2024-01-15T10:00:00Z",
+          note: {
+            ...mockSession.note!,
+            quality_rating: 5,
+            finalized_at: "2024-01-15T10:00:00Z",
+          },
         },
         isLoading: false,
         error: null,
@@ -272,7 +277,7 @@ describe("SessionDetailPage Integration", () => {
         data: {
           ...mockSession,
           status: "finalized",
-          quality_rating: 4,
+          note: { ...mockSession.note!, quality_rating: 4 },
         },
         isLoading: false,
         error: null,
@@ -289,7 +294,7 @@ describe("SessionDetailPage Integration", () => {
   describe("Different Session Statuses", () => {
     it("renders queued status", () => {
       vi.spyOn(useSessions, "useSession").mockReturnValue({
-        data: { ...mockSession, status: "queued", soap_note: null },
+        data: { ...mockSession, status: "queued", note: null },
         isLoading: false,
         error: null,
       } as any)
@@ -304,7 +309,7 @@ describe("SessionDetailPage Integration", () => {
 
     it("renders processing status", () => {
       vi.spyOn(useSessions, "useSession").mockReturnValue({
-        data: { ...mockSession, status: "processing", soap_note: null },
+        data: { ...mockSession, status: "processing", note: null },
         isLoading: false,
         error: null,
       } as any)
@@ -321,7 +326,7 @@ describe("SessionDetailPage Integration", () => {
         data: {
           ...mockSession,
           status: "failed",
-          soap_note: null,
+          note: null,
           error: "Generation failed",
         },
         isLoading: false,

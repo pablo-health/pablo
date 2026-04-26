@@ -160,13 +160,13 @@ export default function SessionDetailPage({ params }: PageProps) {
     )
   }
 
-  const editedSoap = localSoapNoteEdited ?? session.soap_note_edited
-  const noteContent: NoteContent | null = session.soap_note
-    ? { note_type: "soap", ...session.soap_note }
+  const note = session.note
+  const pendingEdited: NoteContent | null = localSoapNoteEdited
+    ? { note_type: "soap", ...localSoapNoteEdited }
     : null
-  const noteEditedContent: NoteContent | null = editedSoap
-    ? { note_type: "soap", ...editedSoap }
-    : null
+  const canReview =
+    session.status === "pending_review" && note !== null
+  const finalizedRating = note?.finalized_at ? note.quality_rating : null
 
   return (
     <div className="space-y-6">
@@ -208,11 +208,11 @@ export default function SessionDetailPage({ params }: PageProps) {
           <div>
             <div className="flex items-center justify-between mb-3 lg:sticky lg:top-0 lg:bg-white lg:z-10 lg:pb-2">
               <h2 className="text-lg font-semibold text-neutral-900">SOAP Note</h2>
-              {session.status === "finalized" && session.quality_rating && (
+              {finalizedRating !== null && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-neutral-600">Quality:</span>
                   <QualityRating
-                    value={session.quality_rating}
+                    value={finalizedRating}
                     onChange={handleFinalizedRatingChange}
                     readonly={false}
                   />
@@ -220,14 +220,19 @@ export default function SessionDetailPage({ params }: PageProps) {
               )}
             </div>
 
-            {noteContent ? (
+            {note ? (
               <NoteViewer
-                sessionId={session.id}
-                session={session}
-                note={noteContent}
-                noteEdited={noteEditedContent}
-                status={session.status}
-                onSave={handleNoteSave}
+                note={note}
+                pendingEdited={pendingEdited}
+                pdfMetadata={{
+                  patient_name: session.patient_name,
+                  session_number: session.session_number,
+                  session_date: session.session_date,
+                }}
+                readonly={session.status !== "pending_review"}
+                onSave={
+                  session.status === "pending_review" ? handleNoteSave : undefined
+                }
                 onClaimClick={handleClaimClick}
               />
             ) : (
@@ -244,7 +249,7 @@ export default function SessionDetailPage({ params }: PageProps) {
           </div>
 
           {/* Quality Rating & Finalize Section */}
-          {session.status === "pending_review" && session.soap_note && (
+          {canReview && (
             <div className="border-t border-neutral-200 pt-6">
               <div className="space-y-6">
                 <div>
@@ -265,7 +270,7 @@ export default function SessionDetailPage({ params }: PageProps) {
                     qualityRating={localRatingFeedback.rating}
                     qualityRatingReason={localRatingFeedback.reason}
                     qualityRatingSections={localRatingFeedback.sections}
-                    soapNoteEdited={localSoapNoteEdited ?? session.soap_note_edited}
+                    soapNoteEdited={localSoapNoteEdited}
                   />
                 </div>
               </div>
