@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Body, Depends, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError
 from ..auth.service import (
@@ -45,6 +45,7 @@ from ..models.scheduling import (
     UpdateAppointmentRequest,
     UpdateAvailabilityRuleRequest,
 )
+from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
 from ..repositories import (
     PatientRepository,
     TherapySessionRepository,
@@ -337,6 +338,7 @@ def start_session_from_appointment(
     service: SchedulingService = Depends(get_scheduling_service),
     session_service: SessionService = Depends(_get_session_service),
     audit: AuditService = Depends(get_audit_service),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
 ) -> SessionResponse:
     """Create a therapy session linked to a calendar appointment.
 
@@ -365,7 +367,16 @@ def start_session_from_appointment(
     if not appt.patient_id:
         raise BadRequestError("Appointment has no linked patient. Resolve the client match first.")
 
-    # 4. Create session from appointment data
+    # 4. Authorize requested note type. Only check when caller explicitly
+    #    requested one — falling back to the default is always allowed.
+    requested_note_type = body.note_type if body else None
+    if requested_note_type is not None and not authorizer.is_allowed(user, requested_note_type):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {requested_note_type!r} not allowed for this subscription",
+        )
+
+    # 5. Create session from appointment data
     request = ScheduleSessionRequest(
         patient_id=appt.patient_id,
         scheduled_at=appt.start_at,
@@ -377,7 +388,7 @@ def start_session_from_appointment(
         ),
         source=SessionSource.COMPANION,
         notes=appt.notes,
-        note_type=body.note_type if body else None,
+        note_type=requested_note_type,
     )
 
     try:
