@@ -286,8 +286,7 @@ def create_standalone_note(
             )
         except (ValueError, KeyError) as exc:
             logger.exception(
-                "Standalone note generation failed for patient=%s note_type=%s",
-                patient_id,
+                "Standalone note generation failed for note_type=%s",
                 request.note_type,
             )
             raise BadRequestError(
