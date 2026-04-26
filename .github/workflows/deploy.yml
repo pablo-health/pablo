@@ -26,7 +26,7 @@ env:
   REGION: us-central1
   REGISTRY: us-central1-docker.pkg.dev/pablohealth-oss/pablo
   CLOUDSQL_INSTANCE: pablohealth-oss:us-central1:pablo
-  RUNTIME_SA: 349958062694-compute@developer.gserviceaccount.com
+  RUNTIME_SA: pablo-backend@pablohealth-oss.iam.gserviceaccount.com
 
 jobs:
   ci:
@@ -249,6 +249,10 @@ jobs:
   smoke:
     name: Smoke Tests
     needs: [deploy-backend, deploy-frontend]
+    # Without this, GitHub Actions propagates `migrate`'s skip transitively
+    # through deploy-backend → smoke, silencing the safety net on every
+    # code-only deploy. deploy-backend uses the same pattern for the same reason.
+    if: always() && !failure() && !cancelled()
     runs-on: ubuntu-latest
     steps:
       - id: auth
