@@ -2,14 +2,17 @@
 
 """Session business logic service.
 
-Encapsulates multi-step session operations: upload with SOAP generation,
-finalization with export queuing, and rating updates.
+Encapsulates multi-step session operations: upload with note generation,
+finalization, scheduling, and status transitions. Note-flavored business
+logic (edit, finalize-with-quality-rating, submit-for-export) lives on
+:class:`app.services.note_service.NoteService`; this service delegates
+through to it for session-scoped endpoints.
 """
 
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .eval_export_service import EvalExportService  # type: ignore[import-not-found]
@@ -17,10 +20,10 @@ if TYPE_CHECKING:
 from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError, ServerError
 from ..models import (
     FinalizeSessionRequest,
+    Note,
     Patient,
     ScheduleSessionRequest,
     SessionStatus,
-    SOAPNote,
     TherapySession,
     Transcript,
     UpdateSessionMetadataRequest,
@@ -33,6 +36,12 @@ from ..notes import get_default_registry
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
 from .note_generation_service import NoteGenerationService
+from .note_service import (
+    NoteAlreadyFinalizedError,
+    NoteNotFinalizedError,
+    NoteNotFoundError,
+    NoteService,
+)
 
 DEFAULT_NOTE_TYPE = "soap"
 
@@ -41,6 +50,7 @@ class InvalidNoteTypeError(BadRequestError):
     """Raised when a request specifies a note_type not in the registry."""
 
     code = "INVALID_NOTE_TYPE"
+
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +156,13 @@ class SessionService:
         self,
         session_repo: TherapySessionRepository,
         patient_repo: PatientRepository,
-        note_service: NoteGenerationService,
+        note_generation_service: NoteGenerationService,
+        note_service: NoteService,
         eval_export_service: "EvalExportService | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
+        self.note_generation_service = note_generation_service
         self.note_service = note_service
         self.eval_export_service = eval_export_service
 
@@ -172,19 +184,37 @@ class SessionService:
         patient.next_session_date = min(future) if future else None
         self.patient_repo.update(patient)
 
+    # --- Generation pipeline ---
+
+    def _generate_and_persist_note(
+        self,
+        session: TherapySession,
+        patient: Patient,
+        note_type: str,
+    ) -> Note:
+        result = self.note_generation_service.generate_note(
+            note_type, session.transcript, patient, session.session_date
+        )
+        return self.note_service.create_or_update_for_session(
+            session_id=session.id,
+            patient_id=session.patient_id,
+            note_type=result.note_type,
+            content=result.content,
+        )
+
     def upload_session(
         self,
         patient_id: str,
         user_id: str,
         request: UploadSessionRequest,
-    ) -> tuple[TherapySession, Patient]:
-        """Create a session, generate SOAP note, and update patient metadata.
+    ) -> tuple[TherapySession, Patient, Note]:
+        """Create a session, generate the note, and update patient metadata.
 
-        Returns the completed session and patient.
+        Returns ``(session, patient, note)``.
 
         Raises:
             PatientNotFoundError: If patient doesn't exist or doesn't belong to user.
-            SOAPGenerationFailedError: If SOAP note generation fails.
+            SOAPGenerationFailedError: If note generation fails.
         """
         patient = self.patient_repo.get(patient_id, user_id)
         if not patient:
@@ -215,21 +245,16 @@ class SessionService:
         session = self.session_repo.update(session)
 
         try:
-            logger.info("Starting SOAP generation for session %s", session.id)
+            logger.info("Starting note generation for session %s", session.id)
+            note = self._generate_and_persist_note(session, patient, DEFAULT_NOTE_TYPE)
+            logger.info("Note generation completed for session %s", session.id)
 
-            result = self.note_service.generate_note(
-                "soap", session.transcript, patient, request.session_date
-            )
-
-            logger.info("SOAP generation completed for session %s", session.id)
-
-            session.soap_note = result.soap_note
             session.status = SessionStatus.PENDING_REVIEW
             session.processing_completed_at = _now()
             session = self.session_repo.update(session)
 
         except Exception as e:
-            logger.exception("SOAP generation failed for session %s", session.id)
+            logger.exception("Note generation failed for session %s", session.id)
             session.status = SessionStatus.FAILED
             session.error = "SOAP generation failed"
             self.session_repo.update(session)
@@ -241,23 +266,25 @@ class SessionService:
             patient.last_session_date = request.session_date
         self.patient_repo.update(patient)
 
-        return session, patient
+        return session, patient, note
 
     def finalize_session(
         self,
         session_id: str,
         user_id: str,
         request: FinalizeSessionRequest,
-    ) -> tuple[TherapySession, Patient]:
+    ) -> tuple[TherapySession, Patient, Note]:
         """Finalize a session after therapist review.
 
-        Validates status, applies edits, queues for export if needed.
-        Returns the finalized session and patient.
+        Validates session status, applies note edits, finalizes the note
+        with quality rating, transitions session to FINALIZED, and queues
+        for eval export if configured. Returns the finalized session,
+        patient, and updated note.
 
         Raises:
-            SessionNotFoundError: If session doesn't exist or doesn't belong to user.
+            SessionNotFoundError: If session doesn't exist.
             InvalidSessionStatusError: If session is not in pending_review status.
-            RatingFeedbackRequiredError: If low rating lacks feedback.
+            NoteNotFoundError: If the session has no note (generation never ran).
         """
         session = self.session_repo.get(session_id, user_id)
         if not session:
@@ -266,53 +293,60 @@ class SessionService:
         if session.status != SessionStatus.PENDING_REVIEW:
             raise InvalidSessionStatusError(session.status, "pending_review")
 
-        session.status = SessionStatus.FINALIZED
-        session.quality_rating = request.quality_rating
-        session.quality_rating_reason = request.quality_rating_reason
-        session.quality_rating_sections = (
-            [s.value for s in request.quality_rating_sections]
-            if request.quality_rating_sections
-            else None
-        )
-        session.finalized_at = _now()
+        note = self.note_service.get_note_by_session_id(session_id)
+        if note is None:
+            raise NoteNotFoundError(f"Session {session_id} has no note to finalize")
 
         if request.soap_note_edited:
-            session.soap_note_edited = SOAPNote.from_dict(
-                {
+            note = self.note_service.update_note_edits(
+                note.id,
+                content_edited={
                     "subjective": request.soap_note_edited.subjective,
                     "objective": request.soap_note_edited.objective,
                     "assessment": request.soap_note_edited.assessment,
                     "plan": request.soap_note_edited.plan,
-                }
+                },
             )
 
+        finalized_at = _now()
+        note = self.note_service.finalize_note(
+            note.id,
+            quality_rating=request.quality_rating,
+            quality_rating_reason=request.quality_rating_reason,
+            quality_rating_sections=(
+                [s.value for s in request.quality_rating_sections]
+                if request.quality_rating_sections
+                else None
+            ),
+            finalized_at=finalized_at,
+        )
+
+        session.status = SessionStatus.FINALIZED
         session = self.session_repo.update(session)
 
-        # Check if session should be queued for eval export (SaaS only)
+        # Check if note should be queued for eval export (SaaS only).
         if self.eval_export_service:
             decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
             if decision.should_queue:
-                session = self.eval_export_service.queue_session_for_export(session)
-                session = self.session_repo.update(session)
+                note = self.note_service.submit_note_for_export(note.id)
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
-
-        return session, patient
+        return session, patient, note
 
     def update_rating(
         self,
         session_id: str,
         user_id: str,
         request: UpdateSessionRatingRequest,
-    ) -> tuple[TherapySession, Patient, int | None]:
-        """Update quality rating for a finalized session.
+    ) -> tuple[TherapySession, Patient, Note, int | None]:
+        """Update quality rating on a finalized session's note.
 
-        Returns the updated session, patient, and old rating value.
+        Returns ``(session, patient, note, old_rating)``.
 
         Raises:
-            SessionNotFoundError: If session doesn't exist or doesn't belong to user.
+            SessionNotFoundError: If session doesn't exist.
             InvalidSessionStatusError: If session is not finalized.
-            RatingFeedbackRequiredError: If low rating lacks feedback.
+            NoteNotFoundError: If the session has no note.
         """
         session = self.session_repo.get(session_id, user_id)
         if not session:
@@ -321,20 +355,66 @@ class SessionService:
         if session.status != SessionStatus.FINALIZED:
             raise InvalidSessionStatusError(session.status, "finalized")
 
-        old_rating = session.quality_rating
+        note = self.note_service.get_note_by_session_id(session_id)
+        if note is None:
+            raise NoteNotFoundError(f"Session {session_id} has no note")
 
-        session.quality_rating = request.quality_rating
-        session.quality_rating_reason = request.quality_rating_reason
-        session.quality_rating_sections = (
-            [s.value for s in request.quality_rating_sections]
-            if request.quality_rating_sections
-            else None
-        )
-        session = self.session_repo.update(session)
+        try:
+            note, old_rating = self.note_service.update_quality_rating(
+                note.id,
+                quality_rating=request.quality_rating,
+                quality_rating_reason=request.quality_rating_reason,
+                quality_rating_sections=(
+                    [s.value for s in request.quality_rating_sections]
+                    if request.quality_rating_sections
+                    else None
+                ),
+            )
+        except NoteNotFinalizedError as exc:
+            # Defensive: should not happen given the session.status guard above.
+            raise InvalidSessionStatusError(session.status, "finalized") from exc
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
+        return session, patient, note, old_rating
 
-        return session, patient, old_rating
+    def update_soap_note_edits(
+        self,
+        session_id: str,
+        user_id: str,
+        content_edited: dict[str, Any],
+    ) -> Note:
+        """Persist clinician edits via the session-scoped path.
+
+        Thin wrapper around :meth:`NoteService.update_note_edits` so
+        callers that only know the ``session_id`` (legacy frontend) can
+        edit through the session route.
+        """
+        session = self.session_repo.get(session_id, user_id)
+        if not session:
+            raise SessionNotFoundError(f"Session {session_id} not found")
+
+        note = self.note_service.get_note_by_session_id(session_id)
+        if note is None:
+            raise NoteNotFoundError(f"Session {session_id} has no note")
+        return self.note_service.update_note_edits(note.id, content_edited)
+
+    def submit_for_export(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> Note:
+        """Queue a session's note for export via the session-scoped path."""
+        session = self.session_repo.get(session_id, user_id)
+        if not session:
+            raise SessionNotFoundError(f"Session {session_id} not found")
+
+        note = self.note_service.get_note_by_session_id(session_id)
+        if note is None:
+            raise NoteNotFoundError(f"Session {session_id} has no note")
+        try:
+            return self.note_service.submit_note_for_export(note.id)
+        except NoteAlreadyFinalizedError:
+            raise
 
     def schedule_session(
         self,
@@ -375,10 +455,21 @@ class SessionService:
             duration_minutes=request.duration_minutes,
             source=request.source.value,
             notes=request.notes,
-            note_type=note_type,
             updated_at=now,
         )
         session = self.session_repo.create(session)
+
+        # Pre-create an empty Note row so the requested ``note_type`` is
+        # remembered until a transcript is uploaded and content generated.
+        # Body fields (content, finalized_at, quality_*) stay NULL until
+        # the generation pipeline runs.
+        self.note_service.create_or_update_for_session(
+            session_id=session.id,
+            patient_id=session.patient_id,
+            note_type=note_type,
+            content=None,
+        )
+
         self._update_next_session_date(patient, user_id)
         return session, patient
 
@@ -474,15 +565,15 @@ class SessionService:
         session_id: str,
         user_id: str,
         request: UploadTranscriptToSessionRequest,
-    ) -> TherapySession:
-        """Upload a transcript to an existing session and trigger SOAP pipeline.
+    ) -> tuple[TherapySession, Note]:
+        """Upload a transcript to an existing session and run note generation.
 
-        Returns the updated session.
+        Returns ``(session, note)``.
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
             InvalidSessionStatusError: If session is not in recording_complete status.
-            SOAPGenerationFailedError: If SOAP generation fails.
+            SOAPGenerationFailedError: If note generation fails.
         """
         session = self.session_repo.get(session_id, user_id)
         if not session:
@@ -494,7 +585,6 @@ class SessionService:
         # Store the transcript
         session.transcript = Transcript(format=request.format, content=request.content)
 
-        # Transition to queued → processing → pending_review (same as upload_session)
         session.status = SessionStatus.QUEUED
         session.updated_at = _now()
         session = self.session_repo.update(session)
@@ -507,25 +597,25 @@ class SessionService:
         if not patient:
             raise PatientNotFoundError(f"Patient {session.patient_id} not found")
 
+        # Pick note_type from any pre-existing Note row (e.g. set at
+        # schedule time). Fall back to the default if absent.
+        existing_note = self.note_service.get_note_by_session_id(session.id)
+        note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
+
         try:
-            logger.info("Starting SOAP generation for session %s", session.id)
+            logger.info("Starting note generation for session %s", session.id)
+            note = self._generate_and_persist_note(session, patient, note_type)
+            logger.info("Note generation completed for session %s", session.id)
 
-            result = self.note_service.generate_note(
-                "soap", session.transcript, patient, session.session_date
-            )
-
-            logger.info("SOAP generation completed for session %s", session.id)
-
-            session.soap_note = result.soap_note
             session.status = SessionStatus.PENDING_REVIEW
             session.processing_completed_at = _now()
             session = self.session_repo.update(session)
 
         except Exception as e:
-            logger.exception("SOAP generation failed for session %s", session.id)
+            logger.exception("Note generation failed for session %s", session.id)
             session.status = SessionStatus.FAILED
             session.error = "SOAP generation failed"
             self.session_repo.update(session)
             raise SOAPGenerationFailedError from e
 
-        return session
+        return session, note

@@ -19,6 +19,7 @@ from ..auth.service import TenantContext, get_tenant_context, require_baa_accept
 from ..models import (
     AuditAction,
     FinalizeSessionRequest,
+    NoteResponse,
     PatientSummary,
     ScheduleSessionRequest,
     SessionListResponse,
@@ -33,9 +34,14 @@ from ..models import (
     UploadTranscriptToSessionRequest,
     User,
 )
+from ..models.note import Note
 from ..repositories import (
+    NotesRepository,
     PatientRepository,
     TherapySessionRepository,
+)
+from ..repositories import (
+    get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -49,6 +55,7 @@ from ..services import (
     InvalidStatusTransitionError,
     MeetingTranscriptionNoteService,
     NoteGenerationService,
+    NoteService,
     PatientNotFoundError,
     SessionAlreadyInStatusError,
     SessionInTerminalStatusError,
@@ -86,9 +93,23 @@ def get_session_repository(
     return _session_repo_factory()
 
 
+def get_notes_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> NotesRepository:
+    """Get notes repository scoped to the tenant's database."""
+    return _notes_repo_factory()
+
+
 def get_note_generation_service() -> NoteGenerationService:
     """Get note generation service instance."""
     return MeetingTranscriptionNoteService()
+
+
+def get_note_service(
+    notes_repo: NotesRepository = Depends(get_notes_repository),
+) -> NoteService:
+    """Get note service instance."""
+    return NoteService(notes_repo)
 
 
 def _build_eval_export_service() -> "EvalExportService | None":
@@ -109,10 +130,21 @@ def _build_eval_export_service() -> "EvalExportService | None":
 def get_session_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
-    note_service: NoteGenerationService = Depends(get_note_generation_service),
+    note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
+    note_service: NoteService = Depends(get_note_service),
 ) -> SessionService:
     """Get session service instance with all dependencies."""
-    return SessionService(session_repo, patient_repo, note_service, _build_eval_export_service())
+    return SessionService(
+        session_repo,
+        patient_repo,
+        note_generation_service,
+        note_service,
+        _build_eval_export_service(),
+    )
+
+
+def _embed_note(note: Note | None) -> NoteResponse | None:
+    return NoteResponse.from_note(note) if note is not None else None
 
 
 @router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_201_CREATED)
@@ -132,13 +164,13 @@ def upload_session(
     - **transcript**: Transcript data (format and content)
     """
     try:
-        session, patient = session_service.upload_session(patient_id, user.id, request)
+        session, patient, note = session_service.upload_session(patient_id, user.id, request)
     except PatientNotFoundError as e:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from e
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
-    return SessionResponse.from_session(session, patient.display_name)
+    return SessionResponse.from_session(session, patient.display_name, _embed_note(note))
 
 
 @router.get("/api/sessions")
@@ -149,6 +181,7 @@ def list_sessions(
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    notes_repo: NotesRepository = Depends(get_notes_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionListResponse:
     """
@@ -168,7 +201,13 @@ def list_sessions(
     for s in sessions:
         patient = patients.get(s.patient_id)
         patient_name = patient.display_name if patient else "Unknown"
-        session_responses.append(SessionResponse.from_session(s, patient_name))
+        session_responses.append(
+            SessionResponse.from_session(
+                s,
+                patient_name,
+                _embed_note(notes_repo.get_by_session_id(s.id)),
+            )
+        )
 
     audit.log_session_list(user, request, total)
 
@@ -239,6 +278,7 @@ def get_session(
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    notes_repo: NotesRepository = Depends(get_notes_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """
@@ -246,7 +286,8 @@ def get_session(
 
     - **session_id**: The session's unique identifier
 
-    Returns the session if found and belongs to the current user.
+    Returns the session if found and belongs to the current user, with
+    the associated note (if any) embedded under ``note``.
     """
     session = session_repo.get(session_id, user.id)
 
@@ -255,10 +296,11 @@ def get_session(
 
     patient = patient_repo.get(session.patient_id, user.id)
     patient_name = patient.display_name if patient else "Unknown"
+    note = notes_repo.get_by_session_id(session.id)
 
     audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
 
-    return SessionResponse.from_session(session, patient_name)
+    return SessionResponse.from_session(session, patient_name, _embed_note(note))
 
 
 @router.patch("/api/sessions/{session_id}/finalize")
@@ -282,7 +324,7 @@ def finalize_session(
     Sets status to "finalized" and records finalized_at timestamp.
     """
     try:
-        session, patient = session_service.finalize_session(session_id, user.id, request)
+        session, patient, note = session_service.finalize_session(session_id, user.id, request)
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found", {"session_id": session_id}) from e
     except InvalidSessionStatusError as e:
@@ -303,7 +345,7 @@ def finalize_session(
         changes={"quality_rating": request.quality_rating},
     )
 
-    return SessionResponse.from_session(session, patient_name)
+    return SessionResponse.from_session(session, patient_name, _embed_note(note))
 
 
 @router.patch("/api/sessions/{session_id}/rating")
@@ -326,7 +368,9 @@ def update_session_rating(
     Allows therapist to update rating after finalization.
     """
     try:
-        session, patient, old_rating = session_service.update_rating(session_id, user.id, request)
+        session, patient, note, old_rating = session_service.update_rating(
+            session_id, user.id, request
+        )
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found", {"session_id": session_id}) from e
     except InvalidSessionStatusError as e:
@@ -347,7 +391,7 @@ def update_session_rating(
         changes={"quality_rating": {"old": old_rating, "new": request.quality_rating}},
     )
 
-    return SessionResponse.from_session(session, patient_name)
+    return SessionResponse.from_session(session, patient_name, _embed_note(note))
 
 
 # --- Companion scheduling endpoints ---
@@ -454,7 +498,9 @@ def upload_transcript_to_session(
 ) -> dict[str, str]:
     """Upload a transcript to an existing session and trigger SOAP pipeline."""
     try:
-        session = session_service.upload_transcript_to_session(session_id, user.id, request)
+        session, _note = session_service.upload_transcript_to_session(
+            session_id, user.id, request
+        )
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found") from e
     except InvalidSessionStatusError as e:

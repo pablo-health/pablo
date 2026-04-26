@@ -26,6 +26,7 @@ from .ehr_route import (
 )
 from .enums import EhrAction, EhrSystem
 from .note import Note
+from .notes import FinalizeNoteRequest, NoteResponse, UpdateNoteEditsRequest
 from .patient import (
     CreatePatientRequest,
     DeletePatientResponse,
@@ -117,11 +118,13 @@ __all__ = [
     "EhrRouteStepResponse",
     "EhrSystem",
     "ExportFormat",
+    "FinalizeNoteRequest",
     "FinalizeSessionRequest",
     "FreeSlotsResponse",
     "GoalNavigationRequest",
     "GoalNavigationResponse",
     "Note",
+    "NoteResponse",
     "ObjectiveNote",
     "Patient",
     "PatientExportData",
@@ -155,6 +158,7 @@ __all__ = [
     "UpdateAppointmentRequest",
     "UpdateAvailabilityRuleRequest",
     "UpdateEhrRouteStepRequest",
+    "UpdateNoteEditsRequest",
     "UpdatePatientRequest",
     "UpdateSessionMetadataRequest",
     "UpdateSessionRatingRequest",

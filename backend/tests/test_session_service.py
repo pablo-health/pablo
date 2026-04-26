@@ -20,8 +20,13 @@ from app.models import (
 from app.models.session import SOAPNote
 from app.models.soap_note import SOAPNoteModel
 from app.models.transcript import TranscriptModel
-from app.repositories import InMemoryPatientRepository, InMemoryTherapySessionRepository
+from app.repositories import (
+    InMemoryNotesRepository,
+    InMemoryPatientRepository,
+    InMemoryTherapySessionRepository,
+)
 from app.services.note_generation_service import GeneratedNote, NoteGenerationService
+from app.services.note_service import NoteService
 from app.services.session_service import (
     InvalidSessionStatusError,
     PatientNotFoundError,
@@ -44,7 +49,17 @@ def patient_repo(
 
 
 @pytest.fixture
-def mock_note_service() -> Mock:
+def notes_repo() -> InMemoryNotesRepository:
+    return InMemoryNotesRepository()
+
+
+@pytest.fixture
+def note_service(notes_repo: InMemoryNotesRepository) -> NoteService:
+    return NoteService(notes_repo)
+
+
+@pytest.fixture
+def mock_note_generation_service() -> Mock:
     service = Mock(spec=NoteGenerationService)
     soap_note = SOAPNote.from_dict(
         {
@@ -87,17 +102,24 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
 def service(
     session_repo: InMemoryTherapySessionRepository,
     patient_repo: InMemoryPatientRepository,
-    mock_note_service: Mock,
+    mock_note_generation_service: Mock,
+    note_service: NoteService,
 ) -> SessionService:
-    return SessionService(session_repo, patient_repo, mock_note_service)
+    return SessionService(
+        session_repo,
+        patient_repo,
+        mock_note_generation_service,
+        note_service,
+    )
 
 
 def _make_pending_session(
     session_repo: InMemoryTherapySessionRepository,
+    note_service: NoteService,
     user_id: str,
     patient_id: str,
 ) -> TherapySession:
-    """Helper to create a session in pending_review status."""
+    """Helper to create a session in pending_review status with a Note."""
     session = TherapySession(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -107,25 +129,24 @@ def _make_pending_session(
         status=SessionStatus.PENDING_REVIEW,
         transcript=Transcript(format="txt", content="Test content"),
         created_at=datetime.now(UTC),
-        soap_note=SOAPNote.from_dict(
-            {
-                "subjective": "S",
-                "objective": "O",
-                "assessment": "A",
-                "plan": "P",
-            }
-        ),
     )
     session_repo.create(session)
+    note_service.create_or_update_for_session(
+        session_id=session.id,
+        patient_id=patient_id,
+        note_type="soap",
+        content={"subjective": "S", "objective": "O", "assessment": "A", "plan": "P"},
+    )
     return session
 
 
 def _make_finalized_session(
     session_repo: InMemoryTherapySessionRepository,
+    note_service: NoteService,
     user_id: str,
     patient_id: str,
 ) -> TherapySession:
-    """Helper to create a session in finalized status."""
+    """Helper to create a session in finalized status with a finalized Note."""
     session = TherapySession(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -135,18 +156,15 @@ def _make_finalized_session(
         status=SessionStatus.FINALIZED,
         transcript=Transcript(format="txt", content="Test content"),
         created_at=datetime.now(UTC),
-        soap_note=SOAPNote.from_dict(
-            {
-                "subjective": "S",
-                "objective": "O",
-                "assessment": "A",
-                "plan": "P",
-            }
-        ),
-        quality_rating=5,
-        finalized_at=datetime.now(UTC),
     )
     session_repo.create(session)
+    note = note_service.create_or_update_for_session(
+        session_id=session.id,
+        patient_id=patient_id,
+        note_type="soap",
+        content={"subjective": "S", "objective": "O", "assessment": "A", "plan": "P"},
+    )
+    note_service.finalize_note(note.id, quality_rating=5)
     return session
 
 
@@ -156,6 +174,7 @@ class TestUploadSession:
         service: SessionService,
         patient: Patient,
         user_id: str,
+        notes_repo: InMemoryNotesRepository,
     ) -> None:
         request = UploadSessionRequest(
             patient_id=patient.id,
@@ -163,14 +182,19 @@ class TestUploadSession:
             transcript=TranscriptModel(format=TranscriptFormat.TXT, content="Test transcript"),
         )
 
-        session, returned_patient = service.upload_session(patient.id, user_id, request)
+        session, returned_patient, note = service.upload_session(patient.id, user_id, request)
 
         assert session.status == SessionStatus.PENDING_REVIEW
-        assert session.soap_note is not None
         assert session.patient_id == patient.id
         assert session.user_id == user_id
         assert returned_patient.session_count == 1
         assert returned_patient.last_session_date == datetime(2026, 1, 15, 10, 0, tzinfo=UTC)
+        # Note row was created with content from the generation pipeline.
+        assert note.session_id == session.id
+        assert note.patient_id == patient.id
+        assert note.content is not None
+        # And it's findable through the repository by session_id.
+        assert notes_repo.get_by_session_id(session.id) is not None
 
     def test_patient_not_found(
         self,
@@ -191,10 +215,10 @@ class TestUploadSession:
         service: SessionService,
         patient: Patient,
         user_id: str,
-        mock_note_service: Mock,
+        mock_note_generation_service: Mock,
         session_repo: InMemoryTherapySessionRepository,
     ) -> None:
-        mock_note_service.generate_note.side_effect = RuntimeError("LLM error")
+        mock_note_generation_service.generate_note.side_effect = RuntimeError("LLM error")
 
         request = UploadSessionRequest(
             patient_id=patient.id,
@@ -238,15 +262,18 @@ class TestFinalizeSession:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_pending_session(session_repo, user_id, patient.id)
+        session = _make_pending_session(session_repo, note_service, user_id, patient.id)
 
         request = FinalizeSessionRequest(quality_rating=5)
-        result_session, _result_patient = service.finalize_session(session.id, user_id, request)
+        result_session, _result_patient, result_note = service.finalize_session(
+            session.id, user_id, request
+        )
 
         assert result_session.status == SessionStatus.FINALIZED
-        assert result_session.quality_rating == 5
-        assert result_session.finalized_at is not None
+        assert result_note.quality_rating == 5
+        assert result_note.finalized_at is not None
 
     def test_session_not_found(
         self,
@@ -264,8 +291,9 @@ class TestFinalizeSession:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_finalized_session(session_repo, user_id, patient.id)
+        session = _make_finalized_session(session_repo, note_service, user_id, patient.id)
 
         request = FinalizeSessionRequest(quality_rating=5)
 
@@ -280,17 +308,18 @@ class TestFinalizeSession:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_pending_session(session_repo, user_id, patient.id)
+        session = _make_pending_session(session_repo, note_service, user_id, patient.id)
 
         request = FinalizeSessionRequest(
             quality_rating=2,
             quality_rating_reason="Needs improvement",
         )
-        result, _ = service.finalize_session(session.id, user_id, request)
+        _, _, note = service.finalize_session(session.id, user_id, request)
 
-        assert result.quality_rating == 2
-        assert result.quality_rating_reason == "Needs improvement"
+        assert note.quality_rating == 2
+        assert note.quality_rating_reason == "Needs improvement"
 
     def test_edited_soap_note_saved(
         self,
@@ -298,8 +327,9 @@ class TestFinalizeSession:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_pending_session(session_repo, user_id, patient.id)
+        session = _make_pending_session(session_repo, note_service, user_id, patient.id)
 
         request = FinalizeSessionRequest(
             quality_rating=5,
@@ -310,9 +340,10 @@ class TestFinalizeSession:
                 plan="Edited P",
             ),
         )
-        result, _ = service.finalize_session(session.id, user_id, request)
+        _, _, note = service.finalize_session(session.id, user_id, request)
 
-        assert result.soap_note_edited is not None
+        assert note.content_edited is not None
+        assert note.content_edited["subjective"] == "Edited S"
 
 
 class TestUpdateRating:
@@ -322,16 +353,17 @@ class TestUpdateRating:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_finalized_session(session_repo, user_id, patient.id)
+        session = _make_finalized_session(session_repo, note_service, user_id, patient.id)
 
         request = UpdateSessionRatingRequest(
             quality_rating=3,
             quality_rating_reason="Reassessed quality",
         )
-        result, _, old_rating = service.update_rating(session.id, user_id, request)
+        _, _, note, old_rating = service.update_rating(session.id, user_id, request)
 
-        assert result.quality_rating == 3
+        assert note.quality_rating == 3
         assert old_rating == 5
 
     def test_session_not_found(
@@ -350,8 +382,9 @@ class TestUpdateRating:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_pending_session(session_repo, user_id, patient.id)
+        session = _make_pending_session(session_repo, note_service, user_id, patient.id)
 
         request = UpdateSessionRatingRequest(quality_rating=4)
 
@@ -364,14 +397,15 @@ class TestUpdateRating:
         patient: Patient,
         user_id: str,
         session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
     ) -> None:
-        session = _make_finalized_session(session_repo, user_id, patient.id)
+        session = _make_finalized_session(session_repo, note_service, user_id, patient.id)
 
         request = UpdateSessionRatingRequest(
             quality_rating=1,
             quality_rating_reason="Reconsidered quality",
         )
-        result, _, old_rating = service.update_rating(session.id, user_id, request)
+        _, _, note, old_rating = service.update_rating(session.id, user_id, request)
 
-        assert result.quality_rating == 1
+        assert note.quality_rating == 1
         assert old_rating == 5

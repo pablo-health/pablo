@@ -27,8 +27,12 @@ from ..models import (
     User,
 )
 from ..repositories import (
+    NotesRepository,
     PatientRepository,
     TherapySessionRepository,
+)
+from ..repositories import (
+    get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -66,12 +70,20 @@ def get_therapy_session_repository(
     return _session_repo_factory()
 
 
+def get_notes_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> NotesRepository:
+    """Get notes repository scoped to the tenant's database."""
+    return _notes_repo_factory()
+
+
 def get_export_service(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     session_repo: TherapySessionRepository = Depends(get_therapy_session_repository),
+    notes_repo: NotesRepository = Depends(get_notes_repository),
 ) -> ExportService:
     """Get export service instance."""
-    return ExportService(patient_repo, session_repo)
+    return ExportService(patient_repo, session_repo, notes_repo)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

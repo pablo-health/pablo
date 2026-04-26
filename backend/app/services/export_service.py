@@ -19,19 +19,34 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from ..models import PatientResponse, TherapySession
-from ..repositories import PatientRepository, TherapySessionRepository
+from ..models import Note, PatientResponse, TherapySession
+from ..models.session import SOAPNote
+from ..repositories import NotesRepository, PatientRepository, TherapySessionRepository
+
+
+def _coerce_soap_note(content: dict[str, Any] | None) -> SOAPNote | None:
+    """Build a SOAPNote dataclass from JSONB content, if shaped as SOAP."""
+    if not content:
+        return None
+    try:
+        return SOAPNote.from_dict(content)
+    except (KeyError, TypeError, AttributeError):
+        return None
 
 
 class ExportService:
     """Service for exporting patient data in various formats."""
 
     def __init__(
-        self, patient_repo: PatientRepository, session_repo: TherapySessionRepository
+        self,
+        patient_repo: PatientRepository,
+        session_repo: TherapySessionRepository,
+        notes_repo: NotesRepository,
     ) -> None:
         """Initialize export service with repositories."""
         self.patient_repo = patient_repo
         self.session_repo = session_repo
+        self.notes_repo = notes_repo
 
     def get_patient_export_data(
         self, patient_id: str, user_id: str, export_format: str
@@ -57,31 +72,47 @@ class ExportService:
 
         # Get all sessions for this patient
         sessions = self.session_repo.list_by_patient(patient_id, user_id)
+        notes_by_session = {
+            s.id: self.notes_repo.get_by_session_id(s.id) for s in sessions
+        }
 
         # Convert to response format
         patient_response = PatientResponse.from_patient(patient)
         exported_at = datetime.now(UTC).isoformat()
 
         if export_format == "json":
-            return self._export_as_json(patient_response, sessions, exported_at)
+            return self._export_as_json(
+                patient_response, sessions, notes_by_session, exported_at
+            )
         elif export_format == "pdf":
-            return self._export_as_pdf(patient_response, sessions, exported_at)
+            return self._export_as_pdf(
+                patient_response, sessions, notes_by_session, exported_at
+            )
         else:
             raise ValueError(f"Unsupported export format: {export_format}")
 
     def _export_as_json(
-        self, patient: PatientResponse, sessions: list[TherapySession], exported_at: str
+        self,
+        patient: PatientResponse,
+        sessions: list[TherapySession],
+        notes_by_session: dict[str, Note | None],
+        exported_at: str,
     ) -> dict[str, Any]:
         """Export patient data as JSON."""
         return {
             "patient": patient.model_dump(),
-            "sessions": [self._session_to_export_dict(s) for s in sessions],
+            "sessions": [
+                self._session_to_export_dict(s, notes_by_session.get(s.id)) for s in sessions
+            ],
             "exported_at": exported_at,
             "export_format": "json",
         }
 
-    def _session_to_export_dict(self, session: TherapySession) -> dict[str, Any]:
-        """Convert TherapySession dataclass to export dictionary with all relevant fields."""
+    def _session_to_export_dict(
+        self, session: TherapySession, note: Note | None
+    ) -> dict[str, Any]:
+        """Convert TherapySession + linked note to export dictionary."""
+        final_content = (note.content_edited or note.content) if note else None
         return {
             "id": session.id,
             "session_date": session.session_date,
@@ -91,20 +122,20 @@ class ExportService:
                 "format": session.transcript.format,
                 "content": session.transcript.content,
             },
-            "soap_note": (session.soap_note.to_dict() if session.soap_note else None),
-            "soap_note_edited": (
-                session.soap_note_edited.to_dict() if session.soap_note_edited else None
-            ),
-            "final_soap_note": (
-                session.final_soap_note.to_dict() if session.final_soap_note else None
-            ),
-            "was_edited": session.was_edited,
+            "soap_note": note.content if note else None,
+            "soap_note_edited": note.content_edited if note else None,
+            "final_soap_note": final_content,
+            "was_edited": bool(note and note.content_edited),
             "created_at": session.created_at,
-            "finalized_at": session.finalized_at,
+            "finalized_at": note.finalized_at if note else None,
         }
 
     def _export_as_pdf(
-        self, patient: PatientResponse, sessions: list[TherapySession], exported_at: str
+        self,
+        patient: PatientResponse,
+        sessions: list[TherapySession],
+        notes_by_session: dict[str, Note | None],
+        exported_at: str,
     ) -> dict[str, Any]:
         """Export patient data as PDF."""
         buffer = BytesIO()
@@ -224,11 +255,16 @@ class ExportService:
                 story.append(Spacer(1, 0.15 * inch))
 
                 # SOAP Note
-                if session.final_soap_note:
-                    narrative = session.final_soap_note.to_narrative()
+                note = notes_by_session.get(session.id)
+                final_soap_note = _coerce_soap_note(
+                    (note.content_edited or note.content) if note else None
+                )
+                if final_soap_note:
+                    narrative = final_soap_note.to_narrative()
+                    was_edited = bool(note and note.content_edited)
                     soap_note_label = (
                         "SOAP Note (Edited by Therapist)"
-                        if session.was_edited
+                        if was_edited
                         else "SOAP Note (AI Generated)"
                     )
                     story.append(Paragraph(soap_note_label, styles["Heading4"]))

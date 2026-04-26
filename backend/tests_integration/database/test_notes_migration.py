@@ -1,13 +1,13 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Migration test for ``b9d2f7c4e3a8`` — create notes table + backfill.
+"""Migration tests for the notes/sessions split (pa-0nx.1 + pa-0nx.2).
 
-What this test proves that unit tests can't:
-  - the migration applies cleanly on top of the prior head
-  - the partial unique index on ``session_id`` exists
-  - the backfill copies one row per ``therapy_sessions`` row that has
-    a non-empty ``note_content`` (and skips empty ones)
-  - all backfilled fields land in the right columns
+What these tests prove that unit tests can't:
+  - the notes table + indexes exist after upgrade-to-head
+  - the partial unique index on ``session_id`` permits multiple NULL
+    standalone notes
+  - pa-0nx.2's migration ``c8a9d3e4f206`` drops the legacy note columns
+    from ``therapy_sessions`` while preserving rows in ``notes``
 
 Skipped automatically when no Postgres is configured — see
 ``DATABASE_URL`` / ``DATABASE_BACKEND`` env. Run via:
@@ -72,26 +72,29 @@ def pg_session(engine: Engine) -> Iterator[Session]:
         session.close()
 
 
-def _insert_session(
+def _insert_session_recording_only(
     session: Session,
     *,
     session_id: str,
     patient_id: str = "patient-mig",
-    note_content: dict | None = None,
 ) -> None:
+    """Insert a recording-only therapy_sessions row (post-pa-0nx.2 schema).
+
+    The legacy note columns (note_content, finalized_at, quality_rating,
+    export_*, etc.) were dropped in c8a9d3e4f206; note state lives on
+    ``notes`` now.
+    """
     now = datetime.now(UTC)
     session.execute(
         text(
             """
             INSERT INTO practice.therapy_sessions (
                 id, user_id, patient_id, session_date, session_number,
-                status, transcript, created_at, note_type, note_content,
-                export_status
+                status, transcript, created_at
             )
             VALUES (
                 :id, :uid, :pid, :sd, 1, 'finalized',
-                CAST(:tr AS jsonb), :now, 'soap',
-                CAST(:nc AS jsonb), 'not_queued'
+                CAST(:tr AS jsonb), :now
             )
             """
         ),
@@ -102,7 +105,38 @@ def _insert_session(
             "sd": now,
             "tr": '{"format": "text", "content": "x"}',
             "now": now,
-            "nc": None if note_content is None else json.dumps(note_content),
+        },
+    )
+
+
+def _insert_note(
+    session: Session,
+    *,
+    note_id: str,
+    session_id: str | None,
+    patient_id: str = "patient-mig",
+    content: dict | None = None,
+) -> None:
+    now = datetime.now(UTC)
+    session.execute(
+        text(
+            """
+            INSERT INTO practice.notes (
+                id, patient_id, session_id, note_type, content,
+                created_at, updated_at, export_status
+            )
+            VALUES (
+                :id, :pid, :sid, 'soap', CAST(:c AS jsonb),
+                :now, :now, 'not_queued'
+            )
+            """
+        ),
+        {
+            "id": note_id,
+            "pid": patient_id,
+            "sid": session_id,
+            "c": json.dumps(content) if content is not None else None,
+            "now": now,
         },
     )
 
@@ -174,45 +208,64 @@ def test_partial_unique_index_allows_multiple_null_session_ids(
     pg_session.commit()
 
 
-def test_backfill_skips_sessions_with_no_note_content(pg_session: Session) -> None:
-    """A row in therapy_sessions with NULL note_content gets no note row.
+def test_drop_legacy_note_columns_from_therapy_sessions(pg_session: Session) -> None:
+    """pa-0nx.2 migration ``c8a9d3e4f206`` drops legacy note columns.
 
-    The migration ran during the engine fixture; this test seeds rows
-    AFTER the migration to verify the backfill rule itself, since the
-    test isolation truncates both tables. We re-run the backfill SQL by
-    re-executing the same logic as the migration.
+    Asserts that, after upgrade-to-head, ``therapy_sessions`` no longer
+    carries any of the soap/quality/export columns — those now live on
+    ``notes``.
     """
-    _insert_session(pg_session, session_id="sess-empty", note_content=None)
-    _insert_session(
-        pg_session,
-        session_id="sess-with-note",
-        note_content={"subjective": "S"},
-    )
-    pg_session.commit()
-
-    pg_session.execute(
-        text(
-            """
-            INSERT INTO practice.notes (
-                id, patient_id, session_id, note_type, content,
-                created_at, updated_at, export_status
+    cols = {
+        row[0]
+        for row in pg_session.execute(
+            text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'practice' AND table_name = 'therapy_sessions'"
             )
-            SELECT
-                ts.id, ts.patient_id, ts.id, COALESCE(ts.note_type, 'soap'),
-                ts.note_content, ts.created_at,
-                COALESCE(ts.updated_at, ts.created_at),
-                COALESCE(ts.export_status, 'not_queued')
-            FROM practice.therapy_sessions AS ts
-            WHERE ts.note_content IS NOT NULL
-              AND ts.note_content::text <> '{}'::text
-            ON CONFLICT (id) DO NOTHING
-            """
-        )
+        ).all()
+    }
+    legacy = {
+        "note_type",
+        "note_content",
+        "note_content_edited",
+        "quality_rating",
+        "quality_rating_reason",
+        "quality_rating_sections",
+        "finalized_at",
+        "redacted_soap_note",
+        "naturalized_soap_note",
+        "export_status",
+        "export_queued_at",
+        "export_reviewed_at",
+        "export_reviewed_by",
+        "exported_at",
+    }
+    assert cols.isdisjoint(legacy), (
+        f"therapy_sessions still has legacy columns after pa-0nx.2: "
+        f"{sorted(cols & legacy)}"
+    )
+
+    # Recording-only columns survive.
+    assert {"id", "transcript", "status", "session_date"}.issubset(cols)
+
+
+def test_drop_migration_preserves_existing_note_rows(pg_session: Session) -> None:
+    """Notes seeded before the drop migration survive — only the
+    therapy_sessions schema changed, not the notes data."""
+    note_id = str(uuid.uuid4())
+    sid = str(uuid.uuid4())
+    _insert_session_recording_only(pg_session, session_id=sid)
+    _insert_note(
+        pg_session,
+        note_id=note_id,
+        session_id=sid,
+        content={"subjective": "S"},
     )
     pg_session.commit()
 
-    rows = pg_session.execute(
-        text("SELECT session_id, content FROM practice.notes ORDER BY session_id")
-    ).all()
-    assert [r[0] for r in rows] == ["sess-with-note"]
-    assert rows[0][1] == {"subjective": "S"}
+    row = pg_session.execute(
+        text("SELECT session_id, content FROM practice.notes WHERE id = :id"),
+        {"id": note_id},
+    ).one()
+    assert row[0] == sid
+    assert row[1] == {"subjective": "S"}

@@ -81,35 +81,14 @@ class TherapySessionRow(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     audio_gcs_path: Mapped[str | None] = mapped_column(Text)
-    # Note-type registry key (soap, dap, birp, narrative, meeting, ...).
-    # Picks the schema/prompt used to render note_content.
-    note_type: Mapped[str] = mapped_column(
-        String(30), nullable=False, server_default="soap", default="soap"
-    )
-    # Generated + clinician-edited notes stored as JSONB. Shape varies by
-    # note_type; the registry owns validation.
-    note_content: Mapped[dict | None] = mapped_column(JSONB)
-    note_content_edited: Mapped[dict | None] = mapped_column(JSONB)
-    quality_rating: Mapped[int | None] = mapped_column(Integer)
-    quality_rating_reason: Mapped[str | None] = mapped_column(Text)
-    quality_rating_sections: Mapped[list | None] = mapped_column(JSONB)
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processing_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
     # AssemblyAI transcript IDs for Cloud Task polling
     transcription_job_metadata: Mapped[dict | None] = mapped_column(JSONB)
-    # PII-redacted versions
+    # PII-redacted transcript variants (note-side variants live on NoteRow).
     redacted_transcript: Mapped[str | None] = mapped_column(Text)
     naturalized_transcript: Mapped[str | None] = mapped_column(Text)
-    redacted_soap_note: Mapped[dict | None] = mapped_column(JSONB)
-    naturalized_soap_note: Mapped[dict | None] = mapped_column(JSONB)
-    # Export tracking
-    export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
-    export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    export_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    export_reviewed_by: Mapped[str | None] = mapped_column(String(128))
-    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class NoteRow(Base):

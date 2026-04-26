@@ -48,7 +48,6 @@ def _session() -> TherapySession:
         duration_minutes=50,
         session_type="individual",
         source="companion",
-        note_type="soap",
     )
 
 

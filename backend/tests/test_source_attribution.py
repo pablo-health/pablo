@@ -11,6 +11,8 @@ os.environ["ENVIRONMENT"] = "development"
 
 from app.models import (
     AssessmentNote,
+    Note,
+    NoteResponse,
     ObjectiveNote,
     PlanNote,
     SOAPNote,
@@ -619,8 +621,10 @@ class TestParseSegmentIds:
 # --- SessionResponse integration ---
 
 
-class TestSessionResponseWithSources:
-    """Test that SessionResponse.from_session includes structured SOAP + segments."""
+class TestSessionResponseWithEmbeddedNote:
+    """SessionResponse embeds the Note via ``note=``; ``transcript_segments``
+    is populated when the embedded note carries content (so frontend source
+    linking still works)."""
 
     def _make_session(self) -> Any:
         return TherapySession(
@@ -635,35 +639,43 @@ class TestSessionResponseWithSources:
                 content=("[00:01] Therapist: How are you?\n[00:06] Client: Better this week.\n"),
             ),
             created_at=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
-            soap_note=SOAPNote(
-                subjective=SubjectiveNote(
-                    chief_complaint=SOAPSentence(text="Feeling better.", source_segment_ids=[1]),
-                ),
-            ),
         )
 
-    def test_response_includes_structured_soap(self) -> None:
-        session = self._make_session()
-        resp = SessionResponse.from_session(session, "Jane Doe")
-        assert resp.soap_note_structured is not None
-        assert resp.soap_note_structured.subjective.chief_complaint.text == "Feeling better."
-        assert resp.soap_note_structured.subjective.chief_complaint.source_segment_ids == [1]
+    def _make_note_response(self) -> Any:
+        soap = SOAPNote(
+            subjective=SubjectiveNote(
+                chief_complaint=SOAPSentence(text="Feeling better.", source_segment_ids=[1]),
+            ),
+        )
+        return NoteResponse.from_note(
+            Note(
+                id="note-1",
+                patient_id="p1",
+                session_id="sess-1",
+                note_type="soap",
+                content=soap.to_dict(),
+                created_at=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+                updated_at=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+            )
+        )
 
-    def test_response_includes_narrative(self) -> None:
+    def test_response_embeds_note(self) -> None:
         session = self._make_session()
-        resp = SessionResponse.from_session(session, "Jane Doe")
-        assert resp.soap_note is not None
-        assert "Feeling better." in resp.soap_note.subjective
+        note = self._make_note_response()
+        resp = SessionResponse.from_session(session, "Jane Doe", note)
+        assert resp.note is not None
+        assert resp.note.id == "note-1"
+        assert resp.note.content is not None
 
-    def test_response_includes_transcript_segments(self) -> None:
+    def test_response_includes_transcript_segments_when_note_has_content(self) -> None:
         session = self._make_session()
-        resp = SessionResponse.from_session(session, "Jane Doe")
+        resp = SessionResponse.from_session(session, "Jane Doe", self._make_note_response())
         assert resp.transcript_segments is not None
         assert len(resp.transcript_segments) == 2
         assert resp.transcript_segments[0].speaker == "Therapist"
         assert resp.transcript_segments[1].speaker == "Client"
 
-    def test_response_no_soap_no_structured(self) -> None:
+    def test_response_no_note_no_segments(self) -> None:
         session = TherapySession(
             id="sess-2",
             user_id="u1",
@@ -675,5 +687,5 @@ class TestSessionResponseWithSources:
             created_at=datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
         )
         resp = SessionResponse.from_session(session, "Jane Doe")
-        assert resp.soap_note_structured is None
+        assert resp.note is None
         assert resp.transcript_segments is None
