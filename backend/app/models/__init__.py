@@ -26,7 +26,12 @@ from .ehr_route import (
 )
 from .enums import EhrAction, EhrSystem
 from .note import Note
-from .notes import FinalizeNoteRequest, NoteResponse, UpdateNoteEditsRequest
+from .notes import (
+    CreateStandaloneNoteRequest,
+    FinalizeNoteRequest,
+    NoteResponse,
+    UpdateNoteEditsRequest,
+)
 from .patient import (
     CreatePatientRequest,
     DeletePatientResponse,
@@ -108,6 +113,7 @@ __all__ = [
     "CreateAvailabilityRuleRequest",
     "CreatePatientRequest",
     "CreateRecurringAppointmentRequest",
+    "CreateStandaloneNoteRequest",
     "DeletePatientResponse",
     "EditSeriesRequest",
     "EhrAction",

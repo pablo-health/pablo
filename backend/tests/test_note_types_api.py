@@ -24,12 +24,17 @@ def _registry_with(*definitions: NoteTypeDefinition) -> NoteTypeRegistry:
     return registry
 
 
-def _sample_type(key: str = "sample") -> NoteTypeDefinition:
+def _sample_type(
+    key: str = "sample",
+    *,
+    context: str = "session",
+) -> NoteTypeDefinition:
     return NoteTypeDefinition(
         key=key,
         label=key.upper(),
         description=f"Sample {key}",
         tier="core",
+        context=context,  # type: ignore[arg-type]
         sections=(
             NoteSectionDef(
                 key="only",
@@ -77,6 +82,42 @@ class TestListNoteTypes:
 
         assert response.status_code == 200
         assert response.json() == {"note_types": []}
+
+    def test_context_filter_returns_only_matching_types(self) -> None:
+        registry = _registry_with(
+            _sample_type("alpha", context="session"),
+            _sample_type("zulu", context="session"),
+            _sample_type("safety_plan", context="patient"),
+        )
+        app.dependency_overrides[get_registry] = lambda: registry
+        try:
+            response = TestClient(app).get("/api/note-types?context=session")
+        finally:
+            app.dependency_overrides.pop(get_registry, None)
+
+        assert response.status_code == 200
+        keys = [t["key"] for t in response.json()["note_types"]]
+        assert keys == ["alpha", "zulu"]
+
+    def test_context_filter_excludes_non_session_types(self) -> None:
+        registry = _registry_with(
+            _sample_type("safety_plan", context="patient"),
+        )
+        app.dependency_overrides[get_registry] = lambda: registry
+        try:
+            response = TestClient(app).get("/api/note-types?context=session")
+        finally:
+            app.dependency_overrides.pop(get_registry, None)
+
+        assert response.status_code == 200
+        assert response.json() == {"note_types": []}
+
+    def test_default_session_filter_returns_oss_session_types(self) -> None:
+        response = TestClient(app).get("/api/note-types?context=session")
+
+        assert response.status_code == 200
+        keys = {t["key"] for t in response.json()["note_types"]}
+        assert {"soap", "narrative"} <= keys
 
 
 class TestGetNoteType:

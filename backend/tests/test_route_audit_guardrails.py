@@ -62,7 +62,10 @@ def _iter_route_handlers() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFu
                     continue
                 if not isinstance(dec.func, ast.Attribute):
                     continue
-                if not isinstance(dec.func.value, ast.Name) or dec.func.value.id != "router":
+                if not isinstance(dec.func.value, ast.Name):
+                    continue
+                router_name = dec.func.value.id
+                if router_name != "router" and not router_name.endswith("_router"):
                     continue
                 if dec.func.attr not in HTTP_METHODS:
                     continue
