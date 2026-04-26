@@ -20,6 +20,10 @@ from .ehr_route import (
     EhrRouteRepository,
     InMemoryEhrRouteRepository,
 )
+from .note import (
+    InMemoryNotesRepository,
+    NotesRepository,
+)
 from .patient import (
     InMemoryPatientRepository,
     PatientRepository,
@@ -67,6 +71,13 @@ def get_session_repository() -> TherapySessionRepository:
     from .postgres.session import PostgresTherapySessionRepository
 
     return PostgresTherapySessionRepository(_get_pg_session())
+
+
+def get_notes_repository() -> NotesRepository:
+    """Get notes repository instance."""
+    from .postgres.note import PostgresNotesRepository
+
+    return PostgresNotesRepository(_get_pg_session())
 
 
 def get_ehr_prompt_repository() -> EhrPromptRepository:
@@ -136,9 +147,11 @@ __all__ = [
     "InMemoryAllowlistRepository",
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
+    "InMemoryNotesRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
+    "NotesRepository",
     "PatientRepository",
     "TherapySessionRepository",
     "UserRepository",
@@ -151,6 +164,7 @@ __all__ = [
     "get_google_calendar_token_repository",
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
+    "get_notes_repository",
     "get_patient_repository",
     "get_session_repository",
     "get_user_repository",
