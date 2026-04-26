@@ -57,6 +57,9 @@ from app.routes.ehr_routes import (  # noqa: E402
 from app.routes.notes import (  # noqa: E402
     get_notes_repository as get_notes_route_notes_repository,
 )
+from app.routes.notes import (  # noqa: E402
+    get_patient_repository as get_notes_route_patient_repository,
+)
 from app.routes.patients import (  # noqa: E402
     get_notes_repository as get_patients_notes_repository,
 )
@@ -233,6 +236,7 @@ def client(
     app.dependency_overrides[get_sessions_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_patients_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_notes_repository] = lambda: mock_notes_repo
+    app.dependency_overrides[get_notes_route_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_current_user_id] = lambda: mock_user_id
     app.dependency_overrides[require_mfa] = lambda: {"uid": mock_user_id, "firebase": {}}
     app.dependency_overrides[get_current_user] = lambda: mock_user

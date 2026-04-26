@@ -10,7 +10,7 @@ lives in downstream overlays, not here.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..api_errors import NotFoundError
@@ -96,11 +96,27 @@ def get_registry() -> NoteTypeRegistry:
 
 @router.get("", response_model=NoteTypeListResponse)
 def list_note_types(
+    context: str | None = Query(
+        default=None,
+        description=(
+            "Filter to note types with the given lifecycle context "
+            "('session', 'patient', or 'practice'). Omit to return all."
+        ),
+    ),
     registry: NoteTypeRegistry = Depends(get_registry),
 ) -> NoteTypeListResponse:
-    """Return all registered note types, sorted by key."""
+    """Return registered note types, sorted by key.
+
+    When ``context`` is provided, returns only note types with a matching
+    ``context`` field. An unknown context value returns an empty list
+    rather than an error — callers can probe for support without a
+    branch on the response shape.
+    """
+    definitions = registry.all()
+    if context is not None:
+        definitions = [d for d in definitions if d.context == context]
     return NoteTypeListResponse(
-        note_types=[NoteTypeSchema.from_def(d) for d in registry.all()],
+        note_types=[NoteTypeSchema.from_def(d) for d in definitions],
     )
 
 

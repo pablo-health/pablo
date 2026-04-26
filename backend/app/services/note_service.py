@@ -106,6 +106,32 @@ class NoteService:
         )
         return self._notes.add(note)
 
+    def create_standalone_note(
+        self,
+        *,
+        patient_id: str,
+        note_type: str,
+        content: dict[str, Any] | None = None,
+        content_edited: dict[str, Any] | None = None,
+    ) -> Note:
+        """Persist a patient-owned note that is not bound to a session.
+
+        Used by the standalone-note path (pa-0nx.3): no ``session_id``,
+        and the row may be empty until the clinician fills it via PATCH.
+        """
+        now = utc_now()
+        note = Note(
+            id=str(uuid.uuid4()),
+            patient_id=patient_id,
+            session_id=None,
+            note_type=note_type,
+            content=content,
+            content_edited=content_edited,
+            created_at=now,
+            updated_at=now,
+        )
+        return self._notes.add(note)
+
     # --- Edits ---
 
     def update_note_edits(self, note_id: str, content_edited: dict[str, Any]) -> Note:
