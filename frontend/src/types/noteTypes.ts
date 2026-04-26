@@ -10,6 +10,16 @@
 
 export type NoteFieldKind = "text" | "list" | "structured"
 
+export type NoteTier = "core" | "extension"
+
+/**
+ * Lifecycle context for a note type.
+ * - `session`: bound to one session record (SOAP, Narrative, DAP, BIRP, GIRP)
+ * - `patient`: bound to a patient, versioned (safety plan, intake, treatment plan)
+ * - `practice`: bound to clinic-level workflows (supervision, audits)
+ */
+export type NoteContext = "session" | "patient" | "practice"
+
 export interface NoteFieldSchema {
   key: string
   label: string
@@ -27,7 +37,8 @@ export interface NoteTypeSchema {
   key: string
   label: string
   description: string
-  tier: "core" | "extension"
+  tier: NoteTier
+  context: NoteContext
   sections: NoteSectionSchema[]
 }
 

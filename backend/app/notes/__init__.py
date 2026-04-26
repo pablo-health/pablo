@@ -14,6 +14,7 @@ from .builtin import (
     register_builtin_note_types,
 )
 from .registry import (
+    NoteContext,
     NoteFieldDef,
     NoteFieldKind,
     NoteSectionDef,
@@ -26,6 +27,7 @@ from .registry import (
 __all__ = [
     "NARRATIVE_DEFINITION",
     "SOAP_DEFINITION",
+    "NoteContext",
     "NoteFieldDef",
     "NoteFieldKind",
     "NoteSectionDef",

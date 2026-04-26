@@ -68,6 +68,7 @@ class NoteTypeSchema(BaseModel):
     label: str
     description: str
     tier: str = Field(description="'core' or 'extension'.")
+    context: str = Field(description="'session', 'patient', or 'practice'.")
     sections: list[NoteSectionSchema]
 
     @classmethod
@@ -77,6 +78,7 @@ class NoteTypeSchema(BaseModel):
             label=definition.label,
             description=definition.description,
             tier=definition.tier,
+            context=definition.context,
             sections=[NoteSectionSchema.from_def(s) for s in definition.sections],
         )
 

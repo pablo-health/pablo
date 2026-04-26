@@ -32,6 +32,7 @@ vi.mock("@/hooks/useNoteTypes", () => ({
           label: "SOAP",
           description: "Subjective / Objective / Assessment / Plan",
           tier: "core",
+          context: "session",
           sections: [],
         },
         {
@@ -39,6 +40,7 @@ vi.mock("@/hooks/useNoteTypes", () => ({
           label: "Narrative",
           description: "Free-form narrative note",
           tier: "core",
+          context: "session",
           sections: [],
         },
       ],

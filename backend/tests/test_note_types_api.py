@@ -93,6 +93,7 @@ class TestGetNoteType:
         assert body["key"] == "alpha"
         assert body["label"] == "ALPHA"
         assert body["tier"] == "core"
+        assert body["context"] == "session"
         assert len(body["sections"]) == 1
         [section] = body["sections"]
         assert section["key"] == "only"

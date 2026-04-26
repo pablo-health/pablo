@@ -117,6 +117,7 @@ class TestBuiltinDefinitions:
 
     def test_narrative_is_single_text_field(self) -> None:
         assert NARRATIVE_DEFINITION.tier == "core"
+        assert NARRATIVE_DEFINITION.context == "session"
         assert NARRATIVE_DEFINITION.section_keys() == ["note"]
         [section] = NARRATIVE_DEFINITION.sections
         [field] = section.fields
@@ -126,6 +127,7 @@ class TestBuiltinDefinitions:
         """SOAP registry must line up with the SOAPNote dataclass so the
         upcoming generation refactor stays behavior-preserving."""
         assert SOAP_DEFINITION.tier == "core"
+        assert SOAP_DEFINITION.context == "session"
         assert SOAP_DEFINITION.section_keys() == [
             "subjective",
             "objective",
