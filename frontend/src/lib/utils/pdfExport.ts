@@ -8,8 +8,14 @@
  */
 
 import jsPDF from "jspdf"
-import type { SessionResponse, SOAPNoteModel } from "@/types/sessions"
+import type { SOAPNoteModel } from "@/types/sessions"
 import { parseNarrativeBlocks } from "./narrativeParser"
+
+export interface PDFExportMetadata {
+  patient_name: string
+  session_number?: number
+  session_date: string
+}
 
 const LEFT_MARGIN = 20
 const BULLET_INDENT = 28
@@ -69,7 +75,10 @@ function renderContentBlock(
  * Export SOAP note to PDF with session metadata.
  * Parses **Label:** content patterns and renders labels bold.
  */
-export function exportSOAPToPDF(session: SessionResponse, soapNote: SOAPNoteModel): void {
+export function exportSOAPToPDF(
+  meta: PDFExportMetadata,
+  soapNote: SOAPNoteModel,
+): void {
   const doc = new jsPDF()
   let yPosition = 20
 
@@ -82,11 +91,13 @@ export function exportSOAPToPDF(session: SessionResponse, soapNote: SOAPNoteMode
   // Session metadata
   doc.setFontSize(12)
   doc.setFont("helvetica", "normal")
-  doc.text(`Patient: ${session.patient_name}`, LEFT_MARGIN, yPosition)
+  doc.text(`Patient: ${meta.patient_name}`, LEFT_MARGIN, yPosition)
   yPosition += 7
-  doc.text(`Session #${session.session_number}`, LEFT_MARGIN, yPosition)
-  yPosition += 7
-  doc.text(`Date: ${formatDate(session.session_date)}`, LEFT_MARGIN, yPosition)
+  if (meta.session_number !== undefined) {
+    doc.text(`Session #${meta.session_number}`, LEFT_MARGIN, yPosition)
+    yPosition += 7
+  }
+  doc.text(`Date: ${formatDate(meta.session_date)}`, LEFT_MARGIN, yPosition)
   yPosition += 15
 
   const pageHeight = doc.internal.pageSize.height
@@ -143,7 +154,8 @@ export function exportSOAPToPDF(session: SessionResponse, soapNote: SOAPNoteMode
     yPosition += SECTION_GAP
   })
 
-  const filename = `soap-note-${session.id}.pdf`
+  const safeName = meta.patient_name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()
+  const filename = `soap-note-${safeName}-${meta.session_date.slice(0, 10)}.pdf`
   const pdfBlob = doc.output("blob")
   // Force octet-stream MIME type so the browser downloads instead of opening inline
   const downloadBlob = new Blob([pdfBlob], { type: "application/octet-stream" })

@@ -30,6 +30,7 @@ from .notes import (
     CreateStandaloneNoteRequest,
     FinalizeNoteRequest,
     NoteResponse,
+    PatientNotesListResponse,
     UpdateNoteEditsRequest,
 )
 from .patient import (
@@ -135,6 +136,7 @@ __all__ = [
     "Patient",
     "PatientExportData",
     "PatientListResponse",
+    "PatientNotesListResponse",
     "PatientResponse",
     "PatientSummary",
     "PlanNote",

@@ -25,6 +25,7 @@ from ..models import (
     CreateStandaloneNoteRequest,
     FinalizeNoteRequest,
     NoteResponse,
+    PatientNotesListResponse,
     Transcript,
     UpdateNoteEditsRequest,
     User,
@@ -215,6 +216,35 @@ def submit_note_for_export(
         changes={"export_status": note.export_status},
     )
     return NoteResponse.from_note(note)
+
+
+@patient_notes_router.get(
+    "/{patient_id}/notes",
+    response_model=PatientNotesListResponse,
+)
+def list_patient_notes(
+    patient_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    note_service: NoteService = Depends(get_note_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> PatientNotesListResponse:
+    """List all notes (session-bound + standalone) for a patient."""
+    patient = patient_repo.get(patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    notes = note_service.list_notes_for_patient(patient.id)
+    notes.sort(
+        key=lambda n: n.finalized_at or n.created_at,
+        reverse=True,
+    )
+    audit.log_session_list(user, http_request, len(notes))
+    return PatientNotesListResponse(
+        data=[NoteResponse.from_note(n) for n in notes],
+        total=len(notes),
+    )
 
 
 @patient_notes_router.post(

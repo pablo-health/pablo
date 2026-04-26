@@ -98,10 +98,20 @@ export function useFinalizeSession(token?: string) {
       updater: (previous, { data }) => ({
         ...previous,
         status: "finalized",
-        quality_rating: data.quality_rating,
-        soap_note_edited:
-          data.soap_note_edited ?? previous.soap_note_edited,
-        finalized_at: new Date().toISOString(),
+        note: previous.note
+          ? {
+              ...previous.note,
+              quality_rating: data.quality_rating,
+              quality_rating_reason:
+                data.quality_rating_reason ?? previous.note.quality_rating_reason,
+              quality_rating_sections:
+                data.quality_rating_sections ?? previous.note.quality_rating_sections,
+              content_edited: data.soap_note_edited
+                ? { ...data.soap_note_edited }
+                : previous.note.content_edited,
+              finalized_at: new Date().toISOString(),
+            }
+          : previous.note,
       }),
     },
   })
@@ -123,7 +133,9 @@ export function useUpdateSessionRating(token?: string) {
       queryKey: ({ sessionId }) => queryKeys.sessions.detail(sessionId),
       updater: (previous, { data }) => ({
         ...previous,
-        quality_rating: data.quality_rating,
+        note: previous.note
+          ? { ...previous.note, quality_rating: data.quality_rating }
+          : previous.note,
       }),
     },
   })

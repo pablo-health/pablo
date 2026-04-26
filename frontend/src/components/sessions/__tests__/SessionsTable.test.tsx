@@ -11,7 +11,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { SessionsTable } from "../SessionsTable"
 import * as sessionsApi from "@/lib/api/sessions"
-import { createMockSession } from "@/test/factories"
+import { createMockNote, createMockSession } from "@/test/factories"
 
 vi.mock("@/lib/api/sessions")
 vi.mock("@/lib/config", () => ({
@@ -42,12 +42,6 @@ const createWrapper = () => {
 
 const mockSession = createMockSession({
   transcript: { format: "vtt", content: "Test" },
-  soap_note: {
-    subjective: "Test",
-    objective: "Test",
-    assessment: "Test",
-    plan: "Test",
-  },
 })
 
 describe("SessionsTable", () => {
@@ -222,7 +216,7 @@ describe("SessionsTable", () => {
     it("renders QualityRating when rating exists", async () => {
       const ratedSession = {
         ...mockSession,
-        quality_rating: 4,
+        note: { ...createMockNote({ quality_rating: 4 }) },
       }
 
       vi.mocked(sessionsApi.listSessions).mockResolvedValue({

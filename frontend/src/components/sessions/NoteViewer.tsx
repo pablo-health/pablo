@@ -3,11 +3,13 @@
 /**
  * NoteViewer Component
  *
- * Polymorphic clinical note viewer/editor. Branches on the session's
+ * Polymorphic clinical note viewer/editor. Branches on the Note's
  * `note_type` to render the right layout — SOAP keeps the historical
  * four-section document; Narrative renders a single free-form body.
  *
- * Replaces SOAPViewer; SOAP rendering is preserved pixel-for-pixel.
+ * Operates on a Note record from /api/notes (pa-0nx.4); the embedded
+ * structured SOAP tree (with source references) is derived from
+ * ``note.content`` when present.
  */
 
 "use client"
@@ -24,18 +26,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { exportSOAPToPDF } from "@/lib/utils/pdfExport"
+import {
+  exportSOAPToPDF,
+  type PDFExportMetadata,
+} from "@/lib/utils/pdfExport"
 import type {
   NarrativeNoteContent,
   NoteContent,
   SOAPNoteContent,
   SOAPNoteModel,
   SOAPSentence,
-  SessionStatus,
-  SessionResponse,
   ClinicalObservation,
   StructuredSOAPNoteModel,
 } from "@/types/sessions"
+import {
+  noteContentFromNote,
+  noteEditedContentFromNote,
+  structuredSoapFromNote,
+} from "@/types/sessions"
+import type { Note } from "@/types/notes"
 import {
   SubFieldEditor,
   SECTION_SUBFIELDS,
@@ -52,41 +61,53 @@ import { parseNarrativeBlocks } from "@/lib/utils/narrativeParser"
 import { SourceBadge, SourceHighlight } from "./SourceBadge"
 
 export interface NoteViewerProps {
-  note: NoteContent | null
-  noteEdited: NoteContent | null
-  sessionId: string
-  session: SessionResponse
-  status: SessionStatus
+  note: Note
+  /** Local override for unsaved edits — takes priority over note.content_edited. */
+  pendingEdited?: NoteContent | null
   readonly?: boolean
+  /** Metadata used for the SOAP PDF export header. PDF button hidden when omitted. */
+  pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
   className?: string
 }
 
-export function NoteViewer(props: NoteViewerProps) {
-  const noteType = props.session.note_type
-  const display = props.noteEdited ?? props.note
-
-  if (display && display.note_type !== noteType) {
-    // Shouldn't happen, but never render the wrong editor against the wrong shape.
-    return null
-  }
+export function NoteViewer({
+  note,
+  pendingEdited,
+  readonly,
+  pdfMetadata,
+  onSave,
+  onClaimClick,
+  className,
+}: NoteViewerProps) {
+  const noteType = note.note_type
+  const baseContent = noteContentFromNote(note)
+  const persistedEdited = noteEditedContentFromNote(note)
+  const editedContent = pendingEdited ?? persistedEdited
 
   if (noteType === "narrative") {
     return (
       <NarrativeNoteView
-        {...props}
-        note={asNarrative(props.note)}
-        noteEdited={asNarrative(props.noteEdited)}
+        note={asNarrative(baseContent)}
+        noteEdited={asNarrative(editedContent)}
+        readonly={readonly}
+        onSave={onSave}
+        className={className}
       />
     )
   }
 
   return (
     <SOAPNoteView
-      {...props}
-      note={asSOAP(props.note)}
-      noteEdited={asSOAP(props.noteEdited)}
+      note={asSOAP(baseContent)}
+      noteEdited={asSOAP(editedContent)}
+      structured={structuredSoapFromNote(note)}
+      readonly={readonly}
+      pdfMetadata={pdfMetadata}
+      onSave={onSave}
+      onClaimClick={onClaimClick}
+      className={className}
     />
   )
 }
@@ -108,17 +129,23 @@ const SOAP_SECTIONS = [
   { key: "plan" as const, label: "Plan" },
 ] as const
 
-interface SOAPViewProps extends Omit<NoteViewerProps, "note" | "noteEdited"> {
+interface SOAPViewProps {
   note: SOAPNoteContent | null
   noteEdited: SOAPNoteContent | null
+  structured: StructuredSOAPNoteModel | null
+  readonly?: boolean
+  pdfMetadata?: PDFExportMetadata
+  onSave?: (editedNote: NoteContent) => void
+  onClaimClick?: (sourceSegmentIds: number[]) => void
+  className?: string
 }
 
 function SOAPNoteView({
   note,
   noteEdited,
-  session,
-  status,
+  structured,
   readonly = false,
+  pdfMetadata,
   onSave,
   onClaimClick,
   className,
@@ -131,8 +158,7 @@ function SOAPNoteView({
 
   const displayNote: SOAPNoteModel | null = noteEdited ?? note
   const isEdited = !!noteEdited
-  const canEdit = status === "pending_review" && !readonly
-  const structured = session.soap_note_structured
+  const canEdit = !readonly && !!onSave
 
   const hasUnsavedChanges = () => {
     if (!editState) return false
@@ -141,9 +167,9 @@ function SOAPNoteView({
 
   const enterEditMode = () => {
     if (!displayNote) return
-    const structured = narrativeToStructured(displayNote)
-    setEditState(structured)
-    setInitialEditState(JSON.stringify(structured))
+    const structuredEdit = narrativeToStructured(displayNote)
+    setEditState(structuredEdit)
+    setInitialEditState(JSON.stringify(structuredEdit))
     setEditMode(true)
   }
 
@@ -178,9 +204,9 @@ function SOAPNoteView({
   }
 
   const handlePDFExport = () => {
-    if (displayNote) {
+    if (displayNote && pdfMetadata) {
       const { subjective, objective, assessment, plan } = displayNote
-      exportSOAPToPDF(session, { subjective, objective, assessment, plan })
+      exportSOAPToPDF(pdfMetadata, { subjective, objective, assessment, plan })
     }
   }
 
@@ -210,10 +236,12 @@ function SOAPNoteView({
         </div>
 
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={handlePDFExport}>
-            <Download className="w-4 h-4 mr-2" />
-            Export PDF
-          </Button>
+          {pdfMetadata && (
+            <Button variant="outline" size="sm" onClick={handlePDFExport}>
+              <Download className="w-4 h-4 mr-2" />
+              Export PDF
+            </Button>
+          )}
 
           {canEdit && !editMode && (
             <Button size="sm" onClick={enterEditMode}>
@@ -476,15 +504,17 @@ function NarrativeContent({ text }: { text: string }) {
 
 // --- Narrative ---------------------------------------------------------
 
-interface NarrativeViewProps extends Omit<NoteViewerProps, "note" | "noteEdited"> {
+interface NarrativeViewProps {
   note: NarrativeNoteContent | null
   noteEdited: NarrativeNoteContent | null
+  readonly?: boolean
+  onSave?: (editedNote: NoteContent) => void
+  className?: string
 }
 
 function NarrativeNoteView({
   note,
   noteEdited,
-  status,
   readonly = false,
   onSave,
   className,
@@ -496,7 +526,7 @@ function NarrativeNoteView({
 
   const displayNote = noteEdited ?? note
   const isEdited = !!noteEdited
-  const canEdit = status === "pending_review" && !readonly
+  const canEdit = !readonly && !!onSave
 
   const hasUnsavedChanges = () => draft !== initialDraft
 

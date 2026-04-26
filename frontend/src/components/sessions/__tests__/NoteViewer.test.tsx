@@ -12,9 +12,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { NoteViewer } from "../NoteViewer"
-import type { NoteContent, SOAPNoteModel } from "@/types/sessions"
+import type {
+  NoteContent,
+  SessionStatus,
+  SOAPNoteModel,
+  StructuredSOAPNoteModel,
+} from "@/types/sessions"
+import { noteContentToJson } from "@/types/sessions"
+import type { Note, NoteType } from "@/types/notes"
 import {
-  createMockSession,
+  createMockNote,
   createMockSOAPNote,
   createMockStructuredSOAPNote,
 } from "@/test/factories"
@@ -52,10 +59,11 @@ const plainNarrative: SOAPNoteModel = createMockSOAPNote({
   plan: "Continue weekly sessions",
 })
 
-const mockSession = createMockSession({
-  transcript: { format: "vtt", content: "Test" },
-  soap_note: structuredNarrative,
-})
+const PDF_META = {
+  patient_name: "Doe, Jane",
+  session_number: 1,
+  session_date: "2024-01-15T14:30:00Z",
+}
 
 const TOTAL_SUBFIELDS = Object.values(SECTION_SUBFIELDS)
   .reduce((sum, fields) => sum + fields.length, 0)
@@ -67,15 +75,51 @@ function asSoapContent(note: SOAPNoteModel | null): NoteContent | null {
   return note ? { note_type: "soap", ...note } : null
 }
 
-function renderViewer(overrides: Record<string, unknown> = {}) {
-  const defaults = {
-    note: asSoapContent(structuredNarrative),
-    noteEdited: null,
-    sessionId: "session-123",
-    session: mockSession,
-    status: "pending_review" as const,
-  }
-  return render(<NoteViewer {...defaults} {...overrides} />)
+interface LegacyRenderOpts {
+  note?: NoteContent | null
+  noteEdited?: NoteContent | null
+  status?: SessionStatus
+  noteType?: NoteType
+  structured?: StructuredSOAPNoteModel | null
+  readonly?: boolean
+  onSave?: (edited: NoteContent) => void
+  onClaimClick?: (ids: number[]) => void
+}
+
+function buildNoteForTest(opts: LegacyRenderOpts): Note {
+  const noteType = opts.noteType ?? opts.note?.note_type ?? "soap"
+  const content: Record<string, unknown> | null = opts.structured
+    ? (opts.structured as unknown as Record<string, unknown>)
+    : opts.note
+      ? noteContentToJson(opts.note)
+      : null
+  return createMockNote({
+    note_type: noteType,
+    content,
+    finalized_at: opts.status === "finalized" ? "2024-01-15T15:00:00Z" : null,
+  })
+}
+
+const EDITABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["pending_review"])
+
+function renderViewer(overrides: LegacyRenderOpts = {}) {
+  const status = overrides.status ?? "pending_review"
+  const noteContent = "note" in overrides
+    ? overrides.note
+    : asSoapContent(structuredNarrative)
+  const note = buildNoteForTest({ ...overrides, note: noteContent, status })
+  const effectiveReadonly =
+    overrides.readonly === true || !EDITABLE_STATUSES.has(status)
+  return render(
+    <NoteViewer
+      note={note}
+      pendingEdited={overrides.noteEdited ?? null}
+      readonly={effectiveReadonly}
+      pdfMetadata={PDF_META}
+      onSave={overrides.onSave ?? (() => {})}
+      onClaimClick={overrides.onClaimClick}
+    />,
+  )
 }
 
 describe("NoteViewer (SOAP)", () => {
@@ -399,13 +443,13 @@ describe("NoteViewer (SOAP)", () => {
   })
 
   describe("PDF Export", () => {
-    it("calls exportSOAPToPDF with session and note", async () => {
+    it("calls exportSOAPToPDF with metadata and note", async () => {
       const { exportSOAPToPDF } = await import("@/lib/utils/pdfExport")
       renderViewer()
 
       fireEvent.click(screen.getByText("Export PDF"))
 
-      expect(exportSOAPToPDF).toHaveBeenCalledWith(mockSession, structuredNarrative)
+      expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, structuredNarrative)
     })
 
     it("uses edited note for export when available", async () => {
@@ -415,7 +459,7 @@ describe("NoteViewer (SOAP)", () => {
 
       fireEvent.click(screen.getByText("Export PDF"))
 
-      expect(exportSOAPToPDF).toHaveBeenCalledWith(mockSession, edited)
+      expect(exportSOAPToPDF).toHaveBeenCalledWith(PDF_META, edited)
     })
 
     it("shows Export PDF button regardless of status", () => {
@@ -456,15 +500,10 @@ describe("NoteViewer (SOAP)", () => {
 
   describe("Source Verification Indicators", () => {
     const structuredNote = createMockStructuredSOAPNote()
-    const sessionWithStructured = createMockSession({
-      transcript: { format: "vtt", content: "Test" },
-      soap_note: structuredNarrative,
-      soap_note_structured: structuredNote,
-    })
 
-    function renderStructuredViewer(overrides: Record<string, unknown> = {}) {
+    function renderStructuredViewer(overrides: LegacyRenderOpts = {}) {
       return renderViewer({
-        session: sessionWithStructured,
+        structured: structuredNote,
         ...overrides,
       })
     }
@@ -543,15 +582,10 @@ describe("NoteViewer (SOAP)", () => {
 
   describe("Claim Click Handlers", () => {
     const structuredNote = createMockStructuredSOAPNote()
-    const sessionWithStructured = createMockSession({
-      transcript: { format: "vtt", content: "Test" },
-      soap_note: structuredNarrative,
-      soap_note_structured: structuredNote,
-    })
 
-    function renderClickableViewer(overrides: Record<string, unknown> = {}) {
+    function renderClickableViewer(overrides: LegacyRenderOpts = {}) {
       return renderViewer({
-        session: sessionWithStructured,
+        structured: structuredNote,
         ...overrides,
       })
     }
@@ -620,25 +654,30 @@ describe("NoteViewer (SOAP)", () => {
 })
 
 describe("NoteViewer (Narrative)", () => {
-  const narrativeSession = createMockSession({
-    note_type: "narrative",
-    transcript: { format: "vtt", content: "Test" },
-  })
-
   const narrativeContent: NoteContent = {
     note_type: "narrative",
     body: "Met with client to review progress on coping strategies; client reports steady improvement.",
   }
 
-  function renderNarrative(overrides: Record<string, unknown> = {}) {
-    const defaults = {
-      note: narrativeContent,
-      noteEdited: null,
-      sessionId: "session-narr",
-      session: narrativeSession,
-      status: "pending_review" as const,
-    }
-    return render(<NoteViewer {...defaults} {...overrides} />)
+  function renderNarrative(overrides: LegacyRenderOpts = {}) {
+    const status = overrides.status ?? "pending_review"
+    const noteContent = "note" in overrides ? overrides.note : narrativeContent
+    const note = buildNoteForTest({
+      ...overrides,
+      note: noteContent,
+      noteType: "narrative",
+      status,
+    })
+    const effectiveReadonly =
+      overrides.readonly === true || !EDITABLE_STATUSES.has(status)
+    return render(
+      <NoteViewer
+        note={note}
+        pendingEdited={overrides.noteEdited ?? null}
+        readonly={effectiveReadonly}
+        onSave={overrides.onSave ?? (() => {})}
+      />,
+    )
   }
 
   beforeEach(() => {

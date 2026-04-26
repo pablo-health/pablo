@@ -66,12 +66,6 @@ const mockPatients = [
 const mockSession = createMockSession({
   patient_id: "patient-1",
   transcript: { format: "vtt", content: "Test" },
-  soap_note: {
-    subjective: "Test",
-    objective: "Test",
-    assessment: "Test",
-    plan: "Test",
-  },
 })
 
 describe("UploadTranscriptDialog", () => {

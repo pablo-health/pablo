@@ -27,12 +27,6 @@ describe("Session API Functions", () => {
   describe("uploadSession", () => {
     it("calls post with correct endpoint and data", async () => {
       const mockSession = createMockSession({
-        soap_note: {
-          subjective: "Patient reports...",
-          objective: "Patient appeared...",
-          assessment: "Continued progress...",
-          plan: "Continue weekly sessions",
-        },
         processing_started_at: "2024-01-15T14:30:01Z",
         processing_completed_at: "2024-01-15T14:30:05Z",
       })
@@ -138,16 +132,8 @@ describe("Session API Functions", () => {
       const mockSession = createMockSession({
         status: "finalized",
         transcript: { format: "vtt", content: "test" },
-        soap_note: {
-          subjective: "test",
-          objective: "test",
-          assessment: "test",
-          plan: "test",
-        },
-        quality_rating: 5,
         processing_started_at: "2024-01-15T14:30:01Z",
         processing_completed_at: "2024-01-15T14:30:05Z",
-        finalized_at: "2024-01-15T14:35:00Z",
       })
 
       vi.mocked(client.get).mockResolvedValue(mockSession)
@@ -182,16 +168,8 @@ describe("Session API Functions", () => {
       const mockSession = createMockSession({
         status: "finalized",
         transcript: { format: "vtt", content: "test" },
-        soap_note: {
-          subjective: "test",
-          objective: "test",
-          assessment: "test",
-          plan: "test",
-        },
-        quality_rating: 5,
         processing_started_at: "2024-01-15T14:30:01Z",
         processing_completed_at: "2024-01-15T14:30:05Z",
-        finalized_at: "2024-01-15T14:35:00Z",
       })
 
       vi.mocked(client.patch).mockResolvedValue(mockSession)
@@ -211,22 +189,8 @@ describe("Session API Functions", () => {
       const mockSession = createMockSession({
         status: "finalized",
         transcript: { format: "vtt", content: "test" },
-        soap_note: {
-          subjective: "original",
-          objective: "original",
-          assessment: "original",
-          plan: "original",
-        },
-        soap_note_edited: {
-          subjective: "edited",
-          objective: "edited",
-          assessment: "edited",
-          plan: "edited",
-        },
-        quality_rating: 4,
         processing_started_at: "2024-01-15T14:30:01Z",
         processing_completed_at: "2024-01-15T14:30:05Z",
-        finalized_at: "2024-01-15T14:35:00Z",
       })
 
       vi.mocked(client.patch).mockResolvedValue(mockSession)
@@ -254,8 +218,6 @@ describe("Session API Functions", () => {
       const mockSession = createMockSession({
         status: "finalized",
         transcript: { format: "vtt", content: "test" },
-        quality_rating: 5,
-        finalized_at: "2024-01-15T14:35:00Z",
       })
 
       vi.mocked(client.patch).mockResolvedValue(mockSession)
@@ -279,8 +241,6 @@ describe("Session API Functions", () => {
       const mockSession = createMockSession({
         status: "finalized",
         transcript: { format: "vtt", content: "test" },
-        quality_rating: 5,
-        finalized_at: "2024-01-15T14:35:00Z",
       })
 
       vi.mocked(client.patch).mockResolvedValue(mockSession)
@@ -300,8 +260,6 @@ describe("Session API Functions", () => {
       const mockSession = createMockSession({
         status: "finalized",
         transcript: { format: "vtt", content: "test" },
-        quality_rating: 4,
-        finalized_at: "2024-01-15T14:35:00Z",
       })
 
       vi.mocked(client.patch).mockResolvedValue(mockSession)

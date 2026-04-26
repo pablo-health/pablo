@@ -35,12 +35,6 @@ const createWrapper = () => {
 }
 
 const mockSessionBase = createMockSession({
-  soap_note: {
-    subjective: "Patient reports improved mood",
-    objective: "Patient appeared calm",
-    assessment: "Continued progress",
-    plan: "Continue weekly sessions",
-  },
   processing_started_at: "2024-01-15T14:30:01Z",
   processing_completed_at: "2024-01-15T14:30:05Z",
 })

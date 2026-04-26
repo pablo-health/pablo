@@ -13,6 +13,7 @@ import type {
   SOAPSentence,
   StructuredSOAPNoteModel,
 } from "@/types/sessions"
+import type { Note, NoteType } from "@/types/notes"
 import type { PatientResponse } from "@/types/patients"
 
 function s(
@@ -51,27 +52,49 @@ export function createMockSession(
     status: "pending_review",
     transcript: { format: "vtt", content: "WEBVTT\n\n..." },
     created_at: "2024-01-15T14:30:00Z",
-    note_type: "soap",
-    soap_note: null,
-    soap_note_edited: null,
-    soap_note_structured: null,
+    scheduled_at: null,
+    video_link: null,
+    video_platform: null,
+    session_type: null,
+    duration_minutes: null,
+    source: null,
+    notes: null,
+    started_at: null,
+    ended_at: null,
+    updated_at: null,
     transcript_segments: null,
-    quality_rating: null,
-    quality_rating_reason: null,
-    quality_rating_sections: null,
     processing_started_at: null,
     processing_completed_at: null,
-    finalized_at: null,
     error: null,
     redacted_transcript: null,
     naturalized_transcript: null,
-    redacted_soap_note: null,
-    naturalized_soap_note: null,
+    note: null,
+    ...overrides,
+  }
+}
+
+/**
+ * Creates a mock Note record (mirrors the backend ``NoteResponse``).
+ */
+export function createMockNote(overrides: Partial<Note> = {}): Note {
+  return {
+    id: "note-1",
+    patient_id: "patient-456",
+    session_id: "session-123",
+    note_type: "soap" as NoteType,
+    content: null,
+    content_edited: null,
+    finalized_at: null,
+    quality_rating: null,
+    quality_rating_reason: null,
+    quality_rating_sections: null,
     export_status: "not_queued",
     export_queued_at: null,
     export_reviewed_at: null,
     export_reviewed_by: null,
     exported_at: null,
+    created_at: "2024-01-15T14:30:00Z",
+    updated_at: "2024-01-15T14:30:00Z",
     ...overrides,
   }
 }
