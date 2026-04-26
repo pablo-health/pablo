@@ -27,7 +27,7 @@ export interface NoteTypeSchema {
   key: string
   label: string
   description: string
-  tier: "oss" | "saas"
+  tier: "core" | "extension"
   sections: NoteSectionSchema[]
 }
 

@@ -2,9 +2,9 @@
 
 """Note-type registry: schema-driven definitions for SOAP, Narrative, and overlays.
 
-Adding a new note format is a registration call, not a refactor. OSS registers
-SOAP + Narrative at startup via :func:`register_builtin_note_types`. SaaS
-overlays register premium formats (DAP, BIRP, Meeting) against the same
+Adding a new note format is a registration call, not a refactor. Pablo
+registers SOAP + Narrative at startup via :func:`register_builtin_note_types`.
+Downstream overlays may register additional formats against the same
 default registry at bootstrap.
 """
 

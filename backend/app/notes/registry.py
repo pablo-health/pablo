@@ -21,11 +21,13 @@ NoteFieldKind = Literal["text", "list", "structured"]
 - ``structured``: nested schema (reserved for richer future fields)
 """
 
-NoteTier = Literal["oss", "saas"]
+NoteTier = Literal["core", "extension"]
 """Tier gating for a note type.
 
-OSS types are always available in the open-source edition. SaaS types are
-registered by the proprietary overlay and gated by subscription tier.
+``core`` types are registered by Pablo at startup and always available.
+``extension`` types are registered by a downstream overlay (e.g. a
+distributor that adds proprietary formats) and may be gated by that
+overlay's own access logic.
 """
 
 
@@ -59,7 +61,7 @@ class NoteTypeDefinition:
     label: str
     description: str
     sections: tuple[NoteSectionDef, ...]
-    tier: NoteTier = "oss"
+    tier: NoteTier = "core"
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
@@ -119,7 +121,8 @@ _DEFAULT_REGISTRY: NoteTypeRegistry = NoteTypeRegistry()
 def get_default_registry() -> NoteTypeRegistry:
     """Return the process-wide default registry.
 
-    OSS startup populates this with SOAP + Narrative. The SaaS overlay
-    registers premium formats against the same instance at bootstrap.
+    Pablo populates this with SOAP + Narrative at startup. Downstream
+    overlays may register additional formats against the same instance
+    at bootstrap.
     """
     return _DEFAULT_REGISTRY

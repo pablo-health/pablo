@@ -29,7 +29,7 @@ def _sample_type(key: str = "sample") -> NoteTypeDefinition:
         key=key,
         label=key.upper(),
         description=f"Sample {key}",
-        tier="oss",
+        tier="core",
         sections=(
             NoteSectionDef(
                 key="only",
@@ -92,7 +92,7 @@ class TestGetNoteType:
         body: dict[str, Any] = response.json()
         assert body["key"] == "alpha"
         assert body["label"] == "ALPHA"
-        assert body["tier"] == "oss"
+        assert body["tier"] == "core"
         assert len(body["sections"]) == 1
         [section] = body["sections"]
         assert section["key"] == "only"
