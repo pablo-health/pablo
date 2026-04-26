@@ -42,6 +42,7 @@ from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
+    InMemoryNotesRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
@@ -53,7 +54,19 @@ from app.routes.ehr_routes import (  # noqa: E402
     get_ehr_prompt_repository,
     get_ehr_route_repository,
 )
-from app.routes.patients import get_patient_repository, get_therapy_session_repository  # noqa: E402
+from app.routes.notes import (  # noqa: E402
+    get_notes_repository as get_notes_route_notes_repository,
+)
+from app.routes.patients import (  # noqa: E402
+    get_notes_repository as get_patients_notes_repository,
+)
+from app.routes.patients import (  # noqa: E402
+    get_patient_repository,
+    get_therapy_session_repository,
+)
+from app.routes.sessions import (  # noqa: E402
+    get_notes_repository as get_sessions_notes_repository,
+)
 from app.routes.sessions import (  # noqa: E402
     get_patient_repository as get_sessions_patient_repository,
 )
@@ -92,6 +105,12 @@ def mock_session_repo() -> InMemoryTherapySessionRepository:
 def mock_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryPatientRepository:
     """Create a fresh in-memory repository for each test."""
     return InMemoryPatientRepository(session_repo=mock_session_repo)
+
+
+@pytest.fixture
+def mock_notes_repo() -> InMemoryNotesRepository:
+    """Create a fresh in-memory notes repository for each test."""
+    return InMemoryNotesRepository()
 
 
 @pytest.fixture
@@ -195,6 +214,7 @@ def mock_session_data() -> dict[str, Any]:
 def client(
     mock_repo: InMemoryPatientRepository,
     mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
     mock_user: User,
     mock_user_repo: InMemoryUserRepository,
@@ -210,6 +230,9 @@ def client(
     app.dependency_overrides[get_sessions_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_therapy_session_repository] = lambda: mock_session_repo
     app.dependency_overrides[get_session_repository] = lambda: mock_session_repo
+    app.dependency_overrides[get_sessions_notes_repository] = lambda: mock_notes_repo
+    app.dependency_overrides[get_patients_notes_repository] = lambda: mock_notes_repo
+    app.dependency_overrides[get_notes_route_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_current_user_id] = lambda: mock_user_id
     app.dependency_overrides[require_mfa] = lambda: {"uid": mock_user_id, "firebase": {}}
     app.dependency_overrides[get_current_user] = lambda: mock_user

@@ -12,12 +12,17 @@ import pytest
 from app.models import Patient, ScheduleSessionRequest, SessionStatus, VideoPlatform
 from app.models.enums import SessionSource, SessionType
 from app.models.session import SOAPNote
-from app.repositories import InMemoryPatientRepository, InMemoryTherapySessionRepository
+from app.repositories import (
+    InMemoryNotesRepository,
+    InMemoryPatientRepository,
+    InMemoryTherapySessionRepository,
+)
 from app.scheduling_engine.exceptions import AppointmentNotFoundError
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services.note_generation_service import GeneratedNote, NoteGenerationService
+from app.services.note_service import NoteService
 from app.services.session_service import InvalidNoteTypeError, PatientNotFoundError, SessionService
 from app.utcnow import utc_now
 
@@ -89,6 +94,11 @@ def patient_repo(session_repo: InMemoryTherapySessionRepository) -> InMemoryPati
 
 
 @pytest.fixture
+def notes_repo() -> InMemoryNotesRepository:
+    return InMemoryNotesRepository()
+
+
+@pytest.fixture
 def scheduling_service(appt_repo: InMemoryAppointmentRepository) -> SchedulingService:
     return SchedulingService(appt_repo)
 
@@ -97,8 +107,9 @@ def scheduling_service(appt_repo: InMemoryAppointmentRepository) -> SchedulingSe
 def session_service(
     session_repo: InMemoryTherapySessionRepository,
     patient_repo: InMemoryPatientRepository,
+    notes_repo: InMemoryNotesRepository,
 ) -> SessionService:
-    mock_note_service = Mock(spec=NoteGenerationService)
+    mock_note_generation_service = Mock(spec=NoteGenerationService)
     soap_note = SOAPNote.from_dict(
         {
             "subjective": "s",
@@ -107,12 +118,17 @@ def session_service(
             "plan": "p",
         }
     )
-    mock_note_service.generate_note.return_value = GeneratedNote(
+    mock_note_generation_service.generate_note.return_value = GeneratedNote(
         note_type="soap",
         content=soap_note.to_dict(),
         soap_note=soap_note,
     )
-    return SessionService(session_repo, patient_repo, mock_note_service)
+    return SessionService(
+        session_repo,
+        patient_repo,
+        mock_note_generation_service,
+        NoteService(notes_repo),
+    )
 
 
 @pytest.fixture
@@ -269,12 +285,18 @@ class TestStartSessionFromAppointment:
 
 
 class TestNoteTypeWiring:
-    """Tests that note_type flows through scheduling into the persisted session."""
+    """Tests that note_type flows through scheduling into a pre-allocated Note row.
+
+    After pa-0nx.2 ``note_type`` lives on the Note (not on the session
+    row). schedule_session pre-creates an empty Note (content=None) so the
+    requested note_type survives until generation runs.
+    """
 
     def test_defaults_to_soap_when_omitted(
         self,
         appt_repo: InMemoryAppointmentRepository,
         session_service: SessionService,
+        notes_repo: InMemoryNotesRepository,
         patient: Patient,
     ) -> None:
         """Omitting note_type falls back to SOAP."""
@@ -284,15 +306,19 @@ class TestNoteTypeWiring:
             scheduled_at=appt.start_at,
         )
         session, _ = session_service.schedule_session(USER_ID, request)
-        assert session.note_type == "soap"
+        note = notes_repo.get_by_session_id(session.id)
+        assert note is not None
+        assert note.note_type == "soap"
+        assert note.content is None
 
     def test_persists_explicit_note_type(
         self,
         appt_repo: InMemoryAppointmentRepository,
         session_service: SessionService,
+        notes_repo: InMemoryNotesRepository,
         patient: Patient,
     ) -> None:
-        """Passing note_type='narrative' creates a session with that note_type."""
+        """Passing note_type='narrative' pre-allocates a Note with that note_type."""
         appt = _make_appointment(appt_repo)
         request = ScheduleSessionRequest(
             patient_id=appt.patient_id,
@@ -300,7 +326,9 @@ class TestNoteTypeWiring:
             note_type="narrative",
         )
         session, _ = session_service.schedule_session(USER_ID, request)
-        assert session.note_type == "narrative"
+        note = notes_repo.get_by_session_id(session.id)
+        assert note is not None
+        assert note.note_type == "narrative"
 
     def test_rejects_unknown_note_type(
         self,

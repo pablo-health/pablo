@@ -112,6 +112,41 @@ class AuditService:
             changes=changes,
         )
 
+    def log_note_action(
+        self,
+        action: AuditAction,
+        user: User,
+        request: Request,
+        note_id: str,
+        patient_id: str | None,
+        session_id: str | None,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Audit a note-scoped operation.
+
+        Notes are PHI-adjacent. We reuse ``ResourceType.SESSION`` (the
+        clinical-content resource family) so admins can run a single
+        query against ``resource_type='session'`` to see all reads/writes
+        of clinical artifacts. Standalone notes (no session_id) record
+        ``session_id=NULL`` and the note's own id under ``resource_id``.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        if changes is not None:
+            _assert_changes_phi_free(changes)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=action.value,
+            resource_type=ResourceType.SESSION.value,
+            resource_id=note_id,
+            patient_id=patient_id,
+            session_id=session_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_patient_list(
         self,
         user: User,

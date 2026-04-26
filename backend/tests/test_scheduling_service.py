@@ -21,11 +21,13 @@ from app.models import (
 )
 from app.models.session import SOAPNote
 from app.repositories import (
+    InMemoryNotesRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
 )
 from app.services.note_generation_service import GeneratedNote, NoteGenerationService
+from app.services.note_service import NoteService
 from app.services.session_service import (
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
@@ -89,12 +91,23 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
 
 
 @pytest.fixture
+def notes_repo() -> InMemoryNotesRepository:
+    return InMemoryNotesRepository()
+
+
+@pytest.fixture
 def service(
     session_repo: InMemoryTherapySessionRepository,
     patient_repo: InMemoryPatientRepository,
+    notes_repo: InMemoryNotesRepository,
     mock_note_service: Mock,
 ) -> SessionService:
-    return SessionService(session_repo, patient_repo, mock_note_service)
+    return SessionService(
+        session_repo,
+        patient_repo,
+        mock_note_service,
+        NoteService(notes_repo),
+    )
 
 
 def _make_session(
@@ -342,12 +355,12 @@ class TestUploadTranscriptToSession:
             content="Therapist: Hello\nClient: Hi",
         )
 
-        updated = service.upload_transcript_to_session(session.id, user_id, req)
+        updated, note = service.upload_transcript_to_session(session.id, user_id, req)
 
         assert updated.status == SessionStatus.PENDING_REVIEW
         assert updated.transcript.content == "Therapist: Hello\nClient: Hi"
         assert updated.transcript.format == "google_meet"
-        assert updated.soap_note is not None
+        assert note.content is not None
         assert updated.processing_started_at is not None
         assert updated.processing_completed_at is not None
 

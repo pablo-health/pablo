@@ -37,6 +37,7 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/transcript",
     "/audio",
     "/soap",
+    "/notes",
     "/resolve-client",
     "/import-clients",
 )
