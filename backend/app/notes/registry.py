@@ -21,11 +21,31 @@ NoteFieldKind = Literal["text", "list", "structured"]
 - ``structured``: nested schema (reserved for richer future fields)
 """
 
-NoteTier = Literal["oss", "saas"]
+NoteTier = Literal["core", "extension"]
 """Tier gating for a note type.
 
-OSS types are always available in the open-source edition. SaaS types are
-registered by the proprietary overlay and gated by subscription tier.
+``core`` types are registered by Pablo at startup and always available.
+``extension`` types are registered by a downstream overlay (e.g. a
+distributor that adds proprietary formats) and may be gated by that
+overlay's own access logic.
+"""
+
+NoteContext = Literal["session", "patient", "practice"]
+"""Lifecycle context for a note type.
+
+- ``session``: bound to one session (one-to-one with a session record).
+  SOAP, Narrative, DAP, BIRP, GIRP — anything generated from a session
+  transcript or written about a single visit.
+- ``patient``: bound to one patient, independent of any single session.
+  Versioned over time. Examples: safety plan (Stanley-Brown), intake,
+  treatment plan. A session note may reference the current patient-context
+  document but does not own its lifecycle.
+- ``practice``: bound to clinic-level workflows, not to a specific
+  patient or session. Examples: supervision case reviews, multi-clinician
+  audit notes.
+
+The context field shapes both storage (which foreign key the note hangs
+off of) and UX (where the "create note" entry point lives).
 """
 
 
@@ -59,7 +79,8 @@ class NoteTypeDefinition:
     label: str
     description: str
     sections: tuple[NoteSectionDef, ...]
-    tier: NoteTier = "oss"
+    tier: NoteTier = "core"
+    context: NoteContext = "session"
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
@@ -119,7 +140,8 @@ _DEFAULT_REGISTRY: NoteTypeRegistry = NoteTypeRegistry()
 def get_default_registry() -> NoteTypeRegistry:
     """Return the process-wide default registry.
 
-    OSS startup populates this with SOAP + Narrative. The SaaS overlay
-    registers premium formats against the same instance at bootstrap.
+    Pablo populates this with SOAP + Narrative at startup. Downstream
+    overlays may register additional formats against the same instance
+    at bootstrap.
     """
     return _DEFAULT_REGISTRY

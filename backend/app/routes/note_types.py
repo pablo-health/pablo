@@ -4,8 +4,8 @@
 
 Exposes the registered :class:`app.notes.NoteTypeDefinition` entries so the
 frontend can render note pickers, viewers, and editors dynamically. The
-routes return plain catalog data and carry no PHI — tier gating lives in
-the SaaS overlay, not here.
+routes return plain catalog data and carry no PHI — tier-gating logic
+lives in downstream overlays, not here.
 """
 
 from __future__ import annotations
@@ -67,7 +67,8 @@ class NoteTypeSchema(BaseModel):
     key: str
     label: str
     description: str
-    tier: str = Field(description="'oss' or 'saas'.")
+    tier: str = Field(description="'core' or 'extension'.")
+    context: str = Field(description="'session', 'patient', or 'practice'.")
     sections: list[NoteSectionSchema]
 
     @classmethod
@@ -77,6 +78,7 @@ class NoteTypeSchema(BaseModel):
             label=definition.label,
             description=definition.description,
             tier=definition.tier,
+            context=definition.context,
             sections=[NoteSectionSchema.from_def(s) for s in definition.sections],
         )
 

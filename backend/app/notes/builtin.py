@@ -23,7 +23,7 @@ SOAP_DEFINITION = NoteTypeDefinition(
         "Subjective / Objective / Assessment / Plan — the default clinical "
         "format used for individual therapy sessions."
     ),
-    tier="oss",
+    tier="core",
     sections=(
         NoteSectionDef(
             key="subjective",
@@ -161,7 +161,7 @@ NARRATIVE_DEFINITION = NoteTypeDefinition(
     description=(
         "A single free-form narrative note for sessions that do not fit a structured format."
     ),
-    tier="oss",
+    tier="core",
     sections=(
         NoteSectionDef(
             key="note",
