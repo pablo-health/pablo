@@ -287,3 +287,23 @@ jobs:
             --format='value(status.url)')
           echo "Frontend URL: ${URL}"
           curl -fsS --max-time 30 -o /dev/null -w "HTTP %{http_code}\n" "${URL}/"
+
+  notify-saas:
+    name: Notify pablo-saas (base-bump dispatch)
+    needs: [smoke]
+    # Only fire on real merges to main. PR runs and manual workflow_dispatch
+    # exercise the deploy path but should not roll the SaaS base image.
+    if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch oss-deployed event to pablo-saas
+        uses: peter-evans/repository-dispatch@v3
+        # Failure here (expired token, GitHub outage) must NOT mark the OSS
+        # deploy as failed — the SaaS base-bump is a follow-up signal, not a
+        # gate. Worst case, the weekly cron in pablo-saas catches up within 7d.
+        continue-on-error: true
+        with:
+          token: ${{ secrets.SAAS_DISPATCH_TOKEN }}
+          repository: pablo-health/pablo-saas
+          event-type: oss-deployed
+          client-payload: '{"sha": "${{ github.sha }}"}'
