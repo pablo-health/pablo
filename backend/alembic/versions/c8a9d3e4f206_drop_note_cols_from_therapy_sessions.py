@@ -12,7 +12,7 @@ this assertion catches the case where someone landed a NoteRow change
 before backfilling.
 
 Revision ID: c8a9d3e4f206
-Revises: f1c8d4a92b65
+Revises: b9d2f7c4e3a8
 Create Date: 2026-04-26
 """
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "c8a9d3e4f206"
-down_revision: str | Sequence[str] | None = "f1c8d4a92b65"
+down_revision: str | Sequence[str] | None = "b9d2f7c4e3a8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
