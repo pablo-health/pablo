@@ -293,7 +293,10 @@ jobs:
     needs: [smoke]
     # Only fire on real merges to main. PR runs and manual workflow_dispatch
     # exercise the deploy path but should not roll the SaaS base image.
-    if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Use `always() && !failure() && !cancelled()` (not `success()`) so the
+    # transitive skip of `migrate` on code-only pushes doesn't propagate
+    # through and silence this dispatch — same pattern as `smoke` above.
+    if: always() && !failure() && !cancelled() && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch oss-deployed event to pablo-saas
