@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
-from alembic import op
+from alembic import context, op
 from sqlalchemy.dialects import postgresql
 
 if TYPE_CHECKING:
@@ -54,28 +54,33 @@ _DROPPED_COLUMNS: tuple[str, ...] = (
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
+    # Pre-flight assertion needs a live connection; in offline mode
+    # (alembic upgrade --sql, used by the prod dry-run dump) bind.execute
+    # returns None. Skip the runtime check; the DDL still ends up in
+    # the SQL dump. The same assertion runs in online mode below.
+    if not context.is_offline_mode():
+        bind = op.get_bind()
 
-    # Pre-flight: every session with content must already have a Note.
-    missing = bind.execute(
-        sa.text(
-            """
-            SELECT COUNT(*) FROM therapy_sessions ts
-            WHERE ts.note_content IS NOT NULL
-              AND ts.note_content::text <> '{}'::text
-              AND NOT EXISTS (
-                  SELECT 1 FROM notes n WHERE n.session_id = ts.id
-              )
-            """
-        )
-    ).scalar_one()
-    if missing:
-        raise RuntimeError(
-            f"Refusing to drop legacy note columns: {missing} therapy_sessions row(s) "
-            "have non-empty note_content but no matching row in `notes`. "
-            "Run the pa-0nx.1 backfill (revision b9d2f7c4e3a8) first, or "
-            "investigate the divergence."
-        )
+        # Pre-flight: every session with content must already have a Note.
+        missing = bind.execute(
+            sa.text(
+                """
+                SELECT COUNT(*) FROM therapy_sessions ts
+                WHERE ts.note_content IS NOT NULL
+                  AND ts.note_content::text <> '{}'::text
+                  AND NOT EXISTS (
+                      SELECT 1 FROM notes n WHERE n.session_id = ts.id
+                  )
+                """
+            )
+        ).scalar_one()
+        if missing:
+            raise RuntimeError(
+                f"Refusing to drop legacy note columns: {missing} therapy_sessions row(s) "
+                "have non-empty note_content but no matching row in `notes`. "
+                "Run the pa-0nx.1 backfill (revision b9d2f7c4e3a8) first, or "
+                "investigate the divergence."
+            )
 
     for col in _DROPPED_COLUMNS:
         op.drop_column("therapy_sessions", col)
