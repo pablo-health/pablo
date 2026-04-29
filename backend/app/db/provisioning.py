@@ -9,11 +9,15 @@ For Pablo Practice edition, new practices get their own schemas on demand.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from datetime import datetime
 
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from ..utcnow import utc_now
@@ -25,6 +29,9 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
+
+# backend/alembic.ini relative to backend/app/db/provisioning.py.
+_ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
 
 
 def _now() -> datetime:
@@ -298,6 +305,33 @@ def _migrate_practice_columns(engine: Engine, schema_name: str) -> None:
         conn.commit()
 
 
+def _stamp_alembic_at_head(engine: Engine, schema_name: str) -> None:
+    """Insert ``alembic_version`` at current head for a freshly-provisioned tenant.
+
+    Without this row, the per-tenant fan-out tool (pa-5in.1) has no version to
+    upgrade FROM — every future migration would either no-op or error against
+    the new schema. We stamp at head because the schema was just built from
+    current SQLAlchemy models via ``Base.metadata.create_all`` and is
+    definitionally at HEAD.
+
+    Idempotent: ``MigrationContext.stamp`` deletes existing rows before
+    inserting, so a retry after a partial provisioning is safe.
+    """
+    script = ScriptDirectory.from_config(Config(str(_ALEMBIC_INI_PATH)))
+    head = script.get_current_head()
+    if head is None:
+        return
+    with engine.begin() as conn:
+        ctx = MigrationContext.configure(
+            connection=conn,
+            opts={
+                "version_table_schema": schema_name,
+                "version_table": "alembic_version",
+            },
+        )
+        ctx.stamp(script, head)
+
+
 def create_practice_schema(engine: Engine, schema_name: str) -> None:
     """Create a new practice schema with all practice tables.
 
@@ -333,5 +367,10 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
 
         with OrmSession(engine) as session:
             enable_rls_on_schema(session, schema_name)
+
+        # Stamp alembic_version on tenant schemas only. The 'practice' template's
+        # version row is owned by the deploy-time `alembic upgrade head` job;
+        # stamping it here would race with that flow.
+        _stamp_alembic_at_head(engine, schema_name)
 
     logger.info("Practice schema '%s' ready", schema_name)
