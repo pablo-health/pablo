@@ -47,9 +47,31 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations against a live database.
 
-    Creates platform schema if needed, then runs practice-schema migrations
-    within the default practice schema.
+    Two modes:
+
+    * Default (deploy-time): bootstrap the platform + ``practice`` template
+      schemas, then run migrations with ``version_table_schema=practice``.
+    * Per-tenant fan-out (pa-5in.1): caller passes a live ``connection`` and
+      ``target_schema`` via ``config.attributes``. env.py skips the bootstrap
+      and runs migrations against the supplied connection with the tenant's
+      version table.
     """
+    injected_connection = config.attributes.get("connection")
+    target_schema = config.attributes.get("target_schema") or DEFAULT_PRACTICE_SCHEMA
+
+    if injected_connection is not None:
+        # Per-tenant fan-out path. The caller owns the connection and the
+        # transaction; alembic must not bootstrap platform tables here
+        # (they already exist) and must use the tenant's alembic_version.
+        context.configure(
+            connection=injected_connection,
+            target_metadata=target_metadata,
+            version_table_schema=target_schema,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     configuration = config.get_section(config.config_ini_section, {})
     configuration["sqlalchemy.url"] = settings.database_url
 
@@ -70,14 +92,14 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         connection.execute(
-            text(f"SET search_path = {DEFAULT_PRACTICE_SCHEMA}, {PLATFORM_SCHEMA}, public")
+            text(f"SET search_path = {target_schema}, {PLATFORM_SCHEMA}, public")
         )
         connection.commit()
 
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            version_table_schema=DEFAULT_PRACTICE_SCHEMA,
+            version_table_schema=target_schema,
         )
 
         with context.begin_transaction():
