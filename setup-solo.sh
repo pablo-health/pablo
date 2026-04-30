@@ -1236,29 +1236,39 @@ echo ""
 # backend/app/routes/ext_auth.py:_verify_blocking_function_token.
 echo "Updating backend CORS + OIDC verification config..."
 
-# Discover the Firebase blocking function runtime SA. One `functions list`
-# call (filtered by name) returns whatever blocking function is actually
-# deployed with its real SA — no casing guesses. Fall back to the default
-# Cloud Functions gen2 compute SA if none exists.
+# Discover the Firebase blocking function runtime SA + URIs. One
+# `functions list` call (filtered by name) returns whatever blocking
+# functions are actually deployed with their real SA + URI — no casing
+# guesses. Fall back to the default Cloud Functions gen2 compute SA if
+# nothing is deployed yet.
 #
 # Wrapped in a 10s watchdog: GCP API calls occasionally hang (not fail),
 # and macOS lacks `timeout(1)`, so we DIY it with a backgrounded child.
 BLOCKING_FN_SA=""
-echo "  Looking up deployed blocking function (10s max)..."
+BLOCKING_FN_BEFORE_CREATE_URI=""
+BLOCKING_FN_BEFORE_SIGNIN_URI=""
+echo "  Looking up deployed blocking functions (10s max)..."
 LIST_TMP=$(mktemp)
 gcloud functions list \
     --gen2 \
     --regions="$REPO_LOCATION" \
     --filter="name~(beforeCreate|beforeSignIn|beforecreate|beforesignin)$" \
-    --format="value(serviceConfig.serviceAccountEmail)" \
-    --limit=1 >"$LIST_TMP" 2>/dev/null &
+    --format="csv[no-heading](name,serviceConfig.serviceAccountEmail,serviceConfig.uri)" \
+    >"$LIST_TMP" 2>/dev/null &
 GPID=$!
 ( sleep 10; kill -TERM "$GPID" 2>/dev/null ) &
 WPID=$!
 wait "$GPID" 2>/dev/null || true
 kill "$WPID" 2>/dev/null || true
 wait "$WPID" 2>/dev/null || true
-BLOCKING_FN_SA=$(head -n 1 "$LIST_TMP" 2>/dev/null || echo "")
+while IFS=, read -r FN_NAME FN_SA FN_URI; do
+    [ -z "$FN_NAME" ] && continue
+    [ -z "$BLOCKING_FN_SA" ] && BLOCKING_FN_SA="$FN_SA"
+    case "$FN_NAME" in
+        *beforeCreate|*beforecreate)  BLOCKING_FN_BEFORE_CREATE_URI="$FN_URI" ;;
+        *beforeSignIn|*beforesignin)  BLOCKING_FN_BEFORE_SIGNIN_URI="$FN_URI" ;;
+    esac
+done <"$LIST_TMP"
 rm -f "$LIST_TMP"
 
 if [ -n "$BLOCKING_FN_SA" ]; then
@@ -1289,6 +1299,69 @@ gcloud run services update pablo-backend \
     --quiet
 
 echo -e "${GREEN}CORS + OIDC verification configured${NC}"
+
+# STEP 9b: Wire blocking functions into Identity Platform.
+#
+# Defense against PABLO-002 (open Firebase signups). Without this,
+# anyone can hit identitytoolkit /accounts:signUp directly and mint
+# an idToken — even with RESTRICT_SIGNUPS=true on the backend, the
+# Firebase user pool fills with zombie accounts and an attacker can
+# make signed-in API calls (which we then 403, but it's noise we
+# shouldn't have to filter).
+#
+# The fix: register the deployed beforeCreate / beforeSignIn Cloud
+# Functions as Identity Platform blocking-function triggers via the
+# admin v2 config API. Once registered, signUp itself fails for any
+# email not on the allowlist (the beforeCreate function calls our
+# /api/ext/auth/check-allowlist endpoint).
+#
+# Note: admin-SDK user creation in Step 10 below uses
+# /v1/projects/{project}/accounts (the privileged Identity Platform
+# Admin endpoint), which bypasses blocking functions per Firebase
+# docs — so the initial admin can still be seeded after this wires up.
+echo ""
+echo "Registering blocking functions with Identity Platform..."
+if [ -n "$BLOCKING_FN_BEFORE_CREATE_URI" ] || [ -n "$BLOCKING_FN_BEFORE_SIGNIN_URI" ]; then
+    # Build only the triggers we actually have URIs for.
+    TRIGGERS_JSON=""
+    if [ -n "$BLOCKING_FN_BEFORE_CREATE_URI" ]; then
+        TRIGGERS_JSON="\"beforeCreate\":{\"functionUri\":\"${BLOCKING_FN_BEFORE_CREATE_URI}\"}"
+    fi
+    if [ -n "$BLOCKING_FN_BEFORE_SIGNIN_URI" ]; then
+        [ -n "$TRIGGERS_JSON" ] && TRIGGERS_JSON="${TRIGGERS_JSON},"
+        TRIGGERS_JSON="${TRIGGERS_JSON}\"beforeSignIn\":{\"functionUri\":\"${BLOCKING_FN_BEFORE_SIGNIN_URI}\"}"
+    fi
+
+    PATCH_BODY="{\"blockingFunctions\":{\"triggers\":{${TRIGGERS_JSON}}}}"
+    PATCH_TOKEN=$(gcloud auth print-access-token)
+    PATCH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+        -X PATCH \
+        "https://identitytoolkit.googleapis.com/admin/v2/projects/${PROJECT_ID}/config?updateMask=blockingFunctions" \
+        -H "Authorization: Bearer ${PATCH_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "${PATCH_BODY}")
+
+    if [ "$PATCH_STATUS" = "200" ]; then
+        echo -e "${GREEN}Blocking functions wired into Identity Platform${NC}"
+        [ -n "$BLOCKING_FN_BEFORE_CREATE_URI" ] && echo "  beforeCreate -> $BLOCKING_FN_BEFORE_CREATE_URI"
+        [ -n "$BLOCKING_FN_BEFORE_SIGNIN_URI" ] && echo "  beforeSignIn -> $BLOCKING_FN_BEFORE_SIGNIN_URI"
+    else
+        echo -e "${YELLOW}Could not register blocking functions (HTTP ${PATCH_STATUS}).${NC}"
+        echo -e "${YELLOW}Open signups remain possible until this is wired manually:${NC}"
+        echo "  Console: https://console.firebase.google.com/project/${PROJECT_ID}/authentication/providers"
+        echo "  Or rerun setup-solo.sh after the blocking functions are deployed."
+    fi
+else
+    echo -e "${YELLOW}No deployed blocking functions found in ${REPO_LOCATION}.${NC}"
+    echo -e "${YELLOW}Deploy them first (PABLO-002 / open-signup hardening):${NC}"
+    echo "  cd functions && npm install && npm run build"
+    echo "  firebase deploy --only functions:beforeCreate,functions:beforeSignIn"
+    echo "  ./setup-solo.sh   # rerun — it will detect them and wire them up"
+    echo ""
+    echo -e "${YELLOW}Until wired, RESTRICT_SIGNUPS=true on the backend blocks${NC}"
+    echo -e "${YELLOW}allowlist-violators from reaching ePHI, but Firebase will${NC}"
+    echo -e "${YELLOW}accept their signUp calls and accumulate zombie accounts.${NC}"
+fi
 
 # STEP 10: Create your user
 echo ""
