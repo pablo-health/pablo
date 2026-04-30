@@ -1,0 +1,38 @@
+# Semgrep ignore — paths intentionally excluded with rationale.
+#
+# This file is read by `semgrep scan` (run from repo root). The pentest
+# runner (backend/app/jobs/pentest_collectors.py:run_semgrep) invokes
+# semgrep against /app/backend in the deployed container, so these
+# exclusions also need a matching block when running inside the image.
+# We use both .semgrepignore (root, dev workflow) and per-file paths
+# below so coverage stays consistent across environments.
+
+# --- Alembic migrations ---------------------------------------------------
+# Migrations are DDL/DML by definition. The `text()` calls flagged by
+# python.sqlalchemy.security.audit.avoid-sqlalchemy-text are author-written
+# SQL run out-of-band by the operator, never reachable from web requests.
+# This is a different trust boundary than the API layer; the rule does not
+# apply.
+backend/alembic/
+
+# --- Pentest jobs (non-prod compliance tooling) ---------------------------
+# Files under backend/app/jobs/pentest_*.py are the automated weekly
+# self-assessment runner. They intentionally make dynamic outbound HTTP
+# calls to:
+#   - GCP / Identity Platform admin APIs (audience-locked OIDC)
+#   - the deployed backend's own /api/admin/pentest/* endpoints
+#   - operator-provided webhooks (Slack-style notifications)
+# All URLs are constructed from runtime config, not user input. The
+# python.lang.security.audit.dynamic-urllib-use-detected hits here are
+# false positives. These scripts are also gated by Cloud Run job IAM and
+# do not serve web traffic, so the API-surface trust model does not
+# apply.
+backend/app/jobs/pentest_collectors.py
+backend/app/jobs/pentest_identity.py
+backend/app/jobs/pentest_runner.py
+backend/app/jobs/pentest_tenant.py
+
+# --- Vendor / generated ---------------------------------------------------
+node_modules/
+.venv/
+**/__pycache__/

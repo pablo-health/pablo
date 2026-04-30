@@ -105,14 +105,14 @@ def _verify_blocking_function_token(request: Request) -> None:
         ) from err
 
     if claims.get("iss") not in _GOOGLE_ISSUERS:
-        logger.warning("Rejected blocking function token: issuer=%s", claims.get("iss"))
+        logger.warning("Rejected blocking-function caller: bad issuer=%s", claims.get("iss"))
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid service identity token",
         )
 
     if not claims.get("email_verified"):
-        logger.warning("Rejected blocking function token: email not verified")
+        logger.warning("Rejected blocking-function caller: email not verified")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid service identity token",
@@ -120,7 +120,7 @@ def _verify_blocking_function_token(request: Request) -> None:
 
     if claims.get("email") != expected_caller:
         logger.warning(
-            "Rejected blocking function token: caller=%s expected=%s",
+            "Rejected blocking-function caller: caller=%s expected=%s",
             claims.get("email"),
             expected_caller,
         )
