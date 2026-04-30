@@ -12,6 +12,10 @@ on:
         description: "Run alembic upgrade head before deploying backend"
         type: boolean
         default: true
+      run_tenant_migrations:
+        description: "Fan alembic upgrade head across every tenant schema"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -170,9 +174,44 @@ jobs:
           gcloud run jobs execute pablo-migrate \
             --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --wait
 
+  migrate-tenants:
+    name: Run Per-Tenant Migrations
+    needs: [migrate]
+    # Opt-in via workflow_dispatch. The default `push` event leaves this
+    # skipped — tenant fan-out only runs on demand because it touches every
+    # paying tenant's schema and is best executed deliberately.
+    if: inputs.run_tenant_migrations == true
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy pablo-migrate-tenants job at new SHA
+        run: |
+          gcloud run jobs deploy pablo-migrate-tenants \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" \
+            --image="${{ env.REGISTRY }}/backend:${{ github.sha }}" \
+            --service-account="${{ env.RUNTIME_SA }}" \
+            --set-cloudsql-instances="${{ env.CLOUDSQL_INSTANCE }}" \
+            --set-secrets="DATABASE_URL=pablo-database-url:latest" \
+            --set-env-vars="ENVIRONMENT=production,GCP_PROJECT_ID=${{ env.PROJECT }},GOOGLE_CLOUD_PROJECT=${{ env.PROJECT }}" \
+            --command="python" \
+            --args="backend/bin/migrate_tenants.py" \
+            --max-retries=0 --task-timeout=1800 --cpu=1 --memory=512Mi --quiet
+
+      - name: Execute tenant fan-out
+        run: |
+          gcloud run jobs execute pablo-migrate-tenants \
+            --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --wait
+
   deploy-backend:
     name: Deploy Backend
-    needs: [build-backend, migrate]
+    needs: [build-backend, migrate, migrate-tenants]
     # `migrate` is skipped when run_migrations=false (workflow_dispatch
     # opt-out). Keep this job alive in that case while still failing on
     # an actual migrate failure.
