@@ -88,8 +88,8 @@ def create_native_code(
     try:
         decoded_token = firebase_auth.verify_id_token(request.id_token, check_revoked=True)
     except Exception as err:
-        logger.warning("Native code request with invalid id_token")
-        logger.debug("id_token verification detail: %s", err)
+        logger.warning("Native code request with invalid Firebase JWT")
+        logger.debug("Firebase JWT verify error detail: %s", err)
         raise UnauthorizedError("Invalid or expired id_token.") from err
 
     # Enforce MFA: reject tokens without a completed second factor
