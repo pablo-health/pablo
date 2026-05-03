@@ -75,7 +75,7 @@ jobs:
         run: |
           pipx inject poetry poetry-plugin-export
           poetry export --only=main --without-hashes -f requirements.txt -o /tmp/requirements-audit.txt
-          poetry run pip-audit -r /tmp/requirements-audit.txt --no-deps --disable-pip
+          pipx run pip-audit -r /tmp/requirements-audit.txt --no-deps --disable-pip
 
       - name: Lint (ruff + mypy)
         run: make lint

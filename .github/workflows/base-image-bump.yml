@@ -1,0 +1,118 @@
+name: Base Image Bump
+
+# Weekly bump of the Chainguard Python base image digests pinned in
+# backend/Dockerfile.production. Trivy scans the *new* digests at
+# CRITICAL/HIGH before opening the PR, so a bump only lands when the
+# upstream rebuild is at least as clean as what's currently pinned.
+#
+# Runs 1h after security.yml's weekly scan so we don't double up on
+# Trivy load. Manual dispatch is allowed for emergency bumps.
+#
+# The PR is opened for human review/merge. To enable auto-merge later,
+# add a PAT or GitHub App token (so CI fires on the PR) and append a
+# `gh pr merge --auto --squash` step.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"  # Monday 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: base-image-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump Chainguard digests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve upstream digests
+        id: upstream
+        run: |
+          set -euo pipefail
+          latest=$(docker buildx imagetools inspect cgr.dev/chainguard/python:latest --format '{{.Manifest.Digest}}')
+          dev=$(docker buildx imagetools inspect cgr.dev/chainguard/python:latest-dev --format '{{.Manifest.Digest}}')
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "dev=$dev" >> "$GITHUB_OUTPUT"
+          echo "Upstream :latest     = $latest"
+          echo "Upstream :latest-dev = $dev"
+
+      - name: Read currently pinned digests
+        id: pinned
+        run: |
+          set -euo pipefail
+          file=backend/Dockerfile.production
+          latest=$(grep -oE 'chainguard/python:latest@sha256:[a-f0-9]{64}' "$file" | head -n1 | sed 's/.*@//')
+          dev=$(grep -oE 'chainguard/python:latest-dev@sha256:[a-f0-9]{64}' "$file" | head -n1 | sed 's/.*@//')
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "dev=$dev" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to bump
+        id: decide
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.upstream.outputs.latest }}" == "${{ steps.pinned.outputs.latest }}" \
+             && "${{ steps.upstream.outputs.dev    }}" == "${{ steps.pinned.outputs.dev    }}" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Digests already current; nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trivy scan new runtime digest
+        if: steps.decide.outputs.changed == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cgr.dev/chainguard/python:latest@${{ steps.upstream.outputs.latest }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Trivy scan new builder digest
+        if: steps.decide.outputs.changed == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cgr.dev/chainguard/python:latest-dev@${{ steps.upstream.outputs.dev }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Patch Dockerfile.production
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          file=backend/Dockerfile.production
+          sed -i \
+            -e "s|chainguard/python:latest@sha256:[a-f0-9]\{64\}|chainguard/python:latest@${{ steps.upstream.outputs.latest }}|" \
+            -e "s|chainguard/python:latest-dev@sha256:[a-f0-9]\{64\}|chainguard/python:latest-dev@${{ steps.upstream.outputs.dev }}|" \
+            "$file"
+          git diff --no-color "$file"
+
+      - name: Open pull request
+        if: steps.decide.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/base-image-bump
+          delete-branch: true
+          commit-message: "chore(deps): bump Chainguard base image digests"
+          title: "chore(deps): bump Chainguard base image digests"
+          body: |
+            Weekly base image digest bump from `.github/workflows/base-image-bump.yml`.
+
+            | Image | Old | New |
+            |---|---|---|
+            | `python:latest` | `${{ steps.pinned.outputs.latest }}` | `${{ steps.upstream.outputs.latest }}` |
+            | `python:latest-dev` | `${{ steps.pinned.outputs.dev }}` | `${{ steps.upstream.outputs.dev }}` |
+
+            Trivy scanned both new digests at CRITICAL/HIGH (ignore-unfixed). PR
+            would not have been opened if either scan had failed.
+          labels: |
+            dependencies
+            ci
+            base-image

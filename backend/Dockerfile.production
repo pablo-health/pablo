@@ -8,12 +8,13 @@
 # psycopg2-binary bundles libpq statically, so the runtime stage needs
 # no OS packages — we use the distroless-style runtime variant.
 #
+# Base image digests below are bumped weekly by .github/workflows/base-image-bump.yml
+# (Trivy-gated PR with auto-merge). Do not edit manually unless rolling back.
+#
 # trivy:ignore:DS-0026 — Cloud Run uses HTTP startup/liveness probes, not Docker HEALTHCHECK
-# trivy:ignore:DS-0001 — Chainguard free tier does not publish version-pinned tags;
-#   :latest is the supported channel. security.yml re-scans this base daily.
 
 # ---------- Stage 1: Builder ----------
-FROM cgr.dev/chainguard/python:latest-dev AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:24ab6598248da608a35ff3d5cd958205b819fe9d8265581c2f364ddfc6abd753 AS builder
 
 WORKDIR /build
 
@@ -30,7 +31,7 @@ RUN poetry config virtualenvs.create false \
 
 
 # ---------- Stage 2: Runtime ----------
-FROM cgr.dev/chainguard/python:latest
+FROM cgr.dev/chainguard/python:latest@sha256:7b27b4bfa2836f4c7007238658754d94a06ba84461a7720f2e07e284c6e564a1
 
 WORKDIR /app
 
