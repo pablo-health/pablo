@@ -174,6 +174,15 @@ class TestProbeBlindSpot:
     def test_platform_writes_do_not_appear_in_unqualified_audit_logs(
         self, pg_session: Session
     ) -> None:
+        # Compare unqualified count before and after — robust to
+        # whatever rows tenant-suite tests left in practice.audit_logs.
+        unqualified_before = pg_session.execute(
+            text("SELECT COUNT(*) FROM audit_logs")
+        ).scalar()
+        platform_before = pg_session.execute(
+            text("SELECT COUNT(*) FROM platform.platform_audit_logs")
+        ).scalar()
+
         service = PlatformAuditService(PostgresPlatformAuditRepository(pg_session))
         service.log_tenant_action(
             action=PlatformAuditAction.TENANT_PROVISIONED,
@@ -184,25 +193,18 @@ class TestProbeBlindSpot:
         )
         pg_session.commit()
 
-        # Qualified count: row is there.
+        # The platform row landed in platform.platform_audit_logs.
         assert (
             pg_session.execute(
-                text(
-                    "SELECT COUNT(*) FROM platform.platform_audit_logs "
-                    "WHERE timestamp > now() - interval '1 day'"
-                )
+                text("SELECT COUNT(*) FROM platform.platform_audit_logs")
             ).scalar()
-            == 1
+            == platform_before + 1
         )
 
-        # Unqualified count (mirrors the pentest probe) resolves to
-        # practice.audit_logs via search_path, which is empty here.
+        # …and is invisible to the unqualified `audit_logs` lookup the
+        # pentest probe runs (which resolves to practice.audit_logs via
+        # search_path).
         assert (
-            pg_session.execute(
-                text(
-                    "SELECT COUNT(*) FROM audit_logs "
-                    "WHERE timestamp > now() - interval '1 day'"
-                )
-            ).scalar()
-            == 0
+            pg_session.execute(text("SELECT COUNT(*) FROM audit_logs")).scalar()
+            == unqualified_before
         )
