@@ -83,6 +83,41 @@ jobs:
       - name: Test (pytest)
         run: cd backend && poetry run pytest tests/ -m "not spacy" --cov=app --cov-report=term-missing --cov-report=html
 
+  backend-integration:
+    name: Backend integration (Postgres)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Configure Poetry virtualenv location
+        run: poetry config virtualenvs.in-project true
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      # Postgres comes up via testcontainers — see
+      # backend/tests_integration/conftest.py. Docker is preinstalled on
+      # ubuntu-latest runners; no extra setup needed.
+      - name: Run audit-write integration tests
+        run: |
+          cd backend && poetry run pytest \
+            tests_integration/database/test_audit_writes.py \
+            tests_integration/database/test_platform_audit_writes.py \
+            -v
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest

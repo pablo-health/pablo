@@ -14,24 +14,26 @@ What a unit test cannot prove but these tests do:
   - each ``log_*`` call writes exactly one row with the right shape
   - every ``AuditAction`` value fits within the 50-char column bound
 
-Requires:
-  - ``DATABASE_URL`` + ``DATABASE_BACKEND=postgres``
-  - ``audit_logs`` table present (``make db-up && make db-migrate``)
+``DATABASE_URL`` is provided by the session-scoped bootstrap fixture in
+``tests_integration/conftest.py`` — it spins up a disposable Postgres
+via testcontainers when no URL is exported, so this suite runs in CI
+without any manual ``make db-up`` orchestration.
 
-Run: ``make test-integration``.
+Run: ``make test-integration`` (locally) or via the integration job in
+``ci.yml`` (in CI).
 """
 
 from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from alembic import command
-from alembic.config import Config
+from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
+from app.db.models import Base
+from app.db.platform_models import PlatformBase
 from app.models import Patient, User
 from app.models.audit import AuditAction, ResourceType
 from app.models.session import TherapySession, Transcript
@@ -46,24 +48,26 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session
 
-_db_url = os.environ.get("DATABASE_URL", "")
-pytestmark = pytest.mark.skipif(
-    not _db_url or os.environ.get("DATABASE_BACKEND") != "postgres",
-    reason=(
-        "PostgreSQL not configured. Set DATABASE_URL and DATABASE_BACKEND=postgres; "
-        "apply migrations with `make db-migrate`."
-    ),
-)
-
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    backend_dir = Path(__file__).resolve().parents[2]
-    cfg = Config(str(backend_dir / "alembic.ini"))
-    cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(cfg, "head")
+    """Materialize tables from ORM models directly.
 
-    eng = create_engine(_db_url, pool_pre_ping=True)
+    We deliberately don't run ``alembic upgrade head`` here — migration
+    correctness is the job of ``test_alembic_idempotency.py`` and the
+    ``migration-lint`` guardrail. This suite only needs the schema as
+    the ORM defines it, which is what the running app actually uses.
+    """
+    db_url = os.environ["DATABASE_URL"]
+    eng = create_engine(db_url, pool_pre_ping=True)
+    with eng.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DEFAULT_PRACTICE_SCHEMA}"))
+        conn.execute(
+            text(f"SET search_path = {DEFAULT_PRACTICE_SCHEMA}, {PLATFORM_SCHEMA}, public")
+        )
+        PlatformBase.metadata.create_all(conn)
+        Base.metadata.create_all(conn)
     yield eng
     eng.dispose()
 
