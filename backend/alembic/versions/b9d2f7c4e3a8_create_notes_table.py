@@ -139,22 +139,27 @@ def upgrade() -> None:
                 ts.id,
                 ts.patient_id,
                 ts.id,
-                COALESCE(ts.note_type, 'soap'),
+                ts.note_type,
                 ts.note_content,
                 ts.note_content_edited,
-                ts.finalized_at,
+                -- therapy_sessions stores these timestamps as varchar(30)
+                -- (ISO-8601 strings); notes uses timestamptz. Postgres
+                -- rejects the INSERT at plan time without explicit casts,
+                -- even when the SELECT yields zero rows — which broke
+                -- fresh-DB bootstrap (alembic upgrade head from scratch).
+                ts.finalized_at::timestamptz,
                 ts.quality_rating,
                 ts.quality_rating_reason,
                 ts.quality_rating_sections,
-                COALESCE(ts.export_status, 'not_queued'),
-                ts.export_queued_at,
-                ts.export_reviewed_at,
+                ts.export_status,
+                ts.export_queued_at::timestamptz,
+                ts.export_reviewed_at::timestamptz,
                 ts.export_reviewed_by,
-                ts.exported_at,
+                ts.exported_at::timestamptz,
                 ts.redacted_soap_note,
                 ts.naturalized_soap_note,
-                ts.created_at,
-                COALESCE(ts.updated_at, ts.created_at)
+                ts.created_at::timestamptz,
+                COALESCE(ts.updated_at, ts.created_at)::timestamptz
             FROM therapy_sessions AS ts
             WHERE ts.note_content IS NOT NULL
               AND ts.note_content::text <> '{}'::text
