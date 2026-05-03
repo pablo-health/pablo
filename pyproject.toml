@@ -13,8 +13,8 @@ packages = [{include = "backend"}]
 [tool.poetry.dependencies]
 
 # Web Framework
-fastapi = ">=0.136.0"
-uvicorn = {extras = ["standard"], version = "^0.45.0"}
+fastapi = ">=0.136.1"
+uvicorn = {extras = ["standard"], version = "^0.46.0"}
 pydantic = "^2.13.3"
 pydantic-settings = "^2.14.0"
 
@@ -37,7 +37,7 @@ psycopg2-binary = "^2.9.12"
 redis = "^5.0.0"
 
 # PDF Generation
-reportlab = "^4.4.10"
+reportlab = "^4.5.0"
 
 # Meeting Transcription Pipeline
 meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcription.git"}
@@ -45,7 +45,7 @@ meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcr
 # NLI Verification — onnxruntime only; sentence-transformers (+ torch)
 # moved to optional nli group since verification is gated by
 # ENABLE_EMBEDDING_VERIFICATION env var.
-onnxruntime = ">=1.25.0"
+onnxruntime = ">=1.25.1"
 
 # iCal calendar feed parsing
 icalendar = "^7.0.3"
@@ -57,7 +57,7 @@ httpx = ">=0.28.0"
 aiohttp = ">=3.13.4"
 
 email-validator = "^2.3.0"
-python-multipart = ">=0.0.26"
+python-multipart = ">=0.0.27"
 google-cloud-storage = "^2.18.0"
 google-cloud-tasks = "^2.22.0"
 google-cloud-batch = "^0.21.0"
@@ -80,7 +80,7 @@ pytest = "^9.0.0"
 pytest-cov = "^7.0.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
-ruff = "^0.15.11"
+ruff = "^0.15.12"
 mypy = "^1.20.2"
 types-redis = "^4.6.0"
 pip-audit = "^2.7.0"
