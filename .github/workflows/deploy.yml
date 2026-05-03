@@ -300,7 +300,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch oss-deployed event to pablo-saas
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@v4
         # Failure here (expired token, GitHub outage) must NOT mark the OSS
         # deploy as failed — the SaaS base-bump is a follow-up signal, not a
         # gate. Worst case, the weekly cron in pablo-saas catches up within 7d.
