@@ -49,6 +49,8 @@ export default function NativeAuthPage() {
 
   // Validate redirect_uri
   const redirectUri = searchParams.get("redirect_uri")
+  // OAuth state (RFC 6749 §10.12) — must be echoed back to redirect_uri unmodified.
+  const state = searchParams.get("state")
   const isValidRedirectUri = (() => {
     if (!redirectUri) return false
     try {
@@ -86,7 +88,9 @@ export default function NativeAuthPage() {
           const data = await res.json().catch(() => null)
           const errorCode = data?.detail?.error?.code ?? data?.error?.code
           if (res.status === 403 && errorCode === "MFA_REQUIRED") {
-            const returnUrl = `/native-auth?redirect_uri=${encodeURIComponent(redirectUri!)}`
+            const returnParams = new URLSearchParams({ redirect_uri: redirectUri! })
+            if (state) returnParams.set("state", state)
+            const returnUrl = `/native-auth?${returnParams.toString()}`
             window.location.href = `/mfa-enrollment?returnTo=${encodeURIComponent(returnUrl)}`
             return
           }
@@ -96,6 +100,7 @@ export default function NativeAuthPage() {
         const { code } = await res.json()
         const callbackUrl = new URL(redirectUri!)
         callbackUrl.searchParams.set("code", code)
+        if (state) callbackUrl.searchParams.set("state", state)
         window.location.href = callbackUrl.toString()
       } catch {
         setError("Failed to get authentication tokens.")
