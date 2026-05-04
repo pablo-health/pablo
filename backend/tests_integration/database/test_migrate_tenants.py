@@ -123,16 +123,35 @@ def test_upgrade_tenant_at_head_reports_already_at_head(engine, tenant_factory) 
     assert _version_in(engine, schema) == _alembic_head()
 
 
-def test_upgrade_tenant_missing_version_auto_stamps(engine, tenant_factory) -> None:
-    """Tenants provisioned before pa-5in.2 lack alembic_version. The fan-out
-    auto-stamps them at HEAD with a clear log line — pa-5in epic note documents
-    this choice. After stamping the row is at HEAD and re-running is a no-op.
+def test_upgrade_tenant_missing_version_reconciles(engine, tenant_factory) -> None:
+    """Tenants without alembic_version are reconciled by re-running the
+    idempotent provisioning path: missing tables/columns are filled in, then
+    the stamp lands at HEAD. After reconciliation the row is at HEAD and
+    re-running is a no-op.
     """
     schema = tenant_factory("legacy", stamp=False)
+
+    # Simulate a legacy schema missing a table introduced after provisioning.
+    # audit_logs is the canonical example: created by a tenant migration
+    # added after the original create_all, and the source of the original
+    # auto-stamp regression. Drop it to exercise the reconcile path.
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP TABLE IF EXISTS {schema}.audit_logs"))
+
     result = upgrade_tenant_schema(engine, schema)
 
-    assert result.status is TenantStatus.STAMPED
+    assert result.status is TenantStatus.RECONCILED
     assert _version_in(engine, schema) == _alembic_head()
+
+    with engine.connect() as conn:
+        has_audit = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.tables"
+                " WHERE table_schema = :s AND table_name = 'audit_logs'"
+            ),
+            {"s": schema},
+        ).fetchone()
+    assert has_audit is not None, "reconcile must recreate missing tables"
 
     again = upgrade_tenant_schema(engine, schema)
     assert again.status is TenantStatus.ALREADY_AT_HEAD

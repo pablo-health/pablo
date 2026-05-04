@@ -8,9 +8,16 @@ Iterates ``platform.practices.schema_name`` for active practices and runs
 deploy-time ``alembic upgrade head`` job and is skipped here.
 
 Tenants without an ``alembic_version`` row (provisioned before pa-5in.2
-landed) are auto-stamped at HEAD with a clear log line. Schemas built from
-``Base.metadata.create_all`` are by definition at HEAD, so stamping is safe
-and avoids forcing manual operator intervention.
+landed) are reconciled by re-running the idempotent provisioning path
+(``create_practice_schema``): ``Base.metadata.create_all`` adds any missing
+tables, ``_migrate_practice_columns`` patches missing columns on legacy
+tables, and the stamp lands once the schema actually matches HEAD.
+
+Earlier behavior blind-stamped every legacy schema at HEAD without first
+reconciling tables — for tenants provisioned before a new model table
+(e.g. ``audit_logs``) was added, that left the schema missing tables
+while alembic believed it was caught up, masking real failures and making
+future ``upgrade head`` calls a no-op against the broken state.
 """
 
 from __future__ import annotations
@@ -27,7 +34,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
-from .provisioning import _ALEMBIC_INI_PATH
+from .provisioning import _ALEMBIC_INI_PATH, create_practice_schema
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -38,7 +45,7 @@ logger = logging.getLogger(__name__)
 class TenantStatus(StrEnum):
     SUCCESS = "success"
     ALREADY_AT_HEAD = "already-at-head"
-    STAMPED = "stamped"
+    RECONCILED = "reconciled"
     FAILED = "failed"
 
 
@@ -92,16 +99,6 @@ def _has_alembic_version(engine: Engine, schema: str) -> bool:
     return row is not None
 
 
-def _stamp_at_head(engine: Engine, schema: str, head: str) -> None:
-    script = ScriptDirectory.from_config(Config(str(_ALEMBIC_INI_PATH)))
-    with engine.begin() as conn:
-        ctx = MigrationContext.configure(
-            connection=conn,
-            opts={"version_table_schema": schema, "version_table": "alembic_version"},
-        )
-        ctx.stamp(script, head)
-
-
 def _current_revision(engine: Engine, schema: str) -> str | None:
     with engine.connect() as conn:
         ctx = MigrationContext.configure(
@@ -124,9 +121,12 @@ def _alembic_config_for(schema: str) -> Config:
 def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
     """Run ``alembic upgrade head`` against a single tenant schema.
 
-    Auto-stamps tenants missing ``alembic_version`` (legacy tenants
-    provisioned before pa-5in.2). Returns a structured result rather than
-    raising so a single bad tenant doesn't abort the fan-out.
+    Reconciles legacy tenants missing ``alembic_version`` by re-running
+    ``create_practice_schema`` (idempotent: ``create_all`` adds missing
+    tables, ``_migrate_practice_columns`` patches missing columns, and
+    the provisioning path stamps at HEAD only after the schema has been
+    brought into shape). Returns a structured result rather than raising
+    so a single bad tenant doesn't abort the fan-out.
     """
     _validate_schema_name(schema)
     head = _alembic_head()
@@ -136,12 +136,12 @@ def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
     try:
         if not _has_alembic_version(engine, schema):
             logger.info(
-                "tenant %s missing alembic_version — auto-stamping at head %s",
+                "tenant %s missing alembic_version — reconciling against head %s",
                 schema,
                 head,
             )
-            _stamp_at_head(engine, schema, head)
-            return TenantResult(schema, TenantStatus.STAMPED, head)
+            create_practice_schema(engine, schema)
+            return TenantResult(schema, TenantStatus.RECONCILED, head)
 
         current = _current_revision(engine, schema)
         if current == head:
