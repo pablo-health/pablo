@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import require_admin
@@ -24,7 +25,7 @@ from ..repositories import (
 )
 from ..services import AuditService, get_audit_service
 from ..services.tenant_export_service import (
-    TenantExportSummary,
+    TenantExportState,
     stream_tenant_archive,
 )
 
@@ -201,9 +202,11 @@ def tenant_export(
     manifest. Audio export is out of scope in v1; ``include_audio`` is
     accepted from the client but coerced to False.
 
-    The TENANT_EXPORTED audit log is emitted once the stream completes;
-    its ``changes`` payload carries counts and the archive's
-    ``size_bytes`` (PHI-free).
+    The TENANT_EXPORTED audit row is emitted from a ``BackgroundTask``
+    that Starlette runs after the response body is fully sent. If the
+    client disconnects mid-stream or the serializer raises, the holder
+    stays empty and no audit row is written — successful exports are
+    audited; aborted ones are not.
     """
     # ``include_audio`` is intentionally ignored in v1. We still accept
     # it on the wire so callers that already include it (e.g. the SaaS
@@ -211,7 +214,11 @@ def tenant_export(
     # later lands.
     _ = body.include_audio
 
-    def _on_complete(summary: TenantExportSummary) -> None:
+    state = TenantExportState()
+
+    def _emit_audit() -> None:
+        if state.summary is None:
+            return
         audit.log(
             AuditAction.TENANT_EXPORTED,
             admin,
@@ -221,22 +228,22 @@ def tenant_export(
             changes={
                 "format": body.format,
                 "include_audio": False,
-                "size_bytes": summary.size_bytes,
-                "counts": summary.counts,
+                "size_bytes": state.summary.size_bytes,
+                "counts": state.summary.counts,
             },
         )
         logger.info(
             "Tenant export streamed by admin %s: format=%s size_bytes=%d counts=%s",
             admin.id,
             body.format,
-            summary.size_bytes,
-            summary.counts,
+            state.summary.size_bytes,
+            state.summary.counts,
         )
 
     stream = stream_tenant_archive(
         db,
         export_format=body.format,
-        on_complete=_on_complete,
+        state=state,
     )
 
     return StreamingResponse(
@@ -246,6 +253,7 @@ def tenant_export(
             "Content-Disposition": 'attachment; filename="tenant-export.tar.gz"',
             "Cache-Control": "no-store",
         },
+        background=BackgroundTask(_emit_audit),
     )
 
 

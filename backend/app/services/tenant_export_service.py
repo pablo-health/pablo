@@ -48,7 +48,7 @@ from ..db.models import (
 from ..utcnow import utc_now_iso
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Iterable, Iterator
 
     from sqlalchemy.orm import Session
 
@@ -78,6 +78,20 @@ class TenantExportSummary:
 
     size_bytes: int
     counts: dict[str, int]
+
+
+@dataclass
+class TenantExportState:
+    """Mutable holder so the route can read the summary post-stream.
+
+    The route attaches a FastAPI ``BackgroundTask`` that runs after
+    Starlette finishes sending the response body; that task closes
+    over an instance of this class and only emits the audit row if
+    ``summary`` was populated (i.e. the generator ran to completion,
+    rather than being aborted by a client disconnect or DB error).
+    """
+
+    summary: TenantExportSummary | None = None
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
@@ -189,7 +203,7 @@ def stream_tenant_archive(
     db: Session,
     *,
     export_format: ExportFormat = "json",
-    on_complete: Callable[[TenantExportSummary], None] | None = None,
+    state: TenantExportState | None = None,
 ) -> Iterator[bytes]:
     """Yield successive byte chunks of a tar.gz archive of the tenant.
 
@@ -206,11 +220,14 @@ def stream_tenant_archive(
         for tenant isolation; this function does not check.
     export_format:
         ``"json"`` (default) or ``"csv"``.
-    on_complete:
-        Optional callback invoked once after the final byte is
-        produced, with the :class:`TenantExportSummary`. Routes use
-        this to emit the ``TENANT_EXPORTED`` audit log without buffering
-        the archive.
+    state:
+        Optional :class:`TenantExportState` holder. When supplied, the
+        generator populates ``state.summary`` after the final byte is
+        produced. The route uses this from a ``BackgroundTask`` to emit
+        the ``TENANT_EXPORTED`` audit row only when the stream actually
+        ran to completion — if the client hangs up or a serializer
+        raises mid-stream, ``state.summary`` stays ``None`` and no
+        audit row is written.
     """
     pipe = _PipeWriter()
     counts: dict[str, int] = {}
@@ -252,5 +269,5 @@ def stream_tenant_archive(
     if chunk:
         yield chunk
 
-    if on_complete is not None:
-        on_complete(TenantExportSummary(size_bytes=pipe.total_bytes, counts=counts))
+    if state is not None:
+        state.summary = TenantExportSummary(size_bytes=pipe.total_bytes, counts=counts)

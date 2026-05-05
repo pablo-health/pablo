@@ -14,7 +14,8 @@ Coverage:
 
 We do **not** materialize the full archive in tests — we open the
 stream, read enough bytes to confirm a tar.gz signature, and then
-drain the iterator so the ``on_complete`` audit callback runs.
+drain the iterator so Starlette runs the BackgroundTask that emits
+the audit row.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from app.routes.admin import TenantExportRequest
 from app.routes.admin import router as admin_router
 from app.services import AuditService, get_audit_service
 from app.services.tenant_export_service import (
+    TenantExportState,
     TenantExportSummary,
     stream_tenant_archive,
 )
@@ -149,25 +151,23 @@ class TestTenantExportHappyPath:
 
         We patch ``stream_tenant_archive`` to a synthetic generator so
         we don't have to materialize the full archive in the test —
-        but we do drive the StreamingResponse to completion so the
-        ``on_complete`` callback runs.
+        but we do drive the StreamingResponse to completion so
+        Starlette runs the BackgroundTask that emits the audit row.
         """
 
-        def _fake_stream(db, *, export_format, on_complete):  # type: ignore[no-untyped-def]
+        def _fake_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
             # Yield a couple of chunks that together start with the
             # gzip magic so a sniffing client could identify it.
             yield b"\x1f\x8b\x08\x00fake-tar-gz-prelude"
             yield b"more-bytes"
-            on_complete(
-                TenantExportSummary(
-                    size_bytes=64,
-                    counts={
-                        "patients": 3,
-                        "therapy_sessions": 5,
-                        "notes": 4,
-                        "audit_logs": 12,
-                    },
-                )
+            state.summary = TenantExportSummary(
+                size_bytes=64,
+                counts={
+                    "patients": 3,
+                    "therapy_sessions": 5,
+                    "notes": 4,
+                    "audit_logs": 12,
+                },
             )
 
         with (
@@ -190,7 +190,8 @@ class TestTenantExportHappyPath:
             # without buffering the whole archive.
             first_chunk = next(resp.iter_bytes())
             assert first_chunk.startswith(b"\x1f\x8b")
-            # Drain the rest so on_complete fires.
+            # Drain the rest so Starlette runs the BackgroundTask that
+            # emits the audit row.
             for _ in resp.iter_bytes():
                 pass
 
@@ -215,18 +216,16 @@ class TestTenantExportHappyPath:
     ) -> None:
         """v1 ignores include_audio; manifest+audit always record False."""
 
-        def _fake_stream(db, *, export_format, on_complete):  # type: ignore[no-untyped-def]
+        def _fake_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
             yield b"\x1f\x8b\x08\x00"
-            on_complete(
-                TenantExportSummary(
-                    size_bytes=4,
-                    counts={
-                        "patients": 0,
-                        "therapy_sessions": 0,
-                        "notes": 0,
-                        "audit_logs": 0,
-                    },
-                )
+            state.summary = TenantExportSummary(
+                size_bytes=4,
+                counts={
+                    "patients": 0,
+                    "therapy_sessions": 0,
+                    "notes": 0,
+                    "audit_logs": 0,
+                },
             )
 
         with (
@@ -248,6 +247,44 @@ class TestTenantExportHappyPath:
         assert entry["changes"]["format"] == "csv"
         assert entry["changes"]["include_audio"] is False
 
+    def test_audit_skipped_when_stream_aborts(
+        self, client: TestClient, captured_audit_entries: list
+    ) -> None:
+        """Generator raises mid-stream → BackgroundTask runs but state.summary
+        is None → no audit row.
+
+        This is the failure mode the BackgroundTask refactor exists to
+        protect: if the serializer raises (or the client disconnects
+        before the generator reaches its tail), we MUST NOT log a
+        TENANT_EXPORTED row that overstates what was actually delivered.
+        """
+
+        def _aborting_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
+            yield b"\x1f\x8b\x08\x00partial"
+            msg = "simulated mid-stream serializer failure"
+            raise RuntimeError(msg)
+
+        with patch(
+            "app.routes.admin.stream_tenant_archive",
+            side_effect=_aborting_stream,
+        ):
+            # raise_server_exceptions=False so the test client surfaces
+            # the broken stream as a closed connection rather than
+            # re-raising; this is what a real disconnect looks like
+            # from Starlette's perspective.
+            aborting_client = TestClient(client.app, raise_server_exceptions=False)
+            with aborting_client.stream(
+                "POST",
+                "/api/admin/tenant-export",
+                json={"format": "json"},
+            ) as resp:
+                # Drain whatever bytes did make it out before the raise.
+                for _ in resp.iter_bytes():
+                    pass
+
+        # No audit row should have been written — state.summary stayed None.
+        assert captured_audit_entries == []
+
 
 class TestTenantExportService:
     """Pure-Python serializer path — no FastAPI involved."""
@@ -258,19 +295,19 @@ class TestTenantExportService:
         Uses a stub session whose ``execute`` returns empty result
         sets. The archive will contain four empty members + manifest;
         we just verify the bytes start with the gzip magic and the
-        summary callback fires with zero counts.
+        state holder is populated with zero counts.
         """
         empty_scalars = MagicMock()
         empty_scalars.scalars.return_value = []
         db = MagicMock()
         db.execute.return_value = empty_scalars
 
-        captured: list[TenantExportSummary] = []
+        state = TenantExportState()
         chunks: list[bytes] = []
         for chunk in stream_tenant_archive(
             db,
             export_format="json",
-            on_complete=captured.append,
+            state=state,
         ):
             chunks.append(chunk)
 
@@ -290,14 +327,14 @@ class TestTenantExportService:
             ]
         )
 
-        assert len(captured) == 1
-        assert captured[0].counts == {
+        assert state.summary is not None
+        assert state.summary.counts == {
             "patients": 0,
             "therapy_sessions": 0,
             "notes": 0,
             "audit_logs": 0,
         }
-        assert captured[0].size_bytes == len(archive)
+        assert state.summary.size_bytes == len(archive)
         # Sanity: the archive really is gzip-decodable.
         gzip.decompress(archive)
 
