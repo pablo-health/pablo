@@ -237,8 +237,10 @@ def stream_tenant_archive(
 
     # Stream tar.gz: ``mode='w|gz'`` is the non-seeking streaming form.
     # The ``with`` block guarantees the gzip footer is written even if
-    # a serializer raises mid-stream.
-    with tarfile.open(fileobj=pipe, mode="w|gz") as tar:
+    # a serializer raises mid-stream. ``_PipeWriter`` exposes the subset
+    # of the file protocol tarfile actually uses (``write`` + ``flush``),
+    # but it does not satisfy mypy's ``_Fileobj`` Protocol.
+    with tarfile.open(fileobj=pipe, mode="w|gz") as tar:  # type: ignore[call-overload]
         for table in _ROW_TYPES:
             payload, count = serializer(_row_iter_for(table, db))
             counts[table] = count
