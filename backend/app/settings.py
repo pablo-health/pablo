@@ -240,9 +240,17 @@ class Settings(BaseSettings):
     )
     database_url: str = Field(
         default="",
+        description=("PostgreSQL connection URL. Format: postgresql://user:pass@host:port/dbname"),
+    )
+    compliance_hard_purge_enabled: bool = Field(
+        default=False,
         description=(
-            "PostgreSQL connection URL. "
-            "Format: postgresql://user:pass@host:port/dbname"
+            "Hosted/SaaS only: allow the hard-purge job to physically delete "
+            "soft-deleted patients past the retention window and write the "
+            "hosted minimal retention stub row in the compliance schema. "
+            "Pablo Core default is False — CEs keep soft-delete plus audit "
+            "trail only. Set via COMPLIANCE_HARD_PURGE_ENABLED on the "
+            "retention Cloud Run Job."
         ),
     )
 
