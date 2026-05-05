@@ -40,7 +40,7 @@ class ComplianceRetentionStubWriter(Protocol):
         """Return True when stub DML may run against this database (DDL present)."""
 
     def stub_row_exists(self, conn: Any, patient_id: str) -> bool:
-        ...
+        pass
 
     def insert_stub(self, conn: Any, stub: ComplianceRetentionStubPayload) -> None:
         ...
