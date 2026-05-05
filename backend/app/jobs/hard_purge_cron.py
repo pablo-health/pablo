@@ -2,29 +2,27 @@
 
 """Soft-delete hard purge job (THERAPY-cgy), stage 2 of the retention model.
 
-When ``COMPLIANCE_HARD_PURGE_ENABLED`` is false — the Pablo Core default —
-this module exits before opening a database connection so self-hosted CEs
-never run hosted-only physical purge logic.
+Requires a registered :class:`~app.jobs.hard_purge_retention_stub.ComplianceRetentionStubWriter`
+(see ``get_compliance_retention_stub_writer``). Hosted images register
+:class:`~app.jobs.hard_purge_retention_stub.SqlComplianceRetentionStubWriter`
+via ``python -m saas.bin.hard_purge``. Core / self-hosted invoke
+``python -m app.jobs.hard_purge_cron`` with **no** writer → exits **0**
+without opening a database connection — soft-delete plus audit remains
+the only semantics.
 
-When true (hosted jobs: set on the Cloud Run Job), physically deletes
-clinical rows for patients whose ``deleted_at`` is before the configurable
-cutoff, writes the hosted compliance retention stub row, appends a
-``patient_purged`` audit record, and deletes dependent rows. Cloud Storage
+Before any deletes, the writer's ``is_supported`` probes the DB; if False,
+exit **2** (misconfigured deployment or DDL not applied).
+
+Retention stub semantics live in ``hard_purge_retention_stub``. Cloud Storage
 audio deletion is intentionally not implemented here yet.
 
-Retention stub write: this is **not** a swappable override or ORM hook —
-there is one implementation (``_insert_retention_stub``) that runs a
-parameterized ``INSERT`` against the hosted ``compliance`` schema. SaaS
-owns the table DDL; SQL identifiers still use legacy names
-(``patient_identity_tombstone``, ``tombstoned_*``) even though product
-language calls this a **minimal retention stub**.
-
-Invoked as (from repo ``backend/`` with Poetry's default paths)::
+Invoked from repo ``backend/``::
 
     python -m app.jobs.hard_purge_cron --dry-run
     python -m app.jobs.hard_purge_cron --purge-before 2026-01-01T00:00:00Z
 
-Cloud Run should set ``PYTHONPATH=/app/backend`` on the OSS image filesystem layout.
+Cloud Run (**hosted**) should use ``PYTHONPATH=/app/backend`` plus
+``python -m saas.bin.hard_purge ...`` — see SaaS overlay.
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ import argparse
 import logging
 import sys
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -42,30 +39,14 @@ from sqlalchemy import text
 from ..db import PLATFORM_SCHEMA, _validate_schema_name, get_engine
 from ..db.migrate_tenants import list_active_practice_registry
 from ..models.audit import AUDIT_LOG_RETENTION_DAYS, AuditAction, ResourceType
-from ..settings import get_settings
+from .hard_purge_retention_stub import (
+    ComplianceRetentionStubPayload,
+    get_compliance_retention_stub_writer,
+)
 
 logger = logging.getLogger(__name__)
 
 _RETENTION_JOB_USER_ID = "system:retention_job"
-
-
-@dataclass(frozen=True, slots=True)
-class _ComplianceRetentionStubPayload:
-    patient_id: str
-    display_name: str
-    dob: str | None
-    practice_id: str
-    schema_name: str
-    reason: str
-
-
-def _compliance_schema_exists(conn: Any) -> bool:
-    row = conn.execute(
-        text(
-            "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'compliance'"
-        )
-    ).fetchone()
-    return row is not None
 
 
 def _parse_purge_before(raw: str | None) -> datetime:
@@ -113,47 +94,6 @@ def _patient_row_for_stub(
     return dict(row) if row else None
 
 
-def _retention_stub_row_exists(conn: Any, patient_id: str) -> bool:
-    row = conn.execute(
-        text(
-            "SELECT 1 FROM compliance.patient_identity_tombstone "
-            "WHERE patient_id = :pid"
-        ),
-        {"pid": patient_id},
-    ).fetchone()
-    return row is not None
-
-
-def _insert_retention_stub(conn: Any, stub: _ComplianceRetentionStubPayload) -> None:
-    """Persist minimal identity retention metadata (legacy table name in SQL)."""
-    expires = datetime.now(UTC) + timedelta(days=AUDIT_LOG_RETENTION_DAYS)
-    base_cols = (
-        "INSERT INTO compliance.patient_identity_tombstone ("
-        " patient_id, name, dob, mrn, tenant_id_at_offboard, "
-        " original_practice_schema, tombstoned_at, tombstoned_reason, expires_at"
-        ") VALUES ("
-    )
-    tail = (
-        " CAST(NULL AS text), :tenant, :schema, "
-        " NOW(), :reason, :exp"
-        ")"
-    )
-    params_base: dict[str, Any] = {
-        "pid": stub.patient_id,
-        "name": stub.display_name,
-        "tenant": stub.practice_id,
-        "schema": stub.schema_name,
-        "reason": stub.reason,
-        "exp": expires,
-    }
-    if stub.dob:
-        sql = base_cols + " :pid, :name, CAST(:dob AS date)," + tail
-        conn.execute(text(sql), {**params_base, "dob": stub.dob})
-    else:
-        sql = base_cols + " :pid, :name, NULL::date," + tail
-        conn.execute(text(sql), params_base)
-
-
 def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
     _validate_schema_name(schema)
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
@@ -199,17 +139,17 @@ def run(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     args = _parse_argv(argv)
 
-    settings = get_settings()
-    if not settings.compliance_hard_purge_enabled:
-        logger.info("hard_purge_disabled_by_policy")
+    stub_writer = get_compliance_retention_stub_writer()
+    if stub_writer is None:
+        logger.info("hard_purge_skip_no_retention_stub_writer")
         return 0
 
     engine = get_engine()
     purge_before = _parse_purge_before(args.purge_before_raw)
 
     with engine.connect() as conn:
-        if not _compliance_schema_exists(conn):
-            logger.error("compliance_schema_missing")
+        if not stub_writer.is_supported(conn):
+            logger.error("hard_purge_retention_stub_unsupported")
             return 2
 
     dry_run_marker = " dry_run=true" if args.dry_run else ""
@@ -238,14 +178,14 @@ def run(argv: list[str] | None = None) -> int:
                     )
                     if row is None:
                         continue
-                    if not _retention_stub_row_exists(conn, patient_id):
+                    if not stub_writer.stub_row_exists(conn, patient_id):
                         name = (row["first_name"] + " " + row["last_name"]).strip() or "(unknown)"
                         dob_raw = row.get("date_of_birth") or None
                         if dob_raw == "":
                             dob_raw = None
-                        _insert_retention_stub(
+                        stub_writer.insert_stub(
                             conn,
-                            _ComplianceRetentionStubPayload(
+                            ComplianceRetentionStubPayload(
                                 patient_id=str(row["id"]),
                                 display_name=name,
                                 dob=str(dob_raw) if dob_raw else None,

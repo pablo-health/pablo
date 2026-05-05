@@ -10,12 +10,14 @@ from unittest.mock import MagicMock, patch
 from app.jobs import hard_purge_cron
 
 
-def test_run_exits_zero_when_disabled() -> None:
+def test_run_exits_zero_when_no_stub_writer_registered() -> None:
     with (
-        patch("app.jobs.hard_purge_cron.get_settings") as gs,
+        patch(
+            "app.jobs.hard_purge_cron.get_compliance_retention_stub_writer",
+            return_value=None,
+        ),
         patch("app.jobs.hard_purge_cron.get_engine") as ge,
     ):
-        gs.return_value = MagicMock(compliance_hard_purge_enabled=False)
         assert hard_purge_cron.run([]) == 0
         ge.assert_not_called()
 
@@ -35,11 +37,10 @@ def test_parse_purge_before_iso_string() -> None:
     assert got == datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC)
 
 
-def test_run_exits_two_when_compliance_schema_missing() -> None:
+def test_run_exits_two_when_stub_writer_unsupported() -> None:
     mock_conn = MagicMock()
-    exec_result = MagicMock()
-    exec_result.fetchone.return_value = None
-    mock_conn.execute.return_value = exec_result
+    stub_writer = MagicMock()
+    stub_writer.is_supported.return_value = False
 
     mock_cm = MagicMock()
     mock_cm.__enter__.return_value = mock_conn
@@ -48,22 +49,23 @@ def test_run_exits_two_when_compliance_schema_missing() -> None:
     mock_engine.connect.return_value = mock_cm
 
     with (
-        patch("app.jobs.hard_purge_cron.get_settings") as gs,
+        patch(
+            "app.jobs.hard_purge_cron.get_compliance_retention_stub_writer",
+            return_value=stub_writer,
+        ),
         patch("app.jobs.hard_purge_cron.get_engine", return_value=mock_engine),
         patch(
             "app.jobs.hard_purge_cron.list_active_practice_registry",
-            side_effect=AssertionError("must not list tenants without compliance"),
+            side_effect=AssertionError("must not list tenants until supported"),
         ),
     ):
-        gs.return_value = MagicMock(compliance_hard_purge_enabled=True)
         assert hard_purge_cron.run([]) == 2
 
 
-def test_run_dry_run_exits_zero_when_schema_present() -> None:
+def test_run_dry_run_exits_zero_when_stub_writer_supported() -> None:
     mock_conn = MagicMock()
-    exec_result = MagicMock()
-    exec_result.fetchone.return_value = (1,)
-    mock_conn.execute.return_value = exec_result
+    stub_writer = MagicMock()
+    stub_writer.is_supported.return_value = True
 
     mock_cm = MagicMock()
     mock_cm.__enter__.return_value = mock_conn
@@ -72,9 +74,11 @@ def test_run_dry_run_exits_zero_when_schema_present() -> None:
     mock_engine.connect.return_value = mock_cm
 
     with (
-        patch("app.jobs.hard_purge_cron.get_settings") as gs,
+        patch(
+            "app.jobs.hard_purge_cron.get_compliance_retention_stub_writer",
+            return_value=stub_writer,
+        ),
         patch("app.jobs.hard_purge_cron.get_engine", return_value=mock_engine),
         patch("app.jobs.hard_purge_cron.list_active_practice_registry", return_value=[]),
     ):
-        gs.return_value = MagicMock(compliance_hard_purge_enabled=True)
         assert hard_purge_cron.run(["--dry-run"]) == 0
