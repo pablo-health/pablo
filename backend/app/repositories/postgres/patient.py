@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ...db.models import PatientRow, TherapySessionRow
+from ...db.models import NoteRow, PatientRow, TherapySessionRow
 from ...models import Patient
 from ...utcnow import utc_now
 from ..patient import PatientRepository
@@ -20,8 +20,11 @@ class PostgresPatientRepository(PatientRepository):
         self._session = session
 
     def get(self, patient_id: str, user_id: str) -> Patient | None:
+        # User-facing reads filter out soft-deleted rows (THERAPY-nyb).
+        # Audit lookups bypass this repo and query AuditLogRow directly,
+        # so dangling-reference resolution still works.
         row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id:
+        if row is None or row.user_id != user_id or row.deleted_at is not None:
             return None
         return _row_to_patient(row)
 
@@ -30,7 +33,11 @@ class PostgresPatientRepository(PatientRepository):
             return {}
         rows = (
             self._session.query(PatientRow)
-            .filter(PatientRow.id.in_(patient_ids), PatientRow.user_id == user_id)
+            .filter(
+                PatientRow.id.in_(patient_ids),
+                PatientRow.user_id == user_id,
+                PatientRow.deleted_at.is_(None),
+            )
             .all()
         )
         return {r.id: _row_to_patient(r) for r in rows}
@@ -44,7 +51,10 @@ class PostgresPatientRepository(PatientRepository):
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Patient], int]:
-        query = self._session.query(PatientRow).filter(PatientRow.user_id == user_id)
+        query = self._session.query(PatientRow).filter(
+            PatientRow.user_id == user_id,
+            PatientRow.deleted_at.is_(None),
+        )
 
         if search:
             search_lower = search.lower()
@@ -80,13 +90,57 @@ class PostgresPatientRepository(PatientRepository):
         return patient
 
     def delete(self, patient_id: str, user_id: str) -> bool:
+        """Soft-delete the patient and cascade to its therapy sessions and notes.
+
+        Sets ``deleted_at = NOW()`` on each row instead of removing it from
+        disk. The day-30 purge cron (THERAPY-cgy) is the only path that
+        physically removes rows; HTTP must never call ``_physical_delete``.
+
+        Cascade order matches the prior hard-delete:
+            therapy_sessions → notes → patients
+
+        Returns False if the row is already gone or already soft-deleted —
+        in both cases the caller's invariant ("nothing live with this id"
+        ) is satisfied without further work.
+        """
+        row = self._session.get(PatientRow, patient_id)
+        if row is None or row.user_id != user_id or row.deleted_at is not None:
+            return False
+
+        now = utc_now()
+        # Cascade: soft-delete therapy sessions for this patient. Skip
+        # rows already tombstoned so deleted_at reflects the *first*
+        # delete, not the latest one.
+        self._session.query(TherapySessionRow).filter(
+            TherapySessionRow.patient_id == patient_id,
+            TherapySessionRow.deleted_at.is_(None),
+        ).update({TherapySessionRow.deleted_at: now}, synchronize_session=False)
+        # Cascade: notes are patient-scoped. Same idempotency guard.
+        self._session.query(NoteRow).filter(
+            NoteRow.patient_id == patient_id,
+            NoteRow.deleted_at.is_(None),
+        ).update({NoteRow.deleted_at: now}, synchronize_session=False)
+        row.deleted_at = now
+        self._session.flush()
+        return True
+
+    # ─── Internal — purge cron only (THERAPY-cgy) ──────────────────────
+    # Not exposed via HTTP. The day-30 purge cron will call this to
+    # physically remove rows whose ``deleted_at`` is past the retention
+    # window. Keeping it on the repo (vs. raw SQL in the cron) preserves
+    # the cascade order audit-log readers depend on.
+
+    def _physical_delete(self, patient_id: str, user_id: str) -> bool:
         row = self._session.get(PatientRow, patient_id)
         if row is None or row.user_id != user_id:
             return False
-        # Cascade: delete associated therapy sessions
+        # Mirror cascade order from soft-delete.
+        self._session.query(NoteRow).filter(NoteRow.patient_id == patient_id).delete(
+            synchronize_session=False
+        )
         self._session.query(TherapySessionRow).filter(
             TherapySessionRow.patient_id == patient_id
-        ).delete()
+        ).delete(synchronize_session=False)
         self._session.delete(row)
         self._session.flush()
         return True

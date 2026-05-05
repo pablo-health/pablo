@@ -52,6 +52,9 @@ class PatientRow(Base):
     next_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Soft-delete tombstone (THERAPY-nyb). NULL = live row. Day-30 purge
+    # cron (THERAPY-cgy) physically removes rows where this is < now()-30d.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TherapySessionRow(Base):
@@ -89,6 +92,9 @@ class TherapySessionRow(Base):
     # PII-redacted transcript variants (note-side variants live on NoteRow).
     redacted_transcript: Mapped[str | None] = mapped_column(Text)
     naturalized_transcript: Mapped[str | None] = mapped_column(Text)
+    # Soft-delete tombstone (THERAPY-nyb). Covers the JSONB ``transcript``
+    # column transitively — no separate transcripts table exists.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class NoteRow(Base):
@@ -129,6 +135,8 @@ class NoteRow(Base):
     redacted_export_payload: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Soft-delete tombstone (THERAPY-nyb).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index(
@@ -269,9 +277,7 @@ class AuditLogRow(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

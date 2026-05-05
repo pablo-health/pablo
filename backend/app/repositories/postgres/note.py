@@ -19,13 +19,19 @@ class PostgresNotesRepository(NotesRepository):
         self._session = session
 
     def get(self, note_id: str) -> Note | None:
+        # User-facing reads filter soft-deleted rows (THERAPY-nyb).
         row = self._session.get(NoteRow, note_id)
-        return _row_to_note(row) if row else None
+        if row is None or row.deleted_at is not None:
+            return None
+        return _row_to_note(row)
 
     def get_by_session_id(self, session_id: str) -> Note | None:
         row = (
             self._session.query(NoteRow)
-            .filter(NoteRow.session_id == session_id)
+            .filter(
+                NoteRow.session_id == session_id,
+                NoteRow.deleted_at.is_(None),
+            )
             .one_or_none()
         )
         return _row_to_note(row) if row else None
@@ -33,7 +39,10 @@ class PostgresNotesRepository(NotesRepository):
     def list_by_patient(self, patient_id: str) -> list[Note]:
         rows = (
             self._session.query(NoteRow)
-            .filter(NoteRow.patient_id == patient_id)
+            .filter(
+                NoteRow.patient_id == patient_id,
+                NoteRow.deleted_at.is_(None),
+            )
             .order_by(
                 NoteRow.finalized_at.desc().nullslast(),
                 NoteRow.created_at.desc(),
@@ -59,6 +68,20 @@ class PostgresNotesRepository(NotesRepository):
         return note
 
     def delete(self, note_id: str) -> None:
+        """Soft-delete the note (THERAPY-nyb).
+
+        No-op if the row is missing or already tombstoned.
+        """
+        from ...utcnow import utc_now  # noqa: PLC0415
+
+        row = self._session.get(NoteRow, note_id)
+        if row is None or row.deleted_at is not None:
+            return
+        row.deleted_at = utc_now()
+        self._session.flush()
+
+    def _physical_delete(self, note_id: str) -> None:
+        """Internal — purge cron only (THERAPY-cgy). Not HTTP-exposed."""
         row = self._session.get(NoteRow, note_id)
         if row is not None:
             self._session.delete(row)
