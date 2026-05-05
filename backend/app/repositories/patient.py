@@ -58,6 +58,30 @@ class PatientRepository(ABC):
         """Delete a patient and cascade to sessions. Returns True if deleted."""
         pass
 
+    @abstractmethod
+    def close_chart(
+        self, patient_id: str, user_id: str, closure_reason: str | None
+    ) -> Patient | None:
+        """Close a patient's chart (THERAPY-hek).
+
+        Sets ``chart_closed_at = NOW()`` and ``chart_closure_reason`` on
+        the patient row. Orthogonal to soft-delete: chart closure does
+        NOT advance the day-30 hard-purge clock and does NOT hide the
+        row from list/get reads. Returns the updated patient, or
+        ``None`` if not found / not owned / soft-deleted.
+        """
+        pass
+
+    @abstractmethod
+    def reopen_chart(self, patient_id: str, user_id: str) -> Patient | None:
+        """Reopen a previously-closed chart (THERAPY-hek).
+
+        Clears ``chart_closed_at`` and ``chart_closure_reason``. Returns
+        the updated patient, or ``None`` if not found / not owned /
+        soft-deleted.
+        """
+        pass
+
 
 class InMemoryPatientRepository(PatientRepository):
     """In-memory implementation of PatientRepository for testing and development."""
@@ -136,3 +160,27 @@ class InMemoryPatientRepository(PatientRepository):
 
         del self._patients[patient_id]
         return True
+
+    def close_chart(
+        self, patient_id: str, user_id: str, closure_reason: str | None
+    ) -> Patient | None:
+        """Close a chart by stamping ``chart_closed_at`` (THERAPY-hek)."""
+        patient = self.get(patient_id, user_id)
+        if patient is None:
+            return None
+        patient.chart_closed_at = utc_now()
+        patient.chart_closure_reason = closure_reason
+        patient.updated_at = patient.chart_closed_at
+        self._patients[patient.id] = patient
+        return patient
+
+    def reopen_chart(self, patient_id: str, user_id: str) -> Patient | None:
+        """Reopen a previously-closed chart (THERAPY-hek)."""
+        patient = self.get(patient_id, user_id)
+        if patient is None:
+            return None
+        patient.chart_closed_at = None
+        patient.chart_closure_reason = None
+        patient.updated_at = utc_now()
+        self._patients[patient.id] = patient
+        return patient
