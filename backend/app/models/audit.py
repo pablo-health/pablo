@@ -50,6 +50,7 @@ class AuditAction(StrEnum):
     # Admin operations
     EXPORT_QUEUE_VIEWED = "export_queue_viewed"
     EXPORT_ACTION_TAKEN = "export_action_taken"
+    TENANT_EXPORTED = "tenant_exported"
 
     # Tenant management
     TENANT_LISTED = "tenant_listed"
@@ -73,6 +74,7 @@ class ResourceType(StrEnum):
     APPOINTMENT = "appointment"
     EHR_ROUTE = "ehr_route"
     SELF = "self"
+    TENANT_EXPORT = "tenant_export"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

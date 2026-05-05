@@ -4,18 +4,28 @@
 
 import logging
 from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import require_admin
+from ..db import get_db_session
 from ..models import User
+from ..models.audit import AuditAction, ResourceType
 from ..repositories import (
     AllowlistRepository,
     UserRepository,
     get_allowlist_repository,
     get_user_repository,
+)
+from ..services import AuditService, get_audit_service
+from ..services.tenant_export_service import (
+    TenantExportSummary,
+    stream_tenant_archive,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,9 +114,7 @@ def disable_user(
     if not target:
         raise NotFoundError("User not found")
     if target.id == admin.id:
-        raise BadRequestError(
-            "You cannot disable your own account", code="CANNOT_DISABLE_SELF"
-        )
+        raise BadRequestError("You cannot disable your own account", code="CANNOT_DISABLE_SELF")
     target.status = "disabled"
     user_repo.update(target)
     logger.info("Admin %s disabled user %s", admin.id, target.id)
@@ -160,6 +168,85 @@ def add_to_allowlist(
     allowlist_repo.add(request.email, admin.id)
     logger.info("Admin %s added email to allowlist", admin.id)
     return {"message": "Email added to allowlist", "email": request.email.lower()}
+
+
+# --- Tenant-wide export (HIPAA Right to Access for the practice) ---
+
+
+class TenantExportRequest(BaseModel):
+    """Request body for POST /api/admin/tenant-export.
+
+    ``include_audio`` is accepted for forward compatibility but ignored
+    in v1; audio export is out of scope (see THERAPY-d11). The route
+    will still record ``include_audio=False`` in the manifest regardless
+    of what the client sends.
+    """
+
+    format: Literal["json", "csv"] = "json"
+    include_audio: bool = False
+
+
+@router.post("/api/admin/tenant-export")
+def tenant_export(
+    body: TenantExportRequest,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+    audit: AuditService = Depends(get_audit_service),
+) -> StreamingResponse:
+    """Stream a tar.gz of every clinical row in the practice schema.
+
+    Practice-admin only. Returns a tar.gz containing one file per
+    row-type (patients, therapy_sessions, notes, audit_logs) plus a
+    manifest. Audio export is out of scope in v1; ``include_audio`` is
+    accepted from the client but coerced to False.
+
+    The TENANT_EXPORTED audit log is emitted once the stream completes;
+    its ``changes`` payload carries counts and the archive's
+    ``size_bytes`` (PHI-free).
+    """
+    # ``include_audio`` is intentionally ignored in v1. We still accept
+    # it on the wire so callers that already include it (e.g. the SaaS
+    # dashboard's offboarding flow) don't get 422'd when audio support
+    # later lands.
+    _ = body.include_audio
+
+    def _on_complete(summary: TenantExportSummary) -> None:
+        audit.log(
+            AuditAction.TENANT_EXPORTED,
+            admin,
+            request,
+            resource_type=ResourceType.TENANT_EXPORT,
+            resource_id="archive",
+            changes={
+                "format": body.format,
+                "include_audio": False,
+                "size_bytes": summary.size_bytes,
+                "counts": summary.counts,
+            },
+        )
+        logger.info(
+            "Tenant export streamed by admin %s: format=%s size_bytes=%d counts=%s",
+            admin.id,
+            body.format,
+            summary.size_bytes,
+            summary.counts,
+        )
+
+    stream = stream_tenant_archive(
+        db,
+        export_format=body.format,
+        on_complete=_on_complete,
+    )
+
+    return StreamingResponse(
+        stream,
+        media_type="application/gzip",
+        headers={
+            "Content-Disposition": 'attachment; filename="tenant-export.tar.gz"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.delete("/api/admin/allowlist/{email}")
