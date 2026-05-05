@@ -180,7 +180,8 @@ class TestPatientSoftDeleteCascade:
         pg_session.commit()
 
         repo = PostgresPatientRepository(pg_session)
-        assert repo.delete(patient.id, _USER_ID) is True
+        deleted = repo.delete(patient.id, _USER_ID)
+        assert deleted is True
         pg_session.commit()
 
         # All three rows still on disk (not physically deleted).
@@ -203,12 +204,14 @@ class TestPatientSoftDeleteCascade:
         pg_session.commit()
         repo = PostgresPatientRepository(pg_session)
 
-        assert repo.delete(patient.id, _USER_ID) is True
+        delete_result = repo.delete(patient.id, _USER_ID)
+        assert delete_result is True
         pg_session.commit()
         first_stamp = pg_session.get(PatientRow, "patient-1").deleted_at
 
         # Second call returns False and does not bump the stamp.
-        assert repo.delete(patient.id, _USER_ID) is False
+        deleted_again = repo.delete(patient.id, _USER_ID)
+        assert deleted_again is False
         pg_session.commit()
         second_stamp = pg_session.get(PatientRow, "patient-1").deleted_at
         assert first_stamp == second_stamp
@@ -224,7 +227,8 @@ class TestTherapySessionSoftDelete:
         pg_session.commit()
 
         repo = PostgresTherapySessionRepository(pg_session)
-        assert repo.delete(session_obj.id, _USER_ID) is True
+        deleted = repo.delete(session_obj.id, _USER_ID)
+        assert deleted is True
         pg_session.commit()
 
         row = pg_session.get(TherapySessionRow, "session-1")
@@ -321,7 +325,8 @@ class TestAtomicity:
         audit = AuditService(PostgresAuditRepository(pg_session))
 
         # Mirror the route's order: soft-delete first, then audit.
-        assert p_repo.delete(patient.id, _USER_ID) is True
+        delete_ok = p_repo.delete(patient.id, _USER_ID)
+        assert delete_ok is True
         audit.log_patient_action(
             AuditAction.PATIENT_DELETED, _build_user(), _build_request(), patient
         )
@@ -353,7 +358,8 @@ class TestAtomicity:
 
         # Match the route's order: soft-delete first, then audit. The
         # audit raise propagates to the middleware, which rolls back.
-        assert p_repo.delete(patient.id, _USER_ID) is True
+        delete_ok = p_repo.delete(patient.id, _USER_ID)
+        assert delete_ok is True
         with pytest.raises(RuntimeError, match="audit DB is down"):
             audit.log_patient_action(
                 AuditAction.PATIENT_DELETED, _build_user(), _build_request(), patient
