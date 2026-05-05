@@ -43,7 +43,7 @@ class ComplianceRetentionStubWriter(Protocol):
         pass
 
     def insert_stub(self, conn: Any, stub: ComplianceRetentionStubPayload) -> None:
-        ...
+        pass
 
 
 @dataclass
