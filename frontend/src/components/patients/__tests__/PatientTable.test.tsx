@@ -55,6 +55,8 @@ const mockPatients: PatientResponse[] = [
     next_session_date: "2024-02-01T00:00:00Z",
     created_at: "2024-01-01T00:00:00Z",
     updated_at: "2024-01-01T00:00:00Z",
+    deleted_at: null,
+    restore_deadline: null,
   },
   {
     id: "patient-2",
@@ -71,6 +73,8 @@ const mockPatients: PatientResponse[] = [
     next_session_date: null,
     created_at: "2024-01-01T00:00:00Z",
     updated_at: "2024-01-01T00:00:00Z",
+    deleted_at: null,
+    restore_deadline: null,
   },
   {
     id: "patient-3",
@@ -87,6 +91,8 @@ const mockPatients: PatientResponse[] = [
     next_session_date: null,
     created_at: "2024-01-01T00:00:00Z",
     updated_at: "2024-01-01T00:00:00Z",
+    deleted_at: null,
+    restore_deadline: null,
   },
 ]
 

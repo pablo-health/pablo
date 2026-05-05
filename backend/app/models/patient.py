@@ -88,7 +88,13 @@ class UpdatePatientRequest(BaseModel):
 
 
 class PatientResponse(BaseModel):
-    """Patient response model for API endpoints."""
+    """Patient response model for API endpoints.
+
+    ``deleted_at`` and ``restore_deadline`` are populated only for the
+    "Recently deleted" listing (``GET /api/patients?include_deleted=recent``).
+    On normal CRUD reads they stay ``None`` because the repository
+    filters out soft-deleted rows (THERAPY-nyb).
+    """
 
     id: str
     user_id: str
@@ -104,10 +110,23 @@ class PatientResponse(BaseModel):
     next_session_date: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
+    restore_deadline: datetime | None = None
 
     @classmethod
-    def from_patient(cls, patient: Patient) -> PatientResponse:
-        """Create response from Patient dataclass."""
+    def from_patient(
+        cls,
+        patient: Patient,
+        *,
+        deleted_at: datetime | None = None,
+        restore_deadline: datetime | None = None,
+    ) -> PatientResponse:
+        """Create response from Patient dataclass.
+
+        Pass ``deleted_at`` and ``restore_deadline`` for soft-deleted
+        rows surfaced through ``include_deleted=recent``; on the live
+        CRUD path leave them at the default ``None``.
+        """
         return cls(
             id=patient.id,
             user_id=patient.user_id,
@@ -123,6 +142,8 @@ class PatientResponse(BaseModel):
             next_session_date=patient.next_session_date,
             created_at=patient.created_at,
             updated_at=patient.updated_at,
+            deleted_at=deleted_at,
+            restore_deadline=restore_deadline,
         )
 
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ...db.models import NoteRow, PatientRow, TherapySessionRow
@@ -123,6 +124,80 @@ class PostgresPatientRepository(PatientRepository):
         row.deleted_at = now
         self._session.flush()
         return True
+
+    # ─── Recently-deleted listing + restore (THERAPY-yg2) ──────────────
+
+    def list_recently_deleted(
+        self,
+        user_id: str,
+        *,
+        window_days: int = 30,
+    ) -> list[tuple[Patient, datetime]]:
+        """Soft-deleted patients still inside the undo window.
+
+        Mirrors the partial index ``WHERE deleted_at IS NOT NULL`` on
+        ``patients`` (THERAPY-nyb migration). Rows past the window stay
+        on disk until the day-30 hard-purge cron physically removes
+        them but no longer surface here, so the UI hides them as
+        "permanently removed."
+
+        Returns ``(patient, deleted_at)`` pairs — ``deleted_at`` is
+        carried out-of-band because it isn't on the ``Patient``
+        dataclass.
+        """
+        cutoff = utc_now() - timedelta(days=window_days)
+        rows = (
+            self._session.query(PatientRow)
+            .filter(
+                PatientRow.user_id == user_id,
+                PatientRow.deleted_at.isnot(None),
+                PatientRow.deleted_at > cutoff,
+            )
+            .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
+            .all()
+        )
+        return [(_row_to_patient(r), r.deleted_at) for r in rows if r.deleted_at is not None]
+
+    def restore(self, patient_id: str, user_id: str, *, window_days: int = 30) -> Patient | None:
+        """Reverse a soft-delete by clearing ``deleted_at``.
+
+        Returns ``None`` if the row is not soft-deleted, not owned by
+        this user, or already past the undo window. The cascade clears
+        ``deleted_at`` only on therapy_sessions / notes whose stamp
+        matches the patient's — i.e. rows the original delete cascade
+        knocked over together. Sessions or notes that were soft-deleted
+        independently before the patient delete keep their own stamps,
+        which is what users expect: undoing the patient delete does not
+        revive earlier per-row deletes.
+
+        Session numbers are unaffected: ``session_number`` is a stored
+        column, and the next-number generator
+        (``get_session_number_for_patient``) deliberately ignores
+        ``deleted_at``, so numbering is monotonic across this round
+        trip (THERAPY-nyb).
+        """
+        row = self._session.get(PatientRow, patient_id)
+        if row is None or row.user_id != user_id or row.deleted_at is None:
+            return None
+        cutoff = utc_now() - timedelta(days=window_days)
+        if row.deleted_at <= cutoff:
+            return None
+
+        patient_stamp = row.deleted_at
+        # Cascade: only undo rows whose deleted_at matches the patient's
+        # tombstone — those are the ones the patient delete cascaded
+        # onto. Earlier independent per-row soft-deletes stay tombstoned.
+        self._session.query(TherapySessionRow).filter(
+            TherapySessionRow.patient_id == patient_id,
+            TherapySessionRow.deleted_at == patient_stamp,
+        ).update({TherapySessionRow.deleted_at: None}, synchronize_session=False)
+        self._session.query(NoteRow).filter(
+            NoteRow.patient_id == patient_id,
+            NoteRow.deleted_at == patient_stamp,
+        ).update({NoteRow.deleted_at: None}, synchronize_session=False)
+        row.deleted_at = None
+        self._session.flush()
+        return _row_to_patient(row)
 
     # ─── Internal — purge cron only (THERAPY-cgy) ──────────────────────
     # Not exposed via HTTP. The day-30 purge cron will call this to

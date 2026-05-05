@@ -14,6 +14,7 @@ import {
   deletePatient,
   getPatient,
   listPatients,
+  restorePatient,
   updatePatient,
 } from "@/lib/api/patients"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -74,5 +75,18 @@ export function useDeletePatient(token?: string) {
         queryKey: queryKeys.patients.detail(patientId),
       })
     },
+  })
+}
+
+/**
+ * Restore a soft-deleted patient (THERAPY-yg2).
+ *
+ * Invalidates both the live and recently-deleted listings so the patient
+ * row hops from the "Recently deleted" tab back to the live tab.
+ */
+export function useRestorePatient(token?: string) {
+  return useAuthMutation({
+    mutationFn: (patientId: string) => restorePatient(patientId, token),
+    invalidateKeys: [queryKeys.patients.lists(), queryKeys.sessions.all],
   })
 }

@@ -21,7 +21,7 @@ pattern in ``test_audit_writes.py``. Migration correctness lives in
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -375,3 +375,154 @@ class TestAtomicity:
             text("SELECT COUNT(*) FROM practice.audit_logs WHERE action='patient_deleted'")
         ).scalar()
         assert audit_count == 0
+
+
+# ─── 5. Recently-deleted listing + restore (THERAPY-yg2) ─────────────────
+
+
+class TestRecentlyDeletedListing:
+    def test_lists_only_in_window_soft_deleted(self, pg_session: Session) -> None:
+        """``list_recently_deleted`` returns soft-deletes inside the 30-day
+        window and excludes both live patients and past-window tombstones."""
+        live = _seed_patient(pg_session, "patient-live")
+        recent = _seed_patient(pg_session, "patient-recent")
+        old = _seed_patient(pg_session, "patient-old")
+        pg_session.commit()
+
+        repo = PostgresPatientRepository(pg_session)
+        # Live: untouched. Recent: soft-deleted now. Old: stamp backdated.
+        repo.delete(recent.id, _USER_ID)
+        repo.delete(old.id, _USER_ID)
+        pg_session.commit()
+
+        old_row = pg_session.get(PatientRow, old.id)
+        assert old_row is not None
+        old_row.deleted_at = datetime.now(UTC) - timedelta(days=31)
+        pg_session.commit()
+
+        results = repo.list_recently_deleted(_USER_ID, window_days=30)
+        ids = [p.id for p, _stamp in results]
+        assert ids == [recent.id]
+        # And the stamp is propagated for the UI countdown.
+        assert results[0][1] is not None
+        # Sanity: live patients are not affected by the recently-deleted slice.
+        live_listed, _ = repo.list_by_user(_USER_ID)
+        assert [p.id for p in live_listed] == [live.id]
+
+
+class TestPatientRestore:
+    def test_restore_clears_deleted_at_and_cascades(self, pg_session: Session) -> None:
+        """Restore reverses ``delete``: patient + cascaded sessions/notes
+        all return to ``deleted_at IS NULL``."""
+        patient = _seed_patient(pg_session)
+        _seed_session(pg_session)
+        _seed_note(pg_session)
+        pg_session.commit()
+
+        repo = PostgresPatientRepository(pg_session)
+        assert repo.delete(patient.id, _USER_ID) is True
+        pg_session.commit()
+
+        restored = repo.restore(patient.id, _USER_ID, window_days=30)
+        assert restored is not None
+        assert restored.id == patient.id
+        pg_session.commit()
+
+        for row in (
+            pg_session.get(PatientRow, "patient-1"),
+            pg_session.get(TherapySessionRow, "session-1"),
+            pg_session.get(NoteRow, "note-1"),
+        ):
+            assert row is not None
+            assert row.deleted_at is None
+
+        # Live read paths surface the patient again.
+        assert repo.get(patient.id, _USER_ID) is not None
+        listed, total = repo.list_by_user(_USER_ID)
+        assert total == 1
+        assert [p.id for p in listed] == [patient.id]
+
+    def test_restore_preserves_session_number(self, pg_session: Session) -> None:
+        """``session_number`` is monotonic across the soft-delete cycle —
+        ``get_session_number_for_patient`` ignores ``deleted_at`` so a
+        restored session keeps the number it had before deletion
+        (THERAPY-nyb invariant guarded for THERAPY-yg2)."""
+        _seed_patient(pg_session)
+        session_obj = _seed_session(pg_session)
+        pg_session.commit()
+        original_number = session_obj.session_number
+
+        repo = PostgresPatientRepository(pg_session)
+        repo.delete("patient-1", _USER_ID)
+        pg_session.commit()
+        repo.restore("patient-1", _USER_ID, window_days=30)
+        pg_session.commit()
+
+        row = pg_session.get(TherapySessionRow, "session-1")
+        assert row is not None
+        assert row.session_number == original_number
+
+    def test_restore_past_window_returns_none(self, pg_session: Session) -> None:
+        """Past-window soft-deletes cannot be restored (awaiting hard-purge)."""
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+        repo.delete(patient.id, _USER_ID)
+        pg_session.commit()
+
+        # Backdate the stamp past the window.
+        row = pg_session.get(PatientRow, patient.id)
+        assert row is not None
+        row.deleted_at = datetime.now(UTC) - timedelta(days=31)
+        pg_session.commit()
+
+        assert repo.restore(patient.id, _USER_ID, window_days=30) is None
+        # Stamp is unchanged — restore did not touch the row.
+        row = pg_session.get(PatientRow, patient.id)
+        assert row is not None
+        assert row.deleted_at is not None
+
+    def test_restore_not_soft_deleted_returns_none(self, pg_session: Session) -> None:
+        """Restoring a live (never-deleted) patient is a no-op None."""
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+        assert repo.restore(patient.id, _USER_ID, window_days=30) is None
+
+    def test_restore_only_undoes_matching_cascade_stamp(self, pg_session: Session) -> None:
+        """Independently soft-deleted sessions stay tombstoned after restore.
+
+        Models the case where a single session was deleted earlier (per-row
+        soft-delete), then later the whole patient was deleted. The patient
+        delete cascades to the still-live sessions/notes, stamping them with
+        the patient's own ``deleted_at``. ``restore`` must clear only the
+        rows whose stamp matches that cascade — the older standalone
+        soft-deletes keep their original stamps and stay hidden.
+        """
+        _seed_patient(pg_session)
+        # Two sessions: one we'll delete on its own first.
+        old = _seed_session(pg_session, session_id="session-1")
+        _seed_session(pg_session, session_id="session-2")
+        pg_session.commit()
+
+        s_repo = PostgresTherapySessionRepository(pg_session)
+        s_repo.delete(old.id, _USER_ID)
+        pg_session.commit()
+        old_stamp = pg_session.get(TherapySessionRow, "session-1").deleted_at
+        assert old_stamp is not None
+
+        p_repo = PostgresPatientRepository(pg_session)
+        p_repo.delete("patient-1", _USER_ID)
+        pg_session.commit()
+
+        p_repo.restore("patient-1", _USER_ID, window_days=30)
+        pg_session.commit()
+
+        # session-2 was cascaded with the patient's stamp — now restored.
+        s2 = pg_session.get(TherapySessionRow, "session-2")
+        assert s2 is not None
+        assert s2.deleted_at is None
+        # session-1 had its own earlier stamp — stays soft-deleted.
+        s1 = pg_session.get(TherapySessionRow, "session-1")
+        assert s1 is not None
+        assert s1.deleted_at == old_stamp
