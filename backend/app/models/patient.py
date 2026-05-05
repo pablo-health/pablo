@@ -104,6 +104,10 @@ class PatientResponse(BaseModel):
     next_session_date: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Chart closure (THERAPY-hek). NULL = chart open. Orthogonal to
+    # soft-delete: closed charts still appear in list/get responses.
+    chart_closed_at: datetime | None = None
+    chart_closure_reason: str | None = None
 
     @classmethod
     def from_patient(cls, patient: Patient) -> PatientResponse:
@@ -123,6 +127,8 @@ class PatientResponse(BaseModel):
             next_session_date=patient.next_session_date,
             created_at=patient.created_at,
             updated_at=patient.updated_at,
+            chart_closed_at=patient.chart_closed_at,
+            chart_closure_reason=patient.chart_closure_reason,
         )
 
 
@@ -139,6 +145,35 @@ class DeletePatientResponse(BaseModel):
     """Response model for delete patient endpoint."""
 
     message: str
+
+
+class DeletePatientRequest(BaseModel):
+    """Request body for DELETE /api/patients/{id} (THERAPY-9ig).
+
+    The user must affirmatively attest to having met state-law /
+    professional retention obligations before destructive delete
+    proceeds. ``acknowledged_retention_obligation`` must be ``True``;
+    any other value (including missing) yields a 400.
+    """
+
+    acknowledged_retention_obligation: bool = Field(
+        ...,
+        description=(
+            "Set to true to confirm you have met your professional "
+            "retention obligations for this patient's record."
+        ),
+    )
+
+
+class CloseChartRequest(BaseModel):
+    """Request body for POST /api/patients/{id}/close-chart (THERAPY-hek).
+
+    Closure reason is free-form and optional. It is stored on the
+    patient row but is **not** copied into audit logs (free-text could
+    be PHI-adjacent).
+    """
+
+    closure_reason: str | None = Field(None, max_length=2000)
 
 
 class ExportFormat(str):
@@ -184,6 +219,8 @@ class Patient:
     diagnosis: str | None = None
     last_session_date: datetime | None = None
     next_session_date: datetime | None = None
+    chart_closed_at: datetime | None = None
+    chart_closure_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""
@@ -224,6 +261,8 @@ class Patient:
             diagnosis=data.get("diagnosis"),
             last_session_date=data.get("last_session_date"),
             next_session_date=data.get("next_session_date"),
+            chart_closed_at=data.get("chart_closed_at"),
+            chart_closure_reason=data.get("chart_closure_reason"),
         )
 
     def to_dict(self) -> dict[str, Any]:

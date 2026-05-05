@@ -101,13 +101,17 @@ def test_update_patient_success(client: TestClient, sample_patient_data: dict[st
 
 
 def test_delete_patient_success(client: TestClient, sample_patient_data: dict[str, Any]) -> None:
-    """Test deleting a patient."""
+    """Test deleting a patient (THERAPY-9ig: attestation required)."""
     # Create patient
     create_response = client.post("/api/patients", json=sample_patient_data)
     patient_id = create_response.json()["id"]
 
-    # Delete patient
-    response = client.delete(f"/api/patients/{patient_id}")
+    # Delete patient with retention attestation (THERAPY-9ig)
+    response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
@@ -219,7 +223,11 @@ def test_delete_patient_other_user_returns_404(
     )
     app.dependency_overrides[get_current_user_id] = lambda: "user2"
     app.dependency_overrides[require_baa_acceptance] = lambda: user2
-    response = client.delete(f"/api/patients/{patient_id}")
+    response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -281,9 +289,49 @@ def test_get_patient_not_found(client: TestClient) -> None:
     assert "patient_id" in data["error"]["details"]
 
 
+def test_delete_patient_without_attestation_returns_400(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """THERAPY-9ig: missing attestation field returns 422 (Pydantic)."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    response = client.request("DELETE", f"/api/patients/{patient_id}", json={})
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # Patient still exists.
+    get_response = client.get(f"/api/patients/{patient_id}")
+    assert get_response.status_code == status.HTTP_200_OK
+
+
+def test_delete_patient_attestation_false_returns_400(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """THERAPY-9ig: attestation=false returns 400 with a clear code."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": False},
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    body = response.json()
+    assert body["error"]["code"] == "RETENTION_ATTESTATION_REQUIRED"
+
+    # Patient still exists.
+    get_response = client.get(f"/api/patients/{patient_id}")
+    assert get_response.status_code == status.HTTP_200_OK
+
+
 def test_delete_patient_not_found(client: TestClient) -> None:
     """Test deleting non-existent patient returns 404."""
-    response = client.delete("/api/patients/nonexistent-id")
+    response = client.request(
+        "DELETE",
+        "/api/patients/nonexistent-id",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -447,7 +495,11 @@ def test_delete_patient_returns_session_count(
     patient_id = create_response.json()["id"]
 
     # Delete
-    response = client.delete(f"/api/patients/{patient_id}")
+    response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
@@ -487,7 +539,11 @@ def test_delete_patient_cascades_to_sessions(
     assert len(sessions) == 3
 
     # Delete patient via API
-    response = client.delete(f"/api/patients/{patient_id}")
+    response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
     assert response.status_code == status.HTTP_200_OK
 
     # Verify sessions were cascade-deleted
@@ -538,7 +594,11 @@ def test_delete_patient_cascade_does_not_affect_other_patients_sessions(
     )
 
     # Delete patient 1
-    client.delete(f"/api/patients/{patient1_id}")
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient1_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     # Patient 1's sessions are gone
     assert len(mock_session_repo.list_by_patient(patient1_id, mock_user_id)) == 0
@@ -633,3 +693,114 @@ def test_update_patient_email_and_phone(
     data = response.json()
     assert data["email"] == update_data["email"]
     assert data["phone"] == update_data["phone"]
+
+
+# ─── Chart closure (THERAPY-hek) ────────────────────────────────────────
+
+
+def test_close_chart_sets_timestamp_and_reason(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """POST /close-chart stamps chart_closed_at and stores the reason."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+    assert create_response.json()["chart_closed_at"] is None
+
+    response = client.post(
+        f"/api/patients/{patient_id}/close-chart",
+        json={"closure_reason": "Care episode complete"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["chart_closed_at"] is not None
+    assert data["chart_closure_reason"] == "Care episode complete"
+    # Status enum unchanged — closure is orthogonal.
+    assert data["status"] == "active"
+
+
+def test_close_chart_without_reason_is_allowed(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """closure_reason is optional."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    response = client.post(f"/api/patients/{patient_id}/close-chart", json={})
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["chart_closed_at"] is not None
+    assert data["chart_closure_reason"] is None
+
+
+def test_closed_chart_still_appears_in_list_and_get(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Chart closure does NOT hide the patient from reads (orthogonal to soft-delete)."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    client.post(f"/api/patients/{patient_id}/close-chart", json={})
+
+    list_response = client.get("/api/patients")
+    assert list_response.status_code == status.HTTP_200_OK
+    ids = [p["id"] for p in list_response.json()["data"]]
+    assert patient_id in ids
+
+    get_response = client.get(f"/api/patients/{patient_id}")
+    assert get_response.status_code == status.HTTP_200_OK
+    assert get_response.json()["chart_closed_at"] is not None
+
+
+def test_reopen_chart_clears_fields(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """POST /reopen-chart clears both chart_closed_at and chart_closure_reason."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    client.post(
+        f"/api/patients/{patient_id}/close-chart",
+        json={"closure_reason": "Done"},
+    )
+
+    response = client.post(f"/api/patients/{patient_id}/reopen-chart")
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["chart_closed_at"] is None
+    assert data["chart_closure_reason"] is None
+
+
+def test_close_chart_patient_not_found(client: TestClient) -> None:
+    """Unknown patient_id returns 404."""
+    response = client.post(
+        "/api/patients/nonexistent-id/close-chart",
+        json={"closure_reason": "x"},
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_reopen_chart_patient_not_found(client: TestClient) -> None:
+    """Unknown patient_id returns 404."""
+    response = client.post("/api/patients/nonexistent-id/reopen-chart")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_close_chart_other_user_returns_404(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """User A cannot close User B's chart."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    user2 = User(
+        id="user2",
+        email="user2@example.com",
+        name="Test User 2",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_version="2024-01-01",
+    )
+    app.dependency_overrides[get_current_user_id] = lambda: "user2"
+    app.dependency_overrides[require_baa_acceptance] = lambda: user2
+    response = client.post(f"/api/patients/{patient_id}/close-chart", json={})
+    assert response.status_code == status.HTTP_404_NOT_FOUND
