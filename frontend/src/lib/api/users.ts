@@ -26,6 +26,11 @@ interface UserStatus {
   is_platform_admin: boolean
   name: string
   email: string
+  /**
+   * Practice id for the current user, when the SaaS overlay is mounted
+   * and multi-tenancy is enabled. Undefined in OSS-only deployments.
+   */
+  practice_id?: string
 }
 
 /**
