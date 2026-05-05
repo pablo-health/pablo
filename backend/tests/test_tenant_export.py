@@ -112,7 +112,7 @@ def client(admin_user: User, audit_service: AuditService) -> TestClient:
 class TestTenantExportAuth:
     """403 path — practice-admin only."""
 
-    @pytest.mark.skip(reason="Flaky in CI — see THERAPY-5ex (401 vs 403 due to test order/state).")
+    @pytest.mark.skip(reason="Flaky in CI — THERAPY-5ex (401 vs 403).")
     def test_non_admin_gets_403_in_production(
         self, non_admin_user: User, audit_service: AuditService
     ) -> None:
@@ -144,7 +144,7 @@ class TestTenantExportAuth:
 class TestTenantExportHappyPath:
     """Stream open + audit emission."""
 
-    @pytest.mark.skip(reason="Flaky in CI — see THERAPY-5ex (httpx.StreamConsumed under test order).")
+    @pytest.mark.skip(reason="Flaky in CI — THERAPY-5ex (StreamConsumed).")
     def test_stream_opens_with_correct_headers(
         self, client: TestClient, captured_audit_entries: list
     ) -> None:
