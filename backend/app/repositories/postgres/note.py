@@ -70,7 +70,7 @@ class PostgresNotesRepository(NotesRepository):
     def delete(self, note_id: str) -> None:
         """Soft-delete the note (THERAPY-nyb).
 
-        No-op if the row is missing or already tombstoned.
+        No-op if the row is missing or already soft-deleted.
         """
         from ...utcnow import utc_now  # noqa: PLC0415
 

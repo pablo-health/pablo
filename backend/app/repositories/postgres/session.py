@@ -90,7 +90,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         return [_row_to_session(r) for r in rows]
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
-        # Numbering is monotonic — count tombstoned sessions too so a
+        # Numbering is monotonic — count soft-deleted sessions too so a
         # restored / re-listed patient doesn't collide on session_number.
         result = (
             self._session.query(func.max(TherapySessionRow.session_number))

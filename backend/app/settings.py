@@ -240,10 +240,7 @@ class Settings(BaseSettings):
     )
     database_url: str = Field(
         default="",
-        description=(
-            "PostgreSQL connection URL. "
-            "Format: postgresql://user:pass@host:port/dbname"
-        ),
+        description=("PostgreSQL connection URL. Format: postgresql://user:pass@host:port/dbname"),
     )
 
     # Google Cloud

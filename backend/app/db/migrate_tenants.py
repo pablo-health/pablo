@@ -82,6 +82,25 @@ def list_active_tenant_schemas(engine: Engine) -> list[str]:
     return [row[0] for row in rows if row[0] != DEFAULT_PRACTICE_SCHEMA]
 
 
+def list_active_practice_registry(engine: Engine) -> list[tuple[str, str]]:
+    """Return ``(schema_name, practice_id)`` for every active practice row.
+
+    Unlike :func:`list_active_tenant_schemas`, this **includes** the template
+    ``practice`` schema so solo/Core installs (and any row whose
+    ``schema_name`` is the template) participate in scheduled jobs that need
+    to fan out across all live practice DB schemas.
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                f"SELECT schema_name, id FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
+                " WHERE is_active = TRUE"
+                " ORDER BY schema_name"
+            )
+        ).fetchall()
+    return [(row[0], row[1]) for row in rows]
+
+
 def _alembic_head() -> str | None:
     script = ScriptDirectory.from_config(Config(str(_ALEMBIC_INI_PATH)))
     return script.get_current_head()
