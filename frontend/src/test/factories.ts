@@ -121,6 +121,8 @@ export function createMockPatient(
     next_session_date: null,
     created_at: "2024-01-15T10:00:00Z",
     updated_at: "2024-01-15T10:00:00Z",
+    deleted_at: null,
+    restore_deadline: null,
     ...overrides,
   }
 }

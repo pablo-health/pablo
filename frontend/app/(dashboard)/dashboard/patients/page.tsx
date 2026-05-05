@@ -2,7 +2,7 @@
 
 "use client"
 
-import { PatientTable } from "@/components/patients/PatientTable"
+import { PatientsView } from "@/components/patients/PatientsView"
 
 export default function PatientsPage() {
   return (
@@ -16,7 +16,7 @@ export default function PatientsPage() {
         </p>
       </div>
 
-      <PatientTable />
+      <PatientsView />
     </div>
   )
 }

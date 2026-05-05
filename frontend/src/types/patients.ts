@@ -11,6 +11,11 @@
  * Patient response from API
  *
  * Represents a patient record with all metadata.
+ *
+ * `deleted_at` and `restore_deadline` are populated only when the row
+ * comes from the recently-deleted listing
+ * (`include_deleted=recent`, THERAPY-yg2). Live CRUD reads return
+ * `null` for both fields.
  */
 export interface PatientResponse {
   id: string
@@ -27,6 +32,8 @@ export interface PatientResponse {
   next_session_date: string | null
   created_at: string
   updated_at: string
+  deleted_at: string | null
+  restore_deadline: string | null
 }
 
 /**
@@ -76,8 +83,13 @@ export interface DeletePatientResponse {
 
 /**
  * Query parameters for listing patients
+ *
+ * `include_deleted: "recent"` switches the listing to soft-deleted
+ * patients still inside the 30-day undo window (THERAPY-yg2). Default
+ * (omitted) lists only live patients.
  */
 export interface PatientListParams {
   search?: string
   search_by?: "first_name" | "last_name"
+  include_deleted?: "recent"
 }

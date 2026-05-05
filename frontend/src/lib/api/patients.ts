@@ -63,6 +63,9 @@ export async function listPatients(
   if (params?.search_by) {
     queryParams.append("search_by", params.search_by)
   }
+  if (params?.include_deleted) {
+    queryParams.append("include_deleted", params.include_deleted)
+  }
 
   const endpoint = queryParams.toString()
     ? `/api/patients?${queryParams.toString()}`
@@ -134,4 +137,27 @@ export async function deletePatient(
   token?: string
 ): Promise<DeletePatientResponse> {
   return del<DeletePatientResponse>(`/api/patients/${patientId}`, token)
+}
+
+/**
+ * Restore a soft-deleted patient inside the 30-day undo window
+ * (THERAPY-yg2).
+ *
+ * Reverses a prior `deletePatient` call: clears `deleted_at` on the
+ * patient and on the therapy sessions / notes that were cascaded with
+ * it, returning the patient to live listings. Session numbers are
+ * preserved across the round trip.
+ *
+ * @param patientId - Patient ID
+ * @param token - Optional auth token for server-side calls
+ * @returns The restored patient (with `deleted_at: null`)
+ * @throws ApiError with code "NOT_FOUND" if the patient is not
+ *   soft-deleted, doesn't belong to the caller, or is past the 30-day
+ *   undo window (already awaiting hard-purge).
+ */
+export async function restorePatient(
+  patientId: string,
+  token?: string
+): Promise<PatientResponse> {
+  return post<PatientResponse>(`/api/patients/${patientId}/restore`, undefined, token)
 }

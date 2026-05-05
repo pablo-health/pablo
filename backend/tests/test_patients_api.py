@@ -3,13 +3,14 @@
 """Comprehensive tests for Patient API endpoints."""
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from app.auth.service import get_current_user_id, require_baa_acceptance
 from app.main import app
 from app.models import TherapySession, User
 from app.models.transcript import Transcript
+from app.utcnow import utc_now
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -695,6 +696,185 @@ def test_update_patient_email_and_phone(
     assert data["phone"] == update_data["phone"]
 
 
+# Priority X: 30-day undo window for soft-deleted patients (THERAPY-yg2)
+
+
+def test_restore_patient_happy_path(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Restore brings a soft-deleted patient back into the live listing."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    delete_response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
+    assert delete_response.status_code == status.HTTP_200_OK
+    # Live read hides the soft-deleted patient.
+    assert client.get(f"/api/patients/{patient_id}").status_code == status.HTTP_404_NOT_FOUND
+
+    restore_response = client.post(f"/api/patients/{patient_id}/restore")
+    assert restore_response.status_code == status.HTTP_200_OK
+    body = restore_response.json()
+    assert body["id"] == patient_id
+    # Live response — these fields are surfaced only on the recently-deleted listing.
+    assert body["deleted_at"] is None
+    assert body["restore_deadline"] is None
+
+    # Patient is back on the live listing and a regular GET succeeds.
+    list_response = client.get("/api/patients")
+    assert list_response.status_code == status.HTTP_200_OK
+    assert any(p["id"] == patient_id for p in list_response.json()["data"])
+    assert client.get(f"/api/patients/{patient_id}").status_code == status.HTTP_200_OK
+
+
+def test_restore_patient_not_soft_deleted_returns_404(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Restoring a live (never-deleted) patient is a 404 — same as a missing id."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    response = client.post(f"/api/patients/{patient_id}/restore")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_restore_patient_unknown_id_returns_404(client: TestClient) -> None:
+    """Restoring an id that never existed is a 404."""
+    response = client.post("/api/patients/does-not-exist/restore")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_restore_patient_past_window_returns_404(
+    client: TestClient,
+    mock_repo: Any,
+    sample_patient_data: dict[str, Any],
+) -> None:
+    """Past-window soft-deletes can no longer be restored.
+
+    Manipulates the in-memory repo's tombstone map directly to simulate
+    a 31-day-old soft-delete without monkey-patching ``utc_now``.
+    """
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    delete_response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
+    assert delete_response.status_code == status.HTTP_200_OK
+
+    # Backdate the tombstone past the 30-day window.
+    mock_repo._deleted_at[patient_id] = utc_now() - timedelta(days=31)
+
+    response = client.post(f"/api/patients/{patient_id}/restore")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    # And the past-window row is no longer surfaced in the recently-deleted listing.
+    listed = client.get("/api/patients?include_deleted=recent")
+    assert listed.status_code == status.HTTP_200_OK
+    assert listed.json()["data"] == []
+
+
+def test_restore_patient_other_user_returns_404(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """User B cannot restore User A's soft-deleted patient."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
+
+    user2 = User(
+        id="user2",
+        email="user2@example.com",
+        name="Test User 2",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_version="2024-01-01",
+    )
+    app.dependency_overrides[get_current_user_id] = lambda: "user2"
+    app.dependency_overrides[require_baa_acceptance] = lambda: user2
+
+    response = client.post(f"/api/patients/{patient_id}/restore")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_list_patients_default_excludes_soft_deleted(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Default list excludes soft-deleted patients."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+    client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
+
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
+
+    response = client.get("/api/patients")
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert len(data["data"]) == 1
+    assert data["data"][0]["first_name"] == "Jane"
+    assert all(p["id"] != patient_id for p in data["data"])
+
+
+def test_list_patients_include_deleted_recent_returns_soft_deleted(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """``include_deleted=recent`` returns soft-deleted patients within the window."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+    # Live patient that should NOT appear in the recently-deleted listing.
+    client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
+
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
+
+    response = client.get("/api/patients?include_deleted=recent")
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["total"] == 1
+    [row] = data["data"]
+    assert row["id"] == patient_id
+    assert row["first_name"] == "John"
+    # Recently-deleted rows expose the deletion stamp + restore deadline
+    # so the UI can render the "X days remaining" countdown.
+    assert row["deleted_at"] is not None
+    assert row["restore_deadline"] is not None
+
+
+def test_list_patients_include_deleted_recent_skips_past_window(
+    client: TestClient,
+    mock_repo: Any,
+    sample_patient_data: dict[str, Any],
+) -> None:
+    """Past-window soft-deletes do not surface in the recently-deleted listing."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
+    mock_repo._deleted_at[patient_id] = utc_now() - timedelta(days=31)
+
+    response = client.get("/api/patients?include_deleted=recent")
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["data"] == []
+
+
 # ─── Chart closure (THERAPY-hek) ────────────────────────────────────────
 
 
@@ -802,5 +982,6 @@ def test_close_chart_other_user_returns_404(
     )
     app.dependency_overrides[get_current_user_id] = lambda: "user2"
     app.dependency_overrides[require_baa_acceptance] = lambda: user2
+
     response = client.post(f"/api/patients/{patient_id}/close-chart", json={})
     assert response.status_code == status.HTTP_404_NOT_FOUND
