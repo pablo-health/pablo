@@ -706,7 +706,11 @@ def test_restore_patient_happy_path(
     create_response = client.post("/api/patients", json=sample_patient_data)
     patient_id = create_response.json()["id"]
 
-    delete_response = client.delete(f"/api/patients/{patient_id}")
+    delete_response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
     assert delete_response.status_code == status.HTTP_200_OK
     # Live read hides the soft-deleted patient.
     assert client.get(f"/api/patients/{patient_id}").status_code == status.HTTP_404_NOT_FOUND
@@ -756,7 +760,11 @@ def test_restore_patient_past_window_returns_404(
     create_response = client.post("/api/patients", json=sample_patient_data)
     patient_id = create_response.json()["id"]
 
-    delete_response = client.delete(f"/api/patients/{patient_id}")
+    delete_response = client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
     assert delete_response.status_code == status.HTTP_200_OK
 
     # Backdate the tombstone past the 30-day window.
@@ -776,7 +784,11 @@ def test_restore_patient_other_user_returns_404(
     """User B cannot restore User A's soft-deleted patient."""
     create_response = client.post("/api/patients", json=sample_patient_data)
     patient_id = create_response.json()["id"]
-    client.delete(f"/api/patients/{patient_id}")
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     user2 = User(
         id="user2",
@@ -801,7 +813,11 @@ def test_list_patients_default_excludes_soft_deleted(
     patient_id = create_response.json()["id"]
     client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
 
-    client.delete(f"/api/patients/{patient_id}")
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     response = client.get("/api/patients")
     assert response.status_code == status.HTTP_200_OK
@@ -820,7 +836,11 @@ def test_list_patients_include_deleted_recent_returns_soft_deleted(
     # Live patient that should NOT appear in the recently-deleted listing.
     client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
 
-    client.delete(f"/api/patients/{patient_id}")
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
 
     response = client.get("/api/patients?include_deleted=recent")
     assert response.status_code == status.HTTP_200_OK
@@ -843,7 +863,11 @@ def test_list_patients_include_deleted_recent_skips_past_window(
     """Past-window soft-deletes do not surface in the recently-deleted listing."""
     create_response = client.post("/api/patients", json=sample_patient_data)
     patient_id = create_response.json()["id"]
-    client.delete(f"/api/patients/{patient_id}")
+    client.request(
+        "DELETE",
+        f"/api/patients/{patient_id}",
+        json={"acknowledged_retention_obligation": True},
+    )
     mock_repo._deleted_at[patient_id] = utc_now() - timedelta(days=31)
 
     response = client.get("/api/patients?include_deleted=recent")
