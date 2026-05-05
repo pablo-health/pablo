@@ -276,14 +276,24 @@ def delete_patient(
     if not patient:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
-    # Log before deletion (patient won't exist after)
-    audit.log_patient_action(AuditAction.PATIENT_DELETED, user, request, patient)
-
     session_count = patient.session_count
-    deleted = repo.delete(patient_id, user.id)
 
+    # Atomicity (THERAPY-nyb): both the soft-delete UPDATE and the audit
+    # INSERT must commit together or not at all. The request-scoped
+    # SQLAlchemy session in DatabaseSessionMiddleware wraps the whole
+    # request in one transaction; an exception from either step rolls
+    # both back. We do the delete first, then the audit — that way an
+    # audit-write failure (raised from AuditService._persist) propagates
+    # out of this handler, the middleware catches it, calls
+    # session.rollback(), and the patient row's deleted_at goes back to
+    # NULL. If we audited first and the delete then failed silently
+    # (returning False), we'd commit an audit row referencing a still-
+    # live patient — the split state we're explicitly avoiding.
+    deleted = repo.delete(patient_id, user.id)
     if not deleted:
         raise ServerError("Failed to delete patient")
+
+    audit.log_patient_action(AuditAction.PATIENT_DELETED, user, request, patient)
 
     session_word = "session" if session_count == 1 else "sessions"
     return DeletePatientResponse(

@@ -21,8 +21,9 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         self._session = session
 
     def get(self, session_id: str, user_id: str) -> TherapySession | None:
+        # User-facing reads filter soft-deleted rows (THERAPY-nyb).
         row = self._session.get(TherapySessionRow, session_id)
-        if row is None or row.user_id != user_id:
+        if row is None or row.user_id != user_id or row.deleted_at is not None:
             return None
         return _row_to_session(row)
 
@@ -32,6 +33,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             .filter(
                 TherapySessionRow.patient_id == patient_id,
                 TherapySessionRow.user_id == user_id,
+                TherapySessionRow.deleted_at.is_(None),
             )
             .order_by(TherapySessionRow.session_date.desc())
             .all()
@@ -41,7 +43,10 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[TherapySession], int]:
-        base = self._session.query(TherapySessionRow).filter(TherapySessionRow.user_id == user_id)
+        base = self._session.query(TherapySessionRow).filter(
+            TherapySessionRow.user_id == user_id,
+            TherapySessionRow.deleted_at.is_(None),
+        )
         total = base.count()
         offset = (page - 1) * page_size
         rows = (
@@ -77,6 +82,7 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
                 TherapySessionRow.scheduled_at.is_not(None),
                 TherapySessionRow.scheduled_at >= start_utc,
                 TherapySessionRow.scheduled_at < end_utc,
+                TherapySessionRow.deleted_at.is_(None),
             )
             .order_by(TherapySessionRow.scheduled_at)
             .all()
@@ -84,12 +90,39 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         return [_row_to_session(r) for r in rows]
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
+        # Numbering is monotonic — count tombstoned sessions too so a
+        # restored / re-listed patient doesn't collide on session_number.
         result = (
             self._session.query(func.max(TherapySessionRow.session_number))
             .filter(TherapySessionRow.patient_id == patient_id)
             .scalar()
         )
         return (result or 0) + 1
+
+    def delete(self, session_id: str, user_id: str) -> bool:
+        """Soft-delete a single therapy session (THERAPY-nyb).
+
+        No HTTP route currently exposes this — it exists so the cascade
+        from ``PatientRepository.delete`` and the future per-session
+        delete UI (THERAPY-yg2) share one code path.
+        """
+        from ...utcnow import utc_now  # noqa: PLC0415  — avoid module-level cycle
+
+        row = self._session.get(TherapySessionRow, session_id)
+        if row is None or row.user_id != user_id or row.deleted_at is not None:
+            return False
+        row.deleted_at = utc_now()
+        self._session.flush()
+        return True
+
+    def _physical_delete(self, session_id: str, user_id: str) -> bool:
+        """Internal — purge cron only (THERAPY-cgy). Not HTTP-exposed."""
+        row = self._session.get(TherapySessionRow, session_id)
+        if row is None or row.user_id != user_id:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        return True
 
 
 def _row_to_session(row: TherapySessionRow) -> TherapySession:
