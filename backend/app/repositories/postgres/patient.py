@@ -199,6 +199,36 @@ class PostgresPatientRepository(PatientRepository):
         self._session.flush()
         return _row_to_patient(row)
 
+    def close_chart(
+        self, patient_id: str, user_id: str, closure_reason: str | None
+    ) -> Patient | None:
+        """Stamp ``chart_closed_at`` and store the closure reason (THERAPY-hek).
+
+        Chart closure is orthogonal to soft-delete: a closed chart is a
+        live, retained record. The hard-purge cron (THERAPY-cgy) keys
+        off ``deleted_at`` only and is unaffected by this column.
+        """
+        row = self._session.get(PatientRow, patient_id)
+        if row is None or row.user_id != user_id or row.deleted_at is not None:
+            return None
+        now = utc_now()
+        row.chart_closed_at = now
+        row.chart_closure_reason = closure_reason
+        row.updated_at = now
+        self._session.flush()
+        return _row_to_patient(row)
+
+    def reopen_chart(self, patient_id: str, user_id: str) -> Patient | None:
+        """Clear chart closure fields (THERAPY-hek)."""
+        row = self._session.get(PatientRow, patient_id)
+        if row is None or row.user_id != user_id or row.deleted_at is not None:
+            return None
+        row.chart_closed_at = None
+        row.chart_closure_reason = None
+        row.updated_at = utc_now()
+        self._session.flush()
+        return _row_to_patient(row)
+
     # ─── Internal — purge cron only (THERAPY-cgy) ──────────────────────
     # Not exposed via HTTP. The day-30 purge cron will call this to
     # physically remove rows whose ``deleted_at`` is past the retention
@@ -239,6 +269,8 @@ def _row_to_patient(row: PatientRow) -> Patient:
         diagnosis=row.diagnosis,
         last_session_date=row.last_session_date,
         next_session_date=row.next_session_date,
+        chart_closed_at=row.chart_closed_at,
+        chart_closure_reason=row.chart_closure_reason,
     )
 
 
@@ -257,5 +289,7 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.session_count = patient.session_count
     row.last_session_date = patient.last_session_date
     row.next_session_date = patient.next_session_date
+    row.chart_closed_at = patient.chart_closed_at
+    row.chart_closure_reason = patient.chart_closure_reason
     row.created_at = patient.created_at
     row.updated_at = patient.updated_at

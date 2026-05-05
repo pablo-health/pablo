@@ -23,6 +23,12 @@ class AuditAction(StrEnum):
     PATIENT_RESTORED = "patient_restored"
     PATIENT_EXPORTED = "patient_exported"
     PATIENT_PURGED = "patient_purged"
+    # Chart closure (THERAPY-hek). Orthogonal to soft-delete: closing a
+    # chart marks the clinical/administrative care episode as ended, but
+    # the row stays live and the day-30 hard-purge clock (THERAPY-cgy)
+    # is not advanced.
+    CHART_CLOSED = "chart_closed"
+    CHART_REOPENED = "chart_reopened"
 
     # Session operations
     SESSION_CREATED = "session_created"
@@ -33,6 +39,12 @@ class AuditAction(StrEnum):
     SESSION_RATING_UPDATED = "session_rating_updated"
     SESSION_TRANSCRIPT_UPLOADED = "session_transcript_uploaded"
     SESSION_AUDIO_UPLOADED = "session_audio_uploaded"
+    # Recorded session audio deleted by the per-practice audio retention
+    # cron (THERAPY-ab7). Emitted by the SaaS
+    # ``saas.bin.audio_retention_purge`` entrypoint. The value is defined
+    # here (not in the SaaS overlay) so audit-log readers and dashboards
+    # render it consistently on both tiers.
+    AUDIO_PURGED = "audio_purged"
 
     # iCal sync / EHR client import operations
     CLIENT_RESOLVED = "client_resolved"

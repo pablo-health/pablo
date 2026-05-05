@@ -19,7 +19,9 @@ from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from ..models import (
     AuditAction,
+    CloseChartRequest,
     CreatePatientRequest,
+    DeletePatientRequest,
     DeletePatientResponse,
     Patient,
     PatientListResponse,
@@ -317,7 +319,8 @@ def update_patient(
 @router.delete("/{patient_id}")
 def delete_patient(
     patient_id: str,
-    request: Request,
+    http_request: Request,
+    body: DeletePatientRequest,
     user: User = Depends(require_baa_acceptance),
     repo: PatientRepository = Depends(get_patient_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -326,9 +329,27 @@ def delete_patient(
     Delete a patient and all associated sessions.
 
     - **patient_id**: The patient's unique identifier
+    - **acknowledged_retention_obligation** (body, required): Must be
+      ``true``. The user is attesting they have met their professional
+      / state-law retention obligations for this record before
+      destructive delete proceeds (THERAPY-9ig). The attestation is
+      audit-logged.
 
-    This operation cascades to delete all sessions for this patient.
+    This operation cascades to soft-delete all sessions and notes for
+    this patient.
     """
+    # THERAPY-9ig: gate destructive delete on an explicit retention
+    # attestation. Pydantic guarantees the field is present and a bool
+    # (a missing field yields 422); we only need to enforce that the
+    # user actually checked the box.
+    if not body.acknowledged_retention_obligation:
+        raise BadRequestError(
+            "You must acknowledge your professional retention obligation "
+            "before deleting this patient.",
+            {"field": "acknowledged_retention_obligation"},
+            code="RETENTION_ATTESTATION_REQUIRED",
+        )
+
     patient = repo.get(patient_id, user.id)
 
     if not patient:
@@ -351,7 +372,16 @@ def delete_patient(
     if not deleted:
         raise ServerError("Failed to delete patient")
 
-    audit.log_patient_action(AuditAction.PATIENT_DELETED, user, request, patient)
+    # PHI-free attestation marker on the audit row (THERAPY-9ig). The
+    # value is a boolean literal — no free text, no PHI. Per
+    # AuditLogEntry.changes contract this is exactly the shape allowed.
+    audit.log_patient_action(
+        AuditAction.PATIENT_DELETED,
+        user,
+        http_request,
+        patient,
+        changes={"attestation": True},
+    )
 
     session_word = "session" if session_count == 1 else "sessions"
     return DeletePatientResponse(
@@ -387,6 +417,71 @@ def restore_patient(
 
     audit.log_patient_action(AuditAction.PATIENT_RESTORED, user, request, restored)
     return PatientResponse.from_patient(restored)
+
+
+@router.post("/{patient_id}/close-chart")
+def close_chart(
+    patient_id: str,
+    http_request: Request,
+    body: CloseChartRequest,
+    user: User = Depends(require_baa_acceptance),
+    repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> PatientResponse:
+    """
+    Close a patient's chart (THERAPY-hek).
+
+    Marks the patient's care episode as ended without removing the
+    record. Closure is **orthogonal** to soft-delete: the row stays
+    visible in list/get responses, and the day-30 hard-purge clock
+    (THERAPY-cgy) is **not** advanced.
+
+    - **patient_id**: The patient's unique identifier
+    - **closure_reason** (body, optional): Free-form reason. Stored on
+      the patient row but never copied into audit logs (free text could
+      be PHI-adjacent).
+    """
+    patient = repo.close_chart(patient_id, user.id, body.closure_reason)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    # Audit changes payload is PHI-free: only flags whether a reason was
+    # supplied, never the reason text itself.
+    audit.log_patient_action(
+        AuditAction.CHART_CLOSED,
+        user,
+        http_request,
+        patient,
+        changes={"closure_reason_provided": body.closure_reason is not None},
+    )
+    return PatientResponse.from_patient(patient)
+
+
+@router.post("/{patient_id}/reopen-chart")
+def reopen_chart(
+    patient_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> PatientResponse:
+    """
+    Reopen a previously-closed chart (THERAPY-hek).
+
+    Clears ``chart_closed_at`` and ``chart_closure_reason``. Audit-only
+    record of the transition.
+    """
+    patient = repo.reopen_chart(patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    audit.log_patient_action(
+        AuditAction.CHART_REOPENED,
+        user,
+        http_request,
+        patient,
+    )
+    return PatientResponse.from_patient(patient)
 
 
 @router.get("/{patient_id}/export")
