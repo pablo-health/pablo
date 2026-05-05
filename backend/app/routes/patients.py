@@ -8,6 +8,7 @@ Implements CRUD operations for patient management with multi-tenant isolation.
 
 import logging
 import uuid
+from datetime import timedelta
 from enum import StrEnum
 from typing import cast
 
@@ -53,6 +54,29 @@ class PatientSearchField(StrEnum):
 
     FIRST_NAME = "first_name"
     LAST_NAME = "last_name"
+
+
+class IncludeDeletedMode(StrEnum):
+    """Soft-delete visibility for ``GET /api/patients`` (THERAPY-yg2).
+
+    Default behavior (``include_deleted`` omitted) lists only live
+    patients — soft-deleted rows are hidden by the repository's
+    ``deleted_at IS NULL`` filter (THERAPY-nyb).
+
+    ``recent`` switches the listing to the 30-day undo window: rows
+    with ``deleted_at IS NOT NULL AND deleted_at > NOW() - 30 days``.
+    The hard-purge cron (THERAPY-cgy) physically removes anything
+    older, so this mode never returns rows that are about to vanish.
+    """
+
+    RECENT = "recent"
+
+
+# THERAPY-yg2: 30-day undo window. Sized to match the soft-delete
+# retention before the day-30 hard-purge cron (THERAPY-cgy). Kept here
+# rather than in settings to make the contract obvious at the call site
+# and impossible to widen via env vars.
+_UNDO_WINDOW_DAYS = 30
 
 
 router = APIRouter(prefix="/api/patients", tags=["patients"])
@@ -139,6 +163,13 @@ def list_patients(
     ),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    include_deleted: IncludeDeletedMode | None = Query(
+        None,
+        description=(
+            "If 'recent', return soft-deleted patients within the 30-day undo "
+            "window instead of live patients. Default lists only live patients."
+        ),
+    ),
     user: User = Depends(require_baa_acceptance),
     repo: PatientRepository = Depends(get_patient_repository),
     audit: AuditService = Depends(get_audit_service),
@@ -150,10 +181,37 @@ def list_patients(
     - **search_by**: Field to search (first_name or last_name, defaults to last_name)
     - **page**: Page number (default 1)
     - **page_size**: Items per page (default 20, max 100)
+    - **include_deleted**: ``recent`` switches to the 30-day soft-delete
+      undo window (THERAPY-yg2). Default lists only live patients.
 
     Returns patients sorted by last name, then first name.
     next_session_date is denormalized on the patient document.
     """
+    if include_deleted is IncludeDeletedMode.RECENT:
+        # Recently-deleted slice: search/pagination intentionally do
+        # not apply — the window is bounded by 30 days of soft-deletes
+        # per user, which on a solo-therapist deployment is small
+        # enough that returning the full list is simpler than
+        # re-implementing the search path against tombstoned rows.
+        # The hard-purge cron (THERAPY-cgy) caps the upper bound.
+        deleted_pairs = repo.list_recently_deleted(user.id, window_days=_UNDO_WINDOW_DAYS)
+        responses = [
+            PatientResponse.from_patient(
+                p,
+                deleted_at=stamp,
+                restore_deadline=stamp + timedelta(days=_UNDO_WINDOW_DAYS),
+            )
+            for p, stamp in deleted_pairs
+        ]
+        total = len(responses)
+        audit.log_patient_list(user, request, total)
+        return PatientListResponse(
+            data=responses,
+            total=total,
+            page=1,
+            page_size=total,
+        )
+
     patients, total = repo.list_by_user(
         user.id, search=search, search_by=search_by.value, page=page, page_size=page_size
     )
@@ -329,6 +387,36 @@ def delete_patient(
     return DeletePatientResponse(
         message=f"Patient and {session_count} {session_word} deleted successfully"
     )
+
+
+@router.post("/{patient_id}/restore")
+def restore_patient(
+    patient_id: str,
+    request: Request,
+    user: User = Depends(require_baa_acceptance),
+    repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> PatientResponse:
+    """Reverse a soft-delete inside the 30-day undo window (THERAPY-yg2).
+
+    Returns 404 if the patient is not soft-deleted, doesn't belong to
+    the caller, or its ``deleted_at`` is past the 30-day window — the
+    same status as a regular missing-patient lookup so we don't leak
+    the lifecycle state of rows the caller can no longer act on.
+
+    Cascade matches the soft-delete cascade: therapy sessions and
+    notes that were tombstoned together with the patient come back
+    together. Sessions / notes that were independently soft-deleted
+    earlier stay tombstoned. Session numbers are preserved — the
+    next-number generator ignores ``deleted_at`` so a restored
+    session keeps its original number (THERAPY-nyb).
+    """
+    restored = repo.restore(patient_id, user.id, window_days=_UNDO_WINDOW_DAYS)
+    if restored is None:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    audit.log_patient_action(AuditAction.PATIENT_RESTORED, user, request, restored)
+    return PatientResponse.from_patient(restored)
 
 
 @router.post("/{patient_id}/close-chart")
