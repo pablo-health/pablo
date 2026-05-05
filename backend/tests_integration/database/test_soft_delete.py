@@ -199,7 +199,7 @@ class TestPatientSoftDeleteCascade:
             assert row.deleted_at is not None
 
     def test_repeat_delete_is_a_noop(self, pg_session: Session) -> None:
-        """Calling delete twice doesn't update the existing tombstone."""
+        """Calling delete twice doesn't update the existing ``deleted_at`` stamp."""
         patient = _seed_patient(pg_session)
         pg_session.commit()
         repo = PostgresPatientRepository(pg_session)
@@ -256,7 +256,7 @@ class TestNoteSoftDelete:
 
 
 class TestReadPathsFilterSoftDeleted:
-    def test_patient_get_and_list_hide_tombstoned(self, pg_session: Session) -> None:
+    def test_patient_get_and_list_hide_soft_deleted(self, pg_session: Session) -> None:
         patient = _seed_patient(pg_session)
         pg_session.commit()
         repo = PostgresPatientRepository(pg_session)
@@ -271,7 +271,7 @@ class TestReadPathsFilterSoftDeleted:
         assert total == 0
         assert repo.get_multiple([patient.id], _USER_ID) == {}
 
-    def test_session_get_and_lists_hide_tombstoned(self, pg_session: Session) -> None:
+    def test_session_get_and_lists_hide_soft_deleted(self, pg_session: Session) -> None:
         """list_by_patient covers transcript visibility — transcripts live
         on therapy_sessions.transcript JSONB, so a session being hidden
         hides its transcript by construction."""
@@ -293,7 +293,7 @@ class TestReadPathsFilterSoftDeleted:
         assert listed_user == []
         assert total_user == 0
 
-    def test_note_get_and_list_hide_tombstoned(self, pg_session: Session) -> None:
+    def test_note_get_and_list_hide_soft_deleted(self, pg_session: Session) -> None:
         _seed_patient(pg_session)
         _seed_session(pg_session)
         _seed_note(pg_session)
@@ -332,7 +332,7 @@ class TestAtomicity:
         )
         pg_session.commit()
 
-        # Patient is tombstoned, audit row is present, both visible after commit.
+        # Patient row is soft-deleted, audit row is present, both visible after commit.
         row = pg_session.get(PatientRow, patient.id)
         assert row is not None
         assert row.deleted_at is not None

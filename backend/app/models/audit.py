@@ -21,6 +21,7 @@ class AuditAction(StrEnum):
     PATIENT_UPDATED = "patient_updated"
     PATIENT_DELETED = "patient_deleted"
     PATIENT_EXPORTED = "patient_exported"
+    PATIENT_PURGED = "patient_purged"
 
     # Session operations
     SESSION_CREATED = "session_created"

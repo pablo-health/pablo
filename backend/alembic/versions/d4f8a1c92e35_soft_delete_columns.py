@@ -10,7 +10,8 @@ three-stage deletion model (THERAPY-nyb):
                  invisible to read paths but stay on disk.
   Stage 2 (T+30, THERAPY-cgy): a purge cron physically deletes rows
                  whose ``deleted_at < now() - interval '30 days'``.
-  Stage 3 (T+30+, separate scope): tombstone rows in compliance schema.
+  Stage 3 (T+30+, separate scope): minimal retention stub row in the
+                 compliance schema (hosted DDL; see THERAPY-cgy).
 
 Notes on scope vs. brief:
   - Transcripts are NOT a separate table in this schema — they live as
