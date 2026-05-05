@@ -109,7 +109,7 @@ class PostgresPatientRepository(PatientRepository):
 
         now = utc_now()
         # Cascade: soft-delete therapy sessions for this patient. Skip
-        # rows already tombstoned so deleted_at reflects the *first*
+        # rows already soft-deleted so deleted_at reflects the *first*
         # delete, not the latest one.
         self._session.query(TherapySessionRow).filter(
             TherapySessionRow.patient_id == patient_id,

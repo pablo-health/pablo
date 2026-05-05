@@ -12,6 +12,13 @@ cutoff, writes the hosted compliance retention stub row, appends a
 ``patient_purged`` audit record, and deletes dependent rows. Cloud Storage
 audio deletion is intentionally not implemented here yet.
 
+Retention stub write: this is **not** a swappable override or ORM hook —
+there is one implementation (``_insert_retention_stub``) that runs a
+parameterized ``INSERT`` against the hosted ``compliance`` schema. SaaS
+owns the table DDL; SQL identifiers still use legacy names
+(``patient_identity_tombstone``, ``tombstoned_*``) even though product
+language calls this a **minimal retention stub**.
+
 Invoked as (from repo ``backend/`` with Poetry's default paths)::
 
     python -m app.jobs.hard_purge_cron --dry-run
@@ -106,7 +113,7 @@ def _patient_row_for_stub(
     return dict(row) if row else None
 
 
-def _already_stubbed(conn: Any, patient_id: str) -> bool:
+def _retention_stub_row_exists(conn: Any, patient_id: str) -> bool:
     row = conn.execute(
         text(
             "SELECT 1 FROM compliance.patient_identity_tombstone "
@@ -118,6 +125,7 @@ def _already_stubbed(conn: Any, patient_id: str) -> bool:
 
 
 def _insert_retention_stub(conn: Any, stub: _ComplianceRetentionStubPayload) -> None:
+    """Persist minimal identity retention metadata (legacy table name in SQL)."""
     expires = datetime.now(UTC) + timedelta(days=AUDIT_LOG_RETENTION_DAYS)
     base_cols = (
         "INSERT INTO compliance.patient_identity_tombstone ("
@@ -230,7 +238,7 @@ def run(argv: list[str] | None = None) -> int:
                     )
                     if row is None:
                         continue
-                    if not _already_stubbed(conn, patient_id):
+                    if not _retention_stub_row_exists(conn, patient_id):
                         name = (row["first_name"] + " " + row["last_name"]).strip() or "(unknown)"
                         dob_raw = row.get("date_of_birth") or None
                         if dob_raw == "":

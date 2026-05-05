@@ -52,8 +52,10 @@ class PatientRow(Base):
     next_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Soft-delete tombstone (THERAPY-nyb). NULL = live row. Day-30 purge
-    # cron (THERAPY-cgy) physically removes rows where this is < now()-30d.
+    # Soft-delete marker (THERAPY-nyb): NULL = live row; read paths omit
+    # non-null rows. Core keeps soft-delete + audit only; hosted purge
+    # (THERAPY-cgy) may remove clinical rows past retention after writing the
+    # minimal retention stub in the compliance schema.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -92,8 +94,8 @@ class TherapySessionRow(Base):
     # PII-redacted transcript variants (note-side variants live on NoteRow).
     redacted_transcript: Mapped[str | None] = mapped_column(Text)
     naturalized_transcript: Mapped[str | None] = mapped_column(Text)
-    # Soft-delete tombstone (THERAPY-nyb). Covers the JSONB ``transcript``
-    # column transitively — no separate transcripts table exists.
+    # Soft-delete marker (THERAPY-nyb). NULL = live row; non-null hides the
+    # session (and JSONB transcript payload) from normal reads.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -135,7 +137,7 @@ class NoteRow(Base):
     redacted_export_payload: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    # Soft-delete tombstone (THERAPY-nyb).
+    # Soft-delete marker (THERAPY-nyb). NULL = live row.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
