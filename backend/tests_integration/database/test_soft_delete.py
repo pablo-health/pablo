@@ -375,3 +375,119 @@ class TestAtomicity:
             text("SELECT COUNT(*) FROM practice.audit_logs WHERE action='patient_deleted'")
         ).scalar()
         assert audit_count == 0
+
+
+# ─── 5. Chart closure is orthogonal to soft-delete (THERAPY-hek) ─────────
+
+
+class TestChartClosure:
+    """Chart closure stamps a separate pair of columns and is invisible
+    to soft-delete / hard-purge logic. The same row may simultaneously
+    be chart-closed and soft-deleted, but neither implies the other.
+    """
+
+    def test_close_chart_sets_timestamp_and_reason(self, pg_session: Session) -> None:
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        result = repo.close_chart(patient.id, _USER_ID, "Care episode complete")
+        assert result is not None
+        assert result.chart_closed_at is not None
+        assert result.chart_closure_reason == "Care episode complete"
+        pg_session.commit()
+
+        row = pg_session.get(PatientRow, patient.id)
+        assert row is not None
+        assert row.chart_closed_at is not None
+        assert row.chart_closure_reason == "Care episode complete"
+        # Soft-delete column is independent and untouched.
+        assert row.deleted_at is None
+        # Status enum unchanged (closure is orthogonal, not a status value).
+        assert row.status == "active"
+
+    def test_close_chart_without_reason(self, pg_session: Session) -> None:
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        result = repo.close_chart(patient.id, _USER_ID, None)
+        assert result is not None
+        assert result.chart_closed_at is not None
+        assert result.chart_closure_reason is None
+
+    def test_reopen_chart_clears_fields(self, pg_session: Session) -> None:
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        repo.close_chart(patient.id, _USER_ID, "x")
+        pg_session.commit()
+
+        result = repo.reopen_chart(patient.id, _USER_ID)
+        assert result is not None
+        assert result.chart_closed_at is None
+        assert result.chart_closure_reason is None
+        pg_session.commit()
+
+        row = pg_session.get(PatientRow, patient.id)
+        assert row is not None
+        assert row.chart_closed_at is None
+        assert row.chart_closure_reason is None
+
+    def test_closed_chart_remains_visible_to_reads(self, pg_session: Session) -> None:
+        """Chart closure must NOT hide the row from list/get (unlike soft-delete)."""
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        repo.close_chart(patient.id, _USER_ID, None)
+        pg_session.commit()
+
+        # Single get
+        fetched = repo.get(patient.id, _USER_ID)
+        assert fetched is not None
+        assert fetched.chart_closed_at is not None
+        # Bulk get
+        assert patient.id in repo.get_multiple([patient.id], _USER_ID)
+        # List
+        rows, total = repo.list_by_user(_USER_ID)
+        assert total == 1
+        assert rows[0].id == patient.id
+
+    def test_close_chart_other_user_returns_none(self, pg_session: Session) -> None:
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        result = repo.close_chart(patient.id, "different-user", None)
+        assert result is None
+        # Untouched.
+        row = pg_session.get(PatientRow, patient.id)
+        assert row is not None
+        assert row.chart_closed_at is None
+
+    def test_close_chart_on_soft_deleted_returns_none(self, pg_session: Session) -> None:
+        """A soft-deleted row is no longer reachable via close_chart."""
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        repo.delete(patient.id, _USER_ID)
+        pg_session.commit()
+
+        result = repo.close_chart(patient.id, _USER_ID, None)
+        assert result is None
+
+    def test_chart_closure_does_not_set_deleted_at(self, pg_session: Session) -> None:
+        """Closing a chart must NOT advance the day-30 hard-purge clock."""
+        patient = _seed_patient(pg_session)
+        pg_session.commit()
+        repo = PostgresPatientRepository(pg_session)
+
+        repo.close_chart(patient.id, _USER_ID, "done")
+        pg_session.commit()
+
+        row = pg_session.get(PatientRow, patient.id)
+        assert row is not None
+        assert row.deleted_at is None  # Purge cron keys off this — must stay NULL.

@@ -22,6 +22,12 @@ class AuditAction(StrEnum):
     PATIENT_DELETED = "patient_deleted"
     PATIENT_EXPORTED = "patient_exported"
     PATIENT_PURGED = "patient_purged"
+    # Chart closure (THERAPY-hek). Orthogonal to soft-delete: closing a
+    # chart marks the clinical/administrative care episode as ended, but
+    # the row stays live and the day-30 hard-purge clock (THERAPY-cgy)
+    # is not advanced.
+    CHART_CLOSED = "chart_closed"
+    CHART_REOPENED = "chart_reopened"
 
     # Session operations
     SESSION_CREATED = "session_created"

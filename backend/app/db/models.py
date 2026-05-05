@@ -57,6 +57,15 @@ class PatientRow(Base):
     # (THERAPY-cgy) may remove clinical rows past retention after writing the
     # minimal retention stub in the compliance schema.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Chart closure (THERAPY-hek). Orthogonal to soft-delete: a closed
+    # chart is a live, retained record whose care episode has ended.
+    # ``status`` stays in {active, inactive, on_hold} — closure is a
+    # timestamp, not a new status enum value, so the existing list
+    # filters keep returning chart-closed patients (with these fields
+    # visible). The hard-purge cron keys off ``deleted_at``, never off
+    # ``chart_closed_at``.
+    chart_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    chart_closure_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class TherapySessionRow(Base):
