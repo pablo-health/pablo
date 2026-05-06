@@ -79,8 +79,16 @@ def get_user_status(
         "email": user.email,
     }
 
-    # Include subscription/trial info for SaaS editions
     settings = get_settings()
+
+    if settings.multi_tenancy_enabled:
+        from ..auth.service import _resolve_practice_from_email
+
+        practice = _resolve_practice_from_email(user.email)
+        if practice:
+            result["practice_id"] = practice[0]
+
+    # Include subscription/trial info for SaaS editions
     if settings.is_saas:
         from .subscription import _get_subscription_info  # type: ignore[import-not-found]
 
