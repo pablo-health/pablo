@@ -7,7 +7,9 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
 from app.jobs import hard_purge_cron
+from google.api_core.exceptions import NotFound
 
 
 def test_run_exits_zero_when_no_stub_writer_registered() -> None:
@@ -82,3 +84,66 @@ def test_run_dry_run_exits_zero_when_stub_writer_supported() -> None:
         patch("app.jobs.hard_purge_cron.list_active_practice_registry", return_value=[]),
     ):
         assert hard_purge_cron.run(["--dry-run"]) == 0
+
+
+# ─── THERAPY-zu4: audio blob cleanup inside the per-patient txn ────────────
+
+
+def test_audio_objects_for_patient_parses_single_and_stereo_paths() -> None:
+    """``audio_gcs_path`` may hold one object name or comma-separated stereo."""
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchall.return_value = [
+        ("2026/05/05/sess-a/abc.wav",),
+        ("2026/05/05/sess-b/therapist.wav, 2026/05/05/sess-b/client.wav",),
+        (None,),
+        ("",),
+    ]
+    objects = hard_purge_cron._audio_objects_for_patient(mock_conn, "practice", "pt-1")
+    assert objects == [
+        "2026/05/05/sess-a/abc.wav",
+        "2026/05/05/sess-b/therapist.wav",
+        "2026/05/05/sess-b/client.wav",
+    ]
+
+
+def test_delete_audio_blobs_noop_when_empty() -> None:
+    with patch("app.jobs.hard_purge_cron._resolve_audio_bucket") as resolver:
+        hard_purge_cron._delete_audio_blobs([])
+        resolver.assert_not_called()
+
+
+def test_delete_audio_blobs_invokes_blob_delete_per_object() -> None:
+    bucket = MagicMock()
+    blob_a = MagicMock()
+    blob_b = MagicMock()
+    bucket.blob.side_effect = [blob_a, blob_b]
+    with patch("app.jobs.hard_purge_cron._resolve_audio_bucket", return_value=bucket):
+        hard_purge_cron._delete_audio_blobs(["obj-a.wav", "obj-b.wav"])
+    assert bucket.blob.call_args_list == [(("obj-a.wav",),), (("obj-b.wav",),)]
+    blob_a.delete.assert_called_once_with()
+    blob_b.delete.assert_called_once_with()
+
+
+def test_delete_audio_blobs_swallows_not_found() -> None:
+    """A blob that's already gone is treated as success (idempotent retries)."""
+    bucket = MagicMock()
+    blob_missing = MagicMock()
+    blob_missing.delete.side_effect = NotFound("gone")
+    blob_present = MagicMock()
+    bucket.blob.side_effect = [blob_missing, blob_present]
+    with patch("app.jobs.hard_purge_cron._resolve_audio_bucket", return_value=bucket):
+        hard_purge_cron._delete_audio_blobs(["missing.wav", "present.wav"])
+    blob_present.delete.assert_called_once_with()
+
+
+def test_delete_audio_blobs_propagates_other_errors() -> None:
+    """Non-404 GCS failures must surface so the surrounding txn rolls back."""
+    bucket = MagicMock()
+    blob = MagicMock()
+    blob.delete.side_effect = RuntimeError("gcs timeout")
+    bucket.blob.return_value = blob
+    with (
+        patch("app.jobs.hard_purge_cron._resolve_audio_bucket", return_value=bucket),
+        pytest.raises(RuntimeError, match="gcs timeout"),
+    ):
+        hard_purge_cron._delete_audio_blobs(["obj.wav"])
