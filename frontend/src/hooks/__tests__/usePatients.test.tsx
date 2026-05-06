@@ -388,7 +388,10 @@ describe("usePatients hooks", () => {
       const removeSpy = vi.spyOn(queryClient, "removeQueries")
       const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries")
 
-      await result.current.mutateAsync("patient-123")
+      await result.current.mutateAsync({
+        patientId: "patient-123",
+        acknowledgedRetentionObligation: true,
+      })
 
       // Should remove patient from cache
       expect(removeSpy).toHaveBeenCalledWith({
@@ -406,6 +409,27 @@ describe("usePatients hooks", () => {
       })
     })
 
+    it("forwards retention attestation through to the API", async () => {
+      vi.mocked(patientsApi.deletePatient).mockResolvedValue({
+        message: "Patient deleted",
+      })
+
+      const { result } = renderHook(() => useDeletePatient(), {
+        wrapper: createWrapper(),
+      })
+
+      await result.current.mutateAsync({
+        patientId: "patient-123",
+        acknowledgedRetentionObligation: true,
+      })
+
+      expect(patientsApi.deletePatient).toHaveBeenCalledWith(
+        "patient-123",
+        true,
+        undefined,
+      )
+    })
+
     it("returns delete confirmation message", async () => {
       const deleteResponse = {
         message: "Patient and 3 sessions deleted successfully",
@@ -417,7 +441,10 @@ describe("usePatients hooks", () => {
         wrapper: createWrapper(),
       })
 
-      const response = await result.current.mutateAsync("patient-123")
+      const response = await result.current.mutateAsync({
+        patientId: "patient-123",
+        acknowledgedRetentionObligation: true,
+      })
 
       expect(response).toEqual(deleteResponse)
     })
@@ -430,9 +457,12 @@ describe("usePatients hooks", () => {
         wrapper: createWrapper(),
       })
 
-      await expect(result.current.mutateAsync("patient-123")).rejects.toThrow(
-        "Deletion failed"
-      )
+      await expect(
+        result.current.mutateAsync({
+          patientId: "patient-123",
+          acknowledgedRetentionObligation: true,
+        }),
+      ).rejects.toThrow("Deletion failed")
     })
   })
 })

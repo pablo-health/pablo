@@ -314,4 +314,116 @@ describe("PatientTable", () => {
       expect(screen.getByPlaceholderText(/search patients by name/i)).toBeInTheDocument()
     })
   })
+
+  describe("Delete confirmation modal", () => {
+    const openDeleteModal = async (user: ReturnType<typeof userEvent.setup>) => {
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients,
+        total: 3,
+        page: 1,
+        page_size: 50,
+      })
+      render(<PatientTable />, { wrapper: Wrapper })
+      await waitFor(() => {
+        expect(screen.getByText("Jane Doe")).toBeInTheDocument()
+      })
+      const deleteBtn = screen.getByRole("button", {
+        name: /delete patient jane doe/i,
+      })
+      await user.click(deleteBtn)
+      const dialog = await screen.findByRole("dialog")
+      return dialog
+    }
+
+    it("disables Delete until the retention attestation checkbox is checked", async () => {
+      const user = userEvent.setup()
+      const dialog = await openDeleteModal(user)
+
+      const confirmBtn = within(dialog).getByRole("button", { name: /^delete$/i })
+      expect(confirmBtn).toBeDisabled()
+
+      const checkbox = within(dialog).getByRole("checkbox", {
+        name: /met my professional retention obligations/i,
+      })
+      await user.click(checkbox)
+
+      expect(confirmBtn).toBeEnabled()
+    })
+
+    it("sends acknowledged_retention_obligation: true with the delete call", async () => {
+      vi.mocked(patientsApi.deletePatient).mockResolvedValue({
+        message: "Patient and 5 sessions deleted successfully",
+      })
+
+      const user = userEvent.setup()
+      const dialog = await openDeleteModal(user)
+
+      await user.click(
+        within(dialog).getByRole("checkbox", {
+          name: /met my professional retention obligations/i,
+        }),
+      )
+      await user.click(within(dialog).getByRole("button", { name: /^delete$/i }))
+
+      await waitFor(() => {
+        expect(patientsApi.deletePatient).toHaveBeenCalledWith(
+          "patient-1",
+          true,
+          undefined,
+        )
+      })
+    })
+
+    it("resets the checkbox when the dialog is reopened", async () => {
+      const user = userEvent.setup()
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients,
+        total: 3,
+        page: 1,
+        page_size: 50,
+      })
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      await waitFor(() => {
+        expect(screen.getByText("Jane Doe")).toBeInTheDocument()
+      })
+
+      // Open, check the box, then cancel — the box should not persist.
+      await user.click(
+        screen.getByRole("button", { name: /delete patient jane doe/i }),
+      )
+      const firstDialog = await screen.findByRole("dialog")
+      await user.click(
+        within(firstDialog).getByRole("checkbox", {
+          name: /met my professional retention obligations/i,
+        }),
+      )
+      expect(
+        within(firstDialog).getByRole("button", { name: /^delete$/i }),
+      ).toBeEnabled()
+      await user.click(
+        within(firstDialog).getByRole("button", { name: /cancel/i }),
+      )
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+      })
+
+      // Reopen for a different patient — Delete must start disabled again.
+      await user.click(
+        screen.getByRole("button", { name: /delete patient john smith/i }),
+      )
+      const secondDialog = await screen.findByRole("dialog")
+      expect(
+        within(secondDialog).getByRole("checkbox", {
+          name: /met my professional retention obligations/i,
+        }),
+      ).not.toBeChecked()
+      expect(
+        within(secondDialog).getByRole("button", { name: /^delete$/i }),
+      ).toBeDisabled()
+    })
+  })
 })

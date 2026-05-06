@@ -115,28 +115,33 @@ export async function updatePatient(
 }
 
 /**
- * Delete a patient and all their sessions
+ * Delete a patient and all their sessions.
  *
- * IMPORTANT: This is a destructive operation that deletes:
- * - The patient record
- * - All session transcripts
- * - All SOAP notes
- * - All quality ratings
+ * Soft-delete that enters the 30-day undo window (THERAPY-yg2). Backend
+ * requires `acknowledged_retention_obligation: true` in the request body
+ * (THERAPY-9ig); pass the user's attestation through from the delete
+ * confirmation modal.
  *
  * @param patientId - Patient ID
+ * @param acknowledgedRetentionObligation - User attestation that they have
+ *   met their professional retention obligations for this record. Must be
+ *   `true` for the request to succeed.
  * @param token - Optional auth token for server-side calls
  * @returns Confirmation message
+ * @throws ApiError with code "RETENTION_ATTESTATION_REQUIRED" if attestation
+ *   is missing or false
  * @throws ApiError with code "NOT_FOUND" if patient doesn't exist
- *
- * @example
- * const result = await deletePatient("123...")
- * console.log(result.message) // "Patient and 5 sessions deleted successfully"
  */
 export async function deletePatient(
   patientId: string,
-  token?: string
+  acknowledgedRetentionObligation: boolean,
+  token?: string,
 ): Promise<DeletePatientResponse> {
-  return del<DeletePatientResponse>(`/api/patients/${patientId}`, token)
+  return del<DeletePatientResponse>(
+    `/api/patients/${patientId}`,
+    token,
+    { acknowledged_retention_obligation: acknowledgedRetentionObligation },
+  )
 }
 
 /**
