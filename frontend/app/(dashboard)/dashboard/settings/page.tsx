@@ -3,6 +3,7 @@
 "use client"
 
 import { useState, useCallback, useRef } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { WorkingHoursSettings } from "@/components/calendar/WorkingHoursSettings"
 import { SettingsSection } from "@/components/settings/SettingsSection"
@@ -10,14 +11,21 @@ import { ProfileSettings } from "@/components/settings/ProfileSettings"
 import { SessionDefaults } from "@/components/settings/SessionDefaults"
 import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
+import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertCircle, Calendar, Check, Clock, Mic, Settings2, User } from "lucide-react"
+import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Settings2, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
-import type { UserPreferences } from "@/lib/api/users"
+import { getUserStatus, type UserPreferences } from "@/lib/api/users"
 
 export default function SettingsPage() {
   const { data: preferences, isLoading, error } = usePreferences()
   const saveMutation = useSavePreferences()
+  const { data: userStatus } = useQuery({
+    queryKey: ["user", "status"],
+    queryFn: () => getUserStatus(),
+    staleTime: 5 * 60 * 1000,
+  })
+  const practiceId = userStatus?.practice_id
   const [showSaved, setShowSaved] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout>>(null)
 
@@ -138,6 +146,16 @@ export default function SettingsPage() {
             onSave={handleSave}
             isSaving={saveMutation.isPending}
           />
+        </SettingsSection>
+      )}
+
+      {isEnabled("audio_retention") && practiceId && (
+        <SettingsSection
+          icon={Archive}
+          title="Audio Retention"
+          description="How long session audio recordings are kept before nightly automatic deletion."
+        >
+          <AudioRetentionSettings practiceId={practiceId} />
         </SettingsSection>
       )}
     </div>
