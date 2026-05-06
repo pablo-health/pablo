@@ -19,30 +19,48 @@ from pydantic import BaseModel, Field
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_current_user
+from ..compliance import (
+    ComplianceTemplate,
+    Edition,
+    get_template,
+    list_templates_for_edition,
+)
 from ..models import User
 from ..repositories import get_compliance_item_repository
 from ..repositories.postgres.compliance_item import (
     ComplianceItem,
     PostgresComplianceItemRepository,
 )
+from ..settings import get_settings
 from ..utcnow import utc_now
 
 router = APIRouter(prefix="/api/compliance", tags=["compliance"])
 
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# Known item types — clients use these to render localized labels and the
-# correct cadence hint. New types can be added without a migration.
-ALLOWED_ITEM_TYPES: frozenset[str] = frozenset(
-    {
-        "license",
-        "liability_insurance",
-        "caqh_attestation",
-        "hipaa_training",
-        "npi",
-        "other",
-    }
-)
+
+class ComplianceTemplateResponse(BaseModel):
+    item_type: str
+    label: str
+    description: str
+    cadence_days: int | None
+    reminder_windows: list[int]
+    multi_instance: bool
+    min_edition: str
+    sort_order: int
+
+
+def _template_to_response(t: ComplianceTemplate) -> ComplianceTemplateResponse:
+    return ComplianceTemplateResponse(
+        item_type=t.item_type,
+        label=t.label,
+        description=t.description,
+        cadence_days=t.cadence_days,
+        reminder_windows=list(t.reminder_windows),
+        multi_instance=t.multi_instance,
+        min_edition=t.min_edition,
+        sort_order=t.sort_order,
+    )
 
 
 class ComplianceItemPayload(BaseModel):
@@ -63,12 +81,27 @@ class ComplianceItemResponse(BaseModel):
     updated_at: str
 
 
+def _current_edition() -> Edition:
+    return get_settings().pablo_edition
+
+
 def _validate(payload: ComplianceItemPayload) -> None:
-    if payload.item_type not in ALLOWED_ITEM_TYPES:
+    template = get_template(payload.item_type)
+    edition = _current_edition()
+    if template is None:
         raise BadRequestError(
             f"Unknown item_type '{payload.item_type}'",
-            {"allowed": sorted(ALLOWED_ITEM_TYPES)},
+            {"allowed": [t.item_type for t in list_templates_for_edition(edition)]},
             code="UNKNOWN_ITEM_TYPE",
+        )
+    # Refuse to create instances of templates the current edition doesn't see —
+    # otherwise a Core deployment could carry rows that only render correctly
+    # on a paid tier.
+    if template not in list_templates_for_edition(edition):
+        raise BadRequestError(
+            f"item_type '{payload.item_type}' is not available on this edition",
+            {"edition": edition, "required": template.min_edition},
+            code="EDITION_GATED",
         )
     if payload.due_date is not None and not ISO_DATE_PATTERN.match(payload.due_date):
         raise BadRequestError(
@@ -95,6 +128,15 @@ RepoDep = Annotated[
     PostgresComplianceItemRepository, Depends(get_compliance_item_repository)
 ]
 UserDep = Annotated[User, Depends(get_current_user)]
+
+
+@router.get("/templates", response_model=list[ComplianceTemplateResponse])
+def list_compliance_templates(
+    _user: UserDep,
+) -> list[ComplianceTemplateResponse]:
+    """Return the catalog of trackable items visible to this edition."""
+    edition = _current_edition()
+    return [_template_to_response(t) for t in list_templates_for_edition(edition)]
 
 
 @router.get("", response_model=list[ComplianceItemResponse])
