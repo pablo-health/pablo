@@ -14,7 +14,12 @@ Before any deletes, the writer's ``is_supported`` probes the DB; if False,
 exit **2** (misconfigured deployment or DDL not applied).
 
 Retention stub semantics live in ``hard_purge_retention_stub``. Cloud Storage
-audio deletion is intentionally not implemented here yet.
+audio cleanup runs inside the per-patient transaction (THERAPY-zu4): blobs
+referenced by ``therapy_sessions.audio_gcs_path`` are deleted **before** the
+clinical-row DELETE commits, so a GCS failure rolls the whole purge back
+rather than leaving an audit row claiming a deletion that didn't happen.
+The BAA §7 Stage 2 promise covers audio of soft-deleted patients regardless
+of the per-practice audio retention slider.
 
 Invoked from repo ``backend/``::
 
@@ -83,14 +88,18 @@ def _patient_row_for_stub(
 ) -> dict[str, Any] | None:
     _validate_schema_name(schema)
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
-    row = conn.execute(
-        text(
-            "SELECT id, first_name, last_name, date_of_birth "
-            "FROM patients WHERE id = :pid AND deleted_at IS NOT NULL "
-            "AND deleted_at < :cutoff FOR UPDATE"
-        ),
-        {"pid": patient_id, "cutoff": purge_before},
-    ).mappings().first()
+    row = (
+        conn.execute(
+            text(
+                "SELECT id, first_name, last_name, date_of_birth "
+                "FROM patients WHERE id = :pid AND deleted_at IS NOT NULL "
+                "AND deleted_at < :cutoff FOR UPDATE"
+            ),
+            {"pid": patient_id, "cutoff": purge_before},
+        )
+        .mappings()
+        .first()
+    )
     return dict(row) if row else None
 
 
@@ -135,6 +144,60 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     conn.execute(text("DELETE FROM patients WHERE id = :pid"), {"pid": patient_id})
 
 
+def _audio_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[str]:
+    """Return GCS object names referenced by the patient's sessions.
+
+    ``therapy_sessions.audio_gcs_path`` may hold a single object name or a
+    comma-separated pair (stereo: ``"<therapist>,<client>"`` — see
+    ``app.routes.sessions``). Empty parts are dropped.
+    """
+    _validate_schema_name(schema)
+    conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+    rows = conn.execute(
+        text(
+            "SELECT audio_gcs_path FROM therapy_sessions "
+            "WHERE patient_id = :pid AND audio_gcs_path IS NOT NULL"
+        ),
+        {"pid": patient_id},
+    ).fetchall()
+    objects: list[str] = []
+    for (raw,) in rows:
+        if raw is None:
+            continue
+        for part in str(raw).split(","):
+            stripped = part.strip()
+            if stripped:
+                objects.append(stripped)
+    return objects
+
+
+def _resolve_audio_bucket() -> Any:
+    """Return the GCS Bucket holding session audio. Patched in unit tests."""
+    from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
+
+    from ..settings import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    return storage.Client().bucket(settings.transcription_audio_bucket)
+
+
+def _delete_audio_blobs(objects: list[str]) -> None:
+    """Delete GCS blobs for the given object names. Idempotent on missing.
+
+    Raises on any non-404 GCS failure so the caller's transaction rolls back.
+    """
+    if not objects:
+        return
+    from google.api_core.exceptions import NotFound  # noqa: PLC0415
+
+    bucket = _resolve_audio_bucket()
+    for object_name in objects:
+        try:
+            bucket.blob(object_name).delete()
+        except NotFound:
+            logger.info("hard_purge_audio_blob_already_gone object=%s", object_name)
+
+
 def run(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     args = _parse_argv(argv)
@@ -173,9 +236,7 @@ def run(argv: list[str] | None = None) -> int:
                 continue
             try:
                 with engine.begin() as conn:
-                    row = _patient_row_for_stub(
-                        conn, schema_name, patient_id, purge_before
-                    )
+                    row = _patient_row_for_stub(conn, schema_name, patient_id, purge_before)
                     if row is None:
                         continue
                     if not stub_writer.stub_row_exists(conn, patient_id):
@@ -195,6 +256,8 @@ def run(argv: list[str] | None = None) -> int:
                             ),
                         )
                     _append_purge_audit(conn, schema_name, patient_id)
+                    audio_objects = _audio_objects_for_patient(conn, schema_name, patient_id)
+                    _delete_audio_blobs(audio_objects)
                     _delete_clinical_rows(conn, schema_name, patient_id)
                     processed += 1
             except Exception:
