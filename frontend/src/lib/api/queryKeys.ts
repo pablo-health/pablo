@@ -93,6 +93,13 @@ export const queryKeys = {
       [...queryKeys.noteTypes.all, "detail", key] as const,
   },
 
+  // Compliance query keys (therapist-owned reminders)
+  compliance: {
+    all: ["compliance"] as const,
+    templates: () => [...queryKeys.compliance.all, "templates"] as const,
+    items: () => [...queryKeys.compliance.all, "items"] as const,
+  },
+
   // Admin query keys
   admin: {
     all: ["admin"] as const,
