@@ -324,7 +324,25 @@ export default function NativeAuthPage() {
         <AuthGoogleButton onClick={handleGoogleLogin} />
 
         <p className="mt-6 text-center text-sm text-neutral-500">
-          By signing in, you agree to our Terms of Service and Privacy Policy
+          By signing in, you agree to our{" "}
+          <a
+            href="https://pablo.health/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-neutral-700"
+          >
+            Terms of Service
+          </a>{" "}
+          and{" "}
+          <a
+            href="https://pablo.health/privacy/product"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-neutral-700"
+          >
+            Privacy Policy
+          </a>
+          .
         </p>
       </div>
 
