@@ -133,6 +133,16 @@ def _migrate_platform_columns(engine: Engine) -> None:
         f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS is_pentest"
         " BOOLEAN NOT NULL DEFAULT FALSE"
     )
+    migrations.extend(
+        [
+            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
+            " audio_retention_days INTEGER NOT NULL DEFAULT 365",
+            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
+            " offboard_scheduled_at TIMESTAMP WITH TIME ZONE",
+            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
+            " deleted_at TIMESTAMP WITH TIME ZONE",
+        ]
+    )
 
     # --- Migrate VARCHAR datetime columns to TIMESTAMP WITH TIME ZONE ---
     etm = f"{PLATFORM_SCHEMA}.email_tenant_mappings"

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -46,6 +46,18 @@ class PracticeRow(PlatformBase):
     is_pentest: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # Per-practice audio retention window (days). DB CHECK enforces
+    # 30..2555 (≈7y). Default 365 matches privacy-policy commitment.
+    audio_retention_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=365, server_default="365"
+    )
+    # Tenant offboarding schedule. NULL = active; non-NULL = scheduled
+    # offboard at this instant. Cleared by NULL to cancel.
+    offboard_scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set inside the offboard transaction once the practice schema is
+    # dropped. Acts as the "this practice is gone" post-condition;
+    # admin queries filter on deleted_at IS NULL.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class EmailTenantMappingRow(PlatformBase):
