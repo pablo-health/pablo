@@ -71,6 +71,17 @@ class AuditAction(StrEnum):
     TENANT_DISABLED = "tenant_disabled"
     TENANT_ENABLED = "tenant_enabled"
     TENANT_DELETED = "tenant_deleted"
+    # Offboarding scheduled but tenant is still active during the grace
+    # window. Distinct from TENANT_DISABLED (which implies access cut)
+    # and TENANT_DELETED (which implies the schema is gone).
+    TENANT_OFFBOARD_SCHEDULED = "tenant_offboard_scheduled"
+
+    # Practice/tenant configuration writes. Used for retention-policy
+    # changes (e.g. per-practice audio retention slider — THERAPY-6k7)
+    # and any future configurable retention surfaces. The `changes`
+    # payload carries {field, previous, new} so audit readers can
+    # reconstruct what was modified without storing PHI.
+    RETENTION_UPDATED = "retention_updated"
 
     # EHR navigation
     EHR_NAVIGATE = "ehr_navigate"
