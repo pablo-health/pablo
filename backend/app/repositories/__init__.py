@@ -140,6 +140,13 @@ def get_clinician_profile_repository():  # type: ignore[no-untyped-def]
     return PostgresClinicianProfileRepository(_get_pg_session())
 
 
+def get_compliance_item_repository():  # type: ignore[no-untyped-def]
+    """Get compliance-item repository instance (postgres only)."""
+    from .postgres.compliance_item import PostgresComplianceItemRepository
+
+    return PostgresComplianceItemRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
     "EhrPromptRepository",
@@ -159,6 +166,7 @@ __all__ = [
     "get_appointment_repository",
     "get_availability_rule_repository",
     "get_clinician_profile_repository",
+    "get_compliance_item_repository",
     "get_ehr_prompt_repository",
     "get_ehr_route_repository",
     "get_google_calendar_token_repository",
