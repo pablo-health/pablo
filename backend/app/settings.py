@@ -47,8 +47,10 @@ class Settings(BaseSettings):
 
     # Security Settings - HIPAA TLS Requirements
     # HTTPS is automatically enforced in production/staging, disabled in development
+    # 2 years (63072000s) matches the privacy policy commitment and the
+    # IETF + browser-vendor recommendation for HSTS-preloaded production sites.
     hsts_max_age: int = Field(
-        default=31536000,  # 1 year in seconds
+        default=63072000,
         description="HSTS max-age directive in seconds (production only)",
     )
     hsts_include_subdomains: bool = Field(

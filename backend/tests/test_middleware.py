@@ -14,7 +14,7 @@ def production_settings() -> Settings:
     """Settings with HTTPS enforcement enabled (production mode)."""
     return Settings(
         environment="production",
-        hsts_max_age=31536000,
+        hsts_max_age=63072000,  # 2 years (production default)
         hsts_include_subdomains=True,
         hsts_preload=True,
     )
@@ -157,9 +157,20 @@ class TestSecurityHeadersMiddleware:
         response = client.get("/test")
         assert "Strict-Transport-Security" in response.headers
         hsts_value = response.headers["Strict-Transport-Security"]
-        assert "max-age=31536000" in hsts_value
+        assert "max-age=63072000" in hsts_value
         assert "includeSubDomains" in hsts_value
         assert "preload" in hsts_value
+
+    def test_hsts_default_is_two_years(self) -> None:
+        """Default HSTS max-age must be 63072000s (2y).
+
+        Privacy policy at pablo-marketing/public/privacy/product.html commits to
+        a two-year HSTS window — the IETF + browser-vendor recommendation for
+        preloaded production sites. A drift back to 1y is a contractual gap, so
+        this test pins the default rather than letting it silently regress.
+        """
+        defaults = Settings(environment="production")
+        assert defaults.hsts_max_age == 63072000
 
     def test_hsts_without_subdomains(self) -> None:
         """HSTS header should exclude includeSubDomains when configured."""
@@ -179,6 +190,7 @@ class TestSecurityHeadersMiddleware:
         client = TestClient(app, base_url="https://testserver")
         response = client.get("/test")
         hsts_value = response.headers["Strict-Transport-Security"]
+        # 31536000 here is the explicit override under test, not a default.
         assert "max-age=31536000" in hsts_value
         assert "includeSubDomains" not in hsts_value
         assert "preload" not in hsts_value
