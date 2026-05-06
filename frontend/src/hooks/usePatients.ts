@@ -66,11 +66,17 @@ export function useUpdatePatient(token?: string) {
   })
 }
 
+export interface DeletePatientVariables {
+  patientId: string
+  acknowledgedRetentionObligation: boolean
+}
+
 export function useDeletePatient(token?: string) {
   return useAuthMutation({
-    mutationFn: (patientId: string) => deletePatient(patientId, token),
+    mutationFn: ({ patientId, acknowledgedRetentionObligation }: DeletePatientVariables) =>
+      deletePatient(patientId, acknowledgedRetentionObligation, token),
     invalidateKeys: [queryKeys.patients.lists(), queryKeys.sessions.all],
-    onSuccess: (_data, patientId, queryClient) => {
+    onSuccess: (_data, { patientId }, queryClient) => {
       queryClient.removeQueries({
         queryKey: queryKeys.patients.detail(patientId),
       })

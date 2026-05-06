@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Pencil, Trash2, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -15,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Table,
   TableBody,
@@ -46,6 +48,7 @@ export function PatientTable() {
   const [selectedPatient, setSelectedPatient] = useState<PatientResponse | undefined>()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [patientToDelete, setPatientToDelete] = useState<PatientResponse | null>(null)
+  const [retentionAcknowledged, setRetentionAcknowledged] = useState(false)
 
   // Debounce search term
   const debouncedSearch = useDebounce(searchTerm, 500)
@@ -73,15 +76,27 @@ export function PatientTable() {
 
   const handleDeleteClick = (patient: PatientResponse) => {
     setPatientToDelete(patient)
+    setRetentionAcknowledged(false)
     setDeleteDialogOpen(true)
   }
 
+  const handleDeleteDialogChange = (open: boolean) => {
+    setDeleteDialogOpen(open)
+    if (!open) {
+      setRetentionAcknowledged(false)
+    }
+  }
+
   const handleConfirmDelete = async () => {
-    if (patientToDelete) {
+    if (patientToDelete && retentionAcknowledged) {
       try {
-        await deletePatient.mutateAsync(patientToDelete.id)
+        await deletePatient.mutateAsync({
+          patientId: patientToDelete.id,
+          acknowledgedRetentionObligation: true,
+        })
         setDeleteDialogOpen(false)
         setPatientToDelete(null)
+        setRetentionAcknowledged(false)
       } catch (error) {
         console.error("Patient delete failed")
       }
@@ -217,7 +232,7 @@ export function PatientTable() {
       />
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <Dialog open={deleteDialogOpen} onOpenChange={handleDeleteDialogChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Patient</DialogTitle>
@@ -229,10 +244,28 @@ export function PatientTable() {
               ? This action cannot be undone and will also delete all associated sessions.
             </DialogDescription>
           </DialogHeader>
+          <div className="flex items-start gap-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">
+            <Checkbox
+              id="retention-acknowledged"
+              checked={retentionAcknowledged}
+              onCheckedChange={(checked) =>
+                setRetentionAcknowledged(checked === true)
+              }
+              disabled={deletePatient.isPending}
+              className="mt-0.5"
+            />
+            <Label
+              htmlFor="retention-acknowledged"
+              className="text-sm font-normal leading-relaxed cursor-pointer"
+            >
+              I confirm I have met my professional retention obligations for
+              this patient&apos;s record.
+            </Label>
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setDeleteDialogOpen(false)}
+              onClick={() => handleDeleteDialogChange(false)}
               disabled={deletePatient.isPending}
             >
               Cancel
@@ -240,7 +273,7 @@ export function PatientTable() {
             <Button
               variant="destructive"
               onClick={handleConfirmDelete}
-              disabled={deletePatient.isPending}
+              disabled={deletePatient.isPending || !retentionAcknowledged}
             >
               {deletePatient.isPending ? "Deleting..." : "Delete"}
             </Button>

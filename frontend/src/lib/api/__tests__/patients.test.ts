@@ -280,18 +280,19 @@ describe("Patient API Functions", () => {
   })
 
   describe("deletePatient", () => {
-    it("calls del with correct endpoint", async () => {
+    it("sends retention attestation in request body", async () => {
       const mockResponse = {
         message: "Patient and 5 sessions deleted successfully",
       }
 
       vi.mocked(client.del).mockResolvedValue(mockResponse)
 
-      const result = await deletePatient("patient-123")
+      const result = await deletePatient("patient-123", true)
 
       expect(client.del).toHaveBeenCalledWith(
         "/api/patients/patient-123",
-        undefined
+        undefined,
+        { acknowledged_retention_obligation: true }
       )
       expect(result).toEqual(mockResponse)
     })
@@ -303,11 +304,27 @@ describe("Patient API Functions", () => {
 
       vi.mocked(client.del).mockResolvedValue(mockResponse)
 
-      await deletePatient("patient-123", "test-token")
+      await deletePatient("patient-123", true, "test-token")
 
       expect(client.del).toHaveBeenCalledWith(
         "/api/patients/patient-123",
-        "test-token"
+        "test-token",
+        { acknowledged_retention_obligation: true }
+      )
+    })
+
+    it("forwards a false attestation verbatim to the backend", async () => {
+      // The UI gates the attestation, but if anything bypasses that we
+      // must let the backend's RETENTION_ATTESTATION_REQUIRED rejection
+      // surface — never silently coerce to true.
+      vi.mocked(client.del).mockResolvedValue({ message: "rejected" })
+
+      await deletePatient("patient-123", false)
+
+      expect(client.del).toHaveBeenCalledWith(
+        "/api/patients/patient-123",
+        undefined,
+        { acknowledged_retention_obligation: false }
       )
     })
   })

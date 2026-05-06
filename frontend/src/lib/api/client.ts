@@ -182,6 +182,14 @@ export async function patch<T>(
   })
 }
 
-export async function del<T>(endpoint: string, token?: string): Promise<T> {
-  return apiClient<T>(endpoint, { method: "DELETE", token })
+export async function del<T>(
+  endpoint: string,
+  token?: string,
+  body?: unknown,
+): Promise<T> {
+  return apiClient<T>(endpoint, {
+    method: "DELETE",
+    token,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
 }
