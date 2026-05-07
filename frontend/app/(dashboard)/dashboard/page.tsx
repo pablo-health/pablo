@@ -5,6 +5,7 @@ import { getTokens } from "next-firebase-auth-edge"
 import { mockUser } from "@/lib/mockData"
 import { authConfig } from "@/lib/auth-config"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
+import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
 
@@ -40,6 +41,8 @@ export default async function DashboardPage() {
         </h1>
         <p className="text-neutral-600 mt-2">{formattedDate}</p>
       </div>
+
+      <DashboardBanners />
 
       <TodayPanel />
 

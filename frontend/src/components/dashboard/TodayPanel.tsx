@@ -7,6 +7,7 @@ import Link from "next/link"
 import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppointmentList } from "@/hooks/useAppointments"
+import { usePatientList } from "@/hooks/usePatients"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
@@ -25,6 +26,13 @@ function startSessionUri(appointmentId: string): string {
 export function TodayPanel() {
   const { start, end } = todayBounds()
   const { data, isLoading } = useAppointmentList(start, end)
+  const { data: patientData } = usePatientList()
+
+  const lastVisitByPatient = useMemo(() => {
+    const m = new Map<string, string | null>()
+    for (const p of patientData?.data ?? []) m.set(p.id, p.last_session_date)
+    return m
+  }, [patientData])
 
   const appts = useMemo(() => {
     const rows = data?.data ?? []
@@ -58,7 +66,11 @@ export function TodayPanel() {
         <>
           <ul className="divide-y divide-neutral-100">
             {appts.map((a) => (
-              <AppointmentRow key={a.id} appointment={a} />
+              <AppointmentRow
+                key={a.id}
+                appointment={a}
+                lastVisit={lastVisitByPatient.get(a.patient_id) ?? null}
+              />
             ))}
           </ul>
           <CompanionFooter />
@@ -68,7 +80,12 @@ export function TodayPanel() {
   )
 }
 
-function AppointmentRow({ appointment }: { appointment: AppointmentResponse }) {
+interface AppointmentRowProps {
+  appointment: AppointmentResponse
+  lastVisit: string | null
+}
+
+function AppointmentRow({ appointment, lastVisit }: AppointmentRowProps) {
   const start = new Date(appointment.start_at)
   const time = start.toLocaleTimeString(undefined, {
     hour: "numeric",
@@ -77,6 +94,7 @@ function AppointmentRow({ appointment }: { appointment: AppointmentResponse }) {
   const badge = STATUS_BADGES[appointment.status]
   const startable =
     appointment.status === "confirmed" && !appointment.session_id
+  const lastVisitLabel = formatLastVisit(lastVisit, appointment.start_at)
 
   return (
     <li className="flex items-center gap-3 py-3">
@@ -90,6 +108,7 @@ function AppointmentRow({ appointment }: { appointment: AppointmentResponse }) {
         <p className="text-xs text-neutral-500 truncate">
           {appointment.duration_minutes} min · {appointment.session_type}
           {appointment.video_platform ? ` · ${appointment.video_platform}` : ""}
+          {lastVisitLabel ? ` · ${lastVisitLabel}` : ""}
         </p>
       </div>
       {badge && (
@@ -146,6 +165,29 @@ function todayBounds(): { start: string; end: string } {
   const end = new Date(start)
   end.setDate(end.getDate() + 1)
   return { start: start.toISOString(), end: end.toISOString() }
+}
+
+// "last visit 4w ago" — coarse-grained on purpose; therapists don't need
+// exact day counts, just "is this someone I just saw or haven't seen in a
+// while." Falls back to null when there's no prior visit (first session)
+// or when the appointment is in the past relative to last_session_date
+// (e.g. data churn after a cancellation).
+export function formatLastVisit(
+  lastSessionDate: string | null,
+  appointmentStart: string,
+): string | null {
+  if (!lastSessionDate) return null
+  const last = new Date(lastSessionDate).getTime()
+  const ref = new Date(appointmentStart).getTime()
+  const diffMs = ref - last
+  if (diffMs <= 0) return null
+  const days = Math.round(diffMs / (1000 * 60 * 60 * 24))
+  if (days <= 1) return "last visit yesterday"
+  if (days < 7) return `last visit ${days}d ago`
+  const weeks = Math.round(days / 7)
+  if (weeks < 8) return `last visit ${weeks}w ago`
+  const months = Math.round(days / 30)
+  return `last visit ${months}mo ago`
 }
 
 function todayLabel(): string {
