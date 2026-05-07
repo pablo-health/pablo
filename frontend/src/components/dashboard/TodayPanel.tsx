@@ -16,6 +16,12 @@ const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
   no_show: { label: "No-show", cls: "bg-red-50 text-red-700" },
 }
 
+// Recording happens in the desktop companion app, not the browser.
+// See docs/url-scheme.md for the full pablohealth:// grammar.
+function startSessionUri(appointmentId: string): string {
+  return `pablohealth://session/start?appointment=${encodeURIComponent(appointmentId)}`
+}
+
 export function TodayPanel() {
   const { start, end } = todayBounds()
   const { data, isLoading } = useAppointmentList(start, end)
@@ -49,11 +55,14 @@ export function TodayPanel() {
       ) : appts.length === 0 ? (
         <EmptyDay />
       ) : (
-        <ul className="divide-y divide-neutral-100">
-          {appts.map((a) => (
-            <AppointmentRow key={a.id} appointment={a} />
-          ))}
-        </ul>
+        <>
+          <ul className="divide-y divide-neutral-100">
+            {appts.map((a) => (
+              <AppointmentRow key={a.id} appointment={a} />
+            ))}
+          </ul>
+          <CompanionFooter />
+        </>
       )}
     </div>
   )
@@ -90,9 +99,8 @@ function AppointmentRow({ appointment }: { appointment: AppointmentResponse }) {
       )}
       {startable ? (
         <Button asChild size="sm">
-          <Link href={`/dashboard/calendar?appointment=${appointment.id}`}>
-            Start session
-          </Link>
+          {/* External URL scheme — not a Next route. */}
+          <a href={startSessionUri(appointment.id)}>Start session</a>
         </Button>
       ) : appointment.session_id ? (
         <Button asChild size="sm" variant="outline">
@@ -102,6 +110,22 @@ function AppointmentRow({ appointment }: { appointment: AppointmentResponse }) {
         </Button>
       ) : null}
     </li>
+  )
+}
+
+function CompanionFooter() {
+  return (
+    <p className="text-xs text-neutral-500 mt-3 pt-3 border-t border-neutral-100 text-center">
+      Recording happens in the Pablo desktop app.{" "}
+      <a
+        href="https://pablo.health"
+        target="_blank"
+        rel="noreferrer"
+        className="text-primary-700 hover:underline"
+      >
+        Don&apos;t have it yet?
+      </a>
+    </p>
   )
 }
 
