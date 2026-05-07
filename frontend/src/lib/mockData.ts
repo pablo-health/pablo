@@ -441,30 +441,3 @@ export const mockSessionListResponse: SessionListResponse = {
   page_size: 20,
 }
 
-export const mockDashboardStats = {
-  totalPatients: 12,
-  activePatients: 9,
-  sessionsThisWeek: 8,
-  sessionsThisMonth: 28,
-  upcomingSessions: 5,
-  recentActivity: [
-    {
-      id: "1",
-      type: "session",
-      description: "Session completed with Alex Chen",
-      timestamp: "2026-01-02T14:00:00Z",
-    },
-    {
-      id: "2",
-      type: "patient",
-      description: "New patient enrolled: Jordan Smith",
-      timestamp: "2026-01-01T09:30:00Z",
-    },
-    {
-      id: "3",
-      type: "session",
-      description: "Session scheduled with Jamie Rivera",
-      timestamp: "2025-12-30T11:00:00Z",
-    },
-  ],
-}

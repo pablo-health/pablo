@@ -276,6 +276,29 @@ class ICalSyncConfigRow(Base):
     consecutive_error_count: Mapped[int] = mapped_column(default=0)
 
 
+class ComplianceItemRow(Base):
+    """Therapist compliance reminder (license, insurance, CAQH, etc.).
+
+    Owned by the therapist, not patient-scoped — these are the clinician's
+    own credentials and are not PHI. ``item_type`` is a free-form string so
+    new categories (BAA expirations, CEU progress) can be added without a
+    migration. ``due_date`` is nullable for items the user wants to track
+    but hasn't filled in yet.
+    """
+
+    __tablename__ = "compliance_items"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    item_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    due_date: Mapped[str | None] = mapped_column(String(10))
+    notes: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AuditLogRow(Base):
     """HIPAA audit log entry.
 

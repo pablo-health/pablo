@@ -23,6 +23,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    compliance,
     ehr_routes,
     ext_auth,
     ical_sync,
@@ -127,6 +128,7 @@ app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(note_types.router)
+app.include_router(compliance.router)
 
 
 @app.get("/api/health")

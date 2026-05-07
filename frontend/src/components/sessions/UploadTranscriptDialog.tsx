@@ -51,10 +51,23 @@ export interface UploadTranscriptDialogProps {
   className?: string
 }
 
+// Zod v4 uses `error` (not v3's `required_error`) for the missing-field
+// message. Without it, an empty submit shows the generic
+// "Invalid input: expected string, received undefined" — confusing to a
+// therapist who just clicked Upload. Set both the type-level message and
+// the min(1) message so the user sees the same friendly text whether the
+// field is missing entirely or just empty.
 const uploadSchema = z.object({
-  patient_id: z.string().min(1, "Patient is required"),
-  session_date: z.string().min(1, "Session date is required"),
-  transcript_file: z.custom<File>((val) => val instanceof File, "File is required"),
+  patient_id: z
+    .string({ error: "Patient is required" })
+    .min(1, "Patient is required"),
+  session_date: z
+    .string({ error: "Session date is required" })
+    .min(1, "Session date is required"),
+  transcript_file: z.custom<File>(
+    (val) => val instanceof File,
+    "File is required",
+  ),
 })
 
 type UploadFormData = z.infer<typeof uploadSchema>

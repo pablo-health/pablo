@@ -175,7 +175,7 @@ describe("UploadTranscriptDialog", () => {
       expect(smithJohnOptions.length).toBeGreaterThan(0)
     })
 
-    it.skip("shows validation error when patient is not selected", async () => {
+    it("shows validation error when patient is not selected", async () => {
       const user = userEvent.setup()
       render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
 
@@ -187,8 +187,9 @@ describe("UploadTranscriptDialog", () => {
 
       await user.click(submitButton)
 
-      // Form validation errors should appear
-      expect(await screen.findByText("Patient is required", {}, { timeout: 2000 })).toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.getByText("Patient is required")).toBeInTheDocument()
+      })
     })
 
     it("disables patient dropdown while loading", () => {
@@ -405,7 +406,7 @@ describe("UploadTranscriptDialog", () => {
       })
     })
 
-    it.skip("rejects invalid file formats", async () => {
+    it("rejects invalid file formats", async () => {
       const user = userEvent.setup()
       render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
 
@@ -415,8 +416,14 @@ describe("UploadTranscriptDialog", () => {
         type: "application/pdf",
       })
 
-      const input = screen.getByLabelText(/Transcript File/)
-      await user.upload(input, file)
+      // Bypass userEvent.upload — it doesn't reliably populate
+      // input.files in jsdom even with applyAccept: false (the input
+      // declares accept=".vtt,.json,.txt"). Drive the change directly so
+      // the test exercises the in-component validation that catches files
+      // sneaking past the browser filter (drag-drop, programmatic set).
+      const input = screen.getByLabelText(/Transcript File/) as HTMLInputElement
+      Object.defineProperty(input, "files", { value: [file], configurable: true })
+      fireEvent.change(input)
 
       expect(await screen.findByText(/Invalid file format/)).toBeInTheDocument()
     })
@@ -496,7 +503,7 @@ describe("UploadTranscriptDialog", () => {
   })
 
   describe("Form Submission", () => {
-    it.skip("shows validation errors when form is incomplete", async () => {
+    it("shows validation errors when form is incomplete", async () => {
       const user = userEvent.setup()
       render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
 
@@ -508,9 +515,11 @@ describe("UploadTranscriptDialog", () => {
 
       await user.click(screen.getByText("Upload & Generate SOAP"))
 
-      expect(await screen.findByText("Patient is required")).toBeInTheDocument()
-      expect(screen.getByText("Session date is required")).toBeInTheDocument()
-      expect(screen.getByText("File is required")).toBeInTheDocument()
+      await waitFor(() => {
+        expect(screen.getByText("Patient is required")).toBeInTheDocument()
+        expect(screen.getByText("Session date is required")).toBeInTheDocument()
+        expect(screen.getByText("File is required")).toBeInTheDocument()
+      })
     })
 
     it("submits form with valid data", async () => {
