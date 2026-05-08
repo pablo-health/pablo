@@ -28,7 +28,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.api_errors import register_exception_handlers
-from app.auth.service import require_admin
+from app.auth.service import get_current_user, require_admin
 from app.db import get_db_session
 from app.models import User
 from app.models.audit import AuditAction
@@ -112,33 +112,38 @@ def client(admin_user: User, audit_service: AuditService) -> TestClient:
 class TestTenantExportAuth:
     """403 path — practice-admin only."""
 
-    @pytest.mark.skip(reason="Flaky in CI — THERAPY-5ex (401 vs 403).")
     def test_non_admin_gets_403_in_production(
         self, non_admin_user: User, audit_service: AuditService
     ) -> None:
-        """When require_admin runs in prod against a non-admin, 403."""
+        """When require_admin runs in prod against a non-admin, 403.
+
+        Deterministic version of the previously-flaky case (THERAPY-5ex):
+        we override ``get_current_user`` via ``app.dependency_overrides``
+        rather than ``mock.patch``, because patches don't reliably flow
+        through FastAPI's ``Depends()`` resolution — the dependency
+        callable is captured at route registration. ``get_settings`` is
+        called as a plain function inside ``require_admin`` (not via
+        Depends), so patching the module-level binding is fine.
+        """
         app = FastAPI()
         register_exception_handlers(app)
         app.include_router(admin_router)
         app.dependency_overrides[get_audit_service] = lambda: audit_service
+        app.dependency_overrides[get_current_user] = lambda: non_admin_user
         _stub_db = MagicMock()
         app.dependency_overrides[get_db_session] = lambda: _stub_db
 
-        # Don't override require_admin — let it run for real against
-        # a non-admin user, with production settings so the dev bypass
-        # is off.
-        with (
-            patch("app.auth.service.get_settings") as mock_settings,
-            patch("app.auth.service.get_current_user", return_value=non_admin_user),
-        ):
+        with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value = Settings(
                 environment="production",
                 database_url="postgresql://test:test@localhost:5432/test",
             )
-            client = TestClient(app, raise_server_exceptions=False)
+            client = TestClient(app)
             resp = client.post("/api/admin/tenant-export", json={"format": "json"})
 
         assert resp.status_code == 403
+        body = resp.json()
+        assert body["detail"]["error"]["code"] == "ADMIN_REQUIRED"
 
 
 class TestTenantExportHappyPath:
