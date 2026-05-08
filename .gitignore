@@ -42,9 +42,8 @@ ui-debug.log
 backend/data/*.jsonl
 backend/data/nli-therapy-*
 
-# Claude Code local settings (keep shared skills in repo)
+# Claude Code: ship team-wide settings.json + skills, ignore per-developer overrides
 .claude/settings.local.json
-.claude/settings.json
 
 # Operator-local scripts and notes (never committed; common convention
 # for keeping environment-specific automation alongside the checkout).
