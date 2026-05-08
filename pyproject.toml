@@ -15,14 +15,14 @@ packages = [{include = "backend"}]
 # Web Framework
 fastapi = ">=0.136.1"
 uvicorn = {extras = ["standard"], version = "^0.46.0"}
-pydantic = "^2.13.3"
+pydantic = "^2.13.4"
 pydantic-settings = "^2.14.0"
 
 # Environment Variables
 python-dotenv = "^1.2.2"
 
 # Google Cloud (for GCP deployment)
-google-cloud-secret-manager = "^2.27.0"
+google-cloud-secret-manager = "^2.28.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
 firebase-admin = "^6.9.0"
@@ -48,7 +48,7 @@ meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcr
 onnxruntime = ">=1.25.1"
 
 # iCal calendar feed parsing
-icalendar = "^7.0.3"
+icalendar = "^7.1.0"
 
 # Real-time audio (Practice Mode)
 httpx = ">=0.28.0"
