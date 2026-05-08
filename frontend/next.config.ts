@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["127.0.0.1"],
+  // Suppress X-Powered-By: Next.js — version disclosure aids fingerprinting.
+  poweredByHeader: false,
   // Standalone output for Docker/Cloud Run deployments
   // This creates a minimal production build with only necessary files
   output: "standalone",
