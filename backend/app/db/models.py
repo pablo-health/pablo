@@ -13,7 +13,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -297,6 +307,41 @@ class ComplianceItemRow(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ComplianceDocumentRow(Base):
+    """Dormant data-model rail for the Phase 3 compliance vault.
+
+    Will eventually back uploaded artifacts (license PDFs, malpractice
+    declarations, CAQH attestations, BAAs) attached to a
+    ``ComplianceItemRow``. Shipping the table now — without routes,
+    storage wiring, or UI — means self-hosters won't need a forced
+    schema migration when the vault product surface lands. ``storage_uri``
+    is opaque (gs:// today, s3:// or local fs in self-host) so the
+    storage backend can swap without a column change. ``document_type``
+    is a free-form string for v1 to keep the schema flexible while the
+    vault feature shape is still settling.
+    """
+
+    __tablename__ = "compliance_documents"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    compliance_item_id: Mapped[str | None] = mapped_column(
+        String(128),
+        ForeignKey("compliance_items.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    document_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    uploaded_by_user_id: Mapped[str] = mapped_column(
+        String(128), nullable=False, index=True
+    )
 
 
 class AuditLogRow(Base):
