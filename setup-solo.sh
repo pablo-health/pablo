@@ -1153,6 +1153,41 @@ BACKEND_URL=$(gcloud run services describe pablo-backend \
 echo -e "${GREEN}Backend deployed: ${BACKEND_URL}${NC}"
 echo ""
 
+# Provision dedicated pablo-frontend runtime SA. Without this, the frontend
+# falls back to the default gen2 compute SA which carries roles/editor —
+# huge blast radius if the frontend is compromised. The frontend signs
+# Firebase session cookies, which requires roles/iam.serviceAccountTokenCreator
+# on the SA-as-itself (not project-wide); without it, sign-in succeeds at
+# Google but the frontend cannot mint a session cookie and hangs.
+FRONTEND_SA_NAME="pablo-frontend"
+FRONTEND_SA="${FRONTEND_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+if ! gcloud iam service-accounts describe "$FRONTEND_SA" --project="$PROJECT_ID" >/dev/null 2>&1; then
+    echo -e "${YELLOW}Creating pablo-frontend runtime service account...${NC}"
+    gcloud iam service-accounts create "$FRONTEND_SA_NAME" \
+        --project="$PROJECT_ID" \
+        --display-name="Pablo Frontend Runtime" \
+        --description="Runtime SA for pablo-frontend Cloud Run service. Least-privilege; do not reuse for unrelated workloads." >/dev/null
+    echo "  Waiting for pablo-frontend SA to propagate..."
+    sleep 15
+fi
+
+for role in \
+    roles/logging.logWriter \
+    roles/secretmanager.secretAccessor; do
+    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+        --member="serviceAccount:${FRONTEND_SA}" \
+        --role="$role" --condition=None >/dev/null 2>&1 || true
+done
+
+# Token creator ON THE SA ITSELF (not project-wide). Lets the frontend sign
+# blobs as itself for Firebase session cookies, without granting the broader
+# ability to impersonate other SAs in the project.
+gcloud iam service-accounts add-iam-policy-binding "$FRONTEND_SA" \
+    --project="$PROJECT_ID" \
+    --member="serviceAccount:${FRONTEND_SA}" \
+    --role="roles/iam.serviceAccountTokenCreator" \
+    --quiet >/dev/null 2>&1 || true
+
 # Deploy frontend
 echo -e "${YELLOW}Deploying frontend...${NC}"
 gcloud run deploy pablo-frontend \
@@ -1160,6 +1195,7 @@ gcloud run deploy pablo-frontend \
     --region="$REPO_LOCATION" \
     --platform=managed \
     --allow-unauthenticated \
+    --service-account="${FRONTEND_SA}" \
     --memory=512Mi \
     --cpu=1 \
     --min-instances=0 \
