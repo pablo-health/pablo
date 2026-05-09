@@ -215,6 +215,7 @@ jobs:
         run: |
           gcloud run services update pablo-frontend \
             --image="${{ env.REGISTRY }}/frontend:${{ github.sha }}" \
+            --service-account="pablo-frontend@${{ env.PROJECT }}.iam.gserviceaccount.com" \
             --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --quiet
 
           gcloud run services update-traffic pablo-frontend \
