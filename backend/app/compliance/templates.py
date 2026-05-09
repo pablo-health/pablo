@@ -27,6 +27,20 @@ higher tiers always inherit lower-tier templates.
 
 _EDITION_RANK: dict[Edition, int] = {"core": 0, "solo": 1, "practice": 2}
 
+Severity = Literal["critical", "routine"]
+"""Tone tier consumed by downstream reminder dispatchers.
+
+``critical`` items are livelihood / legal-exposure: missing them stops
+the therapist from practicing, billing, or being insured (license,
+malpractice, payer credentialing). ``routine`` items are compliance
+hygiene where a missed deadline is an audit risk but doesn't immediately
+halt the business (annual training, BAA chasing, SRA documentation).
+
+The SaaS overlay's reminder cron uses this to pick a tonally-appropriate
+email template (the playful Pablo voice is fine for routine items, but
+reads wrong on a license-lapse reminder).
+"""
+
 
 def edition_at_least(have: Edition, need: Edition) -> bool:
     """Return True if ``have`` includes everything ``need`` requires."""
@@ -78,6 +92,9 @@ class ComplianceTemplate:
     """Display order in the wizard (ascending). Reserve gaps so new
     templates can slot in between existing ones without renumbering."""
 
+    severity: Severity
+    """Tone tier for downstream reminders. See ``Severity`` docstring."""
+
 
 _TEMPLATES: tuple[ComplianceTemplate, ...] = (
     ComplianceTemplate(
@@ -89,6 +106,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="core",
         sort_order=10,
+        severity="critical",
     ),
     ComplianceTemplate(
         item_type="liability_insurance",
@@ -99,6 +117,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="core",
         sort_order=20,
+        severity="critical",
     ),
     ComplianceTemplate(
         item_type="caqh_attestation",
@@ -112,6 +131,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="core",
         sort_order=30,
+        severity="critical",
     ),
     ComplianceTemplate(
         item_type="hipaa_training",
@@ -122,6 +142,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="core",
         sort_order=40,
+        severity="routine",
     ),
     ComplianceTemplate(
         item_type="npi",
@@ -132,6 +153,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="core",
         sort_order=50,
+        severity="critical",
     ),
     # --- Solo (hosted) tier additions ----------------------------------
     ComplianceTemplate(
@@ -143,6 +165,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="solo",
         sort_order=60,
+        severity="routine",
     ),
     ComplianceTemplate(
         item_type="baa",
@@ -156,6 +179,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=True,
         min_edition="solo",
         sort_order=70,
+        severity="routine",
     ),
     ComplianceTemplate(
         item_type="payer_enrollment",
@@ -169,6 +193,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=True,
         min_edition="solo",
         sort_order=80,
+        severity="critical",
     ),
     ComplianceTemplate(
         item_type="mandated_reporter_training",
@@ -179,6 +204,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="solo",
         sort_order=90,
+        severity="routine",
     ),
     ComplianceTemplate(
         item_type="telehealth_licensure",
@@ -192,6 +218,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=True,
         min_edition="solo",
         sort_order=100,
+        severity="critical",
     ),
     # --- Practice tier additions ---------------------------------------
     ComplianceTemplate(
@@ -206,6 +233,7 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         multi_instance=False,
         min_edition="practice",
         sort_order=110,
+        severity="routine",
     ),
 )
 
