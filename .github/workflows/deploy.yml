@@ -141,7 +141,7 @@ jobs:
   migrate:
     name: Run DB Migrations
     needs: [build-backend]
-    if: inputs.run_migrations != false
+    if: github.event_name == 'push' || inputs.run_migrations == true
     runs-on: ubuntu-latest
     steps:
       - id: auth
