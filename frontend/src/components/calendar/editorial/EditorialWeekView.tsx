@@ -98,31 +98,24 @@ function DayHeaderRow({ days }: { days: Date[] }) {
           return (
             <div
               key={day.toISOString()}
-              className="flex flex-col items-center gap-0.5 py-3"
-              style={{ backgroundColor: today ? "var(--ed-today-tint)" : "transparent" }}
+              className="flex items-center justify-center py-3"
             >
-              <span
-                className="text-[10px] font-semibold uppercase tracking-[0.18em]"
-                style={{ color: "var(--ed-ink-soft)" }}
-              >
-                {format(day, "EEE")}
-              </span>
               {today ? (
                 <span
-                  className="flex h-7 w-7 items-center justify-center rounded-full font-display text-[15px] font-semibold"
+                  className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[13px] font-semibold"
                   style={{
                     backgroundColor: "var(--ed-today-circle)",
                     color: "var(--ed-today-circle-fg)",
                   }}
                 >
-                  {format(day, "d")}
+                  {format(day, "EEE d")}
                 </span>
               ) : (
                 <span
-                  className="font-display text-[18px] font-medium leading-none"
-                  style={{ color: "var(--ed-ink)" }}
+                  className="text-[13px] font-medium tracking-tight"
+                  style={{ color: "var(--ed-ink-muted)" }}
                 >
-                  {format(day, "d")}
+                  {format(day, "EEE d")}
                 </span>
               )}
             </div>
