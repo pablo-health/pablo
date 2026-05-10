@@ -89,6 +89,16 @@ class AuditAction(StrEnum):
     # User reading their own audit trail (meta-audit).
     SELF_AUDIT_VIEWED = "self_audit_viewed"
 
+    # Patient-context chat primitive.
+    CHAT_CONVERSATION_CREATED = "chat_conversation_created"
+    CHAT_CONVERSATION_UPDATED = "chat_conversation_updated"
+    CHAT_CONVERSATION_VIEWED = "chat_conversation_viewed"
+    CHAT_CONVERSATION_LISTED = "chat_conversation_listed"
+    CHAT_CONVERSATION_ARCHIVED = "chat_conversation_archived"
+    CHAT_CONVERSATION_PURGED = "chat_conversation_purged"
+    CHAT_TURN_COMPLETED = "chat_turn_completed"
+    CHAT_TURN_FAILED = "chat_turn_failed"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -99,6 +109,7 @@ class ResourceType(StrEnum):
     EHR_ROUTE = "ehr_route"
     SELF = "self"
     TENANT_EXPORT = "tenant_export"
+    CHAT_CONVERSATION = "chat_conversation"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

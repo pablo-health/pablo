@@ -255,6 +255,37 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_chat_action(
+        self,
+        action: AuditAction,
+        user: User,
+        request: Request,
+        conversation_id: str,
+        patient_id: str | None,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Audit a patient-context chat conversation event.
+
+        ``changes`` is a counts/ids/digests dict per the PHI-free
+        invariant — never message content, never the system prompt,
+        never the assembled context.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        if changes is not None:
+            _assert_changes_phi_free(changes)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=action.value,
+            resource_type=ResourceType.CHAT_CONVERSATION.value,
+            resource_id=conversation_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_admin_action(
         self,
         action: AuditAction,

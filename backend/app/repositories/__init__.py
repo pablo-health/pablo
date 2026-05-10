@@ -12,6 +12,10 @@ from .allowlist import (
     AllowlistRepository,
     InMemoryAllowlistRepository,
 )
+from .chat import (
+    ChatRepository,
+    InMemoryChatRepository,
+)
 from .ehr_prompt import (
     EhrPromptRepository,
     InMemoryEhrPromptRepository,
@@ -19,6 +23,10 @@ from .ehr_prompt import (
 from .ehr_route import (
     EhrRouteRepository,
     InMemoryEhrRouteRepository,
+)
+from .llm_usage import (
+    InMemoryLlmUsageRepository,
+    LlmUsageRepository,
 )
 from .note import (
     InMemoryNotesRepository,
@@ -154,17 +162,35 @@ def get_compliance_document_repository():  # type: ignore[no-untyped-def]
     return PostgresComplianceDocumentRepository(_get_pg_session())
 
 
+def get_chat_repository() -> ChatRepository:
+    """Get chat repository instance (patient-context chat primitive)."""
+    from .postgres.chat import PostgresChatRepository
+
+    return PostgresChatRepository(_get_pg_session())
+
+
+def get_llm_usage_repository() -> LlmUsageRepository:
+    """Get LLM usage repository instance (cost meter primitive)."""
+    from .postgres.llm_usage import PostgresLlmUsageRepository
+
+    return PostgresLlmUsageRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
+    "ChatRepository",
     "EhrPromptRepository",
     "EhrRouteRepository",
     "InMemoryAllowlistRepository",
+    "InMemoryChatRepository",
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
+    "InMemoryLlmUsageRepository",
     "InMemoryNotesRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
+    "LlmUsageRepository",
     "NotesRepository",
     "PatientRepository",
     "TherapySessionRepository",
@@ -172,6 +198,7 @@ __all__ = [
     "get_allowlist_repository",
     "get_appointment_repository",
     "get_availability_rule_repository",
+    "get_chat_repository",
     "get_clinician_profile_repository",
     "get_compliance_document_repository",
     "get_compliance_item_repository",
@@ -180,6 +207,7 @@ __all__ = [
     "get_google_calendar_token_repository",
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
+    "get_llm_usage_repository",
     "get_notes_repository",
     "get_patient_repository",
     "get_session_repository",

@@ -344,6 +344,90 @@ class ComplianceDocumentRow(Base):
     )
 
 
+class ChatConversationRow(Base):
+    """One thread of patient-context chat owned by a clinician.
+
+    Bound to a single patient at creation. ``caller_system_prompt`` and
+    ``caller_feature_key`` are supplied by the surface that creates the
+    conversation (chart Q&A, prescription justification, …) so the
+    primitive itself stays prompt-neutral. The patient binding is
+    immutable after insert — see ``ChatService.update_conversation``.
+    """
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    caller_system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    caller_feature_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    default_source_selection: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_turn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ChatMessageRow(Base):
+    """One turn within a conversation, append-only, ordered by sequence.
+
+    User turns carry the active source-selection and the manifest the
+    assembler emitted. Assistant turns carry token accounting plus the
+    LLM model and finish-reason. Errors persist with
+    ``llm_finish_reason='error'`` and an error class-name in
+    ``llm_error`` — never PHI, never a stack trace.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("chat_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_selection: Mapped[dict | None] = mapped_column(JSONB)
+    context_manifest: Mapped[dict | None] = mapped_column(JSONB)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    llm_model: Mapped[str | None] = mapped_column(String(100))
+    llm_finish_reason: Mapped[str | None] = mapped_column(String(30))
+    llm_error: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class LlmUsageRow(Base):
+    """Per-(tenant, user, feature, month, model) LLM usage rollup.
+
+    Records every chat turn (and any other LLM call that opts in) so
+    the meter primitive can answer ``check_quota`` without scanning the
+    audit log. Rows are upserted on each turn — there is no per-turn
+    detail in this table; per-turn detail lives in audit logs.
+
+    ``tenant_id`` is the practice id when multi-tenancy is on; otherwise
+    a fixed sentinel ``"default"`` so the primary key stays stable in
+    single-tenant deployments.
+    """
+
+    __tablename__ = "llm_usage"
+
+    tenant_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    feature_key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    period_yyyymm: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model: Mapped[str] = mapped_column(String(100), primary_key=True)
+    event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AuditLogRow(Base):
     """HIPAA audit log entry.
 

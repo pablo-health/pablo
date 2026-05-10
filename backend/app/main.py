@@ -23,6 +23,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    chat,
     compliance,
     ehr_routes,
     ext_auth,
@@ -129,6 +130,13 @@ app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
+
+# Patient-context chat primitive — gated by ENABLE_PATIENT_CHAT.
+# When the flag is off, the /api/chat/* surface is not mounted and any
+# request to it returns the standard 404. Tables are still created by
+# the migration, so flipping the flag is a config change, not a deploy.
+if settings.enable_patient_chat:
+    app.include_router(chat.router)
 
 
 @app.get("/api/health")

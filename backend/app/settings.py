@@ -378,6 +378,59 @@ class Settings(BaseSettings):
         description="AssemblyAI API key (used when transcription_provider='assemblyai')",
     )
 
+    # Patient-context chat primitive
+    enable_patient_chat: bool = Field(
+        default=False,
+        description=(
+            "Gate the /api/chat/* surface and the frontend ChatPanel. "
+            "Tables are created unconditionally by the chat-primitive "
+            "migration; flipping this flag is a config change, not a "
+            "deploy. Defaults off — opt-in per CLAUDE.md guidance."
+        ),
+    )
+    ai_model: str = Field(
+        default="google:gemini-3-pro-preview",
+        description=(
+            "Default LLM identifier used by SOAP generation and chat "
+            "callers that ask for the higher-tier model."
+        ),
+    )
+    ai_model_flash: str = Field(
+        default="",
+        description=(
+            "Identifier for the cost-optimized model used by chat "
+            "callers (chart Q&A, etc.). Empty falls through to "
+            "AI_MODEL — functional but unoptimised."
+        ),
+    )
+    chat_token_budget: int = Field(
+        default=600_000,
+        ge=10_000,
+        description=(
+            "Token budget the chat ContextBundleAssembler enforces "
+            "before invoking the LLM. Sources are dropped per the "
+            "deterministic priority order when the bundle exceeds it."
+        ),
+    )
+    chat_max_pasted_chars: int = Field(
+        default=32_000,
+        ge=1,
+        description="Hard upper bound on user-pasted text per chat turn.",
+    )
+    chat_max_system_prompt_chars: int = Field(
+        default=16_384,
+        ge=1,
+        description="Hard upper bound on caller_system_prompt at create time.",
+    )
+    llm_quota_enforcement: bool = Field(
+        default=False,
+        description=(
+            "When false, the LLM usage meter records every turn but "
+            "never blocks. Self-host default is off; managed "
+            "deployments populate per-tenant quotas and turn this on."
+        ),
+    )
+
     # Calendar Auto-Sync (Cloud Scheduler + Cloud Tasks)
     calendar_auto_sync_enabled: bool = Field(
         default=True,

@@ -1,12 +1,42 @@
 """Service layer for business logic."""
 
 from .audit_service import AuditService, get_audit_service
+from .chat_context_bundler import (
+    DEFAULT_SOURCE_SELECTION,
+    SOURCE_REGISTRY,
+    BundlerDeps,
+    ContextBundle,
+    ContextOverflowError,
+    assemble_context_bundle,
+    estimate_tokens,
+)
+from .chat_service import (
+    BufferedLlmGateway,
+    ChatConversationNotFoundError,
+    ChatPatientGoneError,
+    ChatPatientNotFoundError,
+    ChatPermissionError,
+    ChatService,
+    LlmStreamGateway,
+    StreamedChunk,
+    StreamResult,
+    build_prompt_envelope,
+    get_default_llm_gateway,
+    manifest_digest,
+)
 from .ehr_navigation_service import (
     EhrNavigationService,
     GeminiEhrNavigationService,
     MockEhrNavigationService,
 )
 from .export_service import ExportService
+from .llm_usage_meter import (
+    LlmUsageMeter,
+    QuotaCheckResult,
+    QuotaStatus,
+    TenantQuotaConfig,
+    get_llm_usage_meter,
+)
 from .note_generation_service import (
     GeneratedNote,
     MeetingTranscriptionNoteService,
@@ -40,13 +70,26 @@ from .source_attribution_service import (
 )
 
 __all__ = [
+    "DEFAULT_SOURCE_SELECTION",
+    "SOURCE_REGISTRY",
     "AuditService",
+    "BufferedLlmGateway",
+    "BundlerDeps",
+    "ChatConversationNotFoundError",
+    "ChatPatientGoneError",
+    "ChatPatientNotFoundError",
+    "ChatPermissionError",
+    "ChatService",
+    "ContextBundle",
+    "ContextOverflowError",
     "EhrNavigationService",
     "ExportService",
     "GeminiEhrNavigationService",
     "GeneratedNote",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
+    "LlmStreamGateway",
+    "LlmUsageMeter",
     "MeetingTranscriptionNoteService",
     "MockEhrNavigationService",
     "MockNoteGenerationService",
@@ -57,16 +100,27 @@ __all__ = [
     "NoteService",
     "NoteServiceError",
     "PatientNotFoundError",
+    "QuotaCheckResult",
+    "QuotaStatus",
     "SOAPGenerationFailedError",
     "SessionAlreadyInStatusError",
     "SessionInTerminalStatusError",
     "SessionNotFoundError",
     "SessionService",
     "SessionServiceError",
+    "StreamResult",
+    "StreamedChunk",
+    "TenantQuotaConfig",
+    "assemble_context_bundle",
     "build_attribution_prompt",
     "build_claims_from_soap",
+    "build_prompt_envelope",
+    "estimate_tokens",
     "format_transcript_with_segment_ids",
     "get_audit_service",
+    "get_default_llm_gateway",
+    "get_llm_usage_meter",
+    "manifest_digest",
     "merge_attribution_into_soap",
     "parse_attribution_response",
 ]
