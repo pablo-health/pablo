@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
 } from "react"
+import { ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -263,53 +264,97 @@ export function ChatPanel(props: ChatPanelProps) {
     return null
   }, [messages])
 
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [messages])
+
   return (
-    <div className={className ?? "flex h-full flex-col gap-3"}>
+    <div className={className ?? "flex h-full flex-col gap-4"}>
       {loadError ? (
-        <div role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+        <div
+          role="alert"
+          className="rounded-lg border border-danger-100 bg-danger-100/30 px-3 py-2 text-sm text-danger-800"
+        >
           {loadError}
         </div>
       ) : null}
 
-      <div className="flex-1 space-y-3 overflow-y-auto" data-testid="chat-messages">
+      <div
+        ref={scrollRef}
+        className="flex-1 space-y-4 overflow-y-auto py-2"
+        data-testid="chat-messages"
+      >
         {messages.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Start a conversation.</p>
+          <p className="text-sm text-neutral-500">Start a conversation.</p>
         ) : null}
-        {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+        {messages.map((m, i) => (
+          <MessageBubble
+            key={m.id}
+            message={m}
+            // Only the most recent assistant turn is announced live, so
+            // earlier replies don't re-announce on every re-render.
+            isLatest={i === messages.length - 1}
+          />
         ))}
       </div>
 
       {lastManifest ? <ContextDisclosure manifest={lastManifest} /> : null}
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
         <Textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder="Type a message…"
           rows={3}
           disabled={streaming || conversation?.archived_at != null}
+          aria-keyshortcuts="Enter"
+          className="resize-none border-neutral-200 bg-white text-neutral-900 placeholder:text-neutral-400"
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // Pablo-native pattern: plain Enter sends, Shift+Enter
+            // inserts a newline. Cmd/Ctrl+Enter retained as an alias
+            // for users who learned it elsewhere.
+            const isSend =
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing
+            if (isSend) {
               e.preventDefault()
               void handleSend()
             }
           }}
         />
         <div className="flex items-center justify-between">
-          <div className="text-xs text-muted-foreground">
-            {streaming ? "Streaming…" : "Cmd/Ctrl + Enter to send"}
+          <div className="text-xs text-neutral-500">
+            {streaming ? (
+              <span className="inline-flex items-center gap-2">
+                <StreamingDots />
+                <span>Streaming…</span>
+              </span>
+            ) : (
+              <span>Enter to send · Shift+Enter for newline</span>
+            )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             {conversation && conversation.archived_at == null ? (
-              <Button variant="ghost" type="button" onClick={handleArchive}>
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                onClick={handleArchive}
+              >
                 Archive
               </Button>
             ) : null}
             <Button
               type="button"
               onClick={handleSend}
-              disabled={streaming || draft.trim().length === 0 || conversation?.archived_at != null}
+              disabled={
+                streaming ||
+                draft.trim().length === 0 ||
+                conversation?.archived_at != null
+              }
             >
               Send
             </Button>
@@ -320,32 +365,65 @@ export function ChatPanel(props: ChatPanelProps) {
   )
 }
 
-function MessageBubble({ message }: { message: RenderedMessage }) {
+function MessageBubble({
+  message,
+  isLatest,
+}: {
+  message: RenderedMessage
+  isLatest: boolean
+}) {
   const isUser = message.role === "user"
+  const ariaLive = !isUser && isLatest && message.pending ? "polite" : undefined
   return (
     <div
       data-testid={`chat-message-${message.role}`}
-      className={
-        "rounded-lg p-3 text-sm " +
-        (isUser
-          ? "bg-secondary text-secondary-foreground"
-          : "bg-muted text-foreground")
-      }
+      className={"flex w-full " + (isUser ? "justify-end" : "justify-start")}
     >
-      <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">
-        {isUser ? "You" : "Assistant"}
+      <div
+        aria-live={ariaLive}
+        aria-atomic="false"
+        className={
+          "max-w-[85%] px-4 py-3 text-sm leading-relaxed text-neutral-900 " +
+          (isUser
+            ? "rounded-2xl rounded-br-sm bg-primary-100"
+            : "rounded-2xl rounded-bl-sm border border-neutral-200 bg-white shadow-sm")
+        }
+      >
+        {message.content ? (
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        ) : message.pending ? (
+          <PendingDots />
+        ) : null}
+        {message.errorMessage && !message.pending ? (
+          <div
+            className="mt-2 rounded-md bg-danger-100/60 px-2 py-1 text-xs text-danger-800"
+            role="alert"
+          >
+            {errorLabelFor(message.errorKind)}: {message.errorMessage}
+          </div>
+        ) : null}
       </div>
-      {message.content ? (
-        <div className="whitespace-pre-wrap">{message.content}</div>
-      ) : message.pending ? (
-        <div className="text-muted-foreground">…</div>
-      ) : null}
-      {message.errorMessage ? (
-        <div className="mt-2 text-xs text-red-700" role="alert">
-          {errorLabelFor(message.errorKind)}: {message.errorMessage}
-        </div>
-      ) : null}
     </div>
+  )
+}
+
+function StreamingDots() {
+  return (
+    <span aria-hidden="true" className="inline-flex items-end gap-0.5">
+      <span className="size-1.5 animate-bounce rounded-full bg-primary-400 [animation-delay:-0.3s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-primary-400 [animation-delay:-0.15s]" />
+      <span className="size-1.5 animate-bounce rounded-full bg-primary-400" />
+    </span>
+  )
+}
+
+function PendingDots() {
+  return (
+    <span className="inline-flex items-end gap-1 py-1" aria-label="Assistant is typing">
+      <span className="size-2 animate-bounce rounded-full bg-neutral-300 [animation-delay:-0.3s]" />
+      <span className="size-2 animate-bounce rounded-full bg-neutral-300 [animation-delay:-0.15s]" />
+      <span className="size-2 animate-bounce rounded-full bg-neutral-300" />
+    </span>
   )
 }
 
@@ -366,29 +444,44 @@ function errorLabelFor(kind?: string): string {
 
 function ContextDisclosure({ manifest }: { manifest: ChatContextManifest }) {
   return (
-    <details className="rounded border border-border bg-card text-xs">
-      <summary className="cursor-pointer p-2 font-medium">
-        What the model saw ({manifest.total_tokens_est.toLocaleString()} tokens)
+    <details className="group border-t border-neutral-200 pt-3 text-xs text-neutral-700">
+      <summary className="flex cursor-pointer select-none items-center gap-1.5 text-neutral-600 transition-colors hover:text-primary-700">
+        <ChevronRight className="size-3 transition-transform group-open:rotate-90" />
+        <span>
+          What the model saw{" "}
+          <span className="text-neutral-400">
+            ({manifest.total_tokens_est.toLocaleString()} tokens)
+          </span>
+        </span>
       </summary>
-      <div className="space-y-2 p-2">
-        <ul className="list-disc pl-4">
+      <div className="space-y-3 pl-4 pt-2">
+        <ul className="space-y-1">
           {manifest.sources_included.map((s) => (
-            <li key={s.source_key}>
-              <code>{s.source_key}</code>
-              {typeof s.tokens_est === "number"
-                ? ` — ${s.tokens_est.toLocaleString()} tokens`
-                : null}
-              {s.status ? ` (${s.status})` : null}
+            <li key={s.source_key} className="flex items-baseline gap-2">
+              <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-700">
+                {s.source_key}
+              </code>
+              {typeof s.tokens_est === "number" ? (
+                <span className="text-neutral-500">
+                  {s.tokens_est.toLocaleString()} tokens
+                </span>
+              ) : null}
+              {s.status ? (
+                <span className="text-neutral-400">({s.status})</span>
+              ) : null}
             </li>
           ))}
         </ul>
         {manifest.sources_dropped.length > 0 ? (
           <div>
-            <div className="font-medium">Dropped to fit:</div>
-            <ul className="list-disc pl-4">
+            <div className="mb-1 text-neutral-600">Dropped to fit:</div>
+            <ul className="space-y-1">
               {manifest.sources_dropped.map((d) => (
-                <li key={d.source_key}>
-                  <code>{d.source_key}</code> — {d.reason}
+                <li key={d.source_key} className="flex items-baseline gap-2">
+                  <code className="rounded bg-neutral-100 px-1.5 py-0.5 text-[11px] text-neutral-700">
+                    {d.source_key}
+                  </code>
+                  <span className="text-neutral-500">— {d.reason}</span>
                 </li>
               ))}
             </ul>
