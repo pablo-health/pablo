@@ -1,0 +1,186 @@
+/* Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0. */
+
+/*
+ * Editorial calendar — scoped tokens.
+ *
+ * Variables only apply inside [data-editorial-theme]. The rest of the
+ * Pablo dashboard chrome is unaffected. Light maps onto Pablo's existing
+ * cream / honey / sage palette; dark uses warm near-black so the brand
+ * still reads warm rather than cold-gray.
+ */
+
+[data-editorial-theme] {
+  /* hour-row height in week/day views */
+  --ed-row-h: 72px;
+
+  /* status accents — same hues as classic, shifted for editorial mood */
+  --ed-status-confirmed-bg: var(--color-primary-100);
+  --ed-status-confirmed-fg: var(--color-primary-800);
+  --ed-status-confirmed-rail: var(--color-primary-500);
+
+  --ed-status-completed-bg: var(--color-secondary-100);
+  --ed-status-completed-fg: var(--color-secondary-700);
+  --ed-status-completed-rail: var(--color-secondary-500);
+
+  --ed-status-cancelled-bg: var(--color-neutral-100);
+  --ed-status-cancelled-fg: var(--color-neutral-600);
+  --ed-status-cancelled-rail: var(--color-neutral-400);
+
+  --ed-status-noshow-bg: var(--color-danger-100);
+  --ed-status-noshow-fg: var(--color-danger-800);
+  --ed-status-noshow-rail: var(--color-danger-800);
+}
+
+[data-editorial-theme="light"] {
+  --ed-canvas: #FBF3E6;        /* slightly deeper than primary-50 — warmer */
+  --ed-canvas-elev: #FFFCF5;
+  --ed-rail: #FDF6EC;
+  --ed-ink: #2C1810;
+  --ed-ink-muted: #6B5344;
+  --ed-ink-soft: #9A7F58;
+  --ed-hairline: rgba(85, 63, 51, 0.10);
+  --ed-hairline-strong: rgba(85, 63, 51, 0.18);
+  --ed-today-tint: rgba(95, 133, 99, 0.06);
+  --ed-pill-hover: rgba(212, 149, 47, 0.10);
+  --ed-cta-bg: #2C1810;
+  --ed-cta-fg: #FDF6EC;
+  --ed-cta-bg-hover: #3D2D24;
+  --ed-now-line: #D4952F;
+  --ed-today-circle: #5F8563;
+  --ed-today-circle-fg: #FDF6EC;
+  --ed-shadow-card: 0 1px 2px rgba(44, 24, 16, 0.04), 0 4px 12px rgba(44, 24, 16, 0.06);
+  --ed-shadow-card-hover: 0 2px 4px rgba(44, 24, 16, 0.06), 0 8px 24px rgba(44, 24, 16, 0.10);
+  --ed-grain-opacity: 0.035;
+}
+
+[data-editorial-theme="dark"] {
+  --ed-canvas: #1B140E;
+  --ed-canvas-elev: #241B14;
+  --ed-rail: #15100B;
+  --ed-ink: #F5EBD9;
+  --ed-ink-muted: #B89B6D;
+  --ed-ink-soft: #6B5344;
+  --ed-hairline: rgba(245, 235, 217, 0.08);
+  --ed-hairline-strong: rgba(245, 235, 217, 0.16);
+  --ed-today-tint: rgba(95, 133, 99, 0.10);
+  --ed-pill-hover: rgba(232, 168, 73, 0.14);
+  --ed-cta-bg: #FDF6EC;
+  --ed-cta-fg: #2C1810;
+  --ed-cta-bg-hover: #F5EBD9;
+  --ed-now-line: #ECA94F;
+  --ed-today-circle: #7A9E7E;
+  --ed-today-circle-fg: #15100B;
+  --ed-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 6px 18px rgba(0, 0, 0, 0.40);
+  --ed-shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.40), 0 12px 28px rgba(0, 0, 0, 0.55);
+  --ed-grain-opacity: 0.025;
+  /* darker mood needs slightly muted status fills */
+  --ed-status-confirmed-bg: rgba(232, 168, 73, 0.16);
+  --ed-status-confirmed-fg: #F5D49E;
+  --ed-status-completed-bg: rgba(122, 158, 126, 0.18);
+  --ed-status-completed-fg: #C2DBC6;
+  --ed-status-cancelled-bg: rgba(184, 155, 109, 0.12);
+  --ed-status-cancelled-fg: #B89B6D;
+  --ed-status-noshow-bg: rgba(220, 38, 38, 0.18);
+  --ed-status-noshow-fg: #FECACA;
+}
+
+/* Paper-grain overlay — applied to .ed-canvas. Inline SVG turbulence keeps
+ * the asset out of the network and lets the opacity be themed. */
+.ed-canvas {
+  background-color: var(--ed-canvas);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='1'/></svg>");
+  background-size: 240px 240px;
+  background-blend-mode: multiply;
+}
+.ed-canvas::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: inherit;
+  opacity: var(--ed-grain-opacity);
+  mix-blend-mode: multiply;
+}
+
+/* Hour-line gradient for week/day view canvases. */
+.ed-hourlines {
+  background-image: linear-gradient(
+    to bottom,
+    var(--ed-hairline) 0px,
+    var(--ed-hairline) 1px,
+    transparent 1px,
+    transparent var(--ed-row-h)
+  );
+  background-size: 100% var(--ed-row-h);
+}
+
+/* Half-hour ticks (subtle, in the time gutter only). */
+.ed-halfhour {
+  background-image: linear-gradient(
+    to bottom,
+    var(--ed-hairline) 0px,
+    var(--ed-hairline) 1px,
+    transparent 1px,
+    transparent calc(var(--ed-row-h) / 2)
+  );
+  background-size: 100% calc(var(--ed-row-h) / 2);
+}
+
+/* Vertical day separators — barely there. */
+.ed-daycols > * + * {
+  box-shadow: -1px 0 0 var(--ed-hairline);
+}
+
+/* Animated underline for the view switcher. */
+.ed-tab {
+  position: relative;
+  padding-bottom: 6px;
+  color: var(--ed-ink-muted);
+  transition: color 200ms ease;
+}
+.ed-tab:hover {
+  color: var(--ed-ink);
+}
+.ed-tab[data-active="true"] {
+  color: var(--ed-ink);
+}
+.ed-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 100%;
+  bottom: 0;
+  height: 2px;
+  background: var(--ed-ink);
+  transition: right 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.ed-tab[data-active="true"]::after {
+  right: 0;
+}
+
+/* Event card lift on hover. */
+.ed-event {
+  box-shadow: var(--ed-shadow-card);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+.ed-event:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--ed-shadow-card-hover);
+}
+
+/* Mini-month day cell. */
+.ed-mini-day {
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.ed-mini-day:hover:not([data-today="true"]) {
+  background-color: var(--ed-pill-hover);
+}
+
+/* Smooth view transitions. */
+.ed-fade-in {
+  animation: ed-fade-in 200ms ease-out;
+}
+@keyframes ed-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
