@@ -215,6 +215,19 @@ export default function CalendarPage() {
         </div>
       ) : (
         <>
+          <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-primary-50/60 px-4 py-2.5">
+            <span className="text-sm text-neutral-700">
+              You&rsquo;re using the classic calendar.
+            </span>
+            <button
+              type="button"
+              onClick={() => setCalendarStyle("editorial")}
+              className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-4 py-1.5 text-sm font-medium text-primary-50 transition-colors hover:bg-neutral-800"
+            >
+              Switch to editorial
+              <span aria-hidden>→</span>
+            </button>
+          </div>
           <div className="card p-4" aria-label="Weekly appointment calendar">
             <CalendarView
               onSelectSlot={handleSelectSlot}
@@ -225,15 +238,6 @@ export default function CalendarPage() {
               defaultView={preferences?.calendar_default_view}
               onViewChange={handleViewChange}
             />
-          </div>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => setCalendarStyle("editorial")}
-              className="text-xs italic text-neutral-500 underline-offset-4 hover:underline"
-            >
-              Switch to editorial calendar
-            </button>
           </div>
         </>
       )}
