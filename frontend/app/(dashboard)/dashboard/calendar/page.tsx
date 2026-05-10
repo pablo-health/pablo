@@ -6,6 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { CalendarView } from "@/components/calendar/CalendarView"
 import { StatusLegend } from "@/components/calendar/StatusLegend"
 import { AppointmentModal } from "@/components/calendar/AppointmentModal"
+import {
+  EditorialCalendar,
+  type CalendarStyle,
+  type EditorialTheme,
+  type EditorialView,
+} from "@/components/calendar/editorial"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import {
   getICalSyncStatus,
@@ -16,6 +22,26 @@ import {
 import { useAuth } from "@/lib/auth-context"
 import { Loader2, RefreshCw } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
+
+const STYLE_KEY = "pablo.calendar.style"
+const THEME_KEY = "pablo.calendar.theme"
+
+function readStored<T extends string>(key: string, fallback: T, valid: T[]): T {
+  if (typeof window === "undefined") return fallback
+  const raw = window.localStorage.getItem(key) as T | null
+  return raw && valid.includes(raw) ? raw : fallback
+}
+
+function toEditorialView(raw: string | undefined): EditorialView | undefined {
+  if (raw === "timeGridDay") return "day"
+  if (raw === "timeGridWeek") return "week"
+  if (raw === "dayGridMonth") return "month"
+  return undefined
+}
+
+function fromEditorialView(v: EditorialView): string {
+  return v === "day" ? "timeGridDay" : v === "week" ? "timeGridWeek" : "dayGridMonth"
+}
 
 export default function CalendarPage() {
   const { loading: authLoading } = useAuth()
@@ -29,6 +55,22 @@ export default function CalendarPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<ICalConnectionStatus[]>([])
   const [syncResult, setSyncResult] = useState<string | null>(null)
+  const [calendarStyle, setCalendarStyle] = useState<CalendarStyle>(() =>
+    readStored<CalendarStyle>(STYLE_KEY, "editorial", ["editorial", "classic"]),
+  )
+  const [editorialTheme, setEditorialTheme] = useState<EditorialTheme>(() =>
+    readStored<EditorialTheme>(THEME_KEY, "light", ["light", "dark"]),
+  )
+
+  useEffect(() => {
+    if (typeof window !== "undefined")
+      window.localStorage.setItem(STYLE_KEY, calendarStyle)
+  }, [calendarStyle])
+
+  useEffect(() => {
+    if (typeof window !== "undefined")
+      window.localStorage.setItem(THEME_KEY, editorialTheme)
+  }, [editorialTheme])
 
   const syncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -115,6 +157,11 @@ export default function CalendarPage() {
     [preferences, saveMutation]
   )
 
+  const handleEditorialViewChange = useCallback(
+    (v: EditorialView) => handleViewChange(fromEditorialView(v)),
+    [handleViewChange],
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -149,19 +196,47 @@ export default function CalendarPage() {
         )}
       </div>
 
-      <StatusLegend />
+      {calendarStyle === "classic" && <StatusLegend />}
 
-      <div className="card p-4" aria-label="Weekly appointment calendar">
-        <CalendarView
-          onSelectSlot={handleSelectSlot}
-          onSelectAppointment={handleSelectAppointment}
-          onCreateNew={handleCreateNew}
-          workingHoursStart={preferences?.working_hours_start}
-          workingHoursEnd={preferences?.working_hours_end}
-          defaultView={preferences?.calendar_default_view}
-          onViewChange={handleViewChange}
-        />
-      </div>
+      {calendarStyle === "editorial" ? (
+        <div aria-label="Weekly appointment calendar">
+          <EditorialCalendar
+            theme={editorialTheme}
+            onThemeChange={setEditorialTheme}
+            style={calendarStyle}
+            onStyleChange={setCalendarStyle}
+            workingHoursStart={preferences?.working_hours_start}
+            defaultView={toEditorialView(preferences?.calendar_default_view) ?? "week"}
+            onSelectSlot={handleSelectSlot}
+            onSelectAppointment={handleSelectAppointment}
+            onCreateNew={handleCreateNew}
+            onViewChange={handleEditorialViewChange}
+          />
+        </div>
+      ) : (
+        <>
+          <div className="card p-4" aria-label="Weekly appointment calendar">
+            <CalendarView
+              onSelectSlot={handleSelectSlot}
+              onSelectAppointment={handleSelectAppointment}
+              onCreateNew={handleCreateNew}
+              workingHoursStart={preferences?.working_hours_start}
+              workingHoursEnd={preferences?.working_hours_end}
+              defaultView={preferences?.calendar_default_view}
+              onViewChange={handleViewChange}
+            />
+          </div>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setCalendarStyle("editorial")}
+              className="text-xs italic text-neutral-500 underline-offset-4 hover:underline"
+            >
+              Switch to editorial calendar
+            </button>
+          </div>
+        </>
+      )}
 
       <AppointmentModal
         open={modalOpen}
