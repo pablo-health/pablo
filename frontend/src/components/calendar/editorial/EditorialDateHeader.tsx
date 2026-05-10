@@ -30,17 +30,17 @@ export function EditorialDateHeader({
       <button
         type="button"
         onClick={onPickerOpen}
-        className="group flex items-baseline gap-3 text-left"
+        className="group flex items-baseline gap-2 text-left"
         aria-label="Jump to a date"
       >
         <h2
-          className="font-display text-[44px] font-bold leading-[1.05] tracking-[-0.02em] sm:text-[52px]"
+          className="font-display text-[24px] font-semibold leading-[1.1] tracking-[-0.01em] sm:text-[28px]"
           style={{ color: "var(--ed-ink)" }}
         >
           {primary}
         </h2>
         <span
-          className="font-display text-[28px] font-light italic tracking-tight sm:text-[34px]"
+          className="font-display text-[20px] font-light tracking-tight sm:text-[22px]"
           style={{ color: "var(--ed-ink-soft)" }}
         >
           {secondary}

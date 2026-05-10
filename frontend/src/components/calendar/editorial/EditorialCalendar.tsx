@@ -22,7 +22,7 @@ import {
   type EditorialTheme,
 } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
-import { shiftAnchor, visibleRange, weekDays, type EditorialView } from "./dateUtils"
+import { shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
 
 const ALL_STATUSES: AppointmentStatus[] = [
   "confirmed",
@@ -90,12 +90,6 @@ export function EditorialCalendar({
     )
   }, [data, statusFilters])
 
-  const highlighted = useMemo(() => {
-    if (view === "day") return [anchor]
-    if (view === "week") return weekDays(anchor)
-    return [anchor]
-  }, [view, anchor])
-
   const handleViewChange = useCallback(
     (next: EditorialView) => {
       setView(next)
@@ -134,7 +128,6 @@ export function EditorialCalendar({
     >
       <EditorialSidebar
         selected={anchor}
-        highlighted={highlighted}
         statusFilters={statusFilters}
         theme={theme}
         style={style}
@@ -178,11 +171,7 @@ export function EditorialCalendar({
               border: "1px solid var(--ed-hairline-strong)",
             }}
           >
-            <EditorialMiniMonth
-              highlighted={highlighted}
-              selected={anchor}
-              onSelect={handlePickerSelect}
-            />
+            <EditorialMiniMonth selected={anchor} onSelect={handlePickerSelect} />
           </div>
         )}
 
