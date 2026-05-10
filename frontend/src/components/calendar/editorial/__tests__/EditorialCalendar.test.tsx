@@ -88,8 +88,10 @@ describe("EditorialCalendar", () => {
 
   it("renders weekday header in week view by default", () => {
     render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
-    // the day header row has Sun/Mon/Tue/Wed/Thu/Fri/Sat short labels
-    expect(screen.getAllByText(/^(SUN|MON|TUE|WED|THU|FRI|SAT)$/i)).toHaveLength(7)
+    // each header cell renders "EEE d" (e.g. "Sun 10") inline
+    expect(
+      screen.getAllByText(/^(Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d{1,2}$/),
+    ).toHaveLength(7)
   })
 
   it("renders 42 day cells in month view", () => {

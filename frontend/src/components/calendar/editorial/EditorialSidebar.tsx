@@ -9,16 +9,15 @@ import { EditorialMiniMonth } from "./EditorialMiniMonth"
 export type EditorialTheme = "light" | "dark"
 export type CalendarStyle = "editorial" | "classic"
 
-const STATUS_OPTIONS: { value: AppointmentStatus; label: string; color: string }[] = [
-  { value: "confirmed", label: "Confirmed", color: "var(--ed-status-confirmed-rail)" },
-  { value: "completed", label: "Completed", color: "var(--ed-status-completed-rail)" },
-  { value: "cancelled", label: "Cancelled", color: "var(--ed-status-cancelled-rail)" },
-  { value: "no_show", label: "No-shows", color: "var(--ed-status-noshow-rail)" },
+const STATUS_OPTIONS: { value: AppointmentStatus; label: string }[] = [
+  { value: "confirmed", label: "Confirmed" },
+  { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "no_show", label: "No-shows" },
 ]
 
 interface EditorialSidebarProps {
   selected: Date
-  highlighted: Date[]
   statusFilters: Set<AppointmentStatus>
   theme: EditorialTheme
   style: CalendarStyle
@@ -31,7 +30,6 @@ interface EditorialSidebarProps {
 
 export function EditorialSidebar({
   selected,
-  highlighted,
   statusFilters,
   theme,
   style,
@@ -50,11 +48,7 @@ export function EditorialSidebar({
         color: "var(--ed-ink)",
       }}
     >
-      <EditorialMiniMonth
-        highlighted={highlighted}
-        selected={selected}
-        onSelect={onSelectDate}
-      />
+      <EditorialMiniMonth selected={selected} onSelect={onSelectDate} />
 
       <button
         type="button"
@@ -111,11 +105,6 @@ export function EditorialSidebar({
                   className="sr-only"
                   checked={checked}
                   onChange={() => onToggleStatus(opt.value)}
-                />
-                <span
-                  aria-hidden
-                  className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: opt.color }}
                 />
                 <span style={{ color: "var(--ed-ink)" }}>{opt.label}</span>
               </label>

@@ -8,18 +8,15 @@ import { addMonths, format, isSameDay, isSameMonth, isToday, startOfMonth } from
 import { monthGridDays } from "./dateUtils"
 
 interface EditorialMiniMonthProps {
-  /** Day(s) shown highlighted as the visible range. */
-  highlighted: Date[]
   selected: Date
   onSelect: (date: Date) => void
 }
 
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"]
 
-export function EditorialMiniMonth({ highlighted, selected, onSelect }: EditorialMiniMonthProps) {
+export function EditorialMiniMonth({ selected, onSelect }: EditorialMiniMonthProps) {
   const [browse, setBrowse] = useState<Date>(startOfMonth(selected))
   const days = monthGridDays(browse)
-  const highlightedKeys = new Set(highlighted.map((d) => d.toDateString()))
 
   return (
     <div className="select-none">
@@ -65,7 +62,6 @@ export function EditorialMiniMonth({ highlighted, selected, onSelect }: Editoria
         {days.map((day, i) => {
           const inMonth = isSameMonth(day, browse)
           const today = isToday(day)
-          const isHighlighted = highlightedKeys.has(day.toDateString())
           const isSelected = isSameDay(day, selected)
           return (
             <button
@@ -73,19 +69,14 @@ export function EditorialMiniMonth({ highlighted, selected, onSelect }: Editoria
               type="button"
               onClick={() => onSelect(day)}
               data-today={today}
-              data-highlighted={isHighlighted}
               className="ed-mini-day relative mx-auto flex h-8 w-8 items-center justify-center rounded-full text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
               style={{
                 color: today
-                  ? "var(--ed-today-circle-fg)"
+                  ? "var(--ed-mini-today-fg)"
                   : inMonth
                     ? "var(--ed-ink)"
                     : "var(--ed-ink-soft)",
-                backgroundColor: today
-                  ? "var(--ed-today-circle)"
-                  : isHighlighted
-                    ? "var(--ed-pill-hover)"
-                    : "transparent",
+                backgroundColor: today ? "var(--ed-mini-today-bg)" : "transparent",
                 fontWeight: today || isSelected ? 600 : 400,
               }}
               aria-label={format(day, "PPPP")}

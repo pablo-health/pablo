@@ -32,25 +32,30 @@
 }
 
 [data-editorial-theme="light"] {
-  --ed-canvas: #FBF3E6;        /* slightly deeper than primary-50 — warmer */
-  --ed-canvas-elev: #FFFCF5;
-  --ed-rail: #FDF6EC;
-  --ed-ink: #2C1810;
-  --ed-ink-muted: #6B5344;
-  --ed-ink-soft: #9A7F58;
-  --ed-hairline: rgba(85, 63, 51, 0.10);
-  --ed-hairline-strong: rgba(85, 63, 51, 0.18);
-  --ed-today-tint: rgba(95, 133, 99, 0.06);
-  --ed-pill-hover: rgba(212, 149, 47, 0.10);
-  --ed-cta-bg: #2C1810;
-  --ed-cta-fg: #FDF6EC;
-  --ed-cta-bg-hover: #3D2D24;
+  /* Cool/neutral canvas. Pablo's warm cream stays in the surrounding
+   * dashboard chrome; the calendar reads as a clean white surface inside
+   * it so honey/sage event fills can separate from the background. */
+  --ed-canvas: #FFFFFF;
+  --ed-canvas-elev: #FFFFFF;
+  --ed-rail: #FFFFFF;           /* sidebar shares grid surface; hairline separates */
+  --ed-ink: #2C1810;            /* warm near-black keeps Pablo voice */
+  --ed-ink-muted: #6B7280;
+  --ed-ink-soft: #9CA3AF;
+  --ed-hairline: rgba(15, 23, 42, 0.07);
+  --ed-hairline-strong: rgba(15, 23, 42, 0.13);
+  --ed-today-tint: transparent; /* day-header pill carries the "today" signal */
+  --ed-pill-hover: rgba(15, 23, 42, 0.05);
+  --ed-cta-bg: #1A1A1A;
+  --ed-cta-fg: #FFFFFF;
+  --ed-cta-bg-hover: #2D2D2D;
   --ed-now-line: #D4952F;
-  --ed-today-circle: #5F8563;
-  --ed-today-circle-fg: #FDF6EC;
-  --ed-shadow-card: 0 1px 2px rgba(44, 24, 16, 0.04), 0 4px 12px rgba(44, 24, 16, 0.06);
-  --ed-shadow-card-hover: 0 2px 4px rgba(44, 24, 16, 0.06), 0 8px 24px rgba(44, 24, 16, 0.10);
-  --ed-grain-opacity: 0.035;
+  --ed-today-circle: #1A1A1A;   /* charcoal pill on day-column header */
+  --ed-today-circle-fg: #FFFFFF;
+  --ed-mini-today-bg: #D4952F;  /* honey accent in mini-month — Cambly's pop */
+  --ed-mini-today-fg: #FFFFFF;
+  --ed-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06);
+  --ed-shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.10);
+  --ed-grain-opacity: 0;        /* paper grain reads as dirt on white */
 }
 
 [data-editorial-theme="dark"] {
@@ -68,8 +73,10 @@
   --ed-cta-fg: #2C1810;
   --ed-cta-bg-hover: #F5EBD9;
   --ed-now-line: #ECA94F;
-  --ed-today-circle: #7A9E7E;
+  --ed-today-circle: #F5EBD9;
   --ed-today-circle-fg: #15100B;
+  --ed-mini-today-bg: #ECA94F;
+  --ed-mini-today-fg: #15100B;
   --ed-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 6px 18px rgba(0, 0, 0, 0.40);
   --ed-shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.40), 0 12px 28px rgba(0, 0, 0, 0.55);
   --ed-grain-opacity: 0.025;
@@ -84,15 +91,17 @@
   --ed-status-noshow-fg: #FECACA;
 }
 
-/* Paper-grain overlay — applied to .ed-canvas. Inline SVG turbulence keeps
- * the asset out of the network and lets the opacity be themed. */
+/* Canvas surface. Paper-grain is only applied in dark theme — on a white
+ * light canvas the noise reads as dirt rather than texture. */
 .ed-canvas {
   background-color: var(--ed-canvas);
+}
+[data-editorial-theme="dark"] .ed-canvas {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='1'/></svg>");
   background-size: 240px 240px;
   background-blend-mode: multiply;
 }
-.ed-canvas::before {
+[data-editorial-theme="dark"] .ed-canvas::before {
   content: "";
   position: absolute;
   inset: 0;
