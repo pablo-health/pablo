@@ -225,14 +225,133 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         item_type="security_risk_assessment",
         label="Annual security risk assessment",
         description=(
-            "HIPAA Security Rule § 164.308(a)(1)(ii)(A) — required annually "
-            "for covered entities."
+            "HIPAA Security Rule § 164.308(a)(1)(ii)(A) — required annually for covered entities."
         ),
         cadence_days=365,
         reminder_windows=(60, 30, 0),
         multi_instance=False,
         min_edition="practice",
         sort_order=110,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="vendor_inventory",
+        label="Annual vendor inventory review",
+        description=(
+            "Refresh the inventory of every vendor that touches business or "
+            "PHI workflows; verify each one's BAA status or non-PHI "
+            "designation. Pairs with the per-vendor `baa` items."
+        ),
+        cadence_days=365,
+        reminder_windows=(60, 30, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=120,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="audit_log_review",
+        label="Audit log review",
+        description=(
+            "Periodic review of system activity / audit log streams. "
+            "HIPAA Security Rule § 164.308(a)(1)(ii)(D) Information System "
+            "Activity Review and § 164.312(b) Audit Controls."
+        ),
+        cadence_days=30,
+        reminder_windows=(3, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=130,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="backup_verification",
+        label="Backup restore verification",
+        description=(
+            "Test-restore from backups to confirm they are usable. "
+            "§ 164.308(a)(7)(ii)(A) Data Backup Plan + (D) Testing and "
+            "Revision Procedures."
+        ),
+        cadence_days=90,
+        reminder_windows=(14, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=140,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="dr_test",
+        label="Disaster recovery / contingency tabletop",
+        description=(
+            "Walk through one scenario from the contingency plan and "
+            "document the result. § 164.308(a)(7)(ii)(B) Disaster Recovery "
+            "Plan + (D) Testing and Revision Procedures."
+        ),
+        cadence_days=365,
+        reminder_windows=(60, 30, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=150,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="vuln_scan",
+        label="Vulnerability scan review",
+        description=(
+            "Periodic review of vulnerability-scan output (container, "
+            "dependency, and code scans). § 164.308(a)(1)(ii)(B) Risk "
+            "Management; required if you self-host any part of the stack."
+        ),
+        cadence_days=90,
+        reminder_windows=(14, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=160,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="vendor_verification",
+        label="Vendor verification (per vendor)",
+        description=(
+            "Annual written analysis + officer certification confirming a "
+            "subprocessor's safeguards. Add one per vendor in the BA chain. "
+            "Tracks the 2026 NPRM § 164.314(b)(2)(ii) verification flow."
+        ),
+        cadence_days=365,
+        reminder_windows=(60, 30, 0),
+        multi_instance=True,
+        min_edition="practice",
+        sort_order=170,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="asset_inventory_review",
+        label="Technology asset inventory review",
+        description=(
+            "Refresh the written inventory of devices, systems, and media "
+            "that touch PHI. § 164.310(d)(1) Device and Media Controls; "
+            "2026 NPRM § 164.308(a)(1)(ii)(A) written asset inventory."
+        ),
+        cadence_days=365,
+        reminder_windows=(60, 30, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=180,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="compliance_audit",
+        label="Internal HIPAA compliance audit",
+        description=(
+            "Internal audit comparing implemented controls against the "
+            "Security Rule, distinct from the annual risk analysis. "
+            "2026 NPRM § 164.308(a)(14)."
+        ),
+        cadence_days=365,
+        reminder_windows=(90, 30, 0),
+        multi_instance=False,
+        min_edition="practice",
+        sort_order=190,
         severity="routine",
     ),
 )
