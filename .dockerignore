@@ -17,6 +17,10 @@ LICENSE
 # …but ship the BAA manifest into the pentest image — it's consumed at
 # runtime by the pentest collector (see Dockerfile.pentest).
 !docs/compliance/baa-manifest.yaml
+# …and the vulnerability exception log — read by the pentest skill to
+# suppress documented-exception §6 hits and flag stale entries (>30d
+# since `Raised:`) as HIGH per § 164.308(a)(1)(ii)(B).
+!docs/pentest/VULNERABILITY_EXCEPTIONS.md
 
 # CI/CD
 .circleci
