@@ -324,6 +324,29 @@ if [ "$PERMISSIONS_GRANTED" -eq "1" ] || [ "$NEEDS_PROPAGATION_CHECK" -eq "1" ];
     echo ""
 fi
 
+# STEP 3c: HIPAA audit log retention sinks
+#
+# Configures retention-locked GCS buckets and Log Sinks for both GCP
+# Admin Activity (control plane) and Pablo application audit events.
+# Required for HIPAA § 164.308(a)(1)(ii)(D) and § 164.316(b)(2)(i)
+# (6-year retention floor). The application sink consumes the Cloud
+# Logging stream that the backend dual-writes from AuditService.
+echo ""
+echo -e "${BLUE}Step 3c: Setting up HIPAA audit log retention...${NC}"
+echo ""
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+if [[ -x "${SCRIPT_DIR}/scripts/setup-hipaa-audit-sink.sh" ]]; then
+    "${SCRIPT_DIR}/scripts/setup-hipaa-audit-sink.sh" "$PROJECT_ID"
+    echo -e "${GREEN}HIPAA audit sinks configured${NC}"
+    echo ""
+    echo -e "${YELLOW}Note: retention is set but NOT locked. For production HIPAA${NC}"
+    echo -e "${YELLOW}evidence, re-run with --lock once you've verified events flow:${NC}"
+    echo "  ${SCRIPT_DIR}/scripts/setup-hipaa-audit-sink.sh ${PROJECT_ID} --lock"
+else
+    echo -e "${YELLOW}Skipped: scripts/setup-hipaa-audit-sink.sh not found${NC}"
+fi
+
 # STEP 4: Create Artifact Registry repository
 echo ""
 echo -e "${BLUE}Step 4: Creating Artifact Registry repository...${NC}"
