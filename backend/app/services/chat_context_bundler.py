@@ -722,6 +722,7 @@ def assemble_context_bundle(
     *,
     notes_repo: NotesRepository,
     patient_id: str,
+    user_id: str,
     selection: dict[str, Any],
     token_budget: int = DEFAULT_TOKEN_BUDGET,
 ) -> ContextBundle:
@@ -741,7 +742,7 @@ def assemble_context_bundle(
     if token_budget <= 0:
         raise ValueError("token_budget must be positive")
 
-    notes = notes_repo.list_by_patient(patient_id)
+    notes = notes_repo.list_by_patient(patient_id, user_id)
     loaded = _load_selected_sources(selection=selection, notes=notes)
 
     pasted = next((s for s in loaded if s.key == SOURCE_KEY_PASTED_TEXT), None)

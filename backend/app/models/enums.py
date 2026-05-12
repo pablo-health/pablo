@@ -92,3 +92,24 @@ class EhrAction(StrEnum):
     NAVIGATE = "navigate"
     WAIT = "wait"
     NONE = "none"
+
+
+class ClinicianRole(StrEnum):
+    """A clinician's relationship to a patient in `patient_clinicians`.
+
+    Pablo intentionally keeps this as a typed enum + DB CHECK constraint
+    rather than a separate `app_roles` table: the four values are fixed
+    by clinical workflow, the access predicate `app.has_patient_access`
+    treats any non-expired row as access-granting, and per-role rules
+    (e.g. supervisor read+cosign, primary read+write) live in code
+    where they have access to the operation context (note finalized?
+    payer enrolled? supervision relationship active?). When/if
+    practice-defined custom roles become a requirement, this enum
+    becomes a foreign key to a roles table — the read sites already
+    go through the typed identifier and migration is mechanical.
+    """
+
+    PRIMARY = "primary"
+    CO_TREATING = "co_treating"
+    SUPERVISOR = "supervisor"
+    COVERING = "covering"

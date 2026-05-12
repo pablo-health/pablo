@@ -102,7 +102,7 @@ def get_note(
 ) -> NoteResponse:
     """Fetch a single note by id."""
     try:
-        note = note_service.get_note(note_id)
+        note = note_service.get_note(note_id, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
 
@@ -128,7 +128,7 @@ def update_note(
 ) -> NoteResponse:
     """Persist clinician edits to a note's content."""
     try:
-        note = note_service.update_note_edits(note_id, request.content_edited)
+        note = note_service.update_note_edits(note_id, request.content_edited, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
 
@@ -164,6 +164,7 @@ def finalize_note(
                 if request.quality_rating_sections
                 else None
             ),
+            user_id=user.id,
         )
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
@@ -196,7 +197,7 @@ def submit_note_for_export(
 ) -> NoteResponse:
     """Queue a finalized note for export."""
     try:
-        note = note_service.submit_note_for_export(note_id)
+        note = note_service.submit_note_for_export(note_id, user.id)
     except NoteNotFoundError as exc:
         raise NotFoundError("Note not found", {"note_id": note_id}) from exc
     except NoteNotFinalizedError as exc:
@@ -235,7 +236,7 @@ def list_patient_notes(
     if patient is None:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
-    notes = note_service.list_notes_for_patient(patient.id)
+    notes = note_service.list_notes_for_patient(patient.id, user.id)
     notes.sort(
         key=lambda n: n.finalized_at or n.created_at,
         reverse=True,
@@ -331,6 +332,7 @@ def create_standalone_note(
         note_type=request.note_type,
         content=content,
         content_edited=request.content_edited,
+        user_id=user.id,
     )
 
     audit.log_note_action(

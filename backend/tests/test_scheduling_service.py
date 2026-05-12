@@ -92,7 +92,9 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
 
 @pytest.fixture
 def notes_repo() -> InMemoryNotesRepository:
-    return InMemoryNotesRepository()
+    _repo = InMemoryNotesRepository()
+    _repo.grant_all_access()
+    return _repo
 
 
 @pytest.fixture

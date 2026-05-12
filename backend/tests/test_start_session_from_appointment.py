@@ -95,7 +95,9 @@ def patient_repo(session_repo: InMemoryTherapySessionRepository) -> InMemoryPati
 
 @pytest.fixture
 def notes_repo() -> InMemoryNotesRepository:
-    return InMemoryNotesRepository()
+    _repo = InMemoryNotesRepository()
+    _repo.grant_all_access()
+    return _repo
 
 
 @pytest.fixture

@@ -6,6 +6,13 @@ Owns the lifecycle of clinical notes (create-from-generation, edit,
 finalize, export submission). Notes are first-class and patient-owned;
 :class:`SessionService` delegates note-flavored operations here so the
 session row stays focused on recording metadata. See pa-0nx.
+
+Every public method takes ``user_id`` (the clinician making the
+request) and forwards it to :class:`NotesRepository`, which gates the
+access via ``patient_clinicians``. Notes the requester has no grant
+for surface as :class:`NoteNotFoundError` — matches the repo's
+"indistinguishable from absent" contract so this layer doesn't leak
+an existence oracle either.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError
 from ..models import Note
 from ..repositories import NotesRepository  # noqa: TC001 — runtime DI type
+from ..repositories.note import PatientAccessDeniedError
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -30,7 +38,7 @@ class NoteServiceError(APIError):
 
 
 class NoteNotFoundError(NotFoundError):
-    """Raised when a note is not found."""
+    """Raised when a note is not found or the user has no access grant."""
 
 
 class NoteAlreadyFinalizedError(ConflictError):
@@ -53,17 +61,17 @@ class NoteService:
 
     # --- Read ---
 
-    def get_note(self, note_id: str) -> Note:
-        note = self._notes.get(note_id)
+    def get_note(self, note_id: str, user_id: str) -> Note:
+        note = self._notes.get(note_id, user_id)
         if note is None:
             raise NoteNotFoundError(f"Note {note_id} not found")
         return note
 
-    def get_note_by_session_id(self, session_id: str) -> Note | None:
-        return self._notes.get_by_session_id(session_id)
+    def get_note_by_session_id(self, session_id: str, user_id: str) -> Note | None:
+        return self._notes.get_by_session_id(session_id, user_id)
 
-    def list_notes_for_patient(self, patient_id: str) -> list[Note]:
-        return self._notes.list_by_patient(patient_id)
+    def list_notes_for_patient(self, patient_id: str, user_id: str) -> list[Note]:
+        return self._notes.list_by_patient(patient_id, user_id)
 
     # --- Generation pipeline ---
 
@@ -74,6 +82,7 @@ class NoteService:
         patient_id: str,
         note_type: str,
         content: dict[str, Any] | None,
+        user_id: str,
     ) -> Note:
         """Persist a note tied to a session.
 
@@ -85,7 +94,7 @@ class NoteService:
         yet — a placeholder so the requested ``note_type`` survives until
         generation.
         """
-        existing = self._notes.get_by_session_id(session_id)
+        existing = self._notes.get_by_session_id(session_id, user_id)
         now = utc_now()
         if existing is not None:
             existing.note_type = note_type
@@ -93,7 +102,7 @@ class NoteService:
                 existing.content = content
                 existing.content_edited = None
             existing.updated_at = now
-            return self._notes.update(existing)
+            return self._notes.update(existing, user_id)
 
         note = Note(
             id=str(uuid.uuid4()),
@@ -104,7 +113,7 @@ class NoteService:
             created_at=now,
             updated_at=now,
         )
-        return self._notes.add(note)
+        return self._notes.add(note, user_id)
 
     def create_standalone_note(
         self,
@@ -113,6 +122,7 @@ class NoteService:
         note_type: str,
         content: dict[str, Any] | None = None,
         content_edited: dict[str, Any] | None = None,
+        user_id: str,
     ) -> Note:
         """Persist a patient-owned note that is not bound to a session.
 
@@ -130,16 +140,24 @@ class NoteService:
             created_at=now,
             updated_at=now,
         )
-        return self._notes.add(note)
+        try:
+            return self._notes.add(note, user_id)
+        except PatientAccessDeniedError as exc:
+            raise NoteNotFoundError(
+                f"Patient {patient_id} not found",
+                {"patient_id": patient_id},
+            ) from exc
 
     # --- Edits ---
 
-    def update_note_edits(self, note_id: str, content_edited: dict[str, Any]) -> Note:
+    def update_note_edits(
+        self, note_id: str, content_edited: dict[str, Any], user_id: str
+    ) -> Note:
         """Persist clinician edits to a note's content."""
-        note = self.get_note(note_id)
+        note = self.get_note(note_id, user_id)
         note.content_edited = content_edited
         note.updated_at = utc_now()
-        return self._notes.update(note)
+        return self._notes.update(note, user_id)
 
     # --- Finalization ---
 
@@ -151,9 +169,10 @@ class NoteService:
         quality_rating_reason: str | None = None,
         quality_rating_sections: list[str] | None = None,
         finalized_at: datetime | None = None,
+        user_id: str,
     ) -> Note:
         """Finalize a note (record quality rating + finalized_at)."""
-        note = self.get_note(note_id)
+        note = self.get_note(note_id, user_id)
         if note.finalized_at is not None:
             raise NoteAlreadyFinalizedError(
                 f"Note {note_id} is already finalized",
@@ -164,7 +183,7 @@ class NoteService:
         note.quality_rating_sections = quality_rating_sections
         note.finalized_at = finalized_at or utc_now()
         note.updated_at = utc_now()
-        return self._notes.update(note)
+        return self._notes.update(note, user_id)
 
     def update_quality_rating(
         self,
@@ -173,13 +192,14 @@ class NoteService:
         quality_rating: int,
         quality_rating_reason: str | None = None,
         quality_rating_sections: list[str] | None = None,
+        user_id: str,
     ) -> tuple[Note, int | None]:
         """Update an already-finalized note's quality rating.
 
         Returns ``(note, old_rating)``. Old rating is whatever was on the
         note before this call — useful for audit logging.
         """
-        note = self.get_note(note_id)
+        note = self.get_note(note_id, user_id)
         if note.finalized_at is None:
             raise NoteNotFinalizedError(
                 f"Note {note_id} is not finalized",
@@ -190,13 +210,13 @@ class NoteService:
         note.quality_rating_reason = quality_rating_reason
         note.quality_rating_sections = quality_rating_sections
         note.updated_at = utc_now()
-        return self._notes.update(note), old_rating
+        return self._notes.update(note, user_id), old_rating
 
     # --- Export ---
 
-    def submit_note_for_export(self, note_id: str) -> Note:
+    def submit_note_for_export(self, note_id: str, user_id: str) -> Note:
         """Queue a finalized note for clinician/eval export."""
-        note = self.get_note(note_id)
+        note = self.get_note(note_id, user_id)
         if note.finalized_at is None:
             raise NoteNotFinalizedError(
                 f"Note {note_id} must be finalized before submitting for export",
@@ -205,4 +225,4 @@ class NoteService:
         note.export_status = EXPORT_STATUS_QUEUED
         note.export_queued_at = utc_now()
         note.updated_at = utc_now()
-        return self._notes.update(note)
+        return self._notes.update(note, user_id)

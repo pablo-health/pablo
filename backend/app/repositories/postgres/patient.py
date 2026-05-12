@@ -7,8 +7,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from ...db.models import NoteRow, PatientRow, TherapySessionRow
+from ...db.models import (
+    NoteRow,
+    PatientClinicianRow,
+    PatientRow,
+    TherapySessionRow,
+)
 from ...models import Patient
+from ...models.enums import ClinicianRole
 from ...utcnow import utc_now
 from ..patient import PatientRepository
 
@@ -75,6 +81,17 @@ class PostgresPatientRepository(PatientRepository):
         row = PatientRow()
         _patient_to_row(patient, row)
         self._session.add(row)
+        # Mirror the patient's primary clinician into the access table.
+        # ``patient_clinicians`` is the source of truth for has_patient_access
+        # — without this row, every read of the new patient's notes /
+        # sessions / appointments would fail the RLS check.
+        grant = PatientClinicianRow(
+            patient_id=patient.id,
+            user_id=patient.user_id,
+            role=ClinicianRole.PRIMARY.value,
+            granted_by=patient.user_id,
+        )
+        self._session.add(grant)
         self._session.flush()
         return patient
 

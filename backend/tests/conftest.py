@@ -125,8 +125,19 @@ def mock_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryPa
 
 @pytest.fixture
 def mock_notes_repo() -> InMemoryNotesRepository:
-    """Create a fresh in-memory notes repository for each test."""
-    return InMemoryNotesRepository()
+    """Create a fresh in-memory notes repository for each test.
+
+    Pre-grants universal access so legacy tests that pre-date the
+    patient_clinicians model keep working unchanged. Tests that
+    specifically exercise access control should use a
+    ``InMemoryNotesRepository()`` constructed inline (or
+    :meth:`InMemoryNotesRepository.grant_access` with specific
+    ``(patient_id, user_id)`` pairs) — the IDOR regression test in
+    ``test_routes_notes.py`` does this.
+    """
+    repo = InMemoryNotesRepository()
+    repo.grant_all_access()
+    return repo
 
 
 @pytest.fixture

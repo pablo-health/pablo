@@ -135,16 +135,35 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
 
 
 def enable_rls_on_schema(session: Session, schema_name: str) -> None:
-    """Enable Row-Level Security on all tables with a user_id column in the given schema.
+    """Enable Row-Level Security on every patient-scoped table in the schema.
 
-    Creates a policy that restricts rows to those matching the session variable
-    `app.current_user_id`. Uses FORCE ROW LEVEL SECURITY so the policy applies
-    even to the table owner (defense-in-depth for HIPAA isolation).
+    Two policy shapes, picked by what columns the table has:
 
-    The `current_setting('app.current_user_id', true)` call returns NULL when the
-    variable is unset, causing the policy to match zero rows — fail-closed.
+    * **user_id column** (clinician owns the row directly — patients,
+      therapy_sessions, appointments, etc.): policy matches rows where
+      ``user_id = current_setting('app.current_user_id', true)``. This
+      is the original direct-ownership shape; preserves prior behavior
+      so multi-clinician sharing on these tables remains a follow-up.
+    * **patient_id column with no user_id** (row is owned indirectly
+      via the patient — currently just ``notes``): policy matches rows
+      where ``has_patient_access(patient_id, current_setting(...))``
+      returns true. The function is defined by migration
+      ``777b846ab944`` and looks up the ``patient_clinicians`` access
+      table — supports primary, co-treating, supervisor, and coverage
+      grants without further policy churn.
 
-    Idempotent: uses CREATE POLICY ... IF NOT EXISTS and is safe to re-run.
+    Tables with neither column (audit_logs, clinician_profiles, etc.)
+    are intentionally skipped; they're not patient-scoped and live
+    behind the tenant-schema boundary plus application-layer checks.
+
+    ``FORCE ROW LEVEL SECURITY`` applies the policy even to the table
+    owner (defense-in-depth for HIPAA isolation). ``current_setting``
+    with ``missing_ok=true`` returns NULL when the session variable is
+    unset, so any query without a tenant-context middleware that set
+    ``app.current_user_id`` sees zero rows — fail-closed.
+
+    Idempotent: DROP POLICY IF EXISTS before each CREATE so the policy
+    body always tracks the current code.
     """
     import logging
 
@@ -155,36 +174,61 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         logger.info("Skipping RLS on template schema '%s'", schema_name)
         return
 
-    # Find all tables in this schema that have a user_id column
-    rows = session.execute(
+    # One query per schema; gives us {table_name: {columns...}} and lets
+    # us pick the right policy shape per table.
+    column_rows = session.execute(
         text(
-            "SELECT table_name FROM information_schema.columns "
-            "WHERE table_schema = :schema AND column_name = 'user_id'"
+            "SELECT table_name, column_name FROM information_schema.columns "
+            "WHERE table_schema = :schema "
+            "AND column_name IN ('user_id', 'patient_id')"
         ),
         {"schema": schema_name},
     ).fetchall()
 
-    if not rows:
-        logger.info("No tables with user_id in schema '%s' — nothing to do", schema_name)
+    tables: dict[str, set[str]] = {}
+    for table_name, column_name in column_rows:
+        tables.setdefault(table_name, set()).add(column_name)
+
+    if not tables:
+        logger.info(
+            "No tables with user_id or patient_id in schema '%s' — nothing to do",
+            schema_name,
+        )
         return
 
-    for (table_name,) in rows:
+    # `patient_clinicians` is the access table itself — applying the
+    # access-function policy to its own backing table would cause an
+    # infinite recursion in the policy evaluator. Direct ownership via
+    # user_id is the correct shape: only the clinician whose grant row
+    # this is can see it. Other grants for the same patient are
+    # invisible to peers, which matches the v1 "primary clinician owns
+    # the relationship" model.
+    for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
-
-        # Enable RLS on the table (idempotent — no error if already enabled)
         session.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
         session.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
 
-        # Create the policy (DROP + CREATE to ensure it's up to date)
-        policy_name = "rls_user_isolation"
-        session.execute(text(f"DROP POLICY IF EXISTS {policy_name} ON {qualified}"))
-        session.execute(
-            text(
-                f"CREATE POLICY {policy_name} ON {qualified} "
-                f"USING (user_id = current_setting('app.current_user_id', true))"
+        if "user_id" in columns:
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_user_isolation ON {qualified} "
+                    f"USING (user_id = current_setting('app.current_user_id', true))"
+                )
             )
-        )
-        logger.info("RLS enabled on %s", qualified)
+            logger.info("RLS (user_id) enabled on %s", qualified)
+        elif "patient_id" in columns:
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_patient_access ON {qualified} "
+                    f"USING (has_patient_access("
+                    f"  patient_id, "
+                    f"  current_setting('app.current_user_id', true)"
+                    f"))"
+                )
+            )
+            logger.info("RLS (patient_access) enabled on %s", qualified)
 
     session.commit()
 
