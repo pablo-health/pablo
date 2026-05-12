@@ -12,20 +12,25 @@ import {
 } from "@/hooks/useCompliance"
 import type { ComplianceItem, ComplianceTemplate } from "@/types/compliance"
 import { ComplianceWizard } from "./ComplianceWizard"
-import { daysUntil, formatDueLabel, urgencyFor } from "./urgency"
+import { HorizonStrip } from "./HorizonStrip"
+import { QuickAddRow } from "./QuickAddRow"
+import {
+  type EnrichedItem,
+  type HorizonId,
+  categoryDot,
+  enrichItems,
+  sortByDueDate,
+} from "./horizons"
+import { formatDueLabel } from "./urgency"
 
-const URGENCY_STYLES: Record<string, string> = {
-  overdue: "bg-red-50 text-red-700 border-red-200",
-  "due-soon": "bg-primary-50 text-primary-700 border-primary-200",
-  upcoming: "bg-neutral-50 text-neutral-600 border-neutral-200",
-  informational: "bg-neutral-50 text-neutral-500 border-neutral-200",
-}
+type Selection = HorizonId | "urgent" | "all"
 
 export function CompliancePanel() {
   const { data: items = [], isLoading: itemsLoading } = useComplianceItems()
   const { data: templates = [] } = useComplianceTemplates()
   const completeItem = useCompleteComplianceItem()
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [selection, setSelection] = useState<Selection>("urgent")
 
   const templateByType = useMemo(() => {
     const m = new Map<string, ComplianceTemplate>()
@@ -33,80 +38,186 @@ export function CompliancePanel() {
     return m
   }, [templates])
 
-  // Surface anything urgent or overdue, sorted soonest-first.
+  const enriched = useMemo(
+    () => enrichItems(items, templateByType),
+    [items, templateByType],
+  )
+
+  const counts = useMemo<Record<HorizonId, number>>(() => {
+    const c: Record<HorizonId, number> = {
+      overdue: 0,
+      week: 0,
+      month: 0,
+      quarter: 0,
+      beyond: 0,
+      informational: 0,
+    }
+    for (const e of enriched) c[e.horizon]++
+    return c
+  }, [enriched])
+
+  const urgent = useMemo(
+    () => enriched.filter((e) => e.isUrgent).sort(sortByDueDate),
+    [enriched],
+  )
+
   const visible = useMemo(() => {
-    const enriched = items.map((i) => ({
-      item: i,
-      template: templateByType.get(i.item_type),
-      days: daysUntil(i.due_date),
-    }))
+    if (selection === "urgent") return urgent
+    if (selection === "all") {
+      return [...enriched]
+        .filter((e) => e.horizon !== "informational")
+        .sort(sortByDueDate)
+    }
     return enriched
-      .filter(({ item, template }) => {
-        if (!template) return false
-        const u = urgencyFor(item, template)
-        return u === "overdue" || u === "due-soon"
-      })
-      .sort(
-        (a, b) => (a.days ?? Number.POSITIVE_INFINITY) - (b.days ?? Number.POSITIVE_INFINITY),
-      )
-  }, [items, templateByType])
+      .filter((e) => e.horizon === selection)
+      .sort(sortByDueDate)
+  }, [selection, enriched, urgent])
 
   const hasAny = items.length > 0
 
+  if (itemsLoading) {
+    return (
+      <div className="card">
+        <PanelHeader onManage={() => setWizardOpen(true)} hasAny={false} />
+        <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
+      </div>
+    )
+  }
+
+  if (!hasAny) {
+    return (
+      <div className="card">
+        <PanelHeader onManage={() => setWizardOpen(true)} hasAny={false} />
+        <EmptyState onStart={() => setWizardOpen(true)} />
+        <ComplianceWizard open={wizardOpen} onOpenChange={setWizardOpen} />
+      </div>
+    )
+  }
+
+  const noUrgent = urgent.length === 0
+  const showAllClear = selection === "urgent" && noUrgent
+
   return (
     <div className="card">
-      <div className="flex items-start justify-between mb-4">
-        <div>
-          <h2 className="text-xl font-display font-semibold text-neutral-900">
-            Compliance
-          </h2>
-          <p className="text-sm text-neutral-600 mt-1">
-            License renewal, insurance, attestation, and training reminders.
-          </p>
-        </div>
-        {hasAny && (
-          <Button variant="outline" size="sm" onClick={() => setWizardOpen(true)}>
-            Manage
-          </Button>
-        )}
-      </div>
+      <PanelHeader onManage={() => setWizardOpen(true)} hasAny />
+      <HorizonStrip counts={counts} selected={selection} onSelect={setSelection} />
 
-      {itemsLoading ? (
-        <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
-      ) : !hasAny ? (
-        <EmptyState onStart={() => setWizardOpen(true)} />
-      ) : visible.length === 0 ? (
+      {showAllClear ? (
         <AllClear />
+      ) : visible.length === 0 ? (
+        <EmptyBucket />
       ) : (
-        <ul className="space-y-2">
-          {visible.map(({ item, template, days }) => {
-            const u = urgencyFor(item, template!)
-            return (
-              <li
-                key={item.id}
-                className={`flex items-center justify-between rounded-md border px-3 py-2 ${URGENCY_STYLES[u]}`}
-              >
-                <div className="min-w-0">
-                  <p className="font-medium truncate">{item.label}</p>
-                  <p className="text-xs">{formatDueLabel(days)}</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => completeItem.mutate(item.id)}
-                  disabled={completeItem.isPending}
-                >
-                  Mark done
-                </Button>
-              </li>
-            )
-          })}
+        <ul className="space-y-1.5" role="list">
+          {visible.map((entry) => (
+            <ItemRow
+              key={entry.item.id}
+              entry={entry}
+              onComplete={() => completeItem.mutate(entry.item.id)}
+              completing={completeItem.isPending}
+            />
+          ))}
         </ul>
       )}
+
+      <QuickAddRow templates={templates} />
 
       <ComplianceWizard open={wizardOpen} onOpenChange={setWizardOpen} />
     </div>
   )
+}
+
+function PanelHeader({
+  onManage,
+  hasAny,
+}: {
+  onManage: () => void
+  hasAny: boolean
+}) {
+  return (
+    <div className="flex items-start justify-between mb-4">
+      <div>
+        <h2 className="text-xl font-display font-semibold text-neutral-900">
+          Compliance
+        </h2>
+        <p className="text-sm text-neutral-600 mt-1">
+          License renewal, insurance, attestation, and training reminders.
+        </p>
+      </div>
+      {hasAny && (
+        <Button variant="outline" size="sm" onClick={onManage}>
+          Manage
+        </Button>
+      )}
+    </div>
+  )
+}
+
+function ItemRow({
+  entry,
+  onComplete,
+  completing,
+}: {
+  entry: EnrichedItem
+  onComplete: () => void
+  completing: boolean
+}) {
+  const { item, days, horizon } = entry
+  const dot = categoryDot(item.item_type)
+  const duePill = pillFor(horizon)
+
+  return (
+    <li className="group flex items-center gap-3 rounded-lg border border-neutral-200/70 bg-white/60 px-3 py-2 hover:bg-white hover:border-neutral-300 transition-colors">
+      <span
+        className={`h-2.5 w-2.5 rounded-full shrink-0 ${dot}`}
+        aria-hidden
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-neutral-900 truncate">
+          {item.label}
+        </p>
+        <p className="text-xs text-neutral-500 mt-0.5 truncate">
+          {item.notes ?? labelForType(item.item_type)}
+        </p>
+      </div>
+      <span
+        className={`hidden sm:inline-flex items-center text-[10.5px] font-medium px-2 py-0.5 rounded-full ${duePill}`}
+      >
+        {formatDueLabel(days)}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onComplete}
+        disabled={completing}
+        className="opacity-70 group-hover:opacity-100 transition-opacity"
+      >
+        Mark done
+      </Button>
+    </li>
+  )
+}
+
+function pillFor(horizon: HorizonId): string {
+  switch (horizon) {
+    case "overdue":
+      return "bg-rose-100 text-rose-800"
+    case "week":
+      return "bg-amber-100 text-amber-800"
+    case "month":
+      return "bg-amber-50 text-amber-700"
+    case "quarter":
+      return "bg-emerald-50 text-emerald-700"
+    case "beyond":
+      return "bg-neutral-100 text-neutral-600"
+    default:
+      return "bg-neutral-100 text-neutral-500"
+  }
+}
+
+function labelForType(type: string): string {
+  return type
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 function EmptyState({ onStart }: { onStart: () => void }) {
@@ -146,5 +257,13 @@ function AllClear() {
         You&apos;re all caught up. Pablo&apos;s got it from here.
       </p>
     </div>
+  )
+}
+
+function EmptyBucket() {
+  return (
+    <p className="text-sm text-neutral-500 py-6 text-center">
+      Nothing in this horizon. Try another bucket above.
+    </p>
   )
 }
