@@ -92,6 +92,20 @@ class Settings(BaseSettings):
         ),
     )
 
+    # HIPAA Audit Logging — defense-in-depth dual-write
+    audit_dual_write_enabled: bool = Field(
+        default=True,
+        description=(
+            "Dual-write every AuditService event to GCP Cloud Logging "
+            "under logName='pablo.audit_events'. A retention-locked GCS "
+            "sink mirrors these for tamper-evident HIPAA retention "
+            "(§ 164.312(c)(2) integrity protection). Best-effort: Cloud "
+            "Logging failures log a warning but do NOT fail the request. "
+            "Disable for environments without GCP credentials "
+            "(local dev, CI) via AUDIT_DUAL_WRITE_ENABLED=false."
+        ),
+    )
+
     @property
     def e2e_test_emails(self) -> set[str]:
         """Parse comma-separated E2E_TEST_EMAILS into a set."""
