@@ -90,3 +90,21 @@ make format     # Auto-fix formatting
    backstop, not the primary loop. Pre-commit hooks (see
    `.pre-commit-config.yaml`) catch the cheap regressions so you don't
    wait on CI to learn you forgot to run ruff.
+
+   **For AI agents specifically:** `pytest` and `ruff check` alone are
+   *not* "CI green." CI runs `make lint` which includes **mypy** — a
+   different class of error (abstract async-generator signatures,
+   `Literal` narrowing, missing param annotations, invalid `type:
+   ignore` comments) that ruff happily lets through. Before declaring
+   "CI should be green" or asking the user to merge, run
+   `make check` (= `make lint` + `make test`). Reporting "pytest
+   passed, ruff passed" is not a substitute.
+
+9. **Diagnostic compares against another ref use `git show`, not
+   `git checkout <ref> -- <path>`.** The checkout form rewrites your
+   working tree with the other ref's content and is easy to clobber
+   uncommitted work with. Use `git show <ref>:path/to/file` for a
+   single file, or `git worktree add /tmp/refname <ref>` for a whole
+   tree you can `cd` into. Never use `git checkout main -- backend/`
+   to "quickly see what main looks like" — that's a foot-gun, not a
+   diff.
