@@ -87,8 +87,13 @@ class StreamEvent:
 class ChatLLMGateway(ABC):
     """Abstract streaming completion gateway used by the chat service."""
 
+    # Declared without ``async`` so subclasses can ship ``async def`` generator
+    # bodies — mypy treats ``async def`` + ``yield`` as ``AsyncIterator``, but
+    # the abstract base must declare the iterator return type directly so the
+    # subclass signature is compatible. See
+    # https://mypy.readthedocs.io/en/stable/more_types.html#asynchronous-iterators.
     @abstractmethod
-    async def stream_completion(
+    def stream_completion(
         self,
         *,
         model: str,

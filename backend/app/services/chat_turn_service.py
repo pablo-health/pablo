@@ -43,6 +43,7 @@ from .chat_llm_gateway import StreamEvent, UserAssistantTurn
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from ..repositories import ChatRepository, NotesRepository
     from .chat_llm_gateway import ChatLLMGateway
 
 logger = logging.getLogger(__name__)
@@ -141,8 +142,8 @@ class ChatTurnService:
     def __init__(
         self,
         *,
-        chat_repo,  # type: ignore[no-untyped-def] — ChatRepository
-        notes_repo,  # type: ignore[no-untyped-def] — NotesRepository
+        chat_repo: ChatRepository,
+        notes_repo: NotesRepository,
         gateway: ChatLLMGateway,
     ) -> None:
         self._chat_repo = chat_repo
@@ -368,11 +369,15 @@ class ChatTurnService:
         for msg in messages:
             if msg.id in exclude_message_ids:
                 continue
-            if msg.role not in ("user", "assistant"):
+            if msg.role == "user":
+                role: Literal["user", "assistant"] = "user"
+            elif msg.role == "assistant":
+                role = "assistant"
+            else:
                 continue
             if not msg.content:
                 continue
-            prior.append(UserAssistantTurn(role=msg.role, content=msg.content))
+            prior.append(UserAssistantTurn(role=role, content=msg.content))
         return prior
 
 
