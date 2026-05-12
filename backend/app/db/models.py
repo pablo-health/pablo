@@ -47,10 +47,19 @@ class ClinicianProfileRow(Base):
 
 
 class PatientRow(Base):
+    """Patient master record.
+
+    Access (read/write) is governed by :class:`PatientClinicianRow`
+    grants, not by a ``user_id`` column on the row itself. The column
+    was dropped in migration ``9dea1edf7fe0`` once the
+    ``patient_clinicians`` access table became the source of truth;
+    the RLS policy on this table is ``has_patient_access(id,
+    current_user)``.
+    """
+
     __tablename__ = "patients"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name_lower: Mapped[str] = mapped_column(String(255), nullable=False, index=True)

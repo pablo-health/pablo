@@ -79,14 +79,13 @@ def user_id() -> str:
 def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
     p = Patient(
         id=str(uuid.uuid4()),
-        user_id=user_id,
         first_name="Jane",
         last_name="Smith",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
         session_count=0,
     )
-    patient_repo.create(p)
+    patient_repo.create(p, user_id)
     return p
 
 

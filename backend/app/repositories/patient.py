@@ -45,13 +45,24 @@ class PatientRepository(ABC):
         pass
 
     @abstractmethod
-    def create(self, patient: Patient) -> Patient:
-        """Create a new patient."""
+    def create(self, patient: Patient, user_id: str) -> Patient:
+        """Create a new patient.
+
+        ``user_id`` becomes the patient's ``role='primary'`` clinician
+        in ``patient_clinicians`` — the creator owns the chart. Splitting
+        the access grant onto a separate method would let a caller
+        forget it, so the create path inserts both rows atomically.
+        """
         pass
 
     @abstractmethod
     def update(self, patient: Patient) -> Patient:
-        """Update an existing patient."""
+        """Update an existing patient.
+
+        Access is gated by RLS at the DB layer; callers always reach
+        this method after a ``get()`` that already passed the access
+        check.
+        """
         pass
 
     @abstractmethod
@@ -125,10 +136,20 @@ class PatientRepository(ABC):
 
 
 class InMemoryPatientRepository(PatientRepository):
-    """In-memory implementation of PatientRepository for testing and development."""
+    """In-memory implementation of PatientRepository.
+
+    Maintains a per-(patient_id, user_id) access set so the contract
+    matches PostgresPatientRepository — tests that exercise the access
+    boundary fail here for the same reason they'd fail in production
+    rather than silently passing against a looser test double.
+
+    The ``create()`` path automatically inserts a 'primary' grant for
+    the caller-supplied ``user_id``, mirroring the Postgres impl.
+    """
 
     def __init__(self, session_repo: TherapySessionRepository | None = None) -> None:
         self._patients: dict[str, Patient] = {}
+        self._access: set[tuple[str, str]] = set()  # (patient_id, user_id)
         # THERAPY-yg2: track soft-delete timestamps in a parallel map so
         # the in-memory repo (used in API tests) can model the same
         # tombstone-then-purge lifecycle as PostgresPatientRepository
@@ -136,23 +157,31 @@ class InMemoryPatientRepository(PatientRepository):
         self._deleted_at: dict[str, datetime] = {}
         self._session_repo = session_repo
 
-    def get(self, patient_id: str, user_id: str) -> Patient | None:
-        """Get patient by ID, ensuring it belongs to the user.
+    # --- access helpers (mirror has_patient_access semantics) ---
 
-        Hides soft-deleted rows from user-facing reads, matching the
-        Postgres repo's behavior (THERAPY-nyb).
-        """
+    def grant_access(self, patient_id: str, user_id: str) -> None:
+        """Record that ``user_id`` may read/write ``patient_id``."""
+        self._access.add((patient_id, user_id))
+
+    def _can_access(self, patient_id: str, user_id: str) -> bool:
+        return (patient_id, user_id) in self._access
+
+    def get(self, patient_id: str, user_id: str) -> Patient | None:
+        """Get patient by ID; ``None`` if absent, soft-deleted, or inaccessible."""
         patient = self._patients.get(patient_id)
-        if patient and patient.user_id == user_id and patient_id not in self._deleted_at:
-            return patient
-        return None
+        if patient is None or patient_id in self._deleted_at:
+            return None
+        if not self._can_access(patient_id, user_id):
+            return None
+        return patient
 
     def get_multiple(self, patient_ids: list[str], user_id: str) -> dict[str, Patient]:
-        """Get multiple patients by IDs, ensuring they belong to the user."""
         return {
             p.id: p
             for p in self._patients.values()
-            if p.id in patient_ids and p.user_id == user_id and p.id not in self._deleted_at
+            if p.id in patient_ids
+            and p.id not in self._deleted_at
+            and self._can_access(p.id, user_id)
         }
 
     def list_by_user(
@@ -164,11 +193,11 @@ class InMemoryPatientRepository(PatientRepository):
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Patient], int]:
-        """List patients for a user with pagination."""
+        """List patients the user has a grant for, with pagination."""
         patients = [
             p
             for p in self._patients.values()
-            if p.user_id == user_id and p.id not in self._deleted_at
+            if p.id not in self._deleted_at and self._can_access(p.id, user_id)
         ]
 
         if search:
@@ -184,31 +213,22 @@ class InMemoryPatientRepository(PatientRepository):
         offset = (page - 1) * page_size
         return patients[offset : offset + page_size], total
 
-    def create(self, patient: Patient) -> Patient:
-        """Create a new patient."""
+    def create(self, patient: Patient, user_id: str) -> Patient:
+        """Create the patient and auto-grant the creator primary access."""
         self._patients[patient.id] = patient
+        self._access.add((patient.id, user_id))
         return patient
 
     def update(self, patient: Patient) -> Patient:
-        """Update an existing patient."""
+        """Update an existing patient. Access is enforced at the read site."""
         patient.updated_at = utc_now()
-        # Regenerate search fields
         patient.first_name_lower = patient.first_name.lower()
         patient.last_name_lower = patient.last_name.lower()
         self._patients[patient.id] = patient
         return patient
 
     def delete(self, patient_id: str, user_id: str) -> bool:
-        """Soft-delete a patient and cascade to sessions. Returns True if deleted.
-
-        Mirrors ``PostgresPatientRepository.delete``: stamps the in-memory
-        soft-delete map and physically removes therapy sessions for this
-        patient (the in-memory session repo doesn't track ``deleted_at``).
-        Restoration is patient-only — see ``restore`` — sessions are
-        not preserved across the in-memory delete/restore cycle in this
-        repo. Production behavior is covered by the Postgres repo's
-        cascade tests.
-        """
+        """Soft-delete a patient and cascade to sessions. Returns True if deleted."""
         patient = self.get(patient_id, user_id)
         if not patient:
             return False
@@ -240,7 +260,9 @@ class InMemoryPatientRepository(PatientRepository):
         rows = [
             (self._patients[pid], stamp)
             for pid, stamp in self._deleted_at.items()
-            if pid in self._patients and self._patients[pid].user_id == user_id and stamp > cutoff
+            if pid in self._patients
+            and self._can_access(pid, user_id)
+            and stamp > cutoff
         ]
         rows.sort(key=lambda pair: (pair[0].last_name_lower, pair[0].first_name_lower))
         return rows
@@ -248,7 +270,7 @@ class InMemoryPatientRepository(PatientRepository):
     def restore(self, patient_id: str, user_id: str, *, window_days: int = 30) -> Patient | None:
         """Undo a soft-delete if still inside the undo window."""
         patient = self._patients.get(patient_id)
-        if patient is None or patient.user_id != user_id:
+        if patient is None or not self._can_access(patient_id, user_id):
             return None
         stamp = self._deleted_at.get(patient_id)
         if stamp is None:

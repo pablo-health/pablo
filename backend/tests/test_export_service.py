@@ -15,7 +15,6 @@ def mock_patient():
     """Create a mock patient."""
     return Patient(
         id="patient-123",
-        user_id="user-456",
         first_name="John",
         last_name="Doe",
         date_of_birth="1980-01-15",

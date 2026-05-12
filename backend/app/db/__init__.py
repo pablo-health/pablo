@@ -180,7 +180,8 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         text(
             "SELECT table_name, column_name FROM information_schema.columns "
             "WHERE table_schema = :schema "
-            "AND column_name IN ('user_id', 'patient_id')"
+            "AND column_name IN ('user_id', 'patient_id', 'id') "
+            "AND table_name != 'alembic_version'"
         ),
         {"schema": schema_name},
     ).fetchall()
@@ -210,14 +211,24 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
 
-        if "user_id" in columns:
+        # Pick the policy shape:
+        #   * patients (the access target itself) — gate by id via the
+        #     has_patient_access function.
+        #   * Any other table with patient_id — gate by patient_id via
+        #     has_patient_access.
+        #   * Fallback to direct user_id ownership for tables that have
+        #     a user_id column but no patient_id (e.g. availability_rules,
+        #     google_calendar_tokens, ical_client_mappings).
+        if table_name == "patients":
             session.execute(
                 text(
-                    f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id = current_setting('app.current_user_id', true))"
+                    f"CREATE POLICY rls_patient_access ON {qualified} "
+                    f"USING (has_patient_access("
+                    f"  id, current_setting('app.current_user_id', true)"
+                    f"))"
                 )
             )
-            logger.info("RLS (user_id) enabled on %s", qualified)
+            logger.info("RLS (patient_access on id) enabled on %s", qualified)
         elif "patient_id" in columns:
             session.execute(
                 text(
@@ -229,6 +240,14 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
                 )
             )
             logger.info("RLS (patient_access) enabled on %s", qualified)
+        elif "user_id" in columns:
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_user_isolation ON {qualified} "
+                    f"USING (user_id = current_setting('app.current_user_id', true))"
+                )
+            )
+            logger.info("RLS (user_id) enabled on %s", qualified)
 
     session.commit()
 

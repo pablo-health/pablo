@@ -67,14 +67,13 @@ def _make_patient(repo: InMemoryPatientRepository) -> Patient:
     now = datetime.now(UTC)
     p = Patient(
         id=PATIENT_ID,
-        user_id=USER_ID,
         first_name="Jane",
         last_name="Smith",
         created_at=now,
         updated_at=now,
         session_count=0,
     )
-    repo.create(p)
+    repo.create(p, USER_ID)
     return p
 
 

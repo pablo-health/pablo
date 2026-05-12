@@ -54,7 +54,6 @@ def _session() -> TherapySession:
 def _patient() -> Patient:
     return Patient(
         id="patient-1",
-        user_id="test-user-123",
         first_name="Jane",
         last_name="Smith",
         created_at=datetime(2026, 1, 1, tzinfo=UTC),

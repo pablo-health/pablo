@@ -123,7 +123,6 @@ def _make_patient(patient_id: str, first: str, last: str, user_id: str = "user1"
     now = _now()
     return Patient(
         id=patient_id,
-        user_id=user_id,
         first_name=first,
         last_name=last,
         created_at=now,
@@ -458,7 +457,7 @@ class TestCsvImport:
     def test_import_csv_skips_duplicates(self, service: ICalSyncService):
         # Pre-create a patient
         patient = _make_patient("existing", "Pablo", "Bear", "user1")
-        service._patient_repo.create(patient)
+        service._patient_repo.create(patient, "user1")
 
         csv_content = (
             "First Name,Last Name,Email,Birth Date,Phone Number,"
