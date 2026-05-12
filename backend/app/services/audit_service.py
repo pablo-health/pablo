@@ -46,6 +46,27 @@ class AuditService:
                 "Failed to persist audit log entry id=%s action=%s", entry.id, entry.action
             )
             raise
+        # Postgres write succeeded (system of record). Best-effort dual-write
+        # to Cloud Logging for tamper-evident retention. Import is inside the
+        # conditional so environments without google-cloud-logging installed
+        # (tests, local dev with the flag off) never load it. The outer
+        # try/except is belt-and-suspenders defense: the inner function
+        # already swallows, but we never want a refactor in that module to
+        # turn a mirror-write failure into a request failure.
+        from ..settings import get_settings
+
+        if get_settings().audit_dual_write_enabled:
+            try:
+                from .audit_cloud_logging import write_to_cloud_logging
+
+                write_to_cloud_logging(entry)
+            except Exception:
+                logger.warning(
+                    "Audit dual-write to Cloud Logging failed for entry id=%s "
+                    "(Postgres row already persisted)",
+                    entry.id,
+                    exc_info=True,
+                )
 
     def log(
         self,
