@@ -280,5 +280,34 @@ ensure_policy "Pablo HIPAA log-review job is stale" "$(cat <<JSON
 JSON
 )"
 
+# Audit dual-write to Cloud Logging failed — fires when AuditService
+# emits a WARNING about Cloud Logging dual-write failing. The Postgres
+# row already persisted, so HIPAA audit-of-record is intact, but the
+# tamper-evident GCS mirror missed the entry. Investigate Cloud Logging
+# IAM (logging.logWriter on the Cloud Run SA), Cloud Logging service
+# health, or a regression in audit_cloud_logging.py.
+ensure_policy "Pablo audit dual-write to Cloud Logging failed" "$(cat <<JSON
+{
+  "displayName": "Pablo audit dual-write to Cloud Logging failed",
+  "combiner": "OR",
+  "conditions": [{
+    "displayName": "Backend logged a Cloud Logging dual-write failure",
+    "conditionMatchedLog": {
+      "filter": "resource.type=\"cloud_run_revision\" AND severity>=\"WARNING\" AND (textPayload:\"dual-write\" OR jsonPayload.message:\"dual-write\")"
+    }
+  }],
+  "notificationChannels": ["$CHANNEL_ID"],
+  "alertStrategy": {
+    "notificationRateLimit": {"period": "300s"},
+    "autoClose": "86400s"
+  },
+  "documentation": {
+    "content": "AuditService failed to mirror an audit entry to Cloud Logging. The canonical Postgres row persisted — HIPAA audit-of-record is intact — but the retention-locked GCS bucket (gs://<project>-hipaa-audit-6y) missed the entry, weakening the § 164.312(c)(2) tamper-evidence story.\n\nCheck:\n- Cloud Run runtime SA has roles/logging.logWriter\n- Cloud Logging service status\n- audit_cloud_logging.py for a regression in the swallow path",
+    "mimeType": "text/markdown"
+  }
+}
+JSON
+)"
+
 info "Simple monitoring tier configured."
 info "Alerts will be sent to: $NOTIFY_EMAIL"
