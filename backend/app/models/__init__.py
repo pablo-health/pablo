@@ -20,6 +20,7 @@ from .chat_api import (
     ChatConversationResponse,
     ChatMessageResponse,
     CreateChatConversationRequest,
+    SendChatMessageRequest,
     UpdateChatConversationRequest,
 )
 from .ehr_prompt import EhrPrompt
@@ -168,6 +169,7 @@ __all__ = [
     "SOAPSentence",
     "SOAPSentenceModel",
     "ScheduleSessionRequest",
+    "SendChatMessageRequest",
     "SessionListResponse",
     "SessionResponse",
     "SessionSource",
