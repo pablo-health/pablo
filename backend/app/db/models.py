@@ -339,8 +339,87 @@ class ComplianceDocumentRow(Base):
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    uploaded_by_user_id: Mapped[str] = mapped_column(
-        String(128), nullable=False, index=True
+    uploaded_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+
+
+class ChatConversationRow(Base):
+    """Patient-context chat conversation envelope (THERAPY-bhv).
+
+    Lives in the practice schema alongside ``patients``. No ``tenant_id``
+    column — schema-per-practice already isolates rows. ``patient_id``
+    and ``caller_system_prompt`` are immutable after insert; the service
+    layer enforces this (no DB constraint because the audit guarantee is
+    a service-level invariant, not a schema invariant).
+
+    Cascade delete on the parent: removing a conversation drops its
+    messages via the FK below. See chat-design doc §6.6 for the
+    user-initiated hard-delete semantics.
+    """
+
+    __tablename__ = "chat_conversations"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    caller_system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    caller_feature_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    default_source_selection: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_turn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "ix_chat_conversations_patient_last_turn",
+            "patient_id",
+            "last_turn_at",
+        ),
+        Index(
+            "ix_chat_conversations_owner_last_turn",
+            "owner_user_id",
+            "last_turn_at",
+        ),
+    )
+
+
+class ChatMessageRow(Base):
+    """A single turn (user or assistant) inside a ChatConversation.
+
+    Append-only. ``sequence`` is monotonic per conversation starting at 1.
+    Per design doc §10.4 the per-turn forensic detail (content, manifest,
+    token counts) lives here, not in the audit log — keeping the audit
+    table PHI-free and small.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("chat_conversations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_selection: Mapped[dict | None] = mapped_column(JSONB)
+    context_manifest: Mapped[dict | None] = mapped_column(JSONB)
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    llm_model: Mapped[str | None] = mapped_column(String(128))
+    llm_finish_reason: Mapped[str | None] = mapped_column(String(32))
+    llm_error: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ux_chat_messages_conversation_sequence",
+            "conversation_id",
+            "sequence",
+            unique=True,
+        ),
     )
 
 

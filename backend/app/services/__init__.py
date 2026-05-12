@@ -1,6 +1,7 @@
 """Service layer for business logic."""
 
 from .audit_service import AuditService, get_audit_service
+from .chat_service import ChatConversationNotFoundError, ChatService
 from .ehr_navigation_service import (
     EhrNavigationService,
     GeminiEhrNavigationService,
@@ -41,6 +42,8 @@ from .source_attribution_service import (
 
 __all__ = [
     "AuditService",
+    "ChatConversationNotFoundError",
+    "ChatService",
     "EhrNavigationService",
     "ExportService",
     "GeminiEhrNavigationService",

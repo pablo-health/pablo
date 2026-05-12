@@ -13,6 +13,15 @@ Models are organized by domain:
 """
 
 from .audit import AuditAction, AuditLogEntry, ResourceType
+from .chat import ChatConversation, ChatMessage
+from .chat_api import (
+    ChatConversationDetailResponse,
+    ChatConversationListResponse,
+    ChatConversationResponse,
+    ChatMessageResponse,
+    CreateChatConversationRequest,
+    UpdateChatConversationRequest,
+)
 from .ehr_prompt import EhrPrompt
 from .ehr_route import (
     EhrRoute,
@@ -109,12 +118,19 @@ __all__ = [
     "AvailabilityRuleListResponse",
     "AvailabilityRuleResponse",
     "BAAStatusResponse",
+    "ChatConversation",
+    "ChatConversationDetailResponse",
+    "ChatConversationListResponse",
+    "ChatConversationResponse",
+    "ChatMessage",
+    "ChatMessageResponse",
     "CheckConflictsRequest",
     "CheckConflictsResponse",
     "CloseChartRequest",
     "ConflictResponse",
     "CreateAppointmentRequest",
     "CreateAvailabilityRuleRequest",
+    "CreateChatConversationRequest",
     "CreatePatientRequest",
     "CreateRecurringAppointmentRequest",
     "CreateStandaloneNoteRequest",
@@ -169,6 +185,7 @@ __all__ = [
     "TranscriptSegmentModel",
     "UpdateAppointmentRequest",
     "UpdateAvailabilityRuleRequest",
+    "UpdateChatConversationRequest",
     "UpdateEhrRouteStepRequest",
     "UpdateNoteEditsRequest",
     "UpdatePatientRequest",

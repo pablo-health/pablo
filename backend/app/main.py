@@ -23,6 +23,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    chat,
     compliance,
     ehr_routes,
     ext_auth,
@@ -129,6 +130,8 @@ app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
+if settings.enable_patient_chat:
+    app.include_router(chat.router)
 
 
 @app.get("/api/health")
