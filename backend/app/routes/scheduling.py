@@ -126,14 +126,12 @@ router = APIRouter(tags=["scheduling"], dependencies=[Depends(require_active_sub
 
 
 def get_appointment_repository(
-    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> AppointmentRepository:
     """Get appointment repository scoped to the tenant's database."""
     return _appt_repo_factory()
 
 
 def get_availability_rule_repository(
-    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> AvailabilityRuleRepository:
     """Get availability rule repository scoped to the tenant's database."""
     return _rule_repo_factory()
@@ -192,7 +190,6 @@ def _to_response(appt: Appointment) -> AppointmentResponse:
 def create_appointment(
     request: CreateAppointmentRequest,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -220,7 +217,6 @@ def list_appointments(
     http_request: Request,
     start: str = Query(..., description="Range start (ISO 8601)"),
     end: str = Query(..., description="Range end (ISO 8601)"),
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -238,7 +234,6 @@ def list_appointments(
 def get_appointment(
     appointment_id: str,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -263,7 +258,6 @@ def update_appointment(
     appointment_id: str,
     request: UpdateAppointmentRequest,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -294,7 +288,6 @@ def update_appointment(
 def cancel_appointment(
     appointment_id: str,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -318,7 +311,6 @@ def cancel_appointment(
 
 
 def _get_session_service(
-    _ctx: TenantContext = Depends(get_tenant_context),
     session_repo: TherapySessionRepository = Depends(_session_repo_factory),
     patient_repo: PatientRepository = Depends(_patient_repo_factory),
     notes_repo: NotesRepository = Depends(_notes_repo_factory),
@@ -427,7 +419,6 @@ def start_session_from_appointment(
 def create_recurring_appointment(
     request: CreateRecurringAppointmentRequest,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -469,7 +460,6 @@ def edit_series(
     appointment_id: str,
     request: EditSeriesRequest,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -505,7 +495,6 @@ def edit_series(
 def cancel_series(
     appointment_id: str,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
@@ -689,7 +678,6 @@ def delete_availability_rule(
 
 
 def get_google_calendar_service(
-    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
     token_repo = _gcal_token_repo_factory()

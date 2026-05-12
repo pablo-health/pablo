@@ -5,7 +5,6 @@ import { getTokens } from "next-firebase-auth-edge"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { Header } from "@/components/layout/Header"
 import { redirect } from "next/navigation"
-import { mockUser } from "@/lib/mockData"
 import { getBAAStatus, getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
@@ -13,7 +12,8 @@ import { IdleTimeout } from "@/components/IdleTimeout"
 
 export const dynamic = "force-dynamic"
 
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
+const IS_DEV_BUILD = process.env.NODE_ENV !== "production"
+const IS_DEV_MODE = IS_DEV_BUILD && process.env.DEV_MODE === "true"
 const IS_OSS_EDITION = (process.env.PABLO_EDITION || "core") === "core"
 
 export default async function DashboardLayout({
@@ -26,6 +26,8 @@ export default async function DashboardLayout({
   let isAdmin = false
 
   if (IS_DEV_MODE) {
+    // Dynamic import keeps the mock fixture out of the prod bundle.
+    const { mockUser } = await import("@/lib/mockData")
     user = mockUser
     isAdmin = true
   } else {

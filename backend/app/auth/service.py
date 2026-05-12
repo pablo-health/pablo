@@ -437,6 +437,12 @@ def get_current_user(
     decoded_token: dict[str, Any] = Depends(require_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
+    # Side-effect dep: sets PostgreSQL session schema + `app.current_user_id`
+    # RLS variable before any downstream tenant-scoped query. Folded into the
+    # auth chain so routes depending on require_baa_acceptance / _subscription
+    # / _admin get tenant scoping for free — no per-route `_ctx` param.
+    # Trailing position so existing positional callers (tests) keep working.
+    _tenant: TenantContext = Depends(get_tenant_context),
 ) -> User:
     """Get the current authenticated user, auto-provisioning on first login.
 

@@ -2,19 +2,21 @@
 
 import { cookies } from "next/headers"
 import { getTokens } from "next-firebase-auth-edge"
-import { mockUser } from "@/lib/mockData"
 import { authConfig } from "@/lib/auth-config"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
 
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
+const IS_DEV_BUILD = process.env.NODE_ENV !== "production"
+const IS_DEV_MODE = IS_DEV_BUILD && process.env.DEV_MODE === "true"
 
 export default async function DashboardPage() {
   let user
 
   if (IS_DEV_MODE) {
+    // Dynamic import keeps the mock fixture out of the prod bundle.
+    const { mockUser } = await import("@/lib/mockData")
     user = mockUser
   } else {
     const tokens = await getTokens(await cookies(), authConfig)

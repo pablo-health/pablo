@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ..services.eval_export_service import EvalExportService  # type: ignore[import-not-found]
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
-from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..auth.service import require_baa_acceptance
 from ..models import (
     AuditAction,
     FinalizeSessionRequest,
@@ -80,21 +80,18 @@ router = APIRouter(tags=["sessions"])
 
 
 def get_patient_repository(
-    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> PatientRepository:
     """Get patient repository scoped to the tenant's database."""
     return _patient_repo_factory()
 
 
 def get_session_repository(
-    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> TherapySessionRepository:
     """Get session repository scoped to the tenant's database."""
     return _session_repo_factory()
 
 
 def get_notes_repository(
-    _ctx: TenantContext = Depends(get_tenant_context),
 ) -> NotesRepository:
     """Get notes repository scoped to the tenant's database."""
     return _notes_repo_factory()
@@ -567,7 +564,6 @@ async def upload_audio(
     therapist_audio: UploadFile,
     client_audio: UploadFile,
     http_request: Request,
-    _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     audit: AuditService = Depends(get_audit_service),

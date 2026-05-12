@@ -62,11 +62,14 @@ class ExchangeAuthCodeResponse(BaseModel):
     refresh_token: str
 
 
-@router.post("/native/code", response_model=CreateAuthCodeResponse)
+@router.post(
+    "/native/code",
+    response_model=CreateAuthCodeResponse,
+    dependencies=[Depends(require_rate_limit)],
+)
 def create_native_code(
     request: CreateAuthCodeRequest,
     http_request: Request,
-    _: None = Depends(require_rate_limit),
 ) -> CreateAuthCodeResponse:
     """Generate a one-time authorization code for native app auth.
 
@@ -109,9 +112,13 @@ def create_native_code(
     return CreateAuthCodeResponse(code=code)
 
 
-@router.post("/native/exchange", response_model=ExchangeAuthCodeResponse)
+@router.post(
+    "/native/exchange",
+    response_model=ExchangeAuthCodeResponse,
+    dependencies=[Depends(require_rate_limit)],
+)
 def exchange_native_code(
-    request: ExchangeAuthCodeRequest, _: None = Depends(require_rate_limit)
+    request: ExchangeAuthCodeRequest,
 ) -> ExchangeAuthCodeResponse:
     """Exchange a one-time authorization code for tokens.
 

@@ -95,7 +95,6 @@ navigate_router = APIRouter(
 @route_router.get("/{ehr_system}")
 def get_ehr_route(
     ehr_system: EhrSystem,
-    _user: User = Depends(get_current_user),
     repo: EhrRouteRepository = Depends(get_ehr_route_repository),
 ) -> EhrRouteResponse:
     """Get cached navigation route for an EHR system."""
@@ -113,7 +112,6 @@ def update_ehr_route_step(
     ehr_system: EhrSystem,
     step_index: int,
     request: UpdateEhrRouteStepRequest,
-    _user: User = Depends(get_current_user),
     repo: EhrRouteRepository = Depends(get_ehr_route_repository),
 ) -> EhrRouteResponse:
     """Update a step in an EHR route (route learning).

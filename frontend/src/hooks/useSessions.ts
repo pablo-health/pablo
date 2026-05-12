@@ -5,6 +5,7 @@
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query"
 import type {
   FinalizeSessionRequest,
+  SessionListResponse,
   SessionResponse,
   UpdateSessionRatingRequest,
   UploadSessionRequest,
@@ -19,20 +20,35 @@ import {
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
-import { mockSessionListResponse, mockSessionResponses } from "@/lib/mockData"
 import { useAuthMutation } from "./useAuthQuery"
+
+// Mock data lives in @/lib/mockData and is loaded via dynamic import only in
+// dev builds. The IS_DEV_BUILD guard collapses to `false` in production, so
+// the prod bundle drops both the import branch and the fixture module.
+const IS_DEV_BUILD = process.env.NODE_ENV !== "production"
+
+async function loadSessionListMock(): Promise<SessionListResponse> {
+  const { mockSessionListResponse } = await import("@/lib/mockData")
+  return mockSessionListResponse
+}
+
+async function loadSessionMock(sessionId: string): Promise<SessionResponse> {
+  const { mockSessionResponses } = await import("@/lib/mockData")
+  const session = mockSessionResponses.find((s) => s.id === sessionId)
+  if (!session) throw new Error(`Session ${sessionId} not found`)
+  return session
+}
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
 
 export function useSessionList(token?: string) {
   const { loading } = useAuth()
   const { dataMode } = useConfig()
-  const isMock = dataMode === "mock"
+  const isMock = IS_DEV_BUILD && dataMode === "mock"
 
   return useQuery({
     queryKey: queryKeys.sessions.list(),
-    queryFn: () =>
-      isMock ? Promise.resolve(mockSessionListResponse) : listSessions(token),
+    queryFn: () => (isMock ? loadSessionListMock() : listSessions(token)),
     staleTime: isMock ? Infinity : 60 * 1000,
     enabled: isMock || !loading,
   })
@@ -44,19 +60,11 @@ export function useSession(
   options?: Omit<UseQueryOptions<SessionResponse>, "queryKey" | "queryFn">,
 ) {
   const { dataMode } = useConfig()
-  const isMock = dataMode === "mock"
+  const isMock = IS_DEV_BUILD && dataMode === "mock"
 
   return useQuery({
     queryKey: queryKeys.sessions.detail(sessionId),
-    queryFn: () => {
-      if (isMock) {
-        const session = mockSessionResponses.find((s) => s.id === sessionId)
-        if (!session)
-          return Promise.reject(new Error(`Session ${sessionId} not found`))
-        return Promise.resolve(session)
-      }
-      return getSession(sessionId, token)
-    },
+    queryFn: () => (isMock ? loadSessionMock(sessionId) : getSession(sessionId, token)),
     staleTime: isMock ? Infinity : 60 * 1000,
     ...options,
   })

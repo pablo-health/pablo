@@ -213,10 +213,13 @@ def accept_baa(
     )
 
 
-@router.get("/baa/{version}", response_class=PlainTextResponse)
+@router.get(
+    "/baa/{version}",
+    response_class=PlainTextResponse,
+    dependencies=[Depends(get_current_user_no_mfa)],
+)
 def get_baa_text(
     version: str,
-    _user: User = Depends(get_current_user_no_mfa),
 ) -> str:
     """
     Get the full text of a specific BAA version.
