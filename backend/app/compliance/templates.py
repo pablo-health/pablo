@@ -354,6 +354,25 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         sort_order=190,
         severity="routine",
     ),
+    # --- Escape hatch ---------------------------------------------------
+    # Free-form custom reminder. The user supplies their own per-instance
+    # label (multi_instance=True); we only enforce a sensible default
+    # cadence so the reminder cron still has something to fire on. Sort
+    # last so it never displaces the structured catalog entries.
+    ComplianceTemplate(
+        item_type="custom",
+        label="Custom reminder",
+        description=(
+            "Anything not in the catalog above — a one-off deadline, an "
+            "internal review, a vendor follow-up. Set your own label and date."
+        ),
+        cadence_days=None,
+        reminder_windows=(30, 7, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=9000,
+        severity="routine",
+    ),
 )
 
 
