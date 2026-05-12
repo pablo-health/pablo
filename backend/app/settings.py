@@ -386,6 +386,18 @@ class Settings(BaseSettings):
         description="Gemini model for EHR navigation LLM fallback",
     )
 
+    # Patient-context chat primitive (THERAPY-bhv).
+    # When false, all /api/chat/* routes return 404 and the frontend
+    # ChatPanel is not mounted. The migration runs unconditionally so
+    # flipping this flag is a config change, not a deploy.
+    enable_patient_chat: bool = Field(
+        default=False,
+        description=(
+            "Enable the OSS patient-context chat primitive. Off by default; "
+            "see docs/architecture/patient-context-chat-oss.md."
+        ),
+    )
+
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(
         default=SecretStr(""),

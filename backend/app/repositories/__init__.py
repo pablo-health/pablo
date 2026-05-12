@@ -12,6 +12,10 @@ from .allowlist import (
     AllowlistRepository,
     InMemoryAllowlistRepository,
 )
+from .chat import (
+    ChatRepository,
+    InMemoryChatRepository,
+)
 from .ehr_prompt import (
     EhrPromptRepository,
     InMemoryEhrPromptRepository,
@@ -154,11 +158,20 @@ def get_compliance_document_repository():  # type: ignore[no-untyped-def]
     return PostgresComplianceDocumentRepository(_get_pg_session())
 
 
+def get_chat_repository() -> ChatRepository:
+    """Get chat repository instance."""
+    from .postgres.chat import PostgresChatRepository
+
+    return PostgresChatRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
+    "ChatRepository",
     "EhrPromptRepository",
     "EhrRouteRepository",
     "InMemoryAllowlistRepository",
+    "InMemoryChatRepository",
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
     "InMemoryNotesRepository",
@@ -172,6 +185,7 @@ __all__ = [
     "get_allowlist_repository",
     "get_appointment_repository",
     "get_availability_rule_repository",
+    "get_chat_repository",
     "get_clinician_profile_repository",
     "get_compliance_document_repository",
     "get_compliance_item_repository",

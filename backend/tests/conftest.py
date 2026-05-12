@@ -9,6 +9,12 @@ import os
 os.environ["ENVIRONMENT"] = "development"
 # Enable SaaS features so admin/tenant routes are registered for tests
 os.environ["PABLO_EDITION"] = "solo"
+# Mount the patient-context chat router for tests (THERAPY-bhv). Off by
+# default in production; flipping it here so tests can exercise the
+# /api/chat surface. The 404-when-disabled behavior is verified by a
+# manual smoke step at deploy time, not by a unit test (the app builds
+# its router list once at import).
+os.environ["ENABLE_PATIENT_CHAT"] = "true"
 # Provide a dummy DATABASE_URL so settings validation passes (never actually connected to)
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 
@@ -40,6 +46,7 @@ from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
+    InMemoryChatRepository,
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
     InMemoryNotesRepository,
@@ -48,6 +55,12 @@ from app.repositories import (  # noqa: E402
     InMemoryUserRepository,
     get_allowlist_repository,
     get_user_repository,
+)
+from app.routes.chat import (  # noqa: E402
+    get_chat_repository_dep as get_chat_route_chat_repository,
+)
+from app.routes.chat import (  # noqa: E402
+    get_patient_repository_dep as get_chat_route_patient_repository,
 )
 from app.routes.ehr_routes import (  # noqa: E402
     get_ehr_navigation_service,
@@ -114,6 +127,12 @@ def mock_repo(mock_session_repo: InMemoryTherapySessionRepository) -> InMemoryPa
 def mock_notes_repo() -> InMemoryNotesRepository:
     """Create a fresh in-memory notes repository for each test."""
     return InMemoryNotesRepository()
+
+
+@pytest.fixture
+def mock_chat_repo() -> InMemoryChatRepository:
+    """Create a fresh in-memory chat repository for each test (THERAPY-bhv)."""
+    return InMemoryChatRepository()
 
 
 @pytest.fixture
@@ -218,6 +237,7 @@ def client(
     mock_repo: InMemoryPatientRepository,
     mock_session_repo: InMemoryTherapySessionRepository,
     mock_notes_repo: InMemoryNotesRepository,
+    mock_chat_repo: InMemoryChatRepository,
     mock_user_id: str,
     mock_user: User,
     mock_user_repo: InMemoryUserRepository,
@@ -237,6 +257,8 @@ def client(
     app.dependency_overrides[get_patients_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_patient_repository] = lambda: mock_repo
+    app.dependency_overrides[get_chat_route_chat_repository] = lambda: mock_chat_repo
+    app.dependency_overrides[get_chat_route_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_current_user_id] = lambda: mock_user_id
     app.dependency_overrides[require_mfa] = lambda: {"uid": mock_user_id, "firebase": {}}
     app.dependency_overrides[get_current_user] = lambda: mock_user

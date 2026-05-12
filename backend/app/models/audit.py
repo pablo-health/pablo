@@ -89,6 +89,15 @@ class AuditAction(StrEnum):
     # User reading their own audit trail (meta-audit).
     SELF_AUDIT_VIEWED = "self_audit_viewed"
 
+    # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
+    # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
+    # land in the audit log; per-turn detail lives on chat_messages rows.
+    CHAT_CONVERSATION_CREATED = "chat_conversation_created"
+    CHAT_CONVERSATION_ARCHIVED = "chat_conversation_archived"
+    CHAT_CONVERSATION_PURGED = "chat_conversation_purged"
+    CHAT_CHART_PROMOTION = "chat_chart_promotion"
+    CHAT_TURN_BLOCKED = "chat_turn_blocked"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -99,6 +108,7 @@ class ResourceType(StrEnum):
     EHR_ROUTE = "ehr_route"
     SELF = "self"
     TENANT_EXPORT = "tenant_export"
+    CHAT_CONVERSATION = "chat_conversation"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

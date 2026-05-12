@@ -206,6 +206,39 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_chat_action(
+        self,
+        action: AuditAction,
+        user: User,
+        request: Request,
+        conversation_id: str,
+        patient_id: str,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Audit a chat-conversation lifecycle event (THERAPY-bhv).
+
+        Per design doc §10.4, the chat primitive follows a two-tier audit
+        policy: lifecycle events (create/archive/purge/promote/blocked)
+        land here; per-turn forensic detail (content, manifest, token
+        counts) lives on the ``chat_messages`` row. Callers must keep
+        ``changes`` PHI-free — ids, counts, hashes, enum codes only.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        if changes is not None:
+            _assert_changes_phi_free(changes)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=action.value,
+            resource_type=ResourceType.CHAT_CONVERSATION.value,
+            resource_id=conversation_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction,
