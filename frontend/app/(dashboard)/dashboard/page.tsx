@@ -4,6 +4,7 @@ import { cookies } from "next/headers"
 import { getTokens } from "next-firebase-auth-edge"
 import { mockUser } from "@/lib/mockData"
 import { authConfig } from "@/lib/auth-config"
+import { getUserStatus } from "@/lib/api/users"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
@@ -13,6 +14,7 @@ const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
 export default async function DashboardPage() {
   let user
+  let isPlatformAdmin = false
 
   if (IS_DEV_MODE) {
     user = mockUser
@@ -23,6 +25,19 @@ export default async function DashboardPage() {
       name: decodedToken?.name || decodedToken?.email,
       email: decodedToken?.email,
       image: decodedToken?.picture,
+    }
+    if (tokens?.token) {
+      try {
+        const status = await getUserStatus(tokens.token)
+        isPlatformAdmin = status.is_platform_admin
+        user = {
+          name: status.name || user.name,
+          email: status.email || user.email,
+          image: decodedToken?.picture,
+        }
+      } catch {
+        // Layout already gates access on this call; fall through to clinician view.
+      }
     }
   }
 
@@ -42,14 +57,34 @@ export default async function DashboardPage() {
         <p className="text-neutral-600 mt-2">{formattedDate}</p>
       </div>
 
-      <DashboardBanners />
+      {isPlatformAdmin ? (
+        <PlatformAdminPanel />
+      ) : (
+        <>
+          <DashboardBanners />
+          <TodayPanel />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <WeekPanel />
+            <CompliancePanel />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
-      <TodayPanel />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <WeekPanel />
-        <CompliancePanel />
-      </div>
+function PlatformAdminPanel() {
+  return (
+    <div className="rounded-lg border border-neutral-200 bg-white p-6">
+      <h2 className="text-xl font-display font-semibold text-neutral-900">
+        Platform admin
+      </h2>
+      <p className="mt-2 text-neutral-600">
+        You&rsquo;re signed in as a platform admin. Clinician panels (today,
+        week, compliance) are hidden because they require BAA acceptance and
+        access to patient records. Use the admin navigation in the sidebar to
+        manage users and platform settings.
+      </p>
     </div>
   )
 }
