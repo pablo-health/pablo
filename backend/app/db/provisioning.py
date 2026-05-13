@@ -38,56 +38,83 @@ def _now() -> datetime:
     return utc_now()
 
 
+# Arbitrary 64-bit key for the boot-time provisioning advisory lock. Any
+# constant works — the value just needs to be stable so every booting
+# instance picks the same lock. Generated once via random.randint to avoid
+# colliding with locks the application may take elsewhere.
+_PROVISIONING_LOCK_KEY = 7283194065831042197
+
+
 def ensure_schemas(engine: Engine) -> None:
     """Create platform + default practice schemas if they don't exist.
 
     Called on application startup when database_backend=postgres.
     Idempotent — safe to call on every boot.
+
+    Concurrency: when Cloud Run starts multiple container instances
+    simultaneously (deployment rollout + min-instance warm-up overlap),
+    every instance races through this function. ``create_all`` checks
+    ``has_table`` before each CREATE, but the check-then-create window is
+    not atomic, so two instances can both observe "table missing" and
+    both emit ``CREATE TABLE`` — the loser gets ``DuplicateTable`` and
+    exits, failing the deploy. We serialize the mutation phase behind a
+    session-scoped Postgres advisory lock so only one instance runs the
+    create/migrate work at a time. The lock auto-releases when the
+    connection closes.
     """
     with engine.connect() as conn:
-        # Create platform schema and tables
-        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
-        conn.commit()
+        # pg_advisory_lock blocks until acquired. Cheap (in-memory in PG),
+        # held only for the duration of provisioning (sub-second).
+        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _PROVISIONING_LOCK_KEY})
+        try:
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
+            conn.commit()
 
-    PlatformBase.metadata.create_all(engine)
+            PlatformBase.metadata.create_all(engine)
 
-    # Add columns that may not exist on older databases
-    _migrate_platform_columns(engine)
+            # Add columns that may not exist on older databases
+            _migrate_platform_columns(engine)
 
-    # Create default practice schema and tables
-    create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
+            # Create default practice schema and tables
+            create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
 
-    # Migrate columns on all existing practice schemas
-    with engine.connect() as conn:
-        schemas = conn.execute(
-            text(
-                "SELECT schema_name FROM information_schema.schemata"
-                " WHERE schema_name LIKE 'practice_%'"
+            # Migrate columns on all existing practice schemas
+            with engine.connect() as inner:
+                schemas = inner.execute(
+                    text(
+                        "SELECT schema_name FROM information_schema.schemata"
+                        " WHERE schema_name LIKE 'practice_%'"
+                    )
+                ).fetchall()
+            for (schema,) in schemas:
+                _migrate_practice_columns(engine, schema)
+
+            # Ensure default practice exists in registry
+            from sqlalchemy.orm import Session
+
+            with Session(engine) as session:
+                session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
+                existing = session.get(PracticeRow, "default")
+                if not existing:
+                    session.add(
+                        PracticeRow(
+                            id="default",
+                            name="Default Practice",
+                            schema_name=DEFAULT_PRACTICE_SCHEMA,
+                            owner_email="",
+                            owner_user_id="",
+                            product="pablo",
+                            created_at=_now(),
+                        )
+                    )
+                    session.commit()
+                    logger.info("Created default practice in registry")
+        finally:
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:k)"),
+                {"k": _PROVISIONING_LOCK_KEY},
             )
-        ).fetchall()
-    for (schema,) in schemas:
-        _migrate_practice_columns(engine, schema)
-
-    # Ensure default practice exists in registry
-    from sqlalchemy.orm import Session
-
-    with Session(engine) as session:
-        session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
-        existing = session.get(PracticeRow, "default")
-        if not existing:
-            session.add(
-                PracticeRow(
-                    id="default",
-                    name="Default Practice",
-                    schema_name=DEFAULT_PRACTICE_SCHEMA,
-                    owner_email="",
-                    owner_user_id="",
-                    product="pablo",
-                    created_at=_now(),
-                )
-            )
-            session.commit()
-            logger.info("Created default practice in registry")
+            conn.commit()
 
 
 def _migrate_platform_columns(engine: Engine) -> None:
@@ -139,8 +166,7 @@ def _migrate_platform_columns(engine: Engine) -> None:
             " audio_retention_days INTEGER NOT NULL DEFAULT 365",
             f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
             " offboard_scheduled_at TIMESTAMP WITH TIME ZONE",
-            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
-            " deleted_at TIMESTAMP WITH TIME ZONE",
+            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE",
         ]
     )
 
@@ -192,8 +218,7 @@ def _ensure_pentest_tenant_guards(engine: Engine) -> None:
     logger = logging.getLogger(__name__)
 
     statements = [
-        "ALTER TABLE platform.practices"
-        " DROP CONSTRAINT IF EXISTS practices_pentest_schema_name",
+        "ALTER TABLE platform.practices DROP CONSTRAINT IF EXISTS practices_pentest_schema_name",
         "ALTER TABLE platform.practices"
         " ADD CONSTRAINT practices_pentest_schema_name"
         r" CHECK (is_pentest = FALSE OR schema_name LIKE 'practice\_pentest\_%' ESCAPE '\')",
