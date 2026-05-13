@@ -1,0 +1,50 @@
+# Pablo
+
+> AI-powered therapy documentation that eliminates clinician paperwork. Pablo
+> generates SOAP notes from session transcripts with dual-method verification
+> (LLM + classical NLP), with full source attribution and HIPAA-grade audit
+> logging. Self-hosted on GCP (Cloud Run + Cloud SQL) or managed.
+
+Pablo is a healthcare app. Anything you change here may touch Protected Health
+Information (PHI). Read CLAUDE.md before editing — guardrails 1, 2, and 5 are
+load-bearing and CI-enforced.
+
+## Start here
+
+- [README](README.md): product overview, quickstart, deploy paths.
+- [CLAUDE.md](CLAUDE.md): engineering rules, guardrails, commands. Required reading.
+- [AGENTS.md](AGENTS.md): symlink to CLAUDE.md for cross-vendor agent compatibility.
+- [CONTRIBUTING.md](CONTRIBUTING.md): contribution flow.
+- [SECURITY.md](SECURITY.md): vulnerability disclosure.
+
+## Architecture
+
+- [docs/TECHNICAL_ARCHITECTURE.md](docs/TECHNICAL_ARCHITECTURE.md): backend/frontend/AI layout.
+- [docs/GCP_DEPLOYMENT.md](docs/GCP_DEPLOYMENT.md): how Pablo runs in production.
+- [docs/url-scheme.md](docs/url-scheme.md): URL conventions.
+
+## HIPAA + compliance (read before touching PHI surfaces)
+
+- [docs/HIPAA_SECURITY.md](docs/HIPAA_SECURITY.md): Security Rule mapping.
+- [docs/HIPAA_AUDIT_LOGS.md](docs/HIPAA_AUDIT_LOGS.md): audit-event surface.
+- [docs/SELF_HOSTING_HIPAA_GUIDE.md](docs/SELF_HOSTING_HIPAA_GUIDE.md): operator-facing checklist.
+- [docs/compliance/hipaa-security-rule.md](docs/compliance/hipaa-security-rule.md): control catalog.
+- [docs/compliance/baa-manifest.yaml](docs/compliance/baa-manifest.yaml): BAA surface.
+
+## Agent infrastructure
+
+- [.claude/skills/audit-coverage-check](.claude/skills/audit-coverage-check/SKILL.md): enforces guardrail #1 (PHI routes need AuditService).
+- [.claude/skills/phi-log-scan](.claude/skills/phi-log-scan/SKILL.md): enforces guardrail #5 (no PHI in stdout).
+- [.claude/skills/migration-lint](.claude/skills/migration-lint/SKILL.md): enforces guardrail #4 (models ship with migrations).
+- [.claude/skills/slop-sweep](.claude/skills/slop-sweep/SKILL.md): scans for AI-slop patterns (banner comments, stacked any-suppressions, mock-data leaks).
+- [.claude/skills/pentest](.claude/skills/pentest/SKILL.md): owner-authorized weekly pentest of the deployed app.
+- [.claude/settings.json](.claude/settings.json): permission allowlist + deny rules for agent tools.
+- [docs/internal/agent-readiness-assessment.md](docs/internal/agent-readiness-assessment.md): current readiness rating + roadmap.
+- [docs/internal/ci-failure-matrix.md](docs/internal/ci-failure-matrix.md): retryable vs human-needed CI failures.
+
+## Conventions agents must follow
+
+- Backend: Python 3.13, Poetry, FastAPI, SQLAlchemy 2.x. Always `poetry run`. Use `str | None`, not `Optional[str]`.
+- Frontend: Next.js 15, TypeScript, Tailwind, shadcn/ui. Pablo brand palette (warm cream, honey, sage). DM Sans body, Fraunces headings.
+- Tests: `make check` (lint + test) is the gate. CI is the backstop, not the primary loop.
+- One file per domain concept, files under ~400 lines, no banner comments, no `as any` without a one-line justification.
