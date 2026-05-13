@@ -6,43 +6,42 @@
 # GitHub matches the LAST entry that matches a path. More-specific paths go
 # below more-general ones.
 #
-# Replace `@pablo-health/maintainers` below with your real owning team /
-# individuals. GitHub silently ignores rules pointing at a non-existent team,
-# so the file is safe to land before the team is configured.
+# Owner: @kurtn718 (solo maintainer). Promote to a team
+# (e.g. `@kurtn718`) once there's more than one approver.
 
 # Default fallback — all other paths.
-*                                           @pablo-health/maintainers
+*                                           @kurtn718
 
 # ---- Agent rules and skills (load-bearing, see CLAUDE.md guardrails) -------
-/CLAUDE.md                                  @pablo-health/maintainers
-/AGENTS.md                                  @pablo-health/maintainers
-/.claude/                                   @pablo-health/maintainers
-/.claude/skills/                            @pablo-health/maintainers
-/.claude/settings.json                      @pablo-health/maintainers
+/CLAUDE.md                                  @kurtn718
+/AGENTS.md                                  @kurtn718
+/.claude/                                   @kurtn718
+/.claude/skills/                            @kurtn718
+/.claude/settings.json                      @kurtn718
 
 # ---- Pre-commit + CI guardrail enforcement --------------------------------
-/.pre-commit-config.yaml                    @pablo-health/maintainers
-/scripts/check_audit_params.py              @pablo-health/maintainers
-/.github/workflows/                         @pablo-health/maintainers
-/.github/CODEOWNERS                         @pablo-health/maintainers
+/.pre-commit-config.yaml                    @kurtn718
+/scripts/check_audit_params.py              @kurtn718
+/.github/workflows/                         @kurtn718
+/.github/CODEOWNERS                         @kurtn718
 
 # ---- HIPAA / audit-logging surface ----------------------------------------
-/backend/app/services/audit_service.py              @pablo-health/maintainers
-/backend/app/services/platform_audit_service.py     @pablo-health/maintainers
-/backend/app/services/audit_review_service.py       @pablo-health/maintainers
-/backend/tests/test_route_audit_guardrails.py       @pablo-health/maintainers
-/docs/HIPAA_AUDIT_LOGS.md                           @pablo-health/maintainers
-/docs/HIPAA_SECURITY.md                             @pablo-health/maintainers
-/docs/SELF_HOSTING_HIPAA_GUIDE.md                   @pablo-health/maintainers
-/docs/compliance/                                   @pablo-health/maintainers
+/backend/app/services/audit_service.py              @kurtn718
+/backend/app/services/platform_audit_service.py     @kurtn718
+/backend/app/services/audit_review_service.py       @kurtn718
+/backend/tests/test_route_audit_guardrails.py       @kurtn718
+/docs/HIPAA_AUDIT_LOGS.md                           @kurtn718
+/docs/HIPAA_SECURITY.md                             @kurtn718
+/docs/SELF_HOSTING_HIPAA_GUIDE.md                   @kurtn718
+/docs/compliance/                                   @kurtn718
 
 # ---- Database models + migrations (guardrail #4) --------------------------
-/backend/app/db/models.py                   @pablo-health/maintainers
-/backend/app/db/platform_models.py          @pablo-health/maintainers
-/backend/alembic/                           @pablo-health/maintainers
+/backend/app/db/models.py                   @kurtn718
+/backend/app/db/platform_models.py          @kurtn718
+/backend/alembic/                           @kurtn718
 
 # ---- Deploy + secrets surface ---------------------------------------------
-/setup-solo.sh                              @pablo-health/maintainers
-/redeploy.sh                                @pablo-health/maintainers
-/run.sh                                     @pablo-health/maintainers
-/SECURITY.md                                @pablo-health/maintainers
+/setup-solo.sh                              @kurtn718
+/redeploy.sh                                @kurtn718
+/run.sh                                     @kurtn718
+/SECURITY.md                                @kurtn718
