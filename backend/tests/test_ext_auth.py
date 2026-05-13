@@ -8,7 +8,11 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from app.routes.ext_auth import _verify_blocking_function_token
+from app.routes.ext_auth import (
+    CheckAllowlistRequest,
+    _verify_blocking_function_token,
+    check_allowlist,
+)
 from app.settings import Settings
 from fastapi import HTTPException, Request
 
@@ -168,3 +172,128 @@ def test_unset_caller_sa_fails_closed_with_503(
         _verify_blocking_function_token(_make_request({"authorization": "Bearer tok"}))
     assert exc.value.status_code == 503
     patch_verify.assert_not_called()
+
+
+# ── check_allowlist handler behavior ─────────────────────────────────────
+
+
+def _dev_settings(**overrides: Any) -> Settings:
+    """Dev settings short-circuit OIDC verification, so the handler runs."""
+    return Settings(
+        environment="development",
+        database_url="postgresql://x:x@localhost:5432/x",
+        restrict_signups=overrides.pop("restrict_signups", True),
+        multi_tenancy_enabled=overrides.pop("multi_tenancy_enabled", True),
+        **overrides,
+    )
+
+
+@pytest.fixture
+def patch_allowlist_repo() -> Any:
+    with patch("app.routes.ext_auth.get_allowlist_repository") as mock:
+        yield mock
+
+
+@pytest.fixture
+def patch_db_session() -> Any:
+    with patch("app.routes.ext_auth.get_db_session") as mock:
+        yield mock
+
+
+def test_check_allowlist_restrict_off_allows_all(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+) -> None:
+    patch_settings.return_value = _dev_settings(restrict_signups=False)
+    result = check_allowlist(
+        CheckAllowlistRequest(email="anyone@example.com"), _make_request()
+    )
+    assert result.allowed is True
+    patch_allowlist_repo.assert_not_called()
+
+
+def test_check_allowlist_explicit_hit_returns_true(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    patch_settings.return_value = _dev_settings()
+    repo = MagicMock()
+    repo.is_allowed.return_value = True
+    patch_allowlist_repo.return_value = repo
+
+    result = check_allowlist(
+        CheckAllowlistRequest(email="known@example.com"), _make_request()
+    )
+    assert result.allowed is True
+    # When explicit allowlist matches, we don't fall through to the
+    # tenant-mapping check.
+    patch_db_session.assert_not_called()
+
+
+def test_check_allowlist_tenant_mapping_acts_as_implicit_allowlist(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    """Provisioned tenants should pass even without an explicit allowlist row.
+
+    Self-serve signup populates EmailTenantMappingRow but not
+    platform.allowed_emails — without this fallback, restrict_signups=True
+    would lock out users immediately after provisioning their own tenant.
+    """
+    patch_settings.return_value = _dev_settings()
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+
+    session = MagicMock()
+    session.get.return_value = MagicMock()  # EmailTenantMappingRow exists
+    patch_db_session.return_value = session
+
+    result = check_allowlist(
+        CheckAllowlistRequest(email="NewUser@Example.com"), _make_request()
+    )
+    assert result.allowed is True
+    # Mapping lookups are lowercased to match storage.
+    args, _ = session.get.call_args
+    assert args[1] == "newuser@example.com"
+
+
+def test_check_allowlist_no_explicit_no_mapping_rejected(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    patch_settings.return_value = _dev_settings()
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+
+    session = MagicMock()
+    session.get.return_value = None
+    patch_db_session.return_value = session
+
+    result = check_allowlist(
+        CheckAllowlistRequest(email="stranger@example.com"), _make_request()
+    )
+    assert result.allowed is False
+
+
+def test_check_allowlist_skips_mapping_fallback_when_multi_tenancy_off(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    """In single-tenant deployments, EmailTenantMappingRow isn't meaningful;
+    don't bypass the explicit allowlist."""
+    patch_settings.return_value = _dev_settings(multi_tenancy_enabled=False)
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+
+    result = check_allowlist(
+        CheckAllowlistRequest(email="stranger@example.com"), _make_request()
+    )
+    assert result.allowed is False
+    patch_db_session.assert_not_called()
