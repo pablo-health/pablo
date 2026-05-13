@@ -397,6 +397,26 @@ class Settings(BaseSettings):
             "see docs/architecture/patient-context-chat-oss.md."
         ),
     )
+    # Default chat model — used by ``resolve_chat_model`` when no
+    # tier-aware overlay overrides the resolver. SaaS overlays may swap
+    # this per ``caller_feature_key`` (e.g. Pro for rx-justification).
+    ai_model: str = Field(
+        default="gemini-2.5-pro",
+        description=(
+            "Default Gemini model for OSS chat (and any other generation "
+            "surface that calls the default resolver). Per design doc "
+            "§11.7, Pro-tier work (SOAP, justifications) targets this; "
+            "Flash-tier chat falls through to ai_model_flash when set."
+        ),
+    )
+    ai_model_flash: str = Field(
+        default="gemini-2.5-flash-lite",
+        description=(
+            "Flash-tier model used by chat callers by default. Cheaper "
+            "than ``ai_model`` and sufficient for grounded chat. When "
+            "unset, chat callers fall through to ``ai_model``."
+        ),
+    )
 
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(
