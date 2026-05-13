@@ -17,6 +17,8 @@ import google.oauth2.id_token
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
+from ..db import get_db_session
+from ..db.platform_models import EmailTenantMappingRow
 from ..repositories import get_allowlist_repository, get_user_repository
 from ..settings import get_settings
 
@@ -147,7 +149,21 @@ def check_allowlist(
         return CheckAllowlistResponse(allowed=True)
 
     repo = get_allowlist_repository()
-    return CheckAllowlistResponse(allowed=repo.is_allowed(request.email))
+    if repo.is_allowed(request.email):
+        return CheckAllowlistResponse(allowed=True)
+
+    # A provisioned tenant is an implicit allowlist entry: if the marketing
+    # signup flow already created an EmailTenantMappingRow for this email,
+    # let Firebase create the account. Without this, self-serve signup
+    # cannot complete when restrict_signups is on, because provisioning
+    # populates the tenant mapping but not platform.allowed_emails.
+    if settings.multi_tenancy_enabled:
+        session = get_db_session()
+        mapping = session.get(EmailTenantMappingRow, request.email.lower())
+        if mapping is not None:
+            return CheckAllowlistResponse(allowed=True)
+
+    return CheckAllowlistResponse(allowed=False)
 
 
 @router.post("/check-status", response_model=CheckStatusResponse)
