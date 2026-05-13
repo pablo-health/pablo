@@ -19,6 +19,7 @@ import { QRCodeSVG } from "qrcode.react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { post } from "@/lib/api/client"
+import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
 export function MFAEnrollmentForm() {
@@ -244,8 +245,10 @@ export function MFAEnrollmentForm() {
                   })
                   setVerificationEmailSent(true)
                   setError("")
-                } catch {
-                  setError("Failed to send verification email. Please wait a minute and try again.")
+                } catch (err) {
+                  console.error("sendEmailVerification failed:", err)
+                  const outcome = firebaseAuthErrorOutcome(err, "verify-email")
+                  if (outcome.kind === "message") setError(outcome.message)
                 }
               }}
               disabled={verificationEmailSent}
