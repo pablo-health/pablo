@@ -6,13 +6,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from ...db.models import ChatConversationRow, ChatMessageRow
 from ...models import ChatConversation, ChatMessage
 from ..chat import ChatRepository
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.orm import Session
 
 
@@ -29,6 +31,22 @@ def _row_to_conversation(row: ChatConversationRow) -> ChatConversation:
         last_turn_at=row.last_turn_at,
         archived_at=row.archived_at,
     )
+
+
+def _message_to_row(message: ChatMessage, row: ChatMessageRow) -> None:
+    row.id = message.id
+    row.conversation_id = message.conversation_id
+    row.sequence = message.sequence
+    row.role = message.role
+    row.content = message.content
+    row.source_selection = message.source_selection
+    row.context_manifest = message.context_manifest
+    row.input_tokens = message.input_tokens
+    row.output_tokens = message.output_tokens
+    row.llm_model = message.llm_model
+    row.llm_finish_reason = message.llm_finish_reason
+    row.llm_error = message.llm_error
+    row.created_at = message.created_at
 
 
 def _row_to_message(row: ChatMessageRow) -> ChatMessage:
@@ -129,6 +147,47 @@ class PostgresChatRepository(ChatRepository):
         _conversation_to_row(conversation, row)
         self._session.flush()
         return conversation
+
+    def next_sequence(self, conversation_id: str) -> int:
+        # Lock the parent conversation row so concurrent message inserts
+        # against the same conversation serialize on the same lock — see
+        # design doc §14. The lock is released when the surrounding
+        # request transaction commits.
+        self._session.execute(
+            select(ChatConversationRow.id)
+            .where(ChatConversationRow.id == conversation_id)
+            .with_for_update()
+        ).scalar_one_or_none()
+        current_max = self._session.execute(
+            select(func.max(ChatMessageRow.sequence)).where(
+                ChatMessageRow.conversation_id == conversation_id
+            )
+        ).scalar_one_or_none()
+        return (current_max or 0) + 1
+
+    def add_message(self, message: ChatMessage) -> ChatMessage:
+        row = ChatMessageRow()
+        _message_to_row(message, row)
+        self._session.add(row)
+        self._session.flush()
+        return message
+
+    def update_message(self, message: ChatMessage) -> ChatMessage:
+        row = self._session.get(ChatMessageRow, message.id)
+        if row is None:
+            row = ChatMessageRow()
+            self._session.add(row)
+        _message_to_row(message, row)
+        self._session.flush()
+        return message
+
+    def touch_last_turn_at(self, conversation_id: str, last_turn_at: datetime) -> None:
+        row = self._session.get(ChatConversationRow, conversation_id)
+        if row is None:
+            return
+        if row.last_turn_at is None or row.last_turn_at < last_turn_at:
+            row.last_turn_at = last_turn_at
+            self._session.flush()
 
     def delete_conversation(self, conversation_id: str) -> int:
         # Count messages before delete so the caller can surface it
