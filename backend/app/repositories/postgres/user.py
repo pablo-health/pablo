@@ -75,6 +75,7 @@ def _row_to_user(row: PlatformUserRow) -> User:
         provider_type=row.provider_type,
         security_guide_acknowledged_at=row.security_guide_acknowledged_at,
         security_guide_version=row.security_guide_version,
+        onboarding_state=row.onboarding_state,
     )
 
 
@@ -97,3 +98,4 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.provider_type = user.provider_type
     row.security_guide_acknowledged_at = user.security_guide_acknowledged_at
     row.security_guide_version = user.security_guide_version
+    row.onboarding_state = user.onboarding_state

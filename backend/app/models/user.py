@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .validators import validate_iso_date
 
 ProviderType = Literal["therapist", "prescriber", "both"]
+OnboardingState = Literal["in_progress", "later", "completed"]
 
 
 class UpdateUserRequest(BaseModel):
@@ -22,6 +23,7 @@ class UpdateUserRequest(BaseModel):
     title: str | None = Field(None, max_length=50)
     credentials: str | None = Field(None, max_length=100)
     provider_type: ProviderType | None = None
+    onboarding_state: OnboardingState | None = None
     baa_accepted_at: datetime | None = None
 
     @classmethod
@@ -118,6 +120,7 @@ class User:
     provider_type: str | None = None
     security_guide_acknowledged_at: datetime | None = None
     security_guide_version: str | None = None
+    onboarding_state: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -176,6 +179,7 @@ class User:
             provider_type=data.get("provider_type"),
             security_guide_acknowledged_at=data.get("security_guide_acknowledged_at"),
             security_guide_version=data.get("security_guide_version"),
+            onboarding_state=data.get("onboarding_state"),
         )
 
     def to_dict(self) -> dict[str, Any]:
