@@ -22,6 +22,7 @@ from ..settings import get_settings
 from ..utcnow import utc_now
 from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
+from .iap import require_iap_assertion
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
@@ -186,7 +187,11 @@ def require_mfa(
         logger.debug("MFA check skipped (development mode)")
         return decoded_token
     if settings.auth_mode == "iap":
-        logger.debug("MFA check skipped (IAP mode — access control at load balancer)")
+        # IAP substitutes for app-level MFA only if the request actually
+        # came through IAP — verify the signed assertion header before
+        # trusting that claim. Otherwise a Firebase token sent directly
+        # to Cloud Run's *.run.app ingress would bypass both IAP and MFA.
+        require_iap_assertion(request)
         return decoded_token
 
     # E2E test accounts bypass MFA in non-production environments only

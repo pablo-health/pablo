@@ -3,6 +3,7 @@
 """Tests for Firebase authentication and Identity Platform multi-tenancy."""
 
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
@@ -101,7 +102,7 @@ class TestTokenCaching:
 
     def test_returns_none_when_no_cache(self) -> None:
         request = MagicMock()
-        request.state = MagicMock(spec=[])  # state exists but has no cache attrs
+        request.state = SimpleNamespace()  # state exists but has no cache attrs
         result = _get_cached_token(request, "any-jwt")
         assert result is None
 
@@ -336,6 +337,89 @@ class TestRequireMfa:
             result = require_mfa(MagicMock(), mock_credentials)
 
         assert result["uid"] == "user123"
+
+    @patch("app.auth.iap.verify_iap_jwt")
+    @patch("app.auth.service.verify_firebase_token")
+    def test_iap_mode_requires_assertion_header(
+        self, mock_verify: MagicMock, mock_verify_iap: MagicMock
+    ) -> None:
+        """In IAP mode, a request without the IAP-signed header is rejected.
+
+        Regression test for the IAP MFA bypass: previously, auth_mode=iap
+        short-circuited require_mfa unconditionally, so a Firebase token
+        sent directly to *.run.app would skip both IAP and MFA.
+        """
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "firebase-token"
+        mock_verify.return_value = {"uid": "user123", "firebase": {}}
+        request = MagicMock()
+        request.headers = {}  # No X-Goog-IAP-JWT-Assertion
+        request.state = SimpleNamespace()
+
+        with patch("app.auth.iap.get_settings") as mock_iap_settings, patch(
+            "app.auth.service.get_settings"
+        ) as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "iap"
+            mock_iap_settings.return_value.iap_audience = "/projects/123/x"
+            with pytest.raises(HTTPException) as exc_info:
+                require_mfa(request, mock_credentials)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail["error"]["code"] == "IAP_ASSERTION_MISSING"  # type: ignore[index]
+        mock_verify_iap.assert_not_called()
+
+    @patch("app.auth.iap.verify_iap_jwt")
+    @patch("app.auth.service.verify_firebase_token")
+    def test_iap_mode_rejects_invalid_assertion(
+        self, mock_verify: MagicMock, mock_verify_iap: MagicMock
+    ) -> None:
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "firebase-token"
+        mock_verify.return_value = {"uid": "user123", "firebase": {}}
+        mock_verify_iap.side_effect = ValueError("bad signature")
+        request = MagicMock()
+        request.headers = {"X-Goog-IAP-JWT-Assertion": "forged"}
+        request.state = SimpleNamespace()
+
+        with patch("app.auth.iap.get_settings") as mock_iap_settings, patch(
+            "app.auth.service.get_settings"
+        ) as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "iap"
+            mock_iap_settings.return_value.iap_audience = "/projects/123/x"
+            with pytest.raises(HTTPException) as exc_info:
+                require_mfa(request, mock_credentials)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail["error"]["code"] == "IAP_ASSERTION_INVALID"  # type: ignore[index]
+
+    @patch("app.auth.iap.verify_iap_jwt")
+    @patch("app.auth.service.verify_firebase_token")
+    def test_iap_mode_accepts_valid_assertion(
+        self, mock_verify: MagicMock, mock_verify_iap: MagicMock
+    ) -> None:
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "firebase-token"
+        mock_verify.return_value = {"uid": "user123", "firebase": {}}
+        mock_verify_iap.return_value = {"sub": "google-user", "email": "u@x.com"}
+        request = MagicMock()
+        request.headers = {"X-Goog-IAP-JWT-Assertion": "valid-iap-jwt"}
+        request.state = SimpleNamespace()
+
+        with patch("app.auth.iap.get_settings") as mock_iap_settings, patch(
+            "app.auth.service.get_settings"
+        ) as mock_settings:
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.auth_mode = "iap"
+            mock_iap_settings.return_value.iap_audience = "/projects/123/x"
+            result = require_mfa(request, mock_credentials)
+
+        assert result["uid"] == "user123"
+        mock_verify_iap.assert_called_once_with("valid-iap-jwt", "/projects/123/x")
 
 
 def _mock_request(tenant_id: str | None = None) -> MagicMock:

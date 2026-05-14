@@ -12,6 +12,7 @@ import {
   verifyPasswordResetCode,
 } from "firebase/auth"
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
+import { safeRedirectPath } from "@/lib/utils/safeRedirect"
 import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
@@ -183,7 +184,7 @@ function AuthActionContent() {
             {message}
           </AuthFeedback>
           <a
-            href={continueUrl || "/login"}
+            href={safeRedirectPath(continueUrl, "/login")}
             className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
           >
             Continue to Sign In

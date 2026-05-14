@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
 from ..auth.firebase_init import initialize_firebase_app
+from ..auth.iap import require_iap_assertion
 from ..rate_limit import require_rate_limit
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..settings import get_settings
@@ -92,14 +93,21 @@ def create_native_code(
         logger.debug("Firebase JWT verify error detail: %s", err)
         raise UnauthorizedError("Invalid or expired id_token.") from err
 
-    # Enforce MFA: reject tokens without a completed second factor
+    # Enforce MFA: reject tokens without a completed second factor.
+    # In IAP mode, the IAP-signed assertion stands in for the second
+    # factor, but only if the request actually came through IAP —
+    # verify the assertion header so direct *.run.app traffic can't
+    # bypass both IAP and MFA.
     settings = get_settings()
-    if settings.require_mfa and not settings.is_development and settings.auth_mode != "iap":
-        firebase_claims = decoded_token.get("firebase", {})
-        if not firebase_claims.get("sign_in_second_factor"):
-            raise ForbiddenError(
-                "Multi-factor authentication is required", code="MFA_REQUIRED"
-            )
+    if settings.require_mfa and not settings.is_development:
+        if settings.auth_mode == "iap":
+            require_iap_assertion(http_request)
+        else:
+            firebase_claims = decoded_token.get("firebase", {})
+            if not firebase_claims.get("sign_in_second_factor"):
+                raise ForbiddenError(
+                    "Multi-factor authentication is required", code="MFA_REQUIRED"
+                )
 
     code = create_auth_code(
         id_token=request.id_token,

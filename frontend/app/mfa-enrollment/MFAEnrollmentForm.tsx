@@ -20,6 +20,7 @@ import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { post } from "@/lib/api/client"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
+import { safeRedirectPath } from "@/lib/utils/safeRedirect"
 import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
 export function MFAEnrollmentForm() {
@@ -42,8 +43,7 @@ export function MFAEnrollmentForm() {
   const recordEnrollmentAndRedirect = async (currentUser: FirebaseUser) => {
     const token = await currentUser.getIdToken()
     await post("/api/users/me/mfa-enrolled", {}, token)
-    const destination = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/dashboard"
-    router.push(destination)
+    router.push(safeRedirectPath(returnTo, "/dashboard"))
   }
 
   // Try generating TOTP secret on mount (works if session is fresh enough)
