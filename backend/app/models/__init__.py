@@ -20,6 +20,8 @@ from .chat_api import (
     ChatConversationResponse,
     ChatMessageResponse,
     CreateChatConversationRequest,
+    PreviewChatContextRequest,
+    PreviewChatContextResponse,
     SendChatMessageRequest,
     UpdateChatConversationRequest,
 )
@@ -163,6 +165,8 @@ __all__ = [
     "PatientResponse",
     "PatientSummary",
     "PlanNote",
+    "PreviewChatContextRequest",
+    "PreviewChatContextResponse",
     "PreviousAction",
     "QuotaStatus",
     "ResourceType",

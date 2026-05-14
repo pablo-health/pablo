@@ -7,36 +7,27 @@
  * tells the user, in plain language, which chart artefacts the model
  * will read on the first turn.
  *
- * Composition rule (per design doc):
- *   "I'm reading {firstName}'s {comma-separated sources}. Ask me anything."
- *
- * Sources are filtered against the patient's notes list so a key that
- * resolves to ``row_count: 0`` (e.g. ``safety_plan_active`` for a
- * patient with no safety plan) is omitted — we never say "no safety
- * plan." That mirrors the manifest-preview semantics described in
- * §13.4 without requiring a separate backend preview endpoint.
+ * Reads truth from the backend: ``POST /api/chat/conversations/preview``
+ * runs the same context bundler the streaming turn would and returns a
+ * manifest with ``sources_included`` (per-source ``row_count`` +
+ * ``latest_at``). The card composes its sentence directly from that
+ * manifest — no FE-side replication of the bundler's note_type / date
+ * logic, so this can't drift when the backend registers new note types
+ * or reorders priorities.
  */
 
+import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 
 import { cn } from "@/lib/utils"
 import { usePatient } from "@/hooks/usePatients"
-import { usePatientNotes } from "@/hooks/useNotes"
-import type { SourceKey, SourceSelection } from "@/lib/chat/types"
-import type { Note } from "@/types/notes"
-
-// Map each note-backed source key to the ``note_type`` values that
-// represent it in ``backend/app/services/chat_context_bundler.py``.
-// Kept here (rather than imported) because the FE Note type intentionally
-// treats ``note_type`` as an open string and OSS doesn't ship a registry.
-const NOTE_TYPE_GROUPS: Partial<Record<SourceKey, readonly string[]>> = {
-  most_recent_intake: ["intake", "biopsychosocial"],
-  treatment_plan_active: ["treatment_plan"],
-  safety_plan_active: ["safety_plan", "stanley_brown"],
-  progress_notes_recent: ["soap", "narrative"],
-}
-
-const DEFAULT_PROGRESS_LIMIT = 3
+import { previewChatContext } from "@/lib/chat/api"
+import type {
+  ContextManifest,
+  ManifestIncludedEntry,
+  SourceKey,
+  SourceSelection,
+} from "@/lib/chat/types"
 
 function formatDate(iso: string | undefined | null): string | null {
   if (!iso) return null
@@ -45,92 +36,82 @@ function formatDate(iso: string | undefined | null): string | null {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric" })
 }
 
-function progressLimit(selection: SourceSelection): number {
+function progressLimit(selection: SourceSelection): number | null {
   const v = selection.progress_notes_recent
   if (v && typeof v === "object" && typeof v.limit === "number") {
     return v.limit
   }
-  return DEFAULT_PROGRESS_LIMIT
+  return null
 }
 
-function sortDescByCreatedAt(notes: Note[]): Note[] {
-  return [...notes].sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
-}
-
-function buildSourcePhrases(
+/**
+ * Map each source key to the lay-friendly phrase that goes into the
+ * briefing sentence. The first phrase in the rendered list gets its
+ * leading "the " stripped so the patient-possessive reads cleanly
+ * ("Maria's active treatment plan" vs the ungrammatical "Maria's the
+ * active treatment plan").
+ */
+function phraseForSource(
+  entry: ManifestIncludedEntry,
   selection: SourceSelection,
-  notes: Note[],
-): string[] {
-  // ``pasted_text`` is intentionally omitted — the briefing card
-  // describes what Pablo will pull from the chart. The user already
-  // knows what they pasted in.
-  const phrases: string[] = []
-
-  if (selection.most_recent_intake) {
-    const types = NOTE_TYPE_GROUPS.most_recent_intake!
-    const match = sortDescByCreatedAt(
-      notes.filter((n) => types.includes(n.note_type as string)),
-    )[0]
-    if (match) {
-      const date = formatDate(match.created_at)
-      phrases.push(
-        date
-          ? `the most recent intake from ${date}`
-          : "the most recent intake",
-      )
-    }
+): string | null {
+  if ((entry.row_count ?? 0) === 0 && entry.source_key !== "pasted_text") {
+    // Spec §13.4: omit empty sources — never say "no safety plan."
+    // ``pasted_text`` is the one exception: it never has a row_count
+    // but we still drop it from the briefing (user knows what they
+    // pasted in).
+    return null
   }
-
-  if (selection.treatment_plan_active) {
-    const types = NOTE_TYPE_GROUPS.treatment_plan_active!
-    const has = notes.some((n) => types.includes(n.note_type as string))
-    if (has) phrases.push("the active treatment plan")
-  }
-
-  if (selection.safety_plan_active) {
-    const types = NOTE_TYPE_GROUPS.safety_plan_active!
-    const has = notes.some((n) => types.includes(n.note_type as string))
-    if (has) phrases.push("the active safety plan")
-  }
-
-  if (selection.current_medications) {
-    phrases.push("the current medication list")
-  }
-
-  if (selection.progress_notes_recent) {
-    const types = NOTE_TYPE_GROUPS.progress_notes_recent!
-    const matches = sortDescByCreatedAt(
-      notes.filter((n) => types.includes(n.note_type as string)),
-    )
-    if (matches.length > 0) {
+  const lastDate = formatDate(entry.latest_at)
+  switch (entry.source_key) {
+    case "most_recent_intake":
+      return lastDate
+        ? `the most recent intake from ${lastDate}`
+        : "the most recent intake"
+    case "treatment_plan_active":
+      return "the active treatment plan"
+    case "safety_plan_active":
+      return "the active safety plan"
+    case "current_medications":
+      return "the current medication list"
+    case "progress_notes_recent": {
       const requested = progressLimit(selection)
-      const n = Math.min(requested, matches.length)
-      const lastDate = formatDate(matches[0].created_at)
+      const n =
+        requested !== null
+          ? Math.min(requested, entry.row_count ?? requested)
+          : (entry.row_count ?? 0)
+      if (n <= 0) return null
       const stem = `${n} most recent progress ${n === 1 ? "note" : "notes"}`
-      phrases.push(lastDate ? `${stem} (last from ${lastDate})` : stem)
+      return lastDate ? `${stem} (last from ${lastDate})` : stem
     }
+    case "progress_notes_explicit":
+      return "the session notes you pinned"
+    case "lab_values_recent":
+      return "recent lab values"
+    case "vitals_recent":
+      return "recent vitals"
+    case "pasted_text":
+      return null
   }
+}
 
-  if (selection.progress_notes_explicit) {
-    phrases.push("the session notes you pinned")
+function buildPhrases(
+  manifest: ContextManifest | undefined,
+  selection: SourceSelection,
+): string[] {
+  if (!manifest) return []
+  const phrases: string[] = []
+  for (const entry of manifest.sources_included) {
+    const phrase = phraseForSource(entry, selection)
+    if (phrase) phrases.push(phrase)
   }
-
-  if (selection.lab_values_recent) {
-    phrases.push("recent lab values")
-  }
-
-  if (selection.vitals_recent) {
-    phrases.push("recent vitals")
-  }
-
   return phrases
 }
 
 /**
- * Strip a leading "the " from the head phrase so the patient-possessive
- * reads cleanly ("Maria's active treatment plan" vs the ungrammatical
- * "Maria's the active treatment plan"). Subsequent phrases keep their
- * determiner — the possessive only applies to the head.
+ * Strip a leading "the " from the head phrase so the possessive reads
+ * cleanly. Subsequent phrases keep their determiner — the possessive
+ * only attaches to the first item in the list.
  */
 function dropLeadingThe(phrase: string): string {
   return phrase.replace(/^the\s+/i, "")
@@ -151,24 +132,40 @@ export interface BriefingCardProps {
   className?: string
 }
 
+const PREVIEW_STALE_MS = 60_000
+
 export function BriefingCard({
   patientId,
   selection,
   className,
 }: BriefingCardProps) {
   const patientQ = usePatient(patientId)
-  const notesQ = usePatientNotes(patientId)
+
+  // The selection dict is stable from the caller's POV but its JSON
+  // form keys the query so a chip-rail toggle re-fetches the preview.
+  const selectionKey = useMemo(() => JSON.stringify(selection), [selection])
+
+  const previewQ = useQuery({
+    queryKey: ["chat", "preview", patientId, selectionKey] as const,
+    queryFn: () =>
+      previewChatContext({
+        patient_id: patientId,
+        source_selection: selection,
+      }),
+    enabled: Boolean(patientId),
+    staleTime: PREVIEW_STALE_MS,
+  })
 
   const firstName = patientQ.data?.first_name?.trim() || "this patient"
-  const notesData = notesQ.data?.data
+  const manifest = previewQ.data?.manifest
 
   const sentence = useMemo(() => {
-    const parts = buildSourcePhrases(selection, notesData ?? [])
+    const parts = buildPhrases(manifest, selection)
     if (parts.length === 0) {
       return `I'm ready to chat about ${firstName}.`
     }
     return `I'm reading ${firstName}'s ${joinWithOxfordAnd(parts)}.`
-  }, [firstName, notesData, selection])
+  }, [firstName, manifest, selection])
 
   return (
     <div
@@ -193,3 +190,7 @@ export function BriefingCard({
     </div>
   )
 }
+
+// Exported for unit-testing the sentence builder in isolation. Not part
+// of the component's public surface.
+export const __test = { buildPhrases, joinWithOxfordAnd, dropLeadingThe }

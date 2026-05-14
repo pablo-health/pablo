@@ -8,13 +8,18 @@ delete). Streaming-message tests land with Phase 3.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from app.models import Patient
+from app.models import Note, Patient
 
 if TYPE_CHECKING:
-    from app.repositories import InMemoryChatRepository, InMemoryPatientRepository
+    from app.repositories import (
+        InMemoryChatRepository,
+        InMemoryNotesRepository,
+        InMemoryPatientRepository,
+    )
     from fastapi.testclient import TestClient
 
 _SYSTEM_PROMPT = "You are a clinical assistant for chart QA."
@@ -292,3 +297,179 @@ class TestDeleteConversation:
     def test_rejects_unknown_conversation(self, client: TestClient) -> None:
         response = client.delete("/api/chat/conversations/does-not-exist")
         assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /conversations/preview — context manifest preview (THERAPY-0s44)
+# ---------------------------------------------------------------------------
+
+
+def _seed_note(
+    notes_repo: InMemoryNotesRepository,
+    *,
+    patient_id: str,
+    note_type: str,
+    created_at: datetime,
+    note_id: str | None = None,
+) -> Note:
+    note = Note(
+        id=note_id or str(uuid.uuid4()),
+        patient_id=patient_id,
+        note_type=note_type,
+        created_at=created_at,
+        updated_at=created_at,
+        finalized_at=created_at,
+        content={"narrative": f"{note_type} body"},
+    )
+    notes_repo.add(note)
+    return note
+
+
+class TestPreviewContext:
+    def test_returns_manifest_for_authorized_patient(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        intake_at = datetime(2026, 3, 3, 10, 0, tzinfo=UTC)
+        soap_at = datetime(2026, 5, 9, 10, 0, tzinfo=UTC)
+        _seed_note(
+            mock_notes_repo,
+            patient_id=patient.id,
+            note_type="intake",
+            created_at=intake_at,
+        )
+        _seed_note(
+            mock_notes_repo,
+            patient_id=patient.id,
+            note_type="soap",
+            created_at=soap_at,
+        )
+
+        response = client.post(
+            "/api/chat/conversations/preview",
+            json={
+                "patient_id": patient.id,
+                "source_selection": {
+                    "most_recent_intake": True,
+                    "progress_notes_recent": {"limit": 3},
+                },
+            },
+        )
+        assert response.status_code == 200
+        manifest = response.json()["manifest"]
+        assert manifest["patient_id"] == patient.id
+
+        by_key = {s["source_key"]: s for s in manifest["sources_included"]}
+        assert "most_recent_intake" in by_key
+        assert by_key["most_recent_intake"]["row_count"] == 1
+        assert by_key["most_recent_intake"]["latest_at"].startswith("2026-03-03")
+        assert "progress_notes_recent" in by_key
+        assert by_key["progress_notes_recent"]["row_count"] == 1
+        assert by_key["progress_notes_recent"]["latest_at"].startswith("2026-05-09")
+
+    def test_uses_design_doc_default_when_selection_omitted(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        # No notes seeded — the default selection still resolves but
+        # most sources report row_count=0 / land in sources_dropped.
+        response = client.post(
+            "/api/chat/conversations/preview",
+            json={"patient_id": patient.id},
+        )
+        assert response.status_code == 200
+        manifest = response.json()["manifest"]
+        # Default selection touches multiple sources — confirm we got
+        # something back rather than asserting on the exact split,
+        # which can shift as registry coverage lands.
+        all_keys = {s["source_key"] for s in manifest["sources_included"]} | {
+            s["source_key"] for s in manifest["sources_dropped"]
+        }
+        assert "most_recent_intake" in all_keys
+        assert "progress_notes_recent" in all_keys
+
+    def test_returns_404_when_patient_belongs_to_other_user(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+    ) -> None:
+        _seed_patient(mock_repo, user_id="other-user", patient_id="patient-other")
+        response = client.post(
+            "/api/chat/conversations/preview",
+            json={"patient_id": "patient-other"},
+        )
+        assert response.status_code == 404
+
+    def test_returns_404_when_patient_missing(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/chat/conversations/preview",
+            json={"patient_id": "no-such-patient"},
+        )
+        assert response.status_code == 404
+
+    def test_rejects_invalid_selection(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        response = client.post(
+            "/api/chat/conversations/preview",
+            json={
+                "patient_id": patient.id,
+                # progress_notes_explicit requires {note_ids: [...]} — pass
+                # the bare boolean form to trigger InvalidSelectionError.
+                "source_selection": {"progress_notes_explicit": True},
+            },
+        )
+        assert response.status_code == 422
+        body = response.json()
+        assert body["detail"]["error"] == "invalid_selection"
+
+    def test_does_not_create_a_conversation(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_chat_repo: InMemoryChatRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        client.post(
+            "/api/chat/conversations/preview",
+            json={"patient_id": patient.id},
+        )
+        rows, total = mock_chat_repo.list_conversations(
+            patient_id=patient.id,
+            owner_user_id=mock_user_id,
+            caller_feature_key=None,
+            include_archived=True,
+            page=1,
+            page_size=50,
+        )
+        assert total == 0
+        assert rows == []
+
+    def test_path_is_resolved_before_conversation_id_catchall(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        # Regression: ``/conversations/{conversation_id}`` GET could
+        # swallow ``/conversations/preview`` if route order regresses.
+        # Confirm the POST route still resolves to the preview handler.
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        response = client.post(
+            "/api/chat/conversations/preview",
+            json={"patient_id": patient.id},
+        )
+        assert response.status_code == 200

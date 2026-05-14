@@ -295,6 +295,21 @@ def _format_note_section(note: Note, header: str) -> str:
     return f"### {header} — {when}\n{body.strip()}"
 
 
+def _latest_iso(notes: list[Note]) -> str | None:
+    """ISO timestamp of the most-recently-finalized note in ``notes``.
+
+    Used by the briefing-card preview so the UI can render an
+    accurate "last from <date>" without re-fetching the notes list
+    client-side. Falls back through finalized_at → updated_at →
+    created_at so any note that hasn't been finalized still surfaces
+    a sensible date.
+    """
+    if not notes:
+        return None
+    candidates = [(n.finalized_at or n.updated_at or n.created_at) for n in notes]
+    return max(candidates).isoformat()
+
+
 def _load_pasted_text(raw: Any) -> LoadedSource:
     if not isinstance(raw, dict) or "content" not in raw:
         raise InvalidSelectionError(
@@ -348,14 +363,18 @@ def _load_notes_source(
     rendered = [_format_note_section(n, header) for n in matched]
     rendered = [r for r in rendered if r]
     text = f"## {section_prefix}\n\n" + "\n\n".join(rendered) if rendered else ""
+    extra: dict[str, Any] = {
+        "note_ids": [n.id for n in matched],
+        "row_count_initial": len(matched),
+    }
+    latest_at = _latest_iso(matched)
+    if latest_at is not None:
+        extra["latest_at"] = latest_at
     return LoadedSource(
         key=key,
         priority=priority,
         rows=list(matched),
-        extra={
-            "note_ids": [n.id for n in matched],
-            "row_count_initial": len(matched),
-        },
+        extra=extra,
         text=text,
         tokens_est=estimate_tokens(text),
         truncatable=truncatable,
@@ -418,15 +437,19 @@ def _load_progress_notes_explicit(raw: Any, notes: list[Note]) -> LoadedSource:
     rendered = [_format_note_section(n, "Note") for n in ordered]
     rendered = [r for r in rendered if r]
     text = "## EXPLICITLY SELECTED NOTES\n\n" + "\n\n".join(rendered) if rendered else ""
+    extra: dict[str, Any] = {
+        "note_ids": [n.id for n in ordered],
+        "missing_note_ids": [nid for nid in note_ids if nid not in by_id],
+        "row_count_initial": len(ordered),
+    }
+    latest_at = _latest_iso(ordered)
+    if latest_at is not None:
+        extra["latest_at"] = latest_at
     return LoadedSource(
         key=SOURCE_KEY_PROGRESS_NOTES_EXPLICIT,
         priority=5,
         rows=list(ordered),
-        extra={
-            "note_ids": [n.id for n in ordered],
-            "missing_note_ids": [nid for nid in note_ids if nid not in by_id],
-            "row_count_initial": len(ordered),
-        },
+        extra=extra,
         text=text,
         tokens_est=estimate_tokens(text),
         truncatable=True,
@@ -681,10 +704,13 @@ def _build_manifest(
             "tokens_est": src.tokens_est,
             "row_count": len(src.rows) if src.is_present else 0,
         }
-        # Forensic extras (no PHI content — ids and counts only).
+        # Forensic extras (no PHI content — ids, counts, dates only).
         note_ids = src.extra.get("note_ids")
         if note_ids:
             entry["note_ids"] = list(note_ids)
+        latest_at = src.extra.get("latest_at")
+        if latest_at:
+            entry["latest_at"] = latest_at
         if src.key == SOURCE_KEY_PASTED_TEXT and src.is_present:
             entry["chars"] = src.extra.get("chars", 0)
         if src.extra.get("dropped_rows"):

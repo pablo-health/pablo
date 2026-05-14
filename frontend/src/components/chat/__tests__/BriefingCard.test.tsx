@@ -2,77 +2,96 @@
 
 /**
  * BriefingCard (§13.4) — sage-tinted Fraunces-italic empty state that
- * composes a lay-language sentence describing what Pablo will read.
+ * composes a lay-language sentence from the backend's manifest preview.
+ *
+ * The card is intentionally dumb about source semantics: everything it
+ * says comes from ``manifest.sources_included`` (key + row_count +
+ * latest_at). The FE never has to know which note_type backs a given
+ * source — that mapping lives once, in the bundler.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { BriefingCard } from "../BriefingCard"
-import type { SourceSelection } from "@/lib/chat/types"
-import type { Note } from "@/types/notes"
+import type {
+  ContextManifest,
+  ManifestIncludedEntry,
+  SourceSelection,
+} from "@/lib/chat/types"
 
 vi.mock("@/hooks/usePatients", () => ({
   usePatient: vi.fn(),
 }))
-vi.mock("@/hooks/useNotes", () => ({
-  usePatientNotes: vi.fn(),
+vi.mock("@/lib/chat/api", () => ({
+  previewChatContext: vi.fn(),
 }))
 
 import { usePatient } from "@/hooks/usePatients"
-import { usePatientNotes } from "@/hooks/useNotes"
+import { previewChatContext } from "@/lib/chat/api"
 
 const mockUsePatient = usePatient as unknown as ReturnType<typeof vi.fn>
-const mockUsePatientNotes = usePatientNotes as unknown as ReturnType<typeof vi.fn>
+const mockPreview = previewChatContext as unknown as ReturnType<typeof vi.fn>
 
-type NoteSeed = {
-  id: string
-  note_type: string
-  created_at: string
-}
-
-function note(seed: NoteSeed): Note {
-  // Cast through ``unknown`` because the FE Note type narrows note_type
-  // to OSS-known values ("soap" | "narrative"), but the bundler — and
-  // therefore the briefing card — operates on the broader open-string
-  // set ("intake", "treatment_plan", ...).
+function makeManifest(
+  sources: ManifestIncludedEntry[],
+): ContextManifest {
   return {
-    id: seed.id,
+    sources_included: sources,
+    sources_dropped: [],
+    total_tokens_est: 0,
+    token_budget: 600_000,
     patient_id: "patient-1",
-    session_id: null,
-    note_type: seed.note_type as unknown as Note["note_type"],
-    content: null,
-    content_edited: null,
-    finalized_at: null,
-    quality_rating: null,
-    quality_rating_reason: null,
-    quality_rating_sections: null,
-    export_status: "not_queued",
-    export_queued_at: null,
-    export_reviewed_at: null,
-    export_reviewed_by: null,
-    exported_at: null,
-    created_at: seed.created_at,
-    updated_at: seed.created_at,
+    assembled_at: "2026-05-14T00:00:00Z",
   }
 }
 
-function setHooks(firstName: string | null, notes: Note[]) {
-  mockUsePatient.mockReturnValue({
-    data: firstName ? { first_name: firstName } : undefined,
-    isLoading: !firstName,
+function wrap(children: React.ReactNode) {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
   })
-  mockUsePatientNotes.mockReturnValue({
-    data: { data: notes, total: notes.length },
-    isLoading: false,
-  })
+  return (
+    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+  )
 }
 
-const FULL_SELECTION: SourceSelection = {
-  most_recent_intake: true,
-  treatment_plan_active: true,
-  safety_plan_active: true,
-  progress_notes_recent: { limit: 5 },
+function renderCard(props: {
+  firstName?: string | null
+  selection?: SourceSelection
+  manifest?: ContextManifest
+}) {
+  mockUsePatient.mockReturnValue({
+    data: props.firstName ? { first_name: props.firstName } : undefined,
+    isLoading: !props.firstName,
+  })
+  mockPreview.mockResolvedValue({
+    manifest: props.manifest ?? makeManifest([]),
+  })
+  return render(
+    wrap(
+      <BriefingCard
+        patientId="patient-1"
+        selection={props.selection ?? {}}
+      />,
+    ),
+  )
+}
+
+/**
+ * Read the briefing sentence node, waiting for useQuery to resolve.
+ * Uses findByRole to dodge text-matcher races: the sentence's text
+ * can flip from "I'm ready…" (pre-data) to "I'm reading…" (post-data)
+ * on a single render flush.
+ */
+async function getBriefingSentence(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const node = document.querySelector(
+      "[data-slot='chat-briefing-sentence']",
+    )
+    expect(node).not.toBeNull()
+    return node as HTMLElement
+  })
 }
 
 beforeEach(() => {
@@ -80,44 +99,49 @@ beforeEach(() => {
 })
 
 describe("BriefingCard", () => {
-  it("composes the full pattern when intake, treatment plan, and progress notes are present", () => {
-    setHooks("Maria", [
-      note({
-        id: "intake-1",
-        note_type: "intake",
-        created_at: "2026-03-03T10:00:00Z",
-      }),
-      note({
-        id: "tp-1",
-        note_type: "treatment_plan",
-        created_at: "2026-04-01T10:00:00Z",
-      }),
-      note({
-        id: "sp-1",
-        note_type: "safety_plan",
-        created_at: "2026-04-15T10:00:00Z",
-      }),
-      note({
-        id: "soap-1",
-        note_type: "soap",
-        created_at: "2026-05-09T10:00:00Z",
-      }),
-      note({
-        id: "soap-2",
-        note_type: "soap",
-        created_at: "2026-05-02T10:00:00Z",
-      }),
-      note({
-        id: "soap-3",
-        note_type: "narrative",
-        created_at: "2026-04-25T10:00:00Z",
-      }),
-    ])
-
-    render(<BriefingCard patientId="patient-1" selection={FULL_SELECTION} />)
-    const sentence = screen.getByText(/^I'm reading Maria's/i)
-    // Head phrase keeps no leading "the" so the possessive reads
-    // cleanly ("Maria's most recent intake …").
+  it("composes the full pattern from the manifest's sources_included + latest_at", async () => {
+    renderCard({
+      firstName: "Maria",
+      selection: {
+        most_recent_intake: true,
+        treatment_plan_active: true,
+        safety_plan_active: true,
+        progress_notes_recent: { limit: 5 },
+      },
+      manifest: makeManifest([
+        {
+          source_key: "most_recent_intake",
+          tokens_est: 200,
+          row_count: 1,
+          latest_at: "2026-03-03T10:00:00Z",
+        },
+        {
+          source_key: "treatment_plan_active",
+          tokens_est: 100,
+          row_count: 1,
+          latest_at: "2026-04-01T10:00:00Z",
+        },
+        {
+          source_key: "safety_plan_active",
+          tokens_est: 100,
+          row_count: 1,
+          latest_at: "2026-04-15T10:00:00Z",
+        },
+        {
+          source_key: "progress_notes_recent",
+          tokens_est: 800,
+          row_count: 3,
+          latest_at: "2026-05-09T10:00:00Z",
+        },
+      ]),
+    })
+    await waitFor(() => {
+      expect(
+        document.querySelector("[data-slot='chat-briefing-sentence']")
+          ?.textContent,
+      ).toMatch(/^I'm reading Maria's/)
+    })
+    const sentence = await getBriefingSentence()
     expect(sentence.textContent).toMatch(
       /Maria's most recent intake from March 3/,
     )
@@ -126,118 +150,152 @@ describe("BriefingCard", () => {
     expect(sentence.textContent).toMatch(
       /3 most recent progress notes \(last from May 9\)/,
     )
-    // Oxford-and join
     expect(sentence.textContent).toMatch(/, and 3 most recent progress notes/)
   })
 
-  it("omits a source whose backing notes are missing (row_count 0)", () => {
-    // No safety_plan notes — should not be mentioned.
-    setHooks("Maria", [
-      note({
-        id: "intake-1",
-        note_type: "intake",
-        created_at: "2026-03-03T10:00:00Z",
-      }),
-      note({
-        id: "tp-1",
-        note_type: "treatment_plan",
-        created_at: "2026-04-01T10:00:00Z",
-      }),
-    ])
-
-    render(
-      <BriefingCard
-        patientId="patient-1"
-        selection={{
-          most_recent_intake: true,
-          treatment_plan_active: true,
-          safety_plan_active: true,
-        }}
-      />,
-    )
-    const sentence = screen.getByText(/^I'm reading Maria's/i)
-    expect(sentence.textContent).toMatch(
-      /Maria's most recent intake from March 3/,
-    )
+  it("omits sources the manifest reports with row_count: 0", async () => {
+    renderCard({
+      firstName: "Maria",
+      selection: {
+        most_recent_intake: true,
+        treatment_plan_active: true,
+        safety_plan_active: true,
+      },
+      manifest: makeManifest([
+        {
+          source_key: "most_recent_intake",
+          tokens_est: 200,
+          row_count: 1,
+          latest_at: "2026-03-03T10:00:00Z",
+        },
+        {
+          source_key: "treatment_plan_active",
+          tokens_est: 100,
+          row_count: 1,
+          latest_at: "2026-04-01T10:00:00Z",
+        },
+        {
+          source_key: "safety_plan_active",
+          tokens_est: 0,
+          row_count: 0,
+        },
+      ]),
+    })
+    await waitFor(() => {
+      const text = document.querySelector(
+        "[data-slot='chat-briefing-sentence']",
+      )?.textContent
+      expect(text).toMatch(/Maria's most recent intake from March 3/)
+    })
+    const sentence = await getBriefingSentence()
     expect(sentence.textContent).toMatch(/the active treatment plan/)
     expect(sentence.textContent).not.toMatch(/safety plan/i)
   })
 
-  it("clamps progress-notes count by available notes when fewer exist than the limit", () => {
-    setHooks("Sam", [
-      note({
-        id: "soap-1",
-        note_type: "soap",
-        created_at: "2026-05-09T10:00:00Z",
-      }),
-    ])
-    render(
-      <BriefingCard
-        patientId="patient-1"
-        selection={{ progress_notes_recent: { limit: 10 } }}
-      />,
-    )
-    // Singular "note" not plural — only 1 available
-    expect(
-      screen.getByText(/1 most recent progress note \(last from May 9\)/),
-    ).toBeInTheDocument()
+  it("clamps progress-notes count by the manifest's row_count when fewer exist than the limit", async () => {
+    renderCard({
+      firstName: "Sam",
+      selection: { progress_notes_recent: { limit: 10 } },
+      manifest: makeManifest([
+        {
+          source_key: "progress_notes_recent",
+          tokens_est: 300,
+          row_count: 1,
+          latest_at: "2026-05-09T10:00:00Z",
+        },
+      ]),
+    })
+    await waitFor(() => {
+      expect(
+        document.querySelector("[data-slot='chat-briefing-sentence']")
+          ?.textContent,
+      ).toMatch(/1 most recent progress note \(last from May 9\)/)
+    })
   })
 
-  it("falls back to a neutral invitation when no sources resolve to content", () => {
-    setHooks("Alex", [])
-    render(
-      <BriefingCard
-        patientId="patient-1"
-        selection={{ most_recent_intake: true }}
-      />,
-    )
-    expect(
-      screen.getByText(/I'm ready to chat about Alex\./i),
-    ).toBeInTheDocument()
+  it("falls back to a neutral invitation when no sources resolve to content", async () => {
+    renderCard({
+      firstName: "Alex",
+      selection: { most_recent_intake: true },
+      manifest: makeManifest([
+        { source_key: "most_recent_intake", tokens_est: 0, row_count: 0 },
+      ]),
+    })
+    await waitFor(() => {
+      expect(
+        document.querySelector("[data-slot='chat-briefing-sentence']")
+          ?.textContent,
+      ).toMatch(/I'm ready to chat about Alex\./)
+    })
   })
 
-  it("uses a generic stand-in when the patient's first name hasn't loaded yet", () => {
-    setHooks(null, [])
-    render(
-      <BriefingCard
-        patientId="patient-1"
-        selection={{ progress_notes_recent: true }}
-      />,
-    )
-    expect(
-      screen.getByText(/I'm ready to chat about this patient\./i),
-    ).toBeInTheDocument()
+  it("uses a generic stand-in when the patient's first name hasn't loaded yet", async () => {
+    renderCard({
+      firstName: null,
+      selection: {},
+      manifest: makeManifest([]),
+    })
+    await waitFor(() => {
+      expect(
+        document.querySelector("[data-slot='chat-briefing-sentence']")
+          ?.textContent,
+      ).toMatch(/I'm ready to chat about this patient\./)
+    })
   })
 
-  it("always renders the 'Ask me anything.' invitation line", () => {
-    setHooks("Maria", [])
-    render(
-      <BriefingCard patientId="patient-1" selection={{}} />,
-    )
+  it("always renders the 'Ask me anything.' invitation line", async () => {
+    renderCard({
+      firstName: "Maria",
+      selection: {},
+      manifest: makeManifest([]),
+    })
     expect(screen.getByText("Ask me anything.")).toBeInTheDocument()
   })
 
-  it("does not mention pasted_text — the user already knows what they pasted in", () => {
-    setHooks("Maria", [])
-    render(
-      <BriefingCard
-        patientId="patient-1"
-        selection={{ pasted_text: { content: "long paste" } }}
-      />,
-    )
-    // Falls through to the neutral invitation since no chart sources
-    // resolve to content for this minimal selection.
-    expect(
-      screen.getByText(/I'm ready to chat about Maria\./i),
-    ).toBeInTheDocument()
+  it("does not mention pasted_text — the user already knows what they pasted in", async () => {
+    renderCard({
+      firstName: "Maria",
+      selection: { pasted_text: { content: "long paste" } },
+      manifest: makeManifest([
+        {
+          source_key: "pasted_text",
+          tokens_est: 100,
+          chars: 42,
+        },
+      ]),
+    })
+    await waitFor(() => {
+      expect(
+        document.querySelector("[data-slot='chat-briefing-sentence']")
+          ?.textContent,
+      ).toMatch(/I'm ready to chat about Maria\./)
+    })
     expect(screen.queryByText(/pasted/i)).toBeNull()
   })
 
-  it("uses the sage-tinted card surface (data-slot hook + secondary palette)", () => {
-    setHooks("Maria", [])
-    const { container } = render(
-      <BriefingCard patientId="patient-1" selection={{}} />,
-    )
+  it("calls previewChatContext with the patient_id and selection passed in", async () => {
+    renderCard({
+      firstName: "Maria",
+      selection: { most_recent_intake: true, current_medications: true },
+      manifest: makeManifest([]),
+    })
+    await waitFor(() => {
+      expect(mockPreview).toHaveBeenCalledWith({
+        patient_id: "patient-1",
+        source_selection: {
+          most_recent_intake: true,
+          current_medications: true,
+        },
+      })
+    })
+  })
+
+  it("uses the sage-tinted card surface (data-slot hook + secondary palette)", async () => {
+    const { container } = renderCard({
+      firstName: "Maria",
+      selection: {},
+      manifest: makeManifest([]),
+    })
     const card = container.querySelector("[data-slot='chat-briefing-card']")
     expect(card).not.toBeNull()
     expect(card?.className).toMatch(/secondary-50/)

@@ -56,6 +56,13 @@ export interface ManifestIncludedEntry {
   tokens_est: number
   row_count?: number
   note_ids?: string[]
+  /**
+   * ISO-8601 timestamp of the most-recently-finalized note backing
+   * this source. Populated for note-backed sources only; absent on
+   * ``pasted_text``, ``current_medications`` (stub), and any source
+   * with ``row_count: 0``. Drives the §13.4 briefing-card dates.
+   */
+  latest_at?: string
   chars?: number
   rows_dropped?: number
   dropped_note_ids?: string[]
@@ -136,6 +143,21 @@ export interface SendChatMessageRequest {
   content: string
   source_selection?: SourceSelection
   model?: string
+}
+
+/**
+ * ``POST /api/chat/conversations/preview`` request. Runs the same
+ * context bundler the streaming turn would, against the proposed
+ * ``source_selection``, but without creating a conversation. Drives
+ * the §13.4 briefing card.
+ */
+export interface PreviewChatContextRequest {
+  patient_id: string
+  source_selection?: SourceSelection
+}
+
+export interface PreviewChatContextResponse {
+  manifest: ContextManifest
 }
 
 // ---------------------------------------------------------------------------
