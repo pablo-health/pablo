@@ -64,7 +64,7 @@ export default async function DashboardLayout({
       }
     } catch (error) {
       if (error && typeof error === "object" && "digest" in error) throw error
-      console.error("Failed to check user status — blocking access")
+      console.error("Failed to check user status — blocking access:", error)
       redirect("/login")
     }
 
@@ -79,7 +79,7 @@ export default async function DashboardLayout({
         }
       } catch (error) {
         if (error && typeof error === "object" && "digest" in error) throw error
-        console.error("Failed to check BAA status — blocking access")
+        console.error("Failed to check BAA status — blocking access:", error)
         redirect("/baa-acceptance")
       }
     }

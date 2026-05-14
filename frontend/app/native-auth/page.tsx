@@ -85,7 +85,10 @@ export default function NativeAuthPage() {
         })
 
         if (!res.ok) {
-          const data = await res.json().catch(() => null)
+          const data = await res.json().catch((err) => {
+            console.error("authorize response was not JSON:", err)
+            return null
+          })
           const errorCode = data?.detail?.error?.code ?? data?.error?.code
           if (res.status === 403 && errorCode === "MFA_REQUIRED") {
             const returnParams = new URLSearchParams({ redirect_uri: redirectUri! })
