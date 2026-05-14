@@ -30,6 +30,16 @@ vi.mock("@/lib/chat/sse", () => ({
   streamChatMessages: vi.fn(),
 }))
 
+// BriefingCard (mounted in the empty state) fetches patient + notes via
+// react-query hooks. Mock them to return idle results so the panel test
+// doesn't need a QueryClientProvider or Firebase auth context.
+vi.mock("@/hooks/usePatients", () => ({
+  usePatient: () => ({ data: { first_name: "Maria" }, isLoading: false }),
+}))
+vi.mock("@/hooks/useNotes", () => ({
+  usePatientNotes: () => ({ data: { data: [], total: 0 }, isLoading: false }),
+}))
+
 import {
   createConversation,
   getConversation,
