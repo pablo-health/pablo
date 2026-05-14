@@ -146,8 +146,19 @@ def mock_notes_repo() -> InMemoryNotesRepository:
 
 @pytest.fixture
 def mock_chat_repo() -> InMemoryChatRepository:
-    """Create a fresh in-memory chat repository for each test (THERAPY-bhv)."""
-    return InMemoryChatRepository()
+    """Create a fresh in-memory chat repository for each test (THERAPY-bhv).
+
+    Pre-grants universal access so existing chat tests that pre-date
+    the patient_clinicians model keep working unchanged. Tests that
+    specifically exercise access control should use a fresh
+    ``InMemoryChatRepository()`` constructed inline (or
+    :meth:`InMemoryChatRepository.grant_access` with specific
+    ``(patient_id, user_id)`` pairs) — the IDOR regression tests in
+    ``test_routes_chat.py`` do this.
+    """
+    repo = InMemoryChatRepository()
+    repo.grant_all_access()
+    return repo
 
 
 @pytest.fixture

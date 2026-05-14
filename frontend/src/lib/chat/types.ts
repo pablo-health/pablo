@@ -101,6 +101,11 @@ export interface ChatMessage {
 export interface ChatConversation {
   id: string
   patient_id: string
+  // Actor data: the clinician who started this chat. Useful for an
+  // attribution chip ("Started by Dr. X") but never for access
+  // gating — the backend authorizes via has_patient_access on
+  // patient_id, so any UI that conditions on owner_user_id would be
+  // wrong (and would show stale state across patient transfer).
   owner_user_id: string
   title: string
   caller_feature_key: string

@@ -75,12 +75,21 @@ class TurnContext:
     """Static per-turn inputs the service needs.
 
     Passed by the route after authorization. The service trusts the
-    route to have run the patient ACL + owner check.
+    route to have verified that ``requesting_user_id`` has a
+    :func:`has_patient_access` grant on ``patient_id``.
+
+    ``requesting_user_id`` is the clinician issuing *this* turn — not
+    necessarily the conversation's ``owner_user_id``. After PR's
+    patient-access swap, a co-treating or successor clinician can
+    resume a chat originally started by someone else; the context
+    bundle, quota check, and metering all key off the resumer's
+    identity so PHI travels with the patient, not the conversation
+    owner.
     """
 
     conversation_id: str
     patient_id: str
-    owner_user_id: str
+    requesting_user_id: str
     caller_system_prompt: str
     caller_feature_key: str
     user_message: str
@@ -203,7 +212,7 @@ class ChatTurnService:
         quota_status: QuotaStatus = QuotaStatus.OK
         if self._usage_meter is not None:
             quota_status = self._usage_meter.check_quota(
-                user_id=context.owner_user_id,
+                user_id=context.requesting_user_id,
                 feature_key=context.caller_feature_key,
             )
             if quota_status == QuotaStatus.HARD_BLOCK:
@@ -221,7 +230,7 @@ class ChatTurnService:
             bundle: ContextBundle = assemble_context_bundle(
                 notes_repo=self._notes_repo,
                 patient_id=context.patient_id,
-                user_id=context.owner_user_id,
+                user_id=context.requesting_user_id,
                 selection=selection,
             )
         except ContextOverflowError as exc:
@@ -275,6 +284,7 @@ class ChatTurnService:
         )
         prior_turns = self._load_prior_turns(
             context.conversation_id,
+            user_id=context.requesting_user_id,
             exclude_message_ids={user_message.id, assistant_message.id},
         )
         input_tokens_estimate = _estimate_input_tokens(
@@ -382,7 +392,7 @@ class ChatTurnService:
         # effort and must not affect the client-visible stream.
         if self._usage_meter is not None:
             self._usage_meter.record_turn(
-                user_id=context.owner_user_id,
+                user_id=context.requesting_user_id,
                 feature_key=context.caller_feature_key,
                 model=context.model,
                 input_tokens=assistant_message.input_tokens or 0,
@@ -402,9 +412,13 @@ class ChatTurnService:
     # ------------------------------------------------------------------
 
     def _load_prior_turns(
-        self, conversation_id: str, *, exclude_message_ids: set[str]
+        self,
+        conversation_id: str,
+        *,
+        user_id: str,
+        exclude_message_ids: set[str],
     ) -> list[UserAssistantTurn]:
-        messages = self._chat_repo.list_messages(conversation_id)
+        messages = self._chat_repo.list_messages(conversation_id, user_id)
         prior: list[UserAssistantTurn] = []
         for msg in messages:
             if msg.id in exclude_message_ids:

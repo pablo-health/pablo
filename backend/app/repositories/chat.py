@@ -2,15 +2,37 @@
 
 """Chat conversation + message repository contracts.
 
-Phase 1 (THERAPY-tdh) only exercises the conversation envelope and a
-message-listing read path. Append/update operations on messages arrive
-with the streaming turn service in Phase 3.
+Access is gated by ``has_patient_access(patient_id, user_id)`` — the
+same grant table (``patient_clinicians``) that scopes patients, notes,
+sessions, and appointments. ``ChatConversation.owner_user_id`` is
+retained on the row as actor data ("who started this chat"); it is not
+the access proxy. The semantic mirrors ``therapy_sessions.user_id``
+after PR #170.
+
+Two clinical invariants this enforces:
+
+  1. **Continuity across transfer / coverage.** A covering or
+     successor clinician inherits the chat history their predecessor
+     accumulated about the shared patient — no "start from scratch"
+     gap.
+
+  2. **§ 164.312(a)(1) minimum-necessary.** When a clinician loses
+     the treatment relationship, they simultaneously lose access to
+     chats referencing the patient's PHI.
+
+Reads return ``None`` / empty list when the caller has no grant —
+matches the empty-result shape for "doesn't exist" so callers can't
+distinguish absent from forbidden via timing or status code (no
+existence oracle). Writes raise :class:`PatientAccessDeniedError`
+because silently no-op'ing a write would mask broken code.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
+
+from .note import PatientAccessDeniedError
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -19,40 +41,78 @@ if TYPE_CHECKING:
 
 
 class ChatRepository(ABC):
-    """Abstract base class for chat data access."""
+    """Abstract base class for chat data access.
+
+    Every method that touches a conversation takes the requesting
+    user's id so the repository can resolve access through
+    :func:`has_patient_access` (Postgres) or the equivalent
+    ``(patient_id, user_id)`` access set (in-memory). The
+    ``owner_user_id`` on the conversation row is *not* consulted for
+    authorization — it is preserved purely as audit / display data.
+    """
 
     @abstractmethod
-    def get_conversation(self, conversation_id: str) -> ChatConversation | None:
-        """Fetch a conversation by id, or None if it doesn't exist."""
+    def get_conversation(
+        self, conversation_id: str, user_id: str
+    ) -> ChatConversation | None:
+        """Fetch a conversation if accessible, else ``None``.
+
+        Returns ``None`` indistinguishably for "doesn't exist" and
+        "user has no grant on the conversation's patient" — the
+        existence-oracle guard. Mirrors
+        :class:`NotesRepository.get` from PR #170.
+        """
 
     @abstractmethod
     def list_conversations(  # noqa: PLR0913 — keyword-only filter + pagination
         self,
         *,
         patient_id: str,
-        owner_user_id: str,
+        user_id: str,
         caller_feature_key: str | None = None,
         include_archived: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[ChatConversation], int]:
-        """List conversations matching the filters. Returns (rows, total)."""
+        """List conversations for a patient. Returns ``([], 0)`` when access denied."""
 
     @abstractmethod
-    def list_messages(self, conversation_id: str) -> list[ChatMessage]:
-        """Return all messages for a conversation in ``sequence`` order."""
+    def list_messages(
+        self, conversation_id: str, user_id: str
+    ) -> list[ChatMessage]:
+        """Return all messages for an accessible conversation.
+
+        ``[]`` if the conversation does not exist or the caller has no
+        grant on its patient — matches the read contract on
+        :meth:`get_conversation`.
+        """
 
     @abstractmethod
-    def add_conversation(self, conversation: ChatConversation) -> ChatConversation:
-        """Insert a new conversation row."""
+    def add_conversation(
+        self, conversation: ChatConversation, user_id: str
+    ) -> ChatConversation:
+        """Insert a new conversation row.
+
+        Raises :class:`PatientAccessDeniedError` if ``user_id`` has no
+        grant on ``conversation.patient_id`` — defense-in-depth; the
+        route layer's :func:`patient_repo.get` check is the primary
+        gate.
+        """
 
     @abstractmethod
-    def update_conversation(self, conversation: ChatConversation) -> ChatConversation:
-        """Persist mutable fields on an existing conversation."""
+    def update_conversation(
+        self, conversation: ChatConversation, user_id: str
+    ) -> ChatConversation:
+        """Persist mutable fields. Raises :class:`PatientAccessDeniedError` if blocked."""
 
     @abstractmethod
-    def delete_conversation(self, conversation_id: str) -> int:
-        """Hard-delete a conversation and its messages. Returns deleted message count."""
+    def delete_conversation(self, conversation_id: str, user_id: str) -> int:
+        """Hard-delete a conversation and its messages.
+
+        Returns the message count on success, ``0`` if the conversation
+        is missing or the caller has no grant — matches the soft-fail
+        contract on :meth:`NotesRepository.delete`.
+        """
 
     @abstractmethod
     def next_sequence(self, conversation_id: str) -> int:
@@ -62,13 +122,22 @@ class ChatRepository(ABC):
         Postgres implementation issues a row-locking SELECT against the
         parent conversation so concurrent ``add_message`` calls are
         serialized per conversation (design doc §14).
+
+        No ``user_id`` argument — this is an internal helper called by
+        the turn service *after* the route layer has already
+        authorized. Threading an access check here would force a
+        redundant lookup on every message and would still depend on
+        the calling service to have done the real check first.
         """
 
     @abstractmethod
     def add_message(self, message: ChatMessage) -> ChatMessage:
-        """Append a new chat message row. Called once per user turn and
-        once per assistant turn (the latter is later updated in place
-        with streaming output and token counts)."""
+        """Append a new chat message row.
+
+        See :meth:`next_sequence` for the rationale on not taking a
+        ``user_id`` — the caller (turn service) has already authorized
+        against the parent conversation.
+        """
 
     @abstractmethod
     def update_message(self, message: ChatMessage) -> ChatMessage:
@@ -89,34 +158,83 @@ class ChatRepository(ABC):
         """
 
 
+_TEST_DEFAULT_USER = "__inmemory_test_default__"
+
+
 class InMemoryChatRepository(ChatRepository):
-    """In-memory ChatRepository for unit tests."""
+    """In-memory ChatRepository for unit tests.
+
+    Maintains a ``(patient_id, user_id)`` access set populated via
+    :meth:`grant_access`. Tests that don't care about access control
+    can call :meth:`grant_all_access` (which the shared
+    ``mock_chat_repo`` fixture in ``conftest.py`` does *not* enable by
+    default — chat tests are explicit because the cross-clinician
+    invariants are the whole point of this repo).
+
+    The ``user_id`` parameter defaults to a sentinel on every method
+    purely as a test ergonomic; production code paths thread
+    ``user_id`` explicitly. The :class:`PostgresChatRepository`
+    intentionally does *not* default, so prod can't accidentally drop
+    the argument.
+    """
 
     def __init__(self) -> None:
-        # String values avoid the runtime import the type hints would
-        # require — TYPE_CHECKING above keeps the names available for
-        # static analysis without re-introducing the import at runtime.
         self._conversations: dict[str, ChatConversation] = {}
         self._messages: dict[str, list[ChatMessage]] = {}
+        self._access: set[tuple[str, str]] = set()  # (patient_id, user_id)
+        self._allow_all = False
 
-    def get_conversation(self, conversation_id: str) -> ChatConversation | None:
-        return self._conversations.get(conversation_id)
+    # --- test setup helpers (mirror has_patient_access semantics) ---
+
+    def grant_access(self, patient_id: str, user_id: str) -> None:
+        """Record that ``user_id`` may read/write ``patient_id``'s chats."""
+        self._access.add((patient_id, user_id))
+
+    def revoke_access(self, patient_id: str, user_id: str) -> None:
+        """Drop a previously granted ``(patient_id, user_id)`` pair.
+
+        Used by the post-transfer regression test to simulate a patient
+        being moved from one clinician to another — drop A's row from
+        ``patient_clinicians`` (this), insert B's (:meth:`grant_access`),
+        then assert that A's reads return None and B's succeed.
+        """
+        self._access.discard((patient_id, user_id))
+
+    def grant_all_access(self) -> None:
+        """Open the gate — only for legacy tests that pre-date the access model."""
+        self._allow_all = True
+
+    def _can_access(self, patient_id: str, user_id: str) -> bool:
+        return self._allow_all or (patient_id, user_id) in self._access
+
+    # --- reads ---
+
+    def get_conversation(
+        self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER
+    ) -> ChatConversation | None:
+        conv = self._conversations.get(conversation_id)
+        if conv is None:
+            return None
+        if not self._can_access(conv.patient_id, user_id):
+            return None
+        return conv
 
     def list_conversations(  # noqa: PLR0913 — keyword-only filter + pagination
         self,
         *,
         patient_id: str,
-        owner_user_id: str,
+        user_id: str = _TEST_DEFAULT_USER,
         caller_feature_key: str | None = None,
         include_archived: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[ChatConversation], int]:
+        if not self._can_access(patient_id, user_id):
+            return [], 0
         rows = [
             c
             for c in self._conversations.values()
             if c.patient_id == patient_id
-            and c.owner_user_id == owner_user_id
             and (caller_feature_key is None or c.caller_feature_key == caller_feature_key)
             and (include_archived or c.archived_at is None)
         ]
@@ -128,24 +246,46 @@ class InMemoryChatRepository(ChatRepository):
         start = (page - 1) * page_size
         return rows[start : start + page_size], total
 
-    def list_messages(self, conversation_id: str) -> list[ChatMessage]:
+    def list_messages(
+        self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER
+    ) -> list[ChatMessage]:
+        conv = self._conversations.get(conversation_id)
+        if conv is None or not self._can_access(conv.patient_id, user_id):
+            return []
         msgs = list(self._messages.get(conversation_id, []))
         msgs.sort(key=lambda m: m.sequence)
         return msgs
 
-    def add_conversation(self, conversation: ChatConversation) -> ChatConversation:
+    # --- writes ---
+
+    def add_conversation(
+        self, conversation: ChatConversation, user_id: str = _TEST_DEFAULT_USER
+    ) -> ChatConversation:
+        if not self._can_access(conversation.patient_id, user_id):
+            raise PatientAccessDeniedError(conversation.patient_id, user_id)
         self._conversations[conversation.id] = conversation
         self._messages.setdefault(conversation.id, [])
         return conversation
 
-    def update_conversation(self, conversation: ChatConversation) -> ChatConversation:
+    def update_conversation(
+        self, conversation: ChatConversation, user_id: str = _TEST_DEFAULT_USER
+    ) -> ChatConversation:
+        if not self._can_access(conversation.patient_id, user_id):
+            raise PatientAccessDeniedError(conversation.patient_id, user_id)
         self._conversations[conversation.id] = conversation
         return conversation
 
-    def delete_conversation(self, conversation_id: str) -> int:
+    def delete_conversation(
+        self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER
+    ) -> int:
+        conv = self._conversations.get(conversation_id)
+        if conv is None or not self._can_access(conv.patient_id, user_id):
+            return 0
         msgs = self._messages.pop(conversation_id, [])
         self._conversations.pop(conversation_id, None)
         return len(msgs)
+
+    # --- message-level helpers (caller-authorized; see ChatRepository) ---
 
     def next_sequence(self, conversation_id: str) -> int:
         msgs = self._messages.get(conversation_id, [])
