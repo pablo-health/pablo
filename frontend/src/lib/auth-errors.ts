@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-export type AuthErrorVariant = "sign-in" | "sign-up" | "google" | "mfa"
+export type AuthErrorVariant = "sign-in" | "sign-up" | "google" | "mfa" | "verify-email"
 
 /**
  * Sentinel values for outcomes that aren't simple error strings.
@@ -58,6 +58,25 @@ export function firebaseAuthErrorOutcome(err: unknown, variant: AuthErrorVariant
       return { kind: "message", message: "Invalid verification code. Please try again." }
     }
     return { kind: "message", message: "MFA verification failed. Please try again." }
+  }
+
+  if (variant === "verify-email") {
+    if (code === "auth/too-many-requests") {
+      return {
+        kind: "message",
+        message: "Too many verification attempts. Please wait a few minutes and try again.",
+      }
+    }
+    if (code === "auth/network-request-failed") {
+      return {
+        kind: "message",
+        message: "Network error. Please check your connection and try again.",
+      }
+    }
+    return {
+      kind: "message",
+      message: `Failed to send verification email (${code || "unknown"}). Please wait a minute and try again.`,
+    }
   }
 
   if (
