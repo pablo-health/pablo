@@ -459,7 +459,7 @@ class TestPreviewContext:
         )
         rows, total = mock_chat_repo.list_conversations(
             patient_id=patient.id,
-            owner_user_id=mock_user_id,
+            user_id=mock_user_id,
             caller_feature_key=None,
             include_archived=True,
             page=1,
