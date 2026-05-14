@@ -23,6 +23,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Uuid,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -59,7 +60,7 @@ class PatientRow(Base):
 
     __tablename__ = "patients"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     first_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name_lower: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
@@ -93,9 +94,9 @@ class PatientRow(Base):
 class TherapySessionRow(Base):
     __tablename__ = "therapy_sessions"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     session_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -141,9 +142,9 @@ class NoteRow(Base):
 
     __tablename__ = "notes"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    session_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
     note_type: Mapped[str] = mapped_column(
         String(30), nullable=False, server_default="soap", default="soap"
     )
@@ -203,7 +204,7 @@ class PatientClinicianRow(Base):
     __tablename__ = "patient_clinicians"
 
     patient_id: Mapped[str] = mapped_column(
-        String(128),
+        Uuid(as_uuid=False),
         ForeignKey("patients.id", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -271,9 +272,9 @@ class EhrRouteRow(Base):
 class AppointmentRow(Base):
     __tablename__ = "appointments"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -285,7 +286,9 @@ class AppointmentRow(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     # Recurrence
     recurrence_rule: Mapped[str | None] = mapped_column(String(50))
-    recurring_appointment_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    recurring_appointment_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), index=True
+    )
     recurrence_index: Mapped[int | None] = mapped_column(Integer)
     is_exception: Mapped[bool] = mapped_column(Boolean, default=False)
     # Google Calendar sync
@@ -298,7 +301,7 @@ class AppointmentRow(Base):
     ical_sync_status: Mapped[str | None] = mapped_column(String(20))
     ehr_appointment_url: Mapped[str | None] = mapped_column(Text)
     # Clinical link
-    session_id: Mapped[str | None] = mapped_column(String(128))
+    session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     # Reminders
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -309,7 +312,7 @@ class AppointmentRow(Base):
 class AvailabilityRuleRow(Base):
     __tablename__ = "availability_rules"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
     enforcement: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -338,7 +341,7 @@ class ICalClientMappingRow(Base):
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
     client_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
-    patient_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -367,7 +370,7 @@ class ComplianceItemRow(Base):
 
     __tablename__ = "compliance_items"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     item_type: Mapped[str] = mapped_column(String(50), nullable=False)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -394,9 +397,9 @@ class ComplianceDocumentRow(Base):
 
     __tablename__ = "compliance_documents"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     compliance_item_id: Mapped[str | None] = mapped_column(
-        String(128),
+        Uuid(as_uuid=False),
         ForeignKey("compliance_items.id", ondelete="CASCADE"),
         nullable=True,
         index=True,
@@ -427,8 +430,8 @@ class ChatConversationRow(Base):
 
     __tablename__ = "chat_conversations"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    patient_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     caller_system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
@@ -463,9 +466,9 @@ class ChatMessageRow(Base):
 
     __tablename__ = "chat_messages"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     conversation_id: Mapped[str] = mapped_column(
-        String(128),
+        Uuid(as_uuid=False),
         ForeignKey("chat_conversations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -530,15 +533,17 @@ class AuditLogRow(Base):
 
     __tablename__ = "audit_logs"
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    # resource_id is polymorphic (patient_id | session_id | user_id | …) —
+    # stays String since it holds Firebase uids for user-resource actions.
     resource_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    patient_id: Mapped[str | None] = mapped_column(String(128), index=True)
-    session_id: Mapped[str | None] = mapped_column(String(128))
+    patient_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(Text)
     changes: Mapped[dict | None] = mapped_column(JSONB)
