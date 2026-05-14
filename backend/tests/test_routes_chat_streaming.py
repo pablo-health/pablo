@@ -190,9 +190,22 @@ class TestSendMessage:
         mock_repo: InMemoryPatientRepository,
         mock_user_id: str,
     ) -> None:
-        # Conversation belongs to current user; we'll try to send a
-        # message as a different user via dep override.
+        # A different clinician (one without a patient_clinicians grant
+        # on the conversation's patient) must get 404 — not 403, not
+        # 200. We swap in a fresh chat repo whose access set is keyed
+        # to a single (patient, user) pair so the foreign override
+        # below has no grant.
+        from app.repositories import InMemoryChatRepository  # noqa: PLC0415 — local
+        from app.routes.chat import (  # noqa: PLC0415
+            get_chat_repository_dep,
+        )
+
+        chat_repo_explicit = InMemoryChatRepository()
+        app.dependency_overrides[get_chat_repository_dep] = lambda: chat_repo_explicit
+
         patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        # Owner grant for the chat creation call below.
+        chat_repo_explicit.grant_access(patient.id, mock_user_id)
         conversation_id = _create_conversation(client, patient.id)
 
         other_user = User(
@@ -213,12 +226,15 @@ class TestSendMessage:
         gateway = FakeChatLLMGateway(script=[StreamEvent(finish_reason="stop", output_tokens=0)])
         _install_gateway(client, gateway)
 
-        response = client.post(
-            f"/api/chat/conversations/{conversation_id}/messages",
-            json={"content": "ping"},
-        )
-        assert response.status_code == 404
-        assert gateway.calls == []
+        try:
+            response = client.post(
+                f"/api/chat/conversations/{conversation_id}/messages",
+                json={"content": "ping"},
+            )
+            assert response.status_code == 404
+            assert gateway.calls == []
+        finally:
+            app.dependency_overrides.pop(get_chat_repository_dep, None)
 
     def test_quota_exceeded_emits_error_event(
         self,

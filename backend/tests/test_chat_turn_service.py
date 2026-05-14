@@ -56,7 +56,7 @@ def _make_context(*, message: str = "What have we tried for sleep?") -> TurnCont
     return TurnContext(
         conversation_id=CONVERSATION_ID,
         patient_id=PATIENT_ID,
-        owner_user_id=OWNER_USER_ID,
+        requesting_user_id=OWNER_USER_ID,
         caller_system_prompt="You are a clinical assistant.",
         caller_feature_key="chart_qa",
         user_message=message,
@@ -67,14 +67,21 @@ def _make_context(*, message: str = "What have we tried for sleep?") -> TurnCont
 
 @pytest.fixture
 def chat_repo() -> InMemoryChatRepository:
+    # Grant universal access — the turn-service tests focus on the
+    # streaming workflow, not the cross-clinician access boundary. The
+    # IDOR tests in test_routes_chat.py exercise the boundary
+    # explicitly.
     repo = InMemoryChatRepository()
-    repo.add_conversation(_make_conversation())
+    repo.grant_all_access()
+    repo.add_conversation(_make_conversation(), OWNER_USER_ID)
     return repo
 
 
 @pytest.fixture
 def notes_repo() -> InMemoryNotesRepository:
-    return InMemoryNotesRepository()
+    repo = InMemoryNotesRepository()
+    repo.grant_all_access()
+    return repo
 
 
 @pytest.fixture(autouse=True)

@@ -1,21 +1,27 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Patient-context chat routes (THERAPY-tdh, Phase 1 of THERAPY-bhv).
+"""Patient-context chat routes.
 
-Phase 1 covers the conversation-lifecycle surface only:
-``POST/GET/PATCH/DELETE /api/chat/conversations`` plus
-``GET /api/chat/conversations`` for listing. The streaming-message
-endpoint (``POST .../messages``) arrives in Phase 3.
+Covers the conversation-lifecycle surface
+(``POST/GET/PATCH/DELETE /api/chat/conversations`` + ``GET ...`` list)
+and the streaming-message endpoint (``POST .../messages``).
 
 The whole router is gated by ``settings.enable_patient_chat``. When the
 flag is off, the router is not mounted at all (see ``app.main``) and
 every chat URL falls through to the global 404 handler.
 
-Authorization model (design doc §9): a user can act on a conversation
-iff they (a) have chart access to the conversation's patient via the
-existing ``PatientRepository.get(patient_id, user_id)`` ACL, and (b)
-are the conversation's ``owner_user_id``. Supervisor access is
-deferred to a follow-up (design doc §18 open decision).
+Authorization model: a user can act on a conversation iff they have a
+grant on the conversation's patient via the ``patient_clinicians``
+access table (the ``has_patient_access`` SQL function). This is the
+same patient-scoped model that gates notes, sessions, and appointments
+after PR #170. ``owner_user_id`` on the conversation row is preserved
+as actor data ("who started this chat") but is *not* the access proxy
+— co-treating, covering, and successor clinicians inherit chat
+continuity for any patient they have a grant on.
+
+Denied reads return 404 (not 403) to avoid leaking conversation
+existence to unauthorized callers — matches the
+``/api/notes/{id}`` IDOR fix from PR #170.
 """
 
 from __future__ import annotations
@@ -161,30 +167,26 @@ def _authorize_conversation(
     conversation_id: str,
     user: User,
     chat_service: ChatService,
-    patient_repo: PatientRepository,
 ) -> ChatConversation:
-    """Return the conversation iff the user is allowed to act on it.
+    """Return the conversation iff the user has a grant on its patient.
 
-    Raises NotFoundError instead of ForbiddenError for cross-user /
-    cross-tenant accesses so the surface does not leak conversation
-    existence to unauthorized callers (matches existing patient-route
-    behavior).
+    Access is gated by ``has_patient_access(patient_id, user_id)`` via
+    the chat service / repository — the same model that scopes notes
+    and sessions. Denied accesses raise :class:`NotFoundError` (not
+    :class:`ForbiddenError`) so the surface does not leak conversation
+    existence to unauthorized callers; matches the IDOR-safe shape on
+    ``/api/notes/{id}``.
+
+    Note the absence of the ``patient_repo`` argument: the chat repo
+    join through ``patient_clinicians`` already enforces the same
+    check, so the redundant lookup served no purpose post-#170.
     """
     try:
-        conv = chat_service.get_conversation(conversation_id)
+        return chat_service.get_conversation(conversation_id, user.id)
     except ChatConversationNotFoundError as exc:
-        raise NotFoundError("Conversation not found", {"conversation_id": conversation_id}) from exc
-
-    if conv.owner_user_id != user.id:
-        raise NotFoundError("Conversation not found", {"conversation_id": conversation_id})
-
-    # The patient ACL is the second gate. If the conversation's patient
-    # has been hard-deleted out from under it or moved to a different
-    # owner, this returns None and we treat the conversation as gone.
-    patient = patient_repo.get(conv.patient_id, user.id)
-    if patient is None:
-        raise NotFoundError("Conversation not found", {"conversation_id": conversation_id})
-    return conv
+        raise NotFoundError(
+            "Conversation not found", {"conversation_id": conversation_id}
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -247,11 +249,10 @@ def get_conversation(
     conversation_id: str,
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
-    patient_repo: PatientRepository = Depends(get_patient_repository_dep),
 ) -> ChatConversationDetailResponse:
     """Return a conversation with its messages in ``sequence`` order."""
-    conv = _authorize_conversation(conversation_id, user, chat_service, patient_repo)
-    messages = chat_service.list_messages(conv.id)
+    conv = _authorize_conversation(conversation_id, user, chat_service)
+    messages = chat_service.list_messages(conv.id, user.id)
     return ChatConversationDetailResponse.from_conversation_with_messages(conv, messages)
 
 
@@ -269,14 +270,22 @@ def list_conversations(
     chat_service: ChatService = Depends(get_chat_service),
     patient_repo: PatientRepository = Depends(get_patient_repository_dep),
 ) -> ChatConversationListResponse:
-    """List conversations for a patient owned by the current user."""
+    """List conversations for a patient the caller has access to.
+
+    Returns ``([], 0)`` on access denial — same shape as "no
+    conversations yet" so callers can't distinguish absent from
+    forbidden. The ``patient_repo.get`` lookup happens first to give a
+    clean 404 on a missing / forbidden patient (matches the rest of
+    the API); the repository then re-checks the grant on its own as
+    defense-in-depth.
+    """
     patient = patient_repo.get(patient_id, user.id)
     if patient is None:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     rows, total = chat_service.list_conversations(
         patient_id=patient.id,
-        owner_user_id=user.id,
+        user_id=user.id,
         caller_feature_key=caller_feature_key,
         include_archived=include_archived,
         page=page,
@@ -298,12 +307,11 @@ def update_conversation(
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
-    patient_repo: PatientRepository = Depends(get_patient_repository_dep),
     audit: AuditService = Depends(get_audit_service),
 ) -> ChatConversationResponse:
     """Update mutable fields. Immutable fields (patient_id, prompt, etc.)
     are not accepted by the request body and silently ignored if sent."""
-    conv = _authorize_conversation(conversation_id, user, chat_service, patient_repo)
+    conv = _authorize_conversation(conversation_id, user, chat_service)
 
     was_archived = conv.archived_at is not None
     changed_fields: list[str] = []
@@ -316,6 +324,7 @@ def update_conversation(
 
     updated = chat_service.update_conversation(
         conv.id,
+        user.id,
         title=request_body.title,
         default_source_selection=request_body.default_source_selection,
         archive=request_body.archive,
@@ -345,7 +354,6 @@ def delete_conversation(
     mode: str = Query(default="purge", pattern="^(purge|archive)$"),
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
-    patient_repo: PatientRepository = Depends(get_patient_repository_dep),
     audit: AuditService = Depends(get_audit_service),
 ) -> Response:
     """Delete a conversation. Defaults to hard-purge per design doc §6.6.
@@ -354,11 +362,11 @@ def delete_conversation(
     the irreversible content deletion. Both record an audit row
     (PHI-free; no message content or manifest content).
     """
-    conv = _authorize_conversation(conversation_id, user, chat_service, patient_repo)
+    conv = _authorize_conversation(conversation_id, user, chat_service)
 
     if mode == "archive":
         if conv.archived_at is None:
-            chat_service.update_conversation(conv.id, archive=True)
+            chat_service.update_conversation(conv.id, user.id, archive=True)
             audit.log_chat_action(
                 action=AuditAction.CHAT_CONVERSATION_ARCHIVED,
                 user=user,
@@ -368,7 +376,7 @@ def delete_conversation(
             )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    deleted_message_count = chat_service.delete_conversation(conv.id)
+    deleted_message_count = chat_service.delete_conversation(conv.id, user.id)
     audit.log_chat_action(
         action=AuditAction.CHAT_CONVERSATION_PURGED,
         user=user,
@@ -387,20 +395,26 @@ async def send_message(
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
-    patient_repo: PatientRepository = Depends(get_patient_repository_dep),
     turn_service: ChatTurnService = Depends(get_chat_turn_service),
     resolver: ChatModelResolver = Depends(get_chat_model_resolver),
     audit: AuditService = Depends(get_audit_service),
 ) -> StreamingResponse:
     """Append a user turn and stream the assistant response (design doc §6.4).
 
-    Authorization mirrors the lifecycle routes: ownership + patient ACL.
+    Authorization gates on :func:`has_patient_access` for the
+    conversation's patient — same model as the lifecycle routes.
     Concurrent ``POST messages`` calls against the same conversation
     serialize via :class:`ChatTurnService`'s lock map and the Postgres
     row-level lock in ``next_sequence``; a request arriving while
     another is mid-stream gets a 409 immediately.
+
+    ``requesting_user_id`` on the turn context is the *resumer's* id
+    (``user.id``), not the conversation's ``owner_user_id``. PHI in
+    the context bundle therefore travels with the patient — a covering
+    clinician resuming a chat sees the chart through their own grants,
+    not the original owner's.
     """
-    conv = _authorize_conversation(conversation_id, user, chat_service, patient_repo)
+    conv = _authorize_conversation(conversation_id, user, chat_service)
     if conv.archived_at is not None:
         raise HTTPException(status_code=409, detail="Conversation is archived")
 
@@ -417,7 +431,7 @@ async def send_message(
     context = TurnContext(
         conversation_id=conv.id,
         patient_id=conv.patient_id,
-        owner_user_id=user.id,
+        requesting_user_id=user.id,
         caller_system_prompt=conv.caller_system_prompt,
         caller_feature_key=conv.caller_feature_key,
         user_message=request_body.content,
