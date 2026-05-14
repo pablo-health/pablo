@@ -49,6 +49,12 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+# Patient / session IDs are native UUID columns post-Phase-B; the test
+# fixtures must hand the audit service strings Postgres will accept.
+_PATIENT_ID = "11111111-1111-4111-8111-111111111111"
+_SESSION_ID = "22222222-2222-4222-8222-222222222222"
+
+
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
     """Materialize tables from ORM models directly.
@@ -110,7 +116,7 @@ def _build_user(user_id: str = "test-user-1") -> User:
     )
 
 
-def _build_patient(patient_id: str = "patient-1") -> Patient:
+def _build_patient(patient_id: str = _PATIENT_ID) -> Patient:
     now = datetime(2024, 1, 1, tzinfo=UTC)
     return Patient(
         id=patient_id,
@@ -121,9 +127,7 @@ def _build_patient(patient_id: str = "patient-1") -> Patient:
     )
 
 
-def _build_session(
-    session_id: str = "session-1", patient_id: str = "patient-1"
-) -> TherapySession:
+def _build_session(session_id: str = _SESSION_ID, patient_id: str = _PATIENT_ID) -> TherapySession:
     return TherapySession(
         id=session_id,
         user_id="test-user-1",
@@ -191,12 +195,15 @@ class TestGenericLog:
 
         assert _count_rows(pg_session) == 1
         row = _fetch_only_row(pg_session)
-        assert row["id"] == entry.id
+        # ``id`` and ``patient_id`` are native UUID columns; the raw
+        # SQL read returns ``uuid.UUID`` while ``entry.id`` / ``patient.id``
+        # remain ``str(uuid.uuid4())`` at the domain layer.
+        assert str(row["id"]) == entry.id
         assert row["user_id"] == user.id
         assert row["action"] == "patient_viewed"
         assert row["resource_type"] == "patient"
         assert row["resource_id"] == patient.id
-        assert row["patient_id"] == patient.id
+        assert str(row["patient_id"]) == patient.id
         assert row["session_id"] is None
         assert row["ip_address"] == "198.51.100.7"
         assert row["user_agent"] == "pytest-integration/1.0"
@@ -205,9 +212,7 @@ class TestGenericLog:
         delta_days = (row["expires_at"] - row["timestamp"]).days
         assert 2554 <= delta_days <= 2556
 
-    def test_x_forwarded_for_takes_precedence_over_client_host(
-        self, pg_session: Session
-    ) -> None:
+    def test_x_forwarded_for_takes_precedence_over_client_host(self, pg_session: Session) -> None:
         service = _build_service(pg_session)
         service.log(
             action=AuditAction.PATIENT_VIEWED,
@@ -272,7 +277,7 @@ class TestLogPatientAction:
         assert row["action"] == action.value
         assert row["resource_type"] == "patient"
         assert row["resource_id"] == patient.id
-        assert row["patient_id"] == patient.id
+        assert str(row["patient_id"]) == patient.id
         if action == AuditAction.PATIENT_UPDATED:
             assert row["changes"] == {"changed_fields": ["status"]}
 
@@ -313,8 +318,8 @@ class TestLogSessionAction:
         assert row["action"] == action.value
         assert row["resource_type"] == "session"
         assert row["resource_id"] == session_model.id
-        assert row["session_id"] == session_model.id
-        assert row["patient_id"] == patient.id
+        assert str(row["session_id"]) == session_model.id
+        assert str(row["patient_id"]) == patient.id
 
 
 # ─── list-endpoint audit helpers ─────────────────────────────────────────
@@ -323,9 +328,7 @@ class TestLogSessionAction:
 class TestListLogs:
     def test_log_patient_list(self, pg_session: Session) -> None:
         service = _build_service(pg_session)
-        service.log_patient_list(
-            user=_build_user(), request=_build_request(), patient_count=7
-        )
+        service.log_patient_list(user=_build_user(), request=_build_request(), patient_count=7)
         pg_session.commit()
         row = _fetch_only_row(pg_session)
         assert row["action"] == "patient_listed"
@@ -336,9 +339,7 @@ class TestListLogs:
 
     def test_log_session_list(self, pg_session: Session) -> None:
         service = _build_service(pg_session)
-        service.log_session_list(
-            user=_build_user(), request=_build_request(), session_count=42
-        )
+        service.log_session_list(user=_build_user(), request=_build_request(), session_count=42)
         pg_session.commit()
         row = _fetch_only_row(pg_session)
         assert row["action"] == "session_listed"

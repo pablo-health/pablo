@@ -88,9 +88,7 @@ def _build_request(
 
 
 def _count_rows(pg_session: Session) -> int:
-    return pg_session.execute(
-        text("SELECT COUNT(*) FROM platform.platform_audit_logs")
-    ).scalar()
+    return pg_session.execute(text("SELECT COUNT(*) FROM platform.platform_audit_logs")).scalar()
 
 
 def _fetch_only_row(pg_session: Session) -> dict:
@@ -127,7 +125,9 @@ class TestLogTenantAction:
 
         assert _count_rows(pg_session) == 1
         row = _fetch_only_row(pg_session)
-        assert row["id"] == entry.id
+        # ``id`` is a native UUID column; raw SQL returns ``uuid.UUID``
+        # while ``entry.id`` is the domain-layer string form.
+        assert str(row["id"]) == entry.id
         assert row["actor_user_id"] == "admin-user-1"
         assert row["action"] == action.value
         assert row["resource_type"] == PlatformResourceType.TENANT.value
@@ -144,9 +144,7 @@ class TestLogTenantAction:
 
 
 class TestRequestContextHandling:
-    def test_no_request_yields_null_ip_and_user_agent(
-        self, pg_session: Session
-    ) -> None:
+    def test_no_request_yields_null_ip_and_user_agent(self, pg_session: Session) -> None:
         service = PlatformAuditService(PostgresPlatformAuditRepository(pg_session))
         service.log_tenant_action(
             action=PlatformAuditAction.TENANT_PROVISIONED,
@@ -176,9 +174,7 @@ class TestProbeBlindSpot:
     ) -> None:
         # Compare unqualified count before and after — robust to
         # whatever rows tenant-suite tests left in practice.audit_logs.
-        unqualified_before = pg_session.execute(
-            text("SELECT COUNT(*) FROM audit_logs")
-        ).scalar()
+        unqualified_before = pg_session.execute(text("SELECT COUNT(*) FROM audit_logs")).scalar()
         platform_before = pg_session.execute(
             text("SELECT COUNT(*) FROM platform.platform_audit_logs")
         ).scalar()
@@ -195,9 +191,7 @@ class TestProbeBlindSpot:
 
         # The platform row landed in platform.platform_audit_logs.
         assert (
-            pg_session.execute(
-                text("SELECT COUNT(*) FROM platform.platform_audit_logs")
-            ).scalar()
+            pg_session.execute(text("SELECT COUNT(*) FROM platform.platform_audit_logs")).scalar()
             == platform_before + 1
         )
 
