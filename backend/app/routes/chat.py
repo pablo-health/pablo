@@ -41,6 +41,8 @@ from ..models import (
     ChatConversationListResponse,
     ChatConversationResponse,
     CreateChatConversationRequest,
+    PreviewChatContextRequest,
+    PreviewChatContextResponse,
     SendChatMessageRequest,
     UpdateChatConversationRequest,
     User,
@@ -69,6 +71,12 @@ from ..services import (
     ChatService,
     LlmUsageMeter,
     get_audit_service,
+)
+from ..services.chat_context_bundler import (
+    ContextOverflowError,
+    InvalidSelectionError,
+    assemble_context_bundle,
+    default_source_selection,
 )
 from ..services.chat_llm_gateway import ChatLLMGateway, GeminiChatLLMGateway
 from ..services.chat_model_resolver import (
@@ -239,6 +247,57 @@ def create_conversation(
         },
     )
     return ChatConversationResponse.from_conversation(conv)
+
+
+@router.post(
+    "/conversations/preview",
+    response_model=PreviewChatContextResponse,
+)
+def preview_context(
+    request_body: PreviewChatContextRequest,
+    user: User = Depends(require_baa_acceptance),
+    patient_repo: PatientRepository = Depends(get_patient_repository_dep),
+    notes_repo: NotesRepository = Depends(get_notes_repository_dep),
+) -> PreviewChatContextResponse:
+    """Return a PHI-free context manifest for a hypothetical first turn.
+
+    Drives the §13.4 briefing card ("I'm reading …"). Runs the same
+    context bundler the streaming turn would, against the proposed
+    ``source_selection``, but does NOT create a conversation, call the
+    LLM, persist a chat row, or audit. Omitting ``source_selection``
+    falls back to the design-doc §7.4 default.
+
+    Returns 404 (not 403) if the user lacks access to the patient —
+    matches the create_conversation surface so this route doesn't
+    leak patient existence.
+    """
+    patient = patient_repo.get(request_body.patient_id, user.id)
+    if patient is None:
+        raise NotFoundError("Patient not found", {"patient_id": request_body.patient_id})
+
+    selection = request_body.source_selection
+    if selection is None:
+        selection = default_source_selection()
+
+    try:
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_id=patient.id,
+            user_id=user.id,
+            selection=selection,
+        )
+    except InvalidSelectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "invalid_selection", "message": str(exc)},
+        ) from exc
+    except ContextOverflowError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "context_too_large", "message": str(exc)},
+        ) from exc
+
+    return PreviewChatContextResponse(manifest=bundle.manifest)
 
 
 @router.get(

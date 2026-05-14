@@ -13,6 +13,8 @@ import type {
   ChatConversation,
   ChatConversationDetail,
   CreateChatConversationRequest,
+  PreviewChatContextRequest,
+  PreviewChatContextResponse,
   UpdateChatConversationRequest,
 } from "./types"
 
@@ -28,6 +30,23 @@ export async function createConversation(
     method: "POST",
     body: JSON.stringify(body),
   })
+}
+
+/**
+ * Preview the context manifest for a hypothetical first turn. Does not
+ * create a conversation or call the LLM — purely a manifest fetch that
+ * drives the §13.4 briefing card.
+ */
+export async function previewChatContext(
+  body: PreviewChatContextRequest,
+): Promise<PreviewChatContextResponse> {
+  return apiClient<PreviewChatContextResponse>(
+    "/api/chat/conversations/preview",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  )
 }
 
 export async function getConversation(
