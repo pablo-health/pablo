@@ -11,6 +11,13 @@ from alembic import op
 import sqlalchemy as sa
 ${imports if imports else ""}
 
+# Alembic reads the module-level globals below by name via runtime
+# introspection. ``__all__`` marks them as intentional exports so static
+# analyzers (github-code-quality, vulture, etc.) don't flag them as
+# "unused global variable" — every migration in the repo carries the
+# same shape.
+__all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
+
 # revision identifiers, used by Alembic.
 revision: str = ${repr(up_revision)}
 down_revision: Union[str, Sequence[str], None] = ${repr(down_revision)}
