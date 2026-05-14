@@ -60,28 +60,15 @@ interface FetchOptions extends RequestInit {
 }
 
 /**
- * Make an authenticated API request
+ * Resolve the bearer token for an authenticated request.
  *
- * Client-side: gets token from Firebase Auth current user
- * Server-side: token must be passed explicitly via the `token` option
+ * Client-side: prefers the supplied token, else asks Firebase for the
+ * current user's id token. Server-side: returns the supplied token or
+ * null. Shared by ``apiClient`` and the SSE consumer so SSE calls land
+ * with the same auth posture as regular API calls without going
+ * through the JSON fetch wrapper.
  */
-export async function apiClient<T>(
-  endpoint: string,
-  options: FetchOptions = {}
-): Promise<T> {
-  const { token, ...fetchOptions } = options
-
-  const url = `${getApiUrl()}${endpoint}`
-
-  const headers: Record<string, string> = {
-    // Don't set Content-Type for FormData — browser must set it with multipart boundary
-    ...(fetchOptions.body instanceof FormData
-      ? {}
-      : { "Content-Type": "application/json" }),
-    ...(fetchOptions.headers as Record<string, string>),
-  }
-
-  // Get auth token - use provided token or get from Firebase client SDK
+export async function getAuthHeader(token?: string): Promise<Record<string, string>> {
   let authToken = token
   if (!authToken && typeof window !== "undefined") {
     try {
@@ -93,9 +80,34 @@ export async function apiClient<T>(
       // Firebase not initialized or no current user — proceed without token
     }
   }
+  return authToken ? { Authorization: `Bearer ${authToken}` } : {}
+}
 
-  if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`
+export function buildApiUrl(endpoint: string): string {
+  return `${getApiUrl()}${endpoint}`
+}
+
+/**
+ * Make an authenticated API request
+ *
+ * Client-side: gets token from Firebase Auth current user
+ * Server-side: token must be passed explicitly via the `token` option
+ */
+export async function apiClient<T>(
+  endpoint: string,
+  options: FetchOptions = {}
+): Promise<T> {
+  const { token, ...fetchOptions } = options
+
+  const url = buildApiUrl(endpoint)
+
+  const headers: Record<string, string> = {
+    // Don't set Content-Type for FormData — browser must set it with multipart boundary
+    ...(fetchOptions.body instanceof FormData
+      ? {}
+      : { "Content-Type": "application/json" }),
+    ...(fetchOptions.headers as Record<string, string>),
+    ...(await getAuthHeader(token)),
   }
 
   try {
