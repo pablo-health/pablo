@@ -41,11 +41,15 @@ from ..models import (
 )
 from ..repositories import (
     ChatRepository,
+    LlmUsageRepository,
     NotesRepository,
     PatientRepository,
 )
 from ..repositories import (
     get_chat_repository as _chat_repo_factory,
+)
+from ..repositories import (
+    get_llm_usage_repository as _llm_usage_repo_factory,
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
@@ -57,6 +61,7 @@ from ..services import (
     AuditService,
     ChatConversationNotFoundError,
     ChatService,
+    LlmUsageMeter,
     get_audit_service,
 )
 from ..services.chat_llm_gateway import ChatLLMGateway, GeminiChatLLMGateway
@@ -69,6 +74,7 @@ from ..services.chat_turn_service import (
     TurnConcurrencyError,
     TurnContext,
 )
+from ..settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -121,15 +127,28 @@ def get_chat_llm_gateway() -> ChatLLMGateway:
     return _default_gateway_holder[0]
 
 
+def get_llm_usage_repository_dep() -> LlmUsageRepository:
+    return _llm_usage_repo_factory()
+
+
+def get_llm_usage_meter(
+    repo: LlmUsageRepository = Depends(get_llm_usage_repository_dep),
+    settings: Settings = Depends(get_settings),
+) -> LlmUsageMeter:
+    return LlmUsageMeter(repo=repo, settings=settings)
+
+
 def get_chat_turn_service(
     chat_repo: ChatRepository = Depends(get_chat_repository_dep),
     notes_repo: NotesRepository = Depends(get_notes_repository_dep),
     gateway: ChatLLMGateway = Depends(get_chat_llm_gateway),
+    usage_meter: LlmUsageMeter = Depends(get_llm_usage_meter),
 ) -> ChatTurnService:
     return ChatTurnService(
         chat_repo=chat_repo,
         notes_repo=notes_repo,
         gateway=gateway,
+        usage_meter=usage_meter,
     )
 
 
@@ -421,7 +440,7 @@ async def send_message(
             async for event in event_iter:
                 if event.kind == "error" and not block_audit_fired["done"]:
                     code = event.data.get("error", "llm_error")
-                    if code in {"safety_block", "context_too_large"}:
+                    if code in {"safety_block", "context_too_large", "quota_exceeded"}:
                         try:
                             audit.log_chat_action(
                                 action=AuditAction.CHAT_TURN_BLOCKED,
@@ -454,6 +473,8 @@ __all__ = [
     "get_chat_repository_dep",
     "get_chat_service",
     "get_chat_turn_service",
+    "get_llm_usage_meter",
+    "get_llm_usage_repository_dep",
     "get_notes_repository_dep",
     "get_patient_repository_dep",
     "router",
