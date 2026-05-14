@@ -80,6 +80,23 @@ jobs:
       - name: Lint (ruff + mypy)
         run: make lint
 
+      - name: Alembic single-head check
+        # Two PRs that each add a migration off the same parent will
+        # silently produce two heads and break ``alembic upgrade head``
+        # for every downstream consumer (most painfully, pablo-saas's
+        # ``saas.bin.migrate``). Catch it at PR time instead of after
+        # the merge.
+        run: |
+          cd backend
+          heads=$(poetry run alembic heads | grep -c "(head)")
+          if [ "$heads" -ne 1 ]; then
+            echo "::error::Alembic has $heads heads — needs a merge migration."
+            echo "::error::Run \`poetry run alembic merge -m '<msg>' heads\` and commit the generated revision."
+            poetry run alembic heads
+            exit 1
+          fi
+          echo "Single head, good."
+
       - name: Test (pytest)
         run: cd backend && poetry run pytest tests/ -m "not spacy" --cov=app --cov-report=term-missing --cov-report=html
 
