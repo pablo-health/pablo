@@ -206,7 +206,7 @@ def list_sessions(
             SessionResponse.from_session(
                 s,
                 patient_name,
-                _embed_note(notes_repo.get_by_session_id(s.id)),
+                _embed_note(notes_repo.get_by_session_id(s.id, user.id)),
             )
         )
 
@@ -297,7 +297,7 @@ def get_session(
 
     patient = patient_repo.get(session.patient_id, user.id)
     patient_name = patient.display_name if patient else "Unknown"
-    note = notes_repo.get_by_session_id(session.id)
+    note = notes_repo.get_by_session_id(session.id, user.id)
 
     audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)
 

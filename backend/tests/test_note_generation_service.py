@@ -325,7 +325,6 @@ class TestMockNoteGenerationService:
         mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
-            user_id="u1",
             first_name="Jane",
             last_name="Doe",
             created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
@@ -368,7 +367,6 @@ class TestMockNoteGenerationService:
         mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
-            user_id="u1",
             first_name="Jane",
             last_name="Doe",
             created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
@@ -389,7 +387,6 @@ class TestMockNoteGenerationService:
         mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
-            user_id="u1",
             first_name="Jane",
             last_name="Doe",
             created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
@@ -417,7 +414,6 @@ class TestNarrativeGeneration:
     def patient(self) -> Patient:
         return Patient(
             id="p1",
-            user_id="u1",
             first_name="Jane",
             last_name="Doe",
             created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),

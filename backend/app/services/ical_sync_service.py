@@ -241,8 +241,8 @@ class ICalSyncService:
                 else:
                     result.skipped += 1
             else:
-                patient = self._create_patient_from_csv(user_id, row)
-                self._patient_repo.create(patient)
+                patient = self._create_patient_from_csv(row)
+                self._patient_repo.create(patient, user_id)
                 existing_by_name[key] = patient
                 result.imported += 1
 
@@ -638,14 +638,19 @@ class ICalSyncService:
             self._patient_repo.update(patient)
         return changed
 
-    def _create_patient_from_csv(self, user_id: str, row: dict[str, str]) -> Any:
-        """Create a Patient dataclass from a CSV row."""
+    def _create_patient_from_csv(self, row: dict[str, str]) -> Any:
+        """Create a Patient dataclass from a CSV row.
+
+        Ownership lives in patient_clinicians, not on the Patient row,
+        so this helper no longer needs the importing clinician's
+        ``user_id`` — the caller supplies that to
+        ``patient_repo.create(patient, user_id)``.
+        """
         from ..models.patient import Patient
 
         now = _now()
         return Patient(
             id=str(uuid.uuid4()),
-            user_id=user_id,
             first_name=row.get("First Name", "").strip(),
             last_name=row.get("Last Name", "").strip(),
             email=row.get("Email", "").strip() or None,

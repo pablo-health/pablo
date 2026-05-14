@@ -114,7 +114,6 @@ def _build_patient(patient_id: str = "patient-1") -> Patient:
     now = datetime(2024, 1, 1, tzinfo=UTC)
     return Patient(
         id=patient_id,
-        user_id="test-user-1",
         first_name="Jane",
         last_name="Doe",
         created_at=now,

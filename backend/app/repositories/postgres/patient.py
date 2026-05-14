@@ -1,14 +1,29 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""PostgreSQL patient repository implementation."""
+"""PostgreSQL patient repository implementation.
+
+Every access-bounded method delegates to the schema-local
+``has_patient_access(patient_id, user_id)`` SQL function (or its join-
+through-``patient_clinicians`` equivalent for queries that already
+need a join). Patient ownership lives in ``patient_clinicians``, not
+on a column of the patient row — see migration ``9dea1edf7fe0``.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from ...db.models import NoteRow, PatientRow, TherapySessionRow
+from sqlalchemy import or_, text
+
+from ...db.models import (
+    NoteRow,
+    PatientClinicianRow,
+    PatientRow,
+    TherapySessionRow,
+)
 from ...models import Patient
+from ...models.enums import ClinicianRole
 from ...utcnow import utc_now
 from ..patient import PatientRepository
 
@@ -16,28 +31,63 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+def _live_grant_filter(user_id: str) -> tuple:
+    """SQL predicates for "user has a non-expired patient_clinicians grant".
+
+    Returns a tuple usable in ``.filter(*predicates)`` calls. Used by
+    every method that joins through ``PatientClinicianRow``; keeping it
+    in one place ensures expiration semantics never drift between
+    methods.
+    """
+    return (
+        PatientClinicianRow.user_id == user_id,
+        or_(
+            PatientClinicianRow.expires_at.is_(None),
+            PatientClinicianRow.expires_at > utc_now(),
+        ),
+    )
+
+
 class PostgresPatientRepository(PatientRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def _has_access(self, patient_id: str, user_id: str) -> bool:
+        result = self._session.execute(
+            text("SELECT has_patient_access(:pid, :uid)"),
+            {"pid": patient_id, "uid": user_id},
+        ).scalar()
+        return bool(result)
+
     def get(self, patient_id: str, user_id: str) -> Patient | None:
-        # User-facing reads filter out soft-deleted rows (THERAPY-nyb).
-        # Audit lookups bypass this repo and query AuditLogRow directly,
-        # so dangling-reference resolution still works.
-        row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id or row.deleted_at is not None:
-            return None
-        return _row_to_patient(row)
+        """Fetch the patient if it exists, is live, and ``user_id`` has a grant.
+
+        Single-query join through ``patient_clinicians`` so denial is
+        indistinguishable from a missing row at the SQL layer (no
+        existence oracle).
+        """
+        row = (
+            self._session.query(PatientRow)
+            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+            .filter(
+                PatientRow.id == patient_id,
+                PatientRow.deleted_at.is_(None),
+                *_live_grant_filter(user_id),
+            )
+            .one_or_none()
+        )
+        return _row_to_patient(row) if row else None
 
     def get_multiple(self, patient_ids: list[str], user_id: str) -> dict[str, Patient]:
         if not patient_ids:
             return {}
         rows = (
             self._session.query(PatientRow)
+            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
             .filter(
                 PatientRow.id.in_(patient_ids),
-                PatientRow.user_id == user_id,
                 PatientRow.deleted_at.is_(None),
+                *_live_grant_filter(user_id),
             )
             .all()
         )
@@ -52,9 +102,20 @@ class PostgresPatientRepository(PatientRepository):
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Patient], int]:
-        query = self._session.query(PatientRow).filter(
-            PatientRow.user_id == user_id,
-            PatientRow.deleted_at.is_(None),
+        """List patients the user has a grant for, with pagination.
+
+        The join through ``patient_clinicians`` returns rows where
+        ``user_id`` has any non-expired grant — primary, co-treating,
+        supervisor, or covering. v1 ships with primary-only grants so
+        the result set matches the prior ``user_id``-column semantics.
+        """
+        query = (
+            self._session.query(PatientRow)
+            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+            .filter(
+                PatientRow.deleted_at.is_(None),
+                *_live_grant_filter(user_id),
+            )
         )
 
         if search:
@@ -71,14 +132,34 @@ class PostgresPatientRepository(PatientRepository):
         rows = query.offset(offset).limit(page_size).all()
         return [_row_to_patient(r) for r in rows], total
 
-    def create(self, patient: Patient) -> Patient:
+    def create(self, patient: Patient, user_id: str) -> Patient:
+        """Create the patient and the primary-clinician grant atomically.
+
+        ``user_id`` becomes the ``role='primary'`` clinician — the
+        creator owns the chart. Co-treating / supervisor / coverage
+        grants are inserted later via the (forthcoming) admin endpoints.
+        """
         row = PatientRow()
         _patient_to_row(patient, row)
         self._session.add(row)
+        grant = PatientClinicianRow(
+            patient_id=patient.id,
+            user_id=user_id,
+            role=ClinicianRole.PRIMARY.value,
+            granted_by=user_id,
+        )
+        self._session.add(grant)
         self._session.flush()
         return patient
 
     def update(self, patient: Patient) -> Patient:
+        """Update a patient row. Access is gated by RLS at the DB layer.
+
+        Does not take ``user_id`` because the caller (a service / route
+        handler) has already loaded the patient via ``get()``, which
+        enforces the access check. Any path that bypasses ``get()``
+        still hits RLS at commit time — fail-closed.
+        """
         patient.updated_at = utc_now()
         patient.first_name_lower = patient.first_name.lower()
         patient.last_name_lower = patient.last_name.lower()
@@ -91,32 +172,26 @@ class PostgresPatientRepository(PatientRepository):
         return patient
 
     def delete(self, patient_id: str, user_id: str) -> bool:
-        """Soft-delete the patient and cascade to its therapy sessions and notes.
-
-        Sets ``deleted_at = NOW()`` on each row instead of removing it from
-        disk. The day-30 purge cron (THERAPY-cgy) is the only path that
-        physically removes rows; HTTP must never call ``_physical_delete``.
+        """Soft-delete the patient and cascade to therapy_sessions + notes.
 
         Cascade order matches the prior hard-delete:
             therapy_sessions → notes → patients
 
-        Returns False if the row is already gone or already soft-deleted —
-        in both cases the caller's invariant ("nothing live with this id"
-        ) is satisfied without further work.
+        Returns False if the row is gone, soft-deleted, or the user has
+        no grant — in all three cases the caller's invariant ("nothing
+        live visible with this id") is satisfied without further work.
         """
         row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id or row.deleted_at is not None:
+        if row is None or row.deleted_at is not None:
+            return False
+        if not self._has_access(patient_id, user_id):
             return False
 
         now = utc_now()
-        # Cascade: soft-delete therapy sessions for this patient. Skip
-        # rows already soft-deleted so deleted_at reflects the *first*
-        # delete, not the latest one.
         self._session.query(TherapySessionRow).filter(
             TherapySessionRow.patient_id == patient_id,
             TherapySessionRow.deleted_at.is_(None),
         ).update({TherapySessionRow.deleted_at: now}, synchronize_session=False)
-        # Cascade: notes are patient-scoped. Same idempotency guard.
         self._session.query(NoteRow).filter(
             NoteRow.patient_id == patient_id,
             NoteRow.deleted_at.is_(None),
@@ -125,33 +200,21 @@ class PostgresPatientRepository(PatientRepository):
         self._session.flush()
         return True
 
-    # ─── Recently-deleted listing + restore (THERAPY-yg2) ──────────────
-
     def list_recently_deleted(
         self,
         user_id: str,
         *,
         window_days: int = 30,
     ) -> list[tuple[Patient, datetime]]:
-        """Soft-deleted patients still inside the undo window.
-
-        Mirrors the partial index ``WHERE deleted_at IS NOT NULL`` on
-        ``patients`` (THERAPY-nyb migration). Rows past the window stay
-        on disk until the day-30 hard-purge cron physically removes
-        them but no longer surface here, so the UI hides them as
-        "permanently removed."
-
-        Returns ``(patient, deleted_at)`` pairs — ``deleted_at`` is
-        carried out-of-band because it isn't on the ``Patient``
-        dataclass.
-        """
+        """Soft-deleted patients still inside the undo window."""
         cutoff = utc_now() - timedelta(days=window_days)
         rows = (
             self._session.query(PatientRow)
+            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
             .filter(
-                PatientRow.user_id == user_id,
                 PatientRow.deleted_at.isnot(None),
                 PatientRow.deleted_at > cutoff,
+                *_live_grant_filter(user_id),
             )
             .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
             .all()
@@ -159,25 +222,11 @@ class PostgresPatientRepository(PatientRepository):
         return [(_row_to_patient(r), r.deleted_at) for r in rows if r.deleted_at is not None]
 
     def restore(self, patient_id: str, user_id: str, *, window_days: int = 30) -> Patient | None:
-        """Reverse a soft-delete by clearing ``deleted_at``.
-
-        Returns ``None`` if the row is not soft-deleted, not owned by
-        this user, or already past the undo window. The cascade clears
-        ``deleted_at`` only on therapy_sessions / notes whose stamp
-        matches the patient's — i.e. rows the original delete cascade
-        knocked over together. Sessions or notes that were soft-deleted
-        independently before the patient delete keep their own stamps,
-        which is what users expect: undoing the patient delete does not
-        revive earlier per-row deletes.
-
-        Session numbers are unaffected: ``session_number`` is a stored
-        column, and the next-number generator
-        (``get_session_number_for_patient``) deliberately ignores
-        ``deleted_at``, so numbering is monotonic across this round
-        trip (THERAPY-nyb).
-        """
+        """Reverse a soft-delete by clearing ``deleted_at``."""
         row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id or row.deleted_at is None:
+        if row is None or row.deleted_at is None:
+            return None
+        if not self._has_access(patient_id, user_id):
             return None
         cutoff = utc_now() - timedelta(days=window_days)
         if row.deleted_at <= cutoff:
@@ -202,14 +251,11 @@ class PostgresPatientRepository(PatientRepository):
     def close_chart(
         self, patient_id: str, user_id: str, closure_reason: str | None
     ) -> Patient | None:
-        """Stamp ``chart_closed_at`` and store the closure reason (THERAPY-hek).
-
-        Chart closure is orthogonal to soft-delete: a closed chart is a
-        live, retained record. The hard-purge cron (THERAPY-cgy) keys
-        off ``deleted_at`` only and is unaffected by this column.
-        """
+        """Stamp ``chart_closed_at`` and store the closure reason (THERAPY-hek)."""
         row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id or row.deleted_at is not None:
+        if row is None or row.deleted_at is not None:
+            return None
+        if not self._has_access(patient_id, user_id):
             return None
         now = utc_now()
         row.chart_closed_at = now
@@ -221,7 +267,9 @@ class PostgresPatientRepository(PatientRepository):
     def reopen_chart(self, patient_id: str, user_id: str) -> Patient | None:
         """Clear chart closure fields (THERAPY-hek)."""
         row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id or row.deleted_at is not None:
+        if row is None or row.deleted_at is not None:
+            return None
+        if not self._has_access(patient_id, user_id):
             return None
         row.chart_closed_at = None
         row.chart_closure_reason = None
@@ -230,14 +278,13 @@ class PostgresPatientRepository(PatientRepository):
         return _row_to_patient(row)
 
     # ─── Internal — purge cron only (THERAPY-cgy) ──────────────────────
-    # Not exposed via HTTP. The day-30 purge cron will call this to
-    # physically remove rows whose ``deleted_at`` is past the retention
-    # window. Keeping it on the repo (vs. raw SQL in the cron) preserves
-    # the cascade order audit-log readers depend on.
+    # Not HTTP-exposed. Bypasses has_patient_access because the cron
+    # runs as a system identity that legitimately has no grant on any
+    # patient. Callers outside ``backend/app/jobs/`` must not use this.
 
-    def _physical_delete(self, patient_id: str, user_id: str) -> bool:
+    def _physical_delete(self, patient_id: str) -> bool:
         row = self._session.get(PatientRow, patient_id)
-        if row is None or row.user_id != user_id:
+        if row is None:
             return False
         # Mirror cascade order from soft-delete.
         self._session.query(NoteRow).filter(NoteRow.patient_id == patient_id).delete(
@@ -246,6 +293,8 @@ class PostgresPatientRepository(PatientRepository):
         self._session.query(TherapySessionRow).filter(
             TherapySessionRow.patient_id == patient_id
         ).delete(synchronize_session=False)
+        # patient_clinicians has ON DELETE CASCADE so grants are removed
+        # automatically when the patient row goes.
         self._session.delete(row)
         self._session.flush()
         return True
@@ -254,7 +303,6 @@ class PostgresPatientRepository(PatientRepository):
 def _row_to_patient(row: PatientRow) -> Patient:
     return Patient(
         id=row.id,
-        user_id=row.user_id,
         first_name=row.first_name,
         last_name=row.last_name,
         created_at=row.created_at,
@@ -276,7 +324,6 @@ def _row_to_patient(row: PatientRow) -> Patient:
 
 def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.id = patient.id
-    row.user_id = patient.user_id
     row.first_name = patient.first_name
     row.last_name = patient.last_name
     row.first_name_lower = patient.first_name_lower

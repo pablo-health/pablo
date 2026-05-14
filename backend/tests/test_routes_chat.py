@@ -31,13 +31,12 @@ def _seed_patient(
     now = datetime.now(UTC)
     patient = Patient(
         id=patient_id,
-        user_id=user_id,
         first_name=first_name,
         last_name=last_name,
         created_at=now,
         updated_at=now,
     )
-    return patient_repo.create(patient)
+    return patient_repo.create(patient, user_id)
 
 
 def _create_payload(

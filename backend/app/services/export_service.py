@@ -73,7 +73,7 @@ class ExportService:
         # Get all sessions for this patient
         sessions = self.session_repo.list_by_patient(patient_id, user_id)
         notes_by_session = {
-            s.id: self.notes_repo.get_by_session_id(s.id) for s in sessions
+            s.id: self.notes_repo.get_by_session_id(s.id, user_id) for s in sessions
         }
 
         # Convert to response format

@@ -33,7 +33,6 @@ const createWrapper = () => {
 
 const mockPatient: PatientResponse = {
   id: "patient-123",
-  user_id: "user-1",
   first_name: "Jane",
   last_name: "Doe",
   email: "jane.doe@example.com",

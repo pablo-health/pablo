@@ -7,27 +7,72 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from ...db.models import AppointmentRow
+from sqlalchemy import or_, text
+
+from ...db.models import AppointmentRow, PatientClinicianRow
 from ...scheduling_engine.models.appointment import Appointment
 from ...scheduling_engine.repositories.appointment import AppointmentRepository
+from ...utcnow import utc_now
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+def _grant_filters(user_id: str) -> tuple:
+    return (
+        PatientClinicianRow.user_id == user_id,
+        or_(
+            PatientClinicianRow.expires_at.is_(None),
+            PatientClinicianRow.expires_at > utc_now(),
+        ),
+    )
+
+
 class PostgresAppointmentRepository(AppointmentRepository):
+    """Appointment access model — hybrid of calendar-ownership and patient-access.
+
+    * ``user_id`` on ``appointments`` stays as "the clinician on whose
+      calendar this slot lives." Used by ``list_by_range`` (the "my
+      calendar" view), ``list_by_recurring_id``, and
+      ``list_by_ical_source`` — these are intrinsically clinician-
+      personal slices.
+
+    * Patient-scoped reads (``get``, ``list_by_patient``) authorize
+      via ``has_patient_access`` so a covering / co-treating /
+      supervisor clinician can see appointments for a patient they're
+      authorized to treat, regardless of which clinician owns the
+      calendar slot. Closes the matching gap to therapy_sessions.
+    """
+
     def __init__(self, session: Session) -> None:
         self._session = session
 
     def get(self, appointment_id: str, user_id: str) -> Appointment | None:
-        row = self._session.get(AppointmentRow, appointment_id)
-        if row is None or row.user_id != user_id:
-            return None
-        return _row_to_appointment(row)
+        row = (
+            self._session.query(AppointmentRow)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == AppointmentRow.patient_id,
+            )
+            .filter(
+                AppointmentRow.id == appointment_id,
+                *_grant_filters(user_id),
+            )
+            .one_or_none()
+        )
+        return _row_to_appointment(row) if row else None
 
     def list_by_range(
         self, user_id: str, start: str | datetime, end: str | datetime
     ) -> list[Appointment]:
+        """List appointments on ``user_id``'s calendar in the date range.
+
+        This is the "my calendar" slice — filters on the appointment's
+        own ``user_id`` (the calendar owner), not via ``patient_clinicians``.
+        Multi-clinician practices don't merge calendars by default; if a
+        coverage clinician needs to see the primary's calendar, that's a
+        future per-call elevation, not the default view.
+        """
         rows = (
             self._session.query(AppointmentRow)
             .filter(
@@ -41,16 +86,30 @@ class PostgresAppointmentRepository(AppointmentRepository):
         return [_row_to_appointment(r) for r in rows]
 
     def list_by_patient(self, user_id: str, patient_id: str) -> list[Appointment]:
+        """List all appointments for a patient that ``user_id`` can see.
+
+        Patient-scoped — returns all appointments for the patient
+        regardless of which clinician owns the calendar slot, gated by
+        ``has_patient_access``.
+        """
+        if not self._has_patient_access(patient_id, user_id):
+            return []
         rows = (
             self._session.query(AppointmentRow)
             .filter(
-                AppointmentRow.user_id == user_id,
                 AppointmentRow.patient_id == patient_id,
             )
             .order_by(AppointmentRow.start_at)
             .all()
         )
         return [_row_to_appointment(r) for r in rows]
+
+    def _has_patient_access(self, patient_id: str, user_id: str) -> bool:
+        result = self._session.execute(
+            text("SELECT has_patient_access(:pid, :uid)"),
+            {"pid": patient_id, "uid": user_id},
+        ).scalar()
+        return bool(result)
 
     def list_by_recurring_id(
         self, user_id: str, recurring_appointment_id: str, after: str | datetime | None = None
@@ -100,8 +159,16 @@ class PostgresAppointmentRepository(AppointmentRepository):
         return appointment
 
     def delete(self, appointment_id: str, user_id: str) -> bool:
+        """Delete an appointment.
+
+        Gated by ``has_patient_access`` (not appointment ownership) so a
+        covering clinician can cancel an appointment for their patient
+        even if the original calendar slot was owned by the primary.
+        """
         row = self._session.get(AppointmentRow, appointment_id)
-        if row is None or row.user_id != user_id:
+        if row is None:
+            return False
+        if not self._has_patient_access(row.patient_id, user_id):
             return False
         self._session.delete(row)
         self._session.flush()

@@ -135,7 +135,6 @@ def create_patient(
 
     patient = Patient(
         id=str(uuid.uuid4()),
-        user_id=user.id,
         first_name=request.first_name,
         last_name=request.last_name,
         email=request.email,
@@ -149,7 +148,7 @@ def create_patient(
         last_session_date=None,
     )
 
-    patient = repo.create(patient)
+    patient = repo.create(patient, user.id)
     audit.log_patient_action(AuditAction.PATIENT_CREATED, user, http_request, patient)
     return PatientResponse.from_patient(patient)
 

@@ -16,6 +16,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -26,6 +27,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from ..models.enums import ClinicianRole
 
 
 class Base(DeclarativeBase):
@@ -44,10 +47,19 @@ class ClinicianProfileRow(Base):
 
 
 class PatientRow(Base):
+    """Patient master record.
+
+    Access (read/write) is governed by :class:`PatientClinicianRow`
+    grants, not by a ``user_id`` column on the row itself. The column
+    was dropped in migration ``9dea1edf7fe0`` once the
+    ``patient_clinicians`` access table became the source of truth;
+    the RLS policy on this table is ``has_patient_access(id,
+    current_user)``.
+    """
+
     __tablename__ = "patients"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     first_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_name: Mapped[str] = mapped_column(String(255), nullable=False)
     first_name_lower: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
@@ -172,6 +184,63 @@ class NoteRow(Base):
             "finalized_at",
             postgresql_using="btree",
         ),
+    )
+
+
+class PatientClinicianRow(Base):
+    """Explicit per-(patient, clinician) access grants.
+
+    Replaces ``patients.user_id`` as the source of truth for "which
+    clinician(s) can read/write this patient's chart". v1 ships with
+    one row per patient (``role = 'primary'``, backfilled from
+    ``patients.user_id``); co-treating, supervision, and coverage
+    rows are inserted as the corresponding workflows land.
+
+    The CHECK on ``role`` mirrors :class:`ClinicianRole` — the
+    module-level assertion below fails the import if they drift.
+    """
+
+    __tablename__ = "patient_clinicians"
+
+    patient_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
+    role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="primary",
+        default=ClinicianRole.PRIMARY.value,
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+    granted_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('primary', 'co_treating', 'supervisor', 'covering')",
+            name="ck_patient_clinicians_role",
+        ),
+    )
+
+
+# Fail-fast guard: the CHECK constraint string above and the enum must
+# enumerate the same set. If a contributor adds a role to one without
+# the other, this trips at import (and therefore in every test run)
+# instead of silently allowing inserts the enum doesn't know about.
+_MODEL_ROLE_VALUES = frozenset({"primary", "co_treating", "supervisor", "covering"})
+_ENUM_ROLE_VALUES = frozenset(r.value for r in ClinicianRole)
+if _MODEL_ROLE_VALUES != _ENUM_ROLE_VALUES:
+    raise RuntimeError(
+        f"ClinicianRole enum ({sorted(_ENUM_ROLE_VALUES)}) and the "
+        f"patient_clinicians CHECK constraint "
+        f"({sorted(_MODEL_ROLE_VALUES)}) have drifted. Update both."
     )
 
 

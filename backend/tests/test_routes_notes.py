@@ -12,12 +12,18 @@ import pytest
 from app.main import app
 from app.models import Note, Patient, Transcript
 from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
-from app.repositories import (  # noqa: TC002 — runtime fixture type
+from app.repositories import (
     InMemoryNotesRepository,
     InMemoryPatientRepository,
 )
 from app.routes.notes import (
     get_note_generation_service,
+)
+from app.routes.notes import (
+    get_notes_repository as get_notes_route_notes_repository,
+)
+from app.routes.sessions import (
+    get_notes_repository as get_sessions_notes_repository,
 )
 from app.services import GeneratedNote, NoteGenerationService
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
@@ -142,13 +148,12 @@ def _seed_patient(
     now = datetime.now(UTC)
     patient = Patient(
         id=patient_id,
-        user_id=user_id,
         first_name="Jane",
         last_name="Doe",
         created_at=now,
         updated_at=now,
     )
-    return patient_repo.create(patient)
+    return patient_repo.create(patient, user_id)
 
 
 class _StubGenerator(NoteGenerationService):
@@ -322,6 +327,121 @@ class TestRequiresAuth:
         note = _seed_note(mock_notes_repo)
         response = client.get(f"/api/notes/{note.id}")
         assert response.status_code != 500
+
+
+class TestIDOR:
+    """Regression tests for the cross-clinician note IDOR that motivated
+    the patient_clinicians model.
+
+    In the multi-clinician "Practice" edition (and in any tenant where
+    two clinicians ever land in the same Postgres schema), clinician A
+    must not be able to read, edit, finalize, or queue-for-export any
+    note that belongs to clinician B's patient — even if A guesses or
+    leaks B's note UUID. The conftest's ``mock_user`` is always the
+    requesting user; we put the note under a *different* clinician's
+    patient and assert each verb returns 404 (not 200, not 403 — 403
+    would leak an existence oracle).
+
+    These tests skip the conftest's grant_all_access shortcut by
+    constructing a fresh ``InMemoryNotesRepository`` and granting only
+    the foreign clinician access to the foreign patient.
+    """
+
+    @staticmethod
+    def _override_notes_repo(repo: InMemoryNotesRepository) -> None:
+        app.dependency_overrides[get_sessions_notes_repository] = lambda: repo
+        app.dependency_overrides[get_notes_route_notes_repository] = lambda: repo
+
+    @staticmethod
+    def _cleanup_overrides() -> None:
+        app.dependency_overrides.pop(get_sessions_notes_repository, None)
+        app.dependency_overrides.pop(get_notes_route_notes_repository, None)
+
+    @staticmethod
+    def _seed_foreign_note(
+        repo: InMemoryNotesRepository,
+        *,
+        finalized: bool,
+    ) -> Note:
+        """Add a note belonging to 'other-clinician' and grant only them access."""
+        now = datetime.now(UTC)
+        other_patient = "foreign-patient"
+        other_clinician = "other-clinician"
+        repo.grant_access(other_patient, other_clinician)
+
+        note = Note(
+            id=str(uuid.uuid4()),
+            patient_id=other_patient,
+            session_id=str(uuid.uuid4()),
+            note_type="soap",
+            content=_SOAP,
+            created_at=now,
+            updated_at=now,
+        )
+        if finalized:
+            note.finalized_at = now
+            note.quality_rating = 4
+        return repo.add(note, other_clinician)
+
+    def test_get_other_clinicians_note_returns_404(self, client: TestClient) -> None:
+        repo = InMemoryNotesRepository()
+        self._override_notes_repo(repo)
+        try:
+            note = self._seed_foreign_note(repo, finalized=False)
+            response = client.get(f"/api/notes/{note.id}")
+            # 404, not 403 — denial is indistinguishable from absence,
+            # so the requester can't enumerate existing note IDs.
+            assert response.status_code == 404
+        finally:
+            self._cleanup_overrides()
+
+    def test_patch_other_clinicians_note_returns_404(self, client: TestClient) -> None:
+        repo = InMemoryNotesRepository()
+        self._override_notes_repo(repo)
+        try:
+            note = self._seed_foreign_note(repo, finalized=False)
+            response = client.patch(
+                f"/api/notes/{note.id}",
+                json={"content_edited": {**_SOAP, "subjective": "forged"}},
+            )
+            assert response.status_code == 404
+            # Defense-in-depth: confirm the underlying note was NOT mutated.
+            stored = repo._notes[note.id]  # type: ignore[attr-defined]  # private read for assertion
+            assert stored.content_edited is None
+        finally:
+            self._cleanup_overrides()
+
+    def test_finalize_other_clinicians_note_returns_404(
+        self, client: TestClient
+    ) -> None:
+        repo = InMemoryNotesRepository()
+        self._override_notes_repo(repo)
+        try:
+            note = self._seed_foreign_note(repo, finalized=False)
+            response = client.post(
+                f"/api/notes/{note.id}/finalize",
+                json={"quality_rating": 5},
+            )
+            assert response.status_code == 404
+            stored = repo._notes[note.id]  # type: ignore[attr-defined]
+            assert stored.finalized_at is None
+            assert stored.quality_rating is None
+        finally:
+            self._cleanup_overrides()
+
+    def test_submit_export_other_clinicians_note_returns_404(
+        self, client: TestClient
+    ) -> None:
+        repo = InMemoryNotesRepository()
+        self._override_notes_repo(repo)
+        try:
+            note = self._seed_foreign_note(repo, finalized=True)
+            response = client.post(f"/api/notes/{note.id}/submit-export")
+            assert response.status_code == 404
+            stored = repo._notes[note.id]  # type: ignore[attr-defined]
+            assert stored.export_status != "queued"
+        finally:
+            self._cleanup_overrides()
 
 
 # Avoid unused-fixture warnings.
