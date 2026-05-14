@@ -63,56 +63,84 @@ def _compute_day_boundaries(tz_name: str) -> tuple[datetime, datetime]:
 
 
 class InMemoryTherapySessionRepository(TherapySessionRepository):
-    """In-memory implementation of TherapySessionRepository for testing and development."""
+    """In-memory implementation of TherapySessionRepository.
+
+    Maintains a per-(patient_id, user_id) access set mirroring
+    ``patient_clinicians`` so tests exercise the same access boundary
+    as production. ``session.user_id`` stays on the row as actor data
+    (who recorded the session) but is not the access proxy.
+    """
 
     def __init__(self) -> None:
         self._sessions: dict[str, TherapySession] = {}
+        self._access: set[tuple[str, str]] = set()  # (patient_id, user_id)
+
+    def grant_access(self, patient_id: str, user_id: str) -> None:
+        """Test helper: record that ``user_id`` can access ``patient_id``'s sessions."""
+        self._access.add((patient_id, user_id))
+
+    def _can_access(self, patient_id: str, user_id: str) -> bool:
+        return (patient_id, user_id) in self._access
 
     def get(self, session_id: str, user_id: str) -> TherapySession | None:
-        """Get session by ID, ensuring it belongs to the user."""
+        """Get session by ID; ``None`` if absent or user lacks patient access."""
         session = self._sessions.get(session_id)
-        if session and session.user_id == user_id:
-            return session
-        return None
+        if session is None:
+            return None
+        if not self._can_access(session.patient_id, user_id):
+            return None
+        return session
 
     def list_by_patient(self, patient_id: str, user_id: str) -> list[TherapySession]:
-        """List all therapy sessions for a patient, ensuring user has access."""
-        sessions = [
-            s
-            for s in self._sessions.values()
-            if s.patient_id == patient_id and s.user_id == user_id
-        ]
-        # Sort by session date descending (newest first)
+        if not self._can_access(patient_id, user_id):
+            return []
+        sessions = [s for s in self._sessions.values() if s.patient_id == patient_id]
         sessions.sort(key=lambda s: s.session_date, reverse=True)
         return sessions
 
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20
     ) -> tuple[list[TherapySession], int]:
-        """List therapy sessions for a user with pagination."""
-        sessions = [s for s in self._sessions.values() if s.user_id == user_id]
+        """List sessions for any patient the user has access to.
+
+        Semantic match for ``PostgresTherapySessionRepository.list_by_user``
+        after the access-table migration: returns sessions for *patients*
+        the user is granted on, not sessions the user personally
+        recorded.
+        """
+        sessions = [
+            s
+            for s in self._sessions.values()
+            if self._can_access(s.patient_id, user_id)
+        ]
         sessions.sort(key=lambda s: s.session_date, reverse=True)
         total = len(sessions)
         offset = (page - 1) * page_size
         return sessions[offset : offset + page_size], total
 
     def create(self, session: TherapySession) -> TherapySession:
-        """Create a new therapy session."""
+        """Insert a session.
+
+        Auto-grants access to ``session.user_id`` for ``session.patient_id``
+        if not already granted — matches the production guarantee that a
+        clinician creating a session has been verified to have access to
+        the patient (the calling service makes that check via
+        ``patient_repo.get(patient_id, user_id)``).
+        """
         self._sessions[session.id] = session
+        self._access.add((session.patient_id, session.user_id))
         return session
 
     def update(self, session: TherapySession) -> TherapySession:
-        """Update an existing therapy session."""
         self._sessions[session.id] = session
         return session
 
     def list_today_by_user(self, user_id: str, tz_name: str = "UTC") -> list[TherapySession]:
-        """List today's sessions for a user."""
         start_utc, end_utc = _compute_day_boundaries(tz_name)
         sessions = [
             s
             for s in self._sessions.values()
-            if s.user_id == user_id
+            if self._can_access(s.patient_id, user_id)
             and s.scheduled_at is not None
             and start_utc <= s.scheduled_at < end_utc
         ]

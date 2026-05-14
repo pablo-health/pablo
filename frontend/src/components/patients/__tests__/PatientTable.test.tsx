@@ -42,7 +42,6 @@ const createWrapper = () => {
 const mockPatients: PatientResponse[] = [
   {
     id: "patient-1",
-    user_id: "user-1",
     first_name: "Jane",
     last_name: "Doe",
     email: "jane.doe@example.com",
@@ -60,7 +59,6 @@ const mockPatients: PatientResponse[] = [
   },
   {
     id: "patient-2",
-    user_id: "user-1",
     first_name: "John",
     last_name: "Smith",
     email: null,
@@ -78,7 +76,6 @@ const mockPatients: PatientResponse[] = [
   },
   {
     id: "patient-3",
-    user_id: "user-1",
     first_name: "Alice",
     last_name: "Johnson",
     email: "alice.johnson@example.com",

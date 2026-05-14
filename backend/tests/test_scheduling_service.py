@@ -79,20 +79,21 @@ def user_id() -> str:
 def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
     p = Patient(
         id=str(uuid.uuid4()),
-        user_id=user_id,
         first_name="Jane",
         last_name="Smith",
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
         session_count=0,
     )
-    patient_repo.create(p)
+    patient_repo.create(p, user_id)
     return p
 
 
 @pytest.fixture
 def notes_repo() -> InMemoryNotesRepository:
-    return InMemoryNotesRepository()
+    _repo = InMemoryNotesRepository()
+    _repo.grant_all_access()
+    return _repo
 
 
 @pytest.fixture
@@ -405,17 +406,30 @@ class TestListTodaySessions:
         assert len(today_sessions) == 1
         assert today_sessions[0].scheduled_at == now
 
-    def test_respects_user_isolation(
+    def test_scopes_by_patient_access(
         self,
         session_repo: InMemoryTherapySessionRepository,
         patient: Patient,
     ) -> None:
+        """List returns sessions for patients the user has access to.
+
+        Post patient_clinicians, ``list_today_by_user`` is scoped by
+        patient grants rather than session ``user_id``. Two sessions
+        for the same patient — one recorded by user-a, one by user-b —
+        are both visible to whichever user has a grant on the patient,
+        because they're treating the same patient. user-c (no grant)
+        sees nothing. Pre-migration this test asserted "sessions you
+        personally recorded" — a strictly narrower view that hid
+        co-treating clinicians' work.
+        """
         now = datetime.now(UTC)
         _make_session(session_repo, "user-a", patient.id, scheduled_at=now)
         _make_session(session_repo, "user-b", patient.id, scheduled_at=now)
 
-        assert len(session_repo.list_today_by_user("user-a", "UTC")) == 1
-        assert len(session_repo.list_today_by_user("user-b", "UTC")) == 1
+        # Both user-a and user-b auto-granted access by create().
+        assert len(session_repo.list_today_by_user("user-a", "UTC")) == 2
+        assert len(session_repo.list_today_by_user("user-b", "UTC")) == 2
+        # user-c has no grant on this patient.
         assert len(session_repo.list_today_by_user("user-c", "UTC")) == 0
 
 

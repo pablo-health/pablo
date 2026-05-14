@@ -108,7 +108,6 @@ export function createMockPatient(
 ): PatientResponse {
   return {
     id: "patient-123",
-    user_id: "user-1",
     first_name: "Jane",
     last_name: "Doe",
     email: null,

@@ -221,6 +221,7 @@ class ChatTurnService:
             bundle: ContextBundle = assemble_context_bundle(
                 notes_repo=self._notes_repo,
                 patient_id=context.patient_id,
+                user_id=context.owner_user_id,
                 selection=selection,
             )
         except ContextOverflowError as exc:

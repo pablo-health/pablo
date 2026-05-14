@@ -37,6 +37,7 @@ from app.services.chat_context_bundler import (
 )
 
 PATIENT_ID = "patient-bundler-1"
+USER_ID = "clinician-bundler-1"
 
 
 def _make_note(
@@ -60,7 +61,9 @@ def _make_note(
 
 @pytest.fixture
 def notes_repo() -> InMemoryNotesRepository:
-    return InMemoryNotesRepository()
+    _repo = InMemoryNotesRepository()
+    _repo.grant_all_access()
+    return _repo
 
 
 @pytest.fixture
@@ -122,6 +125,7 @@ class TestPastedText:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_PASTED_TEXT: {"content": "External note body."}},
         )
         assert "USER-PASTED EXTERNAL DOCUMENT" in bundle.text
@@ -135,6 +139,7 @@ class TestPastedText:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={SOURCE_KEY_PASTED_TEXT: {"content": too_big}},
             )
 
@@ -143,6 +148,7 @@ class TestPastedText:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={SOURCE_KEY_PASTED_TEXT: True},
             )
 
@@ -154,6 +160,7 @@ class TestPastedText:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={SOURCE_KEY_PASTED_TEXT: {"content": content}},
                 token_budget=100,
             )
@@ -191,6 +198,7 @@ class TestProgressNotesRecent:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: True},
         )
         included = next(
@@ -220,6 +228,7 @@ class TestProgressNotesRecent:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: {"limit": 2}},
         )
         entry = next(
@@ -234,6 +243,7 @@ class TestProgressNotesRecent:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: {"limit": 0}},
             )
 
@@ -269,6 +279,7 @@ class TestProgressNotesExplicit:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_PROGRESS_NOTES_EXPLICIT: {"note_ids": ["note-c", "note-a"]}},
         )
         entry = next(
@@ -294,6 +305,7 @@ class TestProgressNotesExplicit:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={
                 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT: {"note_ids": ["note-real", "note-ghost"]}
             },
@@ -311,6 +323,7 @@ class TestProgressNotesExplicit:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={SOURCE_KEY_PROGRESS_NOTES_EXPLICIT: {"note_ids": [1, 2]}},
             )
 
@@ -344,6 +357,7 @@ class TestPatientDocumentSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_MOST_RECENT_INTAKE: True},
         )
         assert "New intake content" in bundle.text
@@ -360,6 +374,7 @@ class TestPatientDocumentSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_SAFETY_PLAN_ACTIVE: True},
         )
         assert "ACTIVE SAFETY PLAN" in bundle.text
@@ -376,6 +391,7 @@ class TestPatientDocumentSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_TREATMENT_PLAN_ACTIVE: True},
         )
         assert "ACTIVE TREATMENT PLAN" in bundle.text
@@ -392,6 +408,7 @@ class TestPatientDocumentSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_CURRENT_MEDICATIONS: True},
         )
         assert "CURRENT MEDICATIONS" in bundle.text
@@ -405,6 +422,7 @@ class TestPatientDocumentSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_TREATMENT_PLAN_ACTIVE: True},
         )
         entry = next(
@@ -420,6 +438,7 @@ class TestPatientDocumentSources:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={SOURCE_KEY_SAFETY_PLAN_ACTIVE: {"limit": 1}},
             )
 
@@ -434,6 +453,7 @@ class TestStubSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_LAB_VALUES_RECENT: {"limit": 5}},
         )
         entry = next(
@@ -448,6 +468,7 @@ class TestStubSources:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_VITALS_RECENT: True},
         )
         entry = next(
@@ -469,6 +490,7 @@ class TestSelectionPlumbing:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
+            user_id=USER_ID,
                 selection={"not_a_real_source": True},
             )
 
@@ -476,6 +498,7 @@ class TestSelectionPlumbing:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={
                 SOURCE_KEY_CURRENT_MEDICATIONS: False,
                 SOURCE_KEY_SAFETY_PLAN_ACTIVE: None,
@@ -495,6 +518,7 @@ class TestSelectionPlumbing:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection=default_source_selection(),
         )
         included_keys = {s["source_key"] for s in bundle.manifest["sources_included"]}
@@ -547,6 +571,7 @@ class TestTruncationPolicy:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: {"limit": 5}},
             token_budget=600,
         )
@@ -588,6 +613,7 @@ class TestTruncationPolicy:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={
                 SOURCE_KEY_TREATMENT_PLAN_ACTIVE: True,
                 SOURCE_KEY_SAFETY_PLAN_ACTIVE: True,
@@ -608,6 +634,7 @@ class TestTruncationPolicy:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: {"limit": 3}},
             token_budget=DEFAULT_TOKEN_BUDGET,
         )
@@ -681,6 +708,7 @@ class TestIntegration:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_id=PATIENT_ID,
+            user_id=USER_ID,
             selection={
                 SOURCE_KEY_PASTED_TEXT: {"content": "External progress note."},
                 **default_source_selection(),

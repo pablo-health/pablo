@@ -119,13 +119,12 @@ class TestSameLastNameFlag:
         patient_repo.create(
             Patient(
                 id="p1",
-                user_id="u1",
                 first_name="Robert",
                 last_name="Smith",  # matches user's surname
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
             )
-        )
+        , "u1")
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -152,13 +151,12 @@ class TestSameLastNameFlag:
         patient_repo.create(
             Patient(
                 id="p1",
-                user_id="u1",
                 first_name="Robert",
                 last_name="Jones",
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
             )
-        )
+        , "u1")
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -195,13 +193,12 @@ class TestNoTreatmentRelationshipFlag:
         patient_repo.create(
             Patient(
                 id="p1",
-                user_id="u1",
                 first_name="X",
                 last_name="Y",
                 created_at=patient_created_ts,
                 updated_at=patient_created_ts,
             )
-        )
+        , "u1")
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -246,13 +243,12 @@ class TestNoTreatmentRelationshipFlag:
         patient_repo.create(
             Patient(
                 id="p1",
-                user_id="u1",
                 first_name="X",
                 last_name="Y",
                 created_at=now,
                 updated_at=now,
             )
-        )
+        , "u1")
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -293,13 +289,12 @@ class TestNoTreatmentRelationshipFlag:
         patient_repo.create(
             Patient(
                 id="p1",
-                user_id="u1",
                 first_name="X",
                 last_name="Y",
                 created_at=created,
                 updated_at=created,
             )
-        )
+        , "u1")
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -355,13 +350,12 @@ class TestNoTreatmentRelationshipFlag:
         patient_repo.create(
             Patient(
                 id="p1",
-                user_id="u1",
                 first_name="X",
                 last_name="Y",
                 created_at=created,
                 updated_at=created,
             )
-        )
+        , "u1")
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",

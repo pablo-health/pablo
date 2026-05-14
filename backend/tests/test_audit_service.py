@@ -39,7 +39,6 @@ def test_user() -> User:
 def test_patient() -> Patient:
     return Patient(
         id="patient-456",
-        user_id="user-123",
         first_name="John",
         last_name="Doe",
         created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),

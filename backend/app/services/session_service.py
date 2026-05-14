@@ -191,6 +191,7 @@ class SessionService:
         session: TherapySession,
         patient: Patient,
         note_type: str,
+        user_id: str,
     ) -> Note:
         result = self.note_generation_service.generate_note(
             note_type, session.transcript, patient, session.session_date
@@ -200,6 +201,7 @@ class SessionService:
             patient_id=session.patient_id,
             note_type=result.note_type,
             content=result.content,
+            user_id=user_id,
         )
 
     def upload_session(
@@ -246,7 +248,7 @@ class SessionService:
 
         try:
             logger.info("Starting note generation for session %s", session.id)
-            note = self._generate_and_persist_note(session, patient, DEFAULT_NOTE_TYPE)
+            note = self._generate_and_persist_note(session, patient, DEFAULT_NOTE_TYPE, user_id)
             logger.info("Note generation completed for session %s", session.id)
 
             session.status = SessionStatus.PENDING_REVIEW
@@ -293,7 +295,7 @@ class SessionService:
         if session.status != SessionStatus.PENDING_REVIEW:
             raise InvalidSessionStatusError(session.status, "pending_review")
 
-        note = self.note_service.get_note_by_session_id(session_id)
+        note = self.note_service.get_note_by_session_id(session_id, user_id)
         if note is None:
             raise NoteNotFoundError(f"Session {session_id} has no note to finalize")
 
@@ -306,6 +308,7 @@ class SessionService:
                     "assessment": request.soap_note_edited.assessment,
                     "plan": request.soap_note_edited.plan,
                 },
+                user_id=user_id,
             )
 
         finalized_at = _now()
@@ -319,6 +322,7 @@ class SessionService:
                 else None
             ),
             finalized_at=finalized_at,
+            user_id=user_id,
         )
 
         session.status = SessionStatus.FINALIZED
@@ -328,7 +332,7 @@ class SessionService:
         if self.eval_export_service:
             decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
             if decision.should_queue:
-                note = self.note_service.submit_note_for_export(note.id)
+                note = self.note_service.submit_note_for_export(note.id, user_id)
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
         return session, patient, note
@@ -355,7 +359,7 @@ class SessionService:
         if session.status != SessionStatus.FINALIZED:
             raise InvalidSessionStatusError(session.status, "finalized")
 
-        note = self.note_service.get_note_by_session_id(session_id)
+        note = self.note_service.get_note_by_session_id(session_id, user_id)
         if note is None:
             raise NoteNotFoundError(f"Session {session_id} has no note")
 
@@ -369,6 +373,7 @@ class SessionService:
                     if request.quality_rating_sections
                     else None
                 ),
+                user_id=user_id,
             )
         except NoteNotFinalizedError as exc:
             # Defensive: should not happen given the session.status guard above.
@@ -393,10 +398,10 @@ class SessionService:
         if not session:
             raise SessionNotFoundError(f"Session {session_id} not found")
 
-        note = self.note_service.get_note_by_session_id(session_id)
+        note = self.note_service.get_note_by_session_id(session_id, user_id)
         if note is None:
             raise NoteNotFoundError(f"Session {session_id} has no note")
-        return self.note_service.update_note_edits(note.id, content_edited)
+        return self.note_service.update_note_edits(note.id, content_edited, user_id)
 
     def submit_for_export(
         self,
@@ -408,11 +413,11 @@ class SessionService:
         if not session:
             raise SessionNotFoundError(f"Session {session_id} not found")
 
-        note = self.note_service.get_note_by_session_id(session_id)
+        note = self.note_service.get_note_by_session_id(session_id, user_id)
         if note is None:
             raise NoteNotFoundError(f"Session {session_id} has no note")
         try:
-            return self.note_service.submit_note_for_export(note.id)
+            return self.note_service.submit_note_for_export(note.id, user_id)
         except NoteAlreadyFinalizedError:
             raise
 
@@ -468,6 +473,7 @@ class SessionService:
             patient_id=session.patient_id,
             note_type=note_type,
             content=None,
+            user_id=user_id,
         )
 
         self._update_next_session_date(patient, user_id)
@@ -599,12 +605,12 @@ class SessionService:
 
         # Pick note_type from any pre-existing Note row (e.g. set at
         # schedule time). Fall back to the default if absent.
-        existing_note = self.note_service.get_note_by_session_id(session.id)
+        existing_note = self.note_service.get_note_by_session_id(session.id, user_id)
         note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
 
         try:
             logger.info("Starting note generation for session %s", session.id)
-            note = self._generate_and_persist_note(session, patient, note_type)
+            note = self._generate_and_persist_note(session, patient, note_type, user_id)
             logger.info("Note generation completed for session %s", session.id)
 
             session.status = SessionStatus.PENDING_REVIEW

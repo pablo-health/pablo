@@ -117,13 +117,12 @@ def _build_request() -> MagicMock:
 def _seed_patient(pg: Session, patient_id: str = "patient-1") -> Patient:
     patient = Patient(
         id=patient_id,
-        user_id=_USER_ID,
         first_name="Jane",
         last_name="Doe",
         created_at=_NOW,
         updated_at=_NOW,
     )
-    PostgresPatientRepository(pg).create(patient)
+    PostgresPatientRepository(pg).create(patient, _USER_ID)
     return patient
 
 

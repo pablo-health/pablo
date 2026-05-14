@@ -50,7 +50,9 @@ def patient_repo(
 
 @pytest.fixture
 def notes_repo() -> InMemoryNotesRepository:
-    return InMemoryNotesRepository()
+    _repo = InMemoryNotesRepository()
+    _repo.grant_all_access()
+    return _repo
 
 
 @pytest.fixture
@@ -86,7 +88,6 @@ def user_id() -> str:
 def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
     p = Patient(
         id=str(uuid.uuid4()),
-        user_id=user_id,
         first_name="John",
         last_name="Doe",
         created_at=datetime.now(UTC),
@@ -94,7 +95,7 @@ def patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
         session_count=0,
         last_session_date=None,
     )
-    patient_repo.create(p)
+    patient_repo.create(p, user_id)
     return p
 
 
@@ -136,6 +137,7 @@ def _make_pending_session(
         patient_id=patient_id,
         note_type="soap",
         content={"subjective": "S", "objective": "O", "assessment": "A", "plan": "P"},
+        user_id=user_id,
     )
     return session
 
@@ -163,8 +165,9 @@ def _make_finalized_session(
         patient_id=patient_id,
         note_type="soap",
         content={"subjective": "S", "objective": "O", "assessment": "A", "plan": "P"},
+        user_id=user_id,
     )
-    note_service.finalize_note(note.id, quality_rating=5)
+    note_service.finalize_note(note.id, quality_rating=5, user_id=user_id)
     return session
 
 

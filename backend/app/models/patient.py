@@ -97,7 +97,6 @@ class PatientResponse(BaseModel):
     """
 
     id: str
-    user_id: str
     first_name: str
     last_name: str
     email: str | None = None
@@ -133,7 +132,6 @@ class PatientResponse(BaseModel):
         """
         return cls(
             id=patient.id,
-            user_id=patient.user_id,
             first_name=patient.first_name,
             last_name=patient.last_name,
             email=patient.email,
@@ -220,12 +218,17 @@ class Patient:
     """
     Patient data model.
 
-    Represents a therapy client/patient managed by a therapist.
+    Represents a therapy client/patient. Access (read/write) is
+    governed by :class:`PatientClinicianRow` grants in the DB rather
+    than a ``user_id`` column on the patient itself — see migration
+    ``9dea1edf7fe0``. The "primary clinician" concept is now an
+    ``role='primary'`` row in ``patient_clinicians``, not a field
+    here.
+
     Search fields (first_name_lower, last_name_lower) are auto-generated.
     """
 
     id: str
-    user_id: str
     first_name: str
     last_name: str
     created_at: datetime
@@ -267,7 +270,6 @@ class Patient:
         last = data["last_name"]
         return cls(
             id=data["id"],
-            user_id=data["user_id"],
             first_name=first,
             last_name=last,
             created_at=data["created_at"],

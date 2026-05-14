@@ -71,16 +71,34 @@ class AppointmentRepository(ABC):
 
 
 class InMemoryAppointmentRepository(AppointmentRepository):
-    """In-memory implementation for testing."""
+    """In-memory implementation for testing.
+
+    Maintains a per-(patient_id, user_id) access set mirroring
+    ``patient_clinicians`` semantics for the patient-scoped methods
+    (``get``, ``list_by_patient``, ``delete``). Calendar-personal
+    methods (``list_by_range``, ``list_by_recurring_id``,
+    ``list_by_ical_source``) keep the original ``appointment.user_id``
+    filter — those are "my calendar" slices, not patient queries.
+    """
 
     def __init__(self) -> None:
         self._appointments: dict[str, Appointment] = {}
+        self._access: set[tuple[str, str]] = set()  # (patient_id, user_id)
+
+    def grant_access(self, patient_id: str, user_id: str) -> None:
+        """Test helper — record a patient_clinicians-equivalent grant."""
+        self._access.add((patient_id, user_id))
+
+    def _can_access(self, patient_id: str, user_id: str) -> bool:
+        return (patient_id, user_id) in self._access
 
     def get(self, appointment_id: str, user_id: str) -> Appointment | None:
         appt = self._appointments.get(appointment_id)
-        if appt and appt.user_id == user_id:
-            return appt
-        return None
+        if appt is None:
+            return None
+        if not self._can_access(appt.patient_id, user_id):
+            return None
+        return appt
 
     def list_by_range(
         self,
@@ -88,6 +106,7 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         start: str | datetime,
         end: str | datetime,
     ) -> list[Appointment]:
+        """My-calendar slice — filtered by appointment ownership, not patient access."""
         start_dt = (
             start
             if isinstance(start, datetime)
@@ -110,12 +129,10 @@ class InMemoryAppointmentRepository(AppointmentRepository):
         user_id: str,
         patient_id: str,
     ) -> list[Appointment]:
+        if not self._can_access(patient_id, user_id):
+            return []
         return sorted(
-            [
-                a
-                for a in self._appointments.values()
-                if a.user_id == user_id and a.patient_id == patient_id
-            ],
+            [a for a in self._appointments.values() if a.patient_id == patient_id],
             key=lambda a: a.start_at,
         )
 
@@ -155,11 +172,16 @@ class InMemoryAppointmentRepository(AppointmentRepository):
 
     def create(self, appointment: Appointment) -> Appointment:
         self._appointments[appointment.id] = appointment
+        # Auto-grant the creator access to the patient — mirrors the
+        # Postgres guarantee that callers verified patient access
+        # before reaching this point.
+        self._access.add((appointment.patient_id, appointment.user_id))
         return appointment
 
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:
         for appt in appointments:
             self._appointments[appt.id] = appt
+            self._access.add((appt.patient_id, appt.user_id))
         return appointments
 
     def update(self, appointment: Appointment) -> Appointment:

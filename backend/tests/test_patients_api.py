@@ -28,7 +28,6 @@ def test_create_patient_success(client: TestClient, sample_patient_data: dict[st
     assert data["date_of_birth"] == "1980-05-15T00:00:00Z"
     assert data["diagnosis"] == "Anxiety disorder"
     assert "id" in data
-    assert "user_id" in data
     assert data["session_count"] == 0
     assert "created_at" in data
     assert "updated_at" in data
