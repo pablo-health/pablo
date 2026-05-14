@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from ..models import ChatMessage
+from ..models import ChatMessage, QuotaStatus
 from ..utcnow import utc_now
 from .chat_context_bundler import (
     ContextBundle,
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from ..repositories import ChatRepository, NotesRepository
     from .chat_llm_gateway import ChatLLMGateway
+    from .llm_usage_meter import LlmUsageMeter
 
 logger = logging.getLogger(__name__)
 
@@ -145,10 +146,15 @@ class ChatTurnService:
         chat_repo: ChatRepository,
         notes_repo: NotesRepository,
         gateway: ChatLLMGateway,
+        usage_meter: LlmUsageMeter | None = None,
     ) -> None:
         self._chat_repo = chat_repo
         self._notes_repo = notes_repo
         self._gateway = gateway
+        # Optional for in-memory tests that don't exercise the metering
+        # path. The route always wires a real meter in; the absence of
+        # one means metering is silently skipped.
+        self._usage_meter = usage_meter
 
     # ------------------------------------------------------------------
     # Entry point
@@ -190,6 +196,22 @@ class ChatTurnService:
                 message=(f"Message exceeds {MAX_CONTENT_CHARS} characters."),
             )
             return
+
+        # Quota gate (design doc §11.6). When enforcement is off (OSS
+        # default) the meter returns OK and this is a no-op. SaaS
+        # overlays subclass the meter to consult tenant config.
+        quota_status: QuotaStatus = QuotaStatus.OK
+        if self._usage_meter is not None:
+            quota_status = self._usage_meter.check_quota(
+                user_id=context.owner_user_id,
+                feature_key=context.caller_feature_key,
+            )
+            if quota_status == QuotaStatus.HARD_BLOCK:
+                yield _error_event(
+                    code="quota_exceeded",
+                    message="LLM usage quota exceeded for this period.",
+                )
+                return
 
         # Assemble context. Pasted-text overflow is the only structural
         # failure the bundler raises; everything else is silently
@@ -262,16 +284,19 @@ class ChatTurnService:
         assistant_message.input_tokens = input_tokens_estimate
         self._chat_repo.update_message(assistant_message)
 
-        yield TurnStreamEvent(
-            kind="meta",
-            data={
-                "user_message_id": user_message.id,
-                "assistant_message_id": assistant_message.id,
-                "input_tokens": input_tokens_estimate,
-                "model": context.model,
-                "manifest": bundle.manifest,
-            },
-        )
+        meta_data: dict[str, object] = {
+            "user_message_id": user_message.id,
+            "assistant_message_id": assistant_message.id,
+            "input_tokens": input_tokens_estimate,
+            "model": context.model,
+            "manifest": bundle.manifest,
+        }
+        if quota_status == QuotaStatus.SOFT_WARN:
+            # Hook for the UI to surface a "you're near your cap"
+            # warning. The remaining-pct value comes from the SaaS
+            # overlay's quota config; OSS stays silent.
+            meta_data["quota_status"] = QuotaStatus.SOFT_WARN.value
+        yield TurnStreamEvent(kind="meta", data=meta_data)
 
         # Stream from the gateway with one transient-error retry.
         attempt_buffers: list[str] = []
@@ -348,6 +373,20 @@ class ChatTurnService:
                 message=final_event.error_message or "LLM error",
             )
             return
+
+        # Meter the completed turn (design doc §11.6). Only successful
+        # turns count — safety blocks, transient errors, and missing
+        # completions are already short-circuited above. Failures
+        # inside the meter are swallowed there; this call is best-
+        # effort and must not affect the client-visible stream.
+        if self._usage_meter is not None:
+            self._usage_meter.record_turn(
+                user_id=context.owner_user_id,
+                feature_key=context.caller_feature_key,
+                model=context.model,
+                input_tokens=assistant_message.input_tokens or 0,
+                output_tokens=assistant_message.output_tokens or 0,
+            )
 
         yield TurnStreamEvent(
             kind="done",

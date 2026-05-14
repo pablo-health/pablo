@@ -33,6 +33,7 @@ from .ehr_navigation_service import (
     MockEhrNavigationService,
 )
 from .export_service import ExportService
+from .llm_usage_meter import LlmUsageMeter, period_yyyymm
 from .note_generation_service import (
     GeneratedNote,
     MeetingTranscriptionNoteService,
@@ -83,6 +84,7 @@ __all__ = [
     "InvalidSelectionError",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
+    "LlmUsageMeter",
     "MeetingTranscriptionNoteService",
     "MockEhrNavigationService",
     "MockNoteGenerationService",
@@ -114,4 +116,5 @@ __all__ = [
     "get_chat_model_resolver",
     "merge_attribution_into_soap",
     "parse_attribution_response",
+    "period_yyyymm",
 ]

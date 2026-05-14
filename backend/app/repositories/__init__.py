@@ -24,6 +24,10 @@ from .ehr_route import (
     EhrRouteRepository,
     InMemoryEhrRouteRepository,
 )
+from .llm_usage import (
+    InMemoryLlmUsageRepository,
+    LlmUsageRepository,
+)
 from .note import (
     InMemoryNotesRepository,
     NotesRepository,
@@ -165,6 +169,13 @@ def get_chat_repository() -> ChatRepository:
     return PostgresChatRepository(_get_pg_session())
 
 
+def get_llm_usage_repository() -> LlmUsageRepository:
+    """Get LLM usage repository instance."""
+    from .postgres.llm_usage import PostgresLlmUsageRepository
+
+    return PostgresLlmUsageRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
     "ChatRepository",
@@ -174,10 +185,12 @@ __all__ = [
     "InMemoryChatRepository",
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
+    "InMemoryLlmUsageRepository",
     "InMemoryNotesRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
+    "LlmUsageRepository",
     "NotesRepository",
     "PatientRepository",
     "TherapySessionRepository",
@@ -194,6 +207,7 @@ __all__ = [
     "get_google_calendar_token_repository",
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
+    "get_llm_usage_repository",
     "get_notes_repository",
     "get_patient_repository",
     "get_session_repository",

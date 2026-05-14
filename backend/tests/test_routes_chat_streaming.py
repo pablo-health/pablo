@@ -21,8 +21,8 @@ from app.auth.service import (
     require_mfa,
 )
 from app.main import app
-from app.models import Patient, User
-from app.routes.chat import get_chat_llm_gateway
+from app.models import Patient, QuotaStatus, User
+from app.routes.chat import get_chat_llm_gateway, get_llm_usage_meter
 from app.services.chat_llm_gateway import FakeChatLLMGateway, StreamEvent
 from app.services.chat_model_resolver import get_chat_model_resolver
 
@@ -220,6 +220,44 @@ class TestSendMessage:
         )
         assert response.status_code == 404
         assert gateway.calls == []
+
+    def test_quota_exceeded_emits_error_event(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A meter that hard-blocks short-circuits before the gateway
+        is called and surfaces a ``quota_exceeded`` SSE error event
+        (THERAPY-f6eg, Phase 3b)."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        conversation_id = _create_conversation(client, patient.id)
+
+        # Pin a meter that always hard-blocks. Real OSS meters always
+        # return OK; this test isolates the route wiring.
+        class _BlockingMeter:
+            def check_quota(self, **_kwargs: object) -> QuotaStatus:
+                return QuotaStatus.HARD_BLOCK
+
+            def record_turn(self, **_kwargs: object) -> None:
+                pass  # never called on a hard-block
+
+        app.dependency_overrides[get_llm_usage_meter] = _BlockingMeter
+        try:
+            gateway = FakeChatLLMGateway(script=[StreamEvent(delta="never reached")])
+            _install_gateway(client, gateway)
+
+            response = client.post(
+                f"/api/chat/conversations/{conversation_id}/messages",
+                json={"content": "ping"},
+            )
+            assert response.status_code == 200
+            events = _parse_sse(response.content)
+            assert events[-1][0] == "error"
+            assert events[-1][1]["error"] == "quota_exceeded"
+            assert gateway.calls == []
+        finally:
+            app.dependency_overrides.pop(get_llm_usage_meter, None)
 
     def test_safety_block_emits_error_event(
         self,
