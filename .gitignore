@@ -44,6 +44,9 @@ backend/data/nli-therapy-*
 
 # Claude Code: ship team-wide settings.json + skills, ignore per-developer overrides
 .claude/settings.local.json
+# Claude Code: worktree-isolated sub-agents materialize here at runtime;
+# transient by design, never committed.
+.claude/worktrees/
 
 # Operator-local scripts and notes (never committed; common convention
 # for keeping environment-specific automation alongside the checkout).
