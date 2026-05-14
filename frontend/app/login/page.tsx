@@ -231,8 +231,10 @@ export default function LoginPage() {
           url: `${window.location.origin}/login`,
         })
         setResendSent(true)
-      } catch {
-        setVerifyEmailError("Failed to resend. Please wait a minute and try again.")
+      } catch (err) {
+        console.error("sendEmailVerification failed:", err)
+        const outcome = firebaseAuthErrorOutcome(err, "verify-email")
+        if (outcome.kind === "message") setVerifyEmailError(outcome.message)
       }
     }
 
