@@ -136,6 +136,30 @@ class ChatConversationListResponse(BaseModel):
     total: int
 
 
+class PreviewChatContextRequest(BaseModel):
+    """``POST /api/chat/conversations/preview`` request body.
+
+    Drives the §13.4 briefing card. Runs the same context bundler the
+    streaming turn would, against the caller's proposed
+    ``source_selection``, and returns the resulting manifest — without
+    creating a conversation, calling the LLM, or recording any audit
+    rows. PHI never leaves the practice schema; the manifest is
+    counts / ids / dates only.
+
+    Omitting ``source_selection`` falls back to the design-doc §7.4
+    default (medications + intake + recent progress notes + plans).
+    """
+
+    patient_id: str
+    source_selection: dict[str, Any] | None = None
+
+
+class PreviewChatContextResponse(BaseModel):
+    """``POST /api/chat/conversations/preview`` response body."""
+
+    manifest: dict[str, Any]
+
+
 class SendChatMessageRequest(BaseModel):
     """``POST /api/chat/conversations/{id}/messages`` request body.
 

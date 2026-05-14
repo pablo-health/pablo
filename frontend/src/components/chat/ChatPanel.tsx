@@ -3,18 +3,16 @@
 "use client"
 
 /**
- * ChatPanel — Phase 4 baseline (THERAPY-q3z).
+ * ChatPanel — Phase 4 baseline (THERAPY-q3z) plus §13.4 / §13.6 / §13.7
+ * trust-affordance bundle (THERAPY-0s44).
  *
  * Implements §13.1 prop API, §13.2 source chip rail, §13.3 per-message
- * manifest disclosure, §13.8 error states, §13.9 bubbles, §13.10
- * composer, §13.11 archive, §13.12 SSE consumer.
+ * manifest disclosure, §13.4 briefing card (empty state), §13.6
+ * system-prompt view, §13.7 scope footer, §13.8 error states, §13.9
+ * bubbles, §13.10 composer, §13.11 archive, §13.12 SSE consumer.
  *
- * Out of scope for this bead (follow-on beads 4c / 4d):
- * - §13.4 briefing card
+ * Out of scope for the current bead chain (THERAPY-4wg3):
  * - §13.5 caller-supplied starter prompts
- * - §13.6 view-system-prompt chevron
- * - §13.7 scope/safety footer
- * - NODE_ENV-gated /dev/chat mount route
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -35,11 +33,14 @@ import {
 } from "@/lib/chat/types"
 
 import { ArchiveButton } from "./ArchiveButton"
+import { BriefingCard } from "./BriefingCard"
 import { ChatErrorNotice } from "./ChatErrorNotice"
 import { Composer } from "./Composer"
 import { MessageBubble } from "./MessageBubble"
+import { ScopeFooter } from "./ScopeFooter"
 import { SourceChipDetail } from "./SourceChipDetail"
 import { SourceChipRail } from "./SourceChipRail"
+import { SystemPromptView } from "./SystemPromptView"
 
 const DEFAULT_TOKEN_BUDGET = 600_000
 
@@ -454,14 +455,22 @@ export function ChatPanel({
       {/* Header */}
       <div
         data-slot="chat-panel-header"
-        className="flex items-center justify-between gap-2"
+        className="flex flex-col gap-1"
       >
-        <h2 className="font-display text-lg font-medium text-neutral-900 truncate">
-          {conversationTitle || title || "Chat"}
-        </h2>
-        {conversationId && !archived ? (
-          <ArchiveButton onConfirm={handleArchive} />
-        ) : null}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h2 className="font-display text-lg font-medium text-neutral-900 truncate">
+              {conversationTitle || title || "Chat"}
+            </h2>
+            <SystemPromptView
+              callerFeatureKey={callerFeatureKey}
+              systemPrompt={callerSystemPrompt}
+            />
+          </div>
+          {conversationId && !archived ? (
+            <ArchiveButton onConfirm={handleArchive} />
+          ) : null}
+        </div>
       </div>
 
       {/* Source chip rail */}
@@ -479,9 +488,10 @@ export function ChatPanel({
         className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4 space-y-3"
       >
         {messages.length === 0 && !streamingAssistantId ? (
-          <p className="text-sm text-neutral-500 italic">
-            Ask a question to start the conversation.
-          </p>
+          <BriefingCard
+            patientId={patientId}
+            selection={defaultSourceSelection ?? serverDefault}
+          />
         ) : null}
         {messages.map((message) => (
           <MessageBubble
@@ -522,6 +532,9 @@ export function ChatPanel({
           onSend={handleSend}
         />
       )}
+
+      {/* Scope / safety footer (§13.7) — persistent for the conversation lifetime. */}
+      <ScopeFooter />
 
       {/* Source-chip detail dialog (single instance shared by all chips) */}
       <SourceChipDetail
