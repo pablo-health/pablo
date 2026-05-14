@@ -7,10 +7,11 @@
  */
 
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
-import { get, post, put } from "./client"
+import { get, patch, post, put } from "./client"
 
+export type ProviderType = "therapist" | "prescriber" | "both"
 
-interface UserProfile {
+export interface UserProfile {
   id: string
   email: string
   name: string
@@ -18,9 +19,10 @@ interface UserProfile {
   mfa_enrolled_at: string | null
   is_platform_admin: boolean
   baa_accepted_at: string | null
+  provider_type: ProviderType | null
 }
 
-interface UserStatus {
+export interface UserStatus {
   status: string
   mfa_enrolled_at: string | null
   is_platform_admin: boolean
@@ -31,6 +33,19 @@ interface UserStatus {
    * and multi-tenancy is enabled. Undefined in OSS-only deployments.
    */
   practice_id?: string
+  /**
+   * "therapist" | "prescriber" | "both". `null` means the user has not
+   * picked a provider type yet — the SaaS overlay treats this as the
+   * "needs onboarding" signal.
+   */
+  provider_type: ProviderType | null
+}
+
+export interface UpdateUserRequest {
+  name?: string
+  title?: string
+  credentials?: string
+  provider_type?: ProviderType
 }
 
 /**
@@ -58,6 +73,19 @@ export async function getUserProfile(
   token?: string
 ): Promise<UserProfile> {
   return get<UserProfile>("/api/users/me", token)
+}
+
+/**
+ * Partial update of the current user's profile. Currently the backend
+ * persists `name` and `provider_type`; `title` / `credentials` are
+ * accepted by the schema but live on the per-practice clinician
+ * profile and are not wired through yet.
+ */
+export async function updateUserProfile(
+  data: UpdateUserRequest,
+  token?: string
+): Promise<UserProfile> {
+  return patch<UserProfile>("/api/users/me", data, token)
 }
 
 /**
