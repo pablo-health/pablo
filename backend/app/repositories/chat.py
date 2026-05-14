@@ -13,6 +13,8 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ..models import ChatConversation, ChatMessage
 
 
@@ -51,6 +53,40 @@ class ChatRepository(ABC):
     @abstractmethod
     def delete_conversation(self, conversation_id: str) -> int:
         """Hard-delete a conversation and its messages. Returns deleted message count."""
+
+    @abstractmethod
+    def next_sequence(self, conversation_id: str) -> int:
+        """Return the next sequence number for a new message in this conversation.
+
+        Sequences are monotonic per conversation starting at 1. The
+        Postgres implementation issues a row-locking SELECT against the
+        parent conversation so concurrent ``add_message`` calls are
+        serialized per conversation (design doc §14).
+        """
+
+    @abstractmethod
+    def add_message(self, message: ChatMessage) -> ChatMessage:
+        """Append a new chat message row. Called once per user turn and
+        once per assistant turn (the latter is later updated in place
+        with streaming output and token counts)."""
+
+    @abstractmethod
+    def update_message(self, message: ChatMessage) -> ChatMessage:
+        """Persist updates to an existing message row.
+
+        Used by the streaming turn service when the assistant message
+        completes: content, output_tokens, llm_model, llm_finish_reason,
+        and llm_error are filled in after the stream ends.
+        """
+
+    @abstractmethod
+    def touch_last_turn_at(self, conversation_id: str, last_turn_at: datetime) -> None:
+        """Update the conversation's ``last_turn_at`` timestamp.
+
+        Called from the turn service after the assistant row finalizes.
+        Idempotent: an out-of-order call with an earlier timestamp is
+        silently ignored.
+        """
 
 
 class InMemoryChatRepository(ChatRepository):
@@ -110,3 +146,29 @@ class InMemoryChatRepository(ChatRepository):
         msgs = self._messages.pop(conversation_id, [])
         self._conversations.pop(conversation_id, None)
         return len(msgs)
+
+    def next_sequence(self, conversation_id: str) -> int:
+        msgs = self._messages.get(conversation_id, [])
+        if not msgs:
+            return 1
+        return max(m.sequence for m in msgs) + 1
+
+    def add_message(self, message: ChatMessage) -> ChatMessage:
+        self._messages.setdefault(message.conversation_id, []).append(message)
+        return message
+
+    def update_message(self, message: ChatMessage) -> ChatMessage:
+        bucket = self._messages.setdefault(message.conversation_id, [])
+        for i, existing in enumerate(bucket):
+            if existing.id == message.id:
+                bucket[i] = message
+                return message
+        bucket.append(message)
+        return message
+
+    def touch_last_turn_at(self, conversation_id: str, last_turn_at: datetime) -> None:
+        conv = self._conversations.get(conversation_id)
+        if conv is None:
+            return
+        if conv.last_turn_at is None or conv.last_turn_at < last_turn_at:
+            conv.last_turn_at = last_turn_at

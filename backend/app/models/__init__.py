@@ -20,6 +20,7 @@ from .chat_api import (
     ChatConversationResponse,
     ChatMessageResponse,
     CreateChatConversationRequest,
+    SendChatMessageRequest,
     UpdateChatConversationRequest,
 )
 from .ehr_prompt import EhrPrompt
@@ -34,6 +35,7 @@ from .ehr_route import (
     UpdateEhrRouteStepRequest,
 )
 from .enums import EhrAction, EhrSystem
+from .llm_usage import LlmUsageRecord, QuotaStatus, UsageSummary
 from .note import Note
 from .notes import (
     CreateStandaloneNoteRequest,
@@ -150,6 +152,7 @@ __all__ = [
     "FreeSlotsResponse",
     "GoalNavigationRequest",
     "GoalNavigationResponse",
+    "LlmUsageRecord",
     "Note",
     "NoteResponse",
     "ObjectiveNote",
@@ -161,6 +164,7 @@ __all__ = [
     "PatientSummary",
     "PlanNote",
     "PreviousAction",
+    "QuotaStatus",
     "ResourceType",
     "SOAPNote",
     "SOAPNoteModel",
@@ -168,6 +172,7 @@ __all__ = [
     "SOAPSentence",
     "SOAPSentenceModel",
     "ScheduleSessionRequest",
+    "SendChatMessageRequest",
     "SessionListResponse",
     "SessionResponse",
     "SessionSource",
@@ -195,6 +200,7 @@ __all__ = [
     "UpdateUserRequest",
     "UploadSessionRequest",
     "UploadTranscriptToSessionRequest",
+    "UsageSummary",
     "User",
     "UserPreferences",
     "VideoPlatform",

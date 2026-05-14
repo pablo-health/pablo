@@ -20,10 +20,12 @@ deferred to a follow-up (design doc §18 open decision).
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 
 from ..api_errors import NotFoundError
 from ..auth.service import require_baa_acceptance
@@ -33,15 +35,24 @@ from ..models import (
     ChatConversationListResponse,
     ChatConversationResponse,
     CreateChatConversationRequest,
+    SendChatMessageRequest,
     UpdateChatConversationRequest,
     User,
 )
 from ..repositories import (
     ChatRepository,
+    LlmUsageRepository,
+    NotesRepository,
     PatientRepository,
 )
 from ..repositories import (
     get_chat_repository as _chat_repo_factory,
+)
+from ..repositories import (
+    get_llm_usage_repository as _llm_usage_repo_factory,
+)
+from ..repositories import (
+    get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -50,10 +61,24 @@ from ..services import (
     AuditService,
     ChatConversationNotFoundError,
     ChatService,
+    LlmUsageMeter,
     get_audit_service,
 )
+from ..services.chat_llm_gateway import ChatLLMGateway, GeminiChatLLMGateway
+from ..services.chat_model_resolver import (
+    ChatModelResolver,
+    get_chat_model_resolver,
+)
+from ..services.chat_turn_service import (
+    ChatTurnService,
+    TurnConcurrencyError,
+    TurnContext,
+)
+from ..settings import Settings, get_settings
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from ..models import ChatConversation
 
 logger = logging.getLogger(__name__)
@@ -74,10 +99,57 @@ def get_patient_repository_dep() -> PatientRepository:
     return _patient_repo_factory()
 
 
+def get_notes_repository_dep() -> NotesRepository:
+    return _notes_repo_factory()
+
+
 def get_chat_service(
     repo: ChatRepository = Depends(get_chat_repository_dep),
 ) -> ChatService:
     return ChatService(repo)
+
+
+# A process-wide singleton holder for the gateway. Wrapped in a list
+# to avoid a module-level ``global`` (lint-friendly singleton pattern):
+# the gateway itself has no per-request state, and the underlying
+# ``google.genai`` client is lazily constructed inside.
+_default_gateway_holder: list[ChatLLMGateway] = []
+
+
+def get_chat_llm_gateway() -> ChatLLMGateway:
+    """FastAPI dependency hook for the streaming Gemini gateway.
+
+    Tests override this with ``FakeChatLLMGateway``; SaaS overlays
+    *could* replace it but ordinarily don't.
+    """
+    if not _default_gateway_holder:
+        _default_gateway_holder.append(GeminiChatLLMGateway())
+    return _default_gateway_holder[0]
+
+
+def get_llm_usage_repository_dep() -> LlmUsageRepository:
+    return _llm_usage_repo_factory()
+
+
+def get_llm_usage_meter(
+    repo: LlmUsageRepository = Depends(get_llm_usage_repository_dep),
+    settings: Settings = Depends(get_settings),
+) -> LlmUsageMeter:
+    return LlmUsageMeter(repo=repo, settings=settings)
+
+
+def get_chat_turn_service(
+    chat_repo: ChatRepository = Depends(get_chat_repository_dep),
+    notes_repo: NotesRepository = Depends(get_notes_repository_dep),
+    gateway: ChatLLMGateway = Depends(get_chat_llm_gateway),
+    usage_meter: LlmUsageMeter = Depends(get_llm_usage_meter),
+) -> ChatTurnService:
+    return ChatTurnService(
+        chat_repo=chat_repo,
+        notes_repo=notes_repo,
+        gateway=gateway,
+        usage_meter=usage_meter,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -308,9 +380,102 @@ def delete_conversation(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post("/conversations/{conversation_id}/messages")
+async def send_message(
+    conversation_id: str,
+    request_body: SendChatMessageRequest,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    chat_service: ChatService = Depends(get_chat_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository_dep),
+    turn_service: ChatTurnService = Depends(get_chat_turn_service),
+    resolver: ChatModelResolver = Depends(get_chat_model_resolver),
+    audit: AuditService = Depends(get_audit_service),
+) -> StreamingResponse:
+    """Append a user turn and stream the assistant response (design doc §6.4).
+
+    Authorization mirrors the lifecycle routes: ownership + patient ACL.
+    Concurrent ``POST messages`` calls against the same conversation
+    serialize via :class:`ChatTurnService`'s lock map and the Postgres
+    row-level lock in ``next_sequence``; a request arriving while
+    another is mid-stream gets a 409 immediately.
+    """
+    conv = _authorize_conversation(conversation_id, user, chat_service, patient_repo)
+    if conv.archived_at is not None:
+        raise HTTPException(status_code=409, detail="Conversation is archived")
+
+    model = resolver(
+        user=user,
+        feature_key=conv.caller_feature_key,
+        override=request_body.model,
+    )
+
+    selection = request_body.source_selection
+    if selection is None and conv.default_source_selection is not None:
+        selection = conv.default_source_selection
+
+    context = TurnContext(
+        conversation_id=conv.id,
+        patient_id=conv.patient_id,
+        owner_user_id=user.id,
+        caller_system_prompt=conv.caller_system_prompt,
+        caller_feature_key=conv.caller_feature_key,
+        user_message=request_body.content,
+        source_selection=selection,
+        model=model,
+    )
+
+    try:
+        event_iter = turn_service.run_turn(context)
+    except TurnConcurrencyError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Another turn is already in progress for this conversation.",
+        ) from exc
+
+    block_audit_fired = {"done": False}
+
+    async def _sse() -> AsyncGenerator[bytes, None]:  # type: ignore[name-defined]
+        try:
+            async for event in event_iter:
+                if event.kind == "error" and not block_audit_fired["done"]:
+                    code = event.data.get("error", "llm_error")
+                    if code in {"safety_block", "context_too_large", "quota_exceeded"}:
+                        try:
+                            audit.log_chat_action(
+                                action=AuditAction.CHAT_TURN_BLOCKED,
+                                user=user,
+                                request=http_request,
+                                conversation_id=conv.id,
+                                patient_id=conv.patient_id,
+                                changes={"block_reason": code},
+                            )
+                        except Exception:
+                            logger.exception("Failed to write CHAT_TURN_BLOCKED audit row")
+                        block_audit_fired["done"] = True
+                payload = json.dumps(event.data, default=str)
+                yield f"event: {event.kind}\ndata: {payload}\n\n".encode()
+        except TurnConcurrencyError:
+            payload = json.dumps(
+                {"error": "concurrent_turn", "message": "Another turn is in flight."}
+            )
+            yield f"event: error\ndata: {payload}\n\n".encode()
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_sse(), media_type="text/event-stream", headers=headers)
+
+
 __all__ = [
+    "get_chat_llm_gateway",
     "get_chat_repository_dep",
     "get_chat_service",
+    "get_chat_turn_service",
+    "get_llm_usage_meter",
+    "get_llm_usage_repository_dep",
+    "get_notes_repository_dep",
     "get_patient_repository_dep",
     "router",
 ]

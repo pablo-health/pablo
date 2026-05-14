@@ -8,13 +8,32 @@ from .chat_context_bundler import (
     assemble_context_bundle,
     default_source_selection,
 )
+from .chat_llm_gateway import (
+    ChatLLMGateway,
+    FakeChatLLMGateway,
+    GeminiChatLLMGateway,
+    StreamEvent,
+    UserAssistantTurn,
+)
+from .chat_model_resolver import (
+    ChatModelResolver,
+    default_resolve_chat_model,
+    get_chat_model_resolver,
+)
 from .chat_service import ChatConversationNotFoundError, ChatService
+from .chat_turn_service import (
+    ChatTurnService,
+    TurnConcurrencyError,
+    TurnContext,
+    TurnStreamEvent,
+)
 from .ehr_navigation_service import (
     EhrNavigationService,
     GeminiEhrNavigationService,
     MockEhrNavigationService,
 )
 from .export_service import ExportService
+from .llm_usage_meter import LlmUsageMeter, period_yyyymm
 from .note_generation_service import (
     GeneratedNote,
     MeetingTranscriptionNoteService,
@@ -50,16 +69,22 @@ from .source_attribution_service import (
 __all__ = [
     "AuditService",
     "ChatConversationNotFoundError",
+    "ChatLLMGateway",
+    "ChatModelResolver",
     "ChatService",
+    "ChatTurnService",
     "ContextBundle",
     "ContextOverflowError",
     "EhrNavigationService",
     "ExportService",
+    "FakeChatLLMGateway",
+    "GeminiChatLLMGateway",
     "GeminiEhrNavigationService",
     "GeneratedNote",
     "InvalidSelectionError",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
+    "LlmUsageMeter",
     "MeetingTranscriptionNoteService",
     "MockEhrNavigationService",
     "MockNoteGenerationService",
@@ -76,12 +101,20 @@ __all__ = [
     "SessionNotFoundError",
     "SessionService",
     "SessionServiceError",
+    "StreamEvent",
+    "TurnConcurrencyError",
+    "TurnContext",
+    "TurnStreamEvent",
+    "UserAssistantTurn",
     "assemble_context_bundle",
     "build_attribution_prompt",
     "build_claims_from_soap",
+    "default_resolve_chat_model",
     "default_source_selection",
     "format_transcript_with_segment_ids",
     "get_audit_service",
+    "get_chat_model_resolver",
     "merge_attribution_into_soap",
     "parse_attribution_response",
+    "period_yyyymm",
 ]

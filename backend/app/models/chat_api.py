@@ -134,3 +134,19 @@ class ChatConversationListResponse(BaseModel):
 
     data: list[ChatConversationResponse]
     total: int
+
+
+class SendChatMessageRequest(BaseModel):
+    """``POST /api/chat/conversations/{id}/messages`` request body.
+
+    The streaming-message endpoint per design doc §6.4. ``source_selection``
+    is an optional per-message override; when omitted the conversation's
+    ``default_source_selection`` is used. ``model`` is an optional
+    per-conversation model override (e.g. SaaS rx-justification pinning
+    Pro) — OSS callers ordinarily leave it unset and the resolver picks
+    ``settings.ai_model_flash``.
+    """
+
+    content: str = Field(min_length=1, max_length=32_768)
+    source_selection: dict[str, Any] | None = None
+    model: str | None = Field(default=None, max_length=128)

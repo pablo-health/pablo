@@ -397,6 +397,40 @@ class Settings(BaseSettings):
             "see docs/architecture/patient-context-chat-oss.md."
         ),
     )
+    # Default chat model — used by ``resolve_chat_model`` when no
+    # tier-aware overlay overrides the resolver. SaaS overlays may swap
+    # this per ``caller_feature_key`` (e.g. Pro for rx-justification).
+    ai_model: str = Field(
+        default="gemini-2.5-pro",
+        description=(
+            "Default Gemini model for OSS chat (and any other generation "
+            "surface that calls the default resolver). Per design doc "
+            "§11.7, Pro-tier work (SOAP, justifications) targets this; "
+            "Flash-tier chat falls through to ai_model_flash when set."
+        ),
+    )
+    ai_model_flash: str = Field(
+        default="gemini-2.5-flash-lite",
+        description=(
+            "Flash-tier model used by chat callers by default. Cheaper "
+            "than ``ai_model`` and sufficient for grounded chat. When "
+            "unset, chat callers fall through to ``ai_model``."
+        ),
+    )
+    # LLM quota enforcement switch for the OSS chat primitive
+    # (THERAPY-f6eg). ``off`` (the OSS default) records usage but never
+    # rejects a turn; ``on`` lets ``LlmUsageMeter.check_quota`` consult
+    # tenant-config limits. SaaS overlays flip this to ``on`` and
+    # subclass the meter; self-hosters who want their own caps can do
+    # the same. See design doc §11.6.
+    llm_quota_enforcement: str = Field(
+        default="off",
+        description=(
+            "Enable LLM quota enforcement on chat turns. ``off`` "
+            "(default) records usage only; ``on`` lets the meter "
+            "consult tenant-config limits and reject over-quota turns."
+        ),
+    )
 
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(

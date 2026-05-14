@@ -94,7 +94,12 @@ export default function LoginPage() {
           }, 200)
         }
       })
-      .catch(() => {})  // Token expired or invalid — user types email manually
+      .catch((err) => {
+        // Token expired or invalid — user types email manually. Logged so
+        // backend exchange failures (e.g. the tenant-isolation trigger fires
+        // on /api/auth/exchange-setup-token) surface in the user's console.
+        console.error("exchange-setup-token failed:", err)
+      })
   }, [])
 
   // Redirect to dashboard when already authenticated (but not during signup flow)
@@ -231,8 +236,10 @@ export default function LoginPage() {
           url: `${window.location.origin}/login`,
         })
         setResendSent(true)
-      } catch {
-        setVerifyEmailError("Failed to resend. Please wait a minute and try again.")
+      } catch (err) {
+        console.error("sendEmailVerification failed:", err)
+        const outcome = firebaseAuthErrorOutcome(err, "verify-email")
+        if (outcome.kind === "message") setVerifyEmailError(outcome.message)
       }
     }
 

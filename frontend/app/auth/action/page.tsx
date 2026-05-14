@@ -17,6 +17,10 @@ import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
 type Status = "loading" | "success" | "error" | "reset-form"
 
+function errorCode(err: unknown): string {
+  return (err as { code?: string })?.code || "unknown"
+}
+
 function AuthActionContent() {
   const searchParams = useSearchParams()
   const mode = searchParams.get("mode") as ActionMode | null
@@ -63,9 +67,12 @@ function AuthActionContent() {
           await applyActionCode(auth, code)
           setStatus("success")
           setMessage("Your email has been verified.")
-        } catch {
+        } catch (err) {
+          console.error("verifyEmail action failed:", err)
           setStatus("error")
-          setMessage("This verification link has expired or already been used.")
+          setMessage(
+            `This verification link has expired or already been used (${errorCode(err)}).`
+          )
         }
         break
 
@@ -74,9 +81,12 @@ function AuthActionContent() {
           const email = await verifyPasswordResetCode(auth, code)
           setResetEmail(email)
           setStatus("reset-form")
-        } catch {
+        } catch (err) {
+          console.error("resetPassword action failed:", err)
           setStatus("error")
-          setMessage("This password reset link has expired or already been used.")
+          setMessage(
+            `This password reset link has expired or already been used (${errorCode(err)}).`
+          )
         }
         break
 
@@ -88,9 +98,12 @@ function AuthActionContent() {
           setMessage(
             `Your email has been reverted to ${info.data.email}. If you didn't request this change, consider resetting your password.`
           )
-        } catch {
+        } catch (err) {
+          console.error("recoverEmail action failed:", err)
           setStatus("error")
-          setMessage("This email recovery link has expired or already been used.")
+          setMessage(
+            `This email recovery link has expired or already been used (${errorCode(err)}).`
+          )
         }
         break
 
@@ -101,9 +114,10 @@ function AuthActionContent() {
           setMessage(
             "Two-factor authentication has been removed from your account. If you didn't request this, secure your account immediately."
           )
-        } catch {
+        } catch (err) {
+          console.error("revertSecondFactorAddition action failed:", err)
           setStatus("error")
-          setMessage("This link has expired or already been used.")
+          setMessage(`This link has expired or already been used (${errorCode(err)}).`)
         }
         break
 
@@ -132,9 +146,10 @@ function AuthActionContent() {
       await confirmPasswordReset(auth, oobCode!, newPassword)
       setStatus("success")
       setMessage("Your password has been reset.")
-    } catch {
+    } catch (err) {
+      console.error("confirmPasswordReset failed:", err)
       setStatus("error")
-      setMessage("Failed to reset password. The link may have expired.")
+      setMessage(`Failed to reset password. The link may have expired (${errorCode(err)}).`)
     } finally {
       setSubmitting(false)
     }

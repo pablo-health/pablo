@@ -1,0 +1,47 @@
+# CODEOWNERS — Pablo
+#
+# This file gates review on safety-critical paths. The intent is *not* to slow
+# every PR; it's to make sure rules and guardrails can't be quietly weakened.
+#
+# GitHub matches the LAST entry that matches a path. More-specific paths go
+# below more-general ones.
+#
+# Owner: @kurtn718 (solo maintainer). Promote to a team
+# (e.g. `@kurtn718`) once there's more than one approver.
+
+# Default fallback — all other paths.
+*                                           @kurtn718
+
+# ---- Agent rules and skills (load-bearing, see CLAUDE.md guardrails) -------
+/CLAUDE.md                                  @kurtn718
+/AGENTS.md                                  @kurtn718
+/.claude/                                   @kurtn718
+/.claude/skills/                            @kurtn718
+/.claude/settings.json                      @kurtn718
+
+# ---- Pre-commit + CI guardrail enforcement --------------------------------
+/.pre-commit-config.yaml                    @kurtn718
+/scripts/check_audit_params.py              @kurtn718
+/.github/workflows/                         @kurtn718
+/.github/CODEOWNERS                         @kurtn718
+
+# ---- HIPAA / audit-logging surface ----------------------------------------
+/backend/app/services/audit_service.py              @kurtn718
+/backend/app/services/platform_audit_service.py     @kurtn718
+/backend/app/services/audit_review_service.py       @kurtn718
+/backend/tests/test_route_audit_guardrails.py       @kurtn718
+/docs/HIPAA_AUDIT_LOGS.md                           @kurtn718
+/docs/HIPAA_SECURITY.md                             @kurtn718
+/docs/SELF_HOSTING_HIPAA_GUIDE.md                   @kurtn718
+/docs/compliance/                                   @kurtn718
+
+# ---- Database models + migrations (guardrail #4) --------------------------
+/backend/app/db/models.py                   @kurtn718
+/backend/app/db/platform_models.py          @kurtn718
+/backend/alembic/                           @kurtn718
+
+# ---- Deploy + secrets surface ---------------------------------------------
+/setup-solo.sh                              @kurtn718
+/redeploy.sh                                @kurtn718
+/run.sh                                     @kurtn718
+/SECURITY.md                                @kurtn718
