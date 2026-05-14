@@ -14,8 +14,10 @@ from firebase_admin import auth as firebase_auth
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
+    IdentityRepository,
     UserRepository,
     get_allowlist_repository,
+    get_identity_repository,
     get_user_repository,
 )
 from ..settings import get_settings
@@ -54,6 +56,59 @@ def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | N
     if cached_raw is not None and cached_raw == token:
         return request.state.decoded_firebase_token  # type: ignore[no-any-return]
     return None
+
+
+def _resolve_pablo_user_id(
+    request: Request | None,
+    firebase_uid: str,
+    identity_repo: IdentityRepository,
+    *,
+    create_if_missing: bool,
+) -> str:
+    """Translate a Firebase uid to Pablo's internal user_id.
+
+    Pablo decouples its storage identity from the auth provider's
+    subject ID via the ``platform.user_identities`` mapping table.
+    Routes use the value returned here for every downstream DB
+    operation, so migrating off a provider (or linking a second
+    provider to the same user) is a row insert, not a schema rewrite.
+
+    ``create_if_missing=False`` is the lookup-only path used by general
+    request dependencies. If no mapping exists yet — e.g., for a user
+    provisioned before the indirection table — it falls back to the
+    Firebase uid. The auto-provision path (`_resolve_user`) passes
+    ``create_if_missing=True`` so the first successful auth pass
+    establishes the mapping.
+
+    Result is cached on ``request.state`` to avoid re-resolving across
+    multiple dependencies in the same request.
+    """
+    # Only the "real mapping found" path is cacheable. A fallback to
+    # firebase_uid (no mapping yet) must not poison the cache, or a
+    # later auto-provision call would short-circuit and skip the
+    # resolve_or_create.
+    if request is not None and not create_if_missing:
+        cached_uid = getattr(request.state, "pablo_user_id_firebase_uid", None)
+        cached_pid = getattr(request.state, "pablo_user_id", None)
+        if (
+            isinstance(cached_uid, str)
+            and cached_uid == firebase_uid
+            and isinstance(cached_pid, str)
+        ):
+            return cached_pid
+
+    if create_if_missing:
+        pablo_id = identity_repo.resolve_or_create("firebase", firebase_uid)
+        cacheable = True
+    else:
+        looked_up = identity_repo.get_user_id("firebase", firebase_uid)
+        cacheable = looked_up is not None
+        pablo_id = looked_up or firebase_uid
+
+    if request is not None and cacheable:
+        request.state.pablo_user_id = pablo_id
+        request.state.pablo_user_id_firebase_uid = firebase_uid
+    return pablo_id
 
 
 def verify_firebase_token(token: str) -> dict[str, Any]:
@@ -121,18 +176,24 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
 def get_current_user_id(
     request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
+    identity_repo: IdentityRepository = Depends(get_identity_repository),
 ) -> str:
     """
     Extract and validate user ID from Firebase ID token.
 
-    This is a FastAPI dependency that can be injected into route handlers.
+    Returns Pablo's internal user_id (resolved via the user_identities
+    mapping), not the raw Firebase uid. For users provisioned before the
+    mapping existed, falls back to the Firebase uid so legacy rows
+    continue to match — `_resolve_user` is what bootstraps the mapping
+    on the auto-provision path.
 
     Args:
         request: The current HTTP request (for middleware token cache)
         auth_credentials: HTTP Bearer token credentials from the Authorization header
+        identity_repo: Identity-mapping repository
 
     Returns:
-        The authenticated user's ID (uid from Firebase token)
+        The Pablo-internal user ID for the authenticated user.
 
     Raises:
         HTTPException: If authentication fails
@@ -141,9 +202,9 @@ def get_current_user_id(
     decoded_token = _get_cached_token(request, token)
     if decoded_token is None:
         decoded_token = verify_firebase_token(token)
-    user_id = decoded_token.get("uid")
+    firebase_uid = decoded_token.get("uid")
 
-    if not user_id:
+    if not firebase_uid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -155,7 +216,9 @@ def get_current_user_id(
             },
         )
 
-    return str(user_id)
+    return _resolve_pablo_user_id(
+        request, str(firebase_uid), identity_repo, create_if_missing=False
+    )
 
 
 def require_mfa(
@@ -214,8 +277,10 @@ def require_mfa(
 
 
 def get_tenant_context(
+    request: Request,
     decoded_token: dict[str, Any] = Depends(require_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
+    identity_repo: IdentityRepository = Depends(get_identity_repository),
 ) -> TenantContext:
     """FastAPI dependency: resolve authenticated user to a TenantContext.
 
@@ -223,8 +288,8 @@ def get_tenant_context(
     In SaaS mode, resolves the user's email to a practice via Postgres.
     Platform admins without a practice mapping get admin-only access.
     """
-    user_id = decoded_token.get("uid")
-    if not user_id:
+    firebase_uid = decoded_token.get("uid")
+    if not firebase_uid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -236,9 +301,13 @@ def get_tenant_context(
             },
         )
 
+    pablo_user_id = _resolve_pablo_user_id(
+        request, str(firebase_uid), identity_repo, create_if_missing=False
+    )
+
     settings = get_settings()
     if not settings.multi_tenancy_enabled:
-        return TenantContext(user_id=str(user_id))
+        return TenantContext(user_id=pablo_user_id)
 
     # Resolve practice from user's email
     email = _extract_email(decoded_token)
@@ -265,18 +334,18 @@ def get_tenant_context(
 
             session.execute(
                 text("SELECT set_config('app.current_user_id', :uid, true)"),
-                {"uid": str(user_id)},
+                {"uid": pablo_user_id},
             )
             return TenantContext(
-                user_id=str(user_id),
+                user_id=pablo_user_id,
                 practice_id=practice_id,
                 practice_schema=schema_name,
             )
 
     # No practice mapping — check if platform admin
-    user = user_repo.get(str(user_id))
+    user = user_repo.get(pablo_user_id)
     if user and user.is_admin:
-        return TenantContext(user_id=str(user_id))
+        return TenantContext(user_id=pablo_user_id)
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -325,6 +394,7 @@ def get_current_user_no_mfa(
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
     user_repo: UserRepository = Depends(get_user_repository),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
+    identity_repo: IdentityRepository = Depends(get_identity_repository),
 ) -> User:
     """Get current user with token verification but WITHOUT MFA enforcement.
 
@@ -337,18 +407,27 @@ def get_current_user_no_mfa(
     decoded_token = _get_cached_token(request, token)
     if decoded_token is None:
         decoded_token = verify_firebase_token(token)
-    return _resolve_user(decoded_token, user_repo, allowlist_repo)
+    return _resolve_user(decoded_token, user_repo, allowlist_repo, identity_repo, request)
 
 
 def _resolve_user(
     decoded_token: dict[str, Any],
     user_repo: UserRepository,
     allowlist_repo: AllowlistRepository,
+    identity_repo: IdentityRepository,
+    request: Request | None = None,
 ) -> User:
-    """Resolve a user from a decoded token, auto-provisioning on first login."""
-    user_id = decoded_token.get("uid")
+    """Resolve a user from a decoded token, auto-provisioning on first login.
 
-    if not user_id:
+    Looks up Pablo's internal user_id via the user_identities mapping
+    (lazy-creating on first sign-in). The new user record is keyed by
+    that internal id, not the Firebase uid — that's the decoupling that
+    makes a future provider migration a row insert rather than a
+    full-schema rewrite.
+    """
+    firebase_uid = decoded_token.get("uid")
+
+    if not firebase_uid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -360,20 +439,29 @@ def _resolve_user(
             },
         )
 
-    user = user_repo.get(str(user_id))
+    firebase_uid_str = str(firebase_uid)
+
+    # Lookup-only first: if a mapping exists, use it. If not, defer the
+    # creation until after the allowlist gate so rejected users don't
+    # leave stray rows.
+    pablo_user_id = _resolve_pablo_user_id(
+        request, firebase_uid_str, identity_repo, create_if_missing=False
+    )
+
+    user = user_repo.get(pablo_user_id)
     if not user:
         email = _extract_email(decoded_token)
 
         # Fallback: look up email from Firebase Auth if token lacks it
         if not email:
             try:
-                fb_user = firebase_auth.get_user(str(user_id))
+                fb_user = firebase_auth.get_user(firebase_uid_str)
                 email = (fb_user.email or "").lower()
-                logger.info("Resolved email from Firebase Auth: uid=%s", user_id)
+                logger.info("Resolved email from Firebase Auth: uid=%s", firebase_uid_str)
             except Exception as exc:
                 logger.warning(
                     "Could not look up email from Firebase Auth for uid=%s: %s",
-                    user_id,
+                    firebase_uid_str,
                     exc,
                 )
 
@@ -393,7 +481,7 @@ def _resolve_user(
             and not is_pentest_user
             and (not email or not allowlist_repo.is_allowed(email))
         ):
-            logger.warning("Blocked non-allowlisted user: uid=%s", user_id)
+            logger.warning("Blocked non-allowlisted user: uid=%s", firebase_uid_str)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -405,9 +493,16 @@ def _resolve_user(
                 },
             )
 
+        # Allowlist passed — link the identity (or no-op if already linked
+        # via the legacy backfill) so downstream queries see a stable
+        # Pablo user_id.
+        pablo_user_id = _resolve_pablo_user_id(
+            request, firebase_uid_str, identity_repo, create_if_missing=True
+        )
+
         # Auto-provision user on first login from Firebase token claims
         user = User(
-            id=str(user_id),
+            id=pablo_user_id,
             email=email,
             name=decoded_token.get("name", decoded_token.get("email", "User")),
             created_at=utc_now(),
@@ -437,6 +532,7 @@ def get_current_user(
     decoded_token: dict[str, Any] = Depends(require_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
+    identity_repo: IdentityRepository = Depends(get_identity_repository),
 ) -> User:
     """Get the current authenticated user, auto-provisioning on first login.
 
@@ -444,7 +540,7 @@ def get_current_user(
     Checks client version, allowlist before provisioning, and user status after lookup.
     """
     check_client_version(request)
-    return _resolve_user(decoded_token, user_repo, allowlist_repo)
+    return _resolve_user(decoded_token, user_repo, allowlist_repo, identity_repo, request)
 
 
 def require_active_subscription(
