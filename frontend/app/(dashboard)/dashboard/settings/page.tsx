@@ -102,7 +102,7 @@ export default function SettingsPage() {
 
       <SettingsSection
         icon={User}
-        title="Provider type"
+        title="Clinician type"
         description="Determines which note template and prompts Pablo uses for your visits."
       >
         <ProviderTypeSettings currentValue={userStatus?.provider_type ?? null} />
