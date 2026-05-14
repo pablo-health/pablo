@@ -89,7 +89,11 @@ gcloud tasks queues add-iam-policy-binding "${QUEUE_NAME}" \
     --project="${PROJECT_ID}" --quiet 2>/dev/null || true
 echo "Granted roles/cloudtasks.enqueuer to ${SA_NAME} on ${QUEUE_NAME}"
 
-# Backend's Cloud Run SA needs enqueuer too (initial enqueue from upload handler)
+# Backend's Cloud Run SA needs enqueuer too (initial enqueue from upload handler).
+# IMPORTANT: this auto-detects the *current* Cloud Run SA. If the backend ever
+# migrates to a different SA (e.g. from compute-default to a dedicated one)
+# this script must be re-run, otherwise enqueues will start failing with
+# PERMISSION_DENIED in production. See bd issue THERAPY-ooow.
 BACKEND_SA="$(gcloud run services describe pablo-backend \
     --region="${REGION}" --project="${PROJECT_ID}" \
     --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null || echo "")"
@@ -100,9 +104,48 @@ if [ -n "${BACKEND_SA}" ]; then
         --role="roles/cloudtasks.enqueuer" \
         --project="${PROJECT_ID}" --quiet 2>/dev/null || true
     echo "Granted roles/cloudtasks.enqueuer to backend SA (${BACKEND_SA})"
+
+    # The enqueued Cloud Task carries an OIDC token signed by cloud-tasks-invoker.
+    # To set that identity on the task, the backend SA must be allowed to
+    # impersonate (actAs) the invoker SA. Without this, create_task fails with
+    # PERMISSION_DENIED on iam.serviceAccounts.actAs.
+    gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+        --member="serviceAccount:${BACKEND_SA}" \
+        --role="roles/iam.serviceAccountUser" \
+        --project="${PROJECT_ID}" --quiet >/dev/null 2>&1 || true
+    echo "Granted roles/iam.serviceAccountUser on ${SA_NAME} to backend SA"
 else
     echo "WARNING: Could not detect backend service account."
-    echo "Manually grant roles/cloudtasks.enqueuer on ${QUEUE_NAME} to the backend SA."
+    echo "Manually grant roles/cloudtasks.enqueuer on ${QUEUE_NAME} AND"
+    echo "roles/iam.serviceAccountUser on ${SA_EMAIL} to the backend SA."
+fi
+echo ""
+
+# --- 6. Drift check: warn on stale SAs bound to the queue ---
+echo "--- Checking for stale enqueuer bindings ---"
+EXPECTED_SAS=(
+    "serviceAccount:${SA_EMAIL}"
+    "serviceAccount:${BACKEND_SA}"
+)
+BOUND_SAS="$(gcloud tasks queues get-iam-policy "${QUEUE_NAME}" \
+    --location="${REGION}" --project="${PROJECT_ID}" \
+    --flatten="bindings[].members" \
+    --filter="bindings.role=roles/cloudtasks.enqueuer" \
+    --format="value(bindings.members)" 2>/dev/null || echo "")"
+STALE_FOUND=0
+for sa in ${BOUND_SAS}; do
+    skip=0
+    for expected in "${EXPECTED_SAS[@]}"; do
+        [ "${sa}" = "${expected}" ] && { skip=1; break; }
+    done
+    if [ "${skip}" -eq 0 ]; then
+        echo "WARNING: stale enqueuer binding: ${sa}"
+        echo "  (not the current backend SA or cloud-tasks-invoker; remove manually if unused)"
+        STALE_FOUND=1
+    fi
+done
+if [ "${STALE_FOUND}" -eq 0 ]; then
+    echo "No stale bindings."
 fi
 echo ""
 
@@ -113,3 +156,4 @@ echo ""
 echo "Run for each environment:"
 echo "  Dev:  GCP_PROJECT_ID=pablohealth-dev  $0"
 echo "  Prod: GCP_PROJECT_ID=pablohealth-prod $0"
+echo "  OSS:  GCP_PROJECT_ID=pablohealth-oss  $0"

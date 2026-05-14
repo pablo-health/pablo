@@ -35,6 +35,7 @@ from ..models import (
     User,
 )
 from ..models.note import Note
+from ..models.session import TherapySession
 from ..repositories import (
     NotesRepository,
     PatientRepository,
@@ -561,6 +562,30 @@ async def _read_bounded(upload: UploadFile, label: str) -> bytes:
     return b"".join(chunks)
 
 
+def _revert_transcribing_and_raise(
+    session: TherapySession,
+    session_repo: TherapySessionRepository,
+    session_id: str,
+    provider: str,
+) -> None:
+    """Revert a session out of TRANSCRIBING after a failed transcription enqueue.
+
+    Without this, a failure between status=TRANSCRIBING and the queue task
+    leaves the session stuck in TRANSCRIBING with no poller — orphan forever.
+    Reverting to RECORDING_COMPLETE lets the client retry the upload.
+    """
+    logger.exception(
+        "Failed to enqueue %s transcription for session %s; reverting status so client can retry",
+        provider,
+        session_id,
+    )
+    session.status = SessionStatus.RECORDING_COMPLETE
+    session_repo.update(session)
+    raise ServerError(
+        "Audio uploaded but transcription could not be queued. Please retry the upload."
+    ) from None
+
+
 @router.post("/api/sessions/{session_id}/upload-audio")
 async def upload_audio(
     session_id: str,
@@ -633,14 +658,17 @@ async def upload_audio(
         }
         session_repo.update(session)
 
-        # Enqueue Cloud Task to poll for results (HIPAA: no schema_name in payload)
+        # Enqueue Cloud Task to poll for results (HIPAA: no schema_name in payload).
         from ..services.cloud_tasks_service import enqueue_cloud_task
 
-        enqueue_cloud_task(
-            queue_name=settings.transcription_task_queue,
-            endpoint_path="/api/internal/transcription-poll",
-            payload={"session_id": session_id, "user_id": user.id},
-        )
+        try:
+            enqueue_cloud_task(
+                queue_name=settings.transcription_task_queue,
+                endpoint_path="/api/internal/transcription-poll",
+                payload={"session_id": session_id, "user_id": user.id},
+            )
+        except Exception:
+            _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
 
         audit.log_session_action(
             AuditAction.SESSION_AUDIO_UPLOADED,
@@ -672,13 +700,16 @@ async def upload_audio(
     session_repo.update(session)
 
     is_practice = settings.pablo_edition == "practice"
-    queue_service.enqueue_transcription(
-        session_id=session_id,
-        tenant_db="(default)",
-        user_id=user.id,
-        gcs_path=session.audio_gcs_path,
-        priority=is_practice,
-    )
+    try:
+        queue_service.enqueue_transcription(
+            session_id=session_id,
+            tenant_db="(default)",
+            user_id=user.id,
+            gcs_path=session.audio_gcs_path,
+            priority=is_practice,
+        )
+    except Exception:
+        _revert_transcribing_and_raise(session, session_repo, session_id, "whisper")
 
     queue_type = "priority" if is_practice else "standard"
     audit.log_session_action(
