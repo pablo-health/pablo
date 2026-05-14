@@ -78,7 +78,9 @@ export default function CalendarPage() {
     if (authLoading) return
     getICalSyncStatus()
       .then((s) => setSyncStatus(s.connections))
-      .catch(() => {})
+      .catch((err) => {
+        console.error("getICalSyncStatus failed:", err)
+      })
   }, [authLoading])
 
   // Sync lastSavedView ref when preferences load asynchronously
