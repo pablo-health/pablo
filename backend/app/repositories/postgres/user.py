@@ -72,6 +72,7 @@ def _row_to_user(row: PlatformUserRow) -> User:
         is_platform_admin=row.is_platform_admin,
         status=row.status,
         mfa_enrolled_at=row.mfa_enrolled_at,
+        provider_type=row.provider_type,
     )
 
 
@@ -91,3 +92,4 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.is_platform_admin = user.is_platform_admin
     row.status = user.status
     row.mfa_enrolled_at = user.mfa_enrolled_at
+    row.provider_type = user.provider_type

@@ -17,7 +17,13 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
-from ..models import AcceptBAARequest, BAAStatusResponse, User, UserPreferences
+from ..models import (
+    AcceptBAARequest,
+    BAAStatusResponse,
+    UpdateUserRequest,
+    User,
+    UserPreferences,
+)
 from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
@@ -77,6 +83,7 @@ def get_user_status(
         "is_platform_admin": user.is_platform_admin,
         "name": user.name,
         "email": user.email,
+        "provider_type": user.provider_type,
     }
 
     settings = get_settings()
@@ -140,6 +147,28 @@ def get_current_user_profile(
 
     Returns the authenticated user's profile information.
     """
+    return user
+
+
+@router.patch("/me")
+def update_current_user_profile(
+    request: UpdateUserRequest,
+    user: User = Depends(get_current_user),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> User:
+    """Partial update of the current user's profile.
+
+    Currently persists ``name`` and ``provider_type`` on the platform
+    user row. ``title`` / ``credentials`` are accepted by the request
+    schema for forward-compat but live on the per-practice
+    ``ClinicianProfile`` and are not wired here yet — a future PR
+    will route them through that repository.
+    """
+    if request.name is not None:
+        user.name = request.name
+    if request.provider_type is not None:
+        user.provider_type = request.provider_type
+    user_repo.update(user)
     return user
 
 
@@ -297,9 +326,7 @@ def list_my_audit_log(
 ) -> AuditLogResponse:
     """Return the caller's own audit rows, newest first."""
     entries = audit.list_for_user(user_id=user.id, since=since, limit=limit)
-    audit.log_self_audit_view(
-        user=user, request=request, returned_count=len(entries)
-    )
+    audit.log_self_audit_view(user=user, request=request, returned_count=len(entries))
     return AuditLogResponse(
         data=[
             AuditLogItem(

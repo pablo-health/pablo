@@ -6,11 +6,13 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from .validators import validate_iso_date
+
+ProviderType = Literal["therapist", "prescriber", "both"]
 
 
 class UpdateUserRequest(BaseModel):
@@ -19,6 +21,7 @@ class UpdateUserRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     title: str | None = Field(None, max_length=50)
     credentials: str | None = Field(None, max_length=100)
+    provider_type: ProviderType | None = None
     baa_accepted_at: datetime | None = None
 
     @classmethod
@@ -93,6 +96,7 @@ class User:
     status: str = "approved"
     mfa_enrolled_at: datetime | None = None
     role: str = "clinician"
+    provider_type: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -148,6 +152,7 @@ class User:
             status=data.get("status", "approved"),
             mfa_enrolled_at=data.get("mfa_enrolled_at"),
             role=data.get("role", "clinician"),
+            provider_type=data.get("provider_type"),
         )
 
     def to_dict(self) -> dict[str, Any]:
