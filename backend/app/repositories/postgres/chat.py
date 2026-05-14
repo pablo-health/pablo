@@ -1,21 +1,58 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""PostgreSQL chat repository implementation (THERAPY-tdh)."""
+"""PostgreSQL chat repository implementation.
+
+Access is gated by ``patient_clinicians`` grants on the conversation's
+patient, mirroring the session / note / appointment pattern from
+PR #170. ``ChatConversationRow.owner_user_id`` is kept as actor data
+("who started this chat") but is *not* the authorization proxy.
+
+Reads return ``None`` / empty list when the caller has no grant —
+indistinguishable from "row absent" so the surface does not leak an
+existence oracle. Writes raise :class:`PatientAccessDeniedError` via
+the abstract repo contract.
+
+The join through :class:`PatientClinicianRow` happens in the same SQL
+statement as the read where possible — same idiom as
+:class:`PostgresNotesRepository.get` so the DB can short-circuit on
+``EXISTS``. The Postgres RLS policy on ``chat_conversations`` provides
+a defense-in-depth gate (installed by ``enable_rls_on_schema`` on the
+next bootstrap pass; see migration ``3f8d1a6c2b04``).
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select, text
 
-from ...db.models import ChatConversationRow, ChatMessageRow
+from ...db.models import ChatConversationRow, ChatMessageRow, PatientClinicianRow
 from ...models import ChatConversation, ChatMessage
+from ...utcnow import utc_now
 from ..chat import ChatRepository
+from ..note import PatientAccessDeniedError
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session
+
+
+def _grant_filters(user_id: str) -> tuple:
+    """Predicates for "user has a non-expired grant on the joined row's patient_id".
+
+    Same shape as :func:`postgres.session._grant_filters` — keeping the
+    two helpers separate (rather than hoisting to a shared module) so
+    each repository stays self-contained and tests can read it
+    end-to-end without cross-file jumps.
+    """
+    return (
+        PatientClinicianRow.user_id == user_id,
+        or_(
+            PatientClinicianRow.expires_at.is_(None),
+            PatientClinicianRow.expires_at > utc_now(),
+        ),
+    )
 
 
 def _row_to_conversation(row: ChatConversationRow) -> ChatConversation:
@@ -84,23 +121,60 @@ class PostgresChatRepository(ChatRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def get_conversation(self, conversation_id: str) -> ChatConversation | None:
-        row = self._session.get(ChatConversationRow, conversation_id)
+    # --- internal access predicate ---
+
+    def _has_access(self, patient_id: str, user_id: str) -> bool:
+        """Application-layer mirror of the RLS policy.
+
+        Same idiom as :class:`PostgresNotesRepository._has_access`: call
+        the SQL function rather than re-implementing the
+        ``patient_clinicians`` lookup in Python so app-layer and
+        DB-layer authorization stay in lockstep.
+        """
+        result = self._session.execute(
+            text("SELECT has_patient_access(:pid, :uid)"),
+            {"pid": patient_id, "uid": user_id},
+        ).scalar()
+        return bool(result)
+
+    # --- reads ---
+
+    def get_conversation(
+        self, conversation_id: str, user_id: str
+    ) -> ChatConversation | None:
+        row = (
+            self._session.query(ChatConversationRow)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == ChatConversationRow.patient_id,
+            )
+            .filter(
+                ChatConversationRow.id == conversation_id,
+                *_grant_filters(user_id),
+            )
+            .one_or_none()
+        )
         return _row_to_conversation(row) if row is not None else None
 
     def list_conversations(  # noqa: PLR0913 — keyword-only filter + pagination
         self,
         *,
         patient_id: str,
-        owner_user_id: str,
+        user_id: str,
         caller_feature_key: str | None = None,
         include_archived: bool = False,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[ChatConversation], int]:
+        # Top-level access gate: deny → empty result, no row enumeration.
+        # Mirrors PostgresNotesRepository.list_by_patient — avoids
+        # leaking a has-conversations-vs-no-conversations signal via
+        # timing.
+        if not self._has_access(patient_id, user_id):
+            return [], 0
+
         query = self._session.query(ChatConversationRow).filter(
             ChatConversationRow.patient_id == patient_id,
-            ChatConversationRow.owner_user_id == owner_user_id,
         )
         if caller_feature_key is not None:
             query = query.filter(ChatConversationRow.caller_feature_key == caller_feature_key)
@@ -121,29 +195,61 @@ class PostgresChatRepository(ChatRepository):
         rows = query.offset(offset).limit(page_size).all()
         return [_row_to_conversation(r) for r in rows], total
 
-    def list_messages(self, conversation_id: str) -> list[ChatMessage]:
+    def list_messages(
+        self, conversation_id: str, user_id: str
+    ) -> list[ChatMessage]:
+        # Join through the parent conversation + patient_clinicians so a
+        # caller without a grant sees an empty list regardless of
+        # whether the conversation exists. One SQL round trip; no
+        # existence oracle.
         stmt = (
             select(ChatMessageRow)
-            .where(ChatMessageRow.conversation_id == conversation_id)
+            .join(
+                ChatConversationRow,
+                ChatConversationRow.id == ChatMessageRow.conversation_id,
+            )
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == ChatConversationRow.patient_id,
+            )
+            .where(
+                ChatMessageRow.conversation_id == conversation_id,
+                *_grant_filters(user_id),
+            )
             .order_by(ChatMessageRow.sequence.asc())
         )
         rows = self._session.execute(stmt).scalars().all()
         return [_row_to_message(r) for r in rows]
 
-    def add_conversation(self, conversation: ChatConversation) -> ChatConversation:
+    # --- writes ---
+
+    def add_conversation(
+        self, conversation: ChatConversation, user_id: str
+    ) -> ChatConversation:
+        if not self._has_access(conversation.patient_id, user_id):
+            raise PatientAccessDeniedError(conversation.patient_id, user_id)
         row = ChatConversationRow()
         _conversation_to_row(conversation, row)
         self._session.add(row)
         self._session.flush()
         return conversation
 
-    def update_conversation(self, conversation: ChatConversation) -> ChatConversation:
+    def update_conversation(
+        self, conversation: ChatConversation, user_id: str
+    ) -> ChatConversation:
+        if not self._has_access(conversation.patient_id, user_id):
+            raise PatientAccessDeniedError(conversation.patient_id, user_id)
         row = self._session.get(ChatConversationRow, conversation.id)
         if row is None:
-            # Caller is responsible for ensuring the row exists before
-            # update; the route layer always reads-then-writes.
+            # Route layer always reads-then-writes, but handle the
+            # upsert-style fallback to match the pre-#170 contract.
             row = ChatConversationRow()
             self._session.add(row)
+        elif not self._has_access(row.patient_id, user_id):
+            # Defense-in-depth: if the on-disk patient_id differs from
+            # the in-memory conversation (e.g. caller forged it), check
+            # the DB-side value too. Either grant denies the write.
+            raise PatientAccessDeniedError(row.patient_id, user_id)
         _conversation_to_row(conversation, row)
         self._session.flush()
         return conversation
@@ -189,7 +295,14 @@ class PostgresChatRepository(ChatRepository):
             row.last_turn_at = last_turn_at
             self._session.flush()
 
-    def delete_conversation(self, conversation_id: str) -> int:
+    def delete_conversation(self, conversation_id: str, user_id: str) -> int:
+        # Read-then-delete so the access check uses the on-disk
+        # patient_id. Mirrors the soft-fail contract on
+        # NotesRepository.delete: missing row OR no grant → return 0
+        # (treat as "nothing to do") without telling the caller which.
+        row = self._session.get(ChatConversationRow, conversation_id)
+        if row is None or not self._has_access(row.patient_id, user_id):
+            return 0
         # Count messages before delete so the caller can surface it
         # (e.g. in the audit log payload).
         count = (
