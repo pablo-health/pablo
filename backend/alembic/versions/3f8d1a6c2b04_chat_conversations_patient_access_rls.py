@@ -60,6 +60,12 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+# Alembic reads these module-level globals by name via runtime
+# introspection. They are part of the migration's public contract; the
+# ``__all__`` here marks them as intentional module exports so static
+# analyzers don't flag them as "unused global variable."
+__all__ = ["branch_labels", "depends_on", "down_revision", "revision"]
+
 revision: str = "3f8d1a6c2b04"
 down_revision: str | Sequence[str] | None = "9dea1edf7fe0"
 branch_labels: str | Sequence[str] | None = None
