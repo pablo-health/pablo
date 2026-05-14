@@ -59,14 +59,14 @@ export function ProviderTypeSettings({ currentValue, onSaved }: ProviderTypeSett
 
   return (
     <div className="space-y-2 max-w-sm">
-      <Label htmlFor="provider-type">Provider type</Label>
+      <Label htmlFor="provider-type">Clinician type</Label>
       <Select
         value={value ?? undefined}
         onValueChange={handleChange}
         disabled={mutation.isPending}
       >
         <SelectTrigger id="provider-type">
-          <SelectValue placeholder="Select your provider type" />
+          <SelectValue placeholder="Select your clinician type" />
         </SelectTrigger>
         <SelectContent>
           {PROVIDER_TYPES.map((p) => (
