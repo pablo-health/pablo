@@ -19,7 +19,9 @@ from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import (
     AcceptBAARequest,
+    AcknowledgeSecurityGuideRequest,
     BAAStatusResponse,
+    SecurityGuideStatusResponse,
     UpdateUserRequest,
     User,
     UserPreferences,
@@ -84,6 +86,8 @@ def get_user_status(
         "name": user.name,
         "email": user.email,
         "provider_type": user.provider_type,
+        "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
+        "security_guide_version": user.security_guide_version,
     }
 
     settings = get_settings()
@@ -239,6 +243,48 @@ def accept_baa(
         accepted_at=utc_now(),
         version=request.version,
         current_version=request.version,
+    )
+
+
+@router.get("/me/security-guide-status")
+def get_security_guide_status(
+    user: User = Depends(get_current_user_no_mfa),
+) -> SecurityGuideStatusResponse:
+    """Return security-guide acknowledgment status for the current user.
+
+    The "current version" is declared by the SaaS overlay (the guide
+    lives in ``pablo-saas/docs/security/``), so this endpoint only
+    reports what the user has acknowledged. The frontend compares
+    against its bundled version to decide whether to re-prompt.
+    """
+    return SecurityGuideStatusResponse(
+        acknowledged=user.security_guide_acknowledged_at is not None,
+        acknowledged_at=user.security_guide_acknowledged_at,
+        version=user.security_guide_version,
+    )
+
+
+@router.post("/me/acknowledge-security-guide")
+def acknowledge_security_guide(
+    request: AcknowledgeSecurityGuideRequest,
+    user: User = Depends(get_current_user_no_mfa),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> SecurityGuideStatusResponse:
+    """Record acknowledgment of the security & privacy guide.
+
+    The user's row stores the acknowledgment timestamp + version
+    pair; that pair *is* the audit trail (mirrors the BAA + MFA
+    patterns, which also record on the user row without a separate
+    audit event). Idempotent — calling again with the same or a
+    different version overwrites both fields.
+    """
+    user.security_guide_acknowledged_at = utc_now()
+    user.security_guide_version = request.version
+    user_repo.update(user)
+    return SecurityGuideStatusResponse(
+        acknowledged=True,
+        acknowledged_at=user.security_guide_acknowledged_at,
+        version=request.version,
     )
 
 

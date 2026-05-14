@@ -2,6 +2,7 @@
 
 """Tests for the user profile PATCH endpoint and provider_type field."""
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import patch
 
@@ -83,3 +84,105 @@ class TestUpdateProfile:
 
         assert response.status_code == 200
         assert response.json()["provider_type"] is None
+
+
+class TestSecurityGuideAcknowledgment:
+    """Test POST /api/users/me/acknowledge-security-guide and the
+    related GET endpoint + /me/status exposure."""
+
+    def test_acknowledge_records_timestamp_and_version(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+
+        response = client.post(
+            "/api/users/me/acknowledge-security-guide",
+            json={"version": "2026-05-14"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["acknowledged"] is True
+        assert body["version"] == "2026-05-14"
+        assert body["acknowledged_at"] is not None
+
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.security_guide_version == "2026-05-14"
+        assert stored.security_guide_acknowledged_at is not None
+
+    def test_invalid_version_format_rejected(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """Versions must match YYYY-MM-DD, mirroring the BAA pattern."""
+        mock_user_repo.update(mock_user)
+        response = client.post(
+            "/api/users/me/acknowledge-security-guide",
+            json={"version": "v2.0"},
+        )
+        assert response.status_code == 422
+
+    def test_acknowledge_is_idempotent_and_overwrites(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """Re-acknowledging (e.g. after a version bump) overwrites
+        both fields. The frontend prompts on version mismatch."""
+        mock_user_repo.update(mock_user)
+        client.post(
+            "/api/users/me/acknowledge-security-guide",
+            json={"version": "2026-02-16"},
+        )
+        response = client.post(
+            "/api/users/me/acknowledge-security-guide",
+            json={"version": "2026-05-14"},
+        )
+        assert response.status_code == 200
+        assert response.json()["version"] == "2026-05-14"
+
+    def test_status_endpoint_reflects_acknowledgment(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user.security_guide_acknowledged_at = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
+        mock_user.security_guide_version = "2026-05-14"
+        mock_user_repo.update(mock_user)
+
+        response = client.get("/api/users/me/security-guide-status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["acknowledged"] is True
+        assert body["version"] == "2026-05-14"
+
+    def test_status_endpoint_reports_not_acknowledged(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user.security_guide_acknowledged_at = None
+        mock_user.security_guide_version = None
+        mock_user_repo.update(mock_user)
+
+        response = client.get("/api/users/me/security-guide-status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["acknowledged"] is False
+        assert body["version"] is None
+        assert body["acknowledged_at"] is None
+
+    def test_user_status_includes_security_guide_fields(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """GET /api/users/me/status exposes the guide fields so the
+        SaaS overlay can decide whether to redirect to the guide step."""
+        mock_user.security_guide_acknowledged_at = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
+        mock_user.security_guide_version = "2026-05-14"
+        mock_user_repo.update(mock_user)
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["security_guide_version"] == "2026-05-14"
+        assert body["security_guide_acknowledged_at"] is not None

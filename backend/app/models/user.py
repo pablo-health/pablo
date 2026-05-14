@@ -69,6 +69,25 @@ class BAAStatusResponse(BaseModel):
     current_version: str
 
 
+class AcknowledgeSecurityGuideRequest(BaseModel):
+    """Request to record acknowledgment of the security & privacy guide.
+
+    The version string is the YYYY-MM-DD effective date of the guide
+    the user is acknowledging. The SaaS overlay declares the current
+    version client-side; OSS records whatever is sent.
+    """
+
+    version: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class SecurityGuideStatusResponse(BaseModel):
+    """Response containing security-guide acknowledgment status."""
+
+    acknowledged: bool
+    acknowledged_at: datetime | None = None
+    version: str | None = None
+
+
 @dataclass
 class User:
     """
@@ -97,6 +116,8 @@ class User:
     mfa_enrolled_at: datetime | None = None
     role: str = "clinician"
     provider_type: str | None = None
+    security_guide_acknowledged_at: datetime | None = None
+    security_guide_version: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -153,6 +174,8 @@ class User:
             mfa_enrolled_at=data.get("mfa_enrolled_at"),
             role=data.get("role", "clinician"),
             provider_type=data.get("provider_type"),
+            security_guide_acknowledged_at=data.get("security_guide_acknowledged_at"),
+            security_guide_version=data.get("security_guide_version"),
         )
 
     def to_dict(self) -> dict[str, Any]:
