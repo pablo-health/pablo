@@ -18,8 +18,13 @@ import asyncio
 from datetime import UTC, datetime
 
 import pytest
-from app.models import ChatConversation
-from app.repositories import InMemoryChatRepository, InMemoryNotesRepository
+from app.models import ChatConversation, QuotaStatus
+from app.repositories import (
+    InMemoryChatRepository,
+    InMemoryLlmUsageRepository,
+    InMemoryNotesRepository,
+)
+from app.services import LlmUsageMeter
 from app.services.chat_llm_gateway import (
     FakeChatLLMGateway,
     StreamEvent,
@@ -77,19 +82,48 @@ def reset_concurrency_locks() -> None:
     ChatTurnService._conversation_locks.clear()
 
 
+class _MeterSettings:
+    """Minimal Settings stand-in for tests that exercise the meter."""
+
+    def __init__(self, *, llm_quota_enforcement: str = "off") -> None:
+        self.llm_quota_enforcement = llm_quota_enforcement
+
+
 def _make_service(
     chat_repo: InMemoryChatRepository,
     notes_repo: InMemoryNotesRepository,
     *,
     script: list[StreamEvent] | None = None,
     scripts: list[list[StreamEvent]] | None = None,
+    usage_meter: LlmUsageMeter | None = None,
 ) -> tuple[ChatTurnService, FakeChatLLMGateway]:
     gateway = FakeChatLLMGateway(
         script=list(script or []),
         scripts=[list(s) for s in (scripts or [])],
     )
-    service = ChatTurnService(chat_repo=chat_repo, notes_repo=notes_repo, gateway=gateway)
+    service = ChatTurnService(
+        chat_repo=chat_repo,
+        notes_repo=notes_repo,
+        gateway=gateway,
+        usage_meter=usage_meter,
+    )
     return service, gateway
+
+
+def _make_meter(
+    *,
+    enforcement: str = "off",
+    quota_override: QuotaStatus | None = None,
+) -> tuple[LlmUsageMeter, InMemoryLlmUsageRepository]:
+    repo = InMemoryLlmUsageRepository()
+    meter = LlmUsageMeter(repo=repo, settings=_MeterSettings(llm_quota_enforcement=enforcement))
+    if quota_override is not None:
+        # Pin ``check_quota`` for tests that need a deterministic
+        # SOFT_WARN / HARD_BLOCK outcome — the OSS default always
+        # returns OK, but the integration with the turn service is
+        # the same regardless of which subclass produced the value.
+        meter.check_quota = lambda **_kwargs: quota_override  # type: ignore[method-assign]
+    return meter, repo
 
 
 def _drain(service: ChatTurnService, context: TurnContext) -> list:
@@ -355,3 +389,130 @@ class TestConcurrency:
 
         result = asyncio.run(_impl())
         assert result[-1].kind == "done"
+
+
+# ---------------------------------------------------------------------------
+# Metering + quota integration (THERAPY-f6eg, Phase 3b)
+# ---------------------------------------------------------------------------
+
+
+class TestMetering:
+    def test_successful_turn_records_one_meter_row(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        meter, repo = _make_meter()
+        service, _ = _make_service(
+            chat_repo,
+            notes_repo,
+            script=[
+                StreamEvent(delta="ok"),
+                StreamEvent(finish_reason="stop", output_tokens=7),
+            ],
+            usage_meter=meter,
+        )
+        _drain(service, _make_context())
+        records = [
+            r
+            for period in {f"{datetime.now(UTC).year:04d}{datetime.now(UTC).month:02d}"}
+            for r in repo.list_records(period_yyyymm=period)
+        ]
+        assert len(records) == 1
+        row = records[0]
+        assert row.user_id == OWNER_USER_ID
+        assert row.feature_key == "chart_qa"
+        assert row.model == "gemini-test-flash"
+        assert row.turn_count == 1
+        assert row.output_tokens == 7
+
+    def test_safety_block_does_not_record(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        meter, repo = _make_meter()
+        service, _ = _make_service(
+            chat_repo,
+            notes_repo,
+            script=[StreamEvent(finish_reason="safety")],
+            usage_meter=meter,
+        )
+        _drain(service, _make_context())
+        period = f"{datetime.now(UTC).year:04d}{datetime.now(UTC).month:02d}"
+        assert repo.list_records(period_yyyymm=period) == []
+
+    def test_retry_then_success_records_once(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("app.services.chat_turn_service.RETRY_BACKOFF_SECONDS", 0)
+        meter, repo = _make_meter()
+        service, _ = _make_service(
+            chat_repo,
+            notes_repo,
+            scripts=[
+                [StreamEvent(finish_reason="error", error_code="timeout")],
+                [
+                    StreamEvent(delta="retried."),
+                    StreamEvent(finish_reason="stop", output_tokens=4),
+                ],
+            ],
+            usage_meter=meter,
+        )
+        _drain(service, _make_context())
+        period = f"{datetime.now(UTC).year:04d}{datetime.now(UTC).month:02d}"
+        rows = repo.list_records(period_yyyymm=period)
+        assert len(rows) == 1
+        assert rows[0].turn_count == 1
+        assert rows[0].output_tokens == 4
+
+    def test_hard_block_short_circuits_before_persistence(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        meter, repo = _make_meter(quota_override=QuotaStatus.HARD_BLOCK)
+        service, gateway = _make_service(
+            chat_repo,
+            notes_repo,
+            script=[
+                StreamEvent(delta="never reached"),
+                StreamEvent(finish_reason="stop", output_tokens=1),
+            ],
+            usage_meter=meter,
+        )
+        events = _drain(service, _make_context())
+        assert len(events) == 1
+        assert events[0].kind == "error"
+        assert events[0].data["error"] == "quota_exceeded"
+        # No user/assistant rows persisted, no gateway call made, no
+        # metering row written for the rejected turn.
+        assert chat_repo.list_messages(CONVERSATION_ID) == []
+        assert gateway.calls == []
+        period = f"{datetime.now(UTC).year:04d}{datetime.now(UTC).month:02d}"
+        assert repo.list_records(period_yyyymm=period) == []
+
+    def test_soft_warn_enriches_meta_and_records(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        meter, repo = _make_meter(quota_override=QuotaStatus.SOFT_WARN)
+        service, _ = _make_service(
+            chat_repo,
+            notes_repo,
+            script=[
+                StreamEvent(delta="ok"),
+                StreamEvent(finish_reason="stop", output_tokens=3),
+            ],
+            usage_meter=meter,
+        )
+        events = _drain(service, _make_context())
+        meta = events[0]
+        assert meta.kind == "meta"
+        assert meta.data.get("quota_status") == "soft_warn"
+        period = f"{datetime.now(UTC).year:04d}{datetime.now(UTC).month:02d}"
+        assert len(repo.list_records(period_yyyymm=period)) == 1

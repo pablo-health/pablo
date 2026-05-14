@@ -417,6 +417,20 @@ class Settings(BaseSettings):
             "unset, chat callers fall through to ``ai_model``."
         ),
     )
+    # LLM quota enforcement switch for the OSS chat primitive
+    # (THERAPY-f6eg). ``off`` (the OSS default) records usage but never
+    # rejects a turn; ``on`` lets ``LlmUsageMeter.check_quota`` consult
+    # tenant-config limits. SaaS overlays flip this to ``on`` and
+    # subclass the meter; self-hosters who want their own caps can do
+    # the same. See design doc §11.6.
+    llm_quota_enforcement: str = Field(
+        default="off",
+        description=(
+            "Enable LLM quota enforcement on chat turns. ``off`` "
+            "(default) records usage only; ``on`` lets the meter "
+            "consult tenant-config limits and reject over-quota turns."
+        ),
+    )
 
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(

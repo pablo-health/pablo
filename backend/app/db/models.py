@@ -423,6 +423,33 @@ class ChatMessageRow(Base):
     )
 
 
+class LlmUsageRow(Base):
+    """Monthly LLM usage roll-up (THERAPY-f6eg, Phase 3b of THERAPY-bhv).
+
+    Per design doc §11.6, aggregated by
+    ``(user_id, feature_key, period_yyyymm, model)``. No ``tenant_id``
+    column — schema-per-practice isolates rows, same as the chat tables.
+    ``LlmUsageMeter.record_turn`` upserts; ``get_period_usage`` reads.
+    """
+
+    __tablename__ = "llm_usage"
+
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    feature_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    period_yyyymm: Mapped[str] = mapped_column(String(6), primary_key=True)
+    model: Mapped[str] = mapped_column(String(128), primary_key=True)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    turn_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    first_recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_llm_usage_period", "period_yyyymm"),
+        Index("ix_llm_usage_feature_period", "feature_key", "period_yyyymm"),
+    )
+
+
 class AuditLogRow(Base):
     """HIPAA audit log entry.
 

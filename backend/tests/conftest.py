@@ -49,6 +49,7 @@ from app.repositories import (  # noqa: E402
     InMemoryChatRepository,
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
+    InMemoryLlmUsageRepository,
     InMemoryNotesRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
@@ -58,6 +59,9 @@ from app.repositories import (  # noqa: E402
 )
 from app.routes.chat import (  # noqa: E402
     get_chat_repository_dep as get_chat_route_chat_repository,
+)
+from app.routes.chat import (  # noqa: E402
+    get_llm_usage_repository_dep as get_chat_route_llm_usage_repository,
 )
 from app.routes.chat import (  # noqa: E402
     get_patient_repository_dep as get_chat_route_patient_repository,
@@ -133,6 +137,12 @@ def mock_notes_repo() -> InMemoryNotesRepository:
 def mock_chat_repo() -> InMemoryChatRepository:
     """Create a fresh in-memory chat repository for each test (THERAPY-bhv)."""
     return InMemoryChatRepository()
+
+
+@pytest.fixture
+def mock_llm_usage_repo() -> InMemoryLlmUsageRepository:
+    """Create a fresh in-memory LLM usage repository for each test (THERAPY-f6eg)."""
+    return InMemoryLlmUsageRepository()
 
 
 @pytest.fixture
@@ -238,6 +248,7 @@ def client(
     mock_session_repo: InMemoryTherapySessionRepository,
     mock_notes_repo: InMemoryNotesRepository,
     mock_chat_repo: InMemoryChatRepository,
+    mock_llm_usage_repo: InMemoryLlmUsageRepository,
     mock_user_id: str,
     mock_user: User,
     mock_user_repo: InMemoryUserRepository,
@@ -258,6 +269,7 @@ def client(
     app.dependency_overrides[get_notes_route_notes_repository] = lambda: mock_notes_repo
     app.dependency_overrides[get_notes_route_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_chat_route_chat_repository] = lambda: mock_chat_repo
+    app.dependency_overrides[get_chat_route_llm_usage_repository] = lambda: mock_llm_usage_repo
     app.dependency_overrides[get_chat_route_patient_repository] = lambda: mock_repo
     app.dependency_overrides[get_current_user_id] = lambda: mock_user_id
     app.dependency_overrides[require_mfa] = lambda: {"uid": mock_user_id, "firebase": {}}
