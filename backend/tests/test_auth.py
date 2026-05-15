@@ -3,6 +3,7 @@
 """Tests for Firebase authentication and Identity Platform multi-tenancy."""
 
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
@@ -18,12 +19,29 @@ from app.auth.service import (
 )
 from app.db import _request_session
 from app.models import User
-from app.repositories import InMemoryAllowlistRepository, InMemoryUserRepository
+from app.repositories import (
+    InMemoryAllowlistRepository,
+    InMemoryIdentityRepository,
+    InMemoryUserRepository,
+)
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from firebase_admin import auth as firebase_auth
 
 VERIFY_PATCH = "app.auth.service.firebase_auth.verify_id_token"
+
+
+def _identity_repo_for(*firebase_uids: str) -> InMemoryIdentityRepository:
+    """Build an identity repo with legacy-backfilled mappings.
+
+    Each uid is linked as ('firebase', uid, uid) — what the
+    migration backfill produces for users provisioned before the
+    indirection existed. Pass no uids to start empty.
+    """
+    repo = InMemoryIdentityRepository()
+    for uid in firebase_uids:
+        repo.link("firebase", uid, uid)
+    return repo
 
 
 class TestVerifyFirebaseToken:
@@ -159,7 +177,9 @@ class TestGetCurrentUserId:
         mock_credentials.credentials = "valid-token"
         mock_verify.return_value = {"uid": "user123", "email": "test@example.com"}
 
-        user_id = get_current_user_id(MagicMock(), mock_credentials)
+        user_id = get_current_user_id(
+            MagicMock(), mock_credentials, _identity_repo_for("user123")
+        )
 
         assert user_id == "user123"
 
@@ -170,7 +190,7 @@ class TestGetCurrentUserId:
         mock_verify.return_value = {"email": "test@example.com"}
 
         with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id(MagicMock(), mock_credentials)
+            get_current_user_id(MagicMock(), mock_credentials, _identity_repo_for())
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail["error"]["code"] == "INVALID_TOKEN"  # type: ignore[index]
@@ -186,7 +206,7 @@ class TestGetCurrentUserId:
         )
 
         with pytest.raises(HTTPException) as exc_info:
-            get_current_user_id(MagicMock(), mock_credentials)
+            get_current_user_id(MagicMock(), mock_credentials, _identity_repo_for())
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -360,6 +380,10 @@ class TestGetCurrentUser:
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
         allowlist_repo.add("allowed@example.com", "admin")
+        # Pre-seed mapping so the test exercises the legacy-backfill path
+        # (stable id = firebase uid). A separate test covers the
+        # fresh-signup case where a UUID is generated.
+        identity_repo = _identity_repo_for("new-user")
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = True
@@ -367,7 +391,9 @@ class TestGetCurrentUser:
             mock_settings.return_value.restrict_signups = True
 
             decoded = mock_verify.return_value
-            user = get_current_user(_mock_request(), decoded, user_repo, allowlist_repo)
+            user = get_current_user(
+                _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+            )
 
         assert user.id == "new-user"
         assert user.email == "allowed@example.com"
@@ -383,6 +409,7 @@ class TestGetCurrentUser:
 
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
+        identity_repo = _identity_repo_for()
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
@@ -391,14 +418,19 @@ class TestGetCurrentUser:
 
             decoded = mock_verify.return_value
             with pytest.raises(HTTPException) as exc_info:
-                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo)
+                get_current_user(
+                    _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+                )
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
+        # Allowlist gate keeps rejected users out of the mapping table
+        assert identity_repo.get_user_id("firebase", "blocked-user") is None
 
     def test_rejects_disabled_user(self) -> None:
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
+        identity_repo = _identity_repo_for("disabled-user")
 
         disabled_user = User(
             id="disabled-user",
@@ -415,7 +447,9 @@ class TestGetCurrentUser:
             mock_settings.return_value.restrict_signups = False
 
             with pytest.raises(HTTPException) as exc_info:
-                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo)
+                get_current_user(
+                    _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+                )
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "USER_DISABLED"  # type: ignore[index]
@@ -515,7 +549,9 @@ class TestTokenVerificationWithTenantClaims:
                 "uid": "user123",
                 "firebase": {"tenant": "practice-a1b2c3"},
             }
-            user_id = get_current_user_id(MagicMock(), mock_credentials)
+            user_id = get_current_user_id(
+                MagicMock(), mock_credentials, _identity_repo_for("user123")
+            )
 
         assert user_id == "user123"
 
@@ -533,7 +569,12 @@ class TestGetTenantContext:
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.multi_tenancy_enabled = False
 
-            ctx = get_tenant_context(decoded, InMemoryUserRepository())
+            ctx = get_tenant_context(
+                _mock_request(),
+                decoded,
+                InMemoryUserRepository(),
+                _identity_repo_for("user123"),
+            )
 
         assert ctx == TenantContext(user_id="user123")
 
@@ -554,7 +595,12 @@ class TestGetTenantContext:
             mock_session = MagicMock()
             token = _request_session.set(mock_session)
             try:
-                ctx = get_tenant_context(decoded, InMemoryUserRepository())
+                ctx = get_tenant_context(
+                    _mock_request(),
+                    decoded,
+                    InMemoryUserRepository(),
+                    _identity_repo_for("user123"),
+                )
             finally:
                 _request_session.reset(token)
 
@@ -583,7 +629,9 @@ class TestGetTenantContext:
         ):
             mock_settings.return_value.multi_tenancy_enabled = True
 
-            ctx = get_tenant_context(decoded, user_repo)
+            ctx = get_tenant_context(
+                _mock_request(), decoded, user_repo, _identity_repo_for("admin-uid")
+            )
 
         assert ctx == TenantContext(user_id="admin-uid")
 
@@ -606,7 +654,9 @@ class TestGetTenantContext:
             mock_settings.return_value.multi_tenancy_enabled = True
 
             with pytest.raises(HTTPException) as exc_info:
-                get_tenant_context(decoded, user_repo)
+                get_tenant_context(
+                    _mock_request(), decoded, user_repo, _identity_repo_for("user123")
+                )
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "NO_PRACTICE"  # type: ignore[index]
@@ -622,7 +672,12 @@ class TestGetTenantContext:
             mock_settings.return_value.multi_tenancy_enabled = True
 
             with pytest.raises(HTTPException) as exc_info:
-                get_tenant_context(decoded, InMemoryUserRepository())
+                get_tenant_context(
+                    _mock_request(),
+                    decoded,
+                    InMemoryUserRepository(),
+                    _identity_repo_for(),
+                )
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "NO_PRACTICE"  # type: ignore[index]
@@ -635,7 +690,115 @@ class TestGetTenantContext:
             mock_settings.return_value.multi_tenancy_enabled = True
 
             with pytest.raises(HTTPException) as exc_info:
-                get_tenant_context(decoded, InMemoryUserRepository())
+                get_tenant_context(
+                    _mock_request(),
+                    decoded,
+                    InMemoryUserRepository(),
+                    _identity_repo_for(),
+                )
 
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail["error"]["code"] == "INVALID_TOKEN"  # type: ignore[index]
+
+
+class TestUserIdentityMapping:
+    """Test the (provider, subject_id) -> user_id indirection.
+
+    The mapping decouples Pablo's storage identity from a single auth
+    provider's subject — once user_identities holds the mapping, the
+    rest of the system never sees the provider's raw uid.
+    """
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_lookup_returns_mapped_pablo_user_id(self, mock_verify: MagicMock) -> None:
+        """An existing mapping translates Firebase uid to the Pablo uuid."""
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "token"
+        mock_verify.return_value = {"uid": "firebase-uid-abc"}
+
+        identity_repo = InMemoryIdentityRepository()
+        identity_repo.link("firebase", "firebase-uid-abc", "uuid-pablo-id-1")
+
+        result = get_current_user_id(MagicMock(), mock_credentials, identity_repo)
+
+        assert result == "uuid-pablo-id-1"
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_legacy_user_falls_back_to_firebase_uid(self, mock_verify: MagicMock) -> None:
+        """No mapping → fall back to the Firebase uid (legacy compat).
+
+        Users provisioned before the mapping existed get a backfilled row
+        in the migration. Until that runs, lookup-only paths return the
+        Firebase uid so existing FK references still resolve.
+        """
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "token"
+        mock_verify.return_value = {"uid": "legacy-firebase-uid"}
+
+        identity_repo = InMemoryIdentityRepository()  # empty
+
+        result = get_current_user_id(MagicMock(), mock_credentials, identity_repo)
+
+        assert result == "legacy-firebase-uid"
+        # Lookup-only path must not mint a mapping for unauthenticated /
+        # un-allowlisted users — that's the auto-provision path's job.
+        assert identity_repo.get_user_id("firebase", "legacy-firebase-uid") is None
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_auto_provision_creates_mapping_with_new_uuid(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """First-time sign-up: a fresh UUID is minted and linked."""
+        mock_verify.return_value = {
+            "uid": "fresh-firebase-uid",
+            "email": "fresh@example.com",
+            "name": "Fresh User",
+            "firebase": {},
+        }
+        decoded = mock_verify.return_value
+
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = InMemoryAllowlistRepository()
+        allowlist_repo.add("fresh@example.com", "admin")
+        identity_repo = InMemoryIdentityRepository()  # empty
+
+        with patch("app.auth.service.get_settings") as mock_settings:
+            mock_settings.return_value.is_development = True
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+
+            user = get_current_user(
+                _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+            )
+
+        mapped = identity_repo.get_user_id("firebase", "fresh-firebase-uid")
+        assert mapped is not None
+        assert mapped == user.id
+        # The stored id is the Pablo uuid, not the Firebase uid
+        assert user.id != "fresh-firebase-uid"
+        # Sanity: UUID4 string form
+        assert len(user.id) == 36
+        assert user.id.count("-") == 4
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_resolution_caches_on_request_state(self, mock_verify: MagicMock) -> None:
+        """Multiple resolves within one request hit the cache, not the repo."""
+        mock_credentials = Mock(spec=HTTPAuthorizationCredentials)
+        mock_credentials.credentials = "token"
+        mock_verify.return_value = {"uid": "cached-uid"}
+
+        identity_repo = InMemoryIdentityRepository()
+        identity_repo.link("firebase", "cached-uid", "pablo-cached-uuid")
+
+        request = MagicMock()
+        request.state = SimpleNamespace()
+        # First call populates the cache via the repo
+        first = get_current_user_id(request, mock_credentials, identity_repo)
+        # Mutate the repo: if the second call hit the repo it would now miss
+        identity_repo._mappings.clear()
+        # Provide a fresh decoded token so verify_firebase_token isn't reused
+        request.state.verified_firebase_token_raw = "token"
+        request.state.decoded_firebase_token = {"uid": "cached-uid"}
+        second = get_current_user_id(request, mock_credentials, identity_repo)
+
+        assert first == second == "pablo-cached-uuid"

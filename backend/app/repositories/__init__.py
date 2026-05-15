@@ -24,6 +24,10 @@ from .ehr_route import (
     EhrRouteRepository,
     InMemoryEhrRouteRepository,
 )
+from .identity import (
+    IdentityRepository,
+    InMemoryIdentityRepository,
+)
 from .llm_usage import (
     InMemoryLlmUsageRepository,
     LlmUsageRepository,
@@ -58,6 +62,13 @@ def get_user_repository() -> UserRepository:
     from .postgres.user import PostgresUserRepository
 
     return PostgresUserRepository(_get_pg_session())
+
+
+def get_identity_repository() -> IdentityRepository:
+    """Get identity repository instance."""
+    from .postgres.identity import PostgresIdentityRepository
+
+    return PostgresIdentityRepository(_get_pg_session())
 
 
 def get_allowlist_repository() -> AllowlistRepository:
@@ -181,10 +192,12 @@ __all__ = [
     "ChatRepository",
     "EhrPromptRepository",
     "EhrRouteRepository",
+    "IdentityRepository",
     "InMemoryAllowlistRepository",
     "InMemoryChatRepository",
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
+    "InMemoryIdentityRepository",
     "InMemoryLlmUsageRepository",
     "InMemoryNotesRepository",
     "InMemoryPatientRepository",
@@ -207,6 +220,7 @@ __all__ = [
     "get_google_calendar_token_repository",
     "get_ical_client_mapping_repository",
     "get_ical_sync_config_repository",
+    "get_identity_repository",
     "get_llm_usage_repository",
     "get_notes_repository",
     "get_patient_repository",
