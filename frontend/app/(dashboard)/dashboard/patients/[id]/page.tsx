@@ -6,6 +6,7 @@ import { use } from "react"
 import { Users, Calendar, Phone, Mail, ArrowLeft, FileText } from "lucide-react"
 import Link from "next/link"
 import { PatientExport } from "@/components/patients/PatientExport"
+import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { usePatient } from "@/hooks/usePatients"
 
@@ -176,6 +177,8 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
           this patient, or open the notes list to review prior session notes.
         </p>
       </div>
+
+      <PatientChartExtras patientId={patient.id} />
     </div>
   )
 }
