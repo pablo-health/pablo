@@ -7,7 +7,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest"
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import {
+  act,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { ChatPanel } from "../ChatPanel"
 import type {
@@ -24,10 +32,30 @@ vi.mock("@/lib/chat/api", () => ({
   createConversation: vi.fn(),
   getConversation: vi.fn(),
   updateConversation: vi.fn(),
+  // BriefingCard fires this on mount in the empty state. Resolve with
+  // an empty included list so the briefing falls through to the
+  // neutral "ready to chat about Maria" copy — the lifecycle tests
+  // below don't care about briefing content.
+  previewChatContext: vi.fn().mockResolvedValue({
+    manifest: {
+      sources_included: [],
+      sources_dropped: [],
+      total_tokens_est: 0,
+      token_budget: 600_000,
+      patient_id: "patient-1",
+      assembled_at: "2026-05-13T21:00:00Z",
+    },
+  }),
 }))
 
 vi.mock("@/lib/chat/sse", () => ({
   streamChatMessages: vi.fn(),
+}))
+
+// BriefingCard reads patient.first_name via usePatient. Mock to a fixed
+// name so the panel tests don't need Firebase auth context.
+vi.mock("@/hooks/usePatients", () => ({
+  usePatient: () => ({ data: { first_name: "Maria" }, isLoading: false }),
 }))
 
 import {
@@ -41,6 +69,18 @@ const mockCreate = createConversation as unknown as Mock
 const mockGet = getConversation as unknown as Mock
 const mockUpdate = updateConversation as unknown as Mock
 const mockStream = streamChatMessages as unknown as Mock
+
+// Wrap render() with a QueryClientProvider because BriefingCard uses
+// react-query for the manifest preview. A fresh client per render
+// avoids cache bleed between tests.
+function render(ui: React.ReactElement): ReturnType<typeof rtlRender> {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  return rtlRender(
+    <QueryClientProvider client={qc}>{ui}</QueryClientProvider>,
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

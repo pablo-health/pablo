@@ -40,7 +40,7 @@ handles them automatically when both sides change in the same
 transaction; nothing to drop/recreate.
 
 Revision ID: b7e25c1d8a4f
-Revises: 65fdccbd8f77
+Revises: a4c91b6e3f08
 Create Date: 2026-05-14
 """
 
@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "b7e25c1d8a4f"
-down_revision: str | Sequence[str] | None = "65fdccbd8f77"
+down_revision: str | Sequence[str] | None = "a4c91b6e3f08"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

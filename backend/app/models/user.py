@@ -6,11 +6,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from .validators import validate_iso_date
+
+ProviderType = Literal["therapist", "prescriber", "both"]
+OnboardingState = Literal["in_progress", "later", "completed"]
 
 
 class UpdateUserRequest(BaseModel):
@@ -19,6 +22,8 @@ class UpdateUserRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     title: str | None = Field(None, max_length=50)
     credentials: str | None = Field(None, max_length=100)
+    provider_type: ProviderType | None = None
+    onboarding_state: OnboardingState | None = None
     baa_accepted_at: datetime | None = None
 
     @classmethod
@@ -66,6 +71,25 @@ class BAAStatusResponse(BaseModel):
     current_version: str
 
 
+class AcknowledgeSecurityGuideRequest(BaseModel):
+    """Request to record acknowledgment of the security & privacy guide.
+
+    The version string is the YYYY-MM-DD effective date of the guide
+    the user is acknowledging. The SaaS overlay declares the current
+    version client-side; OSS records whatever is sent.
+    """
+
+    version: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class SecurityGuideStatusResponse(BaseModel):
+    """Response containing security-guide acknowledgment status."""
+
+    acknowledged: bool
+    acknowledged_at: datetime | None = None
+    version: str | None = None
+
+
 @dataclass
 class User:
     """
@@ -93,6 +117,13 @@ class User:
     status: str = "approved"
     mfa_enrolled_at: datetime | None = None
     role: str = "clinician"
+    provider_type: str | None = None
+    security_guide_acknowledged_at: datetime | None = None
+    security_guide_version: str | None = None
+    onboarding_state: str | None = None
+    chat_quality_review_opt_in: bool = False
+    chat_quality_review_opt_in_at: datetime | None = None
+    chat_quality_review_opt_out_at: datetime | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -148,6 +179,13 @@ class User:
             status=data.get("status", "approved"),
             mfa_enrolled_at=data.get("mfa_enrolled_at"),
             role=data.get("role", "clinician"),
+            provider_type=data.get("provider_type"),
+            security_guide_acknowledged_at=data.get("security_guide_acknowledged_at"),
+            security_guide_version=data.get("security_guide_version"),
+            onboarding_state=data.get("onboarding_state"),
+            chat_quality_review_opt_in=data.get("chat_quality_review_opt_in", False),
+            chat_quality_review_opt_in_at=data.get("chat_quality_review_opt_in_at"),
+            chat_quality_review_opt_out_at=data.get("chat_quality_review_opt_out_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:

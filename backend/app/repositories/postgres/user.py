@@ -72,6 +72,13 @@ def _row_to_user(row: PlatformUserRow) -> User:
         is_platform_admin=row.is_platform_admin,
         status=row.status,
         mfa_enrolled_at=row.mfa_enrolled_at,
+        provider_type=row.provider_type,
+        security_guide_acknowledged_at=row.security_guide_acknowledged_at,
+        security_guide_version=row.security_guide_version,
+        onboarding_state=row.onboarding_state,
+        chat_quality_review_opt_in=row.chat_quality_review_opt_in,
+        chat_quality_review_opt_in_at=row.chat_quality_review_opt_in_at,
+        chat_quality_review_opt_out_at=row.chat_quality_review_opt_out_at,
     )
 
 
@@ -91,3 +98,10 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.is_platform_admin = user.is_platform_admin
     row.status = user.status
     row.mfa_enrolled_at = user.mfa_enrolled_at
+    row.provider_type = user.provider_type
+    row.security_guide_acknowledged_at = user.security_guide_acknowledged_at
+    row.security_guide_version = user.security_guide_version
+    row.onboarding_state = user.onboarding_state
+    row.chat_quality_review_opt_in = user.chat_quality_review_opt_in
+    row.chat_quality_review_opt_in_at = user.chat_quality_review_opt_in_at
+    row.chat_quality_review_opt_out_at = user.chat_quality_review_opt_out_at

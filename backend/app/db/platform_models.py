@@ -117,6 +117,39 @@ class PlatformUserRow(PlatformBase):
     baa_practice_name: Mapped[str | None] = mapped_column(String(255))
     baa_business_address: Mapped[str | None] = mapped_column(String(500))
     baa_full_text: Mapped[str | None] = mapped_column(Text)
+    provider_type: Mapped[str | None] = mapped_column(String(32))
+    security_guide_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_guide_version: Mapped[str | None] = mapped_column(String(20))
+    onboarding_state: Mapped[str | None] = mapped_column(String(20))
+    chat_quality_review_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    chat_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    chat_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserIdentityRow(PlatformBase):
+    """Maps an external auth provider subject to a Pablo-internal user_id.
+
+    Decouples Pablo's storage identity from any single auth provider's
+    subject ID. Lets us migrate off Identity Platform later — or link
+    multiple providers (Google + password) to the same user — without
+    rewriting every user_id FK across every tenant schema.
+
+    Composite PK (provider, subject_id) makes the (provider, subject)
+    pair the natural lookup key. user_id is indexed (not unique) so
+    one user can hold many provider identities.
+
+    Subject IDs are bounded across providers: Firebase uid 28 chars,
+    Auth0 ~40, Google sub 21 digits, Cognito sub 36. 64 covers them
+    all with room to spare.
+    """
+
+    __tablename__ = "user_identities"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class PlatformUserPreferencesRow(PlatformBase):
@@ -142,9 +175,7 @@ class PlatformAuditLogRow(PlatformBase):
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     actor_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

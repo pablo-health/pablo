@@ -20,6 +20,8 @@ from .chat_api import (
     ChatConversationResponse,
     ChatMessageResponse,
     CreateChatConversationRequest,
+    PreviewChatContextRequest,
+    PreviewChatContextResponse,
     SendChatMessageRequest,
     UpdateChatConversationRequest,
 )
@@ -107,11 +109,20 @@ from .session import (
     UploadTranscriptToSessionRequest,
     VideoPlatform,
 )
-from .user import AcceptBAARequest, BAAStatusResponse, UpdateUserRequest, User, UserPreferences
+from .user import (
+    AcceptBAARequest,
+    AcknowledgeSecurityGuideRequest,
+    BAAStatusResponse,
+    SecurityGuideStatusResponse,
+    UpdateUserRequest,
+    User,
+    UserPreferences,
+)
 
 __all__ = [
     "CONFIDENCE_THRESHOLDS",
     "AcceptBAARequest",
+    "AcknowledgeSecurityGuideRequest",
     "AppointmentListResponse",
     "AppointmentResponse",
     "AssessmentNote",
@@ -163,6 +174,8 @@ __all__ = [
     "PatientResponse",
     "PatientSummary",
     "PlanNote",
+    "PreviewChatContextRequest",
+    "PreviewChatContextResponse",
     "PreviousAction",
     "QuotaStatus",
     "ResourceType",
@@ -172,6 +185,7 @@ __all__ = [
     "SOAPSentence",
     "SOAPSentenceModel",
     "ScheduleSessionRequest",
+    "SecurityGuideStatusResponse",
     "SendChatMessageRequest",
     "SessionListResponse",
     "SessionResponse",
