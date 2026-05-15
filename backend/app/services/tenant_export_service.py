@@ -6,8 +6,8 @@ Drives :func:`backend.app.routes.admin.tenant_export` (POST
 /api/admin/tenant-export). Used by:
 
 * Practice admins downloading a self-service archive.
-* The SaaS overlay's offboarding flow, which surfaces this endpoint to
-  CEs before schema teardown.
+* Downstream offboarding flows, which surface this endpoint to CEs
+  before schema teardown.
 
 Design notes:
 

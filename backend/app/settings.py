@@ -66,10 +66,10 @@ class Settings(BaseSettings):
     require_baa: bool = Field(
         default=False,
         description=(
-            "Require BAA acceptance before PHI access. "
-            "SaaS deployments set this to True via setup.sh. "
-            "Self-hosted (Core) defaults to False — therapist signs BAA "
-            "directly with their cloud provider."
+            "Require BAA acceptance before PHI access. Hosted "
+            "deployments set this to True via setup.sh. Self-hosted "
+            "defaults to False — the operator signs a BAA directly "
+            "with their cloud provider."
         ),
     )
 
@@ -128,10 +128,10 @@ class Settings(BaseSettings):
     restrict_signups: bool = Field(
         default=False,
         description=(
-            "Only allowlisted emails can sign in. "
-            "SaaS deployments set this to True via setup.sh. "
-            "Self-hosted (Core) defaults to False — solo therapist "
-            "doesn't need an allowlist."
+            "Only allowlisted emails can sign in. Hosted "
+            "deployments set this to True via setup.sh. Self-hosted "
+            "defaults to False — a solo operator doesn't need an "
+            "allowlist."
         ),
     )
 
@@ -145,7 +145,7 @@ class Settings(BaseSettings):
         description="API description",
     )
 
-    # Stripe Settings (SaaS billing)
+    # Stripe Settings (used by the optional billing overlay)
     stripe_secret_key: SecretStr = Field(
         default=SecretStr(""),
         description="Stripe API secret key for billing portal session creation",
@@ -398,12 +398,12 @@ class Settings(BaseSettings):
         ),
     )
     # Default chat model — used by ``resolve_chat_model`` when no
-    # tier-aware overlay overrides the resolver. SaaS overlays may swap
-    # this per ``caller_feature_key`` (e.g. Pro for rx-justification).
+    # downstream resolver overrides it. Downstream consumers may swap
+    # this per ``caller_feature_key``.
     ai_model: str = Field(
         default="gemini-2.5-pro",
         description=(
-            "Default Gemini model for OSS chat (and any other generation "
+            "Default Gemini model for chat (and any other generation "
             "surface that calls the default resolver). Per design doc "
             "§11.7, Pro-tier work (SOAP, justifications) targets this; "
             "Flash-tier chat falls through to ai_model_flash when set."
@@ -417,12 +417,11 @@ class Settings(BaseSettings):
             "unset, chat callers fall through to ``ai_model``."
         ),
     )
-    # LLM quota enforcement switch for the OSS chat primitive
-    # (THERAPY-f6eg). ``off`` (the OSS default) records usage but never
+    # LLM quota enforcement switch for the chat primitive
+    # (THERAPY-f6eg). ``off`` (the default) records usage but never
     # rejects a turn; ``on`` lets ``LlmUsageMeter.check_quota`` consult
-    # tenant-config limits. SaaS overlays flip this to ``on`` and
-    # subclass the meter; self-hosters who want their own caps can do
-    # the same. See design doc §11.6.
+    # tenant-config limits. Operators who want their own caps flip
+    # this on and subclass the meter. See design doc §11.6.
     llm_quota_enforcement: str = Field(
         default="off",
         description=(
@@ -486,7 +485,7 @@ class Settings(BaseSettings):
 
     @property
     def is_saas(self) -> bool:
-        """Check if running as a SaaS edition (Solo or Practice)."""
+        """Check if running as a hosted edition (Solo or Practice)."""
         return self.pablo_edition in ("solo", "practice")
 
     @property

@@ -5,8 +5,8 @@
 Adds ``security_guide_acknowledged_at TIMESTAMPTZ NULL`` and
 ``security_guide_version VARCHAR(20) NULL`` to ``platform.users``.
 
-The security & privacy guide for clinicians lives in the SaaS overlay
-(``pablo-saas/docs/security/therapist-security-guide.md``). Clinicians
+The security & privacy guide for clinicians is shipped with the
+frontend (or its equivalent in a downstream deployment). Clinicians
 acknowledge a specific version of it during onboarding before they
 get into the dashboard. The user row records the timestamp + version
 pair — that's the audit trail; we deliberately do not store the full
@@ -14,12 +14,12 @@ guide text on the row (unlike BAA, which is a contract: the guide is
 training material whose canonical copy lives in the repo).
 
 NULL is meaningful in both columns: it's the "needs to acknowledge"
-signal that the SaaS overlay's wizard keys off. No backfill — existing
+signal that the onboarding wizard keys off. No backfill — existing
 users will be prompted on next login.
 
-Self-hosted (OSS) deployments do not bundle the Pablo guide; whether
-to gate on this field is a SaaS-side decision (similar to the
-existing BAA gate, which OSS leaves disabled).
+Deployments that do not bundle a guide leave gating on this field to
+operator policy (similar to the existing BAA gate, which is disabled
+by default).
 
 Revision ID: d5a3e9b71f6c
 Revises: c2e8a1f5d4b9

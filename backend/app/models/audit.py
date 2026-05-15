@@ -40,10 +40,9 @@ class AuditAction(StrEnum):
     SESSION_TRANSCRIPT_UPLOADED = "session_transcript_uploaded"
     SESSION_AUDIO_UPLOADED = "session_audio_uploaded"
     # Recorded session audio deleted by the per-practice audio retention
-    # cron (THERAPY-ab7). Emitted by the SaaS
-    # ``saas.bin.audio_retention_purge`` entrypoint. The value is defined
-    # here (not in the SaaS overlay) so audit-log readers and dashboards
-    # render it consistently on both tiers.
+    # cron (THERAPY-ab7). The action value is defined here so audit-log
+    # readers and dashboards render it consistently regardless of which
+    # job entrypoint emitted the row.
     AUDIO_PURGED = "audio_purged"
 
     # iCal sync / EHR client import operations

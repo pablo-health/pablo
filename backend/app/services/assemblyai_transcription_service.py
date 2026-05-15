@@ -2,7 +2,7 @@
 
 """AssemblyAI batch transcription service for session audio.
 
-Replaces the GCP Batch + Whisper pipeline for SaaS deployments.
+Replaces the GCP Batch + Whisper pipeline for managed deployments.
 Submits audio to AssemblyAI's async transcription API, polls for completion,
 and posts the merged transcript back to the internal callback endpoint.
 

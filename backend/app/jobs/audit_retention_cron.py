@@ -18,8 +18,8 @@ Invoked from repo ``backend/``::
     python -m app.jobs.audit_retention_cron --dry-run
     python -m app.jobs.audit_retention_cron --as-of 2026-01-01T00:00:00Z
 
-Cloud Run Job wiring (hosted) lives in pablo-saas
-``.github/workflows/deploy.yml``; this module is OSS and self-hostable.
+Cloud Run Job wiring for hosted deployments is configured outside
+this module; the module itself is self-hostable.
 
 Exit codes:
     * 0 — success (including dry-run)

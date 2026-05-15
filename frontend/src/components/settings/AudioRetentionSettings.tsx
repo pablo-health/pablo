@@ -18,8 +18,8 @@ interface AudioRetentionSettingsProps {
   /**
    * Current retention window from the backend, if known. If omitted,
    * the slider initializes at the documented default (365 days). The
-   * SaaS endpoint accepts only PUT — there is no GET — so callers
-   * that don't already have the value must accept this default.
+   * endpoint accepts only PUT — there is no GET — so callers that
+   * don't already have the value must accept this default.
    */
   initialDays?: number
 }

@@ -114,7 +114,7 @@ def get_note_service(
 
 
 def _build_eval_export_service() -> "EvalExportService | None":
-    """Build eval export service if SaaS edition is active."""
+    """Build eval export service when the optional module is available."""
     settings = get_settings()
     if not settings.is_saas:
         return None

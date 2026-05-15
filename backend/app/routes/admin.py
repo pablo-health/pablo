@@ -209,9 +209,9 @@ def tenant_export(
     audited; aborted ones are not.
     """
     # ``include_audio`` is intentionally ignored in v1. We still accept
-    # it on the wire so callers that already include it (e.g. the SaaS
-    # dashboard's offboarding flow) don't get 422'd when audio support
-    # later lands.
+    # it on the wire so callers that already include it (e.g. an
+    # offboarding flow in a downstream dashboard) don't get 422'd when
+    # audio support later lands.
     _ = body.include_audio
 
     state = TenantExportState()

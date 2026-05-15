@@ -86,8 +86,9 @@ app = FastAPI(
 
 register_exception_handlers(app)
 
-# Populate the note-type registry with OSS built-ins (SOAP + Narrative).
-# SaaS overlays register premium formats against the same default registry.
+# Populate the note-type registry with the built-in note types
+# (SOAP + Narrative). Downstream consumers may register additional
+# formats against the same default registry.
 register_builtin_note_types(get_default_registry())
 
 # PostgreSQL session middleware (must be added before security middleware

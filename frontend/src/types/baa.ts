@@ -1,8 +1,9 @@
 /**
- * BAA type stubs for Pablo Solo.
+ * BAA type stubs.
  *
- * BAA acceptance is a SaaS-only feature. These types exist so that
- * shared API modules (users.ts) compile without modification.
+ * BAA acceptance is provided by an optional backend overlay. These
+ * stubs exist so that shared API modules (users.ts) compile when the
+ * overlay is not present.
  */
 
 export interface BAAStatusResponse {

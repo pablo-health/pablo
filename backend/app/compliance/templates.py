@@ -36,7 +36,7 @@ malpractice, payer credentialing). ``routine`` items are compliance
 hygiene where a missed deadline is an audit risk but doesn't immediately
 halt the business (annual training, BAA chasing, SRA documentation).
 
-The SaaS overlay's reminder cron uses this to pick a tonally-appropriate
+Downstream reminder dispatchers use this to pick a tonally-appropriate
 email template (the playful Pablo voice is fine for routine items, but
 reads wrong on a license-lapse reminder).
 """

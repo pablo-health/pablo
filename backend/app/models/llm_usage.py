@@ -3,9 +3,9 @@
 """LLM-usage domain types (THERAPY-f6eg, Phase 3b of THERAPY-bhv).
 
 See ``docs/architecture/patient-context-chat-oss.md`` §11.6. The meter
-primitive lives in OSS so self-hosters get the same observability as
-SaaS; quota *enforcement* is configured per deployment (OSS default
-``llm_quota_enforcement=off``).
+primitive ships with the core distribution so every deployment gets
+the same observability; quota *enforcement* is configured per
+deployment (default ``llm_quota_enforcement=off``).
 
 No ``tenant_id`` on these dataclasses — the practice schema is the
 tenant boundary, matching :mod:`backend.app.models.chat`.

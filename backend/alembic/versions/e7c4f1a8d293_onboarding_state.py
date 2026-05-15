@@ -7,16 +7,16 @@ Adds ``onboarding_state VARCHAR(20) NULL`` to ``platform.users``.
 Values are ``"in_progress" | "later" | "completed"`` — enforced
 application-side by the Pydantic Literal on ``UpdateUserRequest``.
 NULL is meaningful: it means "grandfathered" (the row existed before
-this column was introduced) and is treated by the SaaS overlay as
-"already completed" — no banner, no redirect. Forward, the wizard
+this column was introduced) and is treated by the onboarding wizard
+as "already completed" — no banner, no redirect. Forward, the wizard
 sets ``in_progress`` on first entry and ``completed`` once every
 registered step's gate is satisfied. ``later`` is set when the user
 clicks Later on an optional step (no optional steps exist yet, but
 the field is part of the contract).
 
-Self-hosted (OSS) deployments do not surface the onboarding wizard;
-the column exists in OSS because the User model is OSS, and the SaaS
-overlay is the only consumer today.
+Deployments that do not surface an onboarding wizard simply leave
+the column NULL; the field is part of the User model so any
+downstream consumer can opt in without a follow-up migration.
 
 Revision ID: e7c4f1a8d293
 Revises: d5a3e9b71f6c
