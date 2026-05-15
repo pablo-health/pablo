@@ -251,13 +251,14 @@ def get_tenant_context(
         if practice:
             practice_id, schema_name = practice
             tenant_id_var.set(practice_id)
-            # CRITICAL: Switch the DB session to this tenant's schema.
-            # Without this, all queries hit the default 'practice' schema,
-            # violating tenant isolation (HIPAA).
-            from ..db import get_db_session, set_tenant_schema
+            # search_path is already set by DatabaseSessionMiddleware
+            # before any dependency runs — see
+            # `app.db.middleware.DatabaseSessionMiddleware._resolve_schema_from_request`.
+            # We still need the active session here to set the
+            # RLS user-id variable below.
+            from ..db import get_db_session
 
             session = get_db_session()
-            set_tenant_schema(session, schema_name)
 
             # RLS defense-in-depth: set the current user ID as a
             # transaction-scoped session variable so PostgreSQL
