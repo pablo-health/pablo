@@ -2,6 +2,11 @@
 
 """FastAPI middleware components (security + request context)."""
 
+from .outbound import (
+    build_traceparent,
+    inject_trace_headers,
+    tracing_async_client,
+)
 from .request_context import (
     AWS_TRACE_HEADER,
     CLOUD_TRACE_HEADER,
@@ -20,5 +25,8 @@ __all__ = [
     "HTTPSEnforcementMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
+    "build_traceparent",
+    "inject_trace_headers",
     "resolve_route_template",
+    "tracing_async_client",
 ]
