@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from .settings import Settings
+from ..settings import Settings
 
 
 class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
