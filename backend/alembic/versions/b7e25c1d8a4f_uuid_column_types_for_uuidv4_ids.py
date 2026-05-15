@@ -20,6 +20,7 @@ Scope (PHI and admin tables whose ``id`` is uuid4()):
   audit_logs.id, .patient_id, .session_id
   patient_clinicians.patient_id
   ical_client_mappings.patient_id
+  compliance_reminder_dispatches.compliance_item_id  (saas-overlay table; no-op when absent)
   platform.platform_audit_logs.id
 
 Explicitly NOT converted:
@@ -89,6 +90,13 @@ TENANT_COLUMNS: list[tuple[str, str]] = [
     ("audit_logs", "session_id"),
     ("patient_clinicians", "patient_id"),
     ("ical_client_mappings", "patient_id"),
+    # SaaS-overlay-only table (created by saas-tenant migration a4f1c8e7b2d6
+    # ahead of this OSS chain on existing tenants). If present, its FK
+    # column to compliance_items.id must move in lockstep so the FK can be
+    # re-created at the end of this migration. ``_alter_to_uuid_in_current_schema``
+    # is a no-op when the table doesn't exist (e.g. self-hosted OSS without
+    # the overlay).
+    ("compliance_reminder_dispatches", "compliance_item_id"),
 ]
 
 # (schema, table, column) in the shared platform schema
