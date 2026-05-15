@@ -17,7 +17,15 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
-from ..models import AcceptBAARequest, BAAStatusResponse, User, UserPreferences
+from ..models import (
+    AcceptBAARequest,
+    AcknowledgeSecurityGuideRequest,
+    BAAStatusResponse,
+    SecurityGuideStatusResponse,
+    UpdateUserRequest,
+    User,
+    UserPreferences,
+)
 from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
@@ -77,6 +85,10 @@ def get_user_status(
         "is_platform_admin": user.is_platform_admin,
         "name": user.name,
         "email": user.email,
+        "provider_type": user.provider_type,
+        "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
+        "security_guide_version": user.security_guide_version,
+        "onboarding_state": user.onboarding_state,
     }
 
     settings = get_settings()
@@ -140,6 +152,31 @@ def get_current_user_profile(
 
     Returns the authenticated user's profile information.
     """
+    return user
+
+
+@router.patch("/me")
+def update_current_user_profile(
+    request: UpdateUserRequest,
+    user: User = Depends(get_current_user),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> User:
+    """Partial update of the current user's profile.
+
+    Currently persists ``name``, ``provider_type``, and
+    ``onboarding_state`` on the platform user row. ``title`` /
+    ``credentials`` are accepted by the request schema for
+    forward-compat but live on the per-practice ``ClinicianProfile``
+    and are not wired here yet — a future PR will route them through
+    that repository.
+    """
+    if request.name is not None:
+        user.name = request.name
+    if request.provider_type is not None:
+        user.provider_type = request.provider_type
+    if request.onboarding_state is not None:
+        user.onboarding_state = request.onboarding_state
+    user_repo.update(user)
     return user
 
 
@@ -210,6 +247,48 @@ def accept_baa(
         accepted_at=utc_now(),
         version=request.version,
         current_version=request.version,
+    )
+
+
+@router.get("/me/security-guide-status")
+def get_security_guide_status(
+    user: User = Depends(get_current_user_no_mfa),
+) -> SecurityGuideStatusResponse:
+    """Return security-guide acknowledgment status for the current user.
+
+    The "current version" is declared by the SaaS overlay (the guide
+    lives in ``pablo-saas/docs/security/``), so this endpoint only
+    reports what the user has acknowledged. The frontend compares
+    against its bundled version to decide whether to re-prompt.
+    """
+    return SecurityGuideStatusResponse(
+        acknowledged=user.security_guide_acknowledged_at is not None,
+        acknowledged_at=user.security_guide_acknowledged_at,
+        version=user.security_guide_version,
+    )
+
+
+@router.post("/me/acknowledge-security-guide")
+def acknowledge_security_guide(
+    request: AcknowledgeSecurityGuideRequest,
+    user: User = Depends(get_current_user_no_mfa),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> SecurityGuideStatusResponse:
+    """Record acknowledgment of the security & privacy guide.
+
+    The user's row stores the acknowledgment timestamp + version
+    pair; that pair *is* the audit trail (mirrors the BAA + MFA
+    patterns, which also record on the user row without a separate
+    audit event). Idempotent — calling again with the same or a
+    different version overwrites both fields.
+    """
+    user.security_guide_acknowledged_at = utc_now()
+    user.security_guide_version = request.version
+    user_repo.update(user)
+    return SecurityGuideStatusResponse(
+        acknowledged=True,
+        acknowledged_at=user.security_guide_acknowledged_at,
+        version=request.version,
     )
 
 
@@ -297,9 +376,7 @@ def list_my_audit_log(
 ) -> AuditLogResponse:
     """Return the caller's own audit rows, newest first."""
     entries = audit.list_for_user(user_id=user.id, since=since, limit=limit)
-    audit.log_self_audit_view(
-        user=user, request=request, returned_count=len(entries)
-    )
+    audit.log_self_audit_view(user=user, request=request, returned_count=len(entries))
     return AuditLogResponse(
         data=[
             AuditLogItem(

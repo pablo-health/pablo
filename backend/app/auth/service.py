@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 
+from ..logging_config import tenant_id_var, user_id_var
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -216,9 +217,11 @@ def get_current_user_id(
             },
         )
 
-    return _resolve_pablo_user_id(
+    pablo_user_id = _resolve_pablo_user_id(
         request, str(firebase_uid), identity_repo, create_if_missing=False
     )
+    user_id_var.set(str(pablo_user_id))
+    return pablo_user_id
 
 
 def require_mfa(
@@ -304,6 +307,7 @@ def get_tenant_context(
     pablo_user_id = _resolve_pablo_user_id(
         request, str(firebase_uid), identity_repo, create_if_missing=False
     )
+    user_id_var.set(str(pablo_user_id))
 
     settings = get_settings()
     if not settings.multi_tenancy_enabled:
@@ -315,13 +319,15 @@ def get_tenant_context(
         practice = _resolve_practice_from_email(email)
         if practice:
             practice_id, schema_name = practice
-            # CRITICAL: Switch the DB session to this tenant's schema.
-            # Without this, all queries hit the default 'practice' schema,
-            # violating tenant isolation (HIPAA).
-            from ..db import get_db_session, set_tenant_schema
+            tenant_id_var.set(practice_id)
+            # search_path is already set by DatabaseSessionMiddleware
+            # before any dependency runs — see
+            # `app.db.middleware.DatabaseSessionMiddleware._resolve_schema_from_request`.
+            # We still need the active session here to set the
+            # RLS user-id variable below.
+            from ..db import get_db_session
 
             session = get_db_session()
-            set_tenant_schema(session, schema_name)
 
             # RLS defense-in-depth: set the current user ID as a
             # transaction-scoped session variable so PostgreSQL
@@ -524,6 +530,7 @@ def _resolve_user(
             },
         )
 
+    user_id_var.set(str(pablo_user_id))
     return user
 
 

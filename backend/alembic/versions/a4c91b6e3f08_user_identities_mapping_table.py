@@ -11,7 +11,7 @@ migration against every tenant connection) does not error on subsequent
 runs against the shared platform schema.
 
 Revision ID: a4c91b6e3f08
-Revises: 65fdccbd8f77
+Revises: f9b2e7d1a4c8
 Create Date: 2026-05-14
 """
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "a4c91b6e3f08"
-down_revision: str | Sequence[str] | None = "65fdccbd8f77"
+down_revision: str | Sequence[str] | None = "f9b2e7d1a4c8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

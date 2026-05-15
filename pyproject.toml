@@ -77,6 +77,17 @@ optional = true
 faker = "^40.15.0"
 
 
+# Eval harness (THERAPY-t0dj). Optional so OSS self-hosters who don't
+# want to run evals locally aren't forced to install the Braintrust SDK.
+# Enable with: poetry install --with evals
+[tool.poetry.group.evals]
+optional = true
+
+[tool.poetry.group.evals.dependencies]
+braintrust = ">=0.0.180"
+openai = ">=1.50.0"
+pyyaml = ">=6.0"
+
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.0"
@@ -139,6 +150,11 @@ ignore = [
     "ARG002",   # Allow unused method args (pytest fixtures)
     "PLR0913",  # Allow many arguments (pytest fixture injection)
     "PLR2004",  # Allow magic values in tests (counts, small literals are self-documenting)
+]
+"backend/evals/**/*.py" = [
+    "S101",     # Allow assert in eval harness tests
+    "PLR0913",  # Allow many keyword-only args in eval entry points (run_eval orchestration)
+    "PLR2004",  # Allow magic values in smoke tests (small fixed counts)
 ]
 "backend/tests_integration/**/*.py" = [
     "S101",     # Allow assert in tests

@@ -22,6 +22,7 @@ from typing import Any
 
 import httpx
 
+from ..middleware.outbound import tracing_async_client
 from ..settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -256,7 +257,7 @@ class AssemblyAiTranscriptionService:
         This is the fast phase — runs in the request context. Returns a list of
         dicts with {transcript_id, speaker, original_offset} for each region.
         """
-        async with httpx.AsyncClient() as client:
+        async with tracing_async_client() as client:
             therapist_jobs = await self._submit_channel_regions(
                 client, therapist_audio, "Therapist"
             )

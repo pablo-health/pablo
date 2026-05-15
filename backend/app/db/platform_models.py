@@ -117,6 +117,13 @@ class PlatformUserRow(PlatformBase):
     baa_practice_name: Mapped[str | None] = mapped_column(String(255))
     baa_business_address: Mapped[str | None] = mapped_column(String(500))
     baa_full_text: Mapped[str | None] = mapped_column(Text)
+    provider_type: Mapped[str | None] = mapped_column(String(32))
+    security_guide_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    security_guide_version: Mapped[str | None] = mapped_column(String(20))
+    onboarding_state: Mapped[str | None] = mapped_column(String(20))
+    chat_quality_review_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    chat_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    chat_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class UserIdentityRow(PlatformBase):
@@ -168,9 +175,7 @@ class PlatformAuditLogRow(PlatformBase):
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, index=True
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     actor_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)

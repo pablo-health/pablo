@@ -8,6 +8,7 @@ import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import { WorkingHoursSettings } from "@/components/calendar/WorkingHoursSettings"
 import { SettingsSection } from "@/components/settings/SettingsSection"
 import { ProfileSettings } from "@/components/settings/ProfileSettings"
+import { ProviderTypeSettings } from "@/components/settings/ProviderTypeSettings"
 import { SessionDefaults } from "@/components/settings/SessionDefaults"
 import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
@@ -97,6 +98,14 @@ export default function SettingsPage() {
           onSave={handleSave}
           isSaving={saveMutation.isPending}
         />
+      </SettingsSection>
+
+      <SettingsSection
+        icon={User}
+        title="Clinician type"
+        description="Determines which note template and prompts Pablo uses for your visits."
+      >
+        <ProviderTypeSettings currentValue={userStatus?.provider_type ?? null} />
       </SettingsSection>
 
       <SettingsSection
