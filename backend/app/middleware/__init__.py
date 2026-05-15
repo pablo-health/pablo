@@ -3,16 +3,20 @@
 """FastAPI middleware components (security + request context)."""
 
 from .request_context import (
+    AWS_TRACE_HEADER,
     CLOUD_TRACE_HEADER,
     REQUEST_ID_HEADER,
+    W3C_TRACEPARENT_HEADER,
     RequestContextMiddleware,
     resolve_route_template,
 )
 from .security import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
 
 __all__ = [
+    "AWS_TRACE_HEADER",
     "CLOUD_TRACE_HEADER",
     "REQUEST_ID_HEADER",
+    "W3C_TRACEPARENT_HEADER",
     "HTTPSEnforcementMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",

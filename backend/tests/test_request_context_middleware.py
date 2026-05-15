@@ -29,10 +29,14 @@ from app.logging_config import (
     user_id_var,
 )
 from app.middleware.request_context import (
+    AWS_TRACE_HEADER,
     CLOUD_TRACE_HEADER,
     REQUEST_ID_HEADER,
+    W3C_TRACEPARENT_HEADER,
     RequestContextMiddleware,
-    _request_id_from_trace,
+    _parse_aws_trace,
+    _parse_gcp_trace,
+    _parse_w3c_traceparent,
 )
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -85,23 +89,59 @@ def _build_app(logger: logging.Logger | None = None) -> FastAPI:
     return app
 
 
-class TestRequestIdFromTrace:
+class TestGcpTraceParser:
     def test_extracts_trace_id_from_full_header(self) -> None:
         # Real Cloud Run header shape: TRACE_ID/SPAN_ID;o=TRACE_TRUE
         assert (
-            _request_id_from_trace("105445aa7843bc8bf206b12000100000/1;o=1")
+            _parse_gcp_trace("105445aa7843bc8bf206b12000100000/1;o=1")
             == "105445aa7843bc8bf206b12000100000"
         )
 
     def test_extracts_trace_id_without_span(self) -> None:
-        assert _request_id_from_trace("abc123") == "abc123"
+        assert _parse_gcp_trace("abc123") == "abc123"
 
     def test_extracts_trace_id_with_options_only(self) -> None:
-        assert _request_id_from_trace("abc123;o=1") == "abc123"
+        assert _parse_gcp_trace("abc123;o=1") == "abc123"
 
     def test_empty_header_returns_none(self) -> None:
-        assert _request_id_from_trace("") is None
-        assert _request_id_from_trace("   ") is None
+        assert _parse_gcp_trace("") is None
+        assert _parse_gcp_trace("   ") is None
+
+
+class TestW3cTraceparentParser:
+    def test_extracts_trace_id_from_valid_header(self) -> None:
+        # Spec: version-trace_id-parent_id-flags
+        value = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        assert _parse_w3c_traceparent(value) == "4bf92f3577b34da6a3ce929d0e0e4736"
+
+    def test_rejects_wrong_trace_id_length(self) -> None:
+        # 31 hex chars instead of 32 — malformed.
+        assert _parse_w3c_traceparent("00-deadbeef-00f067aa0ba902b7-01") is None
+
+    def test_rejects_non_hex_trace_id(self) -> None:
+        assert (
+            _parse_w3c_traceparent("00-NOTHEX_NOTHEX_NOTHEX_NOTHEX_NOTHEX-00f067aa0ba902b7-01")
+            is None
+        )
+
+    def test_rejects_missing_segments(self) -> None:
+        assert _parse_w3c_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736") is None
+
+
+class TestAwsTraceParser:
+    def test_extracts_root_segment(self) -> None:
+        # ALB/API Gateway shape.
+        value = "Root=1-67891233-abcdef012345678912345678;Parent=53995c3f42cd8ad8;Sampled=1"
+        assert _parse_aws_trace(value) == "1-67891233-abcdef012345678912345678"
+
+    def test_handles_root_only(self) -> None:
+        assert _parse_aws_trace("Root=1-abc-def") == "1-abc-def"
+
+    def test_returns_none_when_no_root(self) -> None:
+        assert _parse_aws_trace("Self=foo;Parent=bar") is None
+
+    def test_tolerates_whitespace_between_segments(self) -> None:
+        assert _parse_aws_trace("Self=x; Root=1-abc-def ;Parent=y") == "1-abc-def"
 
 
 class TestRequestIdMinting:
@@ -125,6 +165,56 @@ class TestRequestIdMinting:
         trace = "105445aa7843bc8bf206b12000100000/1;o=1"
         response = client.get(
             "/api/health", headers={CLOUD_TRACE_HEADER: trace}
+        )
+        assert response.headers[REQUEST_ID_HEADER] == "105445aa7843bc8bf206b12000100000"
+
+    def test_w3c_traceparent_honored(self) -> None:
+        client = TestClient(_build_app())
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        response = client.get(
+            "/api/health", headers={W3C_TRACEPARENT_HEADER: traceparent}
+        )
+        assert response.headers[REQUEST_ID_HEADER] == "4bf92f3577b34da6a3ce929d0e0e4736"
+
+    def test_aws_trace_header_honored(self) -> None:
+        client = TestClient(_build_app())
+        aws_trace = (
+            "Root=1-67891233-abcdef012345678912345678;Parent=53995c3f42cd8ad8;Sampled=1"
+        )
+        response = client.get(
+            "/api/health", headers={AWS_TRACE_HEADER: aws_trace}
+        )
+        assert (
+            response.headers[REQUEST_ID_HEADER]
+            == "1-67891233-abcdef012345678912345678"
+        )
+
+    def test_w3c_traceparent_takes_priority_over_cloud_specific(self) -> None:
+        # If both headers are present (e.g. an OTel-instrumented client
+        # behind a Google LB), prefer the standard. Lets tracing
+        # backends correlate without per-cloud config.
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/health",
+            headers={
+                W3C_TRACEPARENT_HEADER: (
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                ),
+                CLOUD_TRACE_HEADER: "105445aa7843bc8bf206b12000100000/1;o=1",
+            },
+        )
+        assert response.headers[REQUEST_ID_HEADER] == "4bf92f3577b34da6a3ce929d0e0e4736"
+
+    def test_malformed_traceparent_falls_through_to_next_header(self) -> None:
+        # Bad traceparent shouldn't poison the request_id; we should
+        # fall through to the next recognized header.
+        client = TestClient(_build_app())
+        response = client.get(
+            "/api/health",
+            headers={
+                W3C_TRACEPARENT_HEADER: "garbage",
+                CLOUD_TRACE_HEADER: "105445aa7843bc8bf206b12000100000/1;o=1",
+            },
         )
         assert response.headers[REQUEST_ID_HEADER] == "105445aa7843bc8bf206b12000100000"
 
