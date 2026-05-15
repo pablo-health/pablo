@@ -62,17 +62,39 @@ If everything is wired correctly, you should see:
 ```
 backend/evals/
 ├── __init__.py
-├── README.md              # this file
-├── .env.example           # template; copy to .env (gitignored)
-├── conftest.py            # pytest setup — loads .env
-├── harness.py             # core: push_dataset, make_model_task, run_eval
-├── test_smoke.py          # pytest entry for the 5-case smoke test
+├── README.md                  # this file
+├── .env.example               # template; copy to .env (gitignored)
+├── conftest.py                # pytest setup — loads .env
+├── harness.py                 # core: push_dataset, make_model_task, run_eval
+├── test_smoke.py              # 5-case scaffolding smoke test
+├── test_chat.py               # push chat.yaml to pablo-chat
+├── test_note_generation.py    # push note_generation.yaml to pablo-note-generation
 ├── datasets/
 │   ├── __init__.py
-│   └── starter_smoke.yaml # 5 placeholder cases
+│   ├── starter_smoke.yaml     # 5 scaffolding cases
+│   ├── chat.yaml              # 10 chat cases (Phase 1.3)
+│   └── note_generation.yaml   # 10 note-gen cases (Phase 1.3)
 └── scorers/
-    └── __init__.py        # real scorers land in THERAPY-j39e (Phase 1.4)
+    └── __init__.py            # real scorers land in THERAPY-j39e (Phase 1.4)
 ```
+
+---
+
+## Braintrust projects
+
+Each surface gets its own Braintrust project so baselines and
+experiment comparisons stay scoped to one kind of work. Run the
+corresponding test entry to push the dataset to its project:
+
+| Surface | Project | Dataset | Cases |
+|---|---|---|---|
+| chat | `pablo-chat` | `phase-1-chat` | 10 (4 scope_refusal, 3 hallucination_resistance, 3 prompt_injection_resistance) |
+| note-generation | `pablo-note-generation` | `phase-1-note-generation` | 10 (3 format_adherence, 7 faithfulness) |
+| scaffolding smoke | `pablo-smoke` | `starter-smoke` | 5 placeholder cases |
+
+Scoring + experiment baselines land in Phase 1.4 ([THERAPY-j39e]) once
+the four custom scorers (`scope_refusal`, `faithfulness`,
+`prompt_injection_resistance`, `format_adherence`) are implemented.
 
 ---
 
