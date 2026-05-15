@@ -25,6 +25,9 @@ jobs:
       - name: Check version sync
         run: bash scripts/check-version-sync.sh
 
+      - name: Check PHI not passed to logger.* calls (THERAPY-za2y)
+        run: python3 scripts/check_phi_in_logs.py
+
   migration-lint:
     name: Models ship with migrations
     if: github.event_name == 'pull_request'
