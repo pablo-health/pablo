@@ -11,8 +11,9 @@ This module installs a root-logger configuration that:
    small set of obvious PHI shapes (SSN, email, US phone).
 3. Reads request-scoped context (request_id, user_id, tenant_id,
    route_template, ...) from contextvars defined here. The middleware
-   that populates these vars ships separately (THERAPY-2pf4); until then
-   the fields are simply omitted from the JSON payload.
+   that populates these vars lives in `app.middleware.request_context`
+   (THERAPY-2pf4); the auth dependency chain populates user_id /
+   tenant_id once the token is verified.
 
 Design contract: log messages MUST NOT contain PHI. The deny-list is the
 load-bearing defense — the regex layer catches accidents, but free-text

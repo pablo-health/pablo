@@ -11,6 +11,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 
+from ..logging_config import tenant_id_var, user_id_var
 from ..models import User
 from ..repositories import (
     AllowlistRepository,
@@ -155,6 +156,7 @@ def get_current_user_id(
             },
         )
 
+    user_id_var.set(str(user_id))
     return str(user_id)
 
 
@@ -236,6 +238,8 @@ def get_tenant_context(
             },
         )
 
+    user_id_var.set(str(user_id))
+
     settings = get_settings()
     if not settings.multi_tenancy_enabled:
         return TenantContext(user_id=str(user_id))
@@ -246,6 +250,7 @@ def get_tenant_context(
         practice = _resolve_practice_from_email(email)
         if practice:
             practice_id, schema_name = practice
+            tenant_id_var.set(practice_id)
             # CRITICAL: Switch the DB session to this tenant's schema.
             # Without this, all queries hit the default 'practice' schema,
             # violating tenant isolation (HIPAA).
@@ -359,6 +364,8 @@ def _resolve_user(
                 }
             },
         )
+
+    user_id_var.set(str(user_id))
 
     user = user_repo.get(str(user_id))
     if not user:
