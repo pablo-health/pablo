@@ -6,8 +6,8 @@ The platform schema stores cross-practice data: practice registry,
 email-tenant mappings, and system config. Lives in the same Cloud SQL
 instance as practice schemas but is not practice-scoped.
 
-Subscription / billing / tier models, when present, live in
-``saas_models.py`` as part of an optional overlay.
+SaaS-specific models (subscriptions, phone numbers, product tiers)
+live in saas_models.py.
 """
 
 from __future__ import annotations
