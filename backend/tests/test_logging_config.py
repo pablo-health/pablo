@@ -8,8 +8,7 @@ import io
 import json
 import logging
 import sys
-from collections.abc import Generator, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.logging_config import (
@@ -21,6 +20,9 @@ from app.logging_config import (
     tenant_id_var,
     user_id_var,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Mapping
 
 
 def _make_record(
