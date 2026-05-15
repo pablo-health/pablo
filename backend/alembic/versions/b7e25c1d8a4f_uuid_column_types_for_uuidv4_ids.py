@@ -35,9 +35,14 @@ replays platform-schema DDL against every tenant connection, and
 because env.py's ``create_all`` on a fresh deploy will already have
 materialised the platform tables with the new model types.
 
-Three foreign-key constraints touch UUID-typed columns. Postgres
-handles them automatically when both sides change in the same
-transaction; nothing to drop/recreate.
+Foreign-key constraints touching the converted columns must be
+dropped before altering and re-created afterward — Postgres rejects
+an ALTER COLUMN TYPE that would leave an FK with incompatible
+parent/child types, even when both sides are being altered in the
+same transaction (only DEFERRABLE constraints get the deferred-check
+treatment, and these are not declared DEFERRABLE). The drop/recreate
+is automated via pg_constraint / pg_get_constraintdef so we don't
+have to maintain a hardcoded FK list as the schema evolves.
 
 Revision ID: b7e25c1d8a4f
 Revises: a4c91b6e3f08
@@ -171,16 +176,156 @@ def _alter_to_varchar_in_schema(schema: str, table: str, column: str) -> None:
     op.execute(sql)
 
 
+def _affected_tenant_tables() -> set[str]:
+    return {t for t, _ in TENANT_COLUMNS}
+
+
+def _affected_platform_tables() -> set[tuple[str, str]]:
+    return {(s, t) for s, t, _ in PLATFORM_COLUMNS}
+
+
+def _drop_and_save_fks_tenant() -> None:
+    """Drop every FK in current_schema whose source or target is an
+    affected tenant table; save each constraint's definition to a temp
+    table for later restoration."""
+    table_list = ", ".join(f"'{t}'" for t in sorted(_affected_tenant_tables()))
+    sql = f"""
+    DROP TABLE IF EXISTS _b7e25c_saved_fks;
+    CREATE TEMP TABLE _b7e25c_saved_fks (
+        schema_name text NOT NULL,
+        table_name text NOT NULL,
+        constraint_name text NOT NULL,
+        constraint_def text NOT NULL
+    );
+
+    INSERT INTO _b7e25c_saved_fks (schema_name, table_name, constraint_name, constraint_def)
+    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid)
+    FROM pg_constraint con
+    JOIN pg_class c  ON con.conrelid  = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    LEFT JOIN pg_class rc ON con.confrelid = rc.oid
+    WHERE con.contype = 'f'
+      AND n.nspname = current_schema()
+      AND (c.relname IN ({table_list}) OR rc.relname IN ({table_list}));
+
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+        FOR r IN SELECT * FROM _b7e25c_saved_fks LOOP
+            EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I',
+                           r.schema_name, r.table_name, r.constraint_name);
+        END LOOP;
+    END $$;
+    """  # noqa: S608  -- identifiers are module-level constants
+    op.execute(sql)
+
+
+def _restore_fks_tenant() -> None:
+    """Re-create every FK saved by ``_drop_and_save_fks_tenant``."""
+    sql = """
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+        IF to_regclass('_b7e25c_saved_fks') IS NULL THEN
+            RETURN;
+        END IF;
+        FOR r IN SELECT * FROM _b7e25c_saved_fks LOOP
+            EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s',
+                           r.schema_name, r.table_name,
+                           r.constraint_name, r.constraint_def);
+        END LOOP;
+    END $$;
+    DROP TABLE IF EXISTS _b7e25c_saved_fks;
+    """
+    op.execute(sql)
+
+
+def _drop_and_save_fks_platform() -> None:
+    """Drop FKs in the platform schema touching affected platform tables."""
+    schemas = sorted({s for s, _, _ in PLATFORM_COLUMNS})
+    tables = sorted({t for _, t, _ in PLATFORM_COLUMNS})
+    schema_list = ", ".join(f"'{s}'" for s in schemas)
+    table_list = ", ".join(f"'{t}'" for t in tables)
+    sql = f"""
+    DROP TABLE IF EXISTS _b7e25c_saved_platform_fks;
+    CREATE TEMP TABLE _b7e25c_saved_platform_fks (
+        schema_name text NOT NULL,
+        table_name text NOT NULL,
+        constraint_name text NOT NULL,
+        constraint_def text NOT NULL
+    );
+
+    INSERT INTO _b7e25c_saved_platform_fks
+        (schema_name, table_name, constraint_name, constraint_def)
+    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid)
+    FROM pg_constraint con
+    JOIN pg_class c  ON con.conrelid  = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    LEFT JOIN pg_class rc ON con.confrelid = rc.oid
+    LEFT JOIN pg_namespace rn ON rc.relnamespace = rn.oid
+    WHERE con.contype = 'f'
+      AND n.nspname IN ({schema_list})
+      AND (
+          c.relname IN ({table_list})
+          OR (rc.relname IS NOT NULL
+              AND rn.nspname IN ({schema_list})
+              AND rc.relname IN ({table_list}))
+      );
+
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+        FOR r IN SELECT * FROM _b7e25c_saved_platform_fks LOOP
+            EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I',
+                           r.schema_name, r.table_name, r.constraint_name);
+        END LOOP;
+    END $$;
+    """  # noqa: S608  -- identifiers are module-level constants
+    op.execute(sql)
+
+
+def _restore_fks_platform() -> None:
+    sql = """
+    DO $$
+    DECLARE r RECORD;
+    BEGIN
+        IF to_regclass('_b7e25c_saved_platform_fks') IS NULL THEN
+            RETURN;
+        END IF;
+        FOR r IN SELECT * FROM _b7e25c_saved_platform_fks LOOP
+            EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s',
+                           r.schema_name, r.table_name,
+                           r.constraint_name, r.constraint_def);
+        END LOOP;
+    END $$;
+    DROP TABLE IF EXISTS _b7e25c_saved_platform_fks;
+    """
+    op.execute(sql)
+
+
 def upgrade() -> None:
+    # Per-tenant fan-out: drop FKs in this schema, alter columns, restore.
+    _drop_and_save_fks_tenant()
     for table, column in TENANT_COLUMNS:
         _alter_to_uuid_in_current_schema(table, column)
+    _restore_fks_tenant()
+
+    # Platform schema (idempotent across tenant fan-out invocations).
+    _drop_and_save_fks_platform()
     for schema, table, column in PLATFORM_COLUMNS:
         _alter_to_uuid_in_schema(schema, table, column)
+    _restore_fks_platform()
 
 
 def downgrade() -> None:
-    # Reverse order so FK-referencing columns revert before their parents.
+    # Mirror of upgrade(); reverse order so FK-referencing columns revert
+    # before their parents within each schema.
+    _drop_and_save_fks_platform()
     for schema, table, column in reversed(PLATFORM_COLUMNS):
         _alter_to_varchar_in_schema(schema, table, column)
+    _restore_fks_platform()
+
+    _drop_and_save_fks_tenant()
     for table, column in reversed(TENANT_COLUMNS):
         _alter_to_varchar_in_current_schema(table, column)
+    _restore_fks_tenant()
