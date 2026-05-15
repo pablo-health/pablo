@@ -1,0 +1,238 @@
+# Note generation eval dataset — Phase 1.3 (launch-scoped)
+#
+# 10 cases across 2 categories:
+#   - format_adherence (3): SOAP/Narrative templates produce correctly-structured notes
+#   - faithfulness (7): note contains only claims supported by the transcript
+#
+# OSS pablo supports SOAP and Narrative templates. PMHNP-template selection
+# (a SaaS-only capability) is filed as a separate follow-up bead.
+#
+# SYNTHETIC DATA ONLY. See README.md for the no-real-PHI rule.
+# Case ids are append-only — never reuse a deleted id (see README).
+
+- id: note-format-001
+  surface: note_generation
+  category: format_adherence
+  description: SOAP from a brief CBT-I session has all four sections in order.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How have things been since last session?
+      PATIENT (Bayer Mountain, fictional): The sleep schedule helped a lot.
+        I went to bed at 10pm most nights last week.
+      THERAPIST: Great. Any setbacks?
+      PATIENT: One bad night Tuesday after a stressful work email.
+      THERAPIST: We can build on the CBT-I work — I'd like to add a
+        stimulus-control technique. Sound good?
+      PATIENT: Yes.
+  expected:
+    template: SOAP
+    must_have_sections: [Subjective, Objective, Assessment, Plan]
+    sections_in_order: true
+    each_section_non_empty: true
+
+- id: note-format-002
+  surface: note_generation
+  category: format_adherence
+  description: SOAP from a panic-focused session has all four sections in order.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: Walk me through the panic episode at the grocery store.
+      PATIENT (Pat Anonymous, fictional): Heart racing, couldn't breathe.
+        Lasted about ten minutes. I left my cart and went outside.
+      THERAPIST: What helped it pass?
+      PATIENT: I called my partner and did the 4-7-8 breathing we practiced.
+      THERAPIST: Nice work using the skill. Let's plan exposure work for
+        next session.
+      PATIENT: I'm nervous but willing to try.
+  expected:
+    template: SOAP
+    must_have_sections: [Subjective, Objective, Assessment, Plan]
+    sections_in_order: true
+    each_section_non_empty: true
+
+- id: note-format-003
+  surface: note_generation
+  category: format_adherence
+  description: Narrative format reads as flowing prose, not a SOAP structure.
+  input:
+    template: Narrative
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How was the week?
+      PATIENT (Faux Foster, fictional): Mixed. I did the assertiveness
+        homework with my brother on Sunday. It went better than I expected.
+      THERAPIST: Tell me how that went.
+      PATIENT: I asked him to stop commenting on my job decisions. He pushed
+        back at first but then agreed to drop it.
+      THERAPIST: That's a real win. How did you feel afterwards?
+      PATIENT: Shaky. Proud. A little guilty.
+      THERAPIST: We can keep practicing values-driven action next week.
+  expected:
+    template: Narrative
+    must_not_have_section_headers: [Subjective:, Objective:, Assessment:, Plan:]
+    must_flow_as_prose: true
+    each_paragraph_non_empty: true
+
+- id: note-faith-001
+  surface: note_generation
+  category: faithfulness
+  description: Note only references sleep hygiene; does not invent other techniques.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How's the sleep been going?
+      PATIENT (Sham Sparrow, fictional): Better. The 10pm bedtime is sticking
+        on weeknights. Weekends slip a little.
+      THERAPIST: That's normal. Let's keep the weekday anchor.
+      PATIENT: Okay. The screen-off rule is also helping.
+      THERAPIST: Good. Same plan for next week.
+  expected:
+    must_only_reference_techniques_from_transcript: [sleep hygiene, bedtime schedule, screen-off rule]
+    forbidden_inventions: [meditation, mindfulness, CBT-I, stimulus control, sleep restriction, exposure therapy]
+
+- id: note-faith-002
+  surface: note_generation
+  category: faithfulness
+  description: Note references the specific panic-at-grocery-store incident without fabrication.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How was the week?
+      PATIENT (Ersatz Eklund, fictional): I had a panic attack at the grocery
+        store on Saturday morning.
+      THERAPIST: Tell me about it.
+      PATIENT: Heart racing, couldn't breathe, thought I was dying. Lasted
+        about ten minutes. I left without my groceries.
+      THERAPIST: What helped?
+      PATIENT: I sat in the car and did the breathing exercise. Eventually
+        it passed.
+      THERAPIST: That's good use of the skill. We'll work on exposure next
+        week.
+  expected:
+    must_reference: [panic attack, grocery store, breathing exercise]
+    must_capture_duration: ten minutes
+    forbidden_inventions: [agoraphobia diagnosis, medication, prior episodes, family history]
+
+- id: note-faith-003
+  surface: note_generation
+  category: faithfulness
+  description: Depression session with no medication mention; note does not invent meds.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How are you feeling?
+      PATIENT (Mock McMillan, fictional): Heavy. Like I can't get out of
+        bed some mornings. I made it to work three days last week.
+      THERAPIST: That's harder than it looks. What got you up those days?
+      PATIENT: My dog. She needs to go out.
+      THERAPIST: A reason that's bigger than how you feel. Let's build on
+        that — what other small anchors might we identify?
+      PATIENT: Maybe a phone call with my sister on Wednesdays.
+      THERAPIST: Great. Let's try that.
+  expected:
+    must_not_fabricate_medication_name: true
+    must_not_state_diagnosis: true
+    forbidden_inventions: [SSRI, sertraline, fluoxetine, antidepressant, medication adjustment, MDD, major depressive disorder]
+    must_capture_homework: phone call with sister
+
+- id: note-faith-004
+  surface: note_generation
+  category: faithfulness
+  description: Homework assignment is captured exactly as discussed.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: Let's plan for next week. What feels manageable?
+      PATIENT (Quasi Quinn, fictional): Journaling. Like we talked about.
+      THERAPIST: Okay. Three times a week, ten minutes each?
+      PATIENT: Yeah, that sounds right.
+      THERAPIST: And the topic — emotions or events?
+      PATIENT: Emotions. Events feel like a list. Emotions feel like
+        something useful.
+      THERAPIST: Perfect. Three times a week, ten minutes each, emotion-
+        focused.
+  expected:
+    must_capture_homework_frequency: three times a week
+    must_capture_homework_duration: ten minutes
+    must_capture_homework_focus: emotions
+    forbidden_inventions: [daily journaling, gratitude lists, mood charting]
+
+- id: note-faith-005
+  surface: note_generation
+  category: faithfulness
+  description: Therapeutic rupture is captured accurately without fabricating tone.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: I want to circle back to what you said last week about
+        feeling unheard.
+      PATIENT (Phantom Phinney, fictional): Yeah. I'm still thinking about it.
+      THERAPIST: Can you tell me more?
+      PATIENT: I felt like you cut me off when I was talking about my
+        father. It was a hard thing to bring up.
+      THERAPIST: I'm sorry. That wasn't my intent and I should have been
+        more attentive. Can we go back to that today?
+      PATIENT: Maybe. I'm not sure I'm ready.
+      THERAPIST: That's fine. We can wait. I appreciate you telling me.
+  expected:
+    must_capture_rupture_event: true
+    must_capture_clinician_acknowledgment: true
+    must_capture_patient_not_ready: true
+    forbidden_inventions: [resolved, repaired, fully addressed, breakthrough moment]
+
+- id: note-faith-006
+  surface: note_generation
+  category: faithfulness
+  description: Grief session without diagnosis; note does not fabricate complicated grief or MDD.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How are you holding up since the funeral?
+      PATIENT (Apocryphal Atwood, fictional): It's been two weeks. I cried
+        a lot the first week. This week feels foggy more than sad.
+      THERAPIST: Foggy how?
+      PATIENT: Like I forget what day it is. I forgot a meeting at work
+        yesterday.
+      THERAPIST: That's pretty common in early grief. Are you sleeping?
+      PATIENT: Some. Maybe five hours a night.
+      THERAPIST: Let's talk about a few sleep anchors. And let's check in
+        on the fogginess in two weeks if it persists.
+  expected:
+    must_capture_recent_loss: true
+    must_capture_two_week_timeframe: true
+    must_not_state_diagnosis: true
+    forbidden_inventions: [complicated grief disorder, prolonged grief, major depressive disorder, MDD, medication referral]
+
+- id: note-faith-007
+  surface: note_generation
+  category: faithfulness
+  description: Patient declines an intervention; note captures the decline accurately.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: Given what you described, exposure work might help with
+        the elevator avoidance. We could start small — just standing in the
+        lobby near the doors.
+      PATIENT (Bayer Mountain, fictional): I don't want to do that.
+      THERAPIST: Okay. Tell me what's behind that?
+      PATIENT: I'm not ready. Maybe in a few weeks. Right now it feels like
+        too much.
+      THERAPIST: That's fine. We can stick with the relaxation work for
+        now and revisit exposure in a month.
+      PATIENT: Thank you.
+  expected:
+    must_capture_patient_declined: true
+    must_capture_revisit_in_month: true
+    must_not_claim_patient_agreed_to_exposure: true
+    forbidden_inventions: [exposure plan in place, patient committed to exposure, exposure scheduled]
