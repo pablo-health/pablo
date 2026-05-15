@@ -34,8 +34,8 @@ security = HTTPBearer()
 class TenantContext:
     """Authenticated user context with practice information.
 
-    For SaaS mode, the user's email is resolved to a practice via
-    the platform.email_tenant_mappings table. The practice_schema
+    In multi-tenant mode the user's email is resolved to a practice
+    via the platform.email_tenant_mappings table. The practice_schema
     determines which Postgres schema to query.
     """
 
@@ -288,8 +288,9 @@ def get_tenant_context(
     """FastAPI dependency: resolve authenticated user to a TenantContext.
 
     In single-tenant mode, returns a default context.
-    In SaaS mode, resolves the user's email to a practice via Postgres.
-    Platform admins without a practice mapping get admin-only access.
+    In multi-tenant mode, resolves the user's email to a practice via
+    Postgres. Platform admins without a practice mapping get admin-only
+    access.
     """
     firebase_uid = decoded_token.get("uid")
     if not firebase_uid:
@@ -555,7 +556,8 @@ def require_active_subscription(
 ) -> User:
     """Verify the user's practice has an active (or trial/grace) subscription.
 
-    No-op for self-hosted (non-SaaS) installations.
+    No-op when subscription enforcement is disabled (the single-tenant
+    default).
 
     Raises:
         HTTPException: 403 if subscription is lapsed and no grace extension is active.
@@ -757,9 +759,10 @@ def require_admin(
 def get_baa_version() -> str:
     """Return the latest BAA version, or "" if no BAA files are bundled.
 
-    SaaS builds ship baa/BAA-YYYY-MM-DD.md and require acceptance.
-    Core (OSS) self-hosters sign their BAA directly with their cloud
-    provider — no BAA files are bundled and the in-app flow is disabled.
+    Deployments that bundle ``baa/BAA-YYYY-MM-DD.md`` require in-app
+    acceptance. Deployments without any bundled BAA files disable the
+    in-app flow — operators sign their BAA directly with their cloud
+    provider.
     """
     baa_dir = Path(__file__).parent.parent.parent / "baa"
     if not baa_dir.is_dir():

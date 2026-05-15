@@ -344,7 +344,7 @@ class AuditReviewService:
 
         Avoids a join to the patients table — the audit log already
         records PATIENT_CREATED, and the repo method is a single
-        indexed lookup (~ms even at SaaS scale).
+        indexed lookup (~ms even at high-tenant-count scale).
         """
         return self._audit.earliest_create_for_patients(patient_ids)
 

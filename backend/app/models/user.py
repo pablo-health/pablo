@@ -75,8 +75,8 @@ class AcknowledgeSecurityGuideRequest(BaseModel):
     """Request to record acknowledgment of the security & privacy guide.
 
     The version string is the YYYY-MM-DD effective date of the guide
-    the user is acknowledging. The SaaS overlay declares the current
-    version client-side; OSS records whatever is sent.
+    the user is acknowledging. The frontend declares the current
+    version; this endpoint records whatever is sent.
     """
 
     version: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")

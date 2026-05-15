@@ -17,9 +17,10 @@ Adds three columns to ``platform.users``:
   (THERAPY-c4v5) to identify users whose captured content needs
   immediate removal independent of the rolling 30-day retention.
 
-The column lives in OSS because the user row is OSS; the capture
-pipeline that *reads* it is SaaS-only (Langfuse self-host lives in
-SaaS infra). Self-hosted OSS installs that never wire up Langfuse will
+The column lives on the core User model so any deployment can carry
+the consent state; the capture pipeline that *reads* it is wired up
+by a downstream consumer (it depends on Langfuse, which is not part
+of the core distribution). Deployments that never wire up Langfuse
 keep this column FALSE forever, which is correct.
 
 Revision ID: f9b2e7d1a4c8

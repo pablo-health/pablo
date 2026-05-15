@@ -10,10 +10,10 @@ are constrained at the application layer to ``"therapist"``,
 set can grow without a follow-up migration.
 
 NULL is meaningful: it's the "user has not picked yet → run the
-onboarding flow" signal. The SaaS overlay's dashboard layout redirects
-to ``/onboarding/provider-type`` while this column is NULL. We
-deliberately do not backfill a default for existing rows — they will be
-prompted on next login.
+onboarding flow" signal. Downstream onboarding flows redirect to
+``/onboarding/provider-type`` while this column is NULL. We
+deliberately do not backfill a default for existing rows — they will
+be prompted on next login.
 
 Revision ID: c2e8a1f5d4b9
 Revises: 65fdccbd8f77

@@ -5,10 +5,10 @@
 Requires a registered :class:`~app.jobs.hard_purge_retention_stub.ComplianceRetentionStubWriter`
 (see ``get_compliance_retention_stub_writer``). Hosted images register
 :class:`~app.jobs.hard_purge_retention_stub.SqlComplianceRetentionStubWriter`
-via ``python -m saas.bin.hard_purge``. Core / self-hosted invoke
-``python -m app.jobs.hard_purge_cron`` with **no** writer → exits **0**
-without opening a database connection — soft-delete plus audit remains
-the only semantics.
+from a deployment-specific entrypoint. Self-hosted invocations of
+``python -m app.jobs.hard_purge_cron`` with **no** writer registered
+exit **0** without opening a database connection — soft-delete plus
+audit remains the only semantics.
 
 Before any deletes, the writer's ``is_supported`` probes the DB; if False,
 exit **2** (misconfigured deployment or DDL not applied).
@@ -26,8 +26,8 @@ Invoked from repo ``backend/``::
     python -m app.jobs.hard_purge_cron --dry-run
     python -m app.jobs.hard_purge_cron --purge-before 2026-01-01T00:00:00Z
 
-Cloud Run (**hosted**) should use ``PYTHONPATH=/app/backend`` plus
-``python -m saas.bin.hard_purge ...`` — see SaaS overlay.
+Cloud Run (**hosted**) should use ``PYTHONPATH=/app/backend`` plus the
+deployment-specific entrypoint that registers a retention-stub writer.
 """
 
 from __future__ import annotations

@@ -48,8 +48,8 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 # Source keys exposed to callers. Frozen tuple so it's hashable and
-# stable across imports — the SaaS overlay imports this set for tier
-# gating in ``caller_feature_key`` enforcement.
+# stable across imports — downstream consumers may import this set
+# for tier gating in ``caller_feature_key`` enforcement.
 SOURCE_KEY_PASTED_TEXT = "pasted_text"
 SOURCE_KEY_CURRENT_MEDICATIONS = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE = "most_recent_intake"
@@ -527,8 +527,8 @@ def _load_current_medications(raw: Any, notes: list[Note]) -> LoadedSource:
 def _load_empty_stub(*, key: str, priority: int) -> LoadedSource:
     """Loader for sources whose underlying module hasn't shipped yet.
 
-    Keeps the API contract stable so SaaS overlays can select these
-    keys today; once the lab/vitals modules land in OSS, a follow-up
+    Keeps the API contract stable so downstream consumers can select
+    these keys today; once the lab/vitals modules land, a follow-up
     PR replaces the stub with a real loader.
     """
     return LoadedSource(
@@ -800,7 +800,7 @@ def default_source_selection() -> dict[str, Any]:
     """Return the design-doc §7.4 recommended default selection.
 
     Used when a caller creates a conversation without specifying one.
-    SaaS overlays may override per ``caller_feature_key``.
+    Downstream consumers may override per ``caller_feature_key``.
     """
     return {
         SOURCE_KEY_CURRENT_MEDICATIONS: True,

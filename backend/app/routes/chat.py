@@ -133,8 +133,8 @@ _default_gateway_holder: list[ChatLLMGateway] = []
 def get_chat_llm_gateway() -> ChatLLMGateway:
     """FastAPI dependency hook for the streaming Gemini gateway.
 
-    Tests override this with ``FakeChatLLMGateway``; SaaS overlays
-    *could* replace it but ordinarily don't.
+    Tests override this with ``FakeChatLLMGateway``; downstream
+    consumers *could* replace it but ordinarily don't.
     """
     if not _default_gateway_holder:
         _default_gateway_holder.append(GeminiChatLLMGateway())

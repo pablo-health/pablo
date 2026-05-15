@@ -11,9 +11,11 @@
 import type { TranscriptModel } from "./sessions"
 
 /**
- * Note-type registry key. OSS ships SOAP and Narrative; SaaS adds DAP / BIRP /
- * meeting on top. Treated as an open string at runtime; the OSS-known keys
- * are listed for static narrowing on the discriminated `NoteContent` union.
+ * Note-type registry key. The core distribution ships SOAP and Narrative;
+ * additional types (DAP / BIRP / meeting / ...) may be registered by
+ * downstream consumers. Treated as an open string at runtime; the
+ * bundled keys are listed for static narrowing on the discriminated
+ * `NoteContent` union.
  */
 export type NoteType = "soap" | "narrative"
 

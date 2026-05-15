@@ -2,10 +2,11 @@
 
 """Note-type authorization hook.
 
-OSS default is allow-all: self-hosters either don't gate note types at all,
-or implement their own subscription policy. Downstream overlays (e.g.
-pablo-saas) override :func:`get_note_type_authorizer` via FastAPI's
-``app.dependency_overrides`` to enforce tier rules at note-creation time.
+Default is allow-all: self-hosters either don't gate note types at
+all, or implement their own subscription policy. Downstream consumers
+override :func:`get_note_type_authorizer` via FastAPI's
+``app.dependency_overrides`` to enforce tier rules at note-creation
+time.
 """
 
 from __future__ import annotations
@@ -19,13 +20,13 @@ if TYPE_CHECKING:
 class NoteTypeAuthorizer:
     """Decides whether a caller may create a note of a given type.
 
-    OSS default is allow-all (self-hosters set their own subscription policy
-    or simply don't gate). Downstream overlays (e.g. pablo-saas) override
-    this dependency via ``app.dependency_overrides[get_note_type_authorizer]``
+    Default is allow-all (self-hosters set their own subscription
+    policy or simply don't gate). Downstream consumers override this
+    dependency via ``app.dependency_overrides[get_note_type_authorizer]``
     to enforce their tier rules.
     """
 
-    def is_allowed(self, user: User, note_type: str) -> bool:  # noqa: ARG002 — args document the override contract for downstream overlays
+    def is_allowed(self, user: User, note_type: str) -> bool:  # noqa: ARG002 — args document the override contract for downstream consumers
         return True
 
 
@@ -35,6 +36,6 @@ _DEFAULT_AUTHORIZER = NoteTypeAuthorizer()
 def get_note_type_authorizer() -> NoteTypeAuthorizer:
     """Return the process-wide default authorizer.
 
-    Overridden by downstream overlays at app bootstrap.
+    Overridden by downstream consumers at app bootstrap.
     """
     return _DEFAULT_AUTHORIZER

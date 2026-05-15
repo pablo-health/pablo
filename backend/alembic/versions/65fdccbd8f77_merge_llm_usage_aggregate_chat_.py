@@ -14,9 +14,8 @@ landed in the same week without a merge migration between them, so
 
 Neither chain references the other, so both stayed at ``(head)`` and
 every downstream consumer that does ``command.upgrade(cfg, "head")``
-broke — most visibly the SaaS overlay's ``saas.bin.migrate``, whose
-integration tests have been red since the OSS base-image bumped to
-``e42c0f0``.
+broke — most visibly downstream migration runners whose integration
+tests have been red since the base-image bumped to ``e42c0f0``.
 
 This file is the standard Alembic remedy: declare a new revision
 whose ``down_revision`` is the tuple ``(3f8d1a6c2b04, a5f1c8d9e472)``,
