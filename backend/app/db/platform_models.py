@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -174,7 +174,7 @@ class PlatformAuditLogRow(PlatformBase):
     __tablename__ = "platform_audit_logs"
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     actor_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
