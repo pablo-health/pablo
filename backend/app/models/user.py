@@ -121,6 +121,9 @@ class User:
     security_guide_acknowledged_at: datetime | None = None
     security_guide_version: str | None = None
     onboarding_state: str | None = None
+    chat_quality_review_opt_in: bool = False
+    chat_quality_review_opt_in_at: datetime | None = None
+    chat_quality_review_opt_out_at: datetime | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -180,6 +183,9 @@ class User:
             security_guide_acknowledged_at=data.get("security_guide_acknowledged_at"),
             security_guide_version=data.get("security_guide_version"),
             onboarding_state=data.get("onboarding_state"),
+            chat_quality_review_opt_in=data.get("chat_quality_review_opt_in", False),
+            chat_quality_review_opt_in_at=data.get("chat_quality_review_opt_in_at"),
+            chat_quality_review_opt_out_at=data.get("chat_quality_review_opt_out_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
