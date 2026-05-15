@@ -88,6 +88,7 @@ def get_user_status(
         "provider_type": user.provider_type,
         "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
         "security_guide_version": user.security_guide_version,
+        "onboarding_state": user.onboarding_state,
     }
 
     settings = get_settings()
@@ -162,16 +163,19 @@ def update_current_user_profile(
 ) -> User:
     """Partial update of the current user's profile.
 
-    Currently persists ``name`` and ``provider_type`` on the platform
-    user row. ``title`` / ``credentials`` are accepted by the request
-    schema for forward-compat but live on the per-practice
-    ``ClinicianProfile`` and are not wired here yet — a future PR
-    will route them through that repository.
+    Currently persists ``name``, ``provider_type``, and
+    ``onboarding_state`` on the platform user row. ``title`` /
+    ``credentials`` are accepted by the request schema for
+    forward-compat but live on the per-practice ``ClinicianProfile``
+    and are not wired here yet — a future PR will route them through
+    that repository.
     """
     if request.name is not None:
         user.name = request.name
     if request.provider_type is not None:
         user.provider_type = request.provider_type
+    if request.onboarding_state is not None:
+        user.onboarding_state = request.onboarding_state
     user_repo.update(user)
     return user
 

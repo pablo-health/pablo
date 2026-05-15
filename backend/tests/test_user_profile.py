@@ -86,6 +86,73 @@ class TestUpdateProfile:
         assert response.json()["provider_type"] is None
 
 
+class TestOnboardingState:
+    """Test the onboarding_state field on PATCH /api/users/me and
+    GET /api/users/me/status."""
+
+    def test_set_onboarding_state_completed(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+
+        response = client.patch("/api/users/me", json={"onboarding_state": "completed"})
+
+        assert response.status_code == 200
+        assert response.json()["onboarding_state"] == "completed"
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.onboarding_state == "completed"
+
+    def test_onboarding_state_accepts_all_three_values(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        for value in ("in_progress", "later", "completed"):
+            response = client.patch("/api/users/me", json={"onboarding_state": value})
+            assert response.status_code == 200
+            assert response.json()["onboarding_state"] == value
+
+    def test_invalid_onboarding_state_rejected(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        response = client.patch("/api/users/me", json={"onboarding_state": "skipped"})
+        assert response.status_code == 422
+
+    def test_user_status_includes_onboarding_state(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """GET /api/users/me/status exposes onboarding_state so the
+        SaaS overlay can decide whether to show the resume banner."""
+        mock_user.onboarding_state = "later"
+        mock_user_repo.update(mock_user)
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        assert response.json()["onboarding_state"] == "later"
+
+    def test_user_status_onboarding_state_null_for_grandfathered_users(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """A row from before this column existed returns null, which
+        the SaaS overlay treats as 'already completed' (no banner,
+        no redirect)."""
+        mock_user.onboarding_state = None
+        mock_user_repo.update(mock_user)
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        assert response.json()["onboarding_state"] is None
+
+
 class TestSecurityGuideAcknowledgment:
     """Test POST /api/users/me/acknowledge-security-guide and the
     related GET endpoint + /me/status exposure."""
