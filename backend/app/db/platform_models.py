@@ -126,6 +126,32 @@ class PlatformUserRow(PlatformBase):
     chat_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class UserIdentityRow(PlatformBase):
+    """Maps an external auth provider subject to a Pablo-internal user_id.
+
+    Decouples Pablo's storage identity from any single auth provider's
+    subject ID. Lets us migrate off Identity Platform later — or link
+    multiple providers (Google + password) to the same user — without
+    rewriting every user_id FK across every tenant schema.
+
+    Composite PK (provider, subject_id) makes the (provider, subject)
+    pair the natural lookup key. user_id is indexed (not unique) so
+    one user can hold many provider identities.
+
+    Subject IDs are bounded across providers: Firebase uid 28 chars,
+    Auth0 ~40, Google sub 21 digits, Cognito sub 36. 64 covers them
+    all with room to spare.
+    """
+
+    __tablename__ = "user_identities"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class PlatformUserPreferencesRow(PlatformBase):
     __tablename__ = "user_preferences"
     __table_args__ = {"schema": PLATFORM_SCHEMA}
