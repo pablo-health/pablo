@@ -89,6 +89,14 @@ class AuditAction(StrEnum):
     # User reading their own audit trail (meta-audit).
     SELF_AUDIT_VIEWED = "self_audit_viewed"
 
+    # Per-user opt-in for chat quality review (THERAPY-8biz / opt-in
+    # content capture). Recorded on every state change so the user can
+    # see their own consent history. Payload carries no PHI — the
+    # `changes` dict is the bare new state, e.g. ``{"opt_in": true}``.
+    CHAT_QUALITY_REVIEW_OPT_IN = "chat_quality_review_opt_in"
+    CHAT_QUALITY_REVIEW_OPT_OUT = "chat_quality_review_opt_out"
+    CHAT_QUALITY_REVIEW_PURGE_REQUESTED = "chat_quality_review_purge_requested"
+
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
     # land in the audit log; per-turn detail lives on chat_messages rows.

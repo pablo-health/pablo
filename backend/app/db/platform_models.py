@@ -121,6 +121,9 @@ class PlatformUserRow(PlatformBase):
     security_guide_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     security_guide_version: Mapped[str | None] = mapped_column(String(20))
     onboarding_state: Mapped[str | None] = mapped_column(String(20))
+    chat_quality_review_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    chat_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    chat_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PlatformUserPreferencesRow(PlatformBase):
