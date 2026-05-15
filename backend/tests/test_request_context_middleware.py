@@ -72,6 +72,34 @@ def captured_logs() -> Generator[tuple[io.StringIO, logging.Logger]]:
         lg.handlers = []
 
 
+@pytest.fixture
+def captured_access_logs() -> Generator[io.StringIO]:
+    """Capture the per-request access log emitted by RequestContextMiddleware.
+
+    The middleware logs to ``pablo.access`` via its own module-level logger,
+    so we attach a JSON handler to that name and restore the original
+    configuration on teardown.
+    """
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(JSONFormatter())
+    handler.addFilter(RedactPHIFilter())
+
+    lg = logging.getLogger("pablo.access")
+    saved_handlers = lg.handlers
+    saved_level = lg.level
+    saved_propagate = lg.propagate
+    lg.handlers = [handler]
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    try:
+        yield buf
+    finally:
+        lg.handlers = saved_handlers
+        lg.setLevel(saved_level)
+        lg.propagate = saved_propagate
+
+
 def _build_app(logger: logging.Logger | None = None) -> FastAPI:
     app = FastAPI()
     app.add_middleware(RequestContextMiddleware)
@@ -294,6 +322,84 @@ class TestContextvarHygiene:
         payload = json.loads(buf.getvalue().strip())
         assert payload["user_id"] == "user-42"
         assert payload["tenant_id"] == "tenant-7"
+
+
+class TestRequestCompletedLog:
+    """The middleware emits one ``event=request_completed`` line per request.
+
+    Feeds the 5xx-rate Cloud Monitoring alert (THERAPY-8uww) and the
+    per-route latency widgets on the ops dashboard. Verifies the payload
+    is PHI-free and that status_code reflects the actual response.
+    """
+
+    def test_emits_one_record_per_request_with_status_and_latency(
+        self, captured_access_logs: io.StringIO
+    ) -> None:
+        client = TestClient(_build_app())
+        client.get("/api/health")
+        lines = [ln for ln in captured_access_logs.getvalue().splitlines() if ln.strip()]
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["event"] == "request_completed"
+        assert payload["status_code"] == 200
+        assert payload["method"] == "GET"
+        assert payload["latency_ms"] >= 0
+        # request_id flows in via the contextvar, not extra=
+        assert "request_id" in payload
+
+    def test_status_code_reflects_5xx_response(
+        self, captured_access_logs: io.StringIO
+    ) -> None:
+        # The 5xx alert must see status_code>=500. Verify a route that
+        # raises an unhandled exception still produces the expected
+        # access-log entry — finally-block emit, not happy-path-only.
+        app = FastAPI()
+        app.add_middleware(RequestContextMiddleware)
+
+        @app.get("/boom")
+        def boom() -> dict[str, str]:
+            raise RuntimeError("kaboom")
+
+        # Starlette's TestClient surfaces unhandled exceptions; pytest
+        # would treat them as test failures. raise_server_exceptions=False
+        # mirrors the prod behavior where exceptions are converted to 500.
+        client = TestClient(app, raise_server_exceptions=False)
+        response = client.get("/boom")
+        assert response.status_code == 500
+
+        lines = [ln for ln in captured_access_logs.getvalue().splitlines() if ln.strip()]
+        assert len(lines) == 1
+        payload = json.loads(lines[0])
+        assert payload["status_code"] == 500
+        assert payload["event"] == "request_completed"
+
+    def test_status_code_reflects_404(self, captured_access_logs: io.StringIO) -> None:
+        client = TestClient(_build_app())
+        client.get("/api/does-not-exist")
+        payload = json.loads(captured_access_logs.getvalue().splitlines()[0])
+        assert payload["status_code"] == 404
+
+    def test_includes_route_template_via_contextvar(
+        self, captured_access_logs: io.StringIO
+    ) -> None:
+        # route_template is set on the contextvar by the middleware; the
+        # JSON formatter merges it into every record (THERAPY-2pf4 + za2y).
+        # Per the 5xx-by-route alert: must show /api/patients/{patient_id},
+        # never the resolved UUID.
+        client = TestClient(_build_app())
+        client.get("/api/patients/c4f1a3e2-0000-4000-8000-000000000abc")
+        payload = json.loads(captured_access_logs.getvalue().splitlines()[0])
+        assert payload["route_template"] == "/api/patients/{patient_id}"
+        assert "c4f1a3e2" not in payload["route_template"]
+
+    def test_no_phi_keys_in_payload(self, captured_access_logs: io.StringIO) -> None:
+        # Belt-and-suspenders: defend against future drift where someone
+        # adds a PHI-shaped field to the access log emit.
+        client = TestClient(_build_app())
+        client.get("/api/health")
+        payload = json.loads(captured_access_logs.getvalue().splitlines()[0])
+        for forbidden in ("patient_id", "patient_name", "soap_text", "transcript"):
+            assert forbidden not in payload
 
 
 class TestAsyncioTaskPropagation:
