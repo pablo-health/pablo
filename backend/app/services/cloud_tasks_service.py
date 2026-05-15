@@ -11,9 +11,34 @@ healthcare practice a request belongs to. Pass only opaque identifiers
 import json
 import logging
 
+from ..logging_config import request_id_var
+from ..middleware.outbound import build_traceparent
+from ..middleware.request_context import REQUEST_ID_HEADER, W3C_TRACEPARENT_HEADER
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_propagation_headers() -> dict[str, str]:
+    """Build trace-propagation headers from the current request context.
+
+    Returns the headers that should ride along on the Cloud Task's HTTP
+    request so the receiving handler can join its logs to the
+    originating user-facing request. The receiver's
+    `RequestContextMiddleware` already parses `traceparent`, so no
+    handler-side code is needed.
+
+    Empty dict when there's no bound request_id (e.g. a Cloud Task
+    enqueued from a startup hook or cron).
+    """
+    request_id = request_id_var.get()
+    if request_id is None:
+        return {}
+    headers = {REQUEST_ID_HEADER: request_id}
+    traceparent = build_traceparent(request_id)
+    if traceparent is not None:
+        headers[W3C_TRACEPARENT_HEADER] = traceparent
+    return headers
 
 
 def enqueue_cloud_task(
@@ -34,6 +59,7 @@ def enqueue_cloud_task(
         service_account_prefix: Prefix for the OIDC service account email.
     """
     settings = get_settings()
+    trace_headers = _trace_propagation_headers()
 
     if settings.is_development:
         logger.info(
@@ -60,7 +86,7 @@ def enqueue_cloud_task(
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
             url=f"{backend_url}{endpoint_path}",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **trace_headers},
             body=json.dumps(payload).encode(),
             oidc_token=tasks_v2.OidcToken(
                 service_account_email=(

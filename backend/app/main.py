@@ -18,7 +18,11 @@ from sqlalchemy import text
 from .api_errors import register_exception_handlers
 from .db import get_engine
 from .logging_config import configure_logging
-from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
+from .middleware import (
+    HTTPSEnforcementMiddleware,
+    RequestContextMiddleware,
+    SecurityHeadersMiddleware,
+)
 from .notes import get_default_registry, register_builtin_note_types
 from .routes import (
     admin,
@@ -116,6 +120,12 @@ app.add_middleware(
         "X-Client-Platform",
     ],
 )
+
+# Request-context middleware — added last so it wraps every other layer
+# as the outermost middleware. request_id is then set before any
+# downstream logging (including HTTPS-rejected responses) and the id
+# survives onto the X-Request-Id response header for clients.
+app.add_middleware(RequestContextMiddleware)
 
 # Core routes (always included)
 app.include_router(auth.router)
