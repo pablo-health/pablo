@@ -23,6 +23,9 @@ This keeps the middleware portable across clouds without any config.
 
 from __future__ import annotations
 
+import contextlib
+import logging
+import time
 import uuid
 from typing import TYPE_CHECKING
 
@@ -35,6 +38,11 @@ from ..logging_config import (
     tenant_id_var,
     user_id_var,
 )
+
+# Dedicated logger for the per-request completion line. Distinct name
+# (``pablo.access``) keeps the access log filterable in Cloud Logging
+# without sweeping in app-level INFO records.
+_access_logger = logging.getLogger("pablo.access")
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -143,11 +151,35 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         user_token = user_id_var.set(None)
         tenant_token = tenant_id_var.set(None)
 
+        start = time.perf_counter()
+        status_code = 500
         try:
             response = await call_next(request)
             response.headers[REQUEST_ID_HEADER] = request_id
+            status_code = response.status_code
             return response
         finally:
+            # Emit one `event=request_completed` record per request. Feeds
+            # the 5xx-rate alert (THERAPY-8uww) and the per-route latency
+            # widgets on the ops dashboard. PHI-free — only the HTTP
+            # method, the matched route template (never the resolved URL),
+            # the status code, and the elapsed time. route_template,
+            # request_id, user_id, and tenant_id are merged in by the
+            # JSON formatter via contextvars.
+            latency_ms = round((time.perf_counter() - start) * 1000.0, 2)
+            # Access logging must never break a response — swallow any
+            # exception out of the finally block rather than letting it
+            # escape and mask the real error.
+            with contextlib.suppress(Exception):
+                _access_logger.info(
+                    "request_completed",
+                    extra={
+                        "event": "request_completed",
+                        "method": request.method,
+                        "status_code": status_code,
+                        "latency_ms": latency_ms,
+                    },
+                )
             request_id_var.reset(rid_token)
             route_template_var.reset(route_token)
             user_id_var.reset(user_token)
