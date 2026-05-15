@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from .api_errors import register_exception_handlers
 from .db import get_engine
+from .logging_config import configure_logging
 from .middleware import HTTPSEnforcementMiddleware, SecurityHeadersMiddleware
 from .notes import get_default_registry, register_builtin_note_types
 from .routes import (
@@ -37,6 +38,8 @@ from .routes import (
 )
 from .settings import get_settings
 from .version_check import get_min_versions, get_server_version
+
+configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
