@@ -2,14 +2,16 @@
 
 """Pluggable compliance **minimal retention stub** writer for hard-purge (THERAPY-cgy).
 
-Pablo Core ships the SQLAlchemy implementation (:class:`SqlComplianceRetentionStubWriter`)
-but does **not** register it at import time. Hosted images call
-``register_compliance_retention_stub_writer`` from ``saas.bin.hard_purge`` before
-running the purge job so Core self-hosters never accidentally execute compliance
-DML with no DDL present.
+This module ships the SQLAlchemy implementation
+(:class:`SqlComplianceRetentionStubWriter`) but does **not** register
+it at import time. Hosted images call
+``register_compliance_retention_stub_writer`` from a deployment-specific
+entrypoint before running the purge job, so self-hosted deployments
+never accidentally execute compliance DML with no DDL present.
 
-SQL identifiers still use legacy SaaS DDL names (``patient_identity_tombstone``,
-``tombstoned_*``); product language remains "minimal retention stub."
+SQL identifiers retain their legacy DDL names
+(``patient_identity_tombstone``, ``tombstoned_*``); product language
+remains "minimal retention stub."
 """
 
 from __future__ import annotations
@@ -74,7 +76,7 @@ def _compliance_schema_exists(conn: Any) -> bool:
 
 
 class SqlComplianceRetentionStubWriter:
-    """Default implementation for SaaS compliance DDL (legacy table name)."""
+    """Default implementation against the legacy compliance DDL."""
 
     def is_supported(self, conn: Any) -> bool:
         if not _compliance_schema_exists(conn):

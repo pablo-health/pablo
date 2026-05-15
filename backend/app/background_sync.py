@@ -1,9 +1,10 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""In-process background calendar sync for self-hosted (Pablo Core) deployments.
+"""In-process background calendar sync for self-hosted deployments.
 
-Runs every 15 minutes inside the FastAPI process. For SaaS deployments,
-Cloud Scheduler + Cloud Tasks handles this instead (see internal.py).
+Runs every 15 minutes inside the FastAPI process. For managed
+deployments, Cloud Scheduler + Cloud Tasks handles this instead (see
+internal.py).
 
 Single-worker uvicorn guarantees no duplicate runs.
 """

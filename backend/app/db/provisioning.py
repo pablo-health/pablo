@@ -203,8 +203,9 @@ def _migrate_platform_columns(engine: Engine) -> None:
                 conn.execute(text(stmt))
                 savepoint.commit()
             except Exception:
-                # Table/column may not exist in this edition (e.g. SaaS-only
-                # tables like platform.subscriptions in the OSS build) — skip.
+                # Table/column may not exist in this deployment (e.g.
+                # overlay-managed tables like platform.subscriptions
+                # when the overlay is not installed) — skip.
                 savepoint.rollback()
         conn.commit()
     _ensure_pentest_tenant_guards(engine)

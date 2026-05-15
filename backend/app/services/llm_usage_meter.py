@@ -3,20 +3,21 @@
 """LLM usage meter (THERAPY-f6eg, Phase 3b of THERAPY-bhv).
 
 Per design doc §11.6: the metering primitive and the enforcement
-primitive both live in OSS so self-hosters get the same observability
-without opting into enforcement. OSS default is
+primitive both ship by default so operators get the same observability
+without opting into enforcement. Default is
 ``LLM_QUOTA_ENFORCEMENT=off`` — the meter still records every turn,
 but :meth:`LlmUsageMeter.check_quota` always returns
 :attr:`QuotaStatus.OK`.
 
-The SaaS overlay substitutes a tier-aware ``check_quota`` (reading
-limits from tenant config) without touching this module — see the
-SaaS overlay's ``LlmUsageMeter`` subclass in ``pablo-saas``.
+Downstream consumers may substitute a tier-aware ``check_quota``
+(reading limits from tenant config) by subclassing ``LlmUsageMeter``;
+this module does not need to change.
 
 No ``tenant_id`` parameter on the public API. The practice schema is
 the tenant boundary, matching :mod:`backend.app.models.chat` and
 :mod:`backend.app.repositories.chat`. The design doc's nominal
-``tenant_id`` signature was rationalized to OSS reality during Phase 3b.
+``tenant_id`` signature was rationalized to the current data model
+during Phase 3b.
 """
 
 from __future__ import annotations
@@ -45,10 +46,10 @@ def period_yyyymm(when: datetime) -> str:
 class LlmUsageMeter:
     """Records LLM turn usage and answers quota checks.
 
-    OSS implementation is observation-only: :meth:`record_turn` writes
-    the monthly aggregate; :meth:`check_quota` short-circuits to
-    :attr:`QuotaStatus.OK` whenever ``settings.llm_quota_enforcement``
-    is not ``"on"``. SaaS overlays subclass and override
+    Default implementation is observation-only: :meth:`record_turn`
+    writes the monthly aggregate; :meth:`check_quota` short-circuits
+    to :attr:`QuotaStatus.OK` whenever ``settings.llm_quota_enforcement``
+    is not ``"on"``. Downstream consumers subclass and override
     :meth:`check_quota`.
     """
 
@@ -129,16 +130,17 @@ class LlmUsageMeter:
     ) -> QuotaStatus:
         """Resolve whether the caller may proceed with a turn.
 
-        OSS resolution order (design doc §11.6):
+        Default resolution order (design doc §11.6):
 
         1. ``settings.llm_quota_enforcement != "on"`` → ``OK``
-        2. No tenant-config limits storage in OSS → ``OK``
+        2. No tenant-config limits storage by default → ``OK``
 
-        SaaS overlays override this method to consult tier-derived
-        tenant config and return ``SOFT_WARN`` / ``HARD_BLOCK`` based
-        on observed usage from :meth:`get_period_usage`.
+        Downstream consumers override this method to consult
+        tier-derived tenant config and return ``SOFT_WARN`` /
+        ``HARD_BLOCK`` based on observed usage from
+        :meth:`get_period_usage`.
         """
-        del user_id, feature_key  # forward-compat: ignored in OSS
+        del user_id, feature_key  # forward-compat: ignored by default
         if (self._settings.llm_quota_enforcement or "off").lower() != "on":
             return QuotaStatus.OK
         # Enforcement-on with no quota config = unlimited (design doc

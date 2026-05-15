@@ -29,14 +29,14 @@ export interface UserStatus {
   name: string
   email: string
   /**
-   * Practice id for the current user, when the SaaS overlay is mounted
-   * and multi-tenancy is enabled. Undefined in OSS-only deployments.
+   * Practice id for the current user, when multi-tenancy is enabled.
+   * Undefined in single-tenant deployments.
    */
   practice_id?: string
   /**
    * "therapist" | "prescriber" | "both". `null` means the user has not
-   * picked a provider type yet — the SaaS overlay treats this as the
-   * "needs onboarding" signal.
+   * picked a provider type yet; downstream onboarding flows treat this
+   * as the "needs onboarding" signal.
    */
   provider_type: ProviderType | null
 }

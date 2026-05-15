@@ -4,9 +4,9 @@
  * Practice API Functions
  *
  * API functions for per-practice administrative endpoints. The
- * `audio-retention` route is mounted by the SaaS overlay
- * (`/api/saas/practices/{practice_id}/audio-retention`) but from the
- * OSS frontend's perspective it's just a route on the same API origin.
+ * `audio-retention` route is mounted by an optional backend overlay;
+ * from the frontend's perspective it's just a route on the same API
+ * origin.
  */
 
 import { put } from "./client"

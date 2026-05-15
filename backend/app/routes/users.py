@@ -100,7 +100,7 @@ def get_user_status(
         if practice:
             result["practice_id"] = practice[0]
 
-    # Include subscription/trial info for SaaS editions
+    # Include subscription/trial info when subscription enforcement is enabled.
     if settings.is_saas:
         from .subscription import _get_subscription_info  # type: ignore[import-not-found]
 
@@ -256,8 +256,8 @@ def get_security_guide_status(
 ) -> SecurityGuideStatusResponse:
     """Return security-guide acknowledgment status for the current user.
 
-    The "current version" is declared by the SaaS overlay (the guide
-    lives in ``pablo-saas/docs/security/``), so this endpoint only
+    The "current version" is declared by the frontend (the guide
+    document is shipped with the client), so this endpoint only
     reports what the user has acknowledged. The frontend compares
     against its bundled version to decide whether to re-prompt.
     """

@@ -4,8 +4,8 @@
 
 Two operations only: upsert one turn's counts into the monthly bucket,
 and read summed usage over a period. The meter (§11.6) is the only
-caller; the SaaS overlay may layer tier-aware quota config on top but
-does not need its own repository.
+caller; downstream consumers may layer tier-aware quota config on top
+without needing their own repository.
 """
 
 from __future__ import annotations

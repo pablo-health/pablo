@@ -1,22 +1,23 @@
 """platform.practices: audio_retention_days + offboard_scheduled_at + deleted_at
 
-Brings three columns under OSS alembic management. They were originally
-added by SaaS-side migrations (a7c4f8b2d319 audio retention, c5d8e2a1b049
-offboard/deleted) so admin endpoints in pablo-saas could record per-practice
-retention windows and offboarding state. Bringing them into OSS lets the
-``PracticeRow`` ORM model expose them and removes the raw-SQL escape hatches
-that pablo-saas had to use because the OSS model didn't declare the columns.
+Brings three columns under the platform alembic chain. They were
+originally introduced by deployment-specific migrations (audio
+retention, offboard/deleted) so admin endpoints could record
+per-practice retention windows and offboarding state. Bringing them
+into the core chain lets the ``PracticeRow`` ORM model expose them
+and removes the raw-SQL escape hatches downstream consumers had to
+use while the model didn't declare the columns.
 
 All DDL is idempotent (``ADD COLUMN IF NOT EXISTS`` and constraint/index
-guards via ``DO $$``) so re-applying on a database where the SaaS chain
-already created the columns is a no-op.
+guards via ``DO $$``) so re-applying on a database where a downstream
+chain already created the columns is a no-op.
 
 Columns
 -------
 * ``audio_retention_days`` — INTEGER NOT NULL DEFAULT 365, CHECK 30..2555.
   Per-practice retention window for recorded session audio. Range matches
   the privacy-policy commitment (30 days to 7 years).
-* ``offboard_scheduled_at`` — TIMESTAMPTZ NULL. Set by the SaaS offboard
+* ``offboard_scheduled_at`` — TIMESTAMPTZ NULL. Set by the offboard
   endpoint to ``NOW() + grace_period_days``; cleared by writing NULL.
 * ``deleted_at`` — TIMESTAMPTZ NULL. Set inside the offboard transaction
   once the practice schema is dropped.

@@ -16,9 +16,9 @@ interface UpdateAudioRetentionVariables {
 /**
  * Mutation hook for updating per-practice audio retention.
  *
- * Wraps `PUT /api/saas/practices/{practice_id}/audio-retention`. The
- * backend response is the canonical persisted value; the parent
- * component is responsible for surfacing success/error UI.
+ * Wraps the per-practice audio-retention PUT endpoint. The backend
+ * response is the canonical persisted value; the parent component is
+ * responsible for surfacing success/error UI.
  */
 export function useAudioRetention(token?: string) {
   return useAuthMutation<

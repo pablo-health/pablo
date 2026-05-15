@@ -166,9 +166,9 @@ class SendChatMessageRequest(BaseModel):
     The streaming-message endpoint per design doc §6.4. ``source_selection``
     is an optional per-message override; when omitted the conversation's
     ``default_source_selection`` is used. ``model`` is an optional
-    per-conversation model override (e.g. SaaS rx-justification pinning
-    Pro) — OSS callers ordinarily leave it unset and the resolver picks
-    ``settings.ai_model_flash``.
+    per-conversation model override used by downstream consumers that
+    pin specific features to a Pro-tier model — default callers leave
+    it unset and the resolver picks ``settings.ai_model_flash``.
     """
 
     content: str = Field(min_length=1, max_length=32_768)

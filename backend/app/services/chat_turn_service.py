@@ -106,9 +106,9 @@ RETRYABLE_ERROR_CODES = frozenset({"timeout", "service_unavailable", "llm_error"
 RETRY_BACKOFF_SECONDS = 1.0
 MAX_GATEWAY_ATTEMPTS = 2  # initial attempt + 1 retry on transient error
 
-# Output-token cap per design doc §11.7. The SaaS overlay can override
-# per ``caller_feature_key`` once tier-aware quotas land in the
-# ``LlmUsageMeter`` follow-up; for now this is a hard cap.
+# Output-token cap per design doc §11.7. Downstream consumers can
+# override per ``caller_feature_key`` once tier-aware quotas land in
+# the ``LlmUsageMeter`` follow-up; for now this is a hard cap.
 DEFAULT_MAX_OUTPUT_TOKENS = 2048
 
 # Hard cap on assistant content length to stay inside the DB column
@@ -206,9 +206,9 @@ class ChatTurnService:
             )
             return
 
-        # Quota gate (design doc §11.6). When enforcement is off (OSS
-        # default) the meter returns OK and this is a no-op. SaaS
-        # overlays subclass the meter to consult tenant config.
+        # Quota gate (design doc §11.6). When enforcement is off (the
+        # default) the meter returns OK and this is a no-op. Downstream
+        # consumers subclass the meter to consult tenant config.
         quota_status: QuotaStatus = QuotaStatus.OK
         if self._usage_meter is not None:
             quota_status = self._usage_meter.check_quota(
@@ -304,8 +304,8 @@ class ChatTurnService:
         }
         if quota_status == QuotaStatus.SOFT_WARN:
             # Hook for the UI to surface a "you're near your cap"
-            # warning. The remaining-pct value comes from the SaaS
-            # overlay's quota config; OSS stays silent.
+            # warning. The remaining-pct value comes from a downstream
+            # quota config; the default implementation stays silent.
             meta_data["quota_status"] = QuotaStatus.SOFT_WARN.value
         yield TurnStreamEvent(kind="meta", data=meta_data)
 

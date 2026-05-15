@@ -328,7 +328,8 @@ class SessionService:
         session.status = SessionStatus.FINALIZED
         session = self.session_repo.update(session)
 
-        # Check if note should be queued for eval export (SaaS only).
+        # Check if note should be queued for eval export (when the
+        # eval-export service is registered).
         if self.eval_export_service:
             decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
             if decision.should_queue:
