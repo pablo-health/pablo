@@ -120,6 +120,7 @@ class PlatformUserRow(PlatformBase):
     provider_type: Mapped[str | None] = mapped_column(String(32))
     security_guide_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     security_guide_version: Mapped[str | None] = mapped_column(String(20))
+    onboarding_state: Mapped[str | None] = mapped_column(String(20))
 
 
 class PlatformUserPreferencesRow(PlatformBase):
