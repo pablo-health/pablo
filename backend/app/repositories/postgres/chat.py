@@ -132,7 +132,7 @@ class PostgresChatRepository(ChatRepository):
         DB-layer authorization stay in lockstep.
         """
         result = self._session.execute(
-            text("SELECT has_patient_access(:pid, :uid)"),
+            text("SELECT has_patient_access(:pid::uuid, :uid)"),
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)
