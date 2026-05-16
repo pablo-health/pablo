@@ -54,7 +54,7 @@ class PostgresPatientRepository(PatientRepository):
 
     def _has_access(self, patient_id: str, user_id: str) -> bool:
         result = self._session.execute(
-            text("SELECT has_patient_access(:pid, :uid)"),
+            text("SELECT has_patient_access(:pid::uuid, :uid)"),
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)

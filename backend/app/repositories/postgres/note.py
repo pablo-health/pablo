@@ -44,7 +44,7 @@ class PostgresNotesRepository(NotesRepository):
         is exactly the failure mode we're trying to prevent.
         """
         result = self._session.execute(
-            text("SELECT has_patient_access(:pid, :uid)"),
+            text("SELECT has_patient_access(:pid::uuid, :uid)"),
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)
