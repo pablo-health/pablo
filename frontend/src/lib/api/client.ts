@@ -7,7 +7,29 @@
  * Handles authentication, error handling, and type-safe responses.
  */
 
+import { signOut } from "firebase/auth"
+
 import { getFirebaseAuth } from "@/lib/firebase"
+
+let idleTimeoutLogoutInFlight = false
+
+function handleIdleTimeoutLogout() {
+  if (idleTimeoutLogoutInFlight) return
+  idleTimeoutLogoutInFlight = true
+  void (async () => {
+    try {
+      await signOut(getFirebaseAuth())
+    } catch {
+      // Firebase not initialized — proceed to clear server-side cookie anyway.
+    }
+    try {
+      await fetch("/api/logout")
+    } catch {
+      // Best-effort: still redirect even if the cookie-clear endpoint fails.
+    }
+    window.location.assign("/login?reason=idle_timeout")
+  })()
+}
 
 /**
  * Global runtime configuration
@@ -140,6 +162,18 @@ export async function apiClient<T>(
       errorData?.error?.message ||
       `API request failed with status ${response.status}`
     const errorDetails = errorData?.error?.details
+
+    // Backend-enforced idle timeout: sign out and redirect so the user
+    // sees the same /login?reason=idle_timeout flow as the client-side
+    // IdleTimeout component. Guarded against re-entry so a parallel
+    // burst of 401s doesn't fire multiple sign-outs / redirects.
+    if (
+      response.status === 401 &&
+      errorCode === "IDLE_TIMEOUT" &&
+      typeof window !== "undefined"
+    ) {
+      handleIdleTimeoutLogout()
+    }
 
     throw new ApiError(errorCode, errorMessage, errorDetails, response.status)
   } catch (error) {
