@@ -32,12 +32,23 @@ class PendingAuthCode:
     refresh_token: str
     redirect_uri: str
     created_at: float
+    # Stashed at code-creation after the id_token is verified, so the
+    # /native/exchange handler can trust this uid without re-verifying
+    # against Firebase. None on entries written before the field landed
+    # (legacy in-flight codes during deploy).
+    firebase_uid: str | None = None
 
 
 class AuthCodeStore(Protocol):
     """Protocol for auth code stores."""
 
-    def create(self, id_token: str, refresh_token: str, redirect_uri: str) -> str: ...
+    def create(
+        self,
+        id_token: str,
+        refresh_token: str,
+        redirect_uri: str,
+        firebase_uid: str | None = None,
+    ) -> str: ...
     def exchange(self, code: str) -> PendingAuthCode | None: ...
 
 
@@ -50,7 +61,13 @@ class InMemoryAuthCodeStore:
         self._codes: dict[str, PendingAuthCode] = {}
         self._lock = Lock()
 
-    def create(self, id_token: str, refresh_token: str, redirect_uri: str) -> str:
+    def create(
+        self,
+        id_token: str,
+        refresh_token: str,
+        redirect_uri: str,
+        firebase_uid: str | None = None,
+    ) -> str:
         code = secrets.token_urlsafe(32)
         now = time.monotonic()
 
@@ -63,6 +80,7 @@ class InMemoryAuthCodeStore:
                 refresh_token=refresh_token,
                 redirect_uri=redirect_uri,
                 created_at=now,
+                firebase_uid=firebase_uid,
             )
         return code
 
@@ -95,7 +113,13 @@ class RedisAuthCodeStore:
         self._redis = redis_client
         self.ttl_seconds = ttl_seconds
 
-    def create(self, id_token: str, refresh_token: str, redirect_uri: str) -> str:
+    def create(
+        self,
+        id_token: str,
+        refresh_token: str,
+        redirect_uri: str,
+        firebase_uid: str | None = None,
+    ) -> str:
         code = secrets.token_urlsafe(32)
         data = json.dumps(
             {
@@ -103,6 +127,7 @@ class RedisAuthCodeStore:
                 "refresh_token": refresh_token,
                 "redirect_uri": redirect_uri,
                 "created_at": time.time(),
+                "firebase_uid": firebase_uid,
             }
         )
         self._redis.setex(f"{self.KEY_PREFIX}{code}", self.ttl_seconds, data)
@@ -125,6 +150,7 @@ class RedisAuthCodeStore:
             refresh_token=data["refresh_token"],
             redirect_uri=data["redirect_uri"],
             created_at=data["created_at"],
+            firebase_uid=data.get("firebase_uid"),
         )
 
 
@@ -150,8 +176,13 @@ def _ensure_store() -> AuthCodeStore:
     return _store
 
 
-def create_auth_code(id_token: str, refresh_token: str, redirect_uri: str) -> str:
-    return _ensure_store().create(id_token, refresh_token, redirect_uri)
+def create_auth_code(
+    id_token: str,
+    refresh_token: str,
+    redirect_uri: str,
+    firebase_uid: str | None = None,
+) -> str:
+    return _ensure_store().create(id_token, refresh_token, redirect_uri, firebase_uid)
 
 
 def exchange_auth_code(code: str) -> PendingAuthCode | None:
