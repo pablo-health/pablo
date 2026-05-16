@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -168,6 +168,46 @@ class PlatformAllowedEmailRow(PlatformBase):
     practice_id: Mapped[str | None] = mapped_column(String(128))
     added_by: Mapped[str] = mapped_column(String(255), nullable=False)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CompanionDeviceRow(PlatformBase):
+    """A user's enrolled native companion install (Mac / Windows desktop app).
+
+    Created at first OAuth code-exchange. ``device_public_key_jwk`` is
+    the JWK the companion generated in Secure Enclave (Mac) or TPM 2.0 /
+    software-KSP fallback (Windows); ``jkt`` is the RFC 7638 thumbprint
+    of that JWK, used as the lookup key by the DPoP middleware
+    (THERAPY-6qtr).
+
+    ``key_storage`` distinguishes hardware-backed keys (``hardware``,
+    Secure Enclave / TPM) from software-backed fallback (``software``,
+    Microsoft Software KSP) on Windows boxes without TPM 2.0. All Macs
+    from 2018+ have Secure Enclave so Mac rows are always ``hardware``.
+
+    No PHI: install_id is a random UUID; hostname_hash is the device's
+    hostname run through a one-way hash on the client. Refresh tokens
+    are not stored here — Firebase manages those.
+    """
+
+    __tablename__ = "companion_devices"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    install_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    device_public_key_jwk: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    jkt: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    key_storage: Mapped[str] = mapped_column(String(16), nullable=False)
+    platform: Mapped[str] = mapped_column(String(16), nullable=False)
+    os_version: Mapped[str | None] = mapped_column(String(64))
+    hostname_hash: Mapped[str | None] = mapped_column(String(64))
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PlatformAuditLogRow(PlatformBase):

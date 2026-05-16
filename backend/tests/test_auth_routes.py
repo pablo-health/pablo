@@ -6,7 +6,8 @@ SaaS-only tests (resolve-tenant, signup) are in test_saas_auth_routes.py.
 """
 
 from collections.abc import Generator
-from unittest.mock import patch
+from typing import Any, ClassVar
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
@@ -177,3 +178,156 @@ class TestNativeCodeExchange:
             json={"code": "nonexistent-code", "redirect_uri": self.REDIRECT_URI},
         )
         assert resp.status_code == 400
+
+
+class TestCompanionDeviceEnrollment:
+    """Enrollment payload submitted alongside /native/exchange (THERAPY-xo0o)."""
+
+    REDIRECT_URI = "pablohealth://callback"
+    VALID_ENROLLMENT: ClassVar[dict[str, Any]] = {
+        "install_id": "install-abc123",
+        "platform": "mac",
+        "os_version": "15.2",
+        "hostname_hash": "abc123",
+        "device_public_key_jwk": {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+            "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+        },
+        "key_storage": "hardware",
+    }
+
+    @pytest.fixture(autouse=True)
+    def _mock_firebase(self) -> Generator[None, None, None]:
+        with (
+            patch("app.routes.auth.initialize_firebase_app"),
+            patch("app.routes.auth.firebase_auth") as mock_auth,
+        ):
+            mock_auth.verify_id_token.return_value = {"uid": "fb-user-1"}
+            yield
+
+    @pytest.fixture
+    def client(self) -> TestClient:
+        return TestClient(app)
+
+    def _create_code(self, client: TestClient) -> str:
+        resp = client.post(
+            "/api/auth/native/code",
+            json={
+                "id_token": "id_tok",
+                "refresh_token": "ref_tok",
+                "redirect_uri": self.REDIRECT_URI,
+            },
+        )
+        assert resp.status_code == 200
+        return resp.json()["code"]
+
+    def test_exchange_with_enrollment_persists_device(self, client: TestClient) -> None:
+        code = self._create_code(client)
+
+        mock_identity_repo = MagicMock()
+        mock_identity_repo.resolve_or_create.return_value = "pablo-user-1"
+        mock_service = MagicMock()
+
+        with (
+            patch(
+                "app.routes.auth.get_identity_repository",
+                return_value=mock_identity_repo,
+            ),
+            patch(
+                "app.routes.auth.get_companion_device_service",
+                return_value=mock_service,
+            ),
+        ):
+            resp = client.post(
+                "/api/auth/native/exchange",
+                json={
+                    "code": code,
+                    "redirect_uri": self.REDIRECT_URI,
+                    "enrollment": self.VALID_ENROLLMENT,
+                },
+            )
+
+        assert resp.status_code == 200
+        mock_identity_repo.resolve_or_create.assert_called_once_with("firebase", "fb-user-1")
+        mock_service.enroll.assert_called_once()
+        args, _ = mock_service.enroll.call_args
+        assert args[0] == "pablo-user-1"
+        assert args[1].install_id == "install-abc123"
+        assert args[1].key_storage == "hardware"
+
+    def test_exchange_without_enrollment_unchanged(self, client: TestClient) -> None:
+        # Backward-compat path: clients pre-dating THERAPY-xo0o don't
+        # send an enrollment block, and the exchange must still work.
+        code = self._create_code(client)
+
+        with (
+            patch("app.routes.auth.get_identity_repository") as mock_get_repo,
+            patch("app.routes.auth.get_companion_device_service") as mock_get_svc,
+        ):
+            resp = client.post(
+                "/api/auth/native/exchange",
+                json={"code": code, "redirect_uri": self.REDIRECT_URI},
+            )
+
+        assert resp.status_code == 200
+        mock_get_repo.assert_not_called()
+        mock_get_svc.assert_not_called()
+
+    def test_enrollment_with_invalid_jwk_does_not_break_exchange(self, client: TestClient) -> None:
+        # A malformed JWK from a buggy companion build must not block
+        # the token return — the companion can retry enrollment later.
+        code = self._create_code(client)
+
+        bad_enrollment = {
+            **self.VALID_ENROLLMENT,
+            "device_public_key_jwk": {"kty": "EC", "crv": "P-256", "x": "abc"},  # no y
+        }
+
+        mock_identity_repo = MagicMock()
+        mock_identity_repo.resolve_or_create.return_value = "pablo-user-1"
+
+        with (
+            patch(
+                "app.routes.auth.get_identity_repository",
+                return_value=mock_identity_repo,
+            ),
+        ):
+            resp = client.post(
+                "/api/auth/native/exchange",
+                json={
+                    "code": code,
+                    "redirect_uri": self.REDIRECT_URI,
+                    "enrollment": bad_enrollment,
+                },
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()["id_token"] == "id_tok"
+
+    def test_enrollment_rejects_unknown_platform(self, client: TestClient) -> None:
+        code = self._create_code(client)
+        bad = {**self.VALID_ENROLLMENT, "platform": "atari"}
+        resp = client.post(
+            "/api/auth/native/exchange",
+            json={
+                "code": code,
+                "redirect_uri": self.REDIRECT_URI,
+                "enrollment": bad,
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_enrollment_rejects_unknown_key_storage(self, client: TestClient) -> None:
+        code = self._create_code(client)
+        bad = {**self.VALID_ENROLLMENT, "key_storage": "telepathic"}
+        resp = client.post(
+            "/api/auth/native/exchange",
+            json={
+                "code": code,
+                "redirect_uri": self.REDIRECT_URI,
+                "enrollment": bad,
+            },
+        )
+        assert resp.status_code == 422

@@ -14,8 +14,14 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
 from ..auth.firebase_init import initialize_firebase_app
+from ..models.companion_device import CompanionEnrollment
 from ..rate_limit import require_rate_limit
+from ..repositories import get_identity_repository
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
+from ..services.companion_device_service import (
+    InvalidDeviceJWKError,
+    get_companion_device_service,
+)
 from ..settings import get_settings
 from ..version_check import check_client_version
 
@@ -55,6 +61,13 @@ class CreateAuthCodeResponse(BaseModel):
 class ExchangeAuthCodeRequest(BaseModel):
     code: str
     redirect_uri: str
+    # Optional companion device enrollment payload. Present when the
+    # native app is registering its install on first OAuth; absent for
+    # legacy clients that pre-date the THERAPY-xo0o rollout. When
+    # present we persist a row in platform.companion_devices and bind
+    # the supplied JWK to the user — used by the DPoP middleware
+    # (THERAPY-6qtr) to verify per-request proofs.
+    enrollment: CompanionEnrollment | None = None
 
 
 class ExchangeAuthCodeResponse(BaseModel):
@@ -97,14 +110,13 @@ def create_native_code(
     if settings.require_mfa and not settings.is_development and settings.auth_mode != "iap":
         firebase_claims = decoded_token.get("firebase", {})
         if not firebase_claims.get("sign_in_second_factor"):
-            raise ForbiddenError(
-                "Multi-factor authentication is required", code="MFA_REQUIRED"
-            )
+            raise ForbiddenError("Multi-factor authentication is required", code="MFA_REQUIRED")
 
     code = create_auth_code(
         id_token=request.id_token,
         refresh_token=request.refresh_token,
         redirect_uri=request.redirect_uri,
+        firebase_uid=decoded_token.get("uid"),
     )
     return CreateAuthCodeResponse(code=code)
 
@@ -117,6 +129,11 @@ def exchange_native_code(
 
     Called by the native app after receiving the code via redirect.
     Codes are single-use and expire after 60 seconds.
+
+    If the native app includes an ``enrollment`` payload (companion
+    install_id + Secure-Enclave / TPM public key), this is also the
+    enrollment point: we persist a ``companion_devices`` row keyed to
+    the authenticated user. See THERAPY-xo0o.
     """
     entry = exchange_auth_code(request.code)
     if entry is None:
@@ -124,7 +141,36 @@ def exchange_native_code(
     # Validate redirect_uri matches what was bound at code creation
     if entry.redirect_uri != request.redirect_uri:
         raise BadRequestError("redirect_uri mismatch.")
+
+    if request.enrollment is not None:
+        _enroll_companion_device(entry.firebase_uid, request.enrollment)
+
     return ExchangeAuthCodeResponse(
         id_token=entry.id_token,
         refresh_token=entry.refresh_token,
     )
+
+
+def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnrollment) -> None:
+    """Persist a companion device row, mapping firebase_uid → pablo user_id.
+
+    Failures here do NOT block the token exchange — a stale or invalid
+    payload should not prevent the user from getting their tokens.
+    The companion will retry enrollment on next launch when it sees
+    that DPoP-protected endpoints are rejecting it (THERAPY-6qtr).
+    """
+    if firebase_uid is None:
+        # Legacy in-flight code (pre-deploy) — no uid stashed; skip.
+        logger.info("companion_enrollment_skipped reason=missing_firebase_uid")
+        return
+    try:
+        pablo_user_id = get_identity_repository().resolve_or_create("firebase", firebase_uid)
+        get_companion_device_service().enroll(pablo_user_id, enrollment)
+    except InvalidDeviceJWKError as err:
+        logger.warning(
+            "companion_enrollment_rejected reason=invalid_jwk install_id=%s detail=%s",
+            enrollment.install_id,
+            err,
+        )
+    except Exception:
+        logger.exception("companion_enrollment_failed install_id=%s", enrollment.install_id)

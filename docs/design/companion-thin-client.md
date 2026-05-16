@@ -168,21 +168,50 @@ callback do two extra things:
    it's a server-side redirect in the OAuth completion handler, not
    the companion driving the browser.
 
-### Hardware-bound device key (follow-on, not in v1)
+### Hardware-bound device key (in v1)
 
-In a later phase, the companion generates a non-extractable P-256
-keypair at enrollment:
-- Mac: `SecKeyCreateRandomKey` with `kSecAttrTokenIDSecureEnclave`
-- Windows: `CngKey` with `Microsoft Platform Crypto Provider` (TPM)
+> **Update (post-design):** the original draft of this doc deferred
+> hardware-bound DPoP to a follow-on phase. After threat-model
+> review, this was promoted into v1 so we don't ship throwaway
+> install_id-as-bearer auth. The full security architecture —
+> including our deviation from RFC 9449 (binding to `install_id`
+> instead of access-token `cnf.jkt`) and the per-scenario threat
+> table — is in
+> [`companion-dpop-binding.md`](./companion-dpop-binding.md).
+
+The companion generates a non-extractable P-256 keypair at enrollment:
+
+- Mac: `SecKeyCreateRandomKey` with `kSecAttrTokenIDSecureEnclave`.
+  Coverage: 100% of Macs from 2018+ have Secure Enclave.
+- Windows: `CngKey.Create` with `Microsoft Platform Crypto Provider`
+  (TPM 2.0). Graceful fallback to
+  `Microsoft Software Key Storage Provider` (DPAPI-bound user-profile
+  key) on TPM-less machines, with `key_storage='software'` recorded
+  in the device row. Coverage: ~95% hardware-bound, 100% with the
+  software fallback.
 
 The public key is registered with the backend at the same time as
-`install_id`. Every API call thereafter carries a DPoP header
-(RFC 9449) signed by the private key. A stolen access/refresh token
-without the corresponding hardware key becomes useless.
+`install_id`. Every API call thereafter carries a `DPoP` header
+(RFC 9449-style) signed by the private key, plus an `X-Install-ID`
+header identifying which enrolled device is calling. A stolen
+Firebase id_token without the corresponding hardware key becomes
+useless.
 
-This is the right answer for the long term, but is not a blocker for
-the thin-client shape. Tracked separately so it can ship when we have
-the threat model and engineering capacity for it.
+**Staged rollout (so we don't ship the middleware before companions
+support signing):**
+
+1. **Stage 1 — THERAPY-xo0o** (backend): `companion_devices` table,
+   enrollment payload accepted at `/api/auth/native/exchange`,
+   stored but not enforced.
+2. **Stage 2 — THERAPY-6qtr** (backend): `DPoP` middleware enforces
+   per-request proofs. Behind `ENABLE_DPOP_VALIDATION` until
+   companions ship.
+3. **Stage 3 — PABLO-D epic** (companion repo): Secure Enclave / TPM
+   key generation, JWK serialization, per-request proof signing on
+   Mac and Windows.
+4. **Stage 4 (optional)**: App Attest / TPM AIK enrollment-time
+   attestation. Closes the "scripted fake companion enrolls itself"
+   gap; lower priority.
 
 ## Deep-link handoff — the secure wow-button flow
 
@@ -332,9 +361,6 @@ independently shippable.
 - **iOS / mobile companion.** Not in scope today. If/when there's an
   iOS companion, the same Universal Link primitive applies — that's
   partly why we're picking this design.
-- **Hardware-bound device key (DPoP).** Tracked separately as a
-  follow-on hardening pass. The thin-client shape can ship without
-  it.
 
 ## Out of scope (deliberately)
 
@@ -349,6 +375,9 @@ independently shippable.
 
 ## Related
 
+- [`companion-dpop-binding.md`](./companion-dpop-binding.md) — full
+  security architecture for the hardware-bound device key, including
+  our deviation from RFC 9449 and the per-scenario threat table.
 - `docs/url-scheme.md` — the existing `pablohealth://` URI grammar
   (still applies; this doc augments it with the verified-link path).
 - THERAPY-3253 epic — marketing/landing page (the "wow page" this
