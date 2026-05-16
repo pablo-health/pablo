@@ -128,7 +128,7 @@ problem and we need to revisit.
 | 7 | Attacker briefly bypasses Secure Enclave (e.g., 60s memory inspection), pre-computes future proofs | ⚠️ Mitigated by server-issued DPoP-Nonce (RFC 9449 §8) | ⚠️ Same gap | Server-nonce deferred in 6qtr; narrow threat |
 | 8 | Stolen unlocked device | ❌ Not addressed by either scheme | ❌ Same | Idle-logout (THERAPY-a290) is the relevant control |
 | 9 | OAuth authorization-code interception | ❌ Not addressed by either scheme | ❌ Same | PKCE is the answer; orthogonal to DPoP |
-| 10 | Lost laptop, user reports it | ✅ Revoke token via Firebase | ✅ Revoke install_id; other devices keep working | Our scheme is strictly more user-friendly here |
+| 10 | Lost laptop, user reports it | ⚠️ DPoP can't help — the key is on the device | ⚠️ Same — install_id-bound key is on the device | DPoP is the wrong layer; see "Lost laptop is a different problem" below |
 | 11 | TPM-less Windows machine | N/A | ⚠️ Graceful fallback: `key_storage='software'`. Same threat model as scenario 3's software case | Compliance team can query for hardware-bound coverage |
 | 12 | Companion auth code intercepted between web and native app (loopback / custom scheme) | Out of scope (PKCE territory) | Same | The auth code itself is 60s TTL single-use, separate defense |
 | 13 | User reinstalls OS / wipes companion | Existing flow: re-authenticate via OAuth | Same: new install_id, new key, new row; old row remains until ops/user revokes | Stale rows are visible in `GET /me/devices` (THERAPY-kcz0) for cleanup |
@@ -142,6 +142,67 @@ or better.
 
 **No row shows our deviation as strictly weaker than RFC 9449.** That
 is the security justification for shipping it.
+
+### Lost laptop is a different problem
+
+Threat #10 (lost / stolen unlocked laptop) deserves its own
+discussion because the obvious read — "we revoke the install_id and
+we're done" — undersells the gap between *device lost* and *device
+revoked*, and because DPoP is **not the relevant control here at
+all**. The hardware-bound key is on the laptop. An attacker holding
+the laptop *is* the device from the proof's perspective; the key
+signs proofs for them happily. RFC 9449 has the same gap for the
+same reason.
+
+**The thin-client architecture shrinks the realistic attack surface
+to the browser session.** The companion in v1 has no PHI-browsing
+UI: minimal main window, "Connected, mic ready, [Open Web
+Dashboard]." A non-sophisticated attacker who picks up an unlocked
+laptop can't browse patient records through the companion because
+the companion doesn't show patient records. To touch PHI they need
+either:
+
+1. **The browser** — click `Start Session` on app.pablo.health, or
+   read whatever logged-in tab is already open. The relevant
+   control is web idle-logout (THERAPY-a290 — currently a launch
+   blocker), **not** any companion-side defense.
+2. **A script** that uses the companion's stored Firebase refresh
+   token + device key to call backend APIs directly. Realistic for a
+   sophisticated insider; rare for a "left laptop at a café"
+   attacker.
+3. **The OS-level Keychain / Credential Manager** — readable if the
+   attacker has unlocked-user access. Full-disk encryption +
+   require-Touch-ID-to-unlock-Keychain are OS-level controls Pablo
+   recommends in the self-hosting / customer onboarding guide; they
+   are not enforced by Pablo's code.
+
+The controls that actually mitigate this scenario, in priority order:
+
+| Control | Owned by | Status |
+|---|---|---|
+| Web idle-logout | Pablo (frontend) | THERAPY-a290, launch-blocker |
+| Companion has no PHI-browsing UI | Pablo (design) | Already true in thin-client v1 |
+| Self-serve `revoke device` button on the device list | Pablo (frontend + backend) | Not yet filed |
+| Refresh-token TTL bounded to N hours | Pablo (Firebase config) | Audit task, not yet filed |
+| Server-side session timeout regardless of token validity | Pablo (backend) | Not yet enforced |
+| Full-disk encryption (FileVault / BitLocker) | OS-level / customer | Document in HIPAA self-hosting guide |
+| Strong device login (Touch ID / Windows Hello / strong password) | OS-level / customer | Document in HIPAA self-hosting guide |
+| Screen-lock idle timer | OS-level / customer | Document in HIPAA self-hosting guide |
+
+DPoP does help the *cross-device* version of this story: revoking the
+lost laptop's install_id doesn't affect the user's other enrolled
+devices (one row update vs. a Firebase-wide token revoke). That's
+real, but it's a usability win, not a defense against the realistic
+threat itself.
+
+**Where the doc was misleading on first pass:** the original row
+implied DPoP gave us strictly-better lost-laptop protection. It
+doesn't. DPoP and `cnf.jkt` are equally helpless when the key is
+sitting on the same hardware the attacker is holding. The protection
+lives at other layers — web idle-logout, refresh-token TTL,
+OS-level disk encryption, self-serve revocation UX — and those are
+where launch-readiness should be measured, not in the DPoP
+architecture.
 
 ---
 
