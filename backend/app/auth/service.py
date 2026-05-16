@@ -279,9 +279,25 @@ def require_mfa(
     return decoded_token
 
 
+def enforce_idle_session(
+    decoded_token: dict[str, Any] = Depends(require_mfa),
+) -> dict[str, Any]:
+    """Reject requests whose Firebase session has been idle past the timeout.
+
+    Drop-in replacement for ``require_mfa`` in dependency chains: returns
+    the same decoded token so downstream deps don't need to change.
+    Defers the Redis logic to ``idle_session.check_and_touch`` to keep
+    that module free of imports from this file.
+    """
+    from . import idle_session
+
+    idle_session.check_and_touch(decoded_token)
+    return decoded_token
+
+
 def get_tenant_context(
     request: Request,
-    decoded_token: dict[str, Any] = Depends(require_mfa),
+    decoded_token: dict[str, Any] = Depends(enforce_idle_session),
     user_repo: UserRepository = Depends(get_user_repository),
     identity_repo: IdentityRepository = Depends(get_identity_repository),
 ) -> TenantContext:
@@ -537,7 +553,7 @@ def _resolve_user(
 
 def get_current_user(
     request: Request,
-    decoded_token: dict[str, Any] = Depends(require_mfa),
+    decoded_token: dict[str, Any] = Depends(enforce_idle_session),
     user_repo: UserRepository = Depends(get_user_repository),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
     identity_repo: IdentityRepository = Depends(get_identity_repository),
@@ -688,9 +704,7 @@ def require_pentest_runner(request: Request) -> str:
     token = auth_header[7:]
 
     try:
-        claims = _verify_google_oidc_token(
-            token, audience=settings.pentest_runner_audience
-        )
+        claims = _verify_google_oidc_token(token, audience=settings.pentest_runner_audience)
     except Exception as exc:
         logger.warning("Pentest runner OIDC verification failed: %s", exc)
         raise HTTPException(
