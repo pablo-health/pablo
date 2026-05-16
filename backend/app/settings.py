@@ -92,6 +92,21 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Server-enforced session idle timeout. The frontend IdleTimeout
+    # component handles the warning dialog and proactive logout for
+    # active tabs; this setting is the backend safety net that catches
+    # stale sessions (tabs restored from bfcache, Safari relaunches,
+    # tampered/replayed tokens). Must stay in sync with the IDLE_TIMEOUT_MS
+    # constant in frontend/src/components/IdleTimeout.tsx.
+    idle_timeout_seconds: int = Field(
+        default=15 * 60,
+        description=(
+            "Maximum allowed gap between authenticated requests before "
+            "the session is forcibly expired (HIPAA §164.312(a)(2)(iii)). "
+            "Requires Redis; no-op when USE_REDIS=false."
+        ),
+    )
+
     # HIPAA Audit Logging — defense-in-depth dual-write
     audit_dual_write_enabled: bool = Field(
         default=True,
