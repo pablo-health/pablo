@@ -3,6 +3,7 @@
 "use client"
 
 import { Component, type ReactNode } from "react"
+import { reportFrontendError } from "@/lib/feErrorReporter"
 
 interface ErrorBoundaryProps {
   children: ReactNode
@@ -30,6 +31,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidCatch(error: Error): void {
     // Log only the error name — never the message or stack (may contain PHI)
     console.error("ErrorBoundary caught:", error.name)
+    // Ship a scrubbed report to Cloud Logging via /api/internal/fe-error.
+    // The reporter swallows network errors so a missing endpoint (pure
+    // self-hosted OSS) can't break a render.
+    void reportFrontendError(error)
   }
 
   handleReset = () => {
