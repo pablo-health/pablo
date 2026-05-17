@@ -16,6 +16,7 @@ from firebase_admin import auth as firebase_auth
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError
+from ..auth.route_security import truly_public
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import (
     AcceptBAARequest,
@@ -182,7 +183,7 @@ def update_current_user_profile(
 
 @router.get("/me/baa-status")
 def get_baa_status(
-    user: User = Depends(get_current_user_no_mfa),
+    user: User = Depends(get_current_user),
     current_version: str = Depends(get_baa_version),
 ) -> BAAStatusResponse:
     """
@@ -205,7 +206,7 @@ def get_baa_status(
 @router.post("/me/accept-baa")
 def accept_baa(
     request: AcceptBAARequest,
-    user: User = Depends(get_current_user_no_mfa),
+    user: User = Depends(get_current_user),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> BAAStatusResponse:
     """
@@ -295,7 +296,7 @@ def acknowledge_security_guide(
 @router.get("/baa/{version}", response_class=PlainTextResponse)
 def get_baa_text(
     version: str,
-    _user: User = Depends(get_current_user_no_mfa),
+    _user: User = Depends(get_current_user),
 ) -> str:
     """
     Get the full text of a specific BAA version.
@@ -315,6 +316,7 @@ def get_baa_text(
 @router.get("/baa", response_class=PlainTextResponse)
 def get_current_baa(
     current_version: str = Depends(get_baa_version),
+    _public: None = Depends(truly_public),
 ) -> str:
     """
     Get the current BAA version text.

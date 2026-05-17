@@ -11,11 +11,12 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from .api_errors import register_exception_handlers
+from .auth.route_security import truly_public
 from .db import get_engine
 from .logging_config import configure_logging
 from .middleware import (
@@ -152,7 +153,7 @@ if settings.enable_patient_chat:
 
 
 @app.get("/api/health")
-def health_check() -> dict[str, object]:
+def health_check(_public: None = Depends(truly_public)) -> dict[str, object]:
     """Health check endpoint.
 
     Returns server status, deployed git SHA, and minimum required

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
 from ..auth.firebase_init import initialize_firebase_app
+from ..auth.route_security import truly_public
 from ..models.companion_device import CompanionEnrollment
 from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
@@ -80,6 +81,7 @@ def create_native_code(
     request: CreateAuthCodeRequest,
     http_request: Request,
     _: None = Depends(require_rate_limit),
+    _public: None = Depends(truly_public),
 ) -> CreateAuthCodeResponse:
     """Generate a one-time authorization code for native app auth.
 
@@ -123,7 +125,9 @@ def create_native_code(
 
 @router.post("/native/exchange", response_model=ExchangeAuthCodeResponse)
 def exchange_native_code(
-    request: ExchangeAuthCodeRequest, _: None = Depends(require_rate_limit)
+    request: ExchangeAuthCodeRequest,
+    _: None = Depends(require_rate_limit),
+    _public: None = Depends(truly_public),
 ) -> ExchangeAuthCodeResponse:
     """Exchange a one-time authorization code for tokens.
 

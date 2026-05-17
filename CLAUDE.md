@@ -72,7 +72,26 @@ make format     # Auto-fix formatting
    SQLAlchemy model in `backend/app/db/models.py` (or
    `platform_models.py`) must include a same-commit Alembic migration.
    Don't land a model change and "add the migration later" — that
-   boots a broken dev env for everyone else.
+   boots a broken dev env for everyone else. **Same commit, regenerate
+   the tenant template.** Any alembic revision that touches tenant DDL
+   (`backend/alembic/versions/`) requires regenerating
+   `backend/app/db/tenant_template.sql`:
+
+   ```
+   poetry run python backend/scripts/regen_tenant_template.py
+   ```
+
+   The template is the canonical schema applied to every freshly-
+   provisioned tenant — `create_practice_schema` reads it directly
+   (it does **not** run alembic per tenant, by design). DDL outside
+   the ORM (functions, triggers, custom types, raw `op.execute(...)`
+   SQL) is invisible to `Base.metadata.create_all`; if you forget to
+   regenerate, new tenants land at HEAD-stamped but **missing your
+   DDL**, and every code path that touches it 500s. This is exactly
+   how patient-create regressed on 2026-05-17. CI should diff the
+   committed template against a freshly-regenerated copy — until
+   that check exists, regenerate manually and commit the resulting
+   `tenant_template.sql` alongside the migration.
 5. **PHI never enters stdout.** No `logger.info("... {patient_name}
    ...")` or `print(patient.*)` in `backend/app/`. Use `AuditService`
    for intentional PHI-adjacent records; keep everything else PHI-free.

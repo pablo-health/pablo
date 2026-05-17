@@ -211,6 +211,12 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}"))
+        # Per-command policies on ``patients`` (split out from the
+        # legacy single ALL policy to fix the INSERT chicken-and-egg).
+        # Idempotent for tables that don't have these policies.
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_modify ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_delete ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_insert ON {qualified}"))
 
         # Pick the policy shape:
         #   * patient_documents — combined policy. Non-private rows
@@ -249,16 +255,102 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
                 qualified,
             )
             continue
-        if table_name == "patients":
+        if table_name == "patient_clinicians":
+            # The grant table itself: gating it via
+            # ``has_patient_access(patient_id, …)`` would recurse
+            # (the function reads patient_clinicians), and even a
+            # non-recursive check on ``patient_id`` would create the
+            # same INSERT chicken-and-egg as ``patients`` had — a
+            # new grant's row can't satisfy "has a grant for this
+            # patient" until that very grant exists. Gate by
+            # ``user_id`` directly: each clinician sees only their
+            # own grants, and INSERTs are permitted as long as the
+            # row's ``user_id`` matches the current user (i.e. you
+            # can't grant access to other clinicians from a normal
+            # request path — admin endpoints would run with a
+            # different effective user via SET ROLE or similar).
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_user_isolation ON {qualified} "
+                    f"USING (user_id = current_setting('app.current_user_id', true)) "
+                    f"WITH CHECK (user_id = current_setting('app.current_user_id', true))"
+                )
+            )
+            logger.info("RLS (user_id) enabled on %s", qualified)
+        elif table_name == "patients":
+            # The ``patients`` table is the access-table target: a row's
+            # grant in ``patient_clinicians`` is what makes the row
+            # visible. Letting USING also gate INSERT (PG's default
+            # when WITH CHECK is omitted) creates a chicken-and-egg —
+            # ``has_patient_access(new_id, user)`` returns false for
+            # a brand-new patient because the grant doesn't exist yet,
+            # so the very first INSERT into a fresh tenant is rejected
+            # ("new row violates row-level security policy"). This is
+            # exactly the failure mode the 2026-05-17 pentest hit on
+            # freshly-provisioned ``practice_pentest_*`` schemas.
+            #
+            # Split the policy: USING gates SELECT/UPDATE/DELETE
+            # (only granted clinicians can read or modify rows), and
+            # an explicit ``WITH CHECK (true)`` permits INSERTs. The
+            # app inserts the patient + its primary-clinician grant
+            # in the same flush so a new patient is immediately
+            # visible to its creator. Other tables (sessions, notes,
+            # etc.) keep the USING-as-WITH-CHECK shape — they SHOULD
+            # require an existing grant to insert.
             session.execute(
                 text(
                     f"CREATE POLICY rls_patient_access ON {qualified} "
-                    f"USING (has_patient_access("
+                    f"FOR SELECT USING (has_patient_access("
                     f"  id, current_setting('app.current_user_id', true)"
                     f"))"
                 )
             )
-            logger.info("RLS (patient_access on id) enabled on %s", qualified)
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_patient_modify ON {qualified} "
+                    f"FOR UPDATE USING (has_patient_access("
+                    f"  id, current_setting('app.current_user_id', true)"
+                    f"))"
+                )
+            )
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_patient_delete ON {qualified} "
+                    f"FOR DELETE USING (has_patient_access("
+                    f"  id, current_setting('app.current_user_id', true)"
+                    f"))"
+                )
+            )
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_patient_insert ON {qualified} FOR INSERT WITH CHECK (true)"
+                )
+            )
+            logger.info("RLS (patient_access split policies) enabled on %s", qualified)
+        elif "user_id" in columns:
+            # Tables where a row has a direct owning clinician
+            # (therapy_sessions, appointments, audit_logs, etc.).
+            # Each user sees only their own rows. WITH CHECK matches
+            # USING explicitly so INSERTs are permitted as long as the
+            # new row's ``user_id`` matches the current user — no
+            # chicken-and-egg, and you can't insert a row claiming
+            # someone else's user_id from a normal request path.
+            #
+            # ``patient_id`` is checked AFTER ``user_id`` (despite
+            # both columns sometimes coexisting on the same table —
+            # e.g. ``therapy_sessions``, ``audit_logs``) because the
+            # documented intent is "user owns the row directly", and
+            # the patient_id-based policy is only meant for tables
+            # that have *no* user_id column (currently just
+            # ``notes``).
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_user_isolation ON {qualified} "
+                    f"USING (user_id = current_setting('app.current_user_id', true)) "
+                    f"WITH CHECK (user_id = current_setting('app.current_user_id', true))"
+                )
+            )
+            logger.info("RLS (user_id) enabled on %s", qualified)
         elif "patient_id" in columns:
             session.execute(
                 text(
@@ -270,14 +362,6 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
                 )
             )
             logger.info("RLS (patient_access) enabled on %s", qualified)
-        elif "user_id" in columns:
-            session.execute(
-                text(
-                    f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id = current_setting('app.current_user_id', true))"
-                )
-            )
-            logger.info("RLS (user_id) enabled on %s", qualified)
 
     session.commit()
 
