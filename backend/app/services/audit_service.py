@@ -239,6 +239,43 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_patient_document_action(
+        self,
+        action: AuditAction,
+        user: User,
+        request: Request,
+        document_id: str,
+        patient_id: str,
+        mime_type: str | None = None,
+        size_bytes: int | None = None,
+    ) -> AuditLogEntry:
+        """Audit a patient-document lifecycle event (THERAPY-ak6m.2).
+
+        Payload shape is fixed to: document_id (resource_id), patient_id,
+        plus optional ``mime_type`` and ``size_bytes`` carried under
+        ``changes``. We deliberately exclude filename and any extracted
+        text — both are PHI-adjacent and the audit table must stay
+        PHI-free per guardrail #5.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        changes: dict[str, Any] = {}
+        if mime_type is not None:
+            changes["mime_type"] = mime_type
+        if size_bytes is not None:
+            changes["size_bytes"] = size_bytes
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=action.value,
+            resource_type=ResourceType.PATIENT_DOCUMENT.value,
+            resource_id=document_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes or None,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction,

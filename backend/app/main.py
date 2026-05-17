@@ -35,6 +35,7 @@ from .routes import (
     ical_sync,
     note_types,
     notes,
+    patient_documents,
     patients,
     scheduling,
     sessions,
@@ -139,6 +140,8 @@ app.include_router(scheduling.router)
 app.include_router(sessions.router)
 app.include_router(notes.router)
 app.include_router(notes.patient_notes_router)
+app.include_router(patient_documents.patient_documents_router)
+app.include_router(patient_documents.documents_router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)

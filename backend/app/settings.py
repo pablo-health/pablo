@@ -356,6 +356,37 @@ class Settings(BaseSettings):
         default="pablo-audio",
         description="GCS bucket for encrypted audio uploads",
     )
+    # Patient document upload (THERAPY-ak6m.2). When unset, the
+    # /api/patients/{id}/documents surface returns 503 with a clear
+    # configuration message — keeps self-hosters who haven't provisioned
+    # a bucket from quietly getting a broken upload flow.
+    patient_documents_gcs_bucket: str | None = Field(
+        default=None,
+        description=(
+            "GCS bucket for clinician-uploaded patient documents (PDFs, "
+            "PNG/JPEG scans). Per-tenant prefix: "
+            "gs://<bucket>/<tenant_id>/<uuid>. Leave unset to disable "
+            "the patient_documents API surface."
+        ),
+    )
+    # Signed-URL TTLs. Upload URL only needs to live for the browser's
+    # PUT round-trip; download URL is consumed immediately by a 302
+    # redirect. 5 min on both keeps the window of misuse small. The
+    # PUT URL is additionally constrained to a single object name +
+    # content type + 25 MB ceiling at sign time so leakage is
+    # unforgeable.
+    patient_documents_upload_url_ttl_seconds: int = Field(
+        default=300,
+        description="V4 signed PUT URL lifetime for patient-document uploads.",
+    )
+    patient_documents_download_url_ttl_seconds: int = Field(
+        default=300,
+        description="V4 signed GET URL lifetime for patient-document downloads.",
+    )
+    patient_documents_max_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        description="Maximum patient-document upload size (bytes).",
+    )
     marketing_site_url: str = Field(
         default="",
         description="Marketing site URL — OIDC audience for M2M provisioning",

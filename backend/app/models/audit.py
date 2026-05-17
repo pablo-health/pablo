@@ -105,6 +105,27 @@ class AuditAction(StrEnum):
     CHAT_CHART_PROMOTION = "chat_chart_promotion"
     CHAT_TURN_BLOCKED = "chat_turn_blocked"
 
+    # Patient document upload (THERAPY-ak6m.2). UPLOAD_INITIATED fires
+    # when a signed PUT URL is minted and the placeholder row inserted;
+    # UPLOADED fires after the finalize step verifies the GCS object,
+    # validates size/mime, and runs PyMuPDF text extraction. VIEWED,
+    # DOWNLOADED, DELETED cover the read-side lifecycle. Payloads carry
+    # ids + size + mime only — never filename or extracted_text content.
+    PATIENT_DOCUMENT_UPLOAD_INITIATED = "patient_document_upload_initiated"
+    PATIENT_DOCUMENT_UPLOADED = "patient_document_uploaded"
+    PATIENT_DOCUMENT_VIEWED = "patient_document_viewed"
+    PATIENT_DOCUMENT_DOWNLOADED = "patient_document_downloaded"
+    PATIENT_DOCUMENT_DELETED = "patient_document_deleted"
+
+    # Companion audio signed-URL upload (additive to the existing
+    # multipart /upload-audio surface — companion app migrates at its
+    # own pace). INIT fires when channel signed URLs are minted;
+    # UPLOADED fires after finalize verifies both channel blobs land
+    # and enqueues transcription. The existing SESSION_AUDIO_UPLOADED
+    # event remains in use by the multipart path so audit dashboards
+    # don't fragment.
+    SESSION_AUDIO_UPLOAD_INITIATED = "session_audio_upload_initiated"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -116,6 +137,7 @@ class ResourceType(StrEnum):
     SELF = "self"
     TENANT_EXPORT = "tenant_export"
     CHAT_CONVERSATION = "chat_conversation"
+    PATIENT_DOCUMENT = "patient_document"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches

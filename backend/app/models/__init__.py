@@ -58,6 +58,7 @@ from .patient import (
     PatientResponse,
     UpdatePatientRequest,
 )
+from .patient_document import PatientDocument
 from .scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -168,6 +169,7 @@ __all__ = [
     "NoteResponse",
     "ObjectiveNote",
     "Patient",
+    "PatientDocument",
     "PatientExportData",
     "PatientListResponse",
     "PatientNotesListResponse",

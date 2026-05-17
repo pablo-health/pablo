@@ -286,9 +286,7 @@ class AppointmentRow(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     # Recurrence
     recurrence_rule: Mapped[str | None] = mapped_column(String(50))
-    recurring_appointment_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False), index=True
-    )
+    recurring_appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
     recurrence_index: Mapped[int | None] = mapped_column(Integer)
     is_exception: Mapped[bool] = mapped_column(Boolean, default=False)
     # Google Calendar sync
@@ -520,6 +518,51 @@ class LlmUsageRow(Base):
         Index("ix_llm_usage_period", "period_yyyymm"),
         Index("ix_llm_usage_feature_period", "feature_key", "period_yyyymm"),
     )
+
+
+class PatientDocumentRow(Base):
+    """Clinician-uploaded patient document (THERAPY-ak6m.2).
+
+    Per-tenant table, RLS-keyed to ``user_id`` (the uploader) — see
+    :func:`app.db.enable_rls_on_schema`. The shape diverges from other
+    patient-scoped tables (which key on patient_id via
+    ``has_patient_access``) because v1 ships single-clinician document
+    ownership; co-treating clinicians can re-upload their own copy
+    until the patient_clinicians-aware sharing model lands.
+
+    Lifecycle:
+
+    * ``finalized_at`` is NULL between init (signed URL minted +
+      placeholder row inserted) and finalize (GCS object verified +
+      PyMuPDF extraction run). List/get filters
+      ``finalized_at IS NOT NULL`` so abandoned init rows never appear.
+    * ``extracted_text`` is NULL when PyMuPDF returned <100 chars
+      (treated as a scanned PDF; ak6m.2.3 will OCR these).
+    * ``deleted_at`` non-NULL = soft-deleted; GCS-object cleanup cron
+      is deferred to ak6m.2.1.
+    """
+
+    __tablename__ = "patient_documents"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_patient_documents_patient_deleted", "patient_id", "deleted_at"),)
 
 
 class AuditLogRow(Base):
