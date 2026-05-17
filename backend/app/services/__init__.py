@@ -47,6 +47,18 @@ from .note_service import (
     NoteService,
     NoteServiceError,
 )
+from .patient_documents_service import (
+    ALLOWED_MIME_TYPES as PATIENT_DOCUMENT_ALLOWED_MIME_TYPES,
+)
+from .patient_documents_service import (
+    DocumentsBucketNotConfiguredError,
+    FileTooLargeError,
+    InitUploadResult,
+    PatientDocumentError,
+    PatientDocumentsService,
+    UnsupportedMimeTypeError,
+    UploadNotCompleteError,
+)
 from .session_service import (
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
@@ -67,6 +79,7 @@ from .source_attribution_service import (
 )
 
 __all__ = [
+    "PATIENT_DOCUMENT_ALLOWED_MIME_TYPES",
     "AuditService",
     "ChatConversationNotFoundError",
     "ChatLLMGateway",
@@ -75,12 +88,15 @@ __all__ = [
     "ChatTurnService",
     "ContextBundle",
     "ContextOverflowError",
+    "DocumentsBucketNotConfiguredError",
     "EhrNavigationService",
     "ExportService",
     "FakeChatLLMGateway",
+    "FileTooLargeError",
     "GeminiChatLLMGateway",
     "GeminiEhrNavigationService",
     "GeneratedNote",
+    "InitUploadResult",
     "InvalidSelectionError",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
@@ -94,6 +110,8 @@ __all__ = [
     "NoteNotFoundError",
     "NoteService",
     "NoteServiceError",
+    "PatientDocumentError",
+    "PatientDocumentsService",
     "PatientNotFoundError",
     "SOAPGenerationFailedError",
     "SessionAlreadyInStatusError",
@@ -105,6 +123,8 @@ __all__ = [
     "TurnConcurrencyError",
     "TurnContext",
     "TurnStreamEvent",
+    "UnsupportedMimeTypeError",
+    "UploadNotCompleteError",
     "UserAssistantTurn",
     "assemble_context_bundle",
     "build_attribution_prompt",

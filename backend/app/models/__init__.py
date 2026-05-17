@@ -58,6 +58,7 @@ from .patient import (
     PatientResponse,
     UpdatePatientRequest,
 )
+from .patient_document import DocumentCategory, PatientDocument
 from .scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -149,6 +150,7 @@ __all__ = [
     "CreateStandaloneNoteRequest",
     "DeletePatientRequest",
     "DeletePatientResponse",
+    "DocumentCategory",
     "EditSeriesRequest",
     "EhrAction",
     "EhrPrompt",
@@ -168,6 +170,7 @@ __all__ = [
     "NoteResponse",
     "ObjectiveNote",
     "Patient",
+    "PatientDocument",
     "PatientExportData",
     "PatientListResponse",
     "PatientNotesListResponse",

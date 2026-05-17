@@ -285,6 +285,24 @@ CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_documents (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    user_id character varying(128) NOT NULL,
+    filename text NOT NULL,
+    mime_type character varying(100) NOT NULL,
+    gcs_path text NOT NULL,
+    extracted_text text,
+    size_bytes bigint DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    finalized_at timestamp with time zone,
+    deleted_at timestamp with time zone,
+    category character varying(32) DEFAULT 'chart'::character varying NOT NULL,
+    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patients (
     id uuid NOT NULL,
     first_name character varying(255) NOT NULL,
@@ -448,6 +466,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
+    ADD CONSTRAINT patient_documents_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patients
     ADD CONSTRAINT patients_pkey PRIMARY KEY (id);
 
@@ -593,6 +616,14 @@ CREATE INDEX ix_patient_clinicians_user_id ON __TENANT_SCHEMA__.patient_clinicia
 
 
 
+CREATE INDEX ix_patient_documents_patient_deleted ON __TENANT_SCHEMA__.patient_documents USING btree (patient_id, deleted_at);
+
+
+
+CREATE INDEX ix_patient_documents_user_id ON __TENANT_SCHEMA__.patient_documents USING btree (user_id);
+
+
+
 CREATE INDEX ix_patients_deleted_at_partial ON __TENANT_SCHEMA__.patients USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
@@ -649,3 +680,12 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
+    ADD CONSTRAINT patient_documents_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text = 'chart'::text) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));

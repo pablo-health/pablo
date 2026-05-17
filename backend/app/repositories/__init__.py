@@ -40,6 +40,10 @@ from .patient import (
     InMemoryPatientRepository,
     PatientRepository,
 )
+from .patient_document import (
+    InMemoryPatientDocumentRepository,
+    PatientDocumentRepository,
+)
 from .session import (
     InMemoryTherapySessionRepository,
     TherapySessionRepository,
@@ -97,6 +101,13 @@ def get_notes_repository() -> NotesRepository:
     from .postgres.note import PostgresNotesRepository
 
     return PostgresNotesRepository(_get_pg_session())
+
+
+def get_patient_document_repository() -> PatientDocumentRepository:
+    """Get patient-document repository instance."""
+    from .postgres.patient_document import PostgresPatientDocumentRepository
+
+    return PostgresPatientDocumentRepository(_get_pg_session())
 
 
 def get_ehr_prompt_repository() -> EhrPromptRepository:
@@ -200,11 +211,13 @@ __all__ = [
     "InMemoryIdentityRepository",
     "InMemoryLlmUsageRepository",
     "InMemoryNotesRepository",
+    "InMemoryPatientDocumentRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
     "LlmUsageRepository",
     "NotesRepository",
+    "PatientDocumentRepository",
     "PatientRepository",
     "TherapySessionRepository",
     "UserRepository",
@@ -223,6 +236,7 @@ __all__ = [
     "get_identity_repository",
     "get_llm_usage_repository",
     "get_notes_repository",
+    "get_patient_document_repository",
     "get_patient_repository",
     "get_session_repository",
     "get_user_repository",

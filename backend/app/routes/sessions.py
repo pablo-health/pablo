@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from ..services.eval_export_service import EvalExportService  # type: ignore[import-not-found]
@@ -499,9 +500,7 @@ def upload_transcript_to_session(
 ) -> dict[str, str]:
     """Upload a transcript to an existing session and trigger SOAP pipeline."""
     try:
-        session, _note = session_service.upload_transcript_to_session(
-            session_id, user.id, request
-        )
+        session, _note = session_service.upload_transcript_to_session(session_id, user.id, request)
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found") from e
     except InvalidSessionStatusError as e:
@@ -726,3 +725,240 @@ async def upload_audio(
         "queue": queue_type,
         "message": f"Audio uploaded (2 channels). Transcription queued ({queue_type}).",
     }
+
+
+# --- Audio upload via signed-URL direct-to-GCS (additive) ---
+#
+# Complements the multipart ``/upload-audio`` endpoint above. The
+# companion app can opt into this path to keep Cloud Run bandwidth
+# flat when many users record concurrently — bytes flow browser→GCS
+# directly. The multipart endpoint stays so existing companion
+# builds keep working; migrating is its own bead.
+#
+# Scope: Whisper provider only. AssemblyAI's VAD region splitting
+# operates on raw bytes and isn't a natural fit for browser-direct
+# upload — that path stays on multipart until we land a follow-up
+# that uses AssemblyAI's ``audio_url`` parameter against a signed
+# GCS GET URL.
+
+
+def _audio_signed_object_name(session_id: str, channel: str) -> str:
+    """Per-session object names for signed PUT URLs.
+
+    Lives under ``signed/`` so the GCS-side bucket policy can apply
+    a different retention / IAM shape if needed without touching the
+    multipart-path objects.
+    """
+    return f"signed/{session_id}/{channel}.pcm"
+
+
+class _AudioUploadChannel(BaseModel):
+    upload_url: str
+    gcs_path: str
+
+
+class _AudioInitResponse(BaseModel):
+    session_id: str
+    therapist: _AudioUploadChannel
+    client: _AudioUploadChannel
+    required_content_type: str
+    max_bytes: int
+
+
+class _AudioFinalizeResponse(BaseModel):
+    id: str
+    status: str
+    provider: str
+    queue: str
+    message: str
+
+
+@router.post(
+    "/api/sessions/{session_id}/upload-audio/init",
+    status_code=status.HTTP_201_CREATED,
+)
+def init_audio_upload(
+    session_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    session_repo: TherapySessionRepository = Depends(get_session_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> _AudioInitResponse:
+    """Mint two signed PUT URLs (therapist + client channels).
+
+    Audit emission carries channel count and provider only — no
+    filename, no caller-provided metadata to redact.
+    """
+    settings = get_settings()
+    if not settings.transcription_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Server-side transcription is not enabled.",
+        )
+    if settings.transcription_provider != "whisper":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=(
+                "Signed-URL audio upload only supports the whisper provider "
+                "in v1; use POST /api/sessions/{id}/upload-audio for "
+                "assemblyai."
+            ),
+        )
+
+    session = session_repo.get(session_id, user.id)
+    if not session:
+        raise NotFoundError("Session not found")
+
+    bucket = settings.transcription_audio_bucket
+    if not bucket:
+        raise ServerError("Transcription audio bucket is not configured")
+
+    from google.cloud import storage  # type: ignore[attr-defined]
+
+    from ..services.signed_upload import make_upload_url
+
+    client = storage.Client()
+    content_type = "application/octet-stream"
+    therapist_path = _audio_signed_object_name(session_id, "therapist")
+    client_path = _audio_signed_object_name(session_id, "client")
+    therapist_url = make_upload_url(
+        client=client,
+        bucket=bucket,
+        object_name=therapist_path,
+        content_type=content_type,
+        max_bytes=_MAX_AUDIO_SIZE,
+        ttl_seconds=settings.patient_documents_upload_url_ttl_seconds,
+    )
+    client_url = make_upload_url(
+        client=client,
+        bucket=bucket,
+        object_name=client_path,
+        content_type=content_type,
+        max_bytes=_MAX_AUDIO_SIZE,
+        ttl_seconds=settings.patient_documents_upload_url_ttl_seconds,
+    )
+
+    audit.log_session_action(
+        AuditAction.SESSION_AUDIO_UPLOAD_INITIATED,
+        user,
+        http_request,
+        session,
+        changes={"provider": "whisper", "channels": 2, "transport": "signed_url"},
+    )
+
+    return _AudioInitResponse(
+        session_id=session_id,
+        therapist=_AudioUploadChannel(upload_url=therapist_url, gcs_path=therapist_path),
+        client=_AudioUploadChannel(upload_url=client_url, gcs_path=client_path),
+        required_content_type=content_type,
+        max_bytes=_MAX_AUDIO_SIZE,
+    )
+
+
+@router.post("/api/sessions/{session_id}/upload-audio/finalize")
+def finalize_audio_upload(
+    session_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    session_repo: TherapySessionRepository = Depends(get_session_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> _AudioFinalizeResponse:
+    """Verify both channel blobs landed in GCS, then enqueue Whisper.
+
+    Idempotent on retry: the size/exists check is read-only against
+    GCS, and ``enqueue_transcription`` is the same as the multipart
+    endpoint calls — the queue worker dedupes by ``session_id``.
+    """
+    settings = get_settings()
+    if settings.transcription_provider != "whisper":
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Signed-URL audio finalize only supports the whisper provider in v1.",
+        )
+
+    session = session_repo.get(session_id, user.id)
+    if not session:
+        raise NotFoundError("Session not found")
+
+    _retryable_statuses = {
+        SessionStatus.RECORDING_COMPLETE,
+        SessionStatus.TRANSCRIBING,
+        SessionStatus.FAILED,
+    }
+    if session.status not in _retryable_statuses:
+        raise BadRequestError(
+            f"Session must be in 'recording_complete', 'transcribing', "
+            f"or 'failed' status, got '{session.status}'",
+            code="INVALID_STATUS",
+        )
+
+    bucket = settings.transcription_audio_bucket
+    if not bucket:
+        raise ServerError("Transcription audio bucket is not configured")
+
+    from google.cloud import storage  # type: ignore[attr-defined]
+    from google.cloud.exceptions import NotFound
+
+    from ..services.signed_upload import fetch_blob_metadata
+
+    storage_client = storage.Client()
+    therapist_path = _audio_signed_object_name(session_id, "therapist")
+    client_path = _audio_signed_object_name(session_id, "client")
+
+    for label, path in (("therapist", therapist_path), ("client", client_path)):
+        try:
+            meta = fetch_blob_metadata(client=storage_client, bucket=bucket, object_name=path)
+        except NotFound as exc:
+            raise BadRequestError(
+                f"{label} audio upload not complete",
+                {"channel": label},
+                code="UPLOAD_NOT_COMPLETE",
+            ) from exc
+        if meta is None:
+            raise BadRequestError(
+                f"{label} audio upload not complete",
+                {"channel": label},
+                code="UPLOAD_NOT_COMPLETE",
+            )
+
+    session.status = SessionStatus.TRANSCRIBING
+    session.updated_at = utc_now()
+    session.audio_gcs_path = f"{therapist_path},{client_path}"
+
+    queue_service: TranscriptionQueueService = (
+        MockTranscriptionQueueService() if settings.is_development else TranscriptionQueueService()
+    )
+    is_practice = settings.pablo_edition == "practice"
+    try:
+        queue_service.enqueue_transcription(
+            session_id=session_id,
+            tenant_db="(default)",
+            user_id=user.id,
+            gcs_path=session.audio_gcs_path,
+            priority=is_practice,
+        )
+    except Exception:
+        _revert_transcribing_and_raise(session, session_repo, session_id, "whisper")
+
+    session_repo.update(session)
+    queue_type = "priority" if is_practice else "standard"
+    audit.log_session_action(
+        AuditAction.SESSION_AUDIO_UPLOADED,
+        user,
+        http_request,
+        session,
+        changes={
+            "provider": "whisper",
+            "queue": queue_type,
+            "channels": 2,
+            "transport": "signed_url",
+        },
+    )
+
+    return _AudioFinalizeResponse(
+        id=session.id,
+        status=session.status,
+        provider="whisper",
+        queue=queue_type,
+        message=f"Audio uploaded via signed URL (2 channels). Transcription queued ({queue_type}).",
+    )
