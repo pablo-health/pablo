@@ -14,9 +14,10 @@ import logging
 
 import google.auth.transport.requests
 import google.oauth2.id_token
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
+from ..auth.route_security import truly_public
 from ..db import get_db_session
 from ..db.platform_models import EmailTenantMappingRow
 from ..repositories import get_allowlist_repository, get_user_repository
@@ -136,6 +137,7 @@ def _verify_blocking_function_token(request: Request) -> None:
 def check_allowlist(
     request: CheckAllowlistRequest,
     http_request: Request,
+    _public: None = Depends(truly_public),
 ) -> CheckAllowlistResponse:
     """Check if an email is on the allowlist.
 
@@ -170,6 +172,7 @@ def check_allowlist(
 def check_status(
     request: CheckStatusRequest,
     http_request: Request,
+    _public: None = Depends(truly_public),
 ) -> CheckStatusResponse:
     """Check if a user account is disabled.
 
