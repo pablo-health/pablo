@@ -210,7 +210,8 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         session.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
-        # New per-command policies on ``patients`` (split out from the
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}"))
+        # Per-command policies on ``patients`` (split out from the
         # legacy single ALL policy to fix the INSERT chicken-and-egg).
         # Idempotent for tables that don't have these policies.
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_modify ON {qualified}"))
@@ -218,6 +219,10 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_insert ON {qualified}"))
 
         # Pick the policy shape:
+        #   * patient_documents — combined policy. Non-private rows
+        #     follow patient_access (co-treaters see the chart);
+        #     private rows collapse to uploader-only. Single CREATE
+        #     POLICY with an OR so PG can short-circuit.
         #   * patients (the access target itself) — gate by id via the
         #     has_patient_access function.
         #   * Any other table with patient_id — gate by patient_id via
@@ -225,6 +230,31 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         #   * Fallback to direct user_id ownership for tables that have
         #     a user_id column but no patient_id (e.g. availability_rules,
         #     google_calendar_tokens, ical_client_mappings).
+        if table_name == "patient_documents":
+            # category = 'chart' → patient_access (co-treaters share).
+            # category IN ('therapist_private', 'psychotherapy_notes')
+            # → uploader-only. Both restricted categories collapse to
+            # the same access predicate; the distinction matters at
+            # the disclosure-workflow layer, not RLS.
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_patient_doc_access ON {qualified} "
+                    f"USING ("
+                    f"  (category = 'chart' AND has_patient_access("
+                    f"    patient_id, current_setting('app.current_user_id', true)"
+                    f"  )) "
+                    f"  OR "
+                    f"  (category IN ('therapist_private', 'psychotherapy_notes') "
+                    f"   AND user_id = current_setting('app.current_user_id', true))"
+                    f")"
+                )
+            )
+            logger.info(
+                "RLS (patient_doc_access: chart=patient_access, restricted=uploader) "
+                "enabled on %s",
+                qualified,
+            )
+            continue
         if table_name == "patient_clinicians":
             # The grant table itself: gating it via
             # ``has_patient_access(patient_id, …)`` would recurse

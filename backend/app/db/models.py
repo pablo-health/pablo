@@ -286,9 +286,7 @@ class AppointmentRow(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     # Recurrence
     recurrence_rule: Mapped[str | None] = mapped_column(String(50))
-    recurring_appointment_id: Mapped[str | None] = mapped_column(
-        Uuid(as_uuid=False), index=True
-    )
+    recurring_appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
     recurrence_index: Mapped[int | None] = mapped_column(Integer)
     is_exception: Mapped[bool] = mapped_column(Boolean, default=False)
     # Google Calendar sync
@@ -519,6 +517,77 @@ class LlmUsageRow(Base):
     __table_args__ = (
         Index("ix_llm_usage_period", "period_yyyymm"),
         Index("ix_llm_usage_feature_period", "feature_key", "period_yyyymm"),
+    )
+
+
+class PatientDocumentRow(Base):
+    """Clinician-uploaded patient document (THERAPY-ak6m.2).
+
+    Per-tenant table. RLS shape combines two policies, keyed on the
+    ``category`` enum (see :class:`app.models.DocumentCategory` for
+    the regulatory rationale):
+
+    * ``chart`` rows follow the same patient-access model as
+      :class:`NoteRow`: anyone with a ``patient_clinicians`` grant on
+      the patient can see them. Default. Matches clinical reality —
+      co-treating clinicians share the chart.
+    * ``therapist_private`` and ``psychotherapy_notes`` rows collapse
+      to direct ``user_id`` ownership: only the uploader can see
+      them. Access predicate is identical for the two categories;
+      they're kept distinct so downstream disclosure workflows
+      (release-of-records, patient right-of-access) can filter on
+      the HIPAA-meaningful boundary later.
+
+    See :func:`app.db.enable_rls_on_schema` for the policy body.
+
+    Lifecycle:
+
+    * ``finalized_at`` is NULL between init (signed URL minted +
+      placeholder row inserted) and finalize (GCS object verified +
+      PyMuPDF extraction run). List/get filters
+      ``finalized_at IS NOT NULL`` so abandoned init rows never appear.
+    * ``extracted_text`` is NULL when PyMuPDF returned <100 chars
+      (treated as a scanned PDF; ak6m.2.3 will OCR these).
+    * ``deleted_at`` non-NULL = soft-deleted; GCS-object cleanup cron
+      is deferred to ak6m.2.1.
+    """
+
+    __tablename__ = "patient_documents"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    # Access + disclosure classification. Set at init, immutable.
+    # Stored as VARCHAR + CHECK (not a native PG enum) so future value
+    # changes / table splits stay cheap. See DocumentCategory in
+    # app/models/patient_document.py for the regulatory boundaries.
+    category: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'chart'"),
+        default="chart",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_patient_documents_patient_deleted", "patient_id", "deleted_at"),
+        CheckConstraint(
+            "category IN ('chart', 'therapist_private', 'psychotherapy_notes')",
+            name="ck_patient_documents_category",
+        ),
     )
 
 

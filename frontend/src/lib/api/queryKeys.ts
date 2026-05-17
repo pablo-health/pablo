@@ -85,6 +85,15 @@ export const queryKeys = {
       [...queryKeys.notes.all, "byPatient", patientId] as const,
   },
 
+  // Patient document query keys (THERAPY-ak6m.2)
+  patientDocuments: {
+    all: ["patient-documents"] as const,
+    byPatient: (patientId: string) =>
+      [...queryKeys.patientDocuments.all, "byPatient", patientId] as const,
+    detail: (documentId: string) =>
+      [...queryKeys.patientDocuments.all, "detail", documentId] as const,
+  },
+
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,
