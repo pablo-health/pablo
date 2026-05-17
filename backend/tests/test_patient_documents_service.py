@@ -14,6 +14,7 @@ import io
 from typing import Any
 
 import pytest
+from app.models import DocumentCategory
 from app.repositories import InMemoryPatientDocumentRepository
 from app.services.patient_documents_service import (
     FileTooLargeError,
@@ -91,7 +92,12 @@ def settings() -> Settings:
 
 @pytest.fixture
 def repo() -> InMemoryPatientDocumentRepository:
-    return InMemoryPatientDocumentRepository()
+    # Default grant for the common-case (patient-1, user-1) used by
+    # most tests. Cross-user / no-grant tests construct their own
+    # repo or call grant_access() explicitly.
+    repo = InMemoryPatientDocumentRepository()
+    repo.grant_access("patient-1", "user-1")
+    return repo
 
 
 @pytest.fixture
@@ -363,13 +369,18 @@ class TestFinalize:
 
 
 class TestReadsAndAccessControl:
-    def test_list_filters_to_user_and_finalized(
+    """Combined access predicate: patient grant + private-flag escape hatch."""
+
+    def test_co_treaters_with_grants_see_each_others_non_private_docs(
         self,
         service: PatientDocumentsService,
         repo: InMemoryPatientDocumentRepository,
         fake_gcs: _FakeStorageClient,
     ) -> None:
-        # Two users, same tenant, same patient
+        # Both clinicians have patient_clinicians grants on patient-1.
+        repo.grant_access("patient-1", "user-A")
+        repo.grant_access("patient-1", "user-B")
+
         a = service.init_upload(
             patient_id="patient-1",
             user_id="user-A",
@@ -378,11 +389,7 @@ class TestReadsAndAccessControl:
             size_bytes=1000,
         )
         _put_blob(
-            fake_gcs,
-            "pablo-docs-test",
-            a.document.gcs_path,
-            _native_text_pdf(),
-            "application/pdf",
+            fake_gcs, "pablo-docs-test", a.document.gcs_path, _native_text_pdf(), "application/pdf"
         )
         service.finalize_upload(document_id=a.document.id, user_id="user-A")
 
@@ -394,22 +401,23 @@ class TestReadsAndAccessControl:
             size_bytes=1000,
         )
         _put_blob(
-            fake_gcs,
-            "pablo-docs-test",
-            b.document.gcs_path,
-            _native_text_pdf(),
-            "application/pdf",
+            fake_gcs, "pablo-docs-test", b.document.gcs_path, _native_text_pdf(), "application/pdf"
         )
         service.finalize_upload(document_id=b.document.id, user_id="user-B")
 
-        assert {d.id for d in service.list_for_patient("patient-1", "user-A")} == {a.document.id}
-        assert {d.id for d in service.list_for_patient("patient-1", "user-B")} == {b.document.id}
+        # Co-treaters see both docs — they share the patient chart.
+        a_visible = {d.id for d in service.list_for_patient("patient-1", "user-A")}
+        b_visible = {d.id for d in service.list_for_patient("patient-1", "user-B")}
+        assert a_visible == {a.document.id, b.document.id}
+        assert b_visible == {a.document.id, b.document.id}
 
-    def test_get_returns_none_for_other_user(
+    def test_user_without_patient_grant_sees_nothing(
         self,
         service: PatientDocumentsService,
+        repo: InMemoryPatientDocumentRepository,
         fake_gcs: _FakeStorageClient,
     ) -> None:
+        repo.grant_access("patient-1", "user-A")
         init = service.init_upload(
             patient_id="patient-1",
             user_id="user-A",
@@ -426,7 +434,76 @@ class TestReadsAndAccessControl:
         )
         service.finalize_upload(document_id=init.document.id, user_id="user-A")
 
+        # user-B has no grant on patient-1 — nothing visible.
         assert service.get(init.document.id, "user-B") is None
+        assert service.list_for_patient("patient-1", "user-B") == []
+
+    @pytest.mark.parametrize(
+        "restricted_category",
+        [DocumentCategory.THERAPIST_PRIVATE, DocumentCategory.PSYCHOTHERAPY_NOTES],
+    )
+    def test_restricted_doc_is_uploader_only_even_with_grants(
+        self,
+        service: PatientDocumentsService,
+        repo: InMemoryPatientDocumentRepository,
+        fake_gcs: _FakeStorageClient,
+        restricted_category: DocumentCategory,
+    ) -> None:
+        # Both clinicians have patient grants — but the doc is in a
+        # restricted category, so only the uploader sees it. Same
+        # access behavior for both restricted categories; the
+        # downstream divergence is in release-of-records and patient
+        # right-of-access, not here.
+        repo.grant_access("patient-1", "user-A")
+        repo.grant_access("patient-1", "user-B")
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-A",
+            filename="restricted.pdf",
+            mime_type="application/pdf",
+            size_bytes=1000,
+            category=restricted_category,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _native_text_pdf(),
+            "application/pdf",
+        )
+        service.finalize_upload(document_id=init.document.id, user_id="user-A")
+
+        assert service.get(init.document.id, "user-A") is not None
+        assert service.get(init.document.id, "user-B") is None
+        # Same for list — restricted doc filtered out of co-treater's view.
+        assert {d.id for d in service.list_for_patient("patient-1", "user-A")} == {init.document.id}
+        assert service.list_for_patient("patient-1", "user-B") == []
+
+    def test_category_persists_on_response_and_namespaces_gcs_path(
+        self,
+        service: PatientDocumentsService,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="notes.pdf",
+            mime_type="application/pdf",
+            size_bytes=1000,
+            category=DocumentCategory.PSYCHOTHERAPY_NOTES,
+        )
+        # GCS path is category-namespaced so a bucket-level audit can
+        # grep for psychotherapy-notes traffic without a DB join.
+        assert "/psychotherapy_notes/" in init.document.gcs_path
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _native_text_pdf(),
+            "application/pdf",
+        )
+        doc = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        assert doc.category is DocumentCategory.PSYCHOTHERAPY_NOTES
 
 
 # ---- soft delete ------------------------------------------------------
@@ -440,8 +517,42 @@ class TestSoftDelete:
     ) -> None:
         init = service.init_upload(
             patient_id="patient-1",
-            user_id="user-A",
+            user_id="user-1",
             filename="x.pdf",
+            mime_type="application/pdf",
+            size_bytes=1000,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _native_text_pdf(),
+            "application/pdf",
+        )
+        service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        deleted = service.soft_delete(init.document.id, "user-1")
+        assert deleted is not None
+        assert deleted.deleted_at is not None
+
+        assert service.get(init.document.id, "user-1") is None
+        assert service.list_for_patient("patient-1", "user-1") == []
+
+    def test_co_treater_cannot_delete_another_clinicians_upload(
+        self,
+        service: PatientDocumentsService,
+        repo: InMemoryPatientDocumentRepository,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        """Read is shared with patient access; destructive ops stay
+        with the uploader. A co-treater with a grant can SEE the doc
+        but cannot delete it."""
+        repo.grant_access("patient-1", "user-A")
+        repo.grant_access("patient-1", "user-B")
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-A",
+            filename="A.pdf",
             mime_type="application/pdf",
             size_bytes=1000,
         )
@@ -454,12 +565,13 @@ class TestSoftDelete:
         )
         service.finalize_upload(document_id=init.document.id, user_id="user-A")
 
-        deleted = service.soft_delete(init.document.id, "user-A")
-        assert deleted is not None
-        assert deleted.deleted_at is not None
-
-        assert service.get(init.document.id, "user-A") is None
-        assert service.list_for_patient("patient-1", "user-A") == []
+        # user-B can see it...
+        assert service.get(init.document.id, "user-B") is not None
+        # ...but cannot delete it.
+        assert service.soft_delete(init.document.id, "user-B") is None
+        # Still visible to both after the failed delete.
+        assert service.get(init.document.id, "user-A") is not None
+        assert service.get(init.document.id, "user-B") is not None
 
     def test_double_delete_is_safe(
         self,
@@ -468,7 +580,7 @@ class TestSoftDelete:
     ) -> None:
         init = service.init_upload(
             patient_id="patient-1",
-            user_id="user-A",
+            user_id="user-1",
             filename="x.pdf",
             mime_type="application/pdf",
             size_bytes=1000,
@@ -480,9 +592,9 @@ class TestSoftDelete:
             _native_text_pdf(),
             "application/pdf",
         )
-        service.finalize_upload(document_id=init.document.id, user_id="user-A")
-        assert service.soft_delete(init.document.id, "user-A") is not None
-        assert service.soft_delete(init.document.id, "user-A") is None
+        service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        assert service.soft_delete(init.document.id, "user-1") is not None
+        assert service.soft_delete(init.document.id, "user-1") is None
 
 
 # ---- helper-level PyMuPDF sanity -------------------------------------

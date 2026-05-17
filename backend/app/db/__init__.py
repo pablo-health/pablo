@@ -204,25 +204,19 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
     # this is can see it. Other grants for the same patient are
     # invisible to peers, which matches the v1 "primary clinician owns
     # the relationship" model.
-    # `patient_documents` is RLS-keyed to user_id by design (THERAPY-
-    # ak6m.2 v1): each clinician owns the documents they upload and
-    # cannot see another clinician's uploads even within the same
-    # tenant. Cross-clinician document sharing waits for a follow-up
-    # bead; until then we deliberately bypass the patient_access
-    # function and use the direct-ownership policy shape.
-    user_id_keyed_tables = frozenset({"patient_documents"})
-
     for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
         session.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
         session.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_access ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_doc_access ON {qualified}"))
 
         # Pick the policy shape:
-        #   * patient_documents — direct user_id ownership (v1
-        #     single-clinician model); explicit allowlist so the
-        #     pattern below doesn't pull it into patient_access.
+        #   * patient_documents — combined policy. Non-private rows
+        #     follow patient_access (co-treaters see the chart);
+        #     private rows collapse to uploader-only. Single CREATE
+        #     POLICY with an OR so PG can short-circuit.
         #   * patients (the access target itself) — gate by id via the
         #     has_patient_access function.
         #   * Any other table with patient_id — gate by patient_id via
@@ -230,14 +224,30 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
         #   * Fallback to direct user_id ownership for tables that have
         #     a user_id column but no patient_id (e.g. availability_rules,
         #     google_calendar_tokens, ical_client_mappings).
-        if table_name in user_id_keyed_tables and "user_id" in columns:
+        if table_name == "patient_documents":
+            # category = 'chart' → patient_access (co-treaters share).
+            # category IN ('therapist_private', 'psychotherapy_notes')
+            # → uploader-only. Both restricted categories collapse to
+            # the same access predicate; the distinction matters at
+            # the disclosure-workflow layer, not RLS.
             session.execute(
                 text(
-                    f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id = current_setting('app.current_user_id', true))"
+                    f"CREATE POLICY rls_patient_doc_access ON {qualified} "
+                    f"USING ("
+                    f"  (category = 'chart' AND has_patient_access("
+                    f"    patient_id, current_setting('app.current_user_id', true)"
+                    f"  )) "
+                    f"  OR "
+                    f"  (category IN ('therapist_private', 'psychotherapy_notes') "
+                    f"   AND user_id = current_setting('app.current_user_id', true))"
+                    f")"
                 )
             )
-            logger.info("RLS (user_id, explicit) enabled on %s", qualified)
+            logger.info(
+                "RLS (patient_doc_access: chart=patient_access, restricted=uploader) "
+                "enabled on %s",
+                qualified,
+            )
             continue
         if table_name == "patients":
             session.execute(

@@ -120,7 +120,13 @@ def documents_settings() -> Settings:
 
 @pytest.fixture
 def doc_repo() -> InMemoryPatientDocumentRepository:
-    return InMemoryPatientDocumentRepository()
+    # Default grant for the patient + the test_user_id that conftest's
+    # `client` fixture authenticates as. The grant model mirrors
+    # patient_clinicians; tests that exercise cross-user access can
+    # call grant_access for other users.
+    repo = InMemoryPatientDocumentRepository()
+    repo.grant_access("patient-1", "test-user-123")
+    return repo
 
 
 @pytest.fixture
@@ -452,27 +458,25 @@ class TestAuditEmission:
                 assert "my-secret-filename" not in field
 
 
-# ---- cross-user isolation (same-tenant RLS proxy) --------------------
+# ---- access predicate (patient grants + private flag) ----------------
 
 
-class TestSameTenantIsolation:
-    """User A and user B in the same tenant cannot see each other's docs.
-
-    The Postgres path enforces this via the ``rls_user_isolation``
-    policy on ``patient_documents`` (created by
-    ``enable_rls_on_schema``). At the route layer we mirror the same
-    contract via the repository's user_id filter. This test fixes the
-    contract so a regression in either layer is visible.
+class TestAccessPredicate:
+    """Combined RLS shape: patient_access for non-private rows, uploader-
+    only for private rows. The Postgres path enforces this via the
+    ``rls_patient_doc_access`` policy created by
+    ``enable_rls_on_schema``. At the route layer we mirror the same
+    contract via the repository, and the tests below fix both halves
+    so a regression in either layer is visible.
     """
 
-    def test_user_b_cannot_see_user_a_documents(
+    def test_user_without_grant_cannot_see_docs(
         self,
         documents_client: TestClient,
         fake_gcs: _FakeStorageClient,
         doc_repo: InMemoryPatientDocumentRepository,
         mock_user_id: str,
     ) -> None:
-        # User A creates + finalizes a document.
         init = _init_upload(documents_client, "patient-1")
         _put_blob(
             fake_gcs,
@@ -483,6 +487,150 @@ class TestSameTenantIsolation:
         )
         documents_client.post(f"/api/documents/{init['document_id']}/finalize")
 
-        # Direct repo probe: from user-B's perspective, the row is invisible.
-        assert doc_repo.get(init["document_id"], "user-B") is None
-        assert doc_repo.list_for_patient("patient-1", "user-B") == []
+        # An unrelated user with no patient_clinicians grant sees nothing.
+        assert doc_repo.get(init["document_id"], "user-no-grant") is None
+        assert doc_repo.list_for_patient("patient-1", "user-no-grant") == []
+
+    def test_co_treater_with_grant_sees_non_private_doc(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        mock_user_id: str,
+    ) -> None:
+        init = _init_upload(documents_client, "patient-1")
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            doc_repo.get(init["document_id"], mock_user_id).gcs_path,  # type: ignore[union-attr]
+            _native_text_pdf_bytes(),
+            "application/pdf",
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+
+        # Grant a co-treater — they can see the (non-private) doc.
+        doc_repo.grant_access("patient-1", "user-co-treater")
+        assert doc_repo.get(init["document_id"], "user-co-treater") is not None
+
+    @pytest.mark.parametrize(
+        "restricted_category",
+        ["therapist_private", "psychotherapy_notes"],
+    )
+    def test_restricted_doc_hidden_from_co_treaters_with_grant(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        mock_user_id: str,
+        restricted_category: str,
+    ) -> None:
+        response = documents_client.post(
+            "/api/patients/patient-1/documents/init",
+            json={
+                "filename": "restricted.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 1000,
+                "category": restricted_category,
+            },
+        )
+        assert response.status_code == 201, response.text
+        init = response.json()
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            doc_repo.get(init["document_id"], mock_user_id).gcs_path,  # type: ignore[union-attr]
+            _native_text_pdf_bytes(),
+            "application/pdf",
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+
+        # Co-treater has a grant but the doc is in a restricted category
+        # — invisible regardless of which specific restricted value.
+        doc_repo.grant_access("patient-1", "user-co-treater")
+        assert doc_repo.get(init["document_id"], "user-co-treater") is None
+        # And the route surfaces the category so the UI can pick the
+        # right treatment (lock icon, label, etc.).
+        get_response = documents_client.get(f"/api/documents/{init['document_id']}")
+        assert get_response.status_code == 200
+        assert get_response.json()["category"] == restricted_category
+
+    def test_psychotherapy_notes_read_emits_restricted_audit_action(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        audit_repo: InMemoryAuditRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Reads of psychotherapy_notes emit the *_RESTRICTED audit action.
+
+        Compliance dashboards filter on action alone for sensitive-
+        document access reporting — without having to parse the
+        changes payload. The specific category still rides in the
+        payload to distinguish therapist_private from psychotherapy_notes.
+        """
+        response = documents_client.post(
+            "/api/patients/patient-1/documents/init",
+            json={
+                "filename": "notes.pdf",
+                "mime_type": "application/pdf",
+                "size_bytes": 1000,
+                "category": "psychotherapy_notes",
+            },
+        )
+        init = response.json()
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            doc_repo.get(init["document_id"], mock_user_id).gcs_path,  # type: ignore[union-attr]
+            _native_text_pdf_bytes(),
+            "application/pdf",
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+        audit_repo.list_for_user(mock_user_id).clear()
+        documents_client.get(f"/api/documents/{init['document_id']}")
+        documents_client.get(
+            f"/api/documents/{init['document_id']}/file",
+            follow_redirects=False,
+        )
+
+        actions = [entry.action for entry in audit_repo.list_for_user(mock_user_id)]
+        assert "patient_document_viewed_restricted" in actions
+        assert "patient_document_downloaded_restricted" in actions
+        # The category rides on the payload to distinguish
+        # therapist_private from psychotherapy_notes within the same
+        # restricted action.
+        restricted_entries = [
+            e
+            for e in audit_repo.list_for_user(mock_user_id)
+            if e.action.endswith("_restricted")
+        ]
+        for entry in restricted_entries:
+            assert (entry.changes or {}).get("category") == "psychotherapy_notes"
+
+    def test_chart_read_emits_regular_audit_action(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        audit_repo: InMemoryAuditRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Reads of chart docs use the regular VIEWED/DOWNLOADED actions
+        (no _RESTRICTED suffix) so compliance reporting can cleanly
+        separate the volumes."""
+        init = _init_upload(documents_client, "patient-1")
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            doc_repo.get(init["document_id"], mock_user_id).gcs_path,  # type: ignore[union-attr]
+            _native_text_pdf_bytes(),
+            "application/pdf",
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+        audit_repo.list_for_user(mock_user_id).clear()
+        documents_client.get(f"/api/documents/{init['document_id']}")
+
+        actions = [entry.action for entry in audit_repo.list_for_user(mock_user_id)]
+        assert "patient_document_viewed" in actions
+        assert "patient_document_viewed_restricted" not in actions

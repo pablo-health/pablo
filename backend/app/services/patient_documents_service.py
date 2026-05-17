@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..models import PatientDocument
+from ..models import DocumentCategory, PatientDocument
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -131,15 +131,21 @@ class PatientDocumentsService:
             )
         return bucket
 
-    def _object_name(self, document_id: str) -> str:
-        # Per-tenant prefix: gs://<bucket>/<tenant>/<uuid>. The tenant
-        # is part of the GCS path so a bucket-policy review can confirm
-        # tenant isolation at the storage layer too (defense in depth
-        # against any future RLS regression). When tenant_id is None
-        # (single-tenant deploys), fall back to a fixed "default"
-        # prefix so the path shape stays predictable.
+    def _object_name(self, document_id: str, category: DocumentCategory) -> str:
+        # Layout: gs://<bucket>/<tenant>/<category>/<uuid>.
+        # * Tenant in the path so a bucket-policy review can confirm
+        #   tenant isolation at the storage layer too (defense in
+        #   depth against any future RLS regression).
+        # * Category in the path so the GCS-level access audit (e.g.
+        #   `gsutil ls`, log forensics) can grep for restricted-
+        #   category traffic without a DB join, and so a future
+        #   bucket split (e.g. move psychotherapy_notes to a
+        #   stricter-IAM bucket) is a path-prefix migration rather
+        #   than a content scan.
+        # When tenant_id is None (single-tenant deploys), fall back to
+        # a fixed "default" prefix so the path shape stays predictable.
         prefix = self._tenant_id or "default"
-        return f"{prefix}/{document_id}"
+        return f"{prefix}/{category.value}/{document_id}"
 
     # --- init / finalize ---------------------------------------------
 
@@ -151,13 +157,23 @@ class PatientDocumentsService:
         filename: str,
         mime_type: str,
         size_bytes: int,
+        category: DocumentCategory = DocumentCategory.CHART,
     ) -> InitUploadResult:
         """Mint a signed PUT URL + insert a placeholder row.
 
         Validates mime + size before any GCS round-trip so a bad
-        request fails fast and never reserves a path. Note that
-        ``size_bytes`` is the client-claimed size; the real check
-        happens at finalize against the live blob metadata.
+        request fails fast and never reserves a path. ``size_bytes``
+        is the client-claimed size; the real check happens at
+        finalize against the live blob metadata.
+
+        ``category`` defaults to :attr:`DocumentCategory.CHART` —
+        the doc is part of the patient record and visible to co-
+        treating clinicians via patient_clinicians grants. Pass
+        :attr:`DocumentCategory.THERAPIST_PRIVATE` or
+        :attr:`DocumentCategory.PSYCHOTHERAPY_NOTES` to restrict to
+        the uploader; see the enum docstring for the regulatory
+        difference between those two values. Category is immutable
+        after init.
         """
         if mime_type not in ALLOWED_MIME_TYPES:
             raise UnsupportedMimeTypeError(mime_type)
@@ -170,7 +186,7 @@ class PatientDocumentsService:
         from .signed_upload import make_upload_url
 
         document_id = str(uuid.uuid4())
-        object_name = self._object_name(document_id)
+        object_name = self._object_name(document_id, category)
         bucket = self._bucket()
 
         client = self._storage_client()
@@ -191,6 +207,7 @@ class PatientDocumentsService:
             mime_type=mime_type,
             gcs_path=object_name,
             size_bytes=0,  # filled in by finalize
+            category=category,
             created_at=utc_now(),
         )
         self._repo.add(document)

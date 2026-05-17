@@ -110,11 +110,21 @@ class AuditAction(StrEnum):
     # UPLOADED fires after the finalize step verifies the GCS object,
     # validates size/mime, and runs PyMuPDF text extraction. VIEWED,
     # DOWNLOADED, DELETED cover the read-side lifecycle. Payloads carry
-    # ids + size + mime only — never filename or extracted_text content.
+    # ids + size + mime + category only — never filename or
+    # extracted_text content.
+    #
+    # *_RESTRICTED variants fire for documents in the therapist_private
+    # or psychotherapy_notes categories — both uploader-only, both
+    # outside the standard patient-record release path. Splitting the
+    # action lets compliance dashboards report on sensitive-document
+    # access independently of the chart traffic, and gives us a hook
+    # for category-specific retention policies later.
     PATIENT_DOCUMENT_UPLOAD_INITIATED = "patient_document_upload_initiated"
     PATIENT_DOCUMENT_UPLOADED = "patient_document_uploaded"
     PATIENT_DOCUMENT_VIEWED = "patient_document_viewed"
+    PATIENT_DOCUMENT_VIEWED_RESTRICTED = "patient_document_viewed_restricted"
     PATIENT_DOCUMENT_DOWNLOADED = "patient_document_downloaded"
+    PATIENT_DOCUMENT_DOWNLOADED_RESTRICTED = "patient_document_downloaded_restricted"
     PATIENT_DOCUMENT_DELETED = "patient_document_deleted"
 
     # Companion audio signed-URL upload (additive to the existing

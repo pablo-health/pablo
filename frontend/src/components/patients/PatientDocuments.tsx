@@ -3,7 +3,15 @@
 "use client"
 
 import { ChangeEvent, useRef, useState } from "react"
-import { Download, FileText, Loader2, Trash2, Upload, AlertCircle } from "lucide-react"
+import {
+  AlertCircle,
+  Download,
+  FileText,
+  Loader2,
+  Lock,
+  Trash2,
+  Upload,
+} from "lucide-react"
 
 import { ApiError } from "@/lib/api/client"
 import { buildPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
@@ -14,8 +22,33 @@ import {
 } from "@/hooks/usePatientDocuments"
 import {
   ALLOWED_DOCUMENT_MIME_TYPES,
+  type DocumentCategory,
   type PatientDocumentResponse,
 } from "@/types/patientDocuments"
+
+const CATEGORY_OPTIONS: { value: DocumentCategory; label: string; hint: string }[] = [
+  {
+    value: "chart",
+    label: "Patient chart",
+    hint: "Shared with co-treating clinicians. Releasable to the patient via standard records request.",
+  },
+  {
+    value: "therapist_private",
+    label: "Therapist private",
+    hint: "Only visible to you. Working material kept out of the patient record.",
+  },
+  {
+    value: "psychotherapy_notes",
+    label: "Psychotherapy notes",
+    hint: "Only visible to you. HIPAA §164.501 — requires separate authorization to release; not subject to patient right-of-access.",
+  },
+]
+
+function categoryBadge(category: DocumentCategory): string | null {
+  if (category === "therapist_private") return "therapist private"
+  if (category === "psychotherapy_notes") return "psychotherapy notes"
+  return null
+}
 
 /**
  * Patient document upload + list (THERAPY-ak6m.2).
@@ -49,6 +82,7 @@ function formatDate(iso: string): string {
 export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [category, setCategory] = useState<DocumentCategory>("chart")
 
   const { data, isLoading, error: listError } = usePatientDocuments(patientId)
   const upload = useUploadPatientDocument(patientId)
@@ -61,7 +95,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
     if (!file) return
     setUploadError(null)
     upload.mutate(
-      { file },
+      { file, category },
       {
         onError: (err) => {
           if (err instanceof ApiError) {
@@ -112,7 +146,26 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
             Upload PDFs, PNGs, or JPEGs to attach to this patient&apos;s chart.
           </p>
         </div>
-        <div>
+        <div className="flex items-end gap-3">
+          <label className="inline-flex flex-col gap-0.5 text-sm text-neutral-600">
+            <span className="text-xs text-neutral-500">Visibility</span>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as DocumentCategory)}
+              disabled={upload.isPending}
+              className="rounded border border-neutral-300 px-2 py-1 text-sm"
+              data-testid="patient-document-category-select"
+              title={
+                CATEGORY_OPTIONS.find((o) => o.value === category)?.hint ?? ""
+              }
+            >
+              {CATEGORY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <input
             ref={fileInputRef}
             type="file"
@@ -166,12 +219,23 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
               <div className="flex items-start gap-3 min-w-0">
                 <FileText className="w-5 h-5 text-neutral-500 flex-shrink-0 mt-0.5" />
                 <div className="min-w-0">
-                  <p className="font-medium text-neutral-900 truncate">
+                  <p className="font-medium text-neutral-900 truncate inline-flex items-center gap-1.5">
                     {doc.filename}
+                    {doc.category !== "chart" && (
+                      <Lock
+                        className="w-3.5 h-3.5 text-neutral-500"
+                        aria-label={
+                          doc.category === "psychotherapy_notes"
+                            ? "Psychotherapy notes (only you can see this)"
+                            : "Therapist private (only you can see this)"
+                        }
+                      />
+                    )}
                   </p>
                   <p className="text-xs text-neutral-500">
                     {formatBytes(doc.size_bytes)} · uploaded{" "}
                     {formatDate(doc.created_at)}
+                    {categoryBadge(doc.category) && ` · ${categoryBadge(doc.category)}`}
                   </p>
                   {doc.text_extraction_failed && (
                     <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-700">

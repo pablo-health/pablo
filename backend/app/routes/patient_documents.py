@@ -38,7 +38,7 @@ from ..api_errors import (
     UnprocessableEntityError,
 )
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..models import AuditAction, PatientDocument, User
+from ..models import AuditAction, DocumentCategory, PatientDocument, User
 from ..repositories import (
     PatientDocumentRepository,
     PatientRepository,
@@ -62,6 +62,31 @@ from ..services import (
 from ..settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _read_action_for(category: DocumentCategory) -> AuditAction:
+    """Pick the VIEWED audit action for a document's category.
+
+    Chart reads emit the regular ``PATIENT_DOCUMENT_VIEWED`` action.
+    Restricted-category reads emit ``PATIENT_DOCUMENT_VIEWED_RESTRICTED``
+    so compliance reports can filter sensitive-document access without
+    parsing the changes payload. Category itself still goes in the
+    payload for the specific value (therapist_private vs.
+    psychotherapy_notes).
+    """
+    if category.is_restricted:
+        return AuditAction.PATIENT_DOCUMENT_VIEWED_RESTRICTED
+    return AuditAction.PATIENT_DOCUMENT_VIEWED
+
+
+def _download_action_for(category: DocumentCategory) -> AuditAction:
+    """Pick the DOWNLOADED audit action for a document's category.
+
+    Same split as :func:`_read_action_for`.
+    """
+    if category.is_restricted:
+        return AuditAction.PATIENT_DOCUMENT_DOWNLOADED_RESTRICTED
+    return AuditAction.PATIENT_DOCUMENT_DOWNLOADED
 
 
 # Two separate router prefixes because the spec splits the surface:
@@ -111,6 +136,12 @@ class InitUploadRequest(BaseModel):
     filename: str = Field(min_length=1, max_length=512)
     mime_type: str = Field(min_length=1, max_length=100)
     size_bytes: int = Field(gt=0)
+    # Default 'chart' = doc follows patient access (co-treaters can
+    # see it). 'therapist_private' / 'psychotherapy_notes' restrict
+    # to uploader and feed into the release-of-records filter
+    # later. See DocumentCategory docstring for the HIPAA boundary.
+    # Immutable after init.
+    category: DocumentCategory = DocumentCategory.CHART
 
 
 class InitUploadResponse(BaseModel):
@@ -133,6 +164,7 @@ class PatientDocumentResponse(BaseModel):
     size_bytes: int
     created_at: str
     finalized_at: str | None = None
+    category: DocumentCategory = DocumentCategory.CHART
     # extracted_text is present only on metadata fetch (GET /api/
     # documents/{id}); the list endpoint omits it to keep response
     # bodies small.
@@ -155,6 +187,7 @@ class PatientDocumentResponse(BaseModel):
             size_bytes=document.size_bytes,
             created_at=document.created_at.isoformat(),
             finalized_at=(document.finalized_at.isoformat() if document.finalized_at else None),
+            category=document.category,
             extracted_text=(document.extracted_text if include_extracted_text else None),
             text_extraction_failed=(
                 document.finalized_at is not None and document.extracted_text is None
@@ -204,6 +237,7 @@ def init_document_upload(
             filename=body.filename,
             mime_type=body.mime_type,
             size_bytes=body.size_bytes,
+            category=body.category,
         )
     except UnsupportedMimeTypeError as exc:
         raise UnprocessableEntityError(
@@ -231,6 +265,7 @@ def init_document_upload(
         patient_id=patient_id,
         mime_type=body.mime_type,
         size_bytes=body.size_bytes,
+        category=body.category.value,
     )
 
     return InitUploadResponse(
@@ -291,6 +326,7 @@ def finalize_document_upload(
         patient_id=document.patient_id,
         mime_type=document.mime_type,
         size_bytes=document.size_bytes,
+        category=document.category.value,
     )
     return PatientDocumentResponse.from_document(document)
 
@@ -336,13 +372,14 @@ def get_document(
         raise NotFoundError("Document not found", {"document_id": document_id})
 
     audit.log_patient_document_action(
-        AuditAction.PATIENT_DOCUMENT_VIEWED,
+        _read_action_for(document.category),
         user,
         http_request,
         document_id=document.id,
         patient_id=document.patient_id,
         mime_type=document.mime_type,
         size_bytes=document.size_bytes,
+        category=document.category.value,
     )
     return PatientDocumentResponse.from_document(document, include_extracted_text=True)
 
@@ -378,13 +415,14 @@ def download_document_file(
 
     document, signed_url = result
     audit.log_patient_document_action(
-        AuditAction.PATIENT_DOCUMENT_DOWNLOADED,
+        _download_action_for(document.category),
         user,
         http_request,
         document_id=document.id,
         patient_id=document.patient_id,
         mime_type=document.mime_type,
         size_bytes=document.size_bytes,
+        category=document.category.value,
     )
     return RedirectResponse(url=signed_url, status_code=status.HTTP_302_FOUND)
 
@@ -410,5 +448,6 @@ def delete_document(
         patient_id=document.patient_id,
         mime_type=document.mime_type,
         size_bytes=document.size_bytes,
+        category=document.category.value,
     )
     return DeleteDocumentResponse(message="Document deleted")

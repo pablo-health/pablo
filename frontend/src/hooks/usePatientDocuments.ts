@@ -13,6 +13,7 @@ import {
 } from "@/lib/api/patientDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type {
+  DocumentCategory,
   PatientDocumentListResponse,
   PatientDocumentResponse,
 } from "@/types/patientDocuments"
@@ -46,9 +47,9 @@ export function useUploadPatientDocument(
   const [stage, setStage] = useState<UploadStage>("idle")
   const mutation = useAuthMutation<
     PatientDocumentResponse,
-    { file: File }
+    { file: File; category?: DocumentCategory }
   >({
-    mutationFn: async ({ file }) => {
+    mutationFn: async ({ file, category }) => {
       if (!patientId) {
         throw new Error("patientId is required")
       }
@@ -59,6 +60,7 @@ export function useUploadPatientDocument(
           filename: file.name,
           mime_type: file.type,
           size_bytes: file.size,
+          category: category ?? "chart",
         },
         token,
       )
