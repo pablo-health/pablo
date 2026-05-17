@@ -72,14 +72,21 @@ def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
     session.execute(text("SET search_path = practice, platform, public"))
-    # Wipe everything we touch so row counts are deterministic.
-    for table in (
-        "practice.audit_logs",
-        "practice.notes",
-        "practice.therapy_sessions",
-        "practice.patients",
-    ):
-        session.execute(text(f"TRUNCATE TABLE {table}"))
+    # Wipe everything we touch so row counts are deterministic. Single
+    # TRUNCATE with all tables listed so the cross-table FK from
+    # patient_clinicians → patients (added in migration 777b846ab944)
+    # doesn't block the wipe — TRUNCATE needs every FK-related table
+    # in the same statement or an explicit CASCADE.
+    session.execute(
+        text(
+            "TRUNCATE TABLE "
+            "practice.audit_logs, "
+            "practice.notes, "
+            "practice.patient_clinicians, "
+            "practice.therapy_sessions, "
+            "practice.patients"
+        )
+    )
     session.commit()
     try:
         yield session
