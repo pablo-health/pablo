@@ -19,10 +19,21 @@ class PlatformAuditAction(StrEnum):
     TENANT_DEPROVISIONED = "tenant_deprovisioned"
     PENTEST_TENANT_PROVISIONED = "pentest_tenant_provisioned"
     PENTEST_TENANT_DEPROVISIONED = "pentest_tenant_deprovisioned"
+    # Pentest *run* lifecycle (distinct from the per-test-tenant
+    # provision/deprovision pair above). Emitted by the pentest
+    # runner itself once per Cloud Run Job execution, so the platform
+    # audit stream answers "what security testing has run against
+    # this project, when, and what did it find" without needing to
+    # cross-correlate Cloud Run logs and the compliance bucket.
+    PENTEST_RUN_STARTED = "pentest_run_started"
+    PENTEST_RUN_COMPLETED = "pentest_run_completed"
 
 
 class PlatformResourceType(StrEnum):
     TENANT = "tenant"
+    # PENTEST_RUN is platform-scoped; its resource_id is the
+    # 8-char run UUID the runner generates.
+    PENTEST_RUN = "pentest_run"
 
 
 @dataclass
