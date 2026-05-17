@@ -41,18 +41,54 @@ def pytest_configure(config: pytest.Config) -> None:
         return
 
     # Pin to docker-compose's major version so tests match dev. driver=None
-    # yields the bare ``postgresql://`` URL SQLAlchemy expects. Username
-    # must be ``pablo`` so migration ``e8f2a9c1b043`` can ``GRANT SELECT
-    # ... TO pablo`` without first creating the role.
+    # yields the bare ``postgresql://`` URL SQLAlchemy expects.
+    #
+    # IMPORTANT: bootstrap as ``postgres`` (not ``pablo``) so we can
+    # later create ``pablo`` as a *non-superuser* role. PostgreSQL
+    # refuses ``ALTER ROLE … NOSUPERUSER`` against the bootstrap user
+    # ("The bootstrap user must have the SUPERUSER attribute"), so any
+    # role created via ``POSTGRES_USER`` is permanently a superuser
+    # for the container's lifetime. Production's ``pablo`` is *not* a
+    # superuser (``rolsuper=false, rolbypassrls=false`` in
+    # pablohealth-oss), and a superuser bypasses every RLS policy —
+    # including FORCE ROW LEVEL SECURITY — which silently turns the
+    # integration suite into a no-RLS suite. Today's pentest finding
+    # (PABLO-API-500) lived in exactly the gap that a superuser test
+    # role papers over.
     _PgState.container = PostgresContainer(
         "postgres:16-alpine",
-        username="pablo",
-        password="pablo_dev",  # noqa: S106 — ephemeral test container, not a secret
+        username="postgres",
+        password="postgres_dev",  # noqa: S106 — ephemeral test container, not a secret
         dbname="pablo",
         driver=None,
     )
     _PgState.container.start()
-    os.environ["DATABASE_URL"] = _PgState.container.get_connection_url()
+
+    # Provision the ``pablo`` role as a normal user (CREATEDB +
+    # CREATEROLE so alembic and provisioning still work, but
+    # NOSUPERUSER + NOBYPASSRLS so RLS policies actually apply).
+    # Grant ownership of the ``pablo`` database so migrations can
+    # CREATE SCHEMA / CREATE TABLE freely.
+    import psycopg2  # noqa: PLC0415
+
+    bootstrap_url = _PgState.container.get_connection_url()
+    conn = psycopg2.connect(bootstrap_url)
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute(
+            "CREATE ROLE pablo WITH LOGIN PASSWORD 'pablo_dev' "
+            "CREATEDB CREATEROLE NOSUPERUSER NOBYPASSRLS"
+        )
+        cur.execute("ALTER DATABASE pablo OWNER TO pablo")
+        # ``pablo`` needs CREATE on the database to make new schemas
+        # and on ``public`` so existing public-schema objects work.
+        cur.execute("GRANT ALL ON SCHEMA public TO pablo")
+    conn.close()
+
+    # Advertise the pablo-scoped URL so app + tests use the non-super
+    # role. Replace ``postgres:postgres_dev@`` with ``pablo:pablo_dev@``.
+    pablo_url = bootstrap_url.replace("postgres:postgres_dev@", "pablo:pablo_dev@", 1)
+    os.environ["DATABASE_URL"] = pablo_url
     os.environ["DATABASE_BACKEND"] = "postgres"
 
 
