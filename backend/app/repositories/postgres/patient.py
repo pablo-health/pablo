@@ -138,10 +138,24 @@ class PostgresPatientRepository(PatientRepository):
         ``user_id`` becomes the ``role='primary'`` clinician — the
         creator owns the chart. Co-treating / supervisor / coverage
         grants are inserted later via the (forthcoming) admin endpoints.
+
+        The two rows are added and flushed *separately* — not because
+        we want two transactions (we don't; both flushes run inside
+        the request's single open transaction and commit/rollback
+        together via ``DatabaseSessionMiddleware``), but because
+        SQLAlchemy's unit-of-work has been observed to skip the
+        ``patients`` INSERT when both objects are added before a
+        single ``flush()``, emitting only the dependent
+        ``patient_clinicians`` INSERT and failing on the FK. Isolating
+        the parent flush gives us the canonical ordering: parent INSERT,
+        then child INSERT, both inside the same transaction, atomic
+        on commit. Documented in [[uow-patient-grant-flush-bug]].
         """
         row = PatientRow()
         _patient_to_row(patient, row)
         self._session.add(row)
+        self._session.flush([row])
+
         grant = PatientClinicianRow(
             patient_id=patient.id,
             user_id=user_id,
@@ -149,7 +163,8 @@ class PostgresPatientRepository(PatientRepository):
             granted_by=user_id,
         )
         self._session.add(grant)
-        self._session.flush()
+        self._session.flush([grant])
+        return patient
         return patient
 
     def update(self, patient: Patient) -> Patient:

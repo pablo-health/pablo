@@ -368,45 +368,146 @@ def _stamp_alembic_at_head(engine: Engine, schema_name: str) -> None:
         ctx.stamp(script, head)
 
 
-def create_practice_schema(engine: Engine, schema_name: str) -> None:
-    """Create a new practice schema with all practice tables.
+# Path to the canonical tenant SQL — the `pg_dump --schema=practice`
+# output from an alembic-head database, with `practice.` placeholders.
+# Regenerate via `backend/scripts/regen_tenant_template.py` after any
+# alembic revision that touches DDL.
+_TENANT_TEMPLATE_SQL_PATH = Path(__file__).resolve().parent / "tenant_template.sql"
+_TENANT_SCHEMA_PLACEHOLDER = "__TENANT_SCHEMA__"
 
-    Idempotent — can be called on existing schemas.
-    Enables Row-Level Security on tables with a user_id column
-    (skipped for the base template schema).
+
+def create_practice_schema(engine: Engine, schema_name: str) -> None:
+    """Create or reconcile a practice schema.
+
+    There are three callers to keep in mind:
+
+    1. ``ensure_schemas`` at boot — passes ``DEFAULT_PRACTICE_SCHEMA``
+       (``practice``). That schema is the canonical template; alembic
+       owns its DDL and ``alembic_version`` row. We use ``create_all``
+       + ``_migrate_practice_columns`` (the legacy path) so this works
+       on a fresh DB where alembic hasn't run yet.
+    2. ``PentestTenantService.provision`` (and any future
+       per-tenant provisioning) — passes a brand-new
+       ``practice_<id>`` schema name. The schema doesn't exist yet, so
+       we apply :file:`tenant_template.sql` to it and stamp at HEAD.
+       The template captures **everything** alembic emits, including
+       raw-SQL objects like ``has_patient_access`` that
+       ``Base.metadata.create_all`` couldn't reproduce. The 2026-05-17
+       pentest hit a fresh tenant that was stamped at HEAD without
+       having ``has_patient_access`` installed — the template closes
+       that gap.
+    3. ``migrate_tenants.upgrade_tenant_schema`` for legacy tenants
+       missing ``alembic_version`` — calls this function with a schema
+       that *already* has tables. Applying the template would crash on
+       ``CREATE TABLE``; fall through to the legacy path so old
+       tenants keep advancing toward HEAD via the column-patch
+       reconcile.
+
+    Idempotent for cases (1) and (3); fresh tenants in (2) error if
+    the template is applied twice (intentional — re-applying canonical
+    DDL is a schema upgrade, not a provisioning step).
     """
     _validate_schema_name(schema_name)
-    with engine.connect() as conn:
-        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
-        conn.commit()
 
-    # Create all practice-schema tables in the new schema
-    # Temporarily rebind table metadata to the target schema
-    for table in Base.metadata.sorted_tables:
-        table.schema = schema_name
+    is_default_template = schema_name == DEFAULT_PRACTICE_SCHEMA
+    schema_already_populated = _schema_has_tables(engine, schema_name)
 
-    Base.metadata.create_all(engine)
+    if is_default_template or schema_already_populated:
+        _create_practice_schema_legacy(engine, schema_name)
+    else:
+        _apply_tenant_template(engine, schema_name)
+        _stamp_alembic_at_head(engine, schema_name)
 
-    # Reset schema to None (default) so future calls don't have stale schema
-    for table in Base.metadata.sorted_tables:
-        table.schema = None
-
-    # Add columns that may not exist on older practice schemas
-    _migrate_practice_columns(engine, schema_name)
-
-    # Enable RLS on all tables with a user_id column (HIPAA defense-in-depth).
-    # Skipped for the base 'practice' template schema.
-    if schema_name != DEFAULT_PRACTICE_SCHEMA:
+    # RLS policies live outside the template — they're created by
+    # ``enable_rls_on_schema`` in Python because the policy shape
+    # depends on a per-table column introspection that's awkward to
+    # express in raw SQL. Skipping for the default template preserves
+    # prior behavior (alembic's job, not provisioning's). Idempotent
+    # for tenant schemas via ``DROP POLICY IF EXISTS`` inside
+    # ``enable_rls_on_schema``.
+    if not is_default_template:
         from sqlalchemy.orm import Session as OrmSession
 
         from . import enable_rls_on_schema
 
         with OrmSession(engine) as session:
+            # Pin search_path so the unqualified ``has_patient_access``
+            # reference inside each policy resolves to **the new
+            # tenant's own copy** (installed by the template),
+            # independent of the connection-pool's prior state. This
+            # makes provisioning deterministic; before, success
+            # depended on a pooled connection happening to carry
+            # ``search_path = practice, …`` from a prior request.
+            session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
             enable_rls_on_schema(session, schema_name)
 
-        # Stamp alembic_version on tenant schemas only. The 'practice' template's
-        # version row is owned by the deploy-time `alembic upgrade head` job;
-        # stamping it here would race with that flow.
-        _stamp_alembic_at_head(engine, schema_name)
-
     logger.info("Practice schema '%s' ready", schema_name)
+
+
+def _create_practice_schema_legacy(engine: Engine, schema_name: str) -> None:
+    """Pre-template provisioning path — ``create_all`` + column patches.
+
+    Used for the default ``practice`` template schema (alembic owns
+    its DDL end-to-end; we just need ``create_all`` on first-boot
+    DBs where alembic hasn't run yet) and for reconciling per-tenant
+    schemas that already have tables from a pre-template provisioning.
+    """
+    with engine.connect() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+        conn.commit()
+
+    for table in Base.metadata.sorted_tables:
+        table.schema = schema_name
+
+    Base.metadata.create_all(engine)
+
+    for table in Base.metadata.sorted_tables:
+        table.schema = None
+
+    _migrate_practice_columns(engine, schema_name)
+
+
+def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
+    """Apply :file:`tenant_template.sql` to a fresh tenant schema.
+
+    The template is the canonical DDL for a tenant at alembic-HEAD —
+    every table, function, index, and FK that the migration chain
+    produces. Substituting ``__TENANT_SCHEMA__`` here makes every
+    object live in the new tenant's namespace, so unqualified
+    references inside function bodies and policies resolve via the
+    tenant's own search_path at query time.
+    """
+    sql = _TENANT_TEMPLATE_SQL_PATH.read_text().replace(_TENANT_SCHEMA_PLACEHOLDER, schema_name)
+    with engine.begin() as conn:
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+        # Set search_path before the template runs so any unqualified
+        # references *inside* function bodies, defaults, or check
+        # constraints resolve to the new tenant — not whichever schema
+        # the pool's connection last touched.
+        conn.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
+        # pg_dump orders objects so functions are created before the
+        # tables their bodies reference (e.g. ``has_patient_access``
+        # SELECTs from ``patient_clinicians``). Defer body validation
+        # until function execution, mirroring what pg_restore does.
+        conn.execute(text("SET check_function_bodies = off"))
+        # exec_driver_sql sends the multi-statement string straight to
+        # psycopg2 — SQLAlchemy's ``text()`` would try to parse bind
+        # params and trip on dollar-quoted function bodies.
+        conn.exec_driver_sql(sql)
+
+
+def _schema_has_tables(engine: Engine, schema_name: str) -> bool:
+    """Return True if ``schema_name`` already contains any base table.
+
+    Used to choose between the canonical-template apply (fresh
+    schemas) and the legacy reconcile path (existing schemas).
+    """
+    with engine.connect() as conn:
+        count = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = :s AND table_type = 'BASE TABLE'"
+            ),
+            {"s": schema_name},
+        ).scalar()
+    return bool(count and count > 0)
