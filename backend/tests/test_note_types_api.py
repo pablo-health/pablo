@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from app.auth.service import get_current_user
 from app.main import app
 from app.notes import (
     NoteFieldDef,
@@ -15,6 +17,21 @@ from app.notes import (
 )
 from app.routes.note_types import get_registry
 from fastapi.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _bypass_auth():
+    """The /api/note-types endpoints require an authenticated user.
+
+    These tests focus on the registry behavior, not the auth gate
+    (covered by tests/test_route_mfa_guardrails.py), so we stub out the
+    user dependency.
+    """
+    app.dependency_overrides[get_current_user] = object
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 def _registry_with(*definitions: NoteTypeDefinition) -> NoteTypeRegistry:
