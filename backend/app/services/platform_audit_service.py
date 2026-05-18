@@ -28,6 +28,43 @@ class PlatformAuditService:
     def __init__(self, repo: PlatformAuditRepository) -> None:
         self._repo = repo
 
+    def log_pentest_run(
+        self,
+        action: PlatformAuditAction,
+        run_uuid: str,
+        actor_user_id: str,
+        details: dict[str, Any] | None = None,
+    ) -> PlatformAuditLogEntry:
+        """Emit a platform-level audit entry for a pentest run lifecycle event.
+
+        Called by the pentest runner (Cloud Run Job, no HTTP request
+        context) at start and end of every execution. Tenant-scoped
+        fields are intentionally null — these are platform-level
+        events, not per-tenant. ``run_uuid`` is the 8-char identifier
+        the runner generates so the started/completed pair can be
+        correlated.
+        """
+        entry = PlatformAuditLogEntry(
+            actor_user_id=actor_user_id,
+            action=action.value,
+            resource_type=PlatformResourceType.PENTEST_RUN.value,
+            resource_id=run_uuid,
+            tenant_schema=None,
+            ip_address=None,
+            user_agent=None,
+            details=details,
+        )
+        try:
+            self._repo.append(entry)
+        except Exception:
+            logger.exception(
+                "Failed to persist platform audit entry id=%s action=%s",
+                entry.id,
+                entry.action,
+            )
+            raise
+        return entry
+
     def log_tenant_action(
         self,
         action: PlatformAuditAction,

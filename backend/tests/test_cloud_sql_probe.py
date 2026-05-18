@@ -149,10 +149,7 @@ class TestCloudSqlSummaryShape:
 
     def test_detects_audit_logs_in_schema_qualified_dt(self) -> None:
         outputs = [("tables", _DT_OUTPUT_WITH_PRACTICE, "")]
-        assert (
-            collectors._cloud_sql_summary(outputs)["audit_logs_table_present"]
-            == "true"
-        )
+        assert collectors._cloud_sql_summary(outputs)["audit_logs_table_present"] == "true"
 
     def test_reports_missing_when_dt_is_empty(self) -> None:
         """Confirms the original PABLO-001 false-positive path: with the
@@ -160,18 +157,38 @@ class TestCloudSqlSummaryShape:
         the summary set present=false even though practice.audit_logs
         actually existed."""
         outputs = [("tables", _DT_OUTPUT_EMPTY, "")]
-        assert (
-            collectors._cloud_sql_summary(outputs)["audit_logs_table_present"]
-            == "false"
-        )
+        assert collectors._cloud_sql_summary(outputs)["audit_logs_table_present"] == "false"
 
-    def test_captures_row_count(self) -> None:
+    def test_captures_row_count_single_schema(self) -> None:
+        """Single-tenant deployment shape: just `practice` exists."""
         outputs = [
             ("tables", _DT_OUTPUT_WITH_PRACTICE, ""),
-            ("audit_logs_row_count_24h", " count\n-------\n    42\n", ""),
+            ("audit_logs_row_count_24h__practice", " count\n-------\n    42\n", ""),
         ]
-        summary = collectors._cloud_sql_summary(outputs)
+        summary = collectors._cloud_sql_summary(outputs, ["practice"])
         assert summary["audit_logs_row_count_24h"] == "42"
+        assert summary["audit_logs_per_schema_24h"] == "practice=42"
+        assert summary["practice_schema_count"] == "1"
+
+    def test_captures_row_count_sums_across_tenants(self) -> None:
+        """Multi-tenant deployment shape: the summary's total field is
+        the sum of per-schema counts, and the breakdown is preserved
+        so the LLM can spot a single-tenant outage."""
+        outputs = [
+            ("tables", _DT_OUTPUT_WITH_PRACTICE, ""),
+            ("audit_logs_row_count_24h__practice", " count\n-------\n     0\n", ""),
+            ("audit_logs_row_count_24h__practice_alpha", " count\n-------\n   100\n", ""),
+            ("audit_logs_row_count_24h__practice_beta", " count\n-------\n     7\n", ""),
+        ]
+        summary = collectors._cloud_sql_summary(
+            outputs, ["practice", "practice_alpha", "practice_beta"]
+        )
+        assert summary["audit_logs_row_count_24h"] == "107"
+        # Per-schema breakdown sorted alphabetically for diff stability.
+        assert (
+            summary["audit_logs_per_schema_24h"] == "practice=0,practice_alpha=100,practice_beta=7"
+        )
+        assert summary["practice_schema_count"] == "3"
 
     def test_flags_permission_denied(self) -> None:
         outputs = [("tables", "", "ERROR: permission denied for table audit_logs")]
