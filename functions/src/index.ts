@@ -1,6 +1,22 @@
 import { beforeUserCreated, beforeUserSignedIn } from "firebase-functions/v2/identity";
 import { HttpsError } from "firebase-functions/v2/identity";
+import { setGlobalOptions } from "firebase-functions/v2/options";
 import { GoogleAuth } from "google-auth-library";
+
+// Direct VPC Egress: route the blocking functions' outbound call to
+// pablo-backend through the VPC so it lands as internal traffic and
+// satisfies pablo-backend's `internal-and-cloud-load-balancing` ingress
+// (set by THERAPY-3261). ALL_TRAFFIC is required because pablo-backend
+// is reached via its public *.run.app hostname; PRIVATE_RANGES_ONLY
+// would not route it through the VPC. No per-connector cost (Cloud Run
+// gen2 native egress). See bead THERAPY-ilfe.
+setGlobalOptions({
+  networkInterface: {
+    network: "default",
+    subnetwork: "default",
+  },
+  vpcEgress: "ALL_TRAFFIC",
+});
 
 /**
  * Get the Pablo backend URL from environment or derive from project.
