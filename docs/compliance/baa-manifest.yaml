@@ -82,3 +82,54 @@ subprocessors:
     baa_reference: null
     notes: >-
       Python package index. Build-time only, no PHI.
+
+  - name: SimplePractice
+    covered_by: no-phi
+    domains:
+      - simplepractice.com
+      - secure.simplepractice.com
+    baa_signed: null
+    baa_reference: null
+    notes: >-
+      Read-only EHR import (calendar feeds + patient records via the
+      clinician's iCal/HTTP authorization). Pablo never sends PHI to
+      SimplePractice — the outbound flow is auth tokens only; the
+      inbound flow returns PHI on the clinician's behalf. The
+      clinician (Pablo's customer, the covered entity) holds the
+      SimplePractice BAA directly; Pablo's BAA with the clinician
+      covers Pablo's handling of received data. No Pablo↔SimplePractice
+      direct BAA is required under § 164.504(e). Wired via
+      backend/app/services/ical_sync_service.py.
+
+  - name: Sessions Health
+    covered_by: no-phi
+    domains:
+      - sessionshealth.com
+      - app.sessionshealth.com
+    baa_signed: null
+    baa_reference: null
+    notes: >-
+      Read-only EHR import (same pattern as SimplePractice). Pablo
+      never sends PHI; the outbound flow is auth tokens, the inbound
+      flow returns PHI on the clinician's behalf. The clinician's
+      direct relationship with Sessions Health covers the inbound
+      data; Pablo's customer BAA covers Pablo's downstream handling.
+      Wired via the same ical_sync_service.py allowlist.
+
+  - name: Braintrust
+    covered_by: no-phi
+    domains:
+      - api.braintrust.dev
+      - braintrust.dev
+    baa_signed: null
+    baa_reference: null
+    notes: >-
+      Dev/CI-only LLM eval logger. Imported in backend/evals/ but
+      gated behind ``[tool.poetry.group.evals]`` (optional = true);
+      Dockerfile.production installs with ``--only main`` so the
+      Braintrust SDK is never present in the deployed runtime. The
+      pentest's static source scan flags the import; the finding is
+      technically accurate but has no runtime PHI flow. Synthetic
+      eval data only — never run against production traces. If we
+      ever wire Braintrust into the deployed runtime, promote this
+      entry to ``direct-baa`` first.
