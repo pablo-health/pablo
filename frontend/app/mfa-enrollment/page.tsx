@@ -96,10 +96,6 @@ export default async function MFAEnrollmentPage() {
         {/* Footer */}
         <footer className="mt-8 pt-6 border-t border-neutral-200 text-center text-sm text-neutral-600">
           <p>
-            This platform is HIPAA compliant and uses industry-standard encryption
-            to protect your data.
-          </p>
-          <p className="mt-2">
             Questions about MFA?{" "}
             <a
               href="mailto:support@pablo.health"
