@@ -230,10 +230,19 @@ def get_current_user_profile(
 @router.patch("/me")
 def update_current_user_profile(
     request: UpdateUserRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> User:
     """Partial update of the current user's profile.
+
+    Posture: pre-MFA onboarding (route_security.py #2). This is the
+    endpoint the onboarding wizard PATCHes for ``provider_type`` and
+    ``onboarding_state``, both of which run BEFORE the user has
+    completed MFA enrollment / re-sign-in. Same reasoning as the BAA
+    endpoints: an authenticated Firebase token is required, but the
+    second-factor claim isn't a meaningful gate for setting your own
+    profile fields. PHI routes downstream remain MFA-required via
+    ``require_mfa`` and ``require_baa_acceptance``.
 
     Currently persists ``name``, ``provider_type``, and
     ``onboarding_state`` on the platform user row. ``title`` /
