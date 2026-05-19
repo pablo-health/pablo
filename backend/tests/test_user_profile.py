@@ -156,6 +156,40 @@ class TestOnboardingState:
         assert response.status_code == 200
         assert response.json()["onboarding_state"] is None
 
+    def test_user_status_includes_baa_accepted_at(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """GET /api/users/me/status exposes baa_accepted_at so the SaaS
+        onboarding wizard step registry can gate the BAA step
+        synchronously (no second API call)."""
+        ts = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
+        mock_user.baa_accepted_at = ts
+        mock_user_repo.update(mock_user)
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        assert response.json()["baa_accepted_at"] is not None
+
+    def test_user_status_baa_accepted_at_null_for_new_users(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """A user who has never accepted the BAA returns null. The
+        wizard treats this as the 'BAA step still required' signal."""
+        mock_user.baa_accepted_at = None
+        mock_user_repo.update(mock_user)
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        assert response.json()["baa_accepted_at"] is None
+
 
 class TestSecurityGuideAcknowledgment:
     """Test POST /api/users/me/acknowledge-security-guide and the

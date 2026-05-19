@@ -140,6 +140,11 @@ def get_user_status(
         "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
         "security_guide_version": user.security_guide_version,
         "onboarding_state": user.onboarding_state,
+        # Exposed pre-MFA so the SaaS onboarding wizard step registry can
+        # gate on it synchronously (see pablo-saas
+        # frontend/overlay/src/lib/onboarding/steps.ts). Version-aware
+        # re-prompt is still driven by /me/baa-status.
+        "baa_accepted_at": user.baa_accepted_at,
     }
 
     settings = get_settings()
