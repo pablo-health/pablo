@@ -412,6 +412,22 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
         return (practice.id, practice.schema_name)
 
 
+def _email_has_tenant_mapping(email: str) -> bool:
+    """True if `email` has an `EmailTenantMappingRow` in the platform schema.
+
+    Mirrors the implicit-allowlist fallback applied by
+    `/api/ext/auth/check-allowlist` (routes/ext_auth.py): a provisioned
+    tenant grants its primary email access even without an explicit
+    `platform.allowed_emails` row. Keeping both gates in sync prevents
+    the "passes blocking-fn but blocked on every API call" failure mode.
+    """
+    from ..db import create_standalone_session
+    from ..db.platform_models import EmailTenantMappingRow
+
+    with create_standalone_session() as db:
+        return db.get(EmailTenantMappingRow, email.lower()) is not None
+
+
 def get_current_user_no_mfa(
     request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -499,9 +515,15 @@ def _resolve_user(
 
         settings = get_settings()
         is_pentest_user = bool(email and PENTEST_EMAIL_PATTERN.match(email))
+        is_provisioned_tenant = bool(
+            email
+            and settings.multi_tenancy_enabled
+            and _email_has_tenant_mapping(email)
+        )
         if (
             settings.restrict_signups
             and not is_pentest_user
+            and not is_provisioned_tenant
             and (not email or not allowlist_repo.is_allowed(email))
         ):
             logger.warning("Blocked non-allowlisted user: uid=%s", firebase_uid_str)
