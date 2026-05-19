@@ -268,7 +268,7 @@ export default function LoginPage() {
         subtitle={
           isSignUp
             ? "Create your account to get started"
-            : "HIPAA-compliant therapy session management"
+            : "Therapy session management"
         }
       />
 

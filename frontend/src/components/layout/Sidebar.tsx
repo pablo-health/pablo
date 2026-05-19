@@ -64,7 +64,15 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
 
       <div className="p-4 border-t border-neutral-200">
         <div className="text-xs text-neutral-500">
-          HIPAA Compliant Platform
+          Pablo · AGPL-3.0 ·{" "}
+          <a
+            href="https://github.com/pablo-health/pablo"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-neutral-700"
+          >
+            Source
+          </a>
         </div>
       </div>
     </div>
