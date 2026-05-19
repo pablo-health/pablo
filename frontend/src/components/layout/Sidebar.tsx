@@ -12,6 +12,7 @@ import {
   Settings,
 } from "lucide-react"
 import { AdminNav } from "./AdminNav"
+import { SidebarFooter } from "./SidebarFooter"
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
@@ -62,19 +63,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
         {isAdmin && <AdminNav />}
       </nav>
 
-      <div className="p-4 border-t border-neutral-200">
-        <div className="text-xs text-neutral-500">
-          Pablo · AGPL-3.0 ·{" "}
-          <a
-            href="https://github.com/pablo-health/pablo"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline hover:text-neutral-700 break-all"
-          >
-            github.com/pablo-health/pablo
-          </a>
-        </div>
-      </div>
+      <SidebarFooter />
     </div>
   )
 }
