@@ -2,13 +2,16 @@
 
 """Tests for the user profile PATCH endpoint and provider_type field."""
 
+from contextlib import ExitStack
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
+import pytest
 from app.models import User
 from app.repositories import InMemoryIdentityRepository, InMemoryUserRepository
+from app.routes.users import _user_has_totp_factor
 
 
 class TestUpdateProfile:
@@ -259,19 +262,16 @@ class TestSecurityGuideAcknowledgment:
 class TestRecordMfaEnrollment:
     """Test POST /api/users/me/mfa-enrolled.
 
-    Regression guard for THERAPY-glzf-2: the handler must look up the
-    Firebase uid via the identity repository's reverse-lookup, not by
-    assuming ``user.id`` is the Firebase uid. Post-indirection, those
-    two values diverge for any self-serve signup.
+    Covers two architectural concerns:
+
+    1. THERAPY-glzf-2: the handler must look up the Firebase uid via the
+       identity repository's reverse-lookup, not by assuming ``user.id``
+       is the Firebase uid (it isn't, post-indirection).
+    2. THERAPY-x08c: TOTP verification goes through the Identity Toolkit
+       REST API, not the Python firebase_admin SDK (which doesn't expose
+       MFA factors). Tests mock ``_user_has_totp_factor`` directly — the
+       REST helper itself is exercised by its own tests below.
     """
-
-    def _fake_totp_user(self) -> SimpleNamespace:
-        return SimpleNamespace(
-            multi_factor=SimpleNamespace(enrolled_factors=[SimpleNamespace(factor_id="totp")])
-        )
-
-    def _fake_non_totp_user(self) -> SimpleNamespace:
-        return SimpleNamespace(multi_factor=SimpleNamespace(enrolled_factors=[]))
 
     def test_resolves_firebase_uid_via_identity_repo(
         self,
@@ -283,24 +283,23 @@ class TestRecordMfaEnrollment:
     ) -> None:
         """Post-indirection: user.id is a Pablo uuid, Firebase uid is separate.
 
-        The handler must call firebase_auth.get_user with the Firebase uid
-        looked up from the identity table, not with user.id. The default
-        fixture pre-links (firebase, mock_user_id) -> mock_user_id as a
-        legacy-backfill record; here we re-link to model a fresh signup
-        where the two diverge.
+        The handler must pass the Firebase uid (from identity repo) to
+        the TOTP verifier — not user.id. The default fixture pre-links
+        (firebase, mock_user_id) -> mock_user_id as a legacy-backfill
+        record; here we re-link to model a fresh signup where the two
+        diverge.
         """
-        # Re-link to model the post-indirection case
         mock_identity_repo._mappings.clear()
         mock_identity_repo.link("firebase", "firebase-uid-distinct", mock_user_id)
         mock_user_repo.update(mock_user)
 
         captured: dict[str, str] = {}
 
-        def fake_get_user(uid: str) -> Any:
+        def fake_check(uid: str) -> bool:
             captured["uid"] = uid
-            return self._fake_totp_user()
+            return True
 
-        with patch("app.routes.users.firebase_auth.get_user", side_effect=fake_get_user):
+        with patch("app.routes.users._user_has_totp_factor", side_effect=fake_check):
             response = client.post("/api/users/me/mfa-enrolled")
 
         assert response.status_code == 200
@@ -320,21 +319,20 @@ class TestRecordMfaEnrollment:
         mock_identity_repo: InMemoryIdentityRepository,
     ) -> None:
         """An authenticated user with no firebase identity row is a server
-        invariant violation, not a 404. Surface it as 500 so the alert
+        invariant violation. Surface as 500 so the auth-failure alert
         fires instead of treating it as a routine client error."""
         mock_identity_repo._mappings.clear()
         mock_user_repo.update(mock_user)
 
-        fb_get_user = MagicMock()
-        with patch("app.routes.users.firebase_auth.get_user", fb_get_user):
+        totp_check = MagicMock()
+        with patch("app.routes.users._user_has_totp_factor", totp_check):
             response = client.post("/api/users/me/mfa-enrolled")
 
         assert response.status_code == 500
         body = response.json()
         assert body["error"]["code"] == "IDENTITY_MAPPING_MISSING"
-        fb_get_user.assert_not_called()
+        totp_check.assert_not_called()
         stored = mock_user_repo.get(mock_user.id)
-        # No timestamp write on the failure path
         assert stored is not None
         assert stored.mfa_enrolled_at is None
 
@@ -346,10 +344,7 @@ class TestRecordMfaEnrollment:
     ) -> None:
         mock_user_repo.update(mock_user)
 
-        with patch(
-            "app.routes.users.firebase_auth.get_user",
-            return_value=self._fake_non_totp_user(),
-        ):
+        with patch("app.routes.users._user_has_totp_factor", return_value=False):
             response = client.post("/api/users/me/mfa-enrolled")
 
         assert response.status_code == 400
@@ -358,3 +353,127 @@ class TestRecordMfaEnrollment:
         stored = mock_user_repo.get(mock_user.id)
         assert stored is not None
         assert stored.mfa_enrolled_at is None
+
+    def test_identity_toolkit_user_miss_is_500(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+    ) -> None:
+        """Identity Toolkit returning no user for an authenticated principal
+        is a server-side invariant violation, not a client error."""
+        mock_user_repo.update(mock_user)
+
+        with patch(
+            "app.routes.users._user_has_totp_factor",
+            side_effect=LookupError("no such user"),
+        ):
+            response = client.post("/api/users/me/mfa-enrolled")
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["error"]["code"] == "FIREBASE_USER_LOOKUP_MISS"
+
+    def test_identity_toolkit_http_error_is_500(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+    ) -> None:
+        """Transport / non-2xx errors from Identity Toolkit don't 4xx the
+        user — they're our problem, surface as 500 so they alert."""
+        mock_user_repo.update(mock_user)
+
+        with patch(
+            "app.routes.users._user_has_totp_factor",
+            side_effect=httpx.HTTPError("upstream blew up"),
+        ):
+            response = client.post("/api/users/me/mfa-enrolled")
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["error"]["code"] == "MFA_VERIFICATION_FAILED"
+
+
+class TestUserHasTotpFactor:
+    """Unit tests for the Identity Toolkit REST shim (THERAPY-x08c).
+
+    These mock at the httpx + google.auth boundary so we exercise the
+    request URL, body, and response parsing — but not the network.
+    """
+
+    @staticmethod
+    def _mock_credentials() -> Any:
+        creds = MagicMock()
+        creds.token = "fake-bearer-token"
+        return creds
+
+    def _patch_auth_and_post(self, payload: dict[str, Any]) -> Any:
+        """Returns a context manager that patches google.auth.default and
+        httpx.post to return ``payload`` from accounts:lookup."""
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                "app.routes.users.google.auth.default",
+                return_value=(self._mock_credentials(), "pablohealth-prod"),
+            )
+        )
+        response_mock = MagicMock()
+        response_mock.json.return_value = payload
+        response_mock.raise_for_status.return_value = None
+        post_mock = stack.enter_context(
+            patch("app.routes.users.httpx.post", return_value=response_mock)
+        )
+        stack.post_mock = post_mock  # type: ignore[attr-defined]
+        return stack
+
+    def test_returns_true_when_totp_factor_present(self) -> None:
+        payload = {
+            "users": [
+                {
+                    "localId": "fb-uid-1",
+                    "mfaInfo": [
+                        {
+                            "mfaEnrollmentId": "enrollment-1",
+                            "totpInfo": {},
+                        }
+                    ],
+                }
+            ]
+        }
+        with self._patch_auth_and_post(payload) as stack:
+            assert _user_has_totp_factor("fb-uid-1") is True
+            # Confirm the request shape Identity Toolkit expects
+            call = stack.post_mock.call_args
+            assert call.args[0].endswith("/v1/accounts:lookup")
+            assert call.kwargs["json"] == {"localId": ["fb-uid-1"]}
+            assert call.kwargs["headers"]["Authorization"] == "Bearer fake-bearer-token"
+
+    def test_returns_false_when_only_phone_factor(self) -> None:
+        payload = {
+            "users": [
+                {
+                    "localId": "fb-uid-2",
+                    "mfaInfo": [
+                        {
+                            "mfaEnrollmentId": "enrollment-phone",
+                            "phoneInfo": "+15555550100",
+                        }
+                    ],
+                }
+            ]
+        }
+        with self._patch_auth_and_post(payload):
+            assert _user_has_totp_factor("fb-uid-2") is False
+
+    def test_returns_false_when_no_factors(self) -> None:
+        payload = {"users": [{"localId": "fb-uid-3"}]}
+        with self._patch_auth_and_post(payload):
+            assert _user_has_totp_factor("fb-uid-3") is False
+
+    def test_raises_lookup_error_when_user_missing(self) -> None:
+        """Identity Toolkit returning an empty users array for an
+        authenticated principal is a server-side invariant violation."""
+        payload = {"users": []}
+        with self._patch_auth_and_post(payload), pytest.raises(LookupError):
+            _user_has_totp_factor("fb-uid-missing")
