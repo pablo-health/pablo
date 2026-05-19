@@ -325,6 +325,22 @@ class TestBaaEndpointsNoMfaPosture:
             f"BAA text must not require MFA; got 403: {response.text}"
         )
 
+    def test_patch_me_resolves_via_no_mfa_override(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """Onboarding wizard PATCHes /api/users/me for provider_type and
+        onboarding_state before the user has completed MFA. The endpoint
+        must accept those updates without requiring the second-factor
+        claim on the token."""
+        mock_user_repo.update(mock_user)
+        response = client.patch("/api/users/me", json={"onboarding_state": "in_progress"})
+        assert response.status_code == 200, (
+            f"PATCH /me must not require MFA; got {response.status_code}: {response.text}"
+        )
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.onboarding_state == "in_progress"
+
 
 class TestRecordMfaEnrollment:
     """Test POST /api/users/me/mfa-enrolled.
