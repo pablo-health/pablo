@@ -254,11 +254,20 @@ def update_current_user_profile(
 
 @router.get("/me/baa-status")
 def get_baa_status(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_no_mfa),
     current_version: str = Depends(get_baa_version),
 ) -> BAAStatusResponse:
     """
     Get BAA acceptance status for the current user.
+
+    Posture: pre-MFA onboarding (route_security.py #2). BAA acceptance
+    runs in the same chicken-and-egg space as MFA enrollment — both
+    are gates a user must satisfy before they can access PHI, and the
+    user might land here with a token that doesn't yet have the MFA
+    second-factor claim (e.g. fresh sign-in path before TOTP prompt,
+    or session-cookie token from before enrollment refresh propagated).
+    MFA is enforced separately by ``require_baa_acceptance`` on actual
+    PHI routes downstream.
 
     Returns:
         - accepted: Whether user has accepted any version of BAA
@@ -277,11 +286,19 @@ def get_baa_status(
 @router.post("/me/accept-baa")
 def accept_baa(
     request: AcceptBAARequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> BAAStatusResponse:
     """
     Accept the Business Associate Agreement.
+
+    Posture: pre-MFA onboarding (route_security.py #2). Same reasoning
+    as ``get_baa_status``: BAA acceptance is an onboarding gate that
+    a user must clear before reaching PHI routes, and the token used
+    to POST here may not yet carry the MFA second-factor claim. PHI
+    routes downstream remain MFA-required via ``require_mfa``, and
+    cannot be reached until ``baa_accepted_at`` is set anyway via
+    ``require_baa_acceptance``.
 
     This endpoint records the user's acceptance of the BAA with their
     professional credentials and practice information for HIPAA compliance.
@@ -367,10 +384,18 @@ def acknowledge_security_guide(
 @router.get("/baa/{version}", response_class=PlainTextResponse)
 def get_baa_text(
     version: str,
-    _user: User = Depends(get_current_user),
+    _user: User = Depends(get_current_user_no_mfa),
 ) -> str:
     """
     Get the full text of a specific BAA version.
+
+    Posture: pre-MFA onboarding (route_security.py #2). The
+    ``/baa-acceptance`` page fetches this in the same render cycle as
+    ``/me/baa-status``; if either requires MFA the BAA flow becomes
+    unreachable for any signup flow that hits BAA before completing
+    MFA sign-in. The response is the BAA markdown — public-equivalent
+    content; authentication is kept only so the response is per-user
+    auditable, not because the content is sensitive.
 
     This endpoint serves the Business Associate Agreement text in markdown format.
 

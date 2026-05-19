@@ -259,6 +259,73 @@ class TestSecurityGuideAcknowledgment:
         assert body["security_guide_acknowledged_at"] is not None
 
 
+class TestBaaEndpointsNoMfaPosture:
+    """Regression guard: BAA endpoints must be pre-MFA-onboarding (#2),
+    not MFA-required (#1).
+
+    The dashboard layout's redirect chain routes users through
+    /baa-acceptance before they've necessarily completed MFA sign-in.
+    If /me/baa-status or /me/accept-baa or /baa/{version} required MFA,
+    the BAA page would fail to render and the user would be stranded
+    (the 2026-05-19 launch-prep symptom).
+
+    The ``client`` fixture installs a ``get_current_user_no_mfa``
+    override that returns the mock user without any MFA assertion.
+    These tests succeeding through that override is the contract: if
+    a future PR adds a ``Depends(get_current_user)`` (transitively
+    require_mfa) anywhere on the BAA chain, FastAPI will resolve the
+    real dep instead of the override, the assertion below fires, and
+    CI catches the regression at PR time.
+    """
+
+    def test_baa_status_resolves_via_no_mfa_override(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        response = client.get("/api/users/me/baa-status")
+        assert response.status_code == 200, (
+            f"expected 200 (no-MFA posture); got {response.status_code}: {response.text}"
+        )
+        body = response.json()
+        assert "accepted" in body
+        assert "current_version" in body
+
+    def test_accept_baa_resolves_via_no_mfa_override(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user.baa_accepted_at = None
+        mock_user_repo.update(mock_user)
+        response = client.post(
+            "/api/users/me/accept-baa",
+            json={
+                "accepted": True,
+                "version": "2024-01-01",
+                "legal_name": "Test Therapist",
+                "license_number": "LMFT12345",
+                "license_state": "CA",
+                "business_address": "1 Main St, Anywhere, CA 94000",
+                "practice_name": "Test Practice",
+            },
+        )
+        # Whether or not the version is bundled, the failure mode that
+        # matters here is "403 MFA_REQUIRED" — anything else (200 success
+        # or 404 unknown version) confirms the no-MFA posture.
+        assert response.status_code != 403, (
+            f"BAA accept must not require MFA; got 403: {response.text}"
+        )
+
+    def test_baa_text_resolves_via_no_mfa_override(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        response = client.get("/api/users/baa/2024-01-01")
+        # Same posture check: 200 if version bundled, 404 if not, but
+        # never 403 from an MFA requirement on the dep tree.
+        assert response.status_code != 403, (
+            f"BAA text must not require MFA; got 403: {response.text}"
+        )
+
+
 class TestRecordMfaEnrollment:
     """Test POST /api/users/me/mfa-enrolled.
 
