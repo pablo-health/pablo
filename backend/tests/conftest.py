@@ -49,12 +49,14 @@ from app.repositories import (  # noqa: E402
     InMemoryChatRepository,
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
+    InMemoryIdentityRepository,
     InMemoryLlmUsageRepository,
     InMemoryNotesRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
     get_allowlist_repository,
+    get_identity_repository,
     get_user_repository,
 )
 from app.routes.chat import (  # noqa: E402
@@ -202,6 +204,20 @@ def mock_allowlist_repo() -> InMemoryAllowlistRepository:
 
 
 @pytest.fixture
+def mock_identity_repo(mock_user_id: str) -> InMemoryIdentityRepository:
+    """Identity repo pre-linked so mock_user.id resolves to a Firebase uid.
+
+    The default test user is treated as a legacy-backfill record:
+    ``(firebase, mock_user_id) -> mock_user_id``. Tests that need a
+    post-indirection user (Pablo uuid distinct from Firebase uid) can
+    re-link by clearing ``_mappings`` and calling ``link`` directly.
+    """
+    repo = InMemoryIdentityRepository()
+    repo.link("firebase", mock_user_id, mock_user_id)
+    return repo
+
+
+@pytest.fixture
 def mock_ehr_route_repo() -> InMemoryEhrRouteRepository:
     """Create a fresh in-memory EHR route repository for each test."""
     return InMemoryEhrRouteRepository()
@@ -278,6 +294,7 @@ def client(
     mock_user: User,
     mock_user_repo: InMemoryUserRepository,
     mock_allowlist_repo: InMemoryAllowlistRepository,
+    mock_identity_repo: InMemoryIdentityRepository,
     mock_audit_service: AuditService,
     mock_ehr_route_repo: InMemoryEhrRouteRepository,
     mock_ehr_prompt_repo: InMemoryEhrPromptRepository,
@@ -306,6 +323,7 @@ def client(
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_user_repository] = lambda: mock_user_repo
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
+    app.dependency_overrides[get_identity_repository] = lambda: mock_identity_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service
     app.dependency_overrides[get_ehr_route_repository] = lambda: mock_ehr_route_repo
     app.dependency_overrides[get_ehr_prompt_repository] = lambda: mock_ehr_prompt_repo

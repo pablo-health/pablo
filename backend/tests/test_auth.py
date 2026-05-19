@@ -177,9 +177,7 @@ class TestGetCurrentUserId:
         mock_credentials.credentials = "valid-token"
         mock_verify.return_value = {"uid": "user123", "email": "test@example.com"}
 
-        user_id = get_current_user_id(
-            MagicMock(), mock_credentials, _identity_repo_for("user123")
-        )
+        user_id = get_current_user_id(MagicMock(), mock_credentials, _identity_repo_for("user123"))
 
         assert user_id == "user123"
 
@@ -413,9 +411,7 @@ class TestGetCurrentUser:
 
         with (
             patch("app.auth.service.get_settings") as mock_settings,
-            patch(
-                "app.auth.service._email_has_tenant_mapping", return_value=False
-            ),
+            patch("app.auth.service._email_has_tenant_mapping", return_value=False),
         ):
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
@@ -424,9 +420,7 @@ class TestGetCurrentUser:
 
             decoded = mock_verify.return_value
             with pytest.raises(HTTPException) as exc_info:
-                get_current_user(
-                    _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
-                )
+                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo, identity_repo)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
@@ -506,9 +500,7 @@ class TestGetCurrentUser:
 
             decoded = mock_verify.return_value
             with pytest.raises(HTTPException) as exc_info:
-                get_current_user(
-                    _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
-                )
+                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo, identity_repo)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
@@ -535,9 +527,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.restrict_signups = False
 
             with pytest.raises(HTTPException) as exc_info:
-                get_current_user(
-                    _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
-                )
+                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo, identity_repo)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert exc_info.value.detail["error"]["code"] == "USER_DISABLED"  # type: ignore[index]
@@ -833,9 +823,7 @@ class TestUserIdentityMapping:
         assert identity_repo.get_user_id("firebase", "legacy-firebase-uid") is None
 
     @patch("app.auth.service.verify_firebase_token")
-    def test_auto_provision_creates_mapping_with_new_uuid(
-        self, mock_verify: MagicMock
-    ) -> None:
+    def test_auto_provision_creates_mapping_with_new_uuid(self, mock_verify: MagicMock) -> None:
         """First-time sign-up: a fresh UUID is minted and linked."""
         mock_verify.return_value = {
             "uid": "fresh-firebase-uid",
@@ -890,3 +878,37 @@ class TestUserIdentityMapping:
         second = get_current_user_id(request, mock_credentials, identity_repo)
 
         assert first == second == "pablo-cached-uuid"
+
+
+class TestIdentityReverseLookup:
+    """Unit tests for IdentityRepository.get_subject_id (THERAPY-glzf-2)."""
+
+    def test_returns_subject_id_when_linked(self) -> None:
+        repo = InMemoryIdentityRepository()
+        repo.link("firebase", "firebase-uid-xyz", "pablo-uuid-1")
+
+        assert repo.get_subject_id("pablo-uuid-1", "firebase") == "firebase-uid-xyz"
+
+    def test_returns_none_when_user_has_no_mapping(self) -> None:
+        repo = InMemoryIdentityRepository()  # empty
+
+        assert repo.get_subject_id("pablo-uuid-unknown", "firebase") is None
+
+    def test_filters_by_provider(self) -> None:
+        """A user_id linked under provider A must not surface under provider B."""
+        repo = InMemoryIdentityRepository()
+        repo.link("firebase", "subject-a", "pablo-uuid-1")
+
+        assert repo.get_subject_id("pablo-uuid-1", "firebase") == "subject-a"
+        assert repo.get_subject_id("pablo-uuid-1", "google-oauth") is None
+
+    def test_round_trip_with_get_user_id(self) -> None:
+        """Forward and reverse lookups agree on the linked pair."""
+        repo = InMemoryIdentityRepository()
+        repo.link("firebase", "round-trip-subject", "round-trip-user")
+
+        forward = repo.get_user_id("firebase", "round-trip-subject")
+        reverse = repo.get_subject_id("round-trip-user", "firebase")
+
+        assert forward == "round-trip-user"
+        assert reverse == "round-trip-subject"
