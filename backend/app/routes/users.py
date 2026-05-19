@@ -15,7 +15,7 @@ from fastapi.responses import PlainTextResponse
 from firebase_admin import auth as firebase_auth
 from pydantic import BaseModel
 
-from ..api_errors import BadRequestError, NotFoundError
+from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.route_security import truly_public
 from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
 from ..models import (
@@ -27,7 +27,12 @@ from ..models import (
     User,
     UserPreferences,
 )
-from ..repositories import UserRepository, get_user_repository
+from ..repositories import (
+    IdentityRepository,
+    UserRepository,
+    get_identity_repository,
+    get_user_repository,
+)
 from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
 
@@ -116,6 +121,7 @@ def get_user_status(
 def record_mfa_enrollment(
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
+    identity_repo: IdentityRepository = Depends(get_identity_repository),
 ) -> dict[str, str]:
     """
     Record that the user has completed MFA enrollment.
@@ -126,8 +132,18 @@ def record_mfa_enrollment(
     mint a bogus ``mfa_enrolled_at`` timestamp and poison compliance
     metrics.
     """
+    # Post-indirection, user.id is the Pablo-internal id, not the Firebase
+    # uid. Resolve via user_identities so a fresh self-serve signup
+    # (Pablo id = fresh uuid4) can still be looked up against Firebase.
+    firebase_uid = identity_repo.get_subject_id(user.id, "firebase")
+    if firebase_uid is None:
+        raise ServerError(
+            "Authenticated user has no Firebase identity mapping",
+            code="IDENTITY_MAPPING_MISSING",
+        )
+
     try:
-        fb_user = firebase_auth.get_user(str(user.id))
+        fb_user = firebase_auth.get_user(firebase_uid)
     except firebase_auth.UserNotFoundError as exc:
         raise NotFoundError("Firebase user not found") from exc
 
