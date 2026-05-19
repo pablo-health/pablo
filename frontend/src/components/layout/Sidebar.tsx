@@ -69,9 +69,9 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
             href="https://github.com/pablo-health/pablo"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline hover:text-neutral-700"
+            className="underline hover:text-neutral-700 break-all"
           >
-            Source
+            github.com/pablo-health/pablo
           </a>
         </div>
       </div>

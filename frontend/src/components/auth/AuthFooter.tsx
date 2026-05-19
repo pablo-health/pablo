@@ -19,7 +19,7 @@ export function AuthFooter({ spacing = "default" }: AuthFooterProps) {
           rel="noopener noreferrer"
           className="underline hover:text-neutral-700"
         >
-          Source
+          github.com/pablo-health/pablo
         </a>
       </p>
     </div>
