@@ -6,13 +6,16 @@ User API routes.
 Implements user profile management and BAA (Business Associate Agreement) acceptance.
 """
 
+import logging
 import re
 from datetime import datetime
 from pathlib import Path
 
+import google.auth
+import google.auth.transport.requests
+import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
-from firebase_admin import auth as firebase_auth
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
@@ -36,7 +39,49 @@ from ..repositories import (
 from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+_IDENTITY_TOOLKIT_LOOKUP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:lookup"
+
+
+def _user_has_totp_factor(firebase_uid: str) -> bool:
+    """Return True iff the Firebase user has at least one TOTP factor enrolled.
+
+    The Python ``firebase_admin`` SDK (every version through 7.4.0 as of
+    2026-05-19) does not expose multi-factor information on ``UserRecord``
+    — it's a Node.js-only feature. We query Identity Toolkit's
+    ``accounts:lookup`` REST endpoint directly and parse ``mfaInfo[]``
+    for a factor with a ``totpInfo`` block.
+
+    Uses Application Default Credentials, which on Cloud Run resolves
+    to the service's runtime identity. That identity is the same project
+    as the Firebase project, so the call is in-project and authorized
+    by default — no extra IAM bindings needed.
+
+    Raises on transport / non-2xx errors so the caller surfaces a 5xx
+    — a failed lookup is a server-side problem, not a client error.
+    """
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    credentials.refresh(google.auth.transport.requests.Request())
+
+    response = httpx.post(
+        _IDENTITY_TOOLKIT_LOOKUP_URL,
+        headers={"Authorization": f"Bearer {credentials.token}"},
+        json={"localId": [firebase_uid]},
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    users = payload.get("users") or []
+    if not users:
+        # Authenticated user that Identity Toolkit can't find is a hard
+        # invariant violation — let the caller convert to a 5xx.
+        raise LookupError(f"Identity Toolkit returned no user for firebase_uid={firebase_uid}")
+    return any(factor.get("totpInfo") is not None for factor in users[0].get("mfaInfo") or [])
+
 
 BAA_DIR = (Path(__file__).parent.parent.parent / "baa").resolve()
 BAA_VERSION_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -143,13 +188,23 @@ def record_mfa_enrollment(
         )
 
     try:
-        fb_user = firebase_auth.get_user(firebase_uid)
-    except firebase_auth.UserNotFoundError as exc:
-        raise NotFoundError("Firebase user not found") from exc
+        has_totp = _user_has_totp_factor(firebase_uid)
+    except LookupError as exc:
+        # Identity Toolkit said "no such user" — authenticated user that
+        # Firebase doesn't know about is a server invariant violation.
+        logger.error("Identity Toolkit lookup miss for uid=%s", firebase_uid)
+        raise ServerError(
+            "Firebase did not recognize the authenticated user",
+            code="FIREBASE_USER_LOOKUP_MISS",
+        ) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("Identity Toolkit accounts:lookup failed for uid=%s", firebase_uid)
+        raise ServerError(
+            "Failed to verify MFA enrollment with Firebase",
+            code="MFA_VERIFICATION_FAILED",
+        ) from exc
 
-    enrolled_factors = getattr(fb_user, "multi_factor", None)
-    enrolled = list(enrolled_factors.enrolled_factors) if enrolled_factors else []
-    if not any(getattr(f, "factor_id", "") == "totp" for f in enrolled):
+    if not has_totp:
         raise BadRequestError(
             "No TOTP factor enrolled for this user in Firebase",
             code="MFA_NOT_ENROLLED",
