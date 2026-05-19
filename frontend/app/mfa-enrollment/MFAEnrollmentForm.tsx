@@ -22,10 +22,23 @@ import { post } from "@/lib/api/client"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
-export function MFAEnrollmentForm() {
+/**
+ * Props for {@link MFAEnrollmentForm}.
+ *
+ * `returnTo` lets a caller override the redirect destination that the
+ * form normally reads from the `returnTo` query param. The SaaS
+ * overlay's wizard-chrome variant (`app/onboarding/mfa/page.tsx`) uses
+ * this so the form can be embedded directly without forcing the
+ * caller to put the destination in the URL.
+ */
+export interface MFAEnrollmentFormProps {
+  returnTo?: string
+}
+
+export function MFAEnrollmentForm({ returnTo: returnToProp }: MFAEnrollmentFormProps = {}) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const returnTo = searchParams.get("returnTo")
+  const returnTo = returnToProp ?? searchParams.get("returnTo")
   const { user, loading: authLoading } = useAuth()
   const [totpSecret, setTotpSecret] = useState<TotpSecret | null>(null)
   const [verificationCode, setVerificationCode] = useState("")
