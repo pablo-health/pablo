@@ -411,10 +411,16 @@ class TestGetCurrentUser:
         allowlist_repo = InMemoryAllowlistRepository()
         identity_repo = _identity_repo_for()
 
-        with patch("app.auth.service.get_settings") as mock_settings:
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch(
+                "app.auth.service._email_has_tenant_mapping", return_value=False
+            ),
+        ):
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = True
 
             decoded = mock_verify.return_value
             with pytest.raises(HTTPException) as exc_info:
@@ -426,6 +432,88 @@ class TestGetCurrentUser:
         assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
         # Allowlist gate keeps rejected users out of the mapping table
         assert identity_repo.get_user_id("firebase", "blocked-user") is None
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_allows_provisioned_tenant_without_explicit_allowlist(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """A user with an EmailTenantMappingRow but no allowed_emails row passes.
+
+        Mirrors the implicit-allowlist fallback in /api/ext/auth/check-allowlist
+        so the marketing-signup -> provisioned-tenant flow can actually use
+        the app after sign-up (THERAPY-glzf). Without this, blocking-fn lets
+        them sign up but the token-auth middleware 403s every API call.
+        """
+        mock_verify.return_value = {
+            "uid": "self-serve-user",
+            "email": "owner@newpractice.com",
+            "firebase": {},
+        }
+
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = InMemoryAllowlistRepository()  # no entry
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch(
+                "app.auth.service._email_has_tenant_mapping", return_value=True
+            ) as mock_tenant_lookup,
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = True
+
+            decoded = mock_verify.return_value
+            user = get_current_user(
+                _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+            )
+
+        assert user.email == "owner@newpractice.com"
+        assert user.status == "approved"
+        mock_tenant_lookup.assert_called_once_with("owner@newpractice.com")
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_skips_tenant_fallback_when_multi_tenancy_disabled(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """Single-tenant deployments must not honor the mapping fallback.
+
+        EmailTenantMappingRow is not meaningful when multi-tenancy is off,
+        so the explicit allowlist remains the only gate.
+        """
+        mock_verify.return_value = {
+            "uid": "stranger",
+            "email": "stranger@example.com",
+            "firebase": {},
+        }
+
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = InMemoryAllowlistRepository()
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch(
+                "app.auth.service._email_has_tenant_mapping", return_value=True
+            ) as mock_tenant_lookup,
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = False
+
+            decoded = mock_verify.return_value
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+                )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
+        # Single-tenant deployments must not even consult the mapping table.
+        mock_tenant_lookup.assert_not_called()
 
     def test_rejects_disabled_user(self) -> None:
         user_repo = InMemoryUserRepository()
