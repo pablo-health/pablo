@@ -12,7 +12,15 @@ export function AuthFooter({ spacing = "default" }: AuthFooterProps) {
   return (
     <div className={wrapper}>
       <p className="text-xs text-neutral-500 text-center leading-relaxed">
-        This platform is HIPAA compliant and uses industry-standard encryption to protect your data
+        Pablo · AGPL-3.0 ·{" "}
+        <a
+          href="https://github.com/pablo-health/pablo"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline hover:text-neutral-700"
+        >
+          github.com/pablo-health/pablo
+        </a>
       </p>
     </div>
   )

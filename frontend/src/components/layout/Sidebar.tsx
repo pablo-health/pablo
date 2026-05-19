@@ -12,6 +12,7 @@ import {
   Settings,
 } from "lucide-react"
 import { AdminNav } from "./AdminNav"
+import { SidebarFooter } from "./SidebarFooter"
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
@@ -62,11 +63,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
         {isAdmin && <AdminNav />}
       </nav>
 
-      <div className="p-4 border-t border-neutral-200">
-        <div className="text-xs text-neutral-500">
-          HIPAA Compliant Platform
-        </div>
-      </div>
+      <SidebarFooter />
     </div>
   )
 }
