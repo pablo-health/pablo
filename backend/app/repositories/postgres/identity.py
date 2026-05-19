@@ -28,6 +28,13 @@ class PostgresIdentityRepository(IdentityRepository):
         )
         return self._session.execute(stmt).scalar_one_or_none()
 
+    def get_subject_id(self, user_id: str, provider: str) -> str | None:
+        stmt = select(UserIdentityRow.subject_id).where(
+            UserIdentityRow.user_id == user_id,
+            UserIdentityRow.provider == provider,
+        )
+        return self._session.execute(stmt).scalar_one_or_none()
+
     def link(
         self,
         provider: str,

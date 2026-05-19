@@ -26,6 +26,18 @@ class IdentityRepository(ABC):
         """Return the Pablo user_id for an existing identity, or None."""
 
     @abstractmethod
+    def get_subject_id(self, user_id: str, provider: str) -> str | None:
+        """Return the provider-specific subject_id for a Pablo user_id, or None.
+
+        Reverse direction of ``get_user_id``. Lets a handler that has a
+        ``User`` (Pablo-internal) make an Admin SDK call against the
+        external provider without falling back to an email lookup. A
+        miss means the Pablo user has no identity registered with this
+        provider — different from "the provider doesn't know that uid",
+        and worth surfacing as a server-side invariant violation.
+        """
+
+    @abstractmethod
     def link(
         self,
         provider: str,
@@ -63,6 +75,12 @@ class InMemoryIdentityRepository(IdentityRepository):
 
     def get_user_id(self, provider: str, subject_id: str) -> str | None:
         return self._mappings.get((provider, subject_id))
+
+    def get_subject_id(self, user_id: str, provider: str) -> str | None:
+        for (mapped_provider, subject_id), mapped_user_id in self._mappings.items():
+            if mapped_user_id == user_id and mapped_provider == provider:
+                return subject_id
+        return None
 
     def link(
         self,

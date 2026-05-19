@@ -3,11 +3,12 @@
 """Tests for the user profile PATCH endpoint and provider_type field."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app.models import User
-from app.repositories import InMemoryUserRepository
+from app.repositories import InMemoryIdentityRepository, InMemoryUserRepository
 
 
 class TestUpdateProfile:
@@ -253,3 +254,107 @@ class TestSecurityGuideAcknowledgment:
         body = response.json()
         assert body["security_guide_version"] == "2026-05-14"
         assert body["security_guide_acknowledged_at"] is not None
+
+
+class TestRecordMfaEnrollment:
+    """Test POST /api/users/me/mfa-enrolled.
+
+    Regression guard for THERAPY-glzf-2: the handler must look up the
+    Firebase uid via the identity repository's reverse-lookup, not by
+    assuming ``user.id`` is the Firebase uid. Post-indirection, those
+    two values diverge for any self-serve signup.
+    """
+
+    def _fake_totp_user(self) -> SimpleNamespace:
+        return SimpleNamespace(
+            multi_factor=SimpleNamespace(enrolled_factors=[SimpleNamespace(factor_id="totp")])
+        )
+
+    def _fake_non_totp_user(self) -> SimpleNamespace:
+        return SimpleNamespace(multi_factor=SimpleNamespace(enrolled_factors=[]))
+
+    def test_resolves_firebase_uid_via_identity_repo(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_identity_repo: InMemoryIdentityRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Post-indirection: user.id is a Pablo uuid, Firebase uid is separate.
+
+        The handler must call firebase_auth.get_user with the Firebase uid
+        looked up from the identity table, not with user.id. The default
+        fixture pre-links (firebase, mock_user_id) -> mock_user_id as a
+        legacy-backfill record; here we re-link to model a fresh signup
+        where the two diverge.
+        """
+        # Re-link to model the post-indirection case
+        mock_identity_repo._mappings.clear()
+        mock_identity_repo.link("firebase", "firebase-uid-distinct", mock_user_id)
+        mock_user_repo.update(mock_user)
+
+        captured: dict[str, str] = {}
+
+        def fake_get_user(uid: str) -> Any:
+            captured["uid"] = uid
+            return self._fake_totp_user()
+
+        with patch("app.routes.users.firebase_auth.get_user", side_effect=fake_get_user):
+            response = client.post("/api/users/me/mfa-enrolled")
+
+        assert response.status_code == 200
+        assert "mfa_enrolled_at" in response.json()
+        assert captured["uid"] == "firebase-uid-distinct", (
+            "handler must use the identity-repo reverse-lookup, not user.id"
+        )
+        stored = mock_user_repo.get(mock_user_id)
+        assert stored is not None
+        assert stored.mfa_enrolled_at is not None
+
+    def test_missing_identity_mapping_is_500(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_identity_repo: InMemoryIdentityRepository,
+    ) -> None:
+        """An authenticated user with no firebase identity row is a server
+        invariant violation, not a 404. Surface it as 500 so the alert
+        fires instead of treating it as a routine client error."""
+        mock_identity_repo._mappings.clear()
+        mock_user_repo.update(mock_user)
+
+        fb_get_user = MagicMock()
+        with patch("app.routes.users.firebase_auth.get_user", fb_get_user):
+            response = client.post("/api/users/me/mfa-enrolled")
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["error"]["code"] == "IDENTITY_MAPPING_MISSING"
+        fb_get_user.assert_not_called()
+        stored = mock_user_repo.get(mock_user.id)
+        # No timestamp write on the failure path
+        assert stored is not None
+        assert stored.mfa_enrolled_at is None
+
+    def test_no_totp_factor_rejected(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+
+        with patch(
+            "app.routes.users.firebase_auth.get_user",
+            return_value=self._fake_non_totp_user(),
+        ):
+            response = client.post("/api/users/me/mfa-enrolled")
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"]["code"] == "MFA_NOT_ENROLLED"
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.mfa_enrolled_at is None
