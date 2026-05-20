@@ -3,6 +3,7 @@
 """Firebase authentication service with practice-based access control."""
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,12 @@ from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
 
 logger = logging.getLogger(__name__)
+
+# Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
+# jobs/pentest_identity.py). 8 hex chars of a uuid4 make collisions
+# with real signups statistically impossible and visually obvious to
+# auditors. Real signups matching this pattern are rejected upstream.
+E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
 
@@ -505,16 +512,19 @@ def _resolve_user(
                 )
 
         # Defense-in-depth: check allowlist before auto-provisioning.
-        # The ephemeral pentest users (pentestuser-<8hex>@pablo.health)
-        # are test-only identities created on every pentest run — they
-        # get a dedicated bypass so the pentest Cloud Run Job doesn't
-        # need write access to `platform.allowed_emails` (the
-        # read-only-DB rule for pentests). The prefix is reserved: real
-        # signups matching this pattern are rejected upstream.
+        # Two reserved test-identity prefixes bypass the allowlist:
+        #   - pentestuser-<8hex>@pablo.health   (weekly pentest job)
+        #   - e2etest-<8hex>@pablo.health       (per-PR E2E test suite
+        #     in pablo-saas/e2e — see THERAPY-wy0f)
+        # Both are owner-controlled, ephemeral, and reserved at the
+        # prefix level: real signups matching either pattern are
+        # rejected here. The bypass exists so external test runners
+        # don't need write access to `platform.allowed_emails`.
         from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 
         settings = get_settings()
         is_pentest_user = bool(email and PENTEST_EMAIL_PATTERN.match(email))
+        is_e2e_user = bool(email and E2E_EMAIL_PATTERN.match(email))
         is_provisioned_tenant = bool(
             email
             and settings.multi_tenancy_enabled
@@ -523,6 +533,7 @@ def _resolve_user(
         if (
             settings.restrict_signups
             and not is_pentest_user
+            and not is_e2e_user
             and not is_provisioned_tenant
             and (not email or not allowlist_repo.is_allowed(email))
         ):
