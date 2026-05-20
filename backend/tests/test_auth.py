@@ -507,6 +507,123 @@ class TestGetCurrentUser:
         # Single-tenant deployments must not even consult the mapping table.
         mock_tenant_lookup.assert_not_called()
 
+    @patch("app.auth.service.verify_firebase_token")
+    def test_allows_e2e_prefixed_user_without_allowlist(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """Reserved e2etest-<8hex>@pablo.health prefix bypasses the allowlist.
+
+        Mirrors the existing pentest bypass. Used by pablo-saas/e2e Cloud
+        Run Job so the test runner doesn't need write access to
+        platform.allowed_emails (THERAPY-wy0f).
+        """
+        mock_verify.return_value = {
+            "uid": "e2e-user",
+            "email": "e2etest-deadbeef@pablo.health",
+            "firebase": {},
+        }
+
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = InMemoryAllowlistRepository()  # no entry
+        identity_repo = _identity_repo_for()
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping", return_value=False),
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = True
+
+            decoded = mock_verify.return_value
+            user = get_current_user(
+                _mock_request(), decoded, user_repo, allowlist_repo, identity_repo
+            )
+
+        assert user.email == "e2etest-deadbeef@pablo.health"
+        assert user.status == "approved"
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_rejects_malformed_e2e_prefix(self, mock_verify: MagicMock) -> None:
+        """Only the exact e2etest-<8hex>@pablo.health pattern bypasses.
+
+        Adjacent variants (wrong hex length, wrong domain, prefix
+        in the middle) still hit the allowlist gate. Prevents a real
+        user from accidentally matching by claiming an e2etest-ish email.
+        """
+        # Uppercase isn't tested here — _extract_email() lowercases first,
+        # so DEADBEEF would correctly match (and that's intentional; emails
+        # are case-insensitive). See test_e2e_prefix_matches_case_insensitively
+        # below for the positive uppercase case.
+        for email in (
+            "e2etest-deadbee@pablo.health",  # 7 hex
+            "e2etest-deadbeef0@pablo.health",  # 9 hex
+            "e2etest-deadxxxx@pablo.health",  # non-hex
+            "e2etest-deadbeef@example.com",  # wrong domain
+            "real-e2etest-deadbeef@pablo.health",  # prefix not at start
+        ):
+            mock_verify.return_value = {
+                "uid": f"fake-{email}",
+                "email": email,
+                "firebase": {},
+            }
+
+            with (
+                patch("app.auth.service.get_settings") as mock_settings,
+                patch(
+                    "app.auth.service._email_has_tenant_mapping", return_value=False
+                ),
+            ):
+                mock_settings.return_value.is_development = False
+                mock_settings.return_value.require_mfa = False
+                mock_settings.return_value.restrict_signups = True
+                mock_settings.return_value.multi_tenancy_enabled = True
+
+                with pytest.raises(HTTPException) as exc_info:
+                    get_current_user(
+                        _mock_request(),
+                        mock_verify.return_value,
+                        InMemoryUserRepository(),
+                        InMemoryAllowlistRepository(),
+                        _identity_repo_for(),
+                    )
+
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN, (
+                f"{email!r} unexpectedly allowed"
+            )
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_e2e_prefix_matches_case_insensitively(
+        self, mock_verify: MagicMock
+    ) -> None:
+        """_extract_email lowercases before regex match — uppercase passes."""
+        mock_verify.return_value = {
+            "uid": "e2e-upper",
+            "email": "E2EtEsT-DEADBEEF@pablo.health",
+            "firebase": {},
+        }
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping", return_value=False),
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = True
+
+            user = get_current_user(
+                _mock_request(),
+                mock_verify.return_value,
+                InMemoryUserRepository(),
+                InMemoryAllowlistRepository(),
+                _identity_repo_for(),
+            )
+
+        # _extract_email lowercased the stored email
+        assert user.email == "e2etest-deadbeef@pablo.health"
+
     def test_rejects_disabled_user(self) -> None:
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
