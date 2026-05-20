@@ -74,25 +74,24 @@ from ..services.transcription_queue_service import (
 from ..settings import get_settings
 from ..utcnow import utc_now
 
-# SaaS-only trial-session gate. The overlay's saas.bootstrap installs
-# saas.billing.subscription at this OSS import path; on self-hosted
-# OSS the import fails and the gate becomes a no-op.
+# Optional subscription extension point. When a billing overlay is
+# installed it registers ``app.routes.subscription``; otherwise the
+# import fails and the gate becomes a no-op.
 try:
     from ..routes.subscription import (  # type: ignore[import-not-found]
         TrialLimitReachedError,
         check_and_count_trial_session,
     )
-except ImportError:  # pragma: no cover -- self-hosted OSS
+except ImportError:  # pragma: no cover -- no subscription overlay installed
     TrialLimitReachedError = None  # type: ignore[assignment,misc]
     check_and_count_trial_session = None  # type: ignore[assignment]
 
 
 def _gate_trial_session(user_email: str) -> None:
-    """Increment SaaS trial counter and 402 if exhausted.
+    """Increment the trial-session counter and 402 if exhausted.
 
-    No-op on self-hosted OSS where the SaaS billing overlay isn't
-    installed. Wrapping the call in a helper keeps the per-route
-    callsites a single line each.
+    No-op when no subscription overlay is installed. Wrapping the call
+    in a helper keeps the per-route callsites a single line each.
     """
     if check_and_count_trial_session is None:
         return
