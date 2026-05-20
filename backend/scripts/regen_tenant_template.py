@@ -5,11 +5,15 @@
 The tenant template SQL is the **canonical schema for a freshly-provisioned
 tenant**. ``create_practice_schema`` applies this file (with the target
 schema name substituted) instead of the old
-``Base.metadata.create_all + _migrate_practice_columns + enable_rls_on_schema``
-trio — that trio silently dropped raw-SQL DDL (functions, triggers,
+``Base.metadata.create_all + enable_rls_on_schema``
+pair — that pair silently dropped raw-SQL DDL (functions, triggers,
 custom types) that lived only in alembic migrations, and bug PABLO-API-500
 on the 2026-05-17 pentest was the consequence: fresh tenants were stamped
 at alembic-head without ``has_patient_access`` ever being created in them.
+Column shape evolution (the historical ``_migrate_practice_columns``
+boot patch — VARCHAR datetime widening, late ``ADD COLUMN`` calls) now
+lives in the alembic chain itself (revision ``b7de65c29385``), so a
+regenerated dump faithfully reflects it.
 
 This script:
   1. Brings up a disposable Postgres via testcontainers.
