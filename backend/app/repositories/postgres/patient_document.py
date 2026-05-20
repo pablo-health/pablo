@@ -49,7 +49,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         need to check access before issuing a deletion or finalize.
         """
         result = self._session.execute(
-            text("SELECT has_patient_access(:pid::uuid, :uid)"),
+            text("SELECT has_patient_access(CAST(:pid AS uuid), :uid)"),
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)

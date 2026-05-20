@@ -106,7 +106,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
 
     def _has_patient_access(self, patient_id: str, user_id: str) -> bool:
         result = self._session.execute(
-            text("SELECT has_patient_access(:pid::uuid, :uid)"),
+            text("SELECT has_patient_access(CAST(:pid AS uuid), :uid)"),
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)
