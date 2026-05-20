@@ -10,8 +10,9 @@ deploy-time ``alembic upgrade head`` job and is skipped here.
 Tenants without an ``alembic_version`` row (provisioned before pa-5in.2
 landed) are reconciled by re-running the idempotent provisioning path
 (``create_practice_schema``): ``Base.metadata.create_all`` adds any missing
-tables, ``_migrate_practice_columns`` patches missing columns on legacy
-tables, and the stamp lands once the schema actually matches HEAD.
+tables, and the stamp lands once the schema actually matches HEAD. Column
+shape evolution that used to live in the boot-time runtime patch is now
+part of the alembic chain (revision ``b7de65c29385``).
 
 Earlier behavior blind-stamped every legacy schema at HEAD without first
 reconciling tables — for tenants provisioned before a new model table
@@ -142,10 +143,10 @@ def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
 
     Reconciles legacy tenants missing ``alembic_version`` by re-running
     ``create_practice_schema`` (idempotent: ``create_all`` adds missing
-    tables, ``_migrate_practice_columns`` patches missing columns, and
-    the provisioning path stamps at HEAD only after the schema has been
-    brought into shape). Returns a structured result rather than raising
-    so a single bad tenant doesn't abort the fan-out.
+    tables; the provisioning path stamps at HEAD only after the schema
+    has been brought into shape, and the alembic chain carries column
+    shape evolution from there). Returns a structured result rather
+    than raising so a single bad tenant doesn't abort the fan-out.
     """
     _validate_schema_name(schema)
     head = _alembic_head()
@@ -167,9 +168,7 @@ def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
             return TenantResult(schema, TenantStatus.ALREADY_AT_HEAD, head)
 
         with engine.begin() as conn:
-            conn.execute(
-                text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public")
-            )
+            conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
             cfg = _alembic_config_for(schema)
             cfg.attributes["connection"] = conn
             cfg.attributes["version_table_schema"] = schema
