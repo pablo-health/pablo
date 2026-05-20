@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # jobs/pentest_identity.py). 8 hex chars of a uuid4 make collisions
 # with real signups statistically impossible and visually obvious to
 # auditors. The bypass that honors this pattern is gated on
-# `not gcp_project_id.endswith("-prod")` in both auth/service.py and
+# `not settings.is_prod_project` in both auth/service.py and
 # routes/ext_auth.py; in production the pattern is treated like any
 # other non-allowlisted email.
 E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
@@ -266,8 +266,7 @@ def require_mfa(
         return decoded_token
 
     # E2E test accounts bypass MFA in non-production environments only
-    is_prod_project = settings.gcp_project_id.endswith("-prod")
-    if settings.e2e_test_emails and not is_prod_project:
+    if settings.e2e_test_emails and not settings.is_prod_project:
         email = decoded_token.get("email", "")
         if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
             logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
@@ -533,7 +532,7 @@ def _resolve_user(
         from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 
         settings = get_settings()
-        is_prod_project = settings.gcp_project_id.endswith("-prod")
+        is_prod_project = settings.is_prod_project
         is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
         is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
         is_provisioned_tenant = bool(

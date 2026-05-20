@@ -164,10 +164,9 @@ def check_allowlist(
     # signUp against the prod project (the web API key ships in the
     # frontend bundle) could mint a token for any e2etest-<hex> /
     # pentestuser-<hex>@pablo.health address and ride this bypass. In
-    # -prod, force the patterns through the normal allowlist gate.
-    is_prod_project = settings.gcp_project_id.endswith("-prod")
+    # production, force the patterns through the normal allowlist gate.
     email_lower = request.email.lower()
-    if not is_prod_project and (
+    if not settings.is_prod_project and (
         PENTEST_EMAIL_PATTERN.match(email_lower) or E2E_EMAIL_PATTERN.match(email_lower)
     ):
         return CheckAllowlistResponse(allowed=True)

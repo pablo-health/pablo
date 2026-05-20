@@ -268,7 +268,7 @@ class TestRequireMfa:
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
-            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.is_prod_project = False
             mock_settings.return_value.require_mfa = True
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
@@ -289,7 +289,7 @@ class TestRequireMfa:
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
-            mock_settings.return_value.gcp_project_id = "pablohealth-prod"
+            mock_settings.return_value.is_prod_project = True
             mock_settings.return_value.require_mfa = True
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
@@ -311,7 +311,7 @@ class TestRequireMfa:
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
-            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.is_prod_project = False
             mock_settings.return_value.require_mfa = True
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
@@ -333,7 +333,7 @@ class TestRequireMfa:
 
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
-            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.is_prod_project = False
             mock_settings.return_value.require_mfa = True
             mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
@@ -533,7 +533,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
             mock_settings.return_value.multi_tenancy_enabled = True
-            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.is_prod_project = False
 
             decoded = mock_verify.return_value
             user = get_current_user(
@@ -576,7 +576,7 @@ class TestGetCurrentUser:
                 mock_settings.return_value.require_mfa = False
                 mock_settings.return_value.restrict_signups = True
                 mock_settings.return_value.multi_tenancy_enabled = True
-                mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+                mock_settings.return_value.is_prod_project = False
 
                 with pytest.raises(HTTPException) as exc_info:
                     get_current_user(
@@ -608,7 +608,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
             mock_settings.return_value.multi_tenancy_enabled = True
-            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
+            mock_settings.return_value.is_prod_project = False
 
             user = get_current_user(
                 _mock_request(),
@@ -645,7 +645,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
             mock_settings.return_value.multi_tenancy_enabled = True
-            mock_settings.return_value.gcp_project_id = "pablohealth-prod"
+            mock_settings.return_value.is_prod_project = True
 
             with pytest.raises(HTTPException) as exc_info:
                 get_current_user(
@@ -676,7 +676,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
             mock_settings.return_value.multi_tenancy_enabled = True
-            mock_settings.return_value.gcp_project_id = "pablohealth-prod"
+            mock_settings.return_value.is_prod_project = True
 
             with pytest.raises(HTTPException) as exc_info:
                 get_current_user(
