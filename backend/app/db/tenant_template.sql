@@ -50,8 +50,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     user_id character varying(128) NOT NULL,
     patient_id uuid NOT NULL,
     title character varying(255) NOT NULL,
-    start_at character varying(30) NOT NULL,
-    end_at character varying(30) NOT NULL,
+    start_at timestamp with time zone NOT NULL,
+    end_at timestamp with time zone NOT NULL,
     duration_minutes integer NOT NULL,
     status character varying(20) NOT NULL,
     session_type character varying(30) NOT NULL,
@@ -72,8 +72,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     session_id uuid,
     reminder_24h_sent boolean NOT NULL,
     reminder_1h_sent boolean NOT NULL,
-    created_at character varying(30) NOT NULL,
-    updated_at character varying(30)
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone
 );
 
 
@@ -101,8 +101,8 @@ CREATE TABLE __TENANT_SCHEMA__.availability_rules (
     rule_type character varying(30) NOT NULL,
     enforcement character varying(10) NOT NULL,
     params jsonb NOT NULL,
-    created_at character varying(30) NOT NULL,
-    updated_at character varying(30)
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone
 );
 
 
@@ -177,7 +177,7 @@ CREATE TABLE __TENANT_SCHEMA__.ehr_prompts (
     ehr_system character varying(50) NOT NULL,
     system_prompt text NOT NULL,
     version integer NOT NULL,
-    updated_at character varying(30) NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
     updated_by character varying(255) NOT NULL,
     notes text NOT NULL
 );
@@ -190,9 +190,9 @@ CREATE TABLE __TENANT_SCHEMA__.ehr_routes (
     route_name character varying(255) NOT NULL,
     steps jsonb NOT NULL,
     success_count integer NOT NULL,
-    last_success character varying(30),
-    created_at character varying(30) NOT NULL,
-    updated_at character varying(30) NOT NULL
+    last_success timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
 );
 
 
@@ -202,8 +202,10 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     encrypted_tokens text NOT NULL,
     calendar_id character varying(255),
     sync_token text,
-    last_synced_at character varying(30),
-    connected_at character varying(30)
+    last_synced_at timestamp with time zone,
+    connected_at timestamp with time zone,
+    consecutive_error_count integer DEFAULT 0,
+    last_sync_error text
 );
 
 
@@ -214,7 +216,7 @@ CREATE TABLE __TENANT_SCHEMA__.ical_client_mappings (
     ehr_system character varying(50) NOT NULL,
     client_identifier character varying(255) NOT NULL,
     patient_id uuid NOT NULL,
-    created_at character varying(30) NOT NULL
+    created_at timestamp with time zone NOT NULL
 );
 
 
@@ -224,9 +226,10 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     user_id character varying(128) NOT NULL,
     ehr_system character varying(50) NOT NULL,
     encrypted_feed_url text NOT NULL,
-    last_synced_at character varying(30),
+    last_synced_at timestamp with time zone,
     last_sync_error text,
-    connected_at character varying(30) NOT NULL
+    connected_at timestamp with time zone NOT NULL,
+    consecutive_error_count integer DEFAULT 0
 );
 
 
@@ -315,10 +318,10 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     date_of_birth character varying(10),
     diagnosis text,
     session_count integer NOT NULL,
-    last_session_date character varying(30),
-    next_session_date character varying(30),
-    created_at character varying(30) NOT NULL,
-    updated_at character varying(30) NOT NULL,
+    last_session_date timestamp with time zone,
+    next_session_date timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     chart_closed_at timestamp with time zone,
     chart_closure_reason text
@@ -330,28 +333,29 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     id uuid NOT NULL,
     user_id character varying(128) NOT NULL,
     patient_id uuid NOT NULL,
-    session_date character varying(30) NOT NULL,
+    session_date timestamp with time zone NOT NULL,
     session_number integer NOT NULL,
     status character varying(30) NOT NULL,
     transcript jsonb NOT NULL,
-    created_at character varying(30) NOT NULL,
-    scheduled_at character varying(30),
+    created_at timestamp with time zone NOT NULL,
+    scheduled_at timestamp with time zone,
     video_link text,
     video_platform character varying(30),
     session_type character varying(30),
     duration_minutes integer,
     source character varying(30),
     notes text,
-    started_at character varying(30),
-    ended_at character varying(30),
-    updated_at character varying(30),
+    started_at timestamp with time zone,
+    ended_at timestamp with time zone,
+    updated_at timestamp with time zone,
     audio_gcs_path text,
-    processing_started_at character varying(30),
-    processing_completed_at character varying(30),
+    processing_started_at timestamp with time zone,
+    processing_completed_at timestamp with time zone,
     error text,
     redacted_transcript text,
     naturalized_transcript text,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    transcription_job_metadata jsonb
 );
 
 

@@ -78,16 +78,14 @@ def ensure_schemas(engine: Engine) -> None:
             # Create default practice schema and tables
             create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
 
-            # Migrate columns on all existing practice schemas
-            with engine.connect() as inner:
-                schemas = inner.execute(
-                    text(
-                        "SELECT schema_name FROM information_schema.schemata"
-                        " WHERE schema_name LIKE 'practice_%'"
-                    )
-                ).fetchall()
-            for (schema,) in schemas:
-                _migrate_practice_columns(engine, schema)
+            # Per-tenant schema evolution belongs in the alembic chain
+            # (``backend/alembic/versions/``), fanned out at deploy time
+            # via ``saas.bin.migrate`` / ``app.db.migrate_tenants``. The
+            # boot path historically iterated ``practice_*`` schemas and
+            # ran a runtime column-patch helper; that left freshly-
+            # provisioned tenants broken until the next backend revision
+            # restarted, and silently swallowed failures via savepoints.
+            # Removed in b7de65c29385 — see that revision's docstring.
 
             # Ensure default practice exists in registry
             from sqlalchemy.orm import Session
@@ -257,90 +255,6 @@ def _ensure_pentest_tenant_guards(engine: Engine) -> None:
         conn.commit()
 
 
-def _migrate_practice_columns(engine: Engine, schema_name: str) -> None:
-    """Add columns to existing practice schemas (idempotent)."""
-    ical = f"{schema_name}.ical_sync_configs"
-    gcal = f"{schema_name}.google_calendar_tokens"
-    sessions = f"{schema_name}.therapy_sessions"
-    migrations = [
-        f"ALTER TABLE {ical} ADD COLUMN IF NOT EXISTS consecutive_error_count INTEGER DEFAULT 0",
-        f"ALTER TABLE {gcal} ADD COLUMN IF NOT EXISTS consecutive_error_count INTEGER DEFAULT 0",
-        f"ALTER TABLE {gcal} ADD COLUMN IF NOT EXISTS last_sync_error TEXT",
-        f"ALTER TABLE {sessions} ADD COLUMN IF NOT EXISTS transcription_job_metadata JSONB",
-    ]
-
-    # --- Migrate VARCHAR datetime columns to TIMESTAMP WITH TIME ZONE ---
-    patients = f"{schema_name}.patients"
-    sessions = f"{schema_name}.therapy_sessions"
-    prompts = f"{schema_name}.ehr_prompts"
-    routes = f"{schema_name}.ehr_routes"
-    appts = f"{schema_name}.appointments"
-    rules = f"{schema_name}.availability_rules"
-    mappings = f"{schema_name}.ical_client_mappings"
-    profiles = f"{schema_name}.clinician_profiles"
-
-    def _alter_ts(table: str, col: str) -> str:
-        return (
-            f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMP WITH TIME ZONE"
-            f" USING CASE WHEN {col}::text = '' THEN NULL"
-            f" ELSE {col}::text::timestamptz END"
-        )
-
-    migrations.extend(
-        [
-            # patients
-            _alter_ts(patients, "last_session_date"),
-            _alter_ts(patients, "next_session_date"),
-            _alter_ts(patients, "created_at"),
-            _alter_ts(patients, "updated_at"),
-            # therapy_sessions
-            _alter_ts(sessions, "session_date"),
-            _alter_ts(sessions, "created_at"),
-            _alter_ts(sessions, "scheduled_at"),
-            _alter_ts(sessions, "started_at"),
-            _alter_ts(sessions, "ended_at"),
-            _alter_ts(sessions, "updated_at"),
-            _alter_ts(sessions, "processing_started_at"),
-            _alter_ts(sessions, "processing_completed_at"),
-            # ehr_prompts
-            _alter_ts(prompts, "updated_at"),
-            # ehr_routes
-            _alter_ts(routes, "last_success"),
-            _alter_ts(routes, "created_at"),
-            _alter_ts(routes, "updated_at"),
-            # appointments
-            _alter_ts(appts, "start_at"),
-            _alter_ts(appts, "end_at"),
-            _alter_ts(appts, "created_at"),
-            _alter_ts(appts, "updated_at"),
-            # availability_rules
-            _alter_ts(rules, "created_at"),
-            _alter_ts(rules, "updated_at"),
-            # google_calendar_tokens
-            _alter_ts(gcal, "last_synced_at"),
-            _alter_ts(gcal, "connected_at"),
-            # ical_client_mappings
-            _alter_ts(mappings, "created_at"),
-            # ical_sync_configs
-            _alter_ts(ical, "last_synced_at"),
-            _alter_ts(ical, "connected_at"),
-            # clinician_profiles
-            _alter_ts(profiles, "joined_at"),
-        ]
-    )
-
-    with engine.connect() as conn:
-        for stmt in migrations:
-            savepoint = conn.begin_nested()
-            try:
-                conn.execute(text(stmt))
-                savepoint.commit()
-            except Exception:
-                # Table/column may not exist in this practice schema — skip safely
-                savepoint.rollback()
-        conn.commit()
-
-
 def _stamp_alembic_at_head(engine: Engine, schema_name: str) -> None:
     """Insert ``alembic_version`` at current head for a freshly-provisioned tenant.
 
@@ -384,8 +298,8 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     1. ``ensure_schemas`` at boot — passes ``DEFAULT_PRACTICE_SCHEMA``
        (``practice``). That schema is the canonical template; alembic
        owns its DDL and ``alembic_version`` row. We use ``create_all``
-       + ``_migrate_practice_columns`` (the legacy path) so this works
-       on a fresh DB where alembic hasn't run yet.
+       (the legacy path) so this works on a fresh DB where alembic
+       hasn't run yet.
     2. ``PentestTenantService.provision`` (and any future
        per-tenant provisioning) — passes a brand-new
        ``practice_<id>`` schema name. The schema doesn't exist yet, so
@@ -399,9 +313,10 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     3. ``migrate_tenants.upgrade_tenant_schema`` for legacy tenants
        missing ``alembic_version`` — calls this function with a schema
        that *already* has tables. Applying the template would crash on
-       ``CREATE TABLE``; fall through to the legacy path so old
-       tenants keep advancing toward HEAD via the column-patch
-       reconcile.
+       ``CREATE TABLE``; fall through to the legacy path so the schema
+       is reconciled to the ORM shape via ``create_all`` and then the
+       caller's subsequent alembic stamp/upgrade carries column shape
+       evolution from there.
 
     Idempotent for cases (1) and (3); fresh tenants in (2) error if
     the template is applied twice (intentional — re-applying canonical
@@ -445,12 +360,18 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
 
 
 def _create_practice_schema_legacy(engine: Engine, schema_name: str) -> None:
-    """Pre-template provisioning path — ``create_all`` + column patches.
+    """Pre-template provisioning path — ``create_all`` only.
 
     Used for the default ``practice`` template schema (alembic owns
-    its DDL end-to-end; we just need ``create_all`` on first-boot
-    DBs where alembic hasn't run yet) and for reconciling per-tenant
+    its DDL end-to-end; we just need ``create_all`` on first-boot DBs
+    where alembic hasn't run yet) and for reconciling per-tenant
     schemas that already have tables from a pre-template provisioning.
+
+    Column shape evolution lives entirely in the alembic chain after
+    revision ``b7de65c29385`` — for the default template, alembic
+    runs at deploy time; for legacy tenant reconcile, the caller
+    (``migrate_tenants.upgrade_tenant_schema``) stamps the schema and
+    subsequent ``alembic upgrade head`` invocations carry it forward.
     """
     with engine.connect() as conn:
         conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
@@ -463,8 +384,6 @@ def _create_practice_schema_legacy(engine: Engine, schema_name: str) -> None:
 
     for table in Base.metadata.sorted_tables:
         table.schema = None
-
-    _migrate_practice_columns(engine, schema_name)
 
 
 def _apply_tenant_template(engine: Engine, schema_name: str) -> None:
