@@ -51,6 +51,25 @@ def ensure_schemas(engine: Engine) -> None:
     Called on application startup when database_backend=postgres.
     Idempotent — safe to call on every boot.
 
+    Schema evolution split:
+
+    * **Bootstrap (here)** — ``CREATE SCHEMA IF NOT EXISTS`` for the
+      platform schema and ``PlatformBase.metadata.create_all`` so a
+      fresh DB has every table the current ORM expects. ``create_all``
+      is a no-op against tables that already exist; it does NOT alter
+      column types on tables that exist with stale shapes.
+    * **Platform column evolution** — owned by the SaaS overlay's
+      ``backend/saas/db/alembic/`` chain (``alembic_version_saas``
+      bookkeeping). Historically lived in a runtime patch
+      (``_migrate_platform_columns``) that ran on every boot; absorbed
+      into the alembic chain in SaaS revision ``f7d2a3e8b194`` and
+      removed from this file. OSS itself has no platform alembic
+      chain — only the SaaS overlay does — so installs without the
+      overlay rely on ``create_all`` matching the ORM shape.
+    * **Tenant column evolution** — owned by the OSS tenant chain
+      (``backend/alembic/``) and fanned out per-tenant by
+      ``saas.bin.migrate`` / ``app.db.migrate_tenants.fan_out``.
+
     Concurrency: when Cloud Run starts multiple container instances
     simultaneously (deployment rollout + min-instance warm-up overlap),
     every instance races through this function. ``create_all`` checks
@@ -72,8 +91,18 @@ def ensure_schemas(engine: Engine) -> None:
 
             PlatformBase.metadata.create_all(engine)
 
-            # Add columns that may not exist on older databases
-            _migrate_platform_columns(engine)
+            # Platform-schema column evolution lives in the SaaS overlay's
+            # alembic chain (``backend/saas/db/alembic/``), fanned out at
+            # deploy time via ``saas.bin.migrate``. The boot path used to
+            # run a runtime ``_migrate_platform_columns`` helper that
+            # issued ~17 ALTER TABLE statements with bare-except savepoints;
+            # absorbed into SaaS revision ``f7d2a3e8b194`` and deleted.
+
+            # Pentest CHECK + immutability trigger on ``platform.practices``.
+            # Declarative DB guards, not column evolution — kept here until
+            # they can move into the SaaS alembic chain alongside the
+            # ``is_pentest`` column itself.
+            _ensure_pentest_tenant_guards(engine)
 
             # Create default practice schema and tables
             create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
@@ -113,101 +142,6 @@ def ensure_schemas(engine: Engine) -> None:
                 {"k": _PROVISIONING_LOCK_KEY},
             )
             conn.commit()
-
-
-def _migrate_platform_columns(engine: Engine) -> None:
-    """Add new columns to existing platform tables.
-
-    Uses ADD COLUMN IF NOT EXISTS so it's safe to run on every boot.
-    """
-    practices = f"{PLATFORM_SCHEMA}.practices"
-    subs = f"{PLATFORM_SCHEMA}.subscriptions"
-    migrations = [
-        # practices: columns added over time
-        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(128) UNIQUE",
-        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
-        " owner_email VARCHAR(255) NOT NULL DEFAULT ''",
-        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active'",
-        # subscriptions: trial tracking
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_start VARCHAR(50)",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_sessions_used INTEGER DEFAULT 0",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_sessions_limit INTEGER DEFAULT 15",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS trial_days_limit INTEGER DEFAULT 0",
-        # subscriptions: grace extension
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS grace_extension_used BOOLEAN DEFAULT FALSE",
-        f"ALTER TABLE {subs} ADD COLUMN IF NOT EXISTS grace_extension_expires_at VARCHAR(50)",
-    ]
-
-    # platform.users: new table columns (table created by create_all above)
-    users = f"{PLATFORM_SCHEMA}.users"
-    migrations.extend(
-        [
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS is_platform_admin BOOLEAN DEFAULT FALSE",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_accepted_at VARCHAR(50)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_version VARCHAR(10)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_legal_name VARCHAR(255)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_license_number VARCHAR(100)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_license_state VARCHAR(2)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_practice_name VARCHAR(255)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_business_address VARCHAR(500)",
-            f"ALTER TABLE {users} ADD COLUMN IF NOT EXISTS baa_full_text TEXT",
-        ]
-    )
-
-    migrations.append(
-        f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS is_pentest"
-        " BOOLEAN NOT NULL DEFAULT FALSE"
-    )
-    migrations.extend(
-        [
-            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
-            " audio_retention_days INTEGER NOT NULL DEFAULT 365",
-            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS"
-            " offboard_scheduled_at TIMESTAMP WITH TIME ZONE",
-            f"ALTER TABLE {practices} ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE",
-        ]
-    )
-
-    # --- Migrate VARCHAR datetime columns to TIMESTAMP WITH TIME ZONE ---
-    etm = f"{PLATFORM_SCHEMA}.email_tenant_mappings"
-    allowed = f"{PLATFORM_SCHEMA}.allowed_emails"
-
-    def _alter_ts(table: str, col: str) -> str:
-        return (
-            f"ALTER TABLE {table} ALTER COLUMN {col} TYPE TIMESTAMP WITH TIME ZONE"
-            f" USING CASE WHEN {col}::text = '' THEN NULL"
-            f" ELSE {col}::text::timestamptz END"
-        )
-
-    migrations.extend(
-        [
-            _alter_ts(practices, "created_at"),
-            _alter_ts(subs, "created_at"),
-            _alter_ts(subs, "updated_at"),
-            _alter_ts(subs, "trial_start"),
-            _alter_ts(subs, "grace_extension_expires_at"),
-            _alter_ts(etm, "created_at"),
-            _alter_ts(users, "created_at"),
-            _alter_ts(users, "mfa_enrolled_at"),
-            _alter_ts(users, "baa_accepted_at"),
-            _alter_ts(allowed, "added_at"),
-        ]
-    )
-
-    with engine.connect() as conn:
-        for stmt in migrations:
-            savepoint = conn.begin_nested()
-            try:
-                conn.execute(text(stmt))
-                savepoint.commit()
-            except Exception:
-                # Table/column may not exist in this deployment (e.g.
-                # overlay-managed tables like platform.subscriptions
-                # when the overlay is not installed) — skip.
-                savepoint.rollback()
-        conn.commit()
-    _ensure_pentest_tenant_guards(engine)
-    logger.info("Platform column migrations applied")
 
 
 def _ensure_pentest_tenant_guards(engine: Engine) -> None:
