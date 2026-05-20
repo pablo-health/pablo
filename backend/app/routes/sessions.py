@@ -74,6 +74,49 @@ from ..services.transcription_queue_service import (
 from ..settings import get_settings
 from ..utcnow import utc_now
 
+# SaaS-only trial-session gate. The overlay's saas.bootstrap installs
+# saas.billing.subscription at this OSS import path; on self-hosted
+# OSS the import fails and the gate becomes a no-op.
+try:
+    from ..routes.subscription import (  # type: ignore[import-not-found]
+        TrialLimitReachedError,
+        check_and_count_trial_session,
+    )
+except ImportError:  # pragma: no cover -- self-hosted OSS
+    TrialLimitReachedError = None  # type: ignore[assignment,misc]
+    check_and_count_trial_session = None  # type: ignore[assignment]
+
+
+def _gate_trial_session(user_email: str) -> None:
+    """Increment SaaS trial counter and 402 if exhausted.
+
+    No-op on self-hosted OSS where the SaaS billing overlay isn't
+    installed. Wrapping the call in a helper keeps the per-route
+    callsites a single line each.
+    """
+    if check_and_count_trial_session is None:
+        return
+    settings = get_settings()
+    try:
+        check_and_count_trial_session(user_email, settings)
+    except Exception as exc:
+        if TrialLimitReachedError is None or not isinstance(exc, TrialLimitReachedError):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": {
+                    "code": "TRIAL_LIMIT_REACHED",
+                    "message": "Trial session limit reached. Upgrade to continue.",
+                    "details": {
+                        "trial_sessions_used": exc.used,
+                        "trial_sessions_limit": exc.limit,
+                    },
+                }
+            },
+        ) from exc
+
+
 logger = logging.getLogger(__name__)
 
 # Background transcription tasks — prevent garbage collection
@@ -165,6 +208,7 @@ def upload_session(
     - **session_date**: ISO 8601 datetime of session
     - **transcript**: Transcript data (format and content)
     """
+    _gate_trial_session(user.email)
     try:
         session, patient, note = session_service.upload_session(patient_id, user.id, request)
     except PatientNotFoundError as e:
@@ -408,6 +452,7 @@ def schedule_session(
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """Create a scheduled session (pre-recording)."""
+    _gate_trial_session(user.email)
     try:
         session, patient = session_service.schedule_session(user.id, request)
     except PatientNotFoundError as e:
