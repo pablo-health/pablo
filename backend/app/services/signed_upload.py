@@ -17,8 +17,57 @@ GCS.
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+def _iam_signing_kwargs() -> dict[str, Any]:
+    """Return generate_signed_url kwargs for IAM-API-backed signing.
+
+    V4 signed URLs require a private key locally to compute the
+    signature. Cloud Run / GKE / GCE workload identities don't ship a
+    private key — google.auth.default() returns a
+    compute_engine.Credentials object that only carries a bearer
+    token. Calling blob.generate_signed_url(version="v4") on those
+    credentials raises AttributeError("you need a private key to sign
+    credentials") and the route 500s.
+
+    Workaround: pass service_account_email + access_token. The
+    google-cloud-storage client then delegates the signature to the
+    IAM signBlob API rather than computing it locally. The runtime
+    SA needs roles/iam.serviceAccountTokenCreator ON ITSELF.
+
+    Returns an empty dict when running with credentials that DO have
+    a local private key (gcloud ADC refresh tokens, downloaded SA
+    JSON keys) — those still self-sign without an IAM round-trip.
+
+    Discovered via pablo-saas E2E (THERAPY-wy0f.4 / THERAPY-vapd).
+    Without this, patient document upload has never worked end-to-end
+    against any deployed environment.
+    """
+    import google.auth
+    import google.auth.transport.requests
+
+    credentials, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    # Only metadata-server credentials lack a private key. We could
+    # introspect the credentials type, but the cheapest check is:
+    # does it expose service_account_email? Compute Engine
+    # credentials do; user/oauth refresh credentials don't.
+    sa_email = getattr(credentials, "service_account_email", None)
+    if not sa_email or sa_email == "default":
+        # Local dev / gcloud ADC — let the library self-sign.
+        return {}
+    # Refresh to ensure access_token is populated.
+    credentials.refresh(google.auth.transport.requests.Request())
+    return {
+        "service_account_email": sa_email,
+        "access_token": credentials.token,
+    }
 
 
 def make_upload_url(
@@ -47,6 +96,7 @@ def make_upload_url(
         headers={
             "x-goog-content-length-range": f"0,{max_bytes}",
         },
+        **_iam_signing_kwargs(),
     )
     return signed
 
@@ -70,6 +120,7 @@ def make_download_url(
         "version": "v4",
         "expiration": timedelta(seconds=ttl_seconds),
         "method": "GET",
+        **_iam_signing_kwargs(),
     }
     if response_disposition is not None:
         kwargs["response_disposition"] = response_disposition
