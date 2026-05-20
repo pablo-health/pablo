@@ -75,6 +75,16 @@ class AuditAction(StrEnum):
     # and TENANT_DELETED (which implies the schema is gone).
     TENANT_OFFBOARD_SCHEDULED = "tenant_offboard_scheduled"
 
+    # Tenant invitations — minted by platform admins to onboard a new
+    # owner without a marketing-checkout round-trip. Lives in OSS so
+    # the SaaS overlay can log via the type-safe AuditService API
+    # rather than persisting raw strings.
+    INVITATION_CREATED = "invitation_created"
+    INVITATION_REISSUED = "invitation_reissued"
+    INVITATION_REVOKED = "invitation_revoked"
+    INVITATION_ACCEPTED = "invitation_accepted"
+    INVITATION_EMAIL_SWITCHED = "invitation_email_switched"
+
     # Practice/tenant configuration writes. Used for retention-policy
     # changes (e.g. per-practice audio retention slider — THERAPY-6k7)
     # and any future configurable retention surfaces. The `changes`
@@ -148,6 +158,7 @@ class ResourceType(StrEnum):
     TENANT_EXPORT = "tenant_export"
     CHAT_CONVERSATION = "chat_conversation"
     PATIENT_DOCUMENT = "patient_document"
+    INVITATION = "invitation"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
