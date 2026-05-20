@@ -368,8 +368,8 @@ export function MFAEnrollmentForm({ returnTo: returnToProp }: MFAEnrollmentFormP
           </div>
 
           <p className="text-sm text-neutral-700 mb-4">
-            Use an authenticator app like Google Authenticator, Authy, or 1Password to scan
-            this QR code:
+            Use an authenticator app like Google Authenticator, Duo Mobile, or 1Password
+            to scan this QR code:
           </p>
 
           <div className="bg-white p-6 rounded-lg border-2 border-neutral-200 flex justify-center">
@@ -446,34 +446,16 @@ export function MFAEnrollmentForm({ returnTo: returnToProp }: MFAEnrollmentFormP
           </form>
         </div>
 
-        {/* Help Text */}
-        <div className="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-lg">
-          <div className="flex items-start gap-3">
-            <svg
-              className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-              />
-            </svg>
-            <div>
-              <h3 className="text-sm font-semibold text-amber-900 mb-1">
-                Save Your Recovery Options
-              </h3>
-              <p className="text-sm text-amber-800 leading-relaxed">
-                Make sure you have access to your authenticator app before enabling MFA.
-                If you lose access to your device, you may need to contact support to regain
-                access to your account.
-              </p>
-            </div>
-          </div>
-        </div>
+        <p className="text-xs text-neutral-500 leading-relaxed">
+          Lose access to your authenticator later? Email{" "}
+          <a
+            href="mailto:support@pablo.health"
+            className="text-primary-600 hover:text-primary-700 underline"
+          >
+            support@pablo.health
+          </a>{" "}
+          and we&apos;ll help you regain access.
+        </p>
       </div>
     </div>
   )
