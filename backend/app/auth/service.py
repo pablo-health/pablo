@@ -30,9 +30,9 @@ from .firebase_init import initialize_firebase_app
 logger = logging.getLogger(__name__)
 
 # Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
-# jobs/pentest_identity.py). 8 hex chars of a uuid4 make collisions
-# with real signups statistically impossible and visually obvious to
-# auditors. Real signups matching this pattern are rejected upstream.
+# jobs/pentest_identity.py). The bypass that honors this pattern is
+# gated on settings.is_prod_project in both auth/service.py and
+# routes/ext_auth.py.
 E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
@@ -263,8 +263,7 @@ def require_mfa(
         return decoded_token
 
     # E2E test accounts bypass MFA in non-production environments only
-    is_prod_project = settings.gcp_project_id.endswith("-prod")
-    if settings.e2e_test_emails and not is_prod_project:
+    if settings.e2e_test_emails and not settings.is_prod_project:
         email = decoded_token.get("email", "")
         if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
             logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
@@ -511,24 +510,18 @@ def _resolve_user(
                     exc,
                 )
 
-        # Defense-in-depth: check allowlist before auto-provisioning.
-        # Two reserved test-identity prefixes bypass the allowlist:
-        #   - pentestuser-<8hex>@pablo.health   (weekly pentest job)
-        #   - e2etest-<8hex>@pablo.health       (per-PR E2E test suite
-        #     in pablo-saas/e2e — see THERAPY-wy0f)
-        # Both are owner-controlled, ephemeral, and reserved at the
-        # prefix level: real signups matching either pattern are
-        # rejected here. The bypass exists so external test runners
-        # don't need write access to `platform.allowed_emails`.
+        # Reserved test-identity prefixes bypass the allowlist in non-prod
+        # only (Firebase signup doesn't verify email — an attacker could
+        # otherwise mint a token for an arbitrary e2etest-<hex>@pablo.health
+        # address and ride this path into prod).
         from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 
         settings = get_settings()
-        is_pentest_user = bool(email and PENTEST_EMAIL_PATTERN.match(email))
-        is_e2e_user = bool(email and E2E_EMAIL_PATTERN.match(email))
+        is_prod_project = settings.is_prod_project
+        is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
+        is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
         is_provisioned_tenant = bool(
-            email
-            and settings.multi_tenancy_enabled
-            and _email_has_tenant_mapping(email)
+            email and settings.multi_tenancy_enabled and _email_has_tenant_mapping(email)
         )
         if (
             settings.restrict_signups
