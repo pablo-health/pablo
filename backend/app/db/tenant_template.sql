@@ -40,7 +40,7 @@ CREATE TABLE __TENANT_SCHEMA__.alembic_version (
 CREATE TABLE __TENANT_SCHEMA__.allowed_emails (
     email character varying(255) NOT NULL,
     added_by character varying(255) NOT NULL,
-    added_at character varying(30) NOT NULL
+    added_at timestamp with time zone NOT NULL
 );
 
 
@@ -371,11 +371,11 @@ CREATE TABLE __TENANT_SCHEMA__.users (
     id character varying(128) NOT NULL,
     email character varying(255) NOT NULL,
     name character varying(255) NOT NULL,
-    created_at character varying(30) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
     title character varying(50),
     credentials character varying(100),
     picture text,
-    baa_accepted_at character varying(30),
+    baa_accepted_at timestamp with time zone,
     baa_version character varying(10),
     baa_legal_name character varying(255),
     baa_license_number character varying(100),
@@ -385,7 +385,7 @@ CREATE TABLE __TENANT_SCHEMA__.users (
     baa_full_text text,
     is_admin boolean NOT NULL,
     status character varying(20) NOT NULL,
-    mfa_enrolled_at character varying(30)
+    mfa_enrolled_at timestamp with time zone
 );
 
 
