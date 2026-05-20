@@ -192,9 +192,7 @@ def _authorize_conversation(
     try:
         return chat_service.get_conversation(conversation_id, user.id)
     except ChatConversationNotFoundError as exc:
-        raise NotFoundError(
-            "Conversation not found", {"conversation_id": conversation_id}
-        ) from exc
+        raise NotFoundError("Conversation not found", {"conversation_id": conversation_id}) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -255,17 +253,19 @@ def create_conversation(
 )
 def preview_context(
     request_body: PreviewChatContextRequest,
+    http_request: Request,
     user: User = Depends(require_baa_acceptance),
     patient_repo: PatientRepository = Depends(get_patient_repository_dep),
     notes_repo: NotesRepository = Depends(get_notes_repository_dep),
+    audit: AuditService = Depends(get_audit_service),
 ) -> PreviewChatContextResponse:
     """Return a PHI-free context manifest for a hypothetical first turn.
 
     Drives the §13.4 briefing card ("I'm reading …"). Runs the same
     context bundler the streaming turn would, against the proposed
     ``source_selection``, but does NOT create a conversation, call the
-    LLM, persist a chat row, or audit. Omitting ``source_selection``
-    falls back to the design-doc §7.4 default.
+    LLM, or persist a chat row. The patient + notes read is still PHI
+    access and lands in the audit log per § 164.312(b).
 
     Returns 404 (not 403) if the user lacks access to the patient —
     matches the create_conversation surface so this route doesn't
@@ -297,6 +297,13 @@ def preview_context(
             detail={"error": "context_too_large", "message": str(exc)},
         ) from exc
 
+    audit.log_chat_action(
+        action=AuditAction.CHAT_CONTEXT_PREVIEWED,
+        user=user,
+        request=http_request,
+        conversation_id="preview",
+        patient_id=patient.id,
+    )
     return PreviewChatContextResponse(manifest=bundle.manifest)
 
 
@@ -306,12 +313,22 @@ def preview_context(
 )
 def get_conversation(
     conversation_id: str,
+    http_request: Request,
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> ChatConversationDetailResponse:
     """Return a conversation with its messages in ``sequence`` order."""
     conv = _authorize_conversation(conversation_id, user, chat_service)
     messages = chat_service.list_messages(conv.id, user.id)
+    audit.log_chat_action(
+        action=AuditAction.CHAT_CONVERSATION_VIEWED,
+        user=user,
+        request=http_request,
+        conversation_id=conv.id,
+        patient_id=conv.patient_id,
+        changes={"message_count": len(messages)},
+    )
     return ChatConversationDetailResponse.from_conversation_with_messages(conv, messages)
 
 
@@ -320,6 +337,7 @@ def get_conversation(
     response_model=ChatConversationListResponse,
 )
 def list_conversations(
+    http_request: Request,
     patient_id: str = Query(...),
     caller_feature_key: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
@@ -328,6 +346,7 @@ def list_conversations(
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
     patient_repo: PatientRepository = Depends(get_patient_repository_dep),
+    audit: AuditService = Depends(get_audit_service),
 ) -> ChatConversationListResponse:
     """List conversations for a patient the caller has access to.
 
@@ -349,6 +368,14 @@ def list_conversations(
         include_archived=include_archived,
         page=page,
         page_size=page_size,
+    )
+    audit.log_chat_action(
+        action=AuditAction.CHAT_CONVERSATION_LISTED,
+        user=user,
+        request=http_request,
+        conversation_id="list",
+        patient_id=patient.id,
+        changes={"conversation_count": total},
     )
     return ChatConversationListResponse(
         data=[ChatConversationResponse.from_conversation(c) for c in rows],

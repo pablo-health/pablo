@@ -38,6 +38,7 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/audio",
     "/soap",
     "/notes",
+    "/chat",
     "/resolve-client",
     "/import-clients",
 )
@@ -47,13 +48,59 @@ FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_reques
 HTTP_METHODS: frozenset[str] = frozenset({"get", "post", "patch", "put", "delete"})
 
 
+def _router_prefixes(tree: ast.Module) -> dict[str, str]:
+    """Map ``router``/``*_router`` binding names to their ``APIRouter(prefix=...)``.
+
+    Without this the path matched against PHI markers is the decorator's
+    literal arg (e.g. ``/conversations``), missing the prefix from
+    ``APIRouter(prefix="/api/chat")`` and silently exempting whole route
+    surfaces from the PHI-marker check.
+    """
+    prefixes: dict[str, str] = {}
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        if not isinstance(stmt.value, ast.Call):
+            continue
+        callee = stmt.value.func
+        callee_name = (
+            callee.id
+            if isinstance(callee, ast.Name)
+            else callee.attr
+            if isinstance(callee, ast.Attribute)
+            else None
+        )
+        if callee_name != "APIRouter":
+            continue
+        prefix = ""
+        for kw in stmt.value.keywords:
+            if (
+                kw.arg == "prefix"
+                and isinstance(kw.value, ast.Constant)
+                and isinstance(kw.value.value, str)
+            ):
+                prefix = kw.value.value
+                break
+        for target in stmt.targets:
+            if isinstance(target, ast.Name) and (
+                target.id == "router" or target.id.endswith("_router")
+            ):
+                prefixes[target.id] = prefix
+    return prefixes
+
+
 def _iter_route_handlers() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef, Path]]:
-    """Return (path, method, function_node, file) for every ``@router.<method>`` handler."""
+    """Return (full_path, method, function_node, file) for every ``@router.<method>`` handler.
+
+    ``full_path`` includes the router prefix so PHI-marker matching sees
+    the URL FastAPI actually exposes.
+    """
     handlers: list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef, Path]] = []
     for py_file in sorted(ROUTES_DIR.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
         tree = ast.parse(py_file.read_text())
+        prefixes = _router_prefixes(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
@@ -74,7 +121,8 @@ def _iter_route_handlers() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFu
                 path = dec.args[0].value
                 if not isinstance(path, str):
                     continue
-                handlers.append((path, dec.func.attr, node, py_file))
+                full_path = prefixes.get(router_name, "") + path
+                handlers.append((full_path, dec.func.attr, node, py_file))
     return handlers
 
 
@@ -154,3 +202,22 @@ def test_phi_routes_inject_audit_service() -> None:
         "path, add it to an explicit allowlist in this test with a comment.\n\n"
         + "\n".join(violations)
     )
+
+
+def test_router_prefix_is_resolved() -> None:
+    """Without prefix resolution, ``APIRouter(prefix="/api/chat")`` paths
+    like ``/conversations`` don't match any PHI marker, silently
+    exempting whole route surfaces from ``test_phi_routes_inject_audit_service``.
+    """
+    source = (
+        "from fastapi import APIRouter\n"
+        "router = APIRouter(prefix='/api/chat', tags=['chat'])\n"
+        "patient_router = APIRouter(prefix='/api/patients')\n"
+        "@router.get('/conversations')\n"
+        "def handler():\n    ...\n"
+        "@patient_router.get('/{patient_id}/extras')\n"
+        "def patient_handler():\n    ...\n"
+    )
+    tree = ast.parse(source)
+    prefixes = _router_prefixes(tree)
+    assert prefixes == {"router": "/api/chat", "patient_router": "/api/patients"}

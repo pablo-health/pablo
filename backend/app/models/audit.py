@@ -110,10 +110,16 @@ class AuditAction(StrEnum):
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
     # land in the audit log; per-turn detail lives on chat_messages rows.
     CHAT_CONVERSATION_CREATED = "chat_conversation_created"
+    CHAT_CONVERSATION_VIEWED = "chat_conversation_viewed"
+    CHAT_CONVERSATION_LISTED = "chat_conversation_listed"
     CHAT_CONVERSATION_ARCHIVED = "chat_conversation_archived"
     CHAT_CONVERSATION_PURGED = "chat_conversation_purged"
     CHAT_CHART_PROMOTION = "chat_chart_promotion"
     CHAT_TURN_BLOCKED = "chat_turn_blocked"
+    # Context preview reads patient + assembled-notes context to produce
+    # the §13.4 briefing card. No conversation row is created, but the
+    # PHI read still requires an audit entry per § 164.312(b).
+    CHAT_CONTEXT_PREVIEWED = "chat_context_previewed"
 
     # Patient document upload (THERAPY-ak6m.2). UPLOAD_INITIATED fires
     # when a signed PUT URL is minted and the placeholder row inserted;

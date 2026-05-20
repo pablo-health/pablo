@@ -16,13 +16,17 @@ chat access and B gains it. These mirror ``test_routes_notes.py``'s
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
 from app.main import app
-from app.models import ChatConversation, Note, Patient
+from app.models import AuditAction, ChatConversation, Note, Patient
 from app.repositories import InMemoryChatRepository
+from app.repositories.audit import InMemoryAuditRepository
 from app.routes.chat import get_chat_repository_dep
+from app.services import AuditService, get_audit_service
 from app.utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -718,3 +722,88 @@ class TestPostTransferAccess:
                     app.dependency_overrides.pop(require_baa_acceptance, None)
         finally:
             app.dependency_overrides.pop(get_chat_repository_dep, None)
+
+
+@pytest.fixture
+def audit_repo() -> InMemoryAuditRepository:
+    return InMemoryAuditRepository()
+
+
+@pytest.fixture
+def audited_client(
+    client: TestClient, audit_repo: InMemoryAuditRepository
+) -> Iterator[TestClient]:
+    app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
+    try:
+        yield client
+    finally:
+        app.dependency_overrides.pop(get_audit_service, None)
+
+
+class TestPHIReadsEmitAudit:
+    """Regression for the three chat routes that previously read PHI
+    without writing an audit entry (HIPAA § 164.312(b))."""
+
+    def test_preview_context_writes_audit(
+        self,
+        audited_client: TestClient,
+        audit_repo: InMemoryAuditRepository,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        response = audited_client.post(
+            "/api/chat/conversations/preview",
+            json={"patient_id": patient.id, "source_selection": {"current_medications": True}},
+        )
+        assert response.status_code == 200
+        entries = audit_repo.all()
+        assert any(
+            e.action == AuditAction.CHAT_CONTEXT_PREVIEWED.value
+            and e.patient_id == patient.id
+            and e.resource_id == "preview"
+            for e in entries
+        )
+
+    def test_get_conversation_writes_audit(
+        self,
+        audited_client: TestClient,
+        audit_repo: InMemoryAuditRepository,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        create = audited_client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        conv_id = create.json()["id"]
+        audit_repo._entries.clear()  # focus on the view-time entry
+
+        response = audited_client.get(f"/api/chat/conversations/{conv_id}")
+        assert response.status_code == 200
+        entries = audit_repo.all()
+        viewed = [e for e in entries if e.action == AuditAction.CHAT_CONVERSATION_VIEWED.value]
+        assert len(viewed) == 1
+        assert viewed[0].resource_id == conv_id
+        assert viewed[0].patient_id == patient.id
+        assert viewed[0].changes == {"message_count": 0}
+
+    def test_list_conversations_writes_audit(
+        self,
+        audited_client: TestClient,
+        audit_repo: InMemoryAuditRepository,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        for _ in range(2):
+            audited_client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        audit_repo._entries.clear()
+
+        response = audited_client.get("/api/chat/conversations", params={"patient_id": patient.id})
+        assert response.status_code == 200
+        listed = [
+            e for e in audit_repo.all() if e.action == AuditAction.CHAT_CONVERSATION_LISTED.value
+        ]
+        assert len(listed) == 1
+        assert listed[0].resource_id == "list"
+        assert listed[0].patient_id == patient.id
+        assert listed[0].changes == {"conversation_count": 2}

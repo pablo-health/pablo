@@ -215,13 +215,18 @@ class AuditService:
         patient_id: str,
         changes: dict[str, Any] | None = None,
     ) -> AuditLogEntry:
-        """Audit a chat-conversation lifecycle event (THERAPY-bhv).
+        """Audit a chat-conversation lifecycle or PHI-read event (THERAPY-bhv).
 
-        Per design doc §10.4, the chat primitive follows a two-tier audit
+        Per design doc §10.4 the chat primitive follows a two-tier audit
         policy: lifecycle events (create/archive/purge/promote/blocked)
-        land here; per-turn forensic detail (content, manifest, token
-        counts) lives on the ``chat_messages`` row. Callers must keep
-        ``changes`` PHI-free — ids, counts, hashes, enum codes only.
+        plus PHI reads (view/list/preview) land here; per-turn forensic
+        detail (content, manifest, token counts) lives on the
+        ``chat_messages`` row. Callers must keep ``changes`` PHI-free —
+        ids, counts, hashes, enum codes only.
+
+        For non-row-scoped actions, pass ``conversation_id="list"`` or
+        ``"preview"`` so the audit table still records a stable
+        resource_id under the chat-conversation resource type.
         """
         ip_address, user_agent = extract_request_context(request)
         if changes is not None:
