@@ -138,6 +138,50 @@ jobs:
             tests_integration/database/test_platform_audit_writes.py \
             -v
 
+  tenant-template-drift:
+    # Catches the failure mode that produced the 2026-05-19 incident:
+    # an alembic revision lands without ``tenant_template.sql`` being
+    # regenerated, so fresh-tenant provisioning (which applies the
+    # template verbatim) emits a different schema than alembic head.
+    # The regen script runs alembic upgrade head + pg_dump in a
+    # disposable Postgres via testcontainers; we then ``git diff``
+    # the committed template against the regen output.
+    name: Tenant template matches alembic head
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Configure Poetry virtualenv location
+        run: poetry config virtualenvs.in-project true
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      - name: Regenerate template (testcontainers Postgres)
+        run: poetry run python backend/scripts/regen_tenant_template.py
+
+      - name: Fail if template drifted from alembic head
+        run: |
+          if ! git diff --exit-code backend/app/db/tenant_template.sql; then
+            echo "::error::tenant_template.sql is out of sync with alembic head."
+            echo "::error::Run: poetry run python backend/scripts/regen_tenant_template.py"
+            echo "::error::Then commit the updated backend/app/db/tenant_template.sql."
+            exit 1
+          fi
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest
