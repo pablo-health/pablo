@@ -18,8 +18,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 
 from ..auth.route_security import truly_public
+from ..auth.service import E2E_EMAIL_PATTERN
 from ..db import get_db_session
 from ..db.platform_models import EmailTenantMappingRow
+from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 from ..repositories import get_allowlist_repository, get_user_repository
 from ..settings import get_settings
 
@@ -148,6 +150,18 @@ def check_allowlist(
 
     # If signups aren't restricted, everyone is allowed
     if not settings.restrict_signups:
+        return CheckAllowlistResponse(allowed=True)
+
+    # Reserved test-identity prefixes bypass the allowlist (same as
+    # auth/service.py — see comment there). Without this duplicate
+    # check, the beforeCreate blocking function rejects test users
+    # before they're even created in Firebase, so the bypass in
+    # auth/service.py (which runs on API calls AFTER signUp) never
+    # gets a chance to apply.
+    email_lower = request.email.lower()
+    if PENTEST_EMAIL_PATTERN.match(email_lower) or E2E_EMAIL_PATTERN.match(
+        email_lower
+    ):
         return CheckAllowlistResponse(allowed=True)
 
     repo = get_allowlist_repository()
