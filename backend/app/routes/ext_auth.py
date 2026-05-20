@@ -152,19 +152,9 @@ def check_allowlist(
     if not settings.restrict_signups:
         return CheckAllowlistResponse(allowed=True)
 
-    # Reserved test-identity prefixes bypass the allowlist (same as
-    # auth/service.py — see comment there). Without this duplicate
-    # check, the beforeCreate blocking function rejects test users
-    # before they're even created in Firebase, so the bypass in
-    # auth/service.py (which runs on API calls AFTER signUp) never
-    # gets a chance to apply.
-    #
-    # Production guard: Firebase Email/Password signup does not require
-    # email-link confirmation, so an attacker who can hit Firebase
-    # signUp against the prod project (the web API key ships in the
-    # frontend bundle) could mint a token for any e2etest-<hex> /
-    # pentestuser-<hex>@pablo.health address and ride this bypass. In
-    # production, force the patterns through the normal allowlist gate.
+    # Reserved test-identity prefixes bypass the allowlist in non-prod
+    # only — must mirror the same guard in auth/service.py, otherwise
+    # the blocking function would reject the test users before signUp.
     email_lower = request.email.lower()
     if not settings.is_prod_project and (
         PENTEST_EMAIL_PATTERN.match(email_lower) or E2E_EMAIL_PATTERN.match(email_lower)

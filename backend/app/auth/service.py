@@ -30,12 +30,9 @@ from .firebase_init import initialize_firebase_app
 logger = logging.getLogger(__name__)
 
 # Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
-# jobs/pentest_identity.py). 8 hex chars of a uuid4 make collisions
-# with real signups statistically impossible and visually obvious to
-# auditors. The bypass that honors this pattern is gated on
-# `not settings.is_prod_project` in both auth/service.py and
-# routes/ext_auth.py; in production the pattern is treated like any
-# other non-allowlisted email.
+# jobs/pentest_identity.py). The bypass that honors this pattern is
+# gated on settings.is_prod_project in both auth/service.py and
+# routes/ext_auth.py.
 E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
@@ -513,22 +510,10 @@ def _resolve_user(
                     exc,
                 )
 
-        # Defense-in-depth: check allowlist before auto-provisioning.
-        # Two reserved test-identity prefixes bypass the allowlist:
-        #   - pentestuser-<8hex>@pablo.health   (weekly pentest job)
-        #   - e2etest-<8hex>@pablo.health       (per-PR E2E test suite
-        #     in pablo-saas/e2e — see THERAPY-wy0f)
-        # Both are owner-controlled, ephemeral, and reserved at the
-        # prefix level. The bypass exists so external test runners
-        # don't need write access to `platform.allowed_emails`.
-        #
-        # Production guard (matches the MFA bypass above and the same
-        # gate in routes/ext_auth.py): Firebase Email/Password signup
-        # does not require email-link confirmation, so an attacker who
-        # can call Firebase signUp against the prod project could mint
-        # a token for an arbitrary e2etest- / pentestuser-<hex>
-        # @pablo.health address. In -prod, force the patterns through
-        # the normal allowlist gate so the bypass is dead code.
+        # Reserved test-identity prefixes bypass the allowlist in non-prod
+        # only (Firebase signup doesn't verify email — an attacker could
+        # otherwise mint a token for an arbitrary e2etest-<hex>@pablo.health
+        # address and ride this path into prod).
         from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 
         settings = get_settings()

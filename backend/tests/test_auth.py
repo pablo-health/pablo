@@ -623,14 +623,6 @@ class TestGetCurrentUser:
 
     @patch("app.auth.service.verify_firebase_token")
     def test_e2e_prefix_rejected_in_prod(self, mock_verify: MagicMock) -> None:
-        """Production guard: the e2etest-<hex> bypass is dead code in -prod.
-
-        Firebase signUp doesn't require email verification, so without this
-        guard an attacker who can call signUp against the prod project can
-        mint a token for an arbitrary e2etest-<hex>@pablo.health address
-        and auto-provision a Pablo user. In -prod the pattern must fall
-        through to the normal allowlist gate (which rejects).
-        """
         mock_verify.return_value = {
             "uid": "e2e-prod",
             "email": "e2etest-deadbeef@pablo.health",
@@ -661,7 +653,6 @@ class TestGetCurrentUser:
 
     @patch("app.auth.service.verify_firebase_token")
     def test_pentestuser_prefix_rejected_in_prod(self, mock_verify: MagicMock) -> None:
-        """Same prod guard, parity check for the pentestuser-<hex> pattern."""
         mock_verify.return_value = {
             "uid": "pentest-prod",
             "email": "pentestuser-cafebabe@pablo.health",

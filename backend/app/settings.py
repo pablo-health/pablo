@@ -17,14 +17,8 @@ from typing import Literal
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# GCP project IDs are matched as "prod" if the trailing segment is
-# `prod` or `production`, optionally followed by digits (e.g. -prod,
-# -production, -prod2). The leading `-` anchor prevents accidental
-# matches on substrings like `reproduction` or `approved`. This is the
-# canonical definition used by every security gate that needs to know
-# whether the runtime project is the production one — keep it here
-# and reference Settings.is_prod_project from call sites so naming
-# changes only have to happen in one place.
+# Matches -prod, -production, -prod<N> at end of project id. The
+# leading `-` prevents substring traps (reproduction, approved).
 _PROD_PROJECT_PATTERN = re.compile(r"-prod(?:uction)?\d*$")
 
 
@@ -562,14 +556,7 @@ class Settings(BaseSettings):
 
     @property
     def is_prod_project(self) -> bool:
-        """True if the deployed GCP project is the production one.
-
-        Used by security gates that must shut off in real prod regardless
-        of the `environment` env var (which can be misconfigured). Matches
-        `<name>-prod`, `<name>-production`, and `<name>-prod<N>` variants
-        on `gcp_project_id`; also returns True when `environment` is
-        explicitly `"production"` as a belt-and-suspenders signal.
-        """
+        """True if running against the production GCP project."""
         if self.environment == "production":
             return True
         return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))

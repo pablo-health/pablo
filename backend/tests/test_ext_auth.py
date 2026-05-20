@@ -344,16 +344,6 @@ def test_check_allowlist_skips_mapping_fallback_when_multi_tenancy_off(
     patch_db_session.assert_not_called()
 
 
-# ── Production guard on test-identity bypass ──────────────────────────────
-#
-# Firebase Email/Password signUp does not require email-link confirmation
-# and the web API key ships in the frontend bundle. Without the prod guard,
-# an attacker can mint a token for e2etest-<hex>@pablo.health and ride the
-# bypass into the platform (auto-provisioned user, BAA accept, MFA enroll,
-# audit-log pollution). In -prod, the patterns must fall through to the
-# normal allowlist gate.
-
-
 def test_check_allowlist_e2etest_prefix_rejected_in_prod(
     patch_settings: MagicMock,
     patch_allowlist_repo: MagicMock,
@@ -401,7 +391,6 @@ def test_check_allowlist_e2etest_prefix_still_bypasses_in_pentest_project(
     patch_allowlist_repo: MagicMock,
     patch_db_session: MagicMock,
 ) -> None:
-    """Pentest / staging / dev projects keep the bypass — only -prod gates it."""
     patch_settings.return_value = _dev_settings(gcp_project_id="pablohealth-pentest")
     result = check_allowlist(
         CheckAllowlistRequest(email="e2etest-deadbeef@pablo.health"),
