@@ -198,7 +198,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # --audit-signatures verifies each package's npm registry signature
+        # before install, catching account-takeover republishes that share
+        # a pinned version. See docs (pablo-saas)
+        # docs/internal/vendor-verification/supply-chain-review-2026-05-19.md.
+        run: npm ci --audit-signatures
         env:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
