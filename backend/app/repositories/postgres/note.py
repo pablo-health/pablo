@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, text
 
 from ...db.models import NoteRow, PatientClinicianRow
 from ...models.note import Note
@@ -27,6 +27,12 @@ from ..note import NotesRepository, PatientAccessDeniedError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
+    bindparam("pid", type_=Uuid(as_uuid=False)),
+    bindparam("uid", type_=String()),
+)
 
 
 class PostgresNotesRepository(NotesRepository):
@@ -44,7 +50,7 @@ class PostgresNotesRepository(NotesRepository):
         is exactly the failure mode we're trying to prevent.
         """
         result = self._session.execute(
-            text("SELECT has_patient_access(:pid::uuid, :uid)"),
+            _HAS_PATIENT_ACCESS_SQL,
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)
