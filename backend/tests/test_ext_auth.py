@@ -280,6 +280,63 @@ def test_check_allowlist_no_explicit_no_mapping_rejected(
     assert result.allowed is False
 
 
+def test_check_allowlist_e2etest_prefix_bypasses(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    """Reserved e2etest-<8hex>@pablo.health bypasses allowlist + tenant lookup."""
+    patch_settings.return_value = _dev_settings()
+    result = check_allowlist(
+        CheckAllowlistRequest(email="e2etest-deadbeef@pablo.health"), _make_request()
+    )
+    assert result.allowed is True
+    # Bypass short-circuits before hitting the repo or DB
+    patch_allowlist_repo.assert_not_called()
+    patch_db_session.assert_not_called()
+
+
+def test_check_allowlist_pentestuser_prefix_bypasses(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    """Reserved pentestuser-<8hex>@pablo.health also bypasses (parity check)."""
+    patch_settings.return_value = _dev_settings()
+    result = check_allowlist(
+        CheckAllowlistRequest(email="pentestuser-cafebabe@pablo.health"),
+        _make_request(),
+    )
+    assert result.allowed is True
+    patch_allowlist_repo.assert_not_called()
+    patch_db_session.assert_not_called()
+
+
+def test_check_allowlist_e2etest_lookalike_does_not_bypass(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    """Wrong-shape e2etest emails fall through to the normal gate."""
+    patch_settings.return_value = _dev_settings()
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+    session = MagicMock()
+    session.get.return_value = None
+    patch_db_session.return_value = session
+
+    for email in (
+        "e2etest-deadbee@pablo.health",  # 7 hex
+        "e2etest-deadbeef@example.com",  # wrong domain
+        "user-e2etest-deadbeef@pablo.health",  # prefix not at start
+    ):
+        result = check_allowlist(
+            CheckAllowlistRequest(email=email), _make_request()
+        )
+        assert result.allowed is False, f"{email!r} should not bypass"
+
+
 def test_check_allowlist_skips_mapping_fallback_when_multi_tenancy_off(
     patch_settings: MagicMock,
     patch_allowlist_repo: MagicMock,
