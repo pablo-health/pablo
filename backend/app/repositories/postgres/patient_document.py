@@ -24,13 +24,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, text
 
 from ...db.models import PatientClinicianRow, PatientDocumentRow
 from ...models import DocumentCategory, PatientDocument
 from ..patient_document import PatientDocumentRepository
 
 _RESTRICTED_CATEGORIES = ("therapist_private", "psychotherapy_notes")
+
+_HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
+    bindparam("pid", type_=Uuid(as_uuid=False)),
+    bindparam("uid", type_=String()),
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -49,7 +54,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         need to check access before issuing a deletion or finalize.
         """
         result = self._session.execute(
-            text("SELECT has_patient_access(CAST(:pid AS uuid), :uid)"),
+            _HAS_PATIENT_ACCESS_SQL,
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)

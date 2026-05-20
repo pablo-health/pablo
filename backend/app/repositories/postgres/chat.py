@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import String, Uuid, bindparam, delete, func, or_, select, text
 
 from ...db.models import ChatConversationRow, ChatMessageRow, PatientClinicianRow
 from ...models import ChatConversation, ChatMessage
@@ -36,6 +36,12 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from sqlalchemy.orm import Session
+
+
+_HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
+    bindparam("pid", type_=Uuid(as_uuid=False)),
+    bindparam("uid", type_=String()),
+)
 
 
 def _grant_filters(user_id: str) -> tuple:
@@ -132,7 +138,7 @@ class PostgresChatRepository(ChatRepository):
         DB-layer authorization stay in lockstep.
         """
         result = self._session.execute(
-            text("SELECT has_patient_access(CAST(:pid AS uuid), :uid)"),
+            _HAS_PATIENT_ACCESS_SQL,
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)

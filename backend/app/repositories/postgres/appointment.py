@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, text
 
 from ...db.models import AppointmentRow, PatientClinicianRow
 from ...scheduling_engine.models.appointment import Appointment
@@ -16,6 +16,12 @@ from ...utcnow import utc_now
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+
+_HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindparams(
+    bindparam("pid", type_=Uuid(as_uuid=False)),
+    bindparam("uid", type_=String()),
+)
 
 
 def _grant_filters(user_id: str) -> tuple:
@@ -106,7 +112,7 @@ class PostgresAppointmentRepository(AppointmentRepository):
 
     def _has_patient_access(self, patient_id: str, user_id: str) -> bool:
         result = self._session.execute(
-            text("SELECT has_patient_access(CAST(:pid AS uuid), :uid)"),
+            _HAS_PATIENT_ACCESS_SQL,
             {"pid": patient_id, "uid": user_id},
         ).scalar()
         return bool(result)
