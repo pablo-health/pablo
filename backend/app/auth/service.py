@@ -32,7 +32,10 @@ logger = logging.getLogger(__name__)
 # Reserved E2E test-user prefix. Mirrors PENTEST_EMAIL_PATTERN (see
 # jobs/pentest_identity.py). 8 hex chars of a uuid4 make collisions
 # with real signups statistically impossible and visually obvious to
-# auditors. Real signups matching this pattern are rejected upstream.
+# auditors. The bypass that honors this pattern is gated on
+# `not gcp_project_id.endswith("-prod")` in both auth/service.py and
+# routes/ext_auth.py; in production the pattern is treated like any
+# other non-allowlisted email.
 E2E_EMAIL_PATTERN = re.compile(r"^e2etest-[0-9a-f]{8}@pablo\.health$")
 security = HTTPBearer()
 
@@ -517,18 +520,24 @@ def _resolve_user(
         #   - e2etest-<8hex>@pablo.health       (per-PR E2E test suite
         #     in pablo-saas/e2e — see THERAPY-wy0f)
         # Both are owner-controlled, ephemeral, and reserved at the
-        # prefix level: real signups matching either pattern are
-        # rejected here. The bypass exists so external test runners
+        # prefix level. The bypass exists so external test runners
         # don't need write access to `platform.allowed_emails`.
+        #
+        # Production guard (matches the MFA bypass above and the same
+        # gate in routes/ext_auth.py): Firebase Email/Password signup
+        # does not require email-link confirmation, so an attacker who
+        # can call Firebase signUp against the prod project could mint
+        # a token for an arbitrary e2etest- / pentestuser-<hex>
+        # @pablo.health address. In -prod, force the patterns through
+        # the normal allowlist gate so the bypass is dead code.
         from ..jobs.pentest_identity import PENTEST_EMAIL_PATTERN
 
         settings = get_settings()
-        is_pentest_user = bool(email and PENTEST_EMAIL_PATTERN.match(email))
-        is_e2e_user = bool(email and E2E_EMAIL_PATTERN.match(email))
+        is_prod_project = settings.gcp_project_id.endswith("-prod")
+        is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
+        is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
         is_provisioned_tenant = bool(
-            email
-            and settings.multi_tenancy_enabled
-            and _email_has_tenant_mapping(email)
+            email and settings.multi_tenancy_enabled and _email_has_tenant_mapping(email)
         )
         if (
             settings.restrict_signups

@@ -158,9 +158,17 @@ def check_allowlist(
     # before they're even created in Firebase, so the bypass in
     # auth/service.py (which runs on API calls AFTER signUp) never
     # gets a chance to apply.
+    #
+    # Production guard: Firebase Email/Password signup does not require
+    # email-link confirmation, so an attacker who can hit Firebase
+    # signUp against the prod project (the web API key ships in the
+    # frontend bundle) could mint a token for any e2etest-<hex> /
+    # pentestuser-<hex>@pablo.health address and ride this bypass. In
+    # -prod, force the patterns through the normal allowlist gate.
+    is_prod_project = settings.gcp_project_id.endswith("-prod")
     email_lower = request.email.lower()
-    if PENTEST_EMAIL_PATTERN.match(email_lower) or E2E_EMAIL_PATTERN.match(
-        email_lower
+    if not is_prod_project and (
+        PENTEST_EMAIL_PATTERN.match(email_lower) or E2E_EMAIL_PATTERN.match(email_lower)
     ):
         return CheckAllowlistResponse(allowed=True)
 

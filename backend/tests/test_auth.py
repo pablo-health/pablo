@@ -508,9 +508,7 @@ class TestGetCurrentUser:
         mock_tenant_lookup.assert_not_called()
 
     @patch("app.auth.service.verify_firebase_token")
-    def test_allows_e2e_prefixed_user_without_allowlist(
-        self, mock_verify: MagicMock
-    ) -> None:
+    def test_allows_e2e_prefixed_user_without_allowlist(self, mock_verify: MagicMock) -> None:
         """Reserved e2etest-<8hex>@pablo.health prefix bypasses the allowlist.
 
         Mirrors the existing pentest bypass. Used by pablo-saas/e2e Cloud
@@ -535,6 +533,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
             mock_settings.return_value.multi_tenancy_enabled = True
+            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
 
             decoded = mock_verify.return_value
             user = get_current_user(
@@ -571,14 +570,13 @@ class TestGetCurrentUser:
 
             with (
                 patch("app.auth.service.get_settings") as mock_settings,
-                patch(
-                    "app.auth.service._email_has_tenant_mapping", return_value=False
-                ),
+                patch("app.auth.service._email_has_tenant_mapping", return_value=False),
             ):
                 mock_settings.return_value.is_development = False
                 mock_settings.return_value.require_mfa = False
                 mock_settings.return_value.restrict_signups = True
                 mock_settings.return_value.multi_tenancy_enabled = True
+                mock_settings.return_value.gcp_project_id = "pablohealth-dev"
 
                 with pytest.raises(HTTPException) as exc_info:
                     get_current_user(
@@ -594,9 +592,7 @@ class TestGetCurrentUser:
             )
 
     @patch("app.auth.service.verify_firebase_token")
-    def test_e2e_prefix_matches_case_insensitively(
-        self, mock_verify: MagicMock
-    ) -> None:
+    def test_e2e_prefix_matches_case_insensitively(self, mock_verify: MagicMock) -> None:
         """_extract_email lowercases before regex match — uppercase passes."""
         mock_verify.return_value = {
             "uid": "e2e-upper",
@@ -612,6 +608,7 @@ class TestGetCurrentUser:
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
             mock_settings.return_value.multi_tenancy_enabled = True
+            mock_settings.return_value.gcp_project_id = "pablohealth-dev"
 
             user = get_current_user(
                 _mock_request(),
@@ -623,6 +620,75 @@ class TestGetCurrentUser:
 
         # _extract_email lowercased the stored email
         assert user.email == "e2etest-deadbeef@pablo.health"
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_e2e_prefix_rejected_in_prod(self, mock_verify: MagicMock) -> None:
+        """Production guard: the e2etest-<hex> bypass is dead code in -prod.
+
+        Firebase signUp doesn't require email verification, so without this
+        guard an attacker who can call signUp against the prod project can
+        mint a token for an arbitrary e2etest-<hex>@pablo.health address
+        and auto-provision a Pablo user. In -prod the pattern must fall
+        through to the normal allowlist gate (which rejects).
+        """
+        mock_verify.return_value = {
+            "uid": "e2e-prod",
+            "email": "e2etest-deadbeef@pablo.health",
+            "firebase": {},
+        }
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping", return_value=False),
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = True
+            mock_settings.return_value.gcp_project_id = "pablohealth-prod"
+
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(),
+                    mock_verify.return_value,
+                    InMemoryUserRepository(),
+                    InMemoryAllowlistRepository(),
+                    _identity_repo_for(),
+                )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
+
+    @patch("app.auth.service.verify_firebase_token")
+    def test_pentestuser_prefix_rejected_in_prod(self, mock_verify: MagicMock) -> None:
+        """Same prod guard, parity check for the pentestuser-<hex> pattern."""
+        mock_verify.return_value = {
+            "uid": "pentest-prod",
+            "email": "pentestuser-cafebabe@pablo.health",
+            "firebase": {},
+        }
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._email_has_tenant_mapping", return_value=False),
+        ):
+            mock_settings.return_value.is_development = False
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = True
+            mock_settings.return_value.multi_tenancy_enabled = True
+            mock_settings.return_value.gcp_project_id = "pablohealth-prod"
+
+            with pytest.raises(HTTPException) as exc_info:
+                get_current_user(
+                    _mock_request(),
+                    mock_verify.return_value,
+                    InMemoryUserRepository(),
+                    InMemoryAllowlistRepository(),
+                    _identity_repo_for(),
+                )
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
 
     def test_rejects_disabled_user(self) -> None:
         user_repo = InMemoryUserRepository()
