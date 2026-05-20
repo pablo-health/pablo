@@ -205,9 +205,7 @@ def test_check_allowlist_restrict_off_allows_all(
     patch_allowlist_repo: MagicMock,
 ) -> None:
     patch_settings.return_value = _dev_settings(restrict_signups=False)
-    result = check_allowlist(
-        CheckAllowlistRequest(email="anyone@example.com"), _make_request()
-    )
+    result = check_allowlist(CheckAllowlistRequest(email="anyone@example.com"), _make_request())
     assert result.allowed is True
     patch_allowlist_repo.assert_not_called()
 
@@ -222,9 +220,7 @@ def test_check_allowlist_explicit_hit_returns_true(
     repo.is_allowed.return_value = True
     patch_allowlist_repo.return_value = repo
 
-    result = check_allowlist(
-        CheckAllowlistRequest(email="known@example.com"), _make_request()
-    )
+    result = check_allowlist(CheckAllowlistRequest(email="known@example.com"), _make_request())
     assert result.allowed is True
     # When explicit allowlist matches, we don't fall through to the
     # tenant-mapping check.
@@ -251,9 +247,7 @@ def test_check_allowlist_tenant_mapping_acts_as_implicit_allowlist(
     session.get.return_value = MagicMock()  # EmailTenantMappingRow exists
     patch_db_session.return_value = session
 
-    result = check_allowlist(
-        CheckAllowlistRequest(email="NewUser@Example.com"), _make_request()
-    )
+    result = check_allowlist(CheckAllowlistRequest(email="NewUser@Example.com"), _make_request())
     assert result.allowed is True
     # Mapping lookups are lowercased to match storage.
     args, _ = session.get.call_args
@@ -274,9 +268,7 @@ def test_check_allowlist_no_explicit_no_mapping_rejected(
     session.get.return_value = None
     patch_db_session.return_value = session
 
-    result = check_allowlist(
-        CheckAllowlistRequest(email="stranger@example.com"), _make_request()
-    )
+    result = check_allowlist(CheckAllowlistRequest(email="stranger@example.com"), _make_request())
     assert result.allowed is False
 
 
@@ -331,9 +323,7 @@ def test_check_allowlist_e2etest_lookalike_does_not_bypass(
         "e2etest-deadbeef@example.com",  # wrong domain
         "user-e2etest-deadbeef@pablo.health",  # prefix not at start
     ):
-        result = check_allowlist(
-            CheckAllowlistRequest(email=email), _make_request()
-        )
+        result = check_allowlist(CheckAllowlistRequest(email=email), _make_request())
         assert result.allowed is False, f"{email!r} should not bypass"
 
 
@@ -349,8 +339,63 @@ def test_check_allowlist_skips_mapping_fallback_when_multi_tenancy_off(
     repo.is_allowed.return_value = False
     patch_allowlist_repo.return_value = repo
 
+    result = check_allowlist(CheckAllowlistRequest(email="stranger@example.com"), _make_request())
+    assert result.allowed is False
+    patch_db_session.assert_not_called()
+
+
+def test_check_allowlist_e2etest_prefix_rejected_in_prod(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    patch_settings.return_value = _dev_settings(gcp_project_id="pablohealth-prod")
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+    session = MagicMock()
+    session.get.return_value = None
+    patch_db_session.return_value = session
+
     result = check_allowlist(
-        CheckAllowlistRequest(email="stranger@example.com"), _make_request()
+        CheckAllowlistRequest(email="e2etest-deadbeef@pablo.health"),
+        _make_request(),
     )
     assert result.allowed is False
+    repo.is_allowed.assert_called_once()
+
+
+def test_check_allowlist_pentestuser_prefix_rejected_in_prod(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    patch_settings.return_value = _dev_settings(gcp_project_id="pablohealth-prod")
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+    session = MagicMock()
+    session.get.return_value = None
+    patch_db_session.return_value = session
+
+    result = check_allowlist(
+        CheckAllowlistRequest(email="pentestuser-cafebabe@pablo.health"),
+        _make_request(),
+    )
+    assert result.allowed is False
+    repo.is_allowed.assert_called_once()
+
+
+def test_check_allowlist_e2etest_prefix_still_bypasses_in_pentest_project(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+) -> None:
+    patch_settings.return_value = _dev_settings(gcp_project_id="pablohealth-pentest")
+    result = check_allowlist(
+        CheckAllowlistRequest(email="e2etest-deadbeef@pablo.health"),
+        _make_request(),
+    )
+    assert result.allowed is True
+    patch_allowlist_repo.assert_not_called()
     patch_db_session.assert_not_called()

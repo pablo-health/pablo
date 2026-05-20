@@ -10,11 +10,16 @@ HIPAA Compliance: Manages security settings including TLS enforcement
 and environment-specific configurations for PHI protection.
 """
 
+import re
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Matches -prod, -production, -prod<N> at end of project id. The
+# leading `-` prevents substring traps (reproduction, approved).
+_PROD_PROJECT_PATTERN = re.compile(r"-prod(?:uction)?\d*$")
 
 
 class Settings(BaseSettings):
@@ -548,6 +553,13 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """Check if running in production environment."""
         return self.environment == "production"
+
+    @property
+    def is_prod_project(self) -> bool:
+        """True if running against the production GCP project."""
+        if self.environment == "production":
+            return True
+        return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))
 
     @property
     def effective_firebase_project_id(self) -> str:
