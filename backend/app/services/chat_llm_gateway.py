@@ -126,6 +126,32 @@ class GeminiChatLLMGateway(ChatLLMGateway):
 
     def __init__(self) -> None:
         self._client: Any = None
+        self._warned_prefixes: set[str] = set()
+
+    def _normalize_model(self, model: str) -> str:
+        """Strip a leading ``google:`` provider prefix.
+
+        Operators occasionally configure ``AI_MODEL`` /
+        ``AI_MODEL_FLASH`` with a LiteLLM-style ``google:`` prefix
+        (e.g. ``google:gemini-2.5-flash``). Vertex AI concatenates the
+        raw string into the endpoint path
+        (``publishers/google/models/<model>``) and returns ``400
+        INVALID_ARGUMENT`` for the colon. Strip the prefix defensively
+        and warn once per prefix so the misconfiguration is visible
+        without breaking chat.
+        """
+        if model.startswith("google:"):
+            stripped = model[len("google:") :]
+            if "google:" not in self._warned_prefixes:
+                logger.warning(
+                    "stripping unsupported 'google:' prefix from chat model "
+                    "(configured=%r, used=%r); fix env to drop the prefix",
+                    model,
+                    stripped,
+                )
+                self._warned_prefixes.add("google:")
+            return stripped
+        return model
 
     def _get_client(self) -> Any:
         """Lazily initialize the Vertex AI client.
@@ -155,6 +181,7 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         except ImportError as exc:
             raise RuntimeError("google-genai package is required for GeminiChatLLMGateway") from exc
 
+        model = self._normalize_model(model)
         contents = _build_contents(types, prior_turns, new_user_text)
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
