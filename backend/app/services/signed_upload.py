@@ -49,6 +49,7 @@ def _iam_signing_kwargs() -> dict[str, Any]:
     against any deployed environment.
     """
     import google.auth
+    import google.auth.compute_engine
     import google.auth.exceptions
     import google.auth.transport.requests
 
@@ -61,20 +62,42 @@ def _iam_signing_kwargs() -> dict[str, Any]:
         # this path use a fake GCS client so the empty kwargs are
         # harmless. Real deployments always have ADC.
         return {}
-    # Only metadata-server credentials lack a private key. We could
-    # introspect the credentials type, but the cheapest check is:
-    # does it expose service_account_email? Compute Engine
-    # credentials do; user/oauth refresh credentials don't.
-    sa_email = getattr(credentials, "service_account_email", None)
-    if not sa_email or sa_email == "default":
-        # Local dev / gcloud ADC — let the library self-sign.
-        return {}
-    # Refresh to ensure access_token is populated.
-    credentials.refresh(google.auth.transport.requests.Request())
-    return {
-        "service_account_email": sa_email,
-        "access_token": credentials.token,
-    }
+
+    request = google.auth.transport.requests.Request()
+
+    # Cloud Run / GCE: credentials are ComputeEngineCredentials. They
+    # don't carry a private key, and `service_account_email` defaults
+    # to the literal string "default" until you look up the real
+    # email via the metadata server.
+    if isinstance(credentials, google.auth.compute_engine.Credentials):
+        sa_email = credentials.service_account_email
+        if not sa_email or sa_email == "default":
+            from google.auth.compute_engine import _metadata
+
+            try:
+                info = _metadata.get_service_account_info(request)
+            except Exception as exc:
+                # Metadata lookup failed — log and fall through to
+                # self-sign, which will raise the original informative
+                # AttributeError instead of a confusing IAM 404.
+                logger.warning(
+                    "compute_engine SA email lookup failed; falling through "
+                    "to local-sign which will fail with the canonical error: %s",
+                    exc,
+                )
+                return {}
+            sa_email = info.get("email") or ""
+        if not sa_email:
+            return {}
+        credentials.refresh(request)
+        return {
+            "service_account_email": sa_email,
+            "access_token": credentials.token,
+        }
+
+    # Anything else (user refresh tokens from gcloud ADC, SA JSON keys)
+    # carries a private key locally — let the library self-sign.
+    return {}
 
 
 def make_upload_url(
