@@ -498,41 +498,47 @@ async def send_message(
         model=model,
     )
 
+    # Eagerly drain the turn while the request-scoped DB session is
+    # still alive (search_path correct, transaction not committed). The
+    # collected events then replay as SSE. This trades real-time delta
+    # streaming for correctness — BaseHTTPMiddleware returns from
+    # call_next once headers ship and closes the session in its finally
+    # block, so any DB write that happens during body iteration races
+    # with the connection-pool's stale search_path and can FK-violate.
+    # Restore true streaming under a redesigned session lifecycle
+    # (deferred close for StreamingResponse) as a follow-up.
+    collected: list = []
+    block_audit_fired = False
     try:
-        event_iter = turn_service.run_turn(context)
+        async for event in turn_service.run_turn(context):
+            collected.append(event)
+            if event.kind == "error" and not block_audit_fired:
+                code = event.data.get("error", "llm_error")
+                if code in {"safety_block", "context_too_large", "quota_exceeded"}:
+                    try:
+                        audit.log_chat_action(
+                            action=AuditAction.CHAT_TURN_BLOCKED,
+                            user=user,
+                            request=http_request,
+                            conversation_id=conv.id,
+                            patient_id=conv.patient_id,
+                            changes={"block_reason": code},
+                        )
+                    except Exception:
+                        logger.exception("Failed to write CHAT_TURN_BLOCKED audit row")
+                    block_audit_fired = True
     except TurnConcurrencyError as exc:
+        # ChatTurnService.run_turn raises before yielding the first
+        # event when another turn is in flight for the same conversation.
         raise HTTPException(
             status_code=409,
             detail="Another turn is already in progress for this conversation.",
         ) from exc
 
-    block_audit_fired = {"done": False}
-
     async def _sse() -> AsyncGenerator[bytes, None]:  # type: ignore[name-defined]
-        try:
-            async for event in event_iter:
-                if event.kind == "error" and not block_audit_fired["done"]:
-                    code = event.data.get("error", "llm_error")
-                    if code in {"safety_block", "context_too_large", "quota_exceeded"}:
-                        try:
-                            audit.log_chat_action(
-                                action=AuditAction.CHAT_TURN_BLOCKED,
-                                user=user,
-                                request=http_request,
-                                conversation_id=conv.id,
-                                patient_id=conv.patient_id,
-                                changes={"block_reason": code},
-                            )
-                        except Exception:
-                            logger.exception("Failed to write CHAT_TURN_BLOCKED audit row")
-                        block_audit_fired["done"] = True
-                payload = json.dumps(event.data, default=str)
-                yield f"event: {event.kind}\ndata: {payload}\n\n".encode()
-        except TurnConcurrencyError:
-            payload = json.dumps(
-                {"error": "concurrent_turn", "message": "Another turn is in flight."}
-            )
-            yield f"event: error\ndata: {payload}\n\n".encode()
+        for event in collected:
+            payload = json.dumps(event.data, default=str)
+            yield f"event: {event.kind}\ndata: {payload}\n\n".encode()
 
     headers = {
         "Cache-Control": "no-cache",
