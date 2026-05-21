@@ -24,6 +24,8 @@ future ``upgrade head`` calls a no-op against the broken state.
 from __future__ import annotations
 
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
@@ -38,9 +40,19 @@ from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
 from .provisioning import _ALEMBIC_INI_PATH, create_practice_schema
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
+
+# Wall-time of the fan-out scales linearly with tenant count when run
+# serially. Each per-tenant alembic invocation pays a non-trivial cost
+# even when there's nothing to upgrade (ScriptDirectory walks the entire
+# versions/ directory; the engine round-trips to check
+# alembic_version). Default to 8 workers — fits comfortably under
+# Cloud SQL's max_connections and the default engine pool overflow.
+DEFAULT_FAN_OUT_WORKERS = int(os.environ.get("PABLO_MIGRATE_MAX_WORKERS", "8"))
 
 
 class TenantStatus(StrEnum):
@@ -138,7 +150,11 @@ def _alembic_config_for(schema: str) -> Config:
     return cfg
 
 
-def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
+def upgrade_tenant_schema(
+    engine: Engine,
+    schema: str,
+    head: str | None = None,
+) -> TenantResult:
     """Run ``alembic upgrade head`` against a single tenant schema.
 
     Reconciles legacy tenants missing ``alembic_version`` by re-running
@@ -147,9 +163,14 @@ def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
     has been brought into shape, and the alembic chain carries column
     shape evolution from there). Returns a structured result rather
     than raising so a single bad tenant doesn't abort the fan-out.
+
+    ``head`` can be pre-computed by the caller (``fan_out`` does this) so
+    a no-op fan-out across N tenants doesn't pay N
+    ``ScriptDirectory.from_config`` walks.
     """
     _validate_schema_name(schema)
-    head = _alembic_head()
+    if head is None:
+        head = _alembic_head()
     if head is None:
         return TenantResult(schema, TenantStatus.FAILED, "alembic has no head revision")
 
@@ -183,15 +204,48 @@ def upgrade_tenant_schema(engine: Engine, schema: str) -> TenantResult:
 def fan_out(
     engine: Engine,
     schemas: list[str],
-    runner: _AlembicRunner = upgrade_tenant_schema,
+    runner: _AlembicRunner | None = None,
+    max_workers: int = DEFAULT_FAN_OUT_WORKERS,
 ) -> list[TenantResult]:
-    """Apply ``runner`` to each schema, continuing past failures."""
-    results: list[TenantResult] = []
-    for schema in schemas:
-        result = runner(engine, schema)
-        results.append(result)
+    """Apply ``runner`` to each schema, continuing past failures.
+
+    Tenants are mutually independent (each owns its own schema), so the
+    fan-out parallelizes across ``max_workers`` threads. ``max_workers=1``
+    preserves the historic sequential behavior — tests and dev paths use
+    that to keep ordering deterministic.
+
+    When the default ``runner`` is used, ``_alembic_head()`` is computed
+    once and threaded through; per-tenant ``ScriptDirectory`` rebuilds
+    dominated wall-time for no-op runs (~14s per tenant under the old
+    code path).
+    """
+    if runner is None:
+        head = _alembic_head()
+        if head is None:
+            return [
+                TenantResult(s, TenantStatus.FAILED, "alembic has no head revision")
+                for s in schemas
+            ]
+
+        def _default_runner(eng: Engine, sch: str) -> TenantResult:
+            return upgrade_tenant_schema(eng, sch, head=head)
+
+        effective_runner: Callable[[Engine, str], TenantResult] = _default_runner
+    else:
+        effective_runner = runner
+
+    def _run_one(schema: str) -> TenantResult:
+        result = effective_runner(engine, schema)
         logger.info("tenant=%s status=%s %s", result.schema, result.status.value, result.detail)
-    return results
+        return result
+
+    if max_workers <= 1 or len(schemas) <= 1:
+        return [_run_one(schema) for schema in schemas]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        # Preserve input order in results so callers can correlate by index.
+        futures = [pool.submit(_run_one, schema) for schema in schemas]
+        return [f.result() for f in futures]
 
 
 def aggregate_exit_code(results: list[TenantResult]) -> int:
