@@ -10,6 +10,8 @@ reduction with a fake runner.
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import TYPE_CHECKING, cast
 
 from app.db.migrate_tenants import (
@@ -37,10 +39,54 @@ def test_fan_out_invokes_runner_per_schema_in_order() -> None:
         "practice_b": TenantStatus.ALREADY_AT_HEAD,
         "practice_c": TenantStatus.RECONCILED,
     }
-    results = fan_out(engine=cast("Engine", None), schemas=list(plan), runner=_runner(plan))
+    results = fan_out(
+        engine=cast("Engine", None),
+        schemas=list(plan),
+        runner=_runner(plan),
+        max_workers=1,
+    )
 
     assert [r.schema for r in results] == ["practice_a", "practice_b", "practice_c"]
     assert [r.status for r in results] == list(plan.values())
+
+
+def test_fan_out_parallel_preserves_input_order() -> None:
+    # Even with parallel execution, results must be in input order so
+    # callers can correlate by index.
+    plan = {f"practice_{i:02d}": TenantStatus.SUCCESS for i in range(10)}
+    results = fan_out(
+        engine=cast("Engine", None),
+        schemas=list(plan),
+        runner=_runner(plan),
+        max_workers=4,
+    )
+    assert [r.schema for r in results] == list(plan)
+
+
+def test_fan_out_parallel_actually_runs_concurrently() -> None:
+    # A runner that sleeps 200ms per call should finish ~5x faster with
+    # 5 workers than serially. Lower bound is generous to avoid CI flake.
+    start_barrier = threading.Barrier(5)
+
+    def _slow_runner(_engine, schema: str) -> TenantResult:
+        start_barrier.wait(timeout=2.0)
+        time.sleep(0.2)
+        return TenantResult(schema, TenantStatus.SUCCESS, detail="slept")
+
+    schemas = [f"practice_p{i}" for i in range(5)]
+    t0 = time.monotonic()
+    results = fan_out(
+        engine=cast("Engine", None),
+        schemas=schemas,
+        runner=_slow_runner,
+        max_workers=5,
+    )
+    elapsed = time.monotonic() - t0
+
+    assert len(results) == 5
+    assert all(r.status is TenantStatus.SUCCESS for r in results)
+    # Serial would be 5 * 0.2 = 1.0s; parallel should be ~0.2s + overhead.
+    assert elapsed < 0.8, f"fan_out did not run in parallel (elapsed={elapsed:.2f}s)"
 
 
 def test_fan_out_continues_past_failures() -> None:
@@ -49,7 +95,12 @@ def test_fan_out_continues_past_failures() -> None:
         "practice_bad": TenantStatus.FAILED,
         "practice_c": TenantStatus.SUCCESS,
     }
-    results = fan_out(engine=cast("Engine", None), schemas=list(plan), runner=_runner(plan))
+    results = fan_out(
+        engine=cast("Engine", None),
+        schemas=list(plan),
+        runner=_runner(plan),
+        max_workers=1,
+    )
 
     # All three were attempted — one bad tenant must not abort the rest.
     assert [r.schema for r in results] == list(plan)
