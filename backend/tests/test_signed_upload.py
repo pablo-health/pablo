@@ -12,7 +12,6 @@ metadata-server credentials don't carry a private key).
 from unittest.mock import MagicMock, patch
 
 import google.auth.exceptions
-
 from app.services.signed_upload import _iam_signing_kwargs
 
 
