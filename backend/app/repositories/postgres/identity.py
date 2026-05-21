@@ -4,10 +4,12 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from ...db.platform_models import UserIdentityRow
 from ...utcnow import utc_now
@@ -50,3 +52,30 @@ class PostgresIdentityRepository(IdentityRepository):
         )
         self._session.add(row)
         self._session.flush()
+
+    def resolve_or_create(self, provider: str, subject_id: str) -> str:
+        # Base-class implementation does SELECT-then-INSERT, which races
+        # across parallel first-login requests for the same firebase_uid
+        # and crashes losers with UniqueViolation on user_identities_pkey.
+        # Collapse it into one atomic UPSERT + read-back so concurrent
+        # callers all converge on the same canonical user_id.
+        candidate_user_id = str(uuid.uuid4())
+        stmt = (
+            pg_insert(UserIdentityRow)
+            .values(
+                provider=provider,
+                subject_id=subject_id,
+                user_id=candidate_user_id,
+                linked_at=utc_now(),
+            )
+            .on_conflict_do_nothing(index_elements=["provider", "subject_id"])
+        )
+        self._session.execute(stmt)
+        self._session.flush()
+        canonical = self.get_user_id(provider, subject_id)
+        if canonical is None:
+            raise RuntimeError(
+                "user_identities row vanished between UPSERT and SELECT — "
+                f"provider={provider} subject_id={subject_id}"
+            )
+        return canonical
