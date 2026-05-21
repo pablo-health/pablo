@@ -36,7 +36,20 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.drop_constraint("ck_chat_messages_content_len", "chat_messages", type_="check")
+    # DROP IF EXISTS rather than alembic's op.drop_constraint — on
+    # environments where the constraint was created by
+    # ``Base.metadata.create_all()`` (fresh-tenant provisioning path)
+    # instead of by this migration chain, the named constraint may
+    # simply not exist before this revision runs. The desired end-
+    # state is the same either way: the relaxed BETWEEN 0 AND 32768
+    # bound below. Without IF EXISTS the upgrade crashed on
+    # pablohealth-prod's first chat_messages migration (chat_messages
+    # tables there were created by create_all and never carried this
+    # particular constraint name).
+    op.execute(
+        "ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS "
+        "ck_chat_messages_content_len"
+    )
     op.create_check_constraint(
         "ck_chat_messages_content_len",
         "chat_messages",
@@ -45,7 +58,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_chat_messages_content_len", "chat_messages", type_="check")
+    op.execute(
+        "ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS "
+        "ck_chat_messages_content_len"
+    )
     op.create_check_constraint(
         "ck_chat_messages_content_len",
         "chat_messages",
