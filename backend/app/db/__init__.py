@@ -16,7 +16,7 @@ import re
 from contextvars import ContextVar
 from functools import lru_cache
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -26,6 +26,15 @@ _VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 # Request-scoped database session, set by DatabaseSessionMiddleware
 _request_session: ContextVar[Session | None] = ContextVar("_request_session", default=None)
+
+# Request-scoped tenant schema name. Propagates to the pool-checkout
+# event listener so every connection grabbed during a request — including
+# from spawned response-body tasks — re-applies the caller's search_path.
+# A no-op (None) outside request scope, where callers (CLI, alembic,
+# standalone sessions) set search_path explicitly.
+_current_tenant_schema: ContextVar[str | None] = ContextVar(
+    "_current_tenant_schema", default=None
+)
 
 # Default practice schema for Pablo Solo (single practice)
 DEFAULT_PRACTICE_SCHEMA = "practice"
@@ -116,10 +125,49 @@ def set_tenant_schema(session: Session, practice_schema: str = DEFAULT_PRACTICE_
     """Set the search_path for a session to include the practice schema.
 
     This scopes all unqualified table references to the practice's schema,
-    providing schema-level tenant isolation.
+    providing schema-level tenant isolation. Also stashes the schema name
+    in ``_current_tenant_schema`` so the pool-checkout event listener can
+    re-apply it on any subsequent connection grab — useful when the
+    session's first connection is returned to the pool and a later
+    operation (e.g. a deferred task) checks out a fresh one whose
+    server-side ``search_path`` is whatever a previous user left on it.
     """
     _validate_schema_name(practice_schema)
     session.execute(text(f"SET search_path = {practice_schema}, {PLATFORM_SCHEMA}, public"))
+    _current_tenant_schema.set(practice_schema)
+
+
+@event.listens_for(Engine, "checkout")
+def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> None:  # type: ignore[no-untyped-def]
+    """Re-apply ``search_path`` from the request-scoped ContextVar on every
+    pool checkout.
+
+    Belt-and-braces alongside the explicit ``set_tenant_schema`` call the
+    session middleware makes at the start of each request: PostgreSQL's
+    ``SET search_path`` persists on the connection, so pool reuse can
+    leak a previous request's tenant schema into a new request's first
+    operation if the session hadn't issued its own ``SET`` yet. This
+    listener closes that window by issuing the right ``SET`` at the
+    moment the connection enters the new operation's scope.
+
+    No-op when the ContextVar is unset (CLI scripts, alembic, standalone
+    sessions created without a schema arg) — those callers manage their
+    own ``search_path`` explicitly.
+    """
+    schema = _current_tenant_schema.get()
+    if schema is None:
+        return
+    if not _VALID_SCHEMA_RE.match(schema):
+        # Should be unreachable — set_tenant_schema validates before
+        # writing the ContextVar — but if a downstream caller bypasses
+        # that path and writes a bad value, refuse the SET rather than
+        # interpolate untrusted input into raw SQL.
+        return
+    cursor = dbapi_conn.cursor()
+    try:
+        cursor.execute(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public")
+    finally:
+        cursor.close()
 
 
 def create_standalone_session(practice_schema: str | None = None) -> Session:

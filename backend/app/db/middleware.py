@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from ..settings import get_settings
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
+    _current_tenant_schema,
     _request_session,
     get_session_factory,
     set_tenant_schema,
@@ -115,6 +116,7 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         finally:
             session.close()
             _request_session.set(None)
+            _current_tenant_schema.set(None)
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:
