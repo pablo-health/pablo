@@ -293,66 +293,51 @@ _TENANT_SCHEMA_PLACEHOLDER = "__TENANT_SCHEMA__"
 def create_practice_schema(engine: Engine, schema_name: str) -> None:
     """Create or reconcile a practice schema.
 
-    There are three callers to keep in mind:
+    Two paths now, picked by whether the target schema already has
+    tables:
 
-    1. ``ensure_schemas`` at boot — passes ``DEFAULT_PRACTICE_SCHEMA``
-       (``practice``). That schema is the canonical template; alembic
-       owns its DDL and ``alembic_version`` row. We use ``create_all``
-       (the legacy path) so this works on a fresh DB where alembic
-       hasn't run yet.
-    2. ``PentestTenantService.provision`` (and any future
-       per-tenant provisioning) — passes a brand-new
-       ``practice_<id>`` schema name. The schema doesn't exist yet, so
-       we apply :file:`tenant_template.sql` to it and stamp at HEAD.
-       The template captures **everything** alembic emits, including
-       raw-SQL objects like ``has_patient_access`` that
-       ``Base.metadata.create_all`` couldn't reproduce. The 2026-05-17
-       pentest hit a fresh tenant that was stamped at HEAD without
-       having ``has_patient_access`` installed — the template closes
-       that gap.
-    3. ``migrate_tenants.upgrade_tenant_schema`` for legacy tenants
-       missing ``alembic_version`` — calls this function with a schema
-       that *already* has tables. Applying the template would crash on
-       ``CREATE TABLE``; fall through to the legacy path so the schema
-       is reconciled to the ORM shape via ``create_all`` and then the
-       caller's subsequent alembic stamp/upgrade carries column shape
-       evolution from there.
+    1. **Empty schema → apply tenant_template.sql + stamp HEAD.** Same
+       path for the default ``practice`` template AND for any new
+       per-tenant schema (``PentestTenantService.provision`` or
+       future per-customer provisioning). Eliminates today's drift
+       class: the ``practice`` template used to be built via
+       ``Base.metadata.create_all`` while tenants were built from
+       SQL — two paths, two slightly different end states. The
+       2026-05-21 prod-promote hit that drift (``chat_messages`` in
+       prod's ``practice`` was missing every CHECK constraint while
+       per-tenant copies had them). Now both paths produce byte-
+       identical state because they apply the same SQL.
 
-    Idempotent for cases (1) and (3); fresh tenants in (2) error if
-    the template is applied twice (intentional — re-applying canonical
-    DDL is a schema upgrade, not a provisioning step).
+    2. **Already-populated schema → legacy reconcile via create_all.**
+       Only ``migrate_tenants.upgrade_tenant_schema`` should hit this
+       branch — when a pre-template-era tenant is being brought up to
+       the current ORM shape. The caller stamps alembic afterwards
+       and column shape evolution carries forward through the chain.
+
+    RLS policies still live outside the template (column introspection
+    in Python). Skipped for the default template — single-tenancy OSS
+    deployments use ``practice`` as their runtime schema without the
+    multi-tenant middleware that sets ``app.current_user_id``, and
+    RLS-without-user-id fails closed (zero rows). Per-tenant schemas
+    always get RLS.
     """
     _validate_schema_name(schema_name)
 
     is_default_template = schema_name == DEFAULT_PRACTICE_SCHEMA
     schema_already_populated = _schema_has_tables(engine, schema_name)
 
-    if is_default_template or schema_already_populated:
+    if schema_already_populated:
         _create_practice_schema_legacy(engine, schema_name)
     else:
         _apply_tenant_template(engine, schema_name)
         _stamp_alembic_at_head(engine, schema_name)
 
-    # RLS policies live outside the template — they're created by
-    # ``enable_rls_on_schema`` in Python because the policy shape
-    # depends on a per-table column introspection that's awkward to
-    # express in raw SQL. Skipping for the default template preserves
-    # prior behavior (alembic's job, not provisioning's). Idempotent
-    # for tenant schemas via ``DROP POLICY IF EXISTS`` inside
-    # ``enable_rls_on_schema``.
     if not is_default_template:
         from sqlalchemy.orm import Session as OrmSession
 
         from . import enable_rls_on_schema
 
         with OrmSession(engine) as session:
-            # Pin search_path so the unqualified ``has_patient_access``
-            # reference inside each policy resolves to **the new
-            # tenant's own copy** (installed by the template),
-            # independent of the connection-pool's prior state. This
-            # makes provisioning deterministic; before, success
-            # depended on a pooled connection happening to carry
-            # ``search_path = practice, …`` from a prior request.
             session.execute(text(f"SET search_path = {schema_name}, {PLATFORM_SCHEMA}, public"))
             enable_rls_on_schema(session, schema_name)
 
