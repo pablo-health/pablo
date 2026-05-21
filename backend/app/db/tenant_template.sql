@@ -138,7 +138,7 @@ CREATE TABLE __TENANT_SCHEMA__.chat_messages (
     llm_finish_reason character varying(32),
     llm_error character varying(128),
     created_at timestamp with time zone NOT NULL,
-    CONSTRAINT ck_chat_messages_content_len CHECK (((char_length(content) >= 1) AND (char_length(content) <= 32768))),
+    CONSTRAINT ck_chat_messages_content_len CHECK (((char_length(content) >= 0) AND (char_length(content) <= 32768))),
     CONSTRAINT ck_chat_messages_role CHECK (((role)::text = ANY ((ARRAY['user'::character varying, 'assistant'::character varying])::text[])))
 );
 
