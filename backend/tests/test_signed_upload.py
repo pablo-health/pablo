@@ -11,6 +11,7 @@ metadata-server credentials don't carry a private key).
 
 from unittest.mock import MagicMock, patch
 
+import google.auth.compute_engine
 import google.auth.exceptions
 from app.services.signed_upload import _iam_signing_kwargs
 
@@ -36,29 +37,44 @@ def test_returns_empty_when_no_adc_configured(
     assert _iam_signing_kwargs() == {}
 
 
+@patch("google.auth.compute_engine._metadata.get_service_account_info")
 @patch("google.auth.default")
-def test_returns_empty_for_default_service_account_marker(
+def test_resolves_default_marker_via_metadata_lookup(
     mock_default: MagicMock,
+    mock_metadata: MagicMock,
 ) -> None:
-    """Credentials reporting `service_account_email='default'` still
-    can't sign — but neither can they delegate (no real SA email).
-    Fall through to self-sign so the underlying error is the
-    library's clear message, not an IAM-API misroute.
+    """ComputeEngineCredentials with service_account_email='default'
+    must look up the real SA email via the metadata server before
+    delegating to IAM signBlob. Otherwise IAM rejects with 'unknown SA'.
     """
-    creds = MagicMock()
+    creds = MagicMock(spec=google.auth.compute_engine.Credentials)
     creds.service_account_email = "default"
+    creds.token = "ya29.fake-token"
     mock_default.return_value = (creds, "project")
-    assert _iam_signing_kwargs() == {}
+    mock_metadata.return_value = {
+        "email": "pablo-backend@proj.iam.gserviceaccount.com",
+    }
+
+    out = _iam_signing_kwargs()
+
+    mock_metadata.assert_called_once()
+    creds.refresh.assert_called_once()
+    assert out == {
+        "service_account_email": (
+            "pablo-backend@proj.iam.gserviceaccount.com"
+        ),
+        "access_token": "ya29.fake-token",
+    }
 
 
-@patch("google.auth.transport.requests.Request")
 @patch("google.auth.default")
-def test_returns_iam_signing_kwargs_for_metadata_server_creds(
+def test_returns_iam_signing_kwargs_for_compute_engine_creds_with_explicit_email(
     mock_default: MagicMock,
-    _mock_request_cls: MagicMock,  # noqa: PT019 — silences refresh() arg
 ) -> None:
-    """Cloud Run / GKE / GCE: delegate signature to IAM signBlob."""
-    creds = MagicMock()
+    """If service_account_email already resolves to a real address
+    (rare but possible), use it without an extra metadata round-trip.
+    """
+    creds = MagicMock(spec=google.auth.compute_engine.Credentials)
     creds.service_account_email = "pablo-backend@proj.iam.gserviceaccount.com"
     creds.token = "ya29.fake-token"
     mock_default.return_value = (creds, "project")
@@ -72,3 +88,21 @@ def test_returns_iam_signing_kwargs_for_metadata_server_creds(
         ),
         "access_token": "ya29.fake-token",
     }
+
+
+@patch("google.auth.compute_engine._metadata.get_service_account_info")
+@patch("google.auth.default")
+def test_metadata_lookup_failure_falls_through(
+    mock_default: MagicMock,
+    mock_metadata: MagicMock,
+) -> None:
+    """If the metadata server is unreachable, fall through so the
+    library's canonical 'you need a private key' AttributeError
+    surfaces — not a confusing IAM 404.
+    """
+    creds = MagicMock(spec=google.auth.compute_engine.Credentials)
+    creds.service_account_email = "default"
+    mock_default.return_value = (creds, "project")
+    mock_metadata.side_effect = Exception("metadata unreachable")
+
+    assert _iam_signing_kwargs() == {}
