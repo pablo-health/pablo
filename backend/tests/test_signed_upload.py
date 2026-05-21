@@ -11,6 +11,8 @@ metadata-server credentials don't carry a private key).
 
 from unittest.mock import MagicMock, patch
 
+import google.auth.exceptions
+
 from app.services.signed_upload import _iam_signing_kwargs
 
 
@@ -21,6 +23,17 @@ def test_returns_empty_for_local_adc_credentials(
     """User credentials (gcloud ADC) have a private key — self-sign."""
     creds = MagicMock(spec=[])  # no service_account_email attribute
     mock_default.return_value = (creds, "project")
+    assert _iam_signing_kwargs() == {}
+
+
+@patch("google.auth.default")
+def test_returns_empty_when_no_adc_configured(
+    mock_default: MagicMock,
+) -> None:
+    """CI test runners have no ADC — fall through quietly."""
+    mock_default.side_effect = google.auth.exceptions.DefaultCredentialsError(
+        "no ADC"
+    )
     assert _iam_signing_kwargs() == {}
 
 

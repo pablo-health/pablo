@@ -49,11 +49,18 @@ def _iam_signing_kwargs() -> dict[str, Any]:
     against any deployed environment.
     """
     import google.auth
+    import google.auth.exceptions
     import google.auth.transport.requests
 
-    credentials, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
+    try:
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+    except google.auth.exceptions.DefaultCredentialsError:
+        # No ADC configured (typical for CI test runners). Callers in
+        # this path use a fake GCS client so the empty kwargs are
+        # harmless. Real deployments always have ADC.
+        return {}
     # Only metadata-server credentials lack a private key. We could
     # introspect the credentials type, but the cheapest check is:
     # does it expose service_account_email? Compute Engine
