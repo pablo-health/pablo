@@ -26,6 +26,8 @@ from app.routes.chat import get_chat_llm_gateway, get_llm_usage_meter
 from app.services.chat_llm_gateway import FakeChatLLMGateway, StreamEvent
 from app.services.chat_model_resolver import get_chat_model_resolver
 
+from ._streaming_body_guard import assert_no_db_checkouts
+
 if TYPE_CHECKING:
     from app.repositories import (
         InMemoryPatientRepository,
@@ -109,7 +111,15 @@ class TestSendMessage:
         )
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        events = _parse_sse(response.content)
+        # Contract: send_message() drains the turn generator inside the
+        # route handler (j62m fix), so iterating the SSE body must do
+        # zero DB pool checkouts. The guard is a no-op when the test
+        # uses in-memory repos (no Engine activity), so this passes
+        # vacuously here — but pins the contract for any future
+        # Postgres-backed integration variant.
+        with assert_no_db_checkouts("chat SSE body"):
+            events = _parse_sse(response.content)
+        # Subsequent uses of `response.content` are cached, fine to read.
         names = [name for name, _ in events]
         assert names[0] == "meta"
         assert names[-1] == "done"
