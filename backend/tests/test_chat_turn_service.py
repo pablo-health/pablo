@@ -33,6 +33,7 @@ from app.services.chat_turn_service import (
     ChatTurnService,
     TurnConcurrencyError,
     TurnContext,
+    _compose_system_prompt,
 )
 
 CONVERSATION_ID = "conv-turn-1"
@@ -523,3 +524,81 @@ class TestMetering:
         assert meta.data.get("quota_status") == "soft_warn"
         period = f"{datetime.now(UTC).year:04d}{datetime.now(UTC).month:02d}"
         assert len(repo.list_records(period_yyyymm=period)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Prompt composition — empty-chart marker (pablo-saas THERAPY-fr6y)
+# ---------------------------------------------------------------------------
+
+
+class TestComposeSystemPromptEmptyChartMarker:
+    """When the bundler returns no data, _compose_system_prompt must still
+    emit a PATIENT CONTEXT block with an explicit empty-chart marker.
+
+    Without this, the model receives only the caller prompt and a
+    question, and confabulates a plausible patient from training-data
+    priors — see pablo-saas THERAPY-fr6y for the prod incident where a
+    fresh patient chart produced a fabricated 45-year-old depression
+    exemplar instead of a refusal.
+    """
+
+    _CALLER_PROMPT = "You are Pablo, a clinical chat assistant."
+
+    def test_empty_context_emits_marker_block(self) -> None:
+        result = _compose_system_prompt(
+            caller_system_prompt=self._CALLER_PROMPT,
+            context_text="",
+        )
+        assert "PATIENT CONTEXT" in result, (
+            "PATIENT CONTEXT block must be present even when context_text is empty"
+        )
+
+    def test_empty_context_marker_signals_no_data(self) -> None:
+        result = _compose_system_prompt(
+            caller_system_prompt=self._CALLER_PROMPT,
+            context_text="",
+        ).lower()
+        # Any of these phrases satisfies the "model knows chart is empty"
+        # signal. Keeping the assertion broad so a future copy edit
+        # doesn't break the test for the wrong reason.
+        assert any(
+            phrase in result
+            for phrase in (
+                "no chart data",
+                "no data is available",
+                "chart contains no information",
+            )
+        ), "Empty-chart marker must explicitly signal that the chart has no data"
+
+    def test_empty_context_marker_forbids_invention(self) -> None:
+        """Marker must instruct the model not to fabricate details."""
+        result = _compose_system_prompt(
+            caller_system_prompt=self._CALLER_PROMPT,
+            context_text="",
+        ).lower()
+        assert (
+            "do not infer" in result or "do not invent" in result
+        ), "Empty-chart marker must instruct the model not to invent patient details"
+
+    def test_non_empty_context_passes_through_unchanged(self) -> None:
+        """When real context is present, no empty-chart marker should appear."""
+        real_context = "Patient: Test Patient (DOB 1900-01-01)\nMost recent session: ..."
+        result = _compose_system_prompt(
+            caller_system_prompt=self._CALLER_PROMPT,
+            context_text=real_context,
+        )
+        assert "PATIENT CONTEXT" in result
+        assert real_context in result
+        assert "no chart data" not in result.lower(), (
+            "Empty-chart marker should NOT appear when real context is present"
+        )
+
+    def test_caller_prompt_is_stripped_and_preserved(self) -> None:
+        """Leading/trailing whitespace on the caller prompt should be trimmed."""
+        result = _compose_system_prompt(
+            caller_system_prompt="\n\n  You are Pablo.  \n\n",
+            context_text="",
+        )
+        assert result.startswith("You are Pablo.")
+        # And the marker still follows
+        assert "PATIENT CONTEXT" in result
