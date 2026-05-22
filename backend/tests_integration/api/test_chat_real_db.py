@@ -181,8 +181,14 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
 
     def _tenant_context() -> TenantContext:
         session = get_db_session()
+        # ``is_local=false`` (session-level) makes the GUC outlive any
+        # autobegin/savepoint cycle the chat turn service may trip
+        # between the route-handler-scoped DB session and the eager-
+        # drained turn events. The DatabaseSessionMiddleware closes the
+        # connection at request end, so the GUC doesn't leak into the
+        # next request's pool checkout.
         session.execute(
-            text("SELECT set_config('app.current_user_id', :uid, true)"),
+            text("SELECT set_config('app.current_user_id', :uid, false)"),
             {"uid": e2e_user_id},
         )
         return TenantContext(
