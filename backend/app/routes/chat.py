@@ -224,12 +224,27 @@ def create_conversation(
     if patient is None:
         raise NotFoundError("Patient not found", {"patient_id": request_body.patient_id})
 
+    # Resolve the system prompt server-side when the client didn't supply
+    # one (or supplied an empty string). Keeps the prompt text in the
+    # backend prompts module — frontend callers can pass nothing and
+    # production + eval will see the same string by construction.
+    caller_system_prompt = request_body.caller_system_prompt
+    if not caller_system_prompt:
+        from ..prompts.chat import get_chat_system_prompt
+
+        # ``user.provider_type`` may be either a ``ProviderType`` enum
+        # (Pydantic User model) or a plain str depending on which User
+        # variant flowed through the dependency chain — normalize.
+        raw_provider = user.provider_type
+        provider_type = getattr(raw_provider, "value", raw_provider)
+        caller_system_prompt = get_chat_system_prompt(provider_type)
+
     display_name = f"{patient.first_name} {patient.last_name}".strip()
     conv = chat_service.create_conversation(
         patient_id=patient.id,
         owner_user_id=user.id,
         caller_feature_key=request_body.caller_feature_key,
-        caller_system_prompt=request_body.caller_system_prompt,
+        caller_system_prompt=caller_system_prompt,
         title=request_body.title,
         default_source_selection=request_body.default_source_selection,
         patient_display_name=display_name or None,
