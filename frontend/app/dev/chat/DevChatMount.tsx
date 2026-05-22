@@ -2,7 +2,7 @@
 
 "use client"
 
-import { ChatPanel } from "@/components/chat/ChatPanel"
+import { ChatPanelWithHistory } from "@/components/chat/ChatPanelWithHistory"
 import type { SourceSelection } from "@/lib/chat/types"
 
 const DEV_DEFAULT_SELECTION: SourceSelection = {
@@ -37,7 +37,7 @@ export function DevChatMount({
   }
 
   return (
-    <ChatPanel
+    <ChatPanelWithHistory
       patientId={patientId}
       callerFeatureKey={callerFeatureKey}
       callerSystemPrompt={callerSystemPrompt}
