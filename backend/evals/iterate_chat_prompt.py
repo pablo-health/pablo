@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from backend.app.prompts.chat import DEFAULT_PROMPT
 from backend.evals.harness import (
     load_yaml_dataset,
     make_model_task,
@@ -101,6 +102,17 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="Path to a text file containing the candidate system prompt.",
     )
+    src.add_argument(
+        "--use-oss-default",
+        action="store_true",
+        help=(
+            "Use the centralized OSS DEFAULT_PROMPT from "
+            "backend.app.prompts.chat — the single source of truth that "
+            "production resolves when a client doesn't supply a "
+            "caller_system_prompt. Use this to baseline the OSS prompt "
+            "against the dataset without copy-pasting it into a file."
+        ),
+    )
     parser.add_argument(
         "--label",
         default="iter",
@@ -119,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    new_prompt = args.prompt_file.read_text(encoding="utf-8") if args.prompt_file else args.prompt
+    if args.use_oss_default:
+        new_prompt = DEFAULT_PROMPT
+    elif args.prompt_file:
+        new_prompt = args.prompt_file.read_text(encoding="utf-8")
+    else:
+        new_prompt = args.prompt
     new_prompt = new_prompt.strip()
     if not new_prompt:
         print("ERROR: prompt is empty", file=sys.stderr)
