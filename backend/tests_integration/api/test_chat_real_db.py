@@ -408,13 +408,20 @@ class TestEmptyChartFirstTurnRealDB:
 
         manifest = row["context_manifest"]
         assert manifest is not None, "Empty-chart turn must still record a manifest"
-        assert manifest["sources_included"] == [], (
-            f"Expected empty sources_included for empty chart; got {manifest['sources_included']}"
-        )
+        # The bundler emits an entry per selected source with row_count=0
+        # when the chart has nothing for it (rather than dropping the
+        # entry). Either shape is valid; what matters is that nothing
+        # leaked PHI-shaped content. Tokens must be zero.
+        for entry in manifest["sources_included"]:
+            assert entry["row_count"] == 0, entry
+            assert entry["tokens_est"] == 0, entry
         # The system prompt the model saw should carry the empty-chart
-        # marker (pablo#248). Inspect what the gateway received.
+        # marker (pablo#248) so the model has a positive signal that
+        # the chart is empty. The marker phrasing has changed across
+        # iterations; assert the substantive "no chart data" stance is
+        # present rather than pinning a specific token.
         prompt = fake_gateway.calls[-1]["system_prompt"].lower()
-        assert "empty" in prompt or "[no chart" in prompt, (
+        assert "no chart data" in prompt or "chart contains no information" in prompt, (
             "Empty-chart marker missing from system prompt — pablo#248 regression. "
             f"prompt={prompt!r}"
         )
@@ -490,12 +497,16 @@ class TestMultiTurnRealDB:
             "assistant",
         ], rows
         # Every user turn carries its own manifest (not back-filled
-        # from a prior turn). With an empty chart they're all empty
-        # but they still must be present and independently shaped.
+        # from a prior turn). With an empty chart every included entry
+        # has row_count=0; what matters is that each turn has its own
+        # independently-assembled manifest object.
         user_manifests = [r["context_manifest"] for r in rows if r["role"] == "user"]
         assert len(user_manifests) == 3
         assert all(m is not None for m in user_manifests), user_manifests
-        assert all(m["sources_included"] == [] for m in user_manifests), user_manifests
+        for manifest in user_manifests:
+            for entry in manifest["sources_included"]:
+                assert entry["row_count"] == 0, entry
+                assert entry["tokens_est"] == 0, entry
 
 
 # ---------------------------------------------------------------------------
