@@ -20,6 +20,22 @@ function extractCodeMessage(err: unknown): { code: string | undefined; message: 
   return { code: e?.code, message: e?.message }
 }
 
+/**
+ * Firebase's `auth/internal-error` often wraps a backend HttpsError
+ * whose user-facing message is embedded as JSON inside `err.message`.
+ * Example: `Firebase: An internal error has occurred ({"error":{"code":500,
+ *   "message":"Unable to verify authorization. Please try again later.",
+ *   "errors":[...]}}). (auth/internal-error).`
+ * Surface that inner message when present — it's what the blocking
+ * function actually threw and is far more actionable than the generic
+ * Firebase wrapper. THERAPY-ivmo.
+ */
+function extractInnerHttpsErrorMessage(message: string | undefined): string | undefined {
+  if (!message) return undefined
+  const m = message.match(/\{[^{}]*"message"\s*:\s*"([^"]+)"/)
+  return m?.[1]
+}
+
 export function firebaseAuthErrorOutcome(err: unknown, variant: AuthErrorVariant): AuthErrorOutcome {
   const { code, message } = extractCodeMessage(err)
 
@@ -38,6 +54,22 @@ export function firebaseAuthErrorOutcome(err: unknown, variant: AuthErrorVariant
   if (code === "auth/blocking-function-error-response") {
     const fallback = variant === "sign-up" ? "Sign-up blocked by administrator." : "Sign-in blocked by administrator."
     return { kind: "message", message: message || fallback }
+  }
+
+  // Firebase wraps blocking-function HttpsError("internal", ...) and
+  // anything else our identity service responds with non-2xx as
+  // auth/internal-error. The bare code is opaque to end users; the
+  // wrapped HttpsError message — when present — is actionable.
+  if (code === "auth/internal-error") {
+    const inner = extractInnerHttpsErrorMessage(message)
+    if (inner) return { kind: "message", message: inner }
+    return {
+      kind: "message",
+      message:
+        variant === "sign-up"
+          ? "We couldn't complete your sign-up just now. Double-check your email, then try again — if it keeps failing, contact your administrator."
+          : "Authorization service didn't respond. Please try again in a moment.",
+    }
   }
 
   if (variant === "sign-up") {
