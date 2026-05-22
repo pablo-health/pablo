@@ -20,7 +20,13 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
 from ..auth.route_security import truly_public
-from ..auth.service import get_baa_version, get_current_user, get_current_user_no_mfa
+from ..auth.service import (
+    TenantContext,
+    get_baa_version,
+    get_current_user,
+    get_current_user_no_mfa,
+    get_tenant_context,
+)
 from ..models import (
     AcceptBAARequest,
     AcknowledgeSecurityGuideRequest,
@@ -484,6 +490,7 @@ def list_my_audit_log(
     ),
     limit: int = Query(100, ge=1, le=AUDIT_LOG_MAX_LIMIT),
     user: User = Depends(get_current_user),
+    _ctx: TenantContext = Depends(get_tenant_context),
     audit: AuditService = Depends(get_audit_service),
 ) -> AuditLogResponse:
     """Return the caller's own audit rows, newest first."""

@@ -131,12 +131,13 @@ jobs:
       # Postgres comes up via testcontainers — see
       # backend/tests_integration/conftest.py. Docker is preinstalled on
       # ubuntu-latest runners; no extra setup needed.
-      - name: Run audit-write integration tests
-        run: |
-          cd backend && poetry run pytest \
-            tests_integration/database/test_audit_writes.py \
-            tests_integration/database/test_platform_audit_writes.py \
-            -v
+      #
+      # The Makefile target is the single source of truth for "what does
+      # CI run" — keep it identical to what a dev would run locally with
+      # ``make test-integration``. Adding individual test paths here drifts
+      # from local-dev and silently skips new integration tests.
+      - name: Run integration tests (real Postgres)
+        run: make test-integration
 
   tenant-template-drift:
     # Catches the failure mode that produced the 2026-05-19 incident:

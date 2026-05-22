@@ -34,9 +34,11 @@ patch("app.db.provisioning.ensure_schemas", return_value=None).start()
 import pytest  # noqa: E402
 from app.auth.firebase_init import initialize_firebase_app  # noqa: E402
 from app.auth.service import (  # noqa: E402
+    TenantContext,
     get_current_user,
     get_current_user_id,
     get_current_user_no_mfa,
+    get_tenant_context,
     require_active_subscription,
     require_admin,
     require_baa_acceptance,
@@ -320,6 +322,16 @@ def client(
     app.dependency_overrides[get_current_user_no_mfa] = lambda: mock_user
     app.dependency_overrides[require_baa_acceptance] = lambda: mock_user
     app.dependency_overrides[require_admin] = lambda: mock_user
+    # Routes that touch tenant-scoped tables (chat, notes, patients, ...)
+    # depend on ``get_tenant_context`` so the GUC/RLS contract holds in
+    # prod. Unit tests use in-memory repos that don't run SQL, so the
+    # GUC isn't load-bearing here — just hand back a populated
+    # TenantContext so the dep resolves.
+    app.dependency_overrides[get_tenant_context] = lambda: TenantContext(
+        user_id=mock_user_id,
+        practice_id="test-practice",
+        practice_schema="practice_test",
+    )
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_user_repository] = lambda: mock_user_repo
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
