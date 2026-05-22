@@ -451,16 +451,35 @@ def _is_retryable(error_code: str | None) -> bool:
     return error_code is not None and error_code in RETRYABLE_ERROR_CODES
 
 
+_EMPTY_CHART_MARKER = (
+    "(No chart data is available for any of the selected sources. "
+    "Do not infer or invent patient details such as demographics, "
+    "diagnoses, medications, history, or session content. If the user "
+    "asks about the patient, state explicitly that the chart contains "
+    "no information for those sections.)"
+)
+
+
 def _compose_system_prompt(
     *,
     caller_system_prompt: str,
     context_text: str,
 ) -> str:
-    """Concatenate the caller prompt + context block per design doc §8."""
-    parts = [caller_system_prompt.strip()]
-    if context_text:
-        parts.append("\n\n--- PATIENT CONTEXT ---\n")
-        parts.append(context_text)
+    """Concatenate the caller prompt + context block per design doc §8.
+
+    When ``context_text`` is empty — the bundler returned no data for
+    any selected source (e.g., a brand-new patient with no notes,
+    intake, treatment plan, meds, or documents) — emit an explicit
+    empty-chart marker block so the model has a positive signal that
+    the chart contains no data. Without this, the model receives only
+    the caller prompt and a question, and defaults to "being helpful"
+    by confabulating a plausible patient from training-data priors.
+    See pablo-saas ``THERAPY-fr6y`` for the prod failure that motivated
+    this change. Regression-tested by the chat-hallu-005 case in
+    ``backend/evals/datasets/chat.yaml``.
+    """
+    parts = [caller_system_prompt.strip(), "\n\n--- PATIENT CONTEXT ---\n"]
+    parts.append(context_text if context_text else _EMPTY_CHART_MARKER)
     return "".join(parts)
 
 
