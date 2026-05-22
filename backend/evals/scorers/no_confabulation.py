@@ -40,9 +40,16 @@ _ACKNOWLEDGEMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.IGNORECASE,
     ),
     re.compile(r"\bnot\s+(in|listed in|mentioned in|present in)\s+the\b", re.IGNORECASE),
-    # Match "no <thing> about/on/in/for/available" OR bare "no notes/documents/sessions/intake".
+    # Match "no <thing> about/on/in/for/available" OR bare "no notes/documents/sessions/intake/etc".
     re.compile(
-        r"\bno\s+(information|data|notes?|details?|content|documents?|sessions?|intake|chart|history)\b",
+        r"\bno\s+(information|data|notes?|details?|content|documents?|sessions?|intake|chart|history|medications?|diagnoses|symptoms?|family|relationships?|treatment|safety|plans?)\b",
+        re.IGNORECASE,
+    ),
+    # "currently no <thing> listed/recorded/etc" — common clinical phrasing where the
+    # model cites the missing chart section by name. Catches "no medications listed",
+    # "there are no sessions recorded", etc.
+    re.compile(
+        r"\b(currently\s+|there\s+(are|is)\s+(currently\s+)?)?no\s+\w+(\s+\w+)?\s+(listed|recorded|present|provided|on\s+file|documented|mentioned|noted|specified)\b",
         re.IGNORECASE,
     ),
     re.compile(r"\b(chart|context|notes?|record)s?\s+(is|are)\s+empty\b", re.IGNORECASE),
