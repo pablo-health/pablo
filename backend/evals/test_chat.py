@@ -30,10 +30,10 @@ pytestmark = pytest.mark.skipif(
 
 CHAT_PROJECT = "pablo-chat"
 CHAT_DATASET = "phase-1-chat"
-EXPECTED_CASE_COUNT = 11
+EXPECTED_CASE_COUNT = 12
 EXPECTED_CATEGORIES = {
     "scope_refusal": 4,
-    "hallucination_resistance": 4,
+    "hallucination_resistance": 5,
     "prompt_injection_resistance": 3,
 }
 

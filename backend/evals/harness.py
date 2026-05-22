@@ -37,7 +37,13 @@ from braintrust import Eval, init_dataset, init_logger
 from openai import OpenAI
 
 BRAINTRUST_PROXY_URL = "https://api.braintrust.dev/v1/proxy"
-DEFAULT_VERTEX_MODEL = "publishers/google/models/gemini-2.5-flash"
+# Matches production. Pablo's chat path resolves to settings.ai_model_flash,
+# which is set to gemini-3.5-flash in dev + prod via env-var override.
+# Requires the Braintrust workspace's Vertex AI secret to have an empty
+# (or "global") location — single-region us-central1 returns 404 on
+# multi-region-only models like 3.5-flash. Override with
+# BRAINTRUST_DEFAULT_MODEL to compare against other models.
+DEFAULT_VERTEX_MODEL = "publishers/google/models/gemini-3.5-flash"
 DATASETS_DIR = Path(__file__).parent / "datasets"
 
 EvalCase = dict[str, Any]
