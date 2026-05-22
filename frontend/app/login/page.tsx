@@ -21,6 +21,10 @@ import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
+  consumeRecoveryNotice,
+  installAuthRecovery,
+} from "@/lib/firebaseAuthRecovery"
+import {
   AuthCard,
   AuthDivider,
   AuthFeedback,
@@ -65,6 +69,17 @@ export default function LoginPage() {
     if (reason === "idle_timeout") {
       setError("You were signed out due to inactivity.")
       window.history.replaceState({}, "", "/login")
+    }
+  }, [])
+
+  // Arm the Firebase Auth stuck-state recovery and surface a one-line
+  // notice if the last attempt was auto-recovered. THERAPY-n1n6.
+  useEffect(() => {
+    installAuthRecovery()
+    if (consumeRecoveryNotice()) {
+      setError(
+        "We cleared a stuck sign-in state from a previous attempt. Please try signing in again."
+      )
     }
   }, [])
 
