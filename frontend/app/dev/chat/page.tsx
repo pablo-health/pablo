@@ -33,11 +33,12 @@ export default async function DevChatPage({ searchParams }: DevChatPageProps) {
   const params = await searchParams
   const patientId = params.patient_id?.trim() ?? ""
   const callerFeatureKey = params.feature_key?.trim() || "dev_chat"
-  const callerSystemPrompt =
-    params.prompt?.trim() ||
-    "You are Pablo, a chart-aware assistant for a licensed clinician. " +
-      "Answer concisely. Cite which chart sources support each claim. " +
-      "Do not invent facts the chart does not support."
+  // Empty string (when the URL doesn't supply ?prompt=...) signals the
+  // backend to resolve the prompt server-side via
+  // backend.app.prompts.chat.get_chat_system_prompt(user.provider_type).
+  // This is the single source of truth — the dev mount no longer
+  // hardcodes a prompt literal that would drift from production.
+  const callerSystemPrompt = params.prompt?.trim() ?? ""
 
   return (
     <main className="mx-auto h-dvh max-w-3xl px-4 py-6">

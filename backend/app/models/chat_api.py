@@ -19,11 +19,24 @@ from .chat import ChatConversation, ChatMessage  # noqa: TC001 — Pydantic runt
 
 
 class CreateChatConversationRequest(BaseModel):
-    """``POST /api/chat/conversations`` request body."""
+    """``POST /api/chat/conversations`` request body.
+
+    ``caller_system_prompt`` is optional: when omitted (or empty), the
+    backend resolves it server-side via
+    ``backend.app.prompts.chat.get_chat_system_prompt(user.provider_type)``.
+    This keeps the prompt text in one place (the backend prompts module
+    and any registered overlay) rather than scattered across frontend
+    callers — production and the eval harness see exactly the same
+    prompt by construction.
+
+    Callers that need a non-default prompt (test pages, downstream
+    consumers running their own provider-aware resolver) may still
+    supply the literal text and the backend will use it verbatim.
+    """
 
     patient_id: str
     caller_feature_key: str = Field(min_length=1, max_length=64)
-    caller_system_prompt: str = Field(min_length=1, max_length=16_384)
+    caller_system_prompt: str | None = Field(default=None, max_length=16_384)
     title: str | None = Field(default=None, max_length=200)
     default_source_selection: dict[str, Any] | None = None
 
