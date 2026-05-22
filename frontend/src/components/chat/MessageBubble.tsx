@@ -15,9 +15,17 @@
  */
 
 import { useState } from "react"
-import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react"
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  FileText,
+  Loader2,
+} from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { saveMessageAsNote } from "@/lib/chat/api"
 import type { ChatMessage, ManifestIncludedEntry, SourceKey } from "@/lib/chat/types"
 import { SOURCE_META } from "@/lib/chat/sourceMeta"
 
@@ -32,9 +40,19 @@ interface MessageBubbleProps {
    * Default opens ``/sessions/{noteId}`` in a new tab.
    */
   onOpenNote?: (noteId: string) => void
+  /**
+   * Notification hook fired after the message is persisted as a
+   * standalone note (THERAPY-rg5w). Receives the new note id.
+   */
+  onSavedAsNote?: (noteId: string, messageId: string) => void
 }
 
-export function MessageBubble({ message, streaming = false, onOpenNote }: MessageBubbleProps) {
+export function MessageBubble({
+  message,
+  streaming = false,
+  onOpenNote,
+  onSavedAsNote,
+}: MessageBubbleProps) {
   if (message.role === "user") {
     return (
       <div
@@ -70,9 +88,90 @@ export function MessageBubble({ message, streaming = false, onOpenNote }: Messag
         ) : null}
       </div>
       {!streaming ? (
-        <ManifestDisclosure message={message} onOpenNote={onOpenNote} />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <ManifestDisclosure message={message} onOpenNote={onOpenNote} />
+          {/* Save-as-note is only meaningful for assistant turns that
+              actually persisted on the server — local optimistic ids
+              (prefix ``local-``) never have a corresponding row to
+              promote, so we hide the action until ``meta`` rewrites
+              the id. */}
+          {!message.id.startsWith("local-") && message.content.trim() ? (
+            <SaveAsNoteButton message={message} onSavedAsNote={onSavedAsNote} />
+          ) : null}
+        </div>
       ) : null}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Save as note (§THERAPY-rg5w)
+// ---------------------------------------------------------------------------
+
+interface SaveAsNoteButtonProps {
+  message: ChatMessage
+  onSavedAsNote?: (noteId: string, messageId: string) => void
+}
+
+function SaveAsNoteButton({ message, onSavedAsNote }: SaveAsNoteButtonProps) {
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "saving" }
+    | { kind: "saved"; noteId: string }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" })
+
+  const handleClick = async () => {
+    if (state.kind === "saving" || state.kind === "saved") return
+    setState({ kind: "saving" })
+    try {
+      const note = await saveMessageAsNote(message.conversation_id, message.id)
+      setState({ kind: "saved", noteId: note.id })
+      onSavedAsNote?.(note.id, message.id)
+    } catch (exc) {
+      setState({
+        kind: "error",
+        message: exc instanceof Error ? exc.message : "Failed to save",
+      })
+    }
+  }
+
+  if (state.kind === "saved") {
+    return (
+      <span
+        data-slot="chat-save-as-note-saved"
+        className="inline-flex items-center gap-1 text-xs text-green-700"
+        title={`Saved as note ${state.noteId}`}
+      >
+        <Check className="size-3" /> Saved as note
+      </span>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleClick()}
+      disabled={state.kind === "saving"}
+      data-testid="chat-save-as-note"
+      className={cn(
+        "inline-flex items-center gap-1 rounded px-1 -mx-1 text-xs text-neutral-600",
+        "hover:bg-neutral-100 transition-colors disabled:opacity-50",
+        state.kind === "error" && "text-red-700",
+      )}
+      title={
+        state.kind === "error"
+          ? `Save failed: ${state.message}`
+          : "Save this answer as a chart note"
+      }
+    >
+      {state.kind === "saving" ? (
+        <Loader2 className="size-3 animate-spin" />
+      ) : (
+        <FileText className="size-3" />
+      )}
+      {state.kind === "error" ? "Retry save" : "Save as note"}
+    </button>
   )
 }
 

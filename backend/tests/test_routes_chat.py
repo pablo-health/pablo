@@ -19,8 +19,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from app.auth.service import require_baa_acceptance
 from app.main import app
-from app.models import ChatConversation, Note, Patient
+from app.models import ChatConversation, ChatMessage, Note, Patient, User
 from app.repositories import InMemoryChatRepository
 from app.routes.chat import get_chat_repository_dep
 from app.utcnow import utc_now
@@ -718,3 +719,190 @@ class TestPostTransferAccess:
                     app.dependency_overrides.pop(require_baa_acceptance, None)
         finally:
             app.dependency_overrides.pop(get_chat_repository_dep, None)
+
+
+# ---------------------------------------------------------------------------
+# POST /conversations/{id}/messages/{message_id}/save-as-note (THERAPY-rg5w)
+# ---------------------------------------------------------------------------
+
+
+def _seed_assistant_message(
+    chat_repo: InMemoryChatRepository,
+    *,
+    conversation_id: str,
+    content: str,
+    message_id: str | None = None,
+    sequence: int | None = None,
+    context_manifest: dict | None = None,
+) -> ChatMessage:
+    """Seed a finalized assistant turn so the save-as-note path has a target."""
+    seq = sequence if sequence is not None else chat_repo.next_sequence(conversation_id)
+    msg = ChatMessage(
+        id=message_id or str(uuid.uuid4()),
+        conversation_id=conversation_id,
+        sequence=seq,
+        role="assistant",
+        content=content,
+        created_at=utc_now(),
+        context_manifest=context_manifest,
+        llm_model="gemini-test",
+        llm_finish_reason="stop",
+    )
+    return chat_repo.add_message(msg)
+
+
+class TestSaveMessageAsNote:
+    def test_saves_assistant_message_as_narrative_note(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        mock_chat_repo: InMemoryChatRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        conv_id = create.json()["id"]
+        body_text = "Patient is improving; sleep is back to 7 hours nightly."
+        manifest = {
+            "sources_included": [{"source_key": "progress_notes_recent", "tokens_est": 100}],
+            "sources_dropped": [],
+            "total_tokens_est": 100,
+            "token_budget": 600_000,
+            "patient_id": patient.id,
+            "assembled_at": "2026-05-22T00:00:00+00:00",
+        }
+        msg = _seed_assistant_message(
+            mock_chat_repo,
+            conversation_id=conv_id,
+            content=body_text,
+            context_manifest=manifest,
+        )
+
+        response = client.post(f"/api/chat/conversations/{conv_id}/messages/{msg.id}/save-as-note")
+        assert response.status_code == 201, response.text
+        note_resp = response.json()
+        assert note_resp["patient_id"] == patient.id
+        assert note_resp["session_id"] is None
+        assert note_resp["note_type"] == "narrative"
+        assert note_resp["content"]["note"]["body"] == body_text
+        source = note_resp["content"]["__source"]
+        assert source["kind"] == "chat"
+        assert source["chat_conversation_id"] == conv_id
+        assert source["chat_message_id"] == msg.id
+        assert source["context_manifest"] == manifest
+        assert source["llm_model"] == "gemini-test"
+
+        # The note actually persists in the notes repo.
+        notes = mock_notes_repo.list_by_patient(patient.id, mock_user_id)
+        assert any(n.id == note_resp["id"] for n in notes)
+
+    def test_rejects_user_message(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        mock_chat_repo: InMemoryChatRepository,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        conv_id = create.json()["id"]
+        user_msg = ChatMessage(
+            id=str(uuid.uuid4()),
+            conversation_id=conv_id,
+            sequence=1,
+            role="user",
+            content="How is the patient doing?",
+            created_at=utc_now(),
+        )
+        mock_chat_repo.add_message(user_msg)
+
+        response = client.post(
+            f"/api/chat/conversations/{conv_id}/messages/{user_msg.id}/save-as-note"
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "NOT_ASSISTANT_MESSAGE"
+
+    def test_rejects_empty_message(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        mock_chat_repo: InMemoryChatRepository,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        conv_id = create.json()["id"]
+        msg = _seed_assistant_message(mock_chat_repo, conversation_id=conv_id, content="   ")
+
+        response = client.post(f"/api/chat/conversations/{conv_id}/messages/{msg.id}/save-as-note")
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "EMPTY_MESSAGE"
+
+    def test_returns_404_for_unknown_message(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        conv_id = create.json()["id"]
+
+        response = client.post(
+            f"/api/chat/conversations/{conv_id}/messages/does-not-exist/save-as-note"
+        )
+        assert response.status_code == 404
+
+    def test_returns_404_for_unknown_conversation(self, client: TestClient) -> None:
+        response = client.post("/api/chat/conversations/does-not-exist/messages/foo/save-as-note")
+        assert response.status_code == 404
+
+    def test_returns_404_when_foreign_user_lacks_access(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        mock_user: User,
+    ) -> None:
+        """Foreign clinician promoting another user's chat turn gets 404, not 403."""
+        # Isolated chat repo with explicit grants — owner has access, foreigner doesn't.
+        chat_repo = InMemoryChatRepository()
+        chat_repo.grant_access("patient-1", mock_user_id)
+        prior = app.dependency_overrides.get(get_chat_repository_dep)
+        app.dependency_overrides[get_chat_repository_dep] = lambda: chat_repo
+        try:
+            patient = _seed_patient(mock_repo, user_id=mock_user_id)
+            create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
+            conv_id = create.json()["id"]
+            msg = _seed_assistant_message(
+                chat_repo, conversation_id=conv_id, content="Some clinical summary."
+            )
+
+            # Swap auth identity to a foreign user without a grant.
+            foreign = User(
+                id="foreign-user",
+                email="b@example.com",
+                name="Foreign Clinician",
+                created_at=datetime.now(UTC),
+                baa_accepted_at=datetime.now(UTC),
+                baa_version="2024-01-01",
+            )
+
+            prior_auth = app.dependency_overrides.get(require_baa_acceptance)
+            app.dependency_overrides[require_baa_acceptance] = lambda: foreign
+            try:
+                response = client.post(
+                    f"/api/chat/conversations/{conv_id}/messages/{msg.id}/save-as-note"
+                )
+                assert response.status_code == 404
+            finally:
+                if prior_auth is not None:
+                    app.dependency_overrides[require_baa_acceptance] = prior_auth
+                else:
+                    app.dependency_overrides.pop(require_baa_acceptance, None)
+        finally:
+            if prior is not None:
+                app.dependency_overrides[get_chat_repository_dep] = prior
+            else:
+                app.dependency_overrides.pop(get_chat_repository_dep, None)

@@ -57,6 +57,12 @@ export interface ChatPanelProps {
   title?: string
   className?: string
   onArchived?: (conversationId: string) => void
+  /**
+   * Fires once when the panel creates a conversation lazily (i.e. the
+   * first user turn arrived without ``conversationId`` set). Used by
+   * :class:`ChatPanelWithHistory` to refresh the sidebar list.
+   */
+  onConversationCreated?: (conversationId: string) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +94,7 @@ export function ChatPanel({
   title,
   className,
   onArchived,
+  onConversationCreated,
 }: ChatPanelProps) {
   const [conversationId, setConversationId] = useState<string | null>(
     initialConversationId ?? null,
@@ -229,6 +236,7 @@ export function ChatPanel({
           setConversationId(created.id)
           setConversationTitle(created.title)
           setServerDefault(created.default_source_selection ?? {})
+          onConversationCreated?.(created.id)
         } catch (exc) {
           setMessages((prev) =>
             prev.filter(
@@ -334,6 +342,7 @@ export function ChatPanel({
       conversationId,
       defaultSourceSelection,
       messages.length,
+      onConversationCreated,
       patientId,
       streamingAssistantId,
       title,
