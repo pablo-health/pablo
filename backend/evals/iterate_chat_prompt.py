@@ -119,10 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.prompt_file:
-        new_prompt = args.prompt_file.read_text(encoding="utf-8")
-    else:
-        new_prompt = args.prompt
+    new_prompt = args.prompt_file.read_text(encoding="utf-8") if args.prompt_file else args.prompt
     new_prompt = new_prompt.strip()
     if not new_prompt:
         print("ERROR: prompt is empty", file=sys.stderr)
