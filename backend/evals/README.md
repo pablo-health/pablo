@@ -62,20 +62,26 @@ If everything is wired correctly, you should see:
 ```
 backend/evals/
 ├── __init__.py
-├── README.md                  # this file
-├── .env.example               # template; copy to .env (gitignored)
-├── conftest.py                # pytest setup — loads .env
-├── harness.py                 # core: push_dataset, make_model_task, run_eval
-├── test_smoke.py              # 5-case scaffolding smoke test
-├── test_chat.py               # push chat.yaml to pablo-chat
-├── test_note_generation.py    # push note_generation.yaml to pablo-note-generation
+├── README.md                    # this file
+├── .env.example                 # template; copy to .env (gitignored)
+├── conftest.py                  # pytest setup — loads .env
+├── harness.py                   # core: push_dataset, make_model_task, run_eval
+├── test_smoke.py                # 5-case scaffolding smoke test
+├── test_chat.py                 # push chat.yaml to pablo-chat
+├── test_note_generation.py      # push note_generation.yaml to pablo-note-generation
+├── test_scorers.py              # unit tests for the Phase 1.4 scorers (no network)
+├── run_chat_experiment.py       # push chat.yaml + run scored experiment (Phase 1.4)
+├── iterate_chat_prompt.py       # fast prompt-iteration loop — see "Iterating prompts"
 ├── datasets/
 │   ├── __init__.py
-│   ├── starter_smoke.yaml     # 5 scaffolding cases
-│   ├── chat.yaml              # 10 chat cases (Phase 1.3)
-│   └── note_generation.yaml   # 10 note-gen cases (Phase 1.3)
+│   ├── starter_smoke.yaml       # 5 scaffolding cases
+│   ├── chat.yaml                # 12 chat cases (Phase 1.3 + chat-hallu-004/005)
+│   └── note_generation.yaml     # 10 note-gen cases (Phase 1.3)
 └── scorers/
-    └── __init__.py            # real scorers land in THERAPY-j39e (Phase 1.4)
+    ├── __init__.py
+    ├── no_confabulation.py      # hallucination_resistance scorer (Phase 1.4)
+    ├── refusal.py               # scope_refusal scorer (Phase 1.4)
+    └── instruction_holding.py   # prompt_injection_resistance scorer (Phase 1.4)
 ```
 
 ---
@@ -88,13 +94,77 @@ corresponding test entry to push the dataset to its project:
 
 | Surface | Project | Dataset | Cases |
 |---|---|---|---|
-| chat | `pablo-chat` | `phase-1-chat` | 10 (4 scope_refusal, 3 hallucination_resistance, 3 prompt_injection_resistance) |
+| chat | `pablo-chat` | `phase-1-chat` | 12 (4 scope_refusal, 5 hallucination_resistance, 3 prompt_injection_resistance) |
 | note-generation | `pablo-note-generation` | `phase-1-note-generation` | 10 (3 format_adherence, 7 faithfulness) |
 | scaffolding smoke | `pablo-smoke` | `starter-smoke` | 5 placeholder cases |
 
-Scoring + experiment baselines land in Phase 1.4 ([THERAPY-j39e]) once
-the four custom scorers (`scope_refusal`, `faithfulness`,
-`prompt_injection_resistance`, `format_adherence`) are implemented.
+Phase 1.4 scorers (THERAPY-j39e) are wired for chat — see
+`scorers/no_confabulation.py`, `scorers/refusal.py`,
+`scorers/instruction_holding.py`. Note-generation scorers are
+deferred until note-gen datasets exercise real failure modes.
+
+---
+
+## Running the chat experiment
+
+```bash
+# One shot — pushes the dataset + runs an experiment against the
+# default model (gemini-3.5-flash via Braintrust AI proxy):
+BRAINTRUST_API_KEY=... poetry run python -m backend.evals.run_chat_experiment
+
+# Custom experiment label (otherwise defaults to 'phase-1-baseline'):
+EXPERIMENT_NAME=my-baseline poetry run python -m backend.evals.run_chat_experiment
+
+# Override model (e.g. compare 3.5-flash vs 2.5-pro):
+BRAINTRUST_DEFAULT_MODEL='publishers/google/models/gemini-2.5-pro' \
+  EXPERIMENT_NAME=pro-baseline \
+  poetry run python -m backend.evals.run_chat_experiment
+```
+
+Output prints the Braintrust experiment URL on completion. The same
+dataset (`phase-1-chat`) is reused across experiments so the
+side-by-side comparison in the Braintrust UI is meaningful.
+
+---
+
+## Iterating prompts (the fast loop)
+
+The system prompt that production sends to the chat model is the
+single highest-leverage knob in the chat product. The iteration
+loop is designed to let you try a candidate prompt without editing
+`chat.yaml`:
+
+```bash
+# Draft a candidate prompt in a file:
+cat > /tmp/draft.txt <<'EOF'
+You are Pablo, a chart-aware assistant for a licensed clinician.
+Answer ONLY from the patient context block below. ...
+EOF
+
+# Push an experiment with that prompt overriding the
+# hallucination_resistance cases' system field:
+BRAINTRUST_API_KEY=... poetry run python -m backend.evals.iterate_chat_prompt \
+  --prompt-file /tmp/draft.txt \
+  --label v2-tighter
+
+# Compare against the previous run in the Braintrust UI — every
+# iterate-* experiment gets a content-hash suffix so re-running an
+# identical prompt is a no-op, and different prompts produce
+# different experiment names.
+```
+
+Key points:
+
+- By default only `hallucination_resistance` cases get the override
+  (those are the cases sensitive to empty-chart prompt design). Pass
+  `--all` for full-spectrum overrides — useful for a complete prompt
+  rewrite, but breaks the `scope_refusal` / `prompt_injection`
+  cases' specific scaffolding.
+- The experiment name is `iterate-{label}-{prompt-hash}`. Two runs
+  of the same prompt re-use the same name (idempotent); different
+  prompts get different suffixes.
+- Locked scenarios (the YAML cases) stay locked. Only the
+  prompt-under-test varies.
 
 ---
 
