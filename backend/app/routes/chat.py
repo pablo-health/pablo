@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
-from ..api_errors import NotFoundError
+from ..api_errors import BadRequestError, NotFoundError
 from ..auth.service import require_baa_acceptance
 from ..models import (
     AuditAction,
@@ -41,6 +41,7 @@ from ..models import (
     ChatConversationListResponse,
     ChatConversationResponse,
     CreateChatConversationRequest,
+    NoteResponse,
     PreviewChatContextRequest,
     PreviewChatContextResponse,
     SendChatMessageRequest,
@@ -70,6 +71,7 @@ from ..services import (
     ChatConversationNotFoundError,
     ChatService,
     LlmUsageMeter,
+    NoteService,
     get_audit_service,
 )
 from ..services.chat_context_bundler import (
@@ -121,6 +123,12 @@ def get_chat_service(
     repo: ChatRepository = Depends(get_chat_repository_dep),
 ) -> ChatService:
     return ChatService(repo)
+
+
+def get_note_service(
+    notes_repo: NotesRepository = Depends(get_notes_repository_dep),
+) -> NoteService:
+    return NoteService(notes_repo)
 
 
 # A process-wide singleton holder for the gateway. Wrapped in a list
@@ -192,9 +200,7 @@ def _authorize_conversation(
     try:
         return chat_service.get_conversation(conversation_id, user.id)
     except ChatConversationNotFoundError as exc:
-        raise NotFoundError(
-            "Conversation not found", {"conversation_id": conversation_id}
-        ) from exc
+        raise NotFoundError("Conversation not found", {"conversation_id": conversation_id}) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +568,108 @@ async def send_message(
     return StreamingResponse(_sse(), media_type="text/event-stream", headers=headers)
 
 
+@router.post(
+    "/conversations/{conversation_id}/messages/{message_id}/save-as-note",
+    status_code=status.HTTP_201_CREATED,
+    response_model=NoteResponse,
+)
+def save_message_as_note(
+    conversation_id: str,
+    message_id: str,
+    http_request: Request,
+    user: User = Depends(require_baa_acceptance),
+    chat_service: ChatService = Depends(get_chat_service),
+    note_service: NoteService = Depends(get_note_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> NoteResponse:
+    """Persist a single assistant chat turn as a standalone narrative note.
+
+    THERAPY-rg5w. Chat is transient until a clinician chooses to promote a
+    turn to the chart. Only assistant messages may be promoted: a user
+    message has no clinical artifact value on its own. The new note is a
+    ``narrative`` type with the message text in ``content.note.body``;
+    source attribution (chat conversation id, message id, citation
+    manifest, model) lives in a ``__source`` block on the same content
+    dict so an audit reviewer can trace the note back to its chat origin.
+
+    Authorization: the conversation lookup gates on ``has_patient_access``
+    (same as every chat route), and the note write goes through the
+    standard ``NotesRepository.add`` path — no chat-side bypass.
+    """
+    conv = _authorize_conversation(conversation_id, user, chat_service)
+
+    messages = chat_service.list_messages(conv.id, user.id)
+    msg = next((m for m in messages if m.id == message_id), None)
+    if msg is None:
+        raise NotFoundError(
+            "Message not found",
+            {"conversation_id": conv.id, "message_id": message_id},
+        )
+    if msg.role != "assistant":
+        raise BadRequestError(
+            "Only assistant messages may be saved as notes",
+            {"message_id": message_id, "role": msg.role},
+            code="NOT_ASSISTANT_MESSAGE",
+        )
+    body = (msg.content or "").strip()
+    if not body:
+        raise BadRequestError(
+            "Cannot save an empty assistant message",
+            {"message_id": message_id},
+            code="EMPTY_MESSAGE",
+        )
+
+    content: dict[str, object] = {
+        "note": {"body": msg.content},
+        "__source": {
+            "kind": "chat",
+            "chat_conversation_id": conv.id,
+            "chat_message_id": msg.id,
+            "caller_feature_key": conv.caller_feature_key,
+            # Preserve the citation manifest (note ids the assistant
+            # could see) so reviewers can verify what the chat turn was
+            # grounded in. This is PHI-adjacent but lives in note
+            # content, not the audit log.
+            "context_manifest": msg.context_manifest,
+            "llm_model": msg.llm_model,
+        },
+    }
+
+    note = note_service.create_standalone_note(
+        patient_id=conv.patient_id,
+        note_type="narrative",
+        content=content,
+        user_id=user.id,
+    )
+
+    # Two-surface audit: the note-creation half mirrors every other
+    # standalone-note write; the chat-side half uses the existing
+    # CHAT_CHART_PROMOTION action so dashboards that track chat-to-chart
+    # promotions don't need a new event.
+    audit.log_note_action(
+        action=AuditAction.SESSION_CREATED,
+        user=user,
+        request=http_request,
+        note_id=note.id,
+        patient_id=note.patient_id,
+        session_id=None,
+        changes={
+            "note_type": note.note_type,
+            "standalone": True,
+            "source": "chat",
+        },
+    )
+    audit.log_chat_action(
+        action=AuditAction.CHAT_CHART_PROMOTION,
+        user=user,
+        request=http_request,
+        conversation_id=conv.id,
+        patient_id=conv.patient_id,
+        changes={"note_id": note.id, "message_id": msg.id},
+    )
+    return NoteResponse.from_note(note)
+
+
 __all__ = [
     "get_chat_llm_gateway",
     "get_chat_repository_dep",
@@ -569,6 +677,7 @@ __all__ = [
     "get_chat_turn_service",
     "get_llm_usage_meter",
     "get_llm_usage_repository_dep",
+    "get_note_service",
     "get_notes_repository_dep",
     "get_patient_repository_dep",
     "router",

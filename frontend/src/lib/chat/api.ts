@@ -98,3 +98,29 @@ export async function deleteConversation(
     { method: "DELETE" },
   )
 }
+
+/**
+ * Shape returned from POST .../messages/{id}/save-as-note. Mirrors the
+ * ``NoteResponse`` Pydantic model — only the fields the chat UI cares
+ * about are typed here. THERAPY-rg5w.
+ */
+export interface SavedNote {
+  id: string
+  patient_id: string
+  note_type: string
+  created_at: string
+  updated_at: string
+  content: Record<string, unknown> | null
+}
+
+export async function saveMessageAsNote(
+  conversationId: string,
+  messageId: string,
+): Promise<SavedNote> {
+  return apiClient<SavedNote>(
+    `/api/chat/conversations/${encodeURIComponent(
+      conversationId,
+    )}/messages/${encodeURIComponent(messageId)}/save-as-note`,
+    { method: "POST" },
+  )
+}
