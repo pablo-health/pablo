@@ -21,16 +21,33 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+# ``ENVIRONMENT=development`` MUST be set before any ``app.*`` import.
+# ``app.settings.get_settings`` is ``lru_cache``'d on first read, and
+# the HTTPSEnforcementMiddleware short-circuits HTTP only when
+# ``settings.is_development``. If this lands after the imports below,
+# Settings caches with ``ENVIRONMENT`` unset (production-like) and the
+# TestClient's ``http://testserver/`` requests all get 400.
+os.environ.setdefault("ENVIRONMENT", "development")
+
 import pytest
 from app.auth.service import (
+    TenantContext,
     get_current_user,
     get_current_user_id,
     get_current_user_no_mfa,
+    get_tenant_context,
     require_baa_acceptance,
 )
 from app.models import User
-from app.repositories import InMemoryPatientRepository, InMemoryTherapySessionRepository
+from app.repositories import (
+    InMemoryNotesRepository,
+    InMemoryPatientRepository,
+    InMemoryTherapySessionRepository,
+)
 from app.repositories.postgres.audit import PostgresAuditRepository
+from app.routes.sessions import (
+    get_notes_repository as get_sessions_notes_repository,
+)
 from app.routes.sessions import (
     get_patient_repository as get_sessions_patient_repository,
 )
@@ -48,16 +65,13 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 _db_url = os.environ.get("DATABASE_URL", "")
-pytestmark = pytest.mark.skip(
+pytestmark = pytest.mark.skipif(
+    not _db_url or os.environ.get("DATABASE_BACKEND") != "postgres",
     reason=(
-        "THERAPY-v1sf: pre-existing breakage. /api/sessions list returns "
-        "401 in the test client — auth fixture wiring drift since the "
-        "test was written. Exposed when pablo CI switched from listing "
-        "specific paths to ``make test-integration``."
+        "PostgreSQL not configured. Set DATABASE_URL and DATABASE_BACKEND=postgres; "
+        "apply migrations with `make db-migrate`."
     ),
 )
-
-os.environ.setdefault("ENVIRONMENT", "development")
 
 
 @pytest.fixture(scope="module")
@@ -107,9 +121,7 @@ def e2e_user() -> User:
 
 
 @pytest.fixture
-def e2e_client(
-    fastapi_app: FastAPI, pg_session: Session, e2e_user: User
-) -> Iterator[TestClient]:
+def e2e_client(fastapi_app: FastAPI, pg_session: Session, e2e_user: User) -> Iterator[TestClient]:
     """TestClient with auth + repos mocked, audit service real (Postgres-backed).
 
     Binds ``get_audit_service`` to ``pg_session`` — the same session
@@ -128,6 +140,21 @@ def e2e_client(
     fastapi_app.dependency_overrides[require_baa_acceptance] = lambda: e2e_user
     fastapi_app.dependency_overrides[get_session_repository] = lambda: session_repo
     fastapi_app.dependency_overrides[get_sessions_patient_repository] = lambda: patient_repo
+    # ``routes/sessions.py::get_notes_repository`` carries a tenant-context
+    # sub-dep that runs against the real auth chain (which we don't wire
+    # up here); override it so the in-memory repo is used directly.
+    notes_repo = InMemoryNotesRepository()
+    fastapi_app.dependency_overrides[get_sessions_notes_repository] = lambda: notes_repo
+    # ``routes/sessions.py``'s patient/notes/session repo factories all
+    # depend on ``get_tenant_context``. Even when we override the repo
+    # factories themselves, the route signature now (post-pablo#252)
+    # threads ``get_tenant_context`` through other paths — provide a
+    # no-op TenantContext so the dep resolves without a Firebase token.
+    fastapi_app.dependency_overrides[get_tenant_context] = lambda: TenantContext(
+        user_id=e2e_user.id,
+        practice_id="test-tenant",
+        practice_schema="practice",
+    )
     fastapi_app.dependency_overrides[get_audit_service] = _audit_service
 
     try:
@@ -147,7 +174,7 @@ class TestSessionsListWritesAudit:
         ``session_listed`` row.
         """
         response = e2e_client.get("/api/sessions")
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         body = response.json()
         assert body["data"] == []
         assert body["total"] == 0
