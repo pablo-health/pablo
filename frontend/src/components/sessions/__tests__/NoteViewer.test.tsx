@@ -170,8 +170,19 @@ describe("NoteViewer (SOAP)", () => {
       expect(screen.queryByText("Chief Complaint")).not.toBeInTheDocument()
     })
 
-    it("shows empty state when no SOAP note", () => {
+    it("opens an empty editable SOAP form when no content yet and the user can edit", () => {
       renderViewer({ note: null })
+
+      // No dead-end card.
+      expect(screen.queryByText("SOAP note not yet generated")).not.toBeInTheDocument()
+      // Edit-mode actions are present so the clinician can type and save.
+      expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument()
+      // Manual-mode hides the AI Generated badge.
+      expect(screen.queryByText("AI Generated")).not.toBeInTheDocument()
+    })
+
+    it("still shows the empty state when the viewer is read-only", () => {
+      renderViewer({ note: null, status: "finalized" })
 
       expect(screen.getByText("SOAP note not yet generated")).toBeInTheDocument()
     })
@@ -699,8 +710,17 @@ describe("NoteViewer (Narrative)", () => {
     expect(screen.queryByText("Plan")).not.toBeInTheDocument()
   })
 
-  it("shows empty state when no note", () => {
+  it("opens an empty editable textarea when no content yet and the user can edit", () => {
     renderNarrative({ note: null })
+
+    expect(screen.queryByText("Narrative note not yet generated")).not.toBeInTheDocument()
+    expect(screen.getByRole("textbox", { name: /narrative note body/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /save changes/i })).toBeInTheDocument()
+    expect(screen.queryByText("AI Generated")).not.toBeInTheDocument()
+  })
+
+  it("still shows the empty state when the viewer is read-only", () => {
+    renderNarrative({ note: null, status: "finalized" })
 
     expect(screen.getByText("Narrative note not yet generated")).toBeInTheDocument()
   })

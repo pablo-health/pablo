@@ -80,9 +80,14 @@ class UpdateNoteEditsRequest(BaseModel):
 
 
 class FinalizeNoteRequest(BaseModel):
-    """Request body for ``POST /api/notes/{id}/finalize``."""
+    """Request body for ``POST /api/notes/{id}/finalize``.
 
-    quality_rating: int = Field(ge=1, le=5)
+    ``quality_rating`` is optional: AI-generated session notes carry a
+    clinician rating of the model's draft, while manually-authored notes
+    have nothing to score and finalize without one.
+    """
+
+    quality_rating: int | None = Field(default=None, ge=1, le=5)
     quality_rating_reason: str | None = None
     quality_rating_sections: list[SOAPSection] | None = None
 

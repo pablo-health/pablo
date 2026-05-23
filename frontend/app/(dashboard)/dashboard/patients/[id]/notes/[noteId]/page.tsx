@@ -49,6 +49,11 @@ export default function StandaloneNotePage({ params }: PageProps) {
     sections: [],
   })
 
+  // Manually-authored notes (no recording → no AI draft) have nothing
+  // for the clinician to rate; the quality wizard only makes sense for
+  // notes derived from a session transcript. Detect by session_id.
+  const isManual = !!note && note.session_id === null
+
   const handleSave = async (edited: NoteContent) => {
     if (!note) return
     await updateEdits.mutateAsync({
@@ -58,15 +63,20 @@ export default function StandaloneNotePage({ params }: PageProps) {
   }
 
   const handleFinalize = async () => {
-    if (!note || feedback.rating === null) return
+    if (!note) return
+    if (!isManual && feedback.rating === null) return
     await finalize.mutateAsync({
       noteId: note.id,
       data: {
-        quality_rating: feedback.rating,
-        ...(feedback.reason && { quality_rating_reason: feedback.reason }),
-        ...(feedback.sections.length > 0 && {
-          quality_rating_sections: feedback.sections,
-        }),
+        ...(isManual
+          ? {}
+          : {
+              quality_rating: feedback.rating ?? undefined,
+              ...(feedback.reason && { quality_rating_reason: feedback.reason }),
+              ...(feedback.sections.length > 0 && {
+                quality_rating_sections: feedback.sections,
+              }),
+            }),
       },
     })
   }
@@ -150,16 +160,20 @@ export default function StandaloneNotePage({ params }: PageProps) {
               audit log.
             </p>
           </div>
-          <QualityRatingWithFeedback
-            value={feedback}
-            onChange={setFeedback}
-            readonly={false}
-          />
+          {!isManual && (
+            <QualityRatingWithFeedback
+              value={feedback}
+              onChange={setFeedback}
+              readonly={false}
+            />
+          )}
           <div className="flex justify-end">
             <Button
               size="lg"
               onClick={handleFinalize}
-              disabled={feedback.rating === null || finalize.isPending}
+              disabled={
+                (!isManual && feedback.rating === null) || finalize.isPending
+              }
               className="bg-secondary-600 hover:bg-secondary-700 text-white"
             >
               <Check className="mr-2 h-4 w-4" />
