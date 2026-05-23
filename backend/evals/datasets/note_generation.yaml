@@ -350,3 +350,59 @@
     must_capture_resolved_nausea: true
     must_not_invent_dose_change: true
     forbidden_inventions: [increased to 100mg, dose increase, discontinued, switched to, added bupropion, taper plan, refill issued]
+
+# Full-length cases (THERAPY-4zbq) — ~45-60 minute synthetic sessions
+# loaded from .txt sidecars via the harness's transcript_path resolver.
+# Each case evaluates end-to-end realistic SOAP generation across all
+# four sections, not a single-failure-mode probe. These complement the
+# short cases above; do not delete a short case to "consolidate" — they
+# answer different questions.
+
+- id: note-faith-013
+  surface: note_generation
+  category: faithfulness
+  description: Full-length depression intake (52 min) — note must capture MDE criteria, caregiver stressor, passive SI w/o plan, and the agreed behavioral activation homework without fabricating treatment elements.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript_path: transcripts/intake_depression_full.txt
+  expected:
+    must_capture_phq9_score: 15
+    must_capture_anhedonia: true
+    must_capture_weight_loss_amount: ten pounds
+    must_capture_weight_loss_timeframe: three or four months
+    must_capture_passive_si_present: true
+    must_capture_passive_si_no_plan: true
+    must_capture_caregiver_stressor: true
+    must_capture_father_diagnosis: stage three colon cancer
+    must_capture_homework: [three twenty-minute morning walks, daily mood tracking]
+    must_capture_treatment_plan: [CBT, behavioral activation]
+    must_capture_medication_deferred: true
+    must_capture_followup_timing: weekly
+    must_not_state_acute_si_risk: true
+    must_not_invent_medication_prescribed: true
+    must_not_invent_diagnosis_beyond: [major depressive disorder, major depressive episode, MDE, MDD]
+    forbidden_inventions: [hospitalization, suicide plan, SSRI prescribed, sertraline initiated, fluoxetine, bipolar, ADHD diagnosis, substance use disorder, alcohol use disorder, levothyroxine adjustment, TSH out of range, prior suicide attempt]
+
+- id: note-faith-014
+  surface: note_generation
+  category: faithfulness
+  description: Full-length OCD mid-treatment follow-up (47 min) — note must capture quantified progress, the partial homework with reframe, the emerging checking pattern under monitoring (not exposure), and the medication conversation deferred to PCP/psychiatry referral.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript_path: transcripts/followup_ocd_full.txt
+  expected:
+    must_capture_diagnosis: OCD
+    must_capture_compulsion_baseline: 22
+    must_capture_compulsion_current_avg: [5, 6, 5.8, about six, around six]
+    must_capture_handshake_assignment: true
+    must_capture_park_bathroom_partial_compliance: true
+    must_capture_stove_checking_monitoring_only: true
+    must_capture_friend_bathroom_spontaneous: true
+    must_capture_partner_reassurance_refusal: true
+    must_capture_midpoint_treatment_review: true
+    must_not_claim_medication_recommended: true
+    must_not_claim_full_homework_compliance: true
+    must_not_treat_checking_as_active_exposure_target: true
+    forbidden_inventions: [SSRI started, fluoxetine, sertraline, medication initiated, hospitalization, treatment terminated, full remission, depression diagnosis added, bipolar, panic disorder, suicide screen positive, ERP discontinued, exposure failed]

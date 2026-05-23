@@ -31,10 +31,10 @@ pytestmark = pytest.mark.skipif(
 
 NOTE_GEN_PROJECT = "pablo-note-generation"
 NOTE_GEN_DATASET = "phase-1-note-generation"
-EXPECTED_CASE_COUNT = 15
+EXPECTED_CASE_COUNT = 17
 EXPECTED_CATEGORIES = {
     "format_adherence": 3,
-    "faithfulness": 12,
+    "faithfulness": 14,
 }
 
 
