@@ -1,0 +1,132 @@
+SOAP NOTE - Psychotherapy Session
+Client: Make-Believe Mosher, 35
+Date: July 18, 2024
+Session #: 1 (Initial Intake)
+Duration: 47 minutes
+Therapist: Dr. Pretend Plimpton, Psy.D.
+
+SUBJECTIVE:
+Client is a 35-year-old female presenting for initial evaluation at suggestion of primary care physician, reporting ongoing psychological symptoms following motor vehicle accident (MVA) on February 14, 2024 (approximately 5 months ago). Client describes accident: was driving home from work in heavy rain, another vehicle ran red light and struck client's car on driver's side, causing car to spin and hit pole. Client sustained concussion, bruising, and sprained wrist; other driver sustained broken leg. Client reports she "thought I was fine" initially but has been experiencing increasing awareness of psychological impact over past several months.
+
+Current symptoms reported:
+1. Intrusive symptoms: Client reports nightmares about the accident, initially nightly for first month, now decreased to 1-2 times per week. Dreams involve replays of accident with variations (being more seriously injured, unable to escape car) or general themes of driving and impending danger. Client reports intrusive thoughts/memories triggered by reminders (loud noises, seeing accidents on news, certain songs, rain). Describes brief "flashback-like" experiences where she can "kind of see it in my head" with accompanying physical sensations (heart pounding, adrenaline surge), but maintains awareness of present moment and experiences pass "pretty quickly."
+
+2. Avoidance: Client avoids specific intersection where accident occurred (takes "longer routes" to bypass it). Reports working from home more frequently than employer expects (3 days/week in office required, client finding excuses to avoid). Avoids driving at night and in bad weather when possible. Has turned down social invitations that would require driving in these conditions. Reports friends have noticed she is "less available." States she doesn't like talking about accident or how it's affecting her because it "feels like complaining."
+
+3. Negative alterations in cognition/mood: Client reports mood is "up and down" - some days "okay, pretty normal," other days feels "kind of flat, like nothing is that interesting or enjoyable." Increased irritability, particularly regarding driving-related situations (husband's driving, sudden plan changes). Reports feeling "more vulnerable than I used to" and frustrated with self for "still being anxious about it five months later." Self-blame present: "I feel like I should be over it by now... I feel like I'm being weak or overly dramatic." Some sense of changed worldview: "I feel like I can't take anything for granted anymore" and increased awareness that "things can go wrong" quickly. Denies guilt about accident itself (recognizes it was not her fault). Denies anhedonia is pervasive or severe.
+
+4. Alterations in arousal/reactivity: Increased startle response to loud noises (door slams, dropped objects). Self-describes as "hypervigilant" - constantly scanning environment for potential hazards, especially when in vehicles. Concentration difficulties at work (zoning out, requiring rereading, tasks take longer though performance apparently still adequate). Sleep disturbance: difficulty falling asleep with rumination (not always about accident, described as general worry which client notes has "always been kind of a worrier" but "worse since February"). When nightmares occur, unable to return to sleep. Increased anxiety when driving, especially in rain and at intersections (racing heart, sweaty palms). As passenger, experiences heightened vigilance, watching other cars, gasping/tensing (husband has noticed).
+
+Client reports some pre-existing anxiety: "I've always been kind of a worrier... overthink things, worry about what could go wrong. But I managed it okay." States current anxiety feels "different though. More intense. And it's specifically about safety and cars and things that never really bothered me before." Baseline self-rated distress level pre-accident: 2/10. Current distress: varies from 3/10 (good days) to 7-8/10 (when driving in challenging conditions), sitting in session 4/10.
+
+Physical recovery: Concussion symptoms (headaches, dizziness) mostly resolved, though still gets headaches when stressed. Wrist healed. Client reports "physically, I'm pretty much back to normal."
+
+Functional status: Client continues working (though working from home more than expected), marriage described as "solid" though client acknowledges being "more tense and snappy." Still seeing friends less frequently. Has reduced exercise (previously attended gym requiring highway driving, now avoiding). Overall states "I wouldn't say my life has fallen apart or anything. I'm managing. I just don't feel like myself, and I'm tired of feeling anxious all the time."
+
+Coping strategies: Deep breathing, staying busy/distracted, occasionally talking to husband (though protects him from "full extent" to avoid him worrying). Reports these provide some relief.
+
+Denies suicidal ideation, homicidal ideation, intent to harm self or others.
+
+OBJECTIVE:
+Client presented for video session appearing as stated age, casually dressed, well-groomed. Eye contact was appropriate throughout session. Speech normal rate and volume, coherent and goal-directed. Mood self-described as "stressed and anxious and tired." Affect was somewhat anxious but appropriate to content; demonstrated good range when discussing various topics. No psychomotor agitation or retardation observed. Client was engaged throughout session, answered questions thoughtfully and with detail. Demonstrated good insight into her symptoms ("I think it's because I'm not in control" regarding passenger anxiety; recognizes self-judgment may worsen symptoms). Shows some psychological mindedness (able to reflect on how brain is "trying to protect" her). Judgment appears intact. Cognitive functioning appears grossly intact despite reported concentration difficulties; memory seemed good for both recent events (detailed account of accident) and timeline. No evidence of dissociation during session. No psychotic symptoms observed. Denied current safety concerns. Client motivated for treatment, asking appropriate questions about diagnosis and treatment, willing to engage in recommended interventions.
+
+ASSESSMENT:
+Client presents 5 months post-MVA with symptoms consistent with trauma response. Symptoms span all PTSD criterion clusters (intrusive symptoms, avoidance, negative alterations in cognition/mood, alterations in arousal/reactivity), however diagnostic picture is complicated by several factors requiring ongoing assessment:
+
+1. Symptom trajectory: Client reports symptoms have been improving over time (nightmares decreased from nightly to 1-2x/week, concussion symptoms resolved). This improvement trajectory is more consistent with acute stress response or adjustment disorder than chronic PTSD, though symptoms can wax and wane in PTSD as well.
+
+2. Functional impairment: While client is experiencing distress and some functional impairment (avoiding certain activities, working from home more, seeing friends less), she maintains ability to work (performance apparently adequate), maintain marriage, and complete necessary activities of daily living including driving when needed. PTSD diagnosis requires "clinically significant distress or impairment" - client clearly has distress, but degree of impairment may not meet threshold for PTSD vs. adjustment disorder.
+
+3. Pre-existing anxiety: Client reports baseline anxiety/"worrier" tendency prior to accident, though reports current symptoms are qualitatively different and more intense. Need to clarify: Is this an exacerbation of pre-existing anxiety disorder triggered by traumatic event, or new-onset trauma symptoms superimposed on baseline anxiety trait? This distinction has treatment implications.
+
+4. Criterion A assessment: Client clearly experienced event involving actual or threatened death/serious injury and responded with fear (reports accident was "scary," "frightening"). This likely meets Criterion A for trauma exposure. However, client had relatively minor physical injuries and was not hospitalized, which may affect her perception of whether she "should" have ongoing symptoms (contributing to self-judgment).
+
+5. Duration: Symptoms present for 5 months, which exceeds the 1-month minimum for PTSD but is still relatively recent. Acute Stress Disorder (ASD) requires symptoms 3 days to 1 month post-trauma; client is beyond that window. If symptoms continue without significant improvement, PTSD diagnosis would be appropriate.
+
+Current diagnostic considerations (in order of likelihood):
+1. F43.12 - Acute Stress Disorder (if considered symptoms from 1-5 months as prolonged acute stress response, though technically outside DSM-5 timeframe)
+2. F43.10 - Posttraumatic Stress Disorder (Provisional) - symptoms present across clusters but may be subsyndromal; need standardized assessment
+3. F43.22 - Adjustment Disorder with Anxiety - may better capture level of impairment and improving trajectory
+4. F41.1 - Generalized Anxiety Disorder (Rule out) - need to clarify if pre-existing GAD being exacerbated by trauma vs. new trauma symptoms
+
+Additional considerations:
+- R/O Persistent Postconcussive Syndrome (ICD-10: F07.81) - some symptoms (concentration difficulties, irritability, sleep disturbance) can be attributed to concussion, though client reports physical symptoms mostly resolved
+- No evidence of Major Depressive Disorder (some mood changes but no pervasive anhedonia, hopelessness, or neurovegetative symptoms)
+- No evidence of Panic Disorder (anxiety is situational/trauma-related, not unexpected panic attacks)
+
+STRENGTHS/PROTECTIVE FACTORS:
+- Motivated for treatment, seeking help relatively early
+- Good insight and self-awareness
+- Maintains functioning in key life domains
+- Supportive spouse
+- Using some adaptive coping strategies
+- Symptoms improving over time (suggesting natural recovery process may be occurring)
+- No suicidal ideation
+- Recognizes accident was not her fault (no inappropriate guilt)
+
+RISK FACTORS/CLINICAL CONCERNS:
+- Avoidance behaviors may become more entrenched if not addressed
+- Self-judgment and minimization may prevent her from seeking appropriate support
+- Pre-existing anxiety may complicate recovery
+- Social isolation increasing (seeing friends less, not talking about experience)
+- Relying on avoidance as primary coping mechanism
+
+RISK ASSESSMENT:
+Suicide risk: LOW - denies SI/HI, plan, intent; has supportive relationships and reasons for living
+Violence risk: LOW - no history or current concerns
+Overall safety: No immediate concerns
+
+PLAN:
+1. Continue weekly individual psychotherapy for ongoing assessment and treatment
+   - Next session: July 25, 2024, same time
+
+2. Diagnostic clarification:
+   - Administer PCL-5 (PTSD Checklist for DSM-5) before next session to obtain standardized symptom severity scores
+   - Track symptom trajectory over next 2-4 sessions to determine if symptoms are continuing to improve, plateauing, or worsening
+   - Obtain more detailed history of pre-accident anxiety to clarify baseline
+   - May administer GAD-7 if indicated to assess generalized anxiety component
+
+3. Treatment approach (trauma-informed, regardless of specific diagnosis):
+   - Psychoeducation about normal trauma responses and recovery process
+   - Validation that her symptoms are not "weakness" or "dramatic" but normal biological response
+   - Symptom monitoring homework: track intrusive thoughts, nightmares, anxiety episodes, triggers
+   - Continue current adaptive coping strategies (deep breathing, talking to husband)
+   - Skills building: teach additional anxiety management techniques before beginning exposure work
+   - Address self-judgment and normalize experience
+   - Eventually: gradual exposure to avoided situations (driving in rain, that intersection, highway to gym) when client has adequate coping skills and is ready - NOT rushing into exposure
+
+4. Do NOT push client to confront feared situations prematurely - she is still in assessment/stabilization phase
+
+5. Encourage:
+   - Continued communication with husband about full extent of symptoms
+   - Self-compassion vs. self-judgment
+   - Continued use of adaptive coping strategies
+
+6. Monitor for:
+   - Development of additional avoidance behaviors
+   - Worsening of symptoms
+   - Emergence of depressive symptoms
+   - Any safety concerns
+
+7. Prognosis: GOOD
+   - Early intervention (5 months post-trauma)
+   - Natural improvement already occurring
+   - Good functioning and support system
+   - Motivated for treatment
+   - If symptoms are improving trajectory of acute stress response, may see significant improvement with brief therapy
+   - If symptoms plateau or worsen, may require more intensive trauma-focused treatment (CPT, PE, EMDR)
+
+8. Treatment duration estimate: Several months (2-6 months likely), to be reassessed as diagnostic picture clarifies and treatment progresses
+
+Diagnosis (Provisional - requires further assessment):
+Primary: F43.10 - Posttraumatic Stress Disorder (PROVISIONAL - pending PCL-5 results and ongoing symptom monitoring)
+Alternative: F43.22 - Adjustment Disorder, With Anxiety (if symptoms are subsyndromal or improving trajectory continues)
+Rule Out: F41.1 - Generalized Anxiety Disorder (need to clarify pre-existing anxiety)
+
+Therapist Signature: Dr. Pretend Plimpton, Psy.D.
+Date: July 18, 2024
+License #: PSY-78901 (State)
+
+NEXT APPOINTMENT: July 25, 2024 at same time (telehealth)
+
+CLINICAL NOTE: This case exemplifies importance of thorough assessment before committing to diagnosis. Client has trauma exposure and symptoms across PTSD clusters, but improving trajectory, preserved functioning, and pre-existing anxiety complicate diagnostic picture. Will need 2-4 more sessions to determine whether this represents subsyndromal PTSD, resolving acute stress response, adjustment disorder, or exacerbation of pre-existing anxiety disorder. Treatment approach will be similar regardless (trauma-informed, anxiety management, eventual exposure) but diagnostic clarity will guide intensity and duration of treatment. Client's self-judgment about "should be over it by now" will be important therapeutic target - this minimization may prevent appropriate help-seeking and recovery.
