@@ -1,0 +1,41 @@
+SOAP NOTE - Psychotherapy Session
+Client: Pseudo Pendleton, 42
+Date: March 15, 2024
+Session #: 1 (Initial Intake)
+Duration: 45 minutes
+Therapist: Dr. Speculative Stamper, Psy.D.
+
+SUBJECTIVE:
+Client is a 42-year-old married male presenting with significant marital distress, specifically related to lack of sexual and emotional intimacy with wife of 8 years. Reports considering divorce 3 weeks ago during argument but states he "loves her so much it hurts" and is "not ready to give up." Describes relationship as feeling like "roommates" with sexual intimacy occurring only 3-4 times per year, down from multiple times weekly in early marriage. Reports cycle of pursue-withdraw dynamic where he initiates, feels rejected, withdraws, then wife notices lack of romance. States wife (Jocose, nurse working 12-hour shifts) declined to attend couples therapy multiple times and did not want to attend today's session. Client reports intrusive thoughts about other women but denies infidelity. Mentions wife's coworker "David" frequently and feels suspicious but no concrete evidence of affair. History of parental divorce at age 10 with subsequent abandonment by father; reports fear of repeating pattern with own children (ages 7 and 9). Describes sleep disturbance, passive-aggressive communication patterns, emotional withdrawal when hurt, and loss of previously enjoyed activities (guitar playing). Reports sole confidant is best friend Tom, who advises leaving marriage.
+
+OBJECTIVE:
+Client presented as casually dressed, good hygiene, appropriate eye contact via telehealth. Speech was rapid at times, particularly when discussing emotionally charged topics. Affect ranged from anxious to sad to frustrated throughout session. Client demonstrated good insight and self-awareness, able to identify patterns and his role in marital dynamics. No evidence of psychosis, SI/HI, or substance use. Client was highly verbal and forthcoming, demonstrating pattern of "information dumping" he acknowledged. Demonstrated cognitive flexibility in considering wife's perspective despite own pain.
+
+ASSESSMENT:
+Client presenting with relational distress (significant marital discord) and associated features including insomnia, social withdrawal, loss of interest in previously enjoyed activities, and ruminative thought patterns. Reports both anxious (intrusive thoughts about infidelity, hypervigilance to wife's behavior) and depressive features (anhedonia, withdrawal, feelings of worthlessness, hopelessness about relationship). No diagnosable disorder meets threshold at this time; symptoms appear situational and tied to marital stress. Client shows protective factors including: strong motivation for treatment, good insight, commitment to family, employment stability, some social support, and willingness to examine own contribution to problems. Risk factors include: childhood trauma (parental divorce/abandonment), lack of healthy relationship models, tendency toward emotional avoidance, and wife's unwillingness to engage in treatment. Prognosis for individual therapy is good; prognosis for marriage uncertain given wife's non-participation.
+
+PLAN:
+- Continue weekly individual psychotherapy (50-minute sessions)
+- Focus areas: communication skills, emotional regulation, identifying/challenging maladaptive thought patterns, boundary setting, reconnection with sense of self beyond roles
+- Homework: (1) Observation of pursue-withdraw patterns without attempting to change them; (2) Engage in previously enjoyed activity (guitar) for self-care and identity reconnection; (3) Practice self-compassion when noting self-critical thoughts
+- Psychoeducation on pursue-withdraw dynamics in relationships, impact of childhood attachment on adult relationships
+- Explore possibility of wife joining for couples sessions in future
+- Monitor for emergence of depressive or anxiety symptoms warranting additional intervention
+- Re-evaluate at session 4 regarding progress and potential need for couples therapy referral
+- Crisis plan reviewed; client has therapist contact information
+- Next appointment: March 22, 2024, same time
+
+Clinical Impressions:
+No formal diagnosis at this time. Will monitor for:
+- Adjustment Disorder (if symptoms worsen or persist)
+- V-Code: V61.10 Partner Relational Distress (ICD-10: Z63.0)
+
+Risk Assessment:
+Suicidal Ideation: None reported
+Homicidal Ideation: None reported
+Self-Harm: None reported
+Violence Risk: Low
+Current Safety: No immediate concerns
+
+Therapist Signature: Dr. Speculative Stamper, Psy.D.
+Date: March 15, 2024
