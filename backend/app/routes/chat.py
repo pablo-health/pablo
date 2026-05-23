@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.responses import StreamingResponse
 
 from ..api_errors import BadRequestError, NotFoundError
-from ..auth.service import require_baa_acceptance
+from ..auth.service import get_tenant_context, require_baa_acceptance
 from ..models import (
     AuditAction,
     ChatConversationDetailResponse,
@@ -99,7 +99,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+# Router-level ``get_tenant_context`` dependency: every chat route reads
+# or writes a tenant-scoped table (``patients``, ``patient_clinicians``,
+# ``chat_conversations``, ``chat_messages``, ``notes``), all of which
+# carry RLS policies gated on the ``app.current_user_id`` GUC. Without
+# this dependency, every chat request hits the DB with the GUC unset
+# and RLS silently denies — chat only worked in prod because the
+# ``pablo`` role had ``BYPASSRLS`` (the very defense-in-depth gap
+# we're closing). Adding it here threads the GUC-setting side effect
+# through every chat route without each handler having to remember.
+router = APIRouter(
+    prefix="/api/chat",
+    tags=["chat"],
+    dependencies=[Depends(get_tenant_context)],
+)
 
 
 # ---------------------------------------------------------------------------
