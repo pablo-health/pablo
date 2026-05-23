@@ -119,6 +119,18 @@ class TestFinalizeNote:
         )
         assert response.status_code == 409
 
+    def test_finalizes_manual_note_without_quality_rating(
+        self, client: TestClient, mock_notes_repo: InMemoryNotesRepository
+    ) -> None:
+        # Manual standalone notes (no AI draft, no recording) have
+        # nothing for the clinician to score, so the rating is optional.
+        note = _seed_note(mock_notes_repo)
+        response = client.post(f"/api/notes/{note.id}/finalize", json={})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["quality_rating"] is None
+        assert body["finalized_at"] is not None
+
 
 class TestSubmitForExport:
     def test_queues_finalized_note(
@@ -411,9 +423,7 @@ class TestIDOR:
         finally:
             self._cleanup_overrides()
 
-    def test_finalize_other_clinicians_note_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_finalize_other_clinicians_note_returns_404(self, client: TestClient) -> None:
         repo = InMemoryNotesRepository()
         self._override_notes_repo(repo)
         try:
@@ -429,9 +439,7 @@ class TestIDOR:
         finally:
             self._cleanup_overrides()
 
-    def test_submit_export_other_clinicians_note_returns_404(
-        self, client: TestClient
-    ) -> None:
+    def test_submit_export_other_clinicians_note_returns_404(self, client: TestClient) -> None:
         repo = InMemoryNotesRepository()
         self._override_notes_repo(repo)
         try:

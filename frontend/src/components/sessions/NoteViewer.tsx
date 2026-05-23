@@ -140,6 +140,13 @@ interface SOAPViewProps {
   className?: string
 }
 
+const EMPTY_SOAP_NARRATIVE: SOAPNoteModel = {
+  subjective: "",
+  objective: "",
+  assessment: "",
+  plan: "",
+}
+
 function SOAPNoteView({
   note,
   noteEdited,
@@ -150,15 +157,32 @@ function SOAPNoteView({
   onClaimClick,
   className,
 }: SOAPViewProps) {
-  const [editMode, setEditMode] = useState(false)
-  const [editState, setEditState] = useState<StructuredEditState | null>(null)
-  const [initialEditState, setInitialEditState] = useState<string>("")
+  // When the note has no AI-generated content and no clinician edits yet
+  // (the standalone "New note" path creates an empty row), open directly
+  // in edit mode so the clinician can type — otherwise we'd render a
+  // dead-end "not yet generated" card with no way into the editor.
+  const isBlank = !noteEdited && !note
+  const canEdit = !readonly && !!onSave
+  const startEmptyEditing = isBlank && canEdit
+
+  const [editMode, setEditMode] = useState(startEmptyEditing)
+  const [editState, setEditState] = useState<StructuredEditState | null>(
+    startEmptyEditing
+      ? narrativeToStructured(EMPTY_SOAP_NARRATIVE)
+      : null,
+  )
+  const [initialEditState, setInitialEditState] = useState<string>(
+    startEmptyEditing
+      ? JSON.stringify(narrativeToStructured(EMPTY_SOAP_NARRATIVE))
+      : "",
+  )
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [clinicalObs, setClinicalObs] = useState<ClinicalObservation>(EMPTY_CLINICAL_OBSERVATION)
 
-  const displayNote: SOAPNoteModel | null = noteEdited ?? note
+  const displayNote: SOAPNoteModel | null =
+    noteEdited ?? note ?? (startEmptyEditing ? EMPTY_SOAP_NARRATIVE : null)
   const isEdited = !!noteEdited
-  const canEdit = !readonly && !!onSave
+  const isManual = isBlank
 
   const hasUnsavedChanges = () => {
     if (!editState) return false
@@ -224,7 +248,7 @@ function SOAPNoteView({
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-neutral-900">SOAP Note</h3>
-          {isEdited ? (
+          {isManual ? null : isEdited ? (
             <span className="px-2 py-1 bg-secondary-100 text-secondary-700 text-xs font-medium rounded">
               Edited
             </span>
@@ -321,10 +345,12 @@ function SOAPNoteView({
       {/* Edit Mode Actions */}
       {editMode && (
         <div className="flex justify-end gap-2 pt-4 border-t border-neutral-200">
-          <Button variant="outline" onClick={handleCancel}>
-            <X className="w-4 h-4 mr-2" />
-            Cancel
-          </Button>
+          {!isManual && (
+            <Button variant="outline" onClick={handleCancel}>
+              <X className="w-4 h-4 mr-2" />
+              Cancel
+            </Button>
+          )}
           <Button onClick={handleSave}>
             <Save className="w-4 h-4 mr-2" />
             Save Changes
@@ -519,14 +545,21 @@ function NarrativeNoteView({
   onSave,
   className,
 }: NarrativeViewProps) {
-  const [editMode, setEditMode] = useState(false)
+  // Mirror the SOAP empty-blank-editing behavior so manually-created
+  // narrative notes open straight in the editor (see SOAPNoteView).
+  const isBlank = !noteEdited && !note
+  const canEdit = !readonly && !!onSave
+  const startEmptyEditing = isBlank && canEdit
+  const isManual = isBlank
+
+  const [editMode, setEditMode] = useState(startEmptyEditing)
   const [draft, setDraft] = useState<string>("")
   const [initialDraft, setInitialDraft] = useState<string>("")
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
 
-  const displayNote = noteEdited ?? note
+  const displayNote =
+    noteEdited ?? note ?? (startEmptyEditing ? { body: "" } : null)
   const isEdited = !!noteEdited
-  const canEdit = !readonly && !!onSave
 
   const hasUnsavedChanges = () => draft !== initialDraft
 
@@ -568,7 +601,7 @@ function NarrativeNoteView({
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <h3 className="text-lg font-semibold text-neutral-900">Narrative Note</h3>
-          {isEdited ? (
+          {isManual ? null : isEdited ? (
             <span className="px-2 py-1 bg-secondary-100 text-secondary-700 text-xs font-medium rounded">
               Edited
             </span>
@@ -609,10 +642,12 @@ function NarrativeNoteView({
 
       {editMode && (
         <div className="flex justify-end gap-2 pt-4 border-t border-neutral-200">
-          <Button variant="outline" onClick={handleCancel}>
-            <X className="w-4 h-4 mr-2" />
-            Cancel
-          </Button>
+          {!isManual && (
+            <Button variant="outline" onClick={handleCancel}>
+              <X className="w-4 h-4 mr-2" />
+              Cancel
+            </Button>
+          )}
           <Button onClick={handleSave}>
             <Save className="w-4 h-4 mr-2" />
             Save Changes

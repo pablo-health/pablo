@@ -59,7 +59,12 @@ export interface UpdateNoteEditsRequest {
 }
 
 export interface FinalizeNoteRequest {
-  quality_rating: number
+  /**
+   * Optional — required for AI-generated session notes (clinician rates
+   * the model's draft) and omitted for manually-authored notes (nothing
+   * to score). Backend treats absent ↔ null.
+   */
+  quality_rating?: number
   quality_rating_reason?: string
   quality_rating_sections?: string[]
 }

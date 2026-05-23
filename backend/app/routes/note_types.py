@@ -10,6 +10,8 @@ lives in downstream overlays, not here.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
@@ -18,10 +20,15 @@ from ..auth.service import get_current_user
 from ..notes import (
     NoteFieldDef,
     NoteSectionDef,
+    NoteTypeAuthorizer,
     NoteTypeDefinition,
     NoteTypeRegistry,
     get_default_registry,
+    get_note_type_authorizer,
 )
+
+if TYPE_CHECKING:
+    from ..models import User
 
 router = APIRouter(prefix="/api/note-types", tags=["note-types"])
 
@@ -71,9 +78,26 @@ class NoteTypeSchema(BaseModel):
     tier: str = Field(description="'core' or 'extension'.")
     context: str = Field(description="'session', 'patient', or 'practice'.")
     sections: list[NoteSectionSchema]
+    is_locked: bool = Field(
+        default=False,
+        description=(
+            "True when the caller's subscription / role does not permit "
+            "creating this note type. The OSS authorizer allows everything, "
+            "so OSS responses always carry False; downstream overlays "
+            "(SaaS subscription-gated authorizer) populate True for "
+            "extension types the caller has not unlocked. Frontends "
+            "should render locked types with an upgrade affordance "
+            "rather than as live picker options."
+        ),
+    )
 
     @classmethod
-    def from_def(cls, definition: NoteTypeDefinition) -> NoteTypeSchema:
+    def from_def(
+        cls,
+        definition: NoteTypeDefinition,
+        *,
+        is_locked: bool = False,
+    ) -> NoteTypeSchema:
         return cls(
             key=definition.key,
             label=definition.label,
@@ -81,6 +105,7 @@ class NoteTypeSchema(BaseModel):
             tier=definition.tier,
             context=definition.context,
             sections=[NoteSectionSchema.from_def(s) for s in definition.sections],
+            is_locked=is_locked,
         )
 
 
@@ -105,7 +130,8 @@ def list_note_types(
         ),
     ),
     registry: NoteTypeRegistry = Depends(get_registry),
-    _user: object = Depends(get_current_user),
+    user: User = Depends(get_current_user),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
 ) -> NoteTypeListResponse:
     """Return registered note types, sorted by key.
 
@@ -113,12 +139,22 @@ def list_note_types(
     ``context`` field. An unknown context value returns an empty list
     rather than an error — callers can probe for support without a
     branch on the response shape.
+
+    Each entry carries ``is_locked``, computed from the injected
+    :class:`NoteTypeAuthorizer`. OSS ships an allow-all authorizer so
+    self-hosters see every type unlocked; the SaaS overlay swaps in a
+    subscription-gated authorizer so Practice-tier extension types
+    (DAP, BIRP, GIRP, ...) render locked for callers who haven't
+    subscribed.
     """
     definitions = registry.all()
     if context is not None:
         definitions = [d for d in definitions if d.context == context]
     return NoteTypeListResponse(
-        note_types=[NoteTypeSchema.from_def(d) for d in definitions],
+        note_types=[
+            NoteTypeSchema.from_def(d, is_locked=not authorizer.is_allowed(user, d.key))
+            for d in definitions
+        ],
     )
 
 
@@ -126,9 +162,11 @@ def list_note_types(
 def get_note_type(
     key: str,
     registry: NoteTypeRegistry = Depends(get_registry),
-    _user: object = Depends(get_current_user),
+    user: User = Depends(get_current_user),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
 ) -> NoteTypeSchema:
     """Return a single note-type definition by key."""
     if not registry.has(key):
         raise NotFoundError(f"Note type {key!r} not found")
-    return NoteTypeSchema.from_def(registry.get(key))
+    definition = registry.get(key)
+    return NoteTypeSchema.from_def(definition, is_locked=not authorizer.is_allowed(user, key))
