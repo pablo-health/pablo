@@ -73,7 +73,7 @@ export function useFinalizeNote(token?: string) {
       updater: (previous, { data }) => ({
         ...previous,
         finalized_at: new Date().toISOString(),
-        quality_rating: data.quality_rating,
+        quality_rating: data.quality_rating ?? null,
         quality_rating_reason: data.quality_rating_reason ?? null,
         quality_rating_sections: data.quality_rating_sections ?? null,
       }),

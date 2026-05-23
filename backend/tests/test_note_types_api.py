@@ -12,8 +12,10 @@ from app.main import app
 from app.notes import (
     NoteFieldDef,
     NoteSectionDef,
+    NoteTypeAuthorizer,
     NoteTypeDefinition,
     NoteTypeRegistry,
+    get_note_type_authorizer,
 )
 from app.routes.note_types import get_registry
 from fastapi.testclient import TestClient
@@ -195,3 +197,62 @@ class TestGetNoteType:
         [section] = body["sections"]
         [field] = section["fields"]
         assert field["kind"] == "text"
+
+
+class TestIsLockedField:
+    """Tier-gating: the route asks the authorizer per-type.
+
+    OSS ships an allow-all authorizer so every entry comes back unlocked;
+    downstream overlays (e.g. the SaaS subscription-aware authorizer)
+    flip ``is_locked`` to True for entries the caller hasn't subscribed
+    to. The frontend reads this field to render an upgrade affordance
+    instead of a live picker option.
+    """
+
+    def test_oss_default_authorizer_reports_everything_unlocked(self) -> None:
+        registry = _registry_with(_sample_type("alpha"), _sample_type("zulu"))
+        app.dependency_overrides[get_registry] = lambda: registry
+        try:
+            response = TestClient(app).get("/api/note-types")
+        finally:
+            app.dependency_overrides.pop(get_registry, None)
+
+        assert response.status_code == 200
+        assert all(t["is_locked"] is False for t in response.json()["note_types"])
+
+    def test_overridden_authorizer_locks_specific_types(self) -> None:
+        registry = _registry_with(_sample_type("alpha"), _sample_type("zulu"))
+
+        class _LockZulu(NoteTypeAuthorizer):
+            def is_allowed(self, user: object, note_type: str) -> bool:  # type: ignore[override]
+                return note_type != "zulu"
+
+        app.dependency_overrides[get_registry] = lambda: registry
+        app.dependency_overrides[get_note_type_authorizer] = _LockZulu
+        try:
+            response = TestClient(app).get("/api/note-types")
+        finally:
+            app.dependency_overrides.pop(get_registry, None)
+            app.dependency_overrides.pop(get_note_type_authorizer, None)
+
+        assert response.status_code == 200
+        locked = {t["key"]: t["is_locked"] for t in response.json()["note_types"]}
+        assert locked == {"alpha": False, "zulu": True}
+
+    def test_single_get_carries_is_locked(self) -> None:
+        registry = _registry_with(_sample_type("alpha"))
+
+        class _LockAlpha(NoteTypeAuthorizer):
+            def is_allowed(self, user: object, note_type: str) -> bool:  # type: ignore[override]
+                return False
+
+        app.dependency_overrides[get_registry] = lambda: registry
+        app.dependency_overrides[get_note_type_authorizer] = _LockAlpha
+        try:
+            response = TestClient(app).get("/api/note-types/alpha")
+        finally:
+            app.dependency_overrides.pop(get_registry, None)
+            app.dependency_overrides.pop(get_note_type_authorizer, None)
+
+        assert response.status_code == 200
+        assert response.json()["is_locked"] is True

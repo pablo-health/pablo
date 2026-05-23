@@ -40,6 +40,15 @@ export interface NoteTypeSchema {
   tier: NoteTier
   context: NoteContext
   sections: NoteSectionSchema[]
+  /**
+   * True when the caller's subscription / role does not permit creating
+   * a note of this type. Defaults to false for OSS (allow-all
+   * authorizer); SaaS sets true for Practice-tier extension types
+   * (DAP, BIRP, GIRP, ...) until the caller upgrades. Pickers should
+   * render locked types with an upgrade affordance rather than as live
+   * options.
+   */
+  is_locked?: boolean
 }
 
 export interface NoteTypeListResponse {

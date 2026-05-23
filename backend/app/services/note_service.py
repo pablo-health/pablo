@@ -165,13 +165,17 @@ class NoteService:
         self,
         note_id: str,
         *,
-        quality_rating: int,
+        quality_rating: int | None = None,
         quality_rating_reason: str | None = None,
         quality_rating_sections: list[str] | None = None,
         finalized_at: datetime | None = None,
         user_id: str,
     ) -> Note:
-        """Finalize a note (record quality rating + finalized_at)."""
+        """Finalize a note (record quality rating + finalized_at).
+
+        ``quality_rating`` is optional — manually-authored notes (no AI
+        draft) carry no rating; session-derived notes do.
+        """
         note = self.get_note(note_id, user_id)
         if note.finalized_at is not None:
             raise NoteAlreadyFinalizedError(
