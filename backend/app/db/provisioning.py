@@ -9,6 +9,7 @@ For Pablo Practice edition, new practices get their own schemas on demand.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,50 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
+
+type PostProvisionHook = Callable[["Engine", str], None]
+
+# Hooks invoked after a *fresh* tenant schema has been built from
+# ``tenant_template.sql`` and stamped at the OSS alembic HEAD. The SaaS
+# overlay registers ``_apply_saas_tenant_template`` +
+# ``_stamp_saas_tenant_at_head`` here so every fresh-tenant code path
+# (signup provisioning, pentest provisioning, …) gets the SaaS-tenant
+# addendum applied atomically — without OSS importing from SaaS
+# (guardrail S1 in pablo-saas/CLAUDE.md).
+#
+# Convention: hooks fire only on the fresh-template branch of
+# :func:`create_practice_schema`. The legacy reconcile branch is used
+# by ``migrate_tenants.upgrade_tenant_schema`` for pre-template tenants
+# and skips hooks — the SaaS-tenant chain is applied to those tenants
+# separately by ``saas.bin.migrate``'s deploy-time fan-out.
+_post_provision_hooks: list[PostProvisionHook] = []
+
+
+def register_post_provision_hook(hook: PostProvisionHook) -> None:
+    """Register a callback to run after a fresh tenant schema is built.
+
+    Called by ``saas.bootstrap`` during application startup so that
+    ``create_practice_schema`` callers (boot-time ``ensure_schemas``,
+    ``PentestTenantService.provision``, future provisioning paths)
+    automatically get the SaaS-tenant addendum applied without each
+    call site re-implementing the wrapping.
+
+    Idempotent: appending the same hook twice would invoke it twice;
+    callers (e.g. ``saas.bootstrap.install``) are responsible for
+    guarding against re-registration on hot-reload.
+    """
+    _post_provision_hooks.append(hook)
+
+
+def _run_post_provision_hooks(engine: Engine, schema_name: str) -> None:
+    for hook in _post_provision_hooks:
+        hook(engine, schema_name)
+
+
+def reset_post_provision_hooks() -> None:
+    """Clear all registered hooks. For tests; do not call from prod."""
+    _post_provision_hooks.clear()
+
 
 # backend/alembic.ini relative to backend/app/db/provisioning.py.
 _ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
@@ -265,6 +310,13 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     else:
         _apply_tenant_template(engine, schema_name)
         _stamp_alembic_at_head(engine, schema_name)
+        # Hooks fire only on the fresh-template path. The SaaS overlay's
+        # hook (registered in ``saas.bootstrap``) lays down the SaaS-
+        # tenant addendum + stamps ``alembic_version_saas_tenant`` so
+        # the schema is at HEAD on both chains before any caller starts
+        # using it. Legacy reconcile path is handled separately by
+        # ``saas.bin.migrate``'s deploy-time fan-out.
+        _run_post_provision_hooks(engine, schema_name)
 
     if not is_default_template:
         from sqlalchemy.orm import Session as OrmSession
