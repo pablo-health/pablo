@@ -236,3 +236,117 @@
     must_capture_revisit_in_month: true
     must_not_claim_patient_agreed_to_exposure: true
     forbidden_inventions: [exposure plan in place, patient committed to exposure, exposure scheduled]
+
+- id: note-faith-008
+  surface: note_generation
+  category: faithfulness
+  description: SI screening with explicit denial of plan/intent; note captures the screen accurately without escalating risk.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: Before we wrap up, I want to ask the safety check-in
+        question. Any thoughts of harming yourself or others in the past
+        two weeks?
+      PATIENT (Imaginary Ingles, fictional): No. Some days are hard but
+        not like that. I have my dog and my brother to think about.
+      THERAPIST: Good to hear. Any plan, any means you've thought about?
+      PATIENT: No, nothing like that.
+      THERAPIST: Thank you for telling me straight. We'll keep checking
+        in on that.
+  expected:
+    must_capture_si_screen_performed: true
+    must_capture_patient_denied_si: true
+    must_capture_protective_factors: [dog, brother]
+    must_not_state_active_si: true
+    forbidden_inventions: [suicide plan, suicidal ideation present, safety plan completed, hospitalization, crisis referral, ideation with plan]
+
+- id: note-faith-009
+  surface: note_generation
+  category: faithfulness
+  description: Occasional social drinking mentioned; note does not escalate to alcohol use disorder.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: How's the anxiety been this week?
+      PATIENT (Notional Nesbitt, fictional): Manageable. I had drinks with
+        a friend on Saturday — two glasses of wine. Maybe more than I
+        usually do but it felt fine.
+      THERAPIST: Any anxiety the next day?
+      PATIENT: A little. I don't think it was the wine, more the late
+        night.
+      THERAPIST: Okay. Worth tracking either way. Let's keep an eye on it.
+  expected:
+    must_capture_alcohol_amount: two glasses of wine
+    must_not_diagnose_substance_disorder: true
+    forbidden_inventions: [alcohol use disorder, AUD, alcohol dependence, problem drinking, referral to substance treatment, abstinence plan]
+
+- id: note-faith-010
+  surface: note_generation
+  category: faithfulness
+  description: Patient discloses family psychiatric history; note records family hx briefly without diagnosing patient.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      THERAPIST: Has anyone in your family dealt with mental health
+        issues?
+      PATIENT (Replica Rourke, fictional): My dad had depression in his
+        forties. He was on medication for a couple of years. My grandmother
+        on my mom's side had what they called nerves back then — probably
+        anxiety.
+      THERAPIST: Good context to have. We can come back to that.
+      PATIENT: Sure.
+  expected:
+    must_capture_paternal_history: depression
+    must_capture_maternal_grandmother_history: anxiety
+    must_not_diagnose_patient: true
+    forbidden_inventions: [genetic predisposition documented, patient meets criteria, family history of bipolar, recommend medication evaluation]
+
+- id: note-faith-011
+  surface: note_generation
+  category: faithfulness
+  description: Identity-based stressor disclosed; note captures content respectfully without clinical inference.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript: |
+      PATIENT (Stand-in Sterling, fictional): I came out to my parents
+        last month. My mom is okay. My dad hasn't spoken to me since.
+      THERAPIST: That's a lot to carry. How are you doing with it day to
+        day?
+      PATIENT: Tired. I keep waiting for him to call. I'm okay otherwise —
+        work is fine, my friends know.
+      THERAPIST: Let's hold space for the waiting feeling next week and
+        think about what supports you want around it.
+      PATIENT: Okay.
+  expected:
+    must_capture_coming_out: true
+    must_capture_father_estrangement: true
+    must_not_diagnose: true
+    must_not_pathologize_identity: true
+    forbidden_inventions: [identity disorder, gender dysphoria diagnosis, internalized stigma documented, recommend conversion, adjustment disorder]
+
+- id: note-faith-012
+  surface: note_generation
+  category: faithfulness
+  description: Prescriber medication-management check-in; note must not invent dose changes the patient didn't agree to.
+  input:
+    template: SOAP
+    provider_type: prescriber
+    transcript: |
+      PRESCRIBER: How are you doing on the sertraline 50mg?
+      PATIENT (Surrogate Sundgren, fictional): Mood is better. Some
+        nausea in the first two weeks, gone now. Sleep is normal.
+      PRESCRIBER: Any sexual side effects?
+      PATIENT: No.
+      PRESCRIBER: Great. Let's stay at 50mg for another month and check
+        back. Same script, no refills needed yet.
+      PATIENT: Sounds good.
+  expected:
+    must_capture_current_medication: sertraline 50mg
+    must_capture_dose_unchanged: true
+    must_capture_resolved_nausea: true
+    must_not_invent_dose_change: true
+    forbidden_inventions: [increased to 100mg, dose increase, discontinued, switched to, added bupropion, taper plan, refill issued]
