@@ -7,6 +7,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
 import { useEffect, useState } from "react"
 import { ConfigProvider } from "@/lib/config-provider"
 import { AuthProvider } from "@/lib/auth-context"
+import { ToastProvider } from "@/components/ui/Toast"
 import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -30,8 +31,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ConfigProvider>
         <AuthProvider>
-          {children}
-          <ReactQueryDevtools initialIsOpen={false} />
+          <ToastProvider>
+            {children}
+            <ReactQueryDevtools initialIsOpen={false} />
+          </ToastProvider>
         </AuthProvider>
       </ConfigProvider>
     </QueryClientProvider>
