@@ -50,10 +50,12 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "THERAPY-o1zh: pre-existing breakage. Per-test TRUNCATE fixture "
-        "doesn't list patient_documents (added by THERAPY-ak6m.2) so "
-        "the FK from patient_documents → patients blocks the TRUNCATE. "
-        "Add patient_documents to the table list or use CASCADE. "
+        "THERAPY-o1zh: pre-existing breakage. TRUNCATE FK fix landed in "
+        "pablo#252 (patient_documents added to the wipe list). Deeper rot "
+        "remains: every test seeds patient/session/note ids as plain "
+        "strings (``patient-1``, ``session-1``, etc.) but the columns "
+        "are now ``uuid``. Re-enabling requires replacing every hardcoded "
+        "id with ``str(uuid.uuid4())`` plus matching assertion casts. "
         "Exposed when pablo CI switched to ``make test-integration``."
     ),
 )
@@ -94,6 +96,7 @@ def pg_session(engine: Engine) -> Iterator[Session]:
             "practice.audit_logs, "
             "practice.notes, "
             "practice.patient_clinicians, "
+            "practice.patient_documents, "
             "practice.therapy_sessions, "
             "practice.patients"
         )

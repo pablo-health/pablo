@@ -36,14 +36,21 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 _db_url = os.environ.get("DATABASE_URL", "")
-pytestmark = pytest.mark.skip(
+pytestmark = pytest.mark.skipif(
+    not _db_url or os.environ.get("DATABASE_BACKEND") != "postgres",
     reason=(
-        "THERAPY-mkvp: pre-existing breakage. Test fixtures seed "
-        "patient_id as strings (``p-1`` / ``patient-mig``) but the "
-        "column is now ``uuid``. Update fixtures to use real UUIDs. "
-        "Exposed when pablo CI switched to ``make test-integration``."
+        "PostgreSQL not configured. Set DATABASE_URL and DATABASE_BACKEND=postgres; "
+        "apply migrations with `make db-migrate`."
     ),
 )
+
+# Stable UUIDs the seeders use as ``patient_id``. The column is ``uuid``
+# (post-c8a31f6e2d54_has_patient_access_uuid_overload). These tests don't
+# need a real ``patients`` row — no FK from therapy_sessions/notes to
+# patients in the schema variants exercised here — so any well-formed
+# UUID is fine.
+_PATIENT_ID_MIG = "11111111-1111-1111-1111-111111111111"
+_PATIENT_ID_P1 = "22222222-2222-2222-2222-222222222222"
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +84,7 @@ def _insert_session_recording_only(
     session: Session,
     *,
     session_id: str,
-    patient_id: str = "patient-mig",
+    patient_id: str = _PATIENT_ID_MIG,
 ) -> None:
     """Insert a recording-only therapy_sessions row (post-pa-0nx.2 schema).
 
@@ -115,7 +122,7 @@ def _insert_note(
     *,
     note_id: str,
     session_id: str | None,
-    patient_id: str = "patient-mig",
+    patient_id: str = _PATIENT_ID_MIG,
     content: dict | None = None,
 ) -> None:
     now = datetime.now(UTC)
@@ -204,7 +211,7 @@ def test_partial_unique_index_allows_multiple_null_session_ids(
                 VALUES (:id, :pid, NULL, 'soap', :now, :now, 'not_queued')
                 """
             ),
-            {"id": str(uuid.uuid4()), "pid": "p-1", "now": now},
+            {"id": str(uuid.uuid4()), "pid": _PATIENT_ID_P1, "now": now},
         )
     pg_session.commit()
 
@@ -268,5 +275,7 @@ def test_drop_migration_preserves_existing_note_rows(pg_session: Session) -> Non
         text("SELECT session_id, content FROM practice.notes WHERE id = :id"),
         {"id": note_id},
     ).one()
-    assert row[0] == sid
+    # ``session_id`` comes back as a ``UUID`` object after the column
+    # was migrated to ``uuid``; stringify before comparing.
+    assert str(row[0]) == sid
     assert row[1] == {"subjective": "S"}
