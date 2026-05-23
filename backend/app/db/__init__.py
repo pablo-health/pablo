@@ -32,9 +32,7 @@ _request_session: ContextVar[Session | None] = ContextVar("_request_session", de
 # from spawned response-body tasks — re-applies the caller's search_path.
 # A no-op (None) outside request scope, where callers (CLI, alembic,
 # standalone sessions) set search_path explicitly.
-_current_tenant_schema: ContextVar[str | None] = ContextVar(
-    "_current_tenant_schema", default=None
-)
+_current_tenant_schema: ContextVar[str | None] = ContextVar("_current_tenant_schema", default=None)
 
 # Default practice schema for Pablo Solo (single practice)
 DEFAULT_PRACTICE_SCHEMA = "practice"
@@ -298,8 +296,7 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
                 )
             )
             logger.info(
-                "RLS (patient_doc_access: chart=patient_access, restricted=uploader) "
-                "enabled on %s",
+                "RLS (patient_doc_access: chart=patient_access, restricted=uploader) enabled on %s",
                 qualified,
             )
             continue
@@ -410,6 +407,33 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
                 )
             )
             logger.info("RLS (patient_access) enabled on %s", qualified)
+        elif table_name == "chat_messages":
+            # chat_messages has neither user_id nor patient_id — gate
+            # by the parent conversation's patient. Without this branch
+            # the loop ENABLE+FORCEs RLS but leaves no policy, which is
+            # a deny-all configuration that only the BYPASSRLS-on-role
+            # posture mistakenly hides in production.
+            session.execute(text(f"DROP POLICY IF EXISTS rls_chat_message_access ON {qualified}"))
+            # ``qualified`` + ``schema_name`` are validated identifiers
+            # built from the validated schema name (see _validate_schema_name
+            # earlier) and a fixed table name; not user input.
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_chat_message_access ON {qualified} "  # noqa: S608
+                    f"USING (EXISTS ("
+                    f"  SELECT 1 FROM {schema_name}.chat_conversations c "
+                    f"  WHERE c.id = {qualified}.conversation_id "
+                    f"    AND has_patient_access("
+                    f"      c.patient_id, "
+                    f"      current_setting('app.current_user_id', true)"
+                    f"    )"
+                    f"))"
+                )
+            )
+            logger.info(
+                "RLS (chat_message_access via parent conversation) enabled on %s",
+                qualified,
+            )
 
     session.commit()
 

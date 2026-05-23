@@ -131,6 +131,14 @@ jobs:
       # Postgres comes up via testcontainers — see
       # backend/tests_integration/conftest.py. Docker is preinstalled on
       # ubuntu-latest runners; no extra setup needed.
+      #
+      # TEMPORARY: scoped back to the original audit-write tests while
+      # we investigate a runner-side hang on the broader suite (test
+      # process gets stuck inside step 8 for 10+ minutes vs the ~25s
+      # the same command takes locally). See THERAPY-* "CI integration
+      # suite hangs on broader make test-integration". The full
+      # ``make test-integration`` runs locally; switch this step back
+      # to ``make test-integration`` once the hang is root-caused.
       - name: Run audit-write integration tests
         run: |
           cd backend && poetry run pytest \
