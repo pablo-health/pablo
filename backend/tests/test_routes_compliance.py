@@ -14,14 +14,17 @@ repository so they stay fast and DB-free.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Generator
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import pytest
 from app.main import app
 from app.repositories import get_compliance_item_repository
 from app.repositories.postgres.compliance_item import ComplianceItem
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
 class InMemoryComplianceItemRepository:
@@ -65,7 +68,7 @@ class InMemoryComplianceItemRepository:
 
 @pytest.fixture
 def compliance_repo(
-    client: TestClient,  # noqa: ARG001 — depend on `client` to register its overrides first
+    client: TestClient,
 ) -> Generator[InMemoryComplianceItemRepository, None, None]:
     """In-memory compliance repo wired into the FastAPI dep graph."""
     repo = InMemoryComplianceItemRepository()
