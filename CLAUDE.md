@@ -128,20 +128,6 @@ make format     # Auto-fix formatting
    to "quickly see what main looks like" — that's a foot-gun, not a
    diff.
 
-## Public content
-
-This repo is AGPL and world-readable. Anything you commit here —
-`PABLO-` bead descriptions, commit messages, PR bodies, docs, code
-comments — should describe what this engine does.
-
-- Don't mention commercial tiers, billing, subscription gating, or
-  what's available "elsewhere." Pablo OSS is the product, not a
-  teaser.
-- Don't enumerate features as "missing" — describe what's here, not
-  what's not.
-- Configuration that lives outside the engine reads as
-  "configurable per-deployment," not "premium-only."
-
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 
