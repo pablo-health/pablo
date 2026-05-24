@@ -9,6 +9,7 @@ free-form section used for non-structured session notes.
 
 from __future__ import annotations
 
+from .prompts.soap import build_soap_prompt
 from .registry import (
     NoteFieldDef,
     NoteSectionDef,
@@ -18,6 +19,7 @@ from .registry import (
 
 SOAP_DEFINITION = NoteTypeDefinition(
     key="soap",
+    prompt_builder=build_soap_prompt,
     label="SOAP",
     description=(
         "Subjective / Objective / Assessment / Plan — the default clinical "

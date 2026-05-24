@@ -12,17 +12,22 @@ from typing import Any
 import pytest
 from app.models import Patient, SOAPNote, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
+from app.notes.builtin import NARRATIVE_DEFINITION
+from app.notes.registry import (
+    NoteFieldDef,
+    NoteSectionDef,
+    NoteTypeDefinition,
+)
 from app.services.note_generation_service import (
     GeneratedNote,
-    MeetingTranscriptionNoteService,
     MockNoteGenerationService,
+    RegistryNoteGenerationService,
+    _coerce_content_to_soap_note,
 )
-
-
-@pytest.fixture
-def service() -> MeetingTranscriptionNoteService:
-    """Create a MeetingTranscriptionNoteService for testing conversion."""
-    return MeetingTranscriptionNoteService(therapist_name="Dr. Test")
+from app.services.structured_llm_gateway import (
+    FakeStructuredLLMGateway,
+    StructuredCompletion,
+)
 
 
 @pytest.fixture
@@ -74,13 +79,10 @@ def full_soap_json() -> dict[str, Any]:
     }
 
 
-def test_all_subfields_preserved(
-    service: MeetingTranscriptionNoteService, full_soap_json: dict[str, Any]
-) -> None:
+def test_all_subfields_preserved(full_soap_json: dict[str, Any]) -> None:
     """Full JSON input produces structured SOAPNote with all sub-fields present."""
-    result = service._convert_json_to_soap_note(full_soap_json)
+    result = _coerce_content_to_soap_note(full_soap_json)
 
-    # Verify structured data is preserved (SOAPSentence .text)
     assert result.subjective.chief_complaint.text == "Increased anxiety related to work stress."
     assert result.subjective.mood_affect.text == "Anxious, restless, but engaged."
     assert result.subjective.symptoms is not None
@@ -105,7 +107,6 @@ def test_all_subfields_preserved(
     ]
     assert result.plan.next_session.text == "One week, same time."
 
-    # Verify narrative rendering includes all sub-field headers
     narrative = result.to_narrative()
 
     assert "**Chief Complaint:**" in narrative["subjective"]
@@ -136,33 +137,23 @@ def test_all_subfields_preserved(
     assert "One week" in narrative["plan"]
 
 
-def test_missing_optional_fields_no_empty_headers(
-    service: MeetingTranscriptionNoteService,
-) -> None:
+def test_missing_optional_fields_no_empty_headers() -> None:
     """Only required fields present — no empty headers in narrative output."""
     minimal_json: dict[str, Any] = {
-        "subjective": {
-            "chief_complaint": "Feels sad.",
-        },
-        "objective": {
-            "behavior": "Withdrawn, minimal eye contact.",
-        },
+        "subjective": {"chief_complaint": "Feels sad."},
+        "objective": {"behavior": "Withdrawn, minimal eye contact."},
         "assessment": {
             "clinical_impression": "Major Depressive Disorder.",
             "risk_assessment": "Denies SI/HI.",
         },
-        "plan": {
-            "next_steps": ["Continue current medication."],
-        },
+        "plan": {"next_steps": ["Continue current medication."]},
     }
-    result = service._convert_json_to_soap_note(minimal_json)
+    result = _coerce_content_to_soap_note(minimal_json)
     narrative = result.to_narrative()
 
-    # Present fields
     assert "**Chief Complaint:**" in narrative["subjective"]
     assert "Feels sad" in narrative["subjective"]
 
-    # Absent fields should NOT appear
     assert "**Mood/Affect:**" not in narrative["subjective"]
     assert "**Symptoms:**" not in narrative["subjective"]
     assert "**Client Narrative:**" not in narrative["subjective"]
@@ -180,9 +171,7 @@ def test_missing_optional_fields_no_empty_headers(
     assert "**Next Session:**" not in narrative["plan"]
 
 
-def test_empty_values_produce_no_artifacts(
-    service: MeetingTranscriptionNoteService,
-) -> None:
+def test_empty_values_produce_no_artifacts() -> None:
     """Empty strings and empty lists don't produce headers or bullet artifacts."""
     empty_json: dict[str, Any] = {
         "subjective": {
@@ -191,11 +180,7 @@ def test_empty_values_produce_no_artifacts(
             "symptoms": [],
             "client_narrative": "   ",
         },
-        "objective": {
-            "behavior": "Cooperative.",
-            "speech": "",
-            "appearance": None,
-        },
+        "objective": {"behavior": "Cooperative.", "speech": "", "appearance": None},
         "assessment": {
             "clinical_impression": "GAD.",
             "risk_assessment": "Low risk.",
@@ -209,10 +194,9 @@ def test_empty_values_produce_no_artifacts(
             "next_session": "",
         },
     }
-    result = service._convert_json_to_soap_note(empty_json)
+    result = _coerce_content_to_soap_note(empty_json)
     narrative = result.to_narrative()
 
-    # Empty string / whitespace-only / None fields should be omitted
     assert "**Mood/Affect:**" not in narrative["subjective"]
     assert "**Symptoms:**" not in narrative["subjective"]
     assert "**Client Narrative:**" not in narrative["subjective"]
@@ -227,7 +211,6 @@ def test_empty_values_produce_no_artifacts(
     assert "**Homework Assignments:**" not in narrative["plan"]
     assert "**Next Session:**" not in narrative["plan"]
 
-    # Valid fields are still present
     assert "**Chief Complaint:**" in narrative["subjective"]
     assert "**Behavior:**" in narrative["objective"]
     assert "**Clinical Impression:**" in narrative["assessment"]
@@ -235,9 +218,7 @@ def test_empty_values_produce_no_artifacts(
     assert "**Next Steps:**" in narrative["plan"]
 
 
-def test_risk_assessment_always_in_assessment(
-    service: MeetingTranscriptionNoteService,
-) -> None:
+def test_risk_assessment_always_in_assessment() -> None:
     """Risk assessment (legally required) appears in the Assessment section."""
     json_with_risk: dict[str, Any] = {
         "subjective": {"chief_complaint": "Feeling better."},
@@ -247,7 +228,7 @@ def test_risk_assessment_always_in_assessment(
         },
         "plan": {"next_steps": ["Continue treatment."]},
     }
-    result = service._convert_json_to_soap_note(json_with_risk)
+    result = _coerce_content_to_soap_note(json_with_risk)
     narrative = result.to_narrative()
 
     assert "**Risk Assessment:**" in narrative["assessment"]
@@ -255,9 +236,7 @@ def test_risk_assessment_always_in_assessment(
     assert "Low risk" in narrative["assessment"]
 
 
-def test_list_formatting_as_bullets(
-    service: MeetingTranscriptionNoteService,
-) -> None:
+def test_list_formatting_as_bullets() -> None:
     """List fields (symptoms, interventions, homework, next_steps) use bullet format."""
     json_with_lists: dict[str, Any] = {
         "subjective": {
@@ -275,32 +254,26 @@ def test_list_formatting_as_bullets(
             "next_steps": ["Reassess medication", "Family session"],
         },
     }
-    result = service._convert_json_to_soap_note(json_with_lists)
+    result = _coerce_content_to_soap_note(json_with_lists)
     narrative = result.to_narrative()
 
-    # Symptoms as bullets
     assert "- Insomnia" in narrative["subjective"]
     assert "- Irritability" in narrative["subjective"]
     assert "- Fatigue" in narrative["subjective"]
 
-    # Interventions as bullets
     assert "- Psychoeducation" in narrative["plan"]
     assert "- Motivational interviewing" in narrative["plan"]
 
-    # Homework as bullets
     assert "- Journal daily" in narrative["plan"]
     assert "- Exercise 3x/week" in narrative["plan"]
 
-    # Next steps as bullets
     assert "- Reassess medication" in narrative["plan"]
     assert "- Family session" in narrative["plan"]
 
 
-def test_completely_empty_sections(
-    service: MeetingTranscriptionNoteService,
-) -> None:
+def test_completely_empty_sections() -> None:
     """Missing sections produce empty strings in narrative, not errors."""
-    result = service._convert_json_to_soap_note({})
+    result = _coerce_content_to_soap_note({})
     narrative = result.to_narrative()
 
     assert narrative["subjective"] == ""
@@ -309,11 +282,9 @@ def test_completely_empty_sections(
     assert narrative["plan"] == ""
 
 
-def test_returns_soap_note_dataclass(
-    service: MeetingTranscriptionNoteService, full_soap_json: dict[str, Any]
-) -> None:
+def test_returns_soap_note_dataclass(full_soap_json: dict[str, Any]) -> None:
     """Conversion returns a SOAPNote dataclass instance."""
-    result = service._convert_json_to_soap_note(full_soap_json)
+    result = _coerce_content_to_soap_note(full_soap_json)
     assert isinstance(result, SOAPNote)
 
 
@@ -321,7 +292,6 @@ class TestMockNoteGenerationService:
     """Tests for MockNoteGenerationService output format."""
 
     def test_mock_returns_subfield_headers(self) -> None:
-        """Mock output includes sub-field markdown headers matching real format."""
         mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
@@ -337,33 +307,28 @@ class TestMockNoteGenerationService:
         )
         narrative = result.soap_note.to_narrative()
 
-        # Subjective headers
         assert "**Chief Complaint:**" in narrative["subjective"]
         assert "**Mood/Affect:**" in narrative["subjective"]
         assert "**Symptoms:**" in narrative["subjective"]
         assert "**Client Narrative:**" in narrative["subjective"]
 
-        # Objective headers
         assert "**Appearance:**" in narrative["objective"]
         assert "**Behavior:**" in narrative["objective"]
         assert "**Speech:**" in narrative["objective"]
         assert "**Thought Process:**" in narrative["objective"]
         assert "**Affect Observed:**" in narrative["objective"]
 
-        # Assessment headers
         assert "**Clinical Impression:**" in narrative["assessment"]
         assert "**Progress:**" in narrative["assessment"]
         assert "**Risk Assessment:**" in narrative["assessment"]
         assert "**Functioning Level:**" in narrative["assessment"]
 
-        # Plan headers
         assert "**Interventions Used:**" in narrative["plan"]
         assert "**Homework Assignments:**" in narrative["plan"]
         assert "**Next Steps:**" in narrative["plan"]
         assert "**Next Session:**" in narrative["plan"]
 
     def test_mock_includes_diagnosis_in_output(self) -> None:
-        """Mock includes patient diagnosis in the output."""
         mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
@@ -383,7 +348,6 @@ class TestMockNoteGenerationService:
         assert "PTSD" in narrative["assessment"]
 
     def test_mock_risk_assessment_present(self) -> None:
-        """Mock always includes risk assessment in Assessment section."""
         mock_service = MockNoteGenerationService()
         patient = Patient(
             id="p1",
@@ -401,8 +365,8 @@ class TestMockNoteGenerationService:
         assert "**Risk Assessment:**" in narrative["assessment"]
 
 
-class TestNarrativeGeneration:
-    """End-to-end narrative generation driven off the registry."""
+class TestRegistryGeneration:
+    """End-to-end generation driven off the registry, with a fake gateway."""
 
     @pytest.fixture
     def isolated_registry(self) -> NoteTypeRegistry:
@@ -421,7 +385,7 @@ class TestNarrativeGeneration:
             diagnosis="Adjustment disorder",
         )
 
-    def test_narrative_end_to_end_against_sample_transcript(
+    def test_narrative_routes_through_registry(
         self, isolated_registry: NoteTypeRegistry, patient: Patient
     ) -> None:
         """Narrative generation composes a registry-driven prompt and returns
@@ -433,8 +397,7 @@ class TestNarrativeGeneration:
                 "[00:05] Client: Better. I used the breathing exercise twice."
             ),
         )
-
-        llm_response = {
+        llm_data = {
             "note": {
                 "body": (
                     "Client reports an improved week with partial use of "
@@ -443,23 +406,11 @@ class TestNarrativeGeneration:
                 )
             }
         }
-
-        captured: dict[str, Any] = {}
-
-        class _FakeLLM:
-            def call_structured(
-                self,
-                prompt: str,
-                response_schema: dict[str, Any],
-                **_: Any,
-            ) -> dict[str, Any]:
-                captured["prompt"] = prompt
-                captured["schema"] = response_schema
-                return llm_response
-
-        service = MeetingTranscriptionNoteService(
-            registry=isolated_registry,
-            llm_client_factory=_FakeLLM,
+        gateway = FakeStructuredLLMGateway(
+            responses=[StructuredCompletion(data=llm_data)]
+        )
+        service = RegistryNoteGenerationService(
+            registry=isolated_registry, llm_gateway=gateway
         )
         result = service.generate_note(
             "narrative",
@@ -471,24 +422,89 @@ class TestNarrativeGeneration:
         assert isinstance(result, GeneratedNote)
         assert result.note_type == "narrative"
         assert result.soap_note is None
-        assert result.content == {
-            "note": {
-                "body": (
-                    "Client reports an improved week with partial use of "
-                    "previously-taught breathing exercises. Engaged and "
-                    "oriented throughout the session."
-                )
-            }
-        }
-        # Prompt is composed from the registry — contains the narrative field's ai_hint.
-        assert "narrative summary of the session" in captured["prompt"].lower()
+        assert result.content == llm_data
+
+        # Prompt is composed from the registry — contains the narrative
+        # field's ai_hint.
+        assert len(gateway.calls) == 1
+        call = gateway.calls[0]
+        assert "narrative summary of the session" in call["user_prompt"].lower()
         # Schema reflects the registry shape (section → field).
-        assert captured["schema"]["properties"]["note"]["properties"]["body"] == {"type": "string"}
+        assert call["response_schema"]["properties"]["note"]["properties"]["body"] == {
+            "type": "string"
+        }
+
+    def test_soap_uses_prompt_builder_hook(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """SOAP routes through the same gateway path but uses the
+        hand-tuned prompt from prompts/soap.py instead of the auto-built
+        one. The hand-tuned prompt is recognizable by its 'SOAP Note
+        Structure' heading; the registry default has 'Section ... Fields'."""
+        transcript = Transcript(
+            format="txt", content="[00:00] Therapist: Hi.\n[00:01] Client: Hi."
+        )
+        soap_llm_data = {
+            "subjective": {
+                "chief_complaint": "Greeting only.",
+                "mood_affect": "Neutral.",
+                "symptoms": [],
+                "client_narrative": "Greeting exchange.",
+            },
+            "objective": {
+                "appearance": "",
+                "behavior": "Brief.",
+                "speech": "",
+                "thought_process": "",
+                "affect_observed": "",
+            },
+            "assessment": {
+                "clinical_impression": "Insufficient content.",
+                "progress": "",
+                "risk_assessment": "No risk indicators present.",
+                "functioning_level": "",
+            },
+            "plan": {
+                "interventions_used": [],
+                "homework_assignments": [],
+                "next_steps": ["Continue treatment."],
+                "next_session": "",
+            },
+        }
+        # First call: SOAP generation. Second call: source-attribution
+        # (Call-2). We return an empty attribution map — coverage tests
+        # for the attribution parsing live in test_source_attribution.
+        gateway = FakeStructuredLLMGateway(
+            responses=[
+                StructuredCompletion(data=soap_llm_data),
+                StructuredCompletion(data={}),
+            ]
+        )
+        service = RegistryNoteGenerationService(
+            registry=isolated_registry, llm_gateway=gateway
+        )
+        result = service.generate_note(
+            "soap",
+            transcript,
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        assert result.note_type == "soap"
+        assert result.soap_note is not None
+        assert result.soap_note.subjective.chief_complaint.text == "Greeting only."
+
+        # First call used the SOAP-specific prompt (hand-tuned).
+        soap_call = gateway.calls[0]
+        assert "SOAP Note Structure" in soap_call["user_prompt"]
+        # Second call is Call-2 source attribution.
+        attribution_call = gateway.calls[1]
+        assert "claim" in attribution_call["user_prompt"].lower()
 
     def test_unknown_note_type_raises(
         self, isolated_registry: NoteTypeRegistry, patient: Patient
     ) -> None:
-        service = MeetingTranscriptionNoteService(registry=isolated_registry)
+        service = RegistryNoteGenerationService(registry=isolated_registry)
         transcript = Transcript(format="txt", content="x")
         with pytest.raises(KeyError):
             service.generate_note(
@@ -516,3 +532,87 @@ class TestNarrativeGeneration:
         assert "note" in result.content
         assert "body" in result.content["note"]
         assert result.content["note"]["body"]
+
+    def test_new_note_type_works_without_code_changes(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """Extensibility proof: registering a fresh definition routes
+        through the existing pipeline with zero code changes outside
+        this test. Models the future DAP / BIRP onboarding shape.
+        """
+        dap_like = NoteTypeDefinition(
+            key="dap_test",
+            label="DAP (test)",
+            description="Data / Assessment / Plan — used to exercise the registry path.",
+            sections=(
+                NoteSectionDef(
+                    key="data",
+                    label="Data",
+                    fields=(
+                        NoteFieldDef(
+                            key="objective_description",
+                            label="Objective Description",
+                            kind="text",
+                            ai_hint="Observable facts from the session.",
+                        ),
+                    ),
+                ),
+                NoteSectionDef(
+                    key="assessment",
+                    label="Assessment",
+                    fields=(
+                        NoteFieldDef(
+                            key="clinical_findings",
+                            label="Clinical Findings",
+                            kind="text",
+                            ai_hint="Clinician's interpretation of the data.",
+                        ),
+                    ),
+                ),
+                NoteSectionDef(
+                    key="plan",
+                    label="Plan",
+                    fields=(
+                        NoteFieldDef(
+                            key="next_steps",
+                            label="Next Steps",
+                            kind="list",
+                            ai_hint="Planned interventions for next session.",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        isolated_registry.register(dap_like)
+        # Sanity-check we didn't accidentally collide with a builtin:
+        assert isolated_registry.has("dap_test")
+        assert isolated_registry.has(NARRATIVE_DEFINITION.key)
+
+        gateway = FakeStructuredLLMGateway(
+            responses=[
+                StructuredCompletion(
+                    data={
+                        "data": {"objective_description": "Client arrived on time."},
+                        "assessment": {"clinical_findings": "Engaged and oriented."},
+                        "plan": {"next_steps": ["Continue weekly cadence."]},
+                    }
+                )
+            ]
+        )
+        service = RegistryNoteGenerationService(
+            registry=isolated_registry, llm_gateway=gateway
+        )
+        result = service.generate_note(
+            "dap_test",
+            Transcript(format="txt", content="[00:00] Therapist: Hi.\n[00:01] Client: Hi."),
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        assert result.note_type == "dap_test"
+        assert result.soap_note is None
+        assert result.content == {
+            "data": {"objective_description": "Client arrived on time."},
+            "assessment": {"clinical_findings": "Engaged and oriented."},
+            "plan": {"next_steps": ["Continue weekly cadence."]},
+        }
