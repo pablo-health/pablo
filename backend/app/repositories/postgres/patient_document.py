@@ -28,7 +28,7 @@ from sqlalchemy import String, Uuid, bindparam, or_, text
 
 from ...db.models import PatientClinicianRow, PatientDocumentRow
 from ...models import DocumentCategory, PatientDocument
-from ..patient_document import PatientDocumentRepository
+from ..patient_document import FinalizedExtraction, PatientDocumentRepository
 
 _RESTRICTED_CATEGORIES = ("therapist_private", "psychotherapy_notes")
 
@@ -70,6 +70,8 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
             mime_type=document.mime_type,
             gcs_path=document.gcs_path,
             extracted_text=document.extracted_text,
+            extracted_via=document.extracted_via,
+            extraction_metadata=document.extraction_metadata,
             size_bytes=document.size_bytes,
             category=document.category.value,
             created_at=document.created_at,
@@ -86,7 +88,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         user_id: str,
         *,
         size_bytes: int,
-        extracted_text: str | None,
+        extraction: FinalizedExtraction,
         finalized_at: object,
     ) -> PatientDocument | None:
         # Finalize restricted to uploader — see abstract method docstring.
@@ -102,7 +104,9 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         if row is None:
             return None
         row.size_bytes = size_bytes
-        row.extracted_text = extracted_text
+        row.extracted_text = extraction.text
+        row.extracted_via = extraction.via
+        row.extraction_metadata = extraction.metadata
         row.finalized_at = finalized_at  # type: ignore[assignment]
         self._session.flush()
         return _row_to_document(row)
@@ -191,6 +195,8 @@ def _row_to_document(row: PatientDocumentRow) -> PatientDocument:
         mime_type=row.mime_type,
         gcs_path=row.gcs_path,
         extracted_text=row.extracted_text,
+        extracted_via=row.extracted_via,
+        extraction_metadata=row.extraction_metadata,
         size_bytes=row.size_bytes,
         category=DocumentCategory(row.category),
         created_at=row.created_at,

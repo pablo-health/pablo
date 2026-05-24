@@ -392,6 +392,32 @@ class Settings(BaseSettings):
         default=25 * 1024 * 1024,
         description="Maximum patient-document upload size (bytes).",
     )
+    # Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
+    # Leave processor_id unset to disable — scanned PDFs land with
+    # extracted_text=NULL, same as before the feature existed.
+    document_ai_project_id: str | None = Field(
+        default=None,
+        description="GCP project that owns the Document AI OCR processor.",
+    )
+    document_ai_location: str = Field(
+        default="us",
+        description="Document AI processor location ('us' or 'eu').",
+    )
+    document_ai_processor_id: str | None = Field(
+        default=None,
+        description="Resource id of the OCR processor (hex suffix of the processor name).",
+    )
+    document_ai_max_pages: int = Field(
+        default=30,
+        description=(
+            "Refuse OCR above this page count. Document AI's sync "
+            "processDocument API rejects requests over ~30 pages."
+        ),
+    )
+    allow_document_ai_ocr: bool = Field(
+        default=True,
+        description="Global kill-switch for the OCR fallback.",
+    )
     marketing_site_url: str = Field(
         default="",
         description="Marketing site URL — OIDC audience for M2M provisioning",

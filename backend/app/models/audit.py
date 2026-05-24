@@ -136,6 +136,7 @@ class AuditAction(StrEnum):
     PATIENT_DOCUMENT_DOWNLOADED = "patient_document_downloaded"
     PATIENT_DOCUMENT_DOWNLOADED_RESTRICTED = "patient_document_downloaded_restricted"
     PATIENT_DOCUMENT_DELETED = "patient_document_deleted"
+    PATIENT_DOCUMENT_OCR_INVOKED = "patient_document_ocr_invoked"
 
     # Companion audio signed-URL upload (additive to the existing
     # multipart /upload-audio surface — companion app migrates at its

@@ -21,10 +21,20 @@ it via a ``(patient_id, user_id)`` grant set populated through
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..models import PatientDocument
+
+
+@dataclass(frozen=True)
+class FinalizedExtraction:
+    """Text + provenance + diagnostics passed to ``mark_finalized``."""
+
+    text: str | None
+    via: str | None
+    metadata: dict[str, object] | None
 
 
 class PatientDocumentRepository(ABC):
@@ -51,10 +61,10 @@ class PatientDocumentRepository(ABC):
         user_id: str,
         *,
         size_bytes: int,
-        extracted_text: str | None,
+        extraction: FinalizedExtraction,
         finalized_at: object,
     ) -> PatientDocument | None:
-        """Stamp ``finalized_at`` + size/extracted_text on a placeholder.
+        """Stamp ``finalized_at`` + size + extraction columns.
 
         Finalize is restricted to the uploader regardless of
         ``category`` — a co-treater cannot finalize someone else's
@@ -128,14 +138,16 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         user_id: str,
         *,
         size_bytes: int,
-        extracted_text: str | None,
+        extraction: FinalizedExtraction,
         finalized_at: object,
     ) -> PatientDocument | None:
         doc = self._by_id.get(document_id)
         if doc is None or doc.user_id != user_id or doc.deleted_at is not None:
             return None
         doc.size_bytes = size_bytes
-        doc.extracted_text = extracted_text
+        doc.extracted_text = extraction.text
+        doc.extracted_via = extraction.via
+        doc.extraction_metadata = extraction.metadata
         doc.finalized_at = finalized_at  # type: ignore[assignment]
         return doc
 

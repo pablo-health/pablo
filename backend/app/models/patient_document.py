@@ -97,3 +97,7 @@ class PatientDocument:
     finalized_at: datetime | None = None
     deleted_at: datetime | None = None
     category: DocumentCategory = field(default=DocumentCategory.CHART)
+    # Which extractor produced extracted_text. See PatientDocumentRow
+    # for the value set.
+    extracted_via: str | None = None
+    extraction_metadata: dict[str, object] | None = None

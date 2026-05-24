@@ -608,3 +608,215 @@ def test_extract_pdf_text_native_returns_body() -> None:
 
 def test_extract_pdf_text_below_threshold_returns_none() -> None:
     assert _extract_pdf_text(_empty_pdf()) is None
+
+
+# ---- OCR fallback (THERAPY-ak6m.2.3) ---------------------------------
+
+
+from dataclasses import dataclass  # noqa: E402
+
+from app.services.document_ai_ocr import OcrResult  # noqa: E402
+
+
+@dataclass
+class _FakeOcrClient:
+    """Records calls + returns a scripted result.
+
+    Stands in for ``DocumentAiOcrClient`` so the service tests can
+    exercise the fallback wiring without touching Google's SDK.
+    """
+
+    is_configured: bool = True
+    result: OcrResult | None = None
+    raise_on_call: bool = False
+    calls: list[bytes] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.calls is None:
+            self.calls = []
+
+    def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None:
+        self.calls.append(pdf_bytes)
+        if self.raise_on_call:
+            raise RuntimeError("boom")
+        return self.result
+
+
+def _service_with_ocr(
+    repo: InMemoryPatientDocumentRepository,
+    settings: Settings,
+    fake_gcs: _FakeStorageClient,
+    ocr: _FakeOcrClient,
+) -> PatientDocumentsService:
+    return PatientDocumentsService(
+        repo=repo,
+        settings=settings,
+        storage_client_factory=lambda: fake_gcs,
+        tenant_id="tenant-A",
+        ocr_client=ocr,  # type: ignore[arg-type]
+    )
+
+
+class TestOcrFallback:
+    def test_pymupdf_success_skips_ocr(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        ocr = _FakeOcrClient()
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="native.pdf",
+            mime_type="application/pdf",
+            size_bytes=2048,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _native_text_pdf(),
+            "application/pdf",
+        )
+
+        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        assert document.extracted_via == "pymupdf"
+        assert document.extraction_metadata is None
+        assert ocr.calls == []  # OCR never invoked when PyMuPDF found text
+
+    def test_ocr_fallback_populates_text_and_metadata(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        ocr = _FakeOcrClient(
+            result=OcrResult(
+                text="Patient presents with depressed mood since loss of spouse.",
+                page_count=2,
+                avg_confidence=0.91,
+                low_confidence_pages=[],
+                latency_ms=842,
+            )
+        )
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="scan.pdf",
+            mime_type="application/pdf",
+            size_bytes=200,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _empty_pdf(),
+            "application/pdf",
+        )
+
+        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        assert document.extracted_via == "document_ai"
+        assert document.extracted_text is not None
+        assert "depressed mood" in document.extracted_text
+        assert document.extraction_metadata == {
+            "page_count": 2,
+            "avg_confidence": 0.91,
+            "low_confidence_pages": [],
+            "latency_ms": 842,
+        }
+        assert len(ocr.calls) == 1
+
+    def test_ocr_soft_failure_marks_unavailable(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        # Client returns None to signal "tried + couldn't" (the real
+        # client maps Document AI exceptions to None internally).
+        ocr = _FakeOcrClient(result=None)
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="scan.pdf",
+            mime_type="application/pdf",
+            size_bytes=200,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _empty_pdf(),
+            "application/pdf",
+        )
+
+        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        assert document.extracted_via == "unavailable"
+        assert document.extracted_text is None
+        assert document.finalized_at is not None  # finalize still succeeded
+
+    def test_ocr_skipped_when_client_unconfigured(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        # is_configured=False mimics a deployment with the env var
+        # unset — the service must not call extract at all.
+        ocr = _FakeOcrClient(is_configured=False, raise_on_call=True)
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="scan.pdf",
+            mime_type="application/pdf",
+            size_bytes=200,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _empty_pdf(),
+            "application/pdf",
+        )
+
+        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        # No OCR client wired effectively → behaves like the pre-bead path
+        assert document.extracted_via is None
+        assert document.extracted_text is None
+        assert ocr.calls == []
+
+    def test_ocr_not_called_for_images(
+        self,
+        repo: InMemoryPatientDocumentRepository,
+        settings: Settings,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        ocr = _FakeOcrClient(raise_on_call=True)
+        service = _service_with_ocr(repo, settings, fake_gcs, ocr)
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="photo.png",
+            mime_type="image/png",
+            size_bytes=100,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            b"\x89PNG\r\n\x1a\n" + b"x" * 20,
+            "image/png",
+        )
+
+        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        assert document.extracted_via is None
+        assert ocr.calls == []

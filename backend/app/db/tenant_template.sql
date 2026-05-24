@@ -301,7 +301,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     finalized_at timestamp with time zone,
     deleted_at timestamp with time zone,
     category character varying(32) DEFAULT 'chart'::character varying NOT NULL,
-    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])))
+    extracted_via character varying(32),
+    extraction_metadata jsonb,
+    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
+    CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[]))))
 );
 
 
