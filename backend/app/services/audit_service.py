@@ -286,6 +286,44 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_patient_document_ocr(
+        self,
+        user: User,
+        request: Request,
+        document_id: str,
+        patient_id: str,
+        processor: str,
+        outcome: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Audit a Document AI OCR invocation (THERAPY-ak6m.2.3).
+
+        Distinct from :meth:`log_patient_document_action` because the
+        payload shape is different (no mime/size/category here — those
+        already landed with the PATIENT_DOCUMENT_UPLOADED row that
+        precedes this in the same request). ``outcome`` is one of
+        ``"success"`` / ``"unavailable"`` so dashboards can split the
+        success rate without parsing metadata. ``metadata`` carries
+        page_count / avg_confidence / low_confidence_pages /
+        latency_ms — all PHI-free.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        changes: dict[str, Any] = {"processor": processor, "outcome": outcome}
+        if metadata is not None:
+            changes.update(metadata)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=AuditAction.PATIENT_DOCUMENT_OCR_INVOKED.value,
+            resource_type=ResourceType.PATIENT_DOCUMENT.value,
+            resource_id=document_id,
+            patient_id=patient_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_appointment_action(
         self,
         action: AuditAction,

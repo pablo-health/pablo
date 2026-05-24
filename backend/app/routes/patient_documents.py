@@ -121,11 +121,19 @@ def get_patient_documents_service(
     Tenant id is carried into the service so the GCS object name
     inherits the per-tenant prefix. When tenant context is unavailable
     (single-tenant deploys) the service falls back to a fixed prefix.
+
+    The OCR client is constructed unconditionally; its own
+    ``is_configured`` check makes it a no-op when the deployment hasn't
+    set a processor id (local dev, OSS demo). Construction is cheap —
+    the underlying Google client is built lazily on first ``extract``.
     """
+    from ..services.document_ai_ocr import DocumentAiOcrClient
+
     return PatientDocumentsService(
         repo=repo,
         settings=settings,
         tenant_id=ctx.practice_id,
+        ocr_client=DocumentAiOcrClient(settings=settings),
     )
 
 
@@ -328,6 +336,19 @@ def finalize_document_upload(
         size_bytes=document.size_bytes,
         category=document.category.value,
     )
+    # OCR audit: emitted whenever the service attempted the Document AI
+    # fallback (success OR soft failure). PyMuPDF-only finalizes leave
+    # extracted_via in {None, "pymupdf"} and skip this row entirely.
+    if document.extracted_via in ("document_ai", "unavailable"):
+        audit.log_patient_document_ocr(
+            user,
+            http_request,
+            document_id=document.id,
+            patient_id=document.patient_id,
+            processor="document_ai",
+            outcome="success" if document.extracted_via == "document_ai" else "unavailable",
+            metadata=document.extraction_metadata,
+        )
     return PatientDocumentResponse.from_document(document)
 
 
