@@ -71,6 +71,12 @@ def load_yaml_dataset(filename: str) -> list[EvalCase]:
 
     Each case must have an `id` field. Real schema enforcement comes
     with the Phase 1.3 dataset format (THERAPY-exba).
+
+    Cases may set ``input.transcript_path`` (relative to ``datasets/``)
+    instead of ``input.transcript`` — the referenced .txt file is read
+    and inlined as ``input.transcript`` at load time. This keeps full-
+    length (~400-600 line) synthetic transcripts reviewable as flat
+    files rather than 400-line YAML blocks.
     """
     path = DATASETS_DIR / filename
     if not path.exists():
@@ -82,6 +88,30 @@ def load_yaml_dataset(filename: str) -> list[EvalCase]:
     for i, case in enumerate(cases):
         if not isinstance(case, dict) or "id" not in case:
             raise ValueError(f"Case {i} in {filename} missing required `id` field")
+        inputs = case.get("input")
+        if not isinstance(inputs, dict):
+            continue
+        transcript_path = inputs.pop("transcript_path", None)
+        if transcript_path is None:
+            continue
+        if "transcript" in inputs:
+            raise ValueError(
+                f"Case {case['id']} sets both `transcript` and `transcript_path`; use one"
+            )
+        # Resolve relative to datasets/ and refuse anything that escapes
+        # the datasets tree — eval transcripts must live under
+        # backend/evals/datasets/ for the no-real-PHI rule to apply.
+        resolved = (DATASETS_DIR / transcript_path).resolve()
+        if not resolved.is_relative_to(DATASETS_DIR.resolve()):
+            raise ValueError(
+                f"Case {case['id']} transcript_path {transcript_path!r} escapes datasets/"
+            )
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"Case {case['id']} transcript_path {transcript_path!r} not found at {resolved}"
+            )
+        with resolved.open("r", encoding="utf-8") as tf:
+            inputs["transcript"] = tf.read()
     return cases
 
 
