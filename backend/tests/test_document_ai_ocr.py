@@ -70,7 +70,9 @@ class _FakeDocAiClient:
     raises: list[BaseException] = field(default_factory=list)
     calls: list[Any] = field(default_factory=list)
 
-    def process_document(self, request: Any) -> _FakeResponse:
+    def process_document(self, request: Any, **kwargs: Any) -> _FakeResponse:
+        # Real client also takes timeout= and retry=; accept them so the
+        # wrapper's call signature stays decoupled from these tests.
         self.calls.append(request)
         if self.raises:
             raise self.raises.pop(0)

@@ -66,6 +66,13 @@ _PAGE_CONFIDENCE_LOW_THRESHOLD = 0.5
 # it down to 0; production keeps the 2s default.
 _RETRY_BACKOFF_SECONDS = 2.0
 
+# Per-call deadline for the synchronous Document AI request. The SDK's
+# default is 300s with internal retries — way too long for a user-
+# facing finalize. 60s is enough for a 30-page OCR pass on a normal
+# day; auth or quota failures surface in seconds and our own one-
+# retry loop handles transient blips.
+_PROCESS_TIMEOUT_SECONDS = 60.0
+
 _LOW_CONFIDENCE_MARKER = (
     "[extraction had low confidence — verify before relying on details]\n\n"
 )
@@ -248,15 +255,25 @@ def _call_with_one_retry(fn: Any, request: Any) -> Any:
 
     Distinguishes:
 
-    * Transient (``ServiceUnavailable``, ``DeadlineExceeded``) → one
-      retry with a 2s backoff.
+    * Transient (``ServiceUnavailable``, ``DeadlineExceeded``,
+      ``RetryError``) → one retry with a 2s backoff. ``RetryError`` is
+      the SDK's wrapper when its own internal retry exhausts on a
+      transient — usually a flaky upstream or stale auth — and we
+      still want to give it one more shot from our side.
     * Permanent (``Unauthenticated``, ``PermissionDenied``,
       ``InvalidArgument``, anything else) → log + return ``None``.
+
+    A short per-call timeout is passed (``_PROCESS_TIMEOUT_SECONDS``)
+    so auth or network failures surface in seconds rather than
+    bouncing through the SDK's 300s internal retry loop. The SDK
+    receives ``retry=None`` so it does not double-retry on top of our
+    explicit logic.
 
     Returns the response or ``None`` on soft failure.
     """
     try:
         from google.api_core import exceptions as gax_exceptions
+        from google.api_core import gapic_v1
     except ImportError:
         # Without google.api_core we can't distinguish error classes,
         # so any exception becomes a soft failure.
@@ -266,14 +283,29 @@ def _call_with_one_retry(fn: Any, request: Any) -> Any:
             logger.exception("document_ai call failed (no api_core for retry classes)")
             return None
 
-    transient = (gax_exceptions.ServiceUnavailable, gax_exceptions.DeadlineExceeded)
+    transient = (
+        gax_exceptions.ServiceUnavailable,
+        gax_exceptions.DeadlineExceeded,
+        gax_exceptions.RetryError,
+    )
+    call_kwargs = {
+        "request": request,
+        "timeout": _PROCESS_TIMEOUT_SECONDS,
+        "retry": gapic_v1.method.DEFAULT,
+    }
+    # The SDK's DEFAULT retry on Document AI's processDocument is a
+    # 300s loop on 503s — useful for batch, painful for our sync
+    # finalize path. Pass retry=None when supported to disable it;
+    # older SDK versions ignore the override harmlessly.
+    call_kwargs["retry"] = None
+
     try:
-        return fn(request=request)
+        return fn(**call_kwargs)
     except transient as exc:
         logger.warning("document_ai transient error: %s; retrying once", exc)
         time.sleep(_RETRY_BACKOFF_SECONDS)
         try:
-            return fn(request=request)
+            return fn(**call_kwargs)
         except Exception:
             logger.exception("document_ai retry failed; treating as soft failure")
             return None
