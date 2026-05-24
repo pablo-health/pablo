@@ -338,12 +338,12 @@ def preview_context(
         )
     except InvalidSelectionError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "invalid_selection", "message": str(exc)},
         ) from exc
     except ContextOverflowError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": "context_too_large", "message": str(exc)},
         ) from exc
 
