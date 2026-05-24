@@ -49,7 +49,7 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "mtsamples" / "psychiatry"
 
-_MIN_WORD_COVERAGE = 0.95
+_MIN_WORD_COVERAGE = 0.98
 _RASTER_DPI = 150  # ~clinical fax quality
 
 # Diversity-picked smoke set. Each fixture exercises a different OCR
