@@ -7,6 +7,7 @@ import { ArrowLeft, FileText } from "lucide-react"
 import Link from "next/link"
 import { PatientExport } from "@/components/patients/PatientExport"
 import { PatientSummary } from "@/components/patients/PatientSummary"
+import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
@@ -83,6 +84,8 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
       </div>
 
       <PatientSummary patient={patient} />
+
+      <PatientChartTabs patientId={patient.id} />
 
       {/* Notes */}
       <div className="card">
