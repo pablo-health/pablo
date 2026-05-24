@@ -13,6 +13,7 @@
 import {
   ClipboardList,
   FileText,
+  Files,
   HeartPulse,
   Notebook,
   Pill,
@@ -65,6 +66,13 @@ export const SOURCE_META: Record<SourceKey, SourceMeta> = {
     description: "Specific session notes you've pinned to this conversation.",
     family: "sessions",
     icon: FileText,
+  },
+  patient_documents: {
+    label: "Uploaded documents",
+    description:
+      "PDFs you've uploaded to this patient's chart (prior-provider records, intake packets, labs).",
+    family: "documents",
+    icon: Files,
   },
   treatment_plan_active: {
     label: "Treatment plan",

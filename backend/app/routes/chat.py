@@ -52,6 +52,7 @@ from ..repositories import (
     ChatRepository,
     LlmUsageRepository,
     NotesRepository,
+    PatientDocumentRepository,
     PatientRepository,
 )
 from ..repositories import (
@@ -62,6 +63,9 @@ from ..repositories import (
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
+)
+from ..repositories import (
+    get_patient_document_repository as _patient_document_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
@@ -132,6 +136,10 @@ def get_notes_repository_dep() -> NotesRepository:
     return _notes_repo_factory()
 
 
+def get_patient_document_repository_dep() -> PatientDocumentRepository:
+    return _patient_document_repo_factory()
+
+
 def get_chat_service(
     repo: ChatRepository = Depends(get_chat_repository_dep),
 ) -> ChatService:
@@ -176,12 +184,16 @@ def get_llm_usage_meter(
 def get_chat_turn_service(
     chat_repo: ChatRepository = Depends(get_chat_repository_dep),
     notes_repo: NotesRepository = Depends(get_notes_repository_dep),
+    patient_documents_repo: PatientDocumentRepository = Depends(
+        get_patient_document_repository_dep
+    ),
     gateway: ChatLLMGateway = Depends(get_chat_llm_gateway),
     usage_meter: LlmUsageMeter = Depends(get_llm_usage_meter),
 ) -> ChatTurnService:
     return ChatTurnService(
         chat_repo=chat_repo,
         notes_repo=notes_repo,
+        patient_documents_repo=patient_documents_repo,
         gateway=gateway,
         usage_meter=usage_meter,
     )
@@ -292,6 +304,9 @@ def preview_context(
     user: User = Depends(require_baa_acceptance),
     patient_repo: PatientRepository = Depends(get_patient_repository_dep),
     notes_repo: NotesRepository = Depends(get_notes_repository_dep),
+    patient_documents_repo: PatientDocumentRepository = Depends(
+        get_patient_document_repository_dep
+    ),
 ) -> PreviewChatContextResponse:
     """Return a PHI-free context manifest for a hypothetical first turn.
 
@@ -316,6 +331,7 @@ def preview_context(
     try:
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
+            patient_documents_repo=patient_documents_repo,
             patient_id=patient.id,
             user_id=user.id,
             selection=selection,
@@ -692,6 +708,7 @@ __all__ = [
     "get_llm_usage_repository_dep",
     "get_note_service",
     "get_notes_repository_dep",
+    "get_patient_document_repository_dep",
     "get_patient_repository_dep",
     "router",
 ]

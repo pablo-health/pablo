@@ -86,6 +86,11 @@ function phraseForSource(
     }
     case "progress_notes_explicit":
       return "the session notes you pinned"
+    case "patient_documents": {
+      const n = entry.row_count ?? 0
+      if (n <= 0) return null
+      return `${n} uploaded ${n === 1 ? "document" : "documents"}`
+    }
     case "lab_values_recent":
       return "recent lab values"
     case "vitals_recent":
