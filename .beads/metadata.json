@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "PABLO",
+  "project_id": "48987cf1-8f61-42e5-8ab2-3908be274060"
+}
