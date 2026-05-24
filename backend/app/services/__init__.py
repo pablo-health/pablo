@@ -36,9 +36,9 @@ from .export_service import ExportService
 from .llm_usage_meter import LlmUsageMeter, period_yyyymm
 from .note_generation_service import (
     GeneratedNote,
-    MeetingTranscriptionNoteService,
     MockNoteGenerationService,
     NoteGenerationService,
+    RegistryNoteGenerationService,
 )
 from .note_service import (
     NoteAlreadyFinalizedError,
@@ -77,6 +77,13 @@ from .source_attribution_service import (
     merge_attribution_into_soap,
     parse_attribution_response,
 )
+from .structured_llm_gateway import (
+    FakeStructuredLLMGateway,
+    GeminiStructuredLLMGateway,
+    StructuredCompletion,
+    StructuredLLMGateway,
+    get_default_structured_llm_gateway,
+)
 
 __all__ = [
     "PATIENT_DOCUMENT_ALLOWED_MIME_TYPES",
@@ -92,16 +99,17 @@ __all__ = [
     "EhrNavigationService",
     "ExportService",
     "FakeChatLLMGateway",
+    "FakeStructuredLLMGateway",
     "FileTooLargeError",
     "GeminiChatLLMGateway",
     "GeminiEhrNavigationService",
+    "GeminiStructuredLLMGateway",
     "GeneratedNote",
     "InitUploadResult",
     "InvalidSelectionError",
     "InvalidSessionStatusError",
     "InvalidStatusTransitionError",
     "LlmUsageMeter",
-    "MeetingTranscriptionNoteService",
     "MockEhrNavigationService",
     "MockNoteGenerationService",
     "NoteAlreadyFinalizedError",
@@ -113,6 +121,7 @@ __all__ = [
     "PatientDocumentError",
     "PatientDocumentsService",
     "PatientNotFoundError",
+    "RegistryNoteGenerationService",
     "SOAPGenerationFailedError",
     "SessionAlreadyInStatusError",
     "SessionInTerminalStatusError",
@@ -120,6 +129,8 @@ __all__ = [
     "SessionService",
     "SessionServiceError",
     "StreamEvent",
+    "StructuredCompletion",
+    "StructuredLLMGateway",
     "TurnConcurrencyError",
     "TurnContext",
     "TurnStreamEvent",
@@ -134,6 +145,7 @@ __all__ = [
     "format_transcript_with_segment_ids",
     "get_audit_service",
     "get_chat_model_resolver",
+    "get_default_structured_llm_gateway",
     "merge_attribution_into_soap",
     "parse_attribution_response",
     "period_yyyymm",

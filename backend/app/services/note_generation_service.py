@@ -2,28 +2,25 @@
 
 """Note-type generation service.
 
-Dispatches on a registry key (``"soap"``, ``"narrative"``, …) so the
-backend can produce any note format registered in
-:mod:`app.notes.registry`. The service composes its prompt from each
-section/field's ``ai_hint`` for schema-driven types; SOAP continues to
-use the existing ``MentalHealthPlugin`` pipeline so its output stays
-byte-identical to the pre-generalisation golden fixtures.
+One implementation, one code path: every registered note type
+(``"soap"``, ``"narrative"``, future DAP/BIRP/…) flows through
+:meth:`RegistryNoteGenerationService._generate_via_registry`, which uses
+the :class:`StructuredLLMGateway` to issue a single Gemini call whose
+response is constrained to a JSON schema derived from the registry
+shape.
+
+A definition may opt out of the auto-built prompt by setting
+:attr:`NoteTypeDefinition.prompt_builder` — SOAP does this to preserve
+the hand-tuned clinical prompt migrated from the legacy plugin.
 """
 
 import json
 import logging
 import os
-import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
-
-from meeting_transcription.pipeline import combine_transcript_words
-from meeting_transcription.pipeline.parse_text_transcript import (
-    parse_text_to_combined_format,
-)
+from typing import Any
 
 from ..models import (
     AssessmentNote,
@@ -36,39 +33,35 @@ from ..models import (
     Transcript,
 )
 from ..notes import NoteTypeDefinition, NoteTypeRegistry, get_default_registry
+from ..notes.prompts.soap import SOAP_SYSTEM_PROMPT
+from ..settings import get_settings
 from .source_attribution_service import (
     build_attribution_prompt,
     build_claims_from_soap,
     format_transcript_with_segment_ids,
     parse_attribution_response,
 )
+from .structured_llm_gateway import (
+    StructuredLLMGateway,
+    get_default_structured_llm_gateway,
+)
 
 logger = logging.getLogger(__name__)
 
 
 SOAP_KEY = "soap"
-
-
-class _LLMClientLike(Protocol):
-    """Narrow surface of :class:`meeting_transcription.utils.llm_client.LLMClient`.
-
-    Tests inject a fake via ``MeetingTranscriptionNoteService(llm_client_factory=...)``
-    so they do not have to import the real (and in CI, 3.14-incompatible) module.
-    """
-
-    def call_structured(
-        self,
-        prompt: str,
-        response_schema: dict[str, Any],
-        max_tokens: int = ...,
-        temperature: float = ...,
-    ) -> dict[str, Any]: ...
-
-
-def _default_llm_client_factory() -> _LLMClientLike:
-    from meeting_transcription.utils.llm_client import LLMClient
-
-    return LLMClient()
+_DEFAULT_GENERATION_PROMPT_SYSTEM = (
+    "You are a clinical documentation assistant. Populate the requested "
+    "note structure from the supplied therapy-session transcript. Use "
+    "neutral, clinically-appropriate language. If a field cannot be "
+    "inferred from the transcript, return an empty string (or empty list "
+    "for list-shaped fields)."
+)
+_SOAP_ATTRIBUTION_SCHEMA: dict[str, Any] = {"type": "object"}
+"""Permissive schema for Call-2. The response is a map of arbitrary
+claim numbers → arrays of segment ids; the registered SDK schema isn't
+expressive enough to constrain that shape, so we accept any object and
+let :func:`parse_attribution_response` validate."""
 
 
 @dataclass
@@ -76,10 +69,10 @@ class GeneratedNote:
     """Result returned by :class:`NoteGenerationService`.
 
     ``content`` is the registry-shaped dict ``{section_key: {field_key: value}}``
-    that persists to the ``note_content`` JSONB column. For SOAP, the
-    structured :class:`SOAPNote` dataclass (with per-sentence source
-    attribution) is additionally exposed on ``soap_note`` — downstream
-    code that still depends on SOAPNote continues to work unchanged.
+    persisted to ``NoteRow.content``. For SOAP, the :class:`SOAPNote`
+    dataclass (with per-sentence source attribution) is additionally
+    exposed on ``soap_note`` so downstream code that still depends on
+    that shape works unchanged.
     """
 
     note_type: str
@@ -106,24 +99,38 @@ class NoteGenerationService(ABC):
         """
 
 
-class MeetingTranscriptionNoteService(NoteGenerationService):
-    """Real implementation backed by the meeting-transcription pipeline.
+class RegistryNoteGenerationService(NoteGenerationService):
+    """Real implementation: registry-driven prompts via the structured gateway.
 
-    SOAP routes through ``MentalHealthPlugin`` (behavior-preserving). All
-    other note types drive off the registry: prompt is composed from each
-    section/field's ``ai_hint`` and the LLM returns structured JSON shaped
-    to the registry.
+    SOAP and every other registered note type share the same pipeline:
+
+    1. Build the user prompt — either from the definition's
+       ``prompt_builder`` (SOAP today) or auto-synthesized from each
+       field's ``ai_hint``.
+    2. Build a JSON response schema mirroring the registry shape.
+    3. Call :class:`StructuredLLMGateway`, get a parsed dict back.
+    4. Coerce the dict into the registry shape (filling missing fields).
+    5. For SOAP only: wrap into :class:`SOAPNote` and run the Call-2
+       source-attribution pass that links each generated sentence back
+       to transcript segment ids.
     """
 
     def __init__(
         self,
         therapist_name: str | None = None,
         registry: NoteTypeRegistry | None = None,
-        llm_client_factory: Callable[[], _LLMClientLike] | None = None,
+        llm_gateway: StructuredLLMGateway | None = None,
+        model: str | None = None,
     ) -> None:
         self.therapist_name = therapist_name or "Therapist"
         self.registry = registry or get_default_registry()
-        self._llm_client_factory = llm_client_factory or _default_llm_client_factory
+        self._llm_gateway = llm_gateway or get_default_structured_llm_gateway()
+        self._model = model
+
+    def _resolve_model(self) -> str:
+        if self._model is not None:
+            return self._model
+        return get_settings().ai_model
 
     def generate_note(
         self,
@@ -133,81 +140,16 @@ class MeetingTranscriptionNoteService(NoteGenerationService):
         session_date: datetime,
     ) -> GeneratedNote:
         definition = self.registry.get(note_type)
+        content = self._generate_via_registry(definition, transcript, patient, session_date)
         if note_type == SOAP_KEY:
-            soap_note = self._generate_soap_via_plugin(transcript, patient, session_date)
+            soap_note = _coerce_content_to_soap_note(content)
+            self._run_source_attribution(soap_note, transcript.content)
             return GeneratedNote(
                 note_type=SOAP_KEY,
                 content=soap_note.to_dict(),
                 soap_note=soap_note,
             )
-        content = self._generate_via_registry(definition, transcript, patient, session_date)
         return GeneratedNote(note_type=note_type, content=content)
-
-    def _generate_soap_via_plugin(
-        self, transcript: Transcript, patient: Patient, session_date: datetime
-    ) -> SOAPNote:
-        """Generate a SOAP note via the mental-health pipeline plus source attribution."""
-        from backend.plugins.mental_health.plugin import (  # type: ignore[import-untyped,import-not-found]
-            get_plugin,
-        )
-
-        plugin = get_plugin()
-        plugin.configure(
-            {
-                "include_verbatim_quotes": True,
-                "risk_assessment_required": True,
-                "hipaa_compliant_mode": True,
-            }
-        )
-
-        metadata = {
-            "client_name": "the client",
-            "session_date": session_date.isoformat().split("T", maxsplit=1)[0],
-            "session_number": "1",
-            "therapist_name": self.therapist_name,
-        }
-        if patient.diagnosis:
-            metadata["diagnosis"] = patient.diagnosis
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            if transcript.format in ("txt", "vtt", "google_meet"):
-                segments = parse_text_to_combined_format(transcript.content)
-            elif transcript.format == "json":
-                segments = json.loads(transcript.content)
-                if not isinstance(segments, list):
-                    raise ValueError("JSON transcript must be a list of segments")
-            else:
-                raise ValueError(f"Unsupported transcript format: {transcript.format}")
-
-            raw_path = os.path.join(tmpdir, "transcript_raw.json")  # noqa: PTH118
-            with open(raw_path, "w") as f:  # noqa: PTH123
-                json.dump(segments, f, indent=2)
-
-            combined_path = os.path.join(tmpdir, "transcript_combined.json")  # noqa: PTH118
-            combine_transcript_words.combine_transcript_words(raw_path, combined_path)  # type: ignore[no-untyped-call]
-
-            try:
-                logger.debug("Starting SOAP pipeline processing")
-                outputs = plugin.process_transcript(
-                    combined_transcript_path=combined_path,
-                    output_dir=tmpdir,
-                    metadata=metadata,
-                )
-                logger.debug("SOAP pipeline completed successfully")
-            except Exception as e:
-                logger.exception("SOAP pipeline processing failed")
-                raise ValueError(f"Pipeline processing failed: {e}") from e
-
-            soap_note_path = outputs.get("soap_note_json")
-            if not soap_note_path or not os.path.exists(soap_note_path):  # noqa: PTH110
-                raise ValueError("Pipeline did not generate soap_note.json")
-
-            with open(soap_note_path) as f:  # noqa: PTH123
-                soap_data = json.load(f)
-
-            soap_note = self._convert_json_to_soap_note(soap_data)
-            self._run_source_attribution(soap_note, transcript.content)
-            return soap_note
 
     def _generate_via_registry(
         self,
@@ -216,38 +158,46 @@ class MeetingTranscriptionNoteService(NoteGenerationService):
         patient: Patient,
         session_date: datetime,
     ) -> dict[str, Any]:
-        """Generate registry-driven content for any non-SOAP note type.
+        if definition.prompt_builder is not None:
+            user_prompt = definition.prompt_builder(
+                definition, transcript, patient, session_date
+            )
+            system_prompt = (
+                SOAP_SYSTEM_PROMPT
+                if definition.key == SOAP_KEY
+                else _DEFAULT_GENERATION_PROMPT_SYSTEM
+            )
+        else:
+            user_prompt = _build_registry_user_prompt(
+                definition, transcript, patient, session_date
+            )
+            system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
-        Prompt is composed from each section/field's ``ai_hint``; the LLM
-        is asked to return JSON matching the registry shape.
-        """
-        prompt = _build_registry_prompt(definition, transcript, patient, session_date)
         schema = _build_registry_response_schema(definition)
-
         try:
-            llm_client = self._llm_client_factory()
-            response = llm_client.call_structured(
-                prompt=prompt,
+            completion = self._llm_gateway.complete_structured(
+                model=self._resolve_model(),
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 response_schema=schema,
-                max_tokens=4096,
+                max_output_tokens=4096,
                 temperature=0.2,
             )
-        except Exception as e:
+        except Exception as exc:
             logger.exception("LLM generation failed for note_type=%s", definition.key)
-            raise ValueError(f"Note generation failed: {e}") from e
+            raise ValueError(f"Note generation failed: {exc}") from exc
 
-        return _coerce_registry_response(definition, response)
+        return _coerce_registry_response(definition, completion.data)
 
-    @staticmethod
-    def _run_source_attribution(soap_note: SOAPNote, transcript_content: str) -> None:
-        """Run LLM Call 2 to attribute SOAP claims to transcript segments.
+    def _run_source_attribution(self, soap_note: SOAPNote, transcript_content: str) -> None:
+        """Run Call-2: ask the model which transcript segments support each claim.
 
-        Modifies soap_note in-place by populating source_segment_ids on each SOAPSentence.
-        Failures are logged but do not raise — the SOAP note remains valid without sources.
+        Modifies ``soap_note`` in-place by populating ``source_segment_ids``
+        on each :class:`SOAPSentence`. Failures are logged but do not raise
+        — the SOAP note remains valid (and persistable) without source
+        links.
         """
         try:
-            from meeting_transcription.utils.llm_client import LLMClient
-
             indexed_transcript = format_transcript_with_segment_ids(transcript_content)
             segment_count = len(indexed_transcript.strip().splitlines())
             claims = build_claims_from_soap(soap_note)
@@ -255,148 +205,154 @@ class MeetingTranscriptionNoteService(NoteGenerationService):
                 return
 
             prompt = build_attribution_prompt(claims, indexed_transcript)
-
-            llm_client = LLMClient()
-            response_text = llm_client.call(
-                prompt=prompt,
-                max_tokens=2000,
+            completion = self._llm_gateway.complete_structured(
+                model=self._resolve_model(),
+                system_prompt=(
+                    "You are an evidence-attribution assistant. Map each "
+                    "claim number to the transcript segment ids (the "
+                    "numbers after S in [Sn]) that support it. Return "
+                    "ONLY a JSON object."
+                ),
+                user_prompt=prompt,
+                response_schema=_SOAP_ATTRIBUTION_SCHEMA,
+                max_output_tokens=2000,
                 temperature=0.0,
             )
-
-            parse_attribution_response(response_text, claims, max_segment_id=segment_count - 1)
+            parse_attribution_response(
+                json.dumps(completion.data),
+                claims,
+                max_segment_id=segment_count - 1,
+            )
             logger.info("Source attribution completed: %d claims attributed", len(claims))
 
             if os.getenv("ENABLE_EMBEDDING_VERIFICATION", "").lower() == "true":
-                try:
-                    import re as _re
-
-                    from .embedding_service import GoogleEmbeddingService
-                    from .nli_service import DeBERTaNLIService
-                    from .source_verification_service import SourceVerificationService
-
-                    segments = [
-                        _re.sub(r"^\[\d{2}:\d{2}\]\s*\w+:\s*", "", line.strip())
-                        for line in transcript_content.strip().splitlines()
-                        if line.strip()
-                    ]
-                    claim_texts = {key: claim.text for key, claim in claims.items() if claim.text}
-                    attribution_map = {
-                        key: claim.source_segment_ids for key, claim in claims.items()
-                    }
-
-                    from ..settings import get_settings
-                    from .signals import (
-                        MINICHECK_AVAILABLE,
-                        EmbeddingSimilaritySignal,
-                        EntityConsistencySignal,
-                        HedgingSignal,
-                        MiniCheckSignal,
-                        NegationSignal,
-                        TemporalConsistencySignal,
-                        TokenOverlapSignal,
-                    )
-
-                    _settings = get_settings()
-                    primary = [
-                        TokenOverlapSignal(),
-                        EmbeddingSimilaritySignal(),
-                        HedgingSignal(),
-                    ]
-                    if MINICHECK_AVAILABLE:
-                        primary.append(
-                            MiniCheckSignal(
-                                model_path=_settings.minicheck_model_path,
-                            )
-                        )
-                    verification_service = SourceVerificationService(
-                        embedding_service=GoogleEmbeddingService(),
-                        nli_service=DeBERTaNLIService(
-                            model_name=_settings.nli_model_path,
-                        ),
-                        primary_signals=primary,
-                        safety_signals=[
-                            NegationSignal(),
-                            EntityConsistencySignal(),
-                            TemporalConsistencySignal(),
-                        ],
-                    )
-                    results = verification_service.verify_attributions(
-                        claim_texts, segments, attribution_map
-                    )
-
-                    for result in results:
-                        if result.claim_key in claims:
-                            claim = claims[result.claim_key]
-                            claim.confidence_score = result.confidence_score
-                            claim.confidence_level = result.confidence_level
-                            claim.possible_match_segment_ids = result.possible_match_segment_ids
-                            claim.signal_used = result.signal_used
-                    logger.info("Source verification completed: %d claims verified", len(results))
-                except Exception:
-                    logger.warning(
-                        "Source attribution verification failed",
-                        exc_info=True,
-                    )
+                _run_embedding_verification(claims, transcript_content)
         except Exception:
             logger.warning(
                 "Source attribution (Call 2) failed — SOAP note saved without source links",
                 exc_info=True,
             )
 
-    @staticmethod
-    def _convert_json_to_soap_note(soap_data: dict[str, Any]) -> SOAPNote:
-        """Convert SOAP JSON from LLM to structured SOAPNote dataclass.
 
-        Maps LLM JSON fields to structured dataclasses with SOAPSentence wrappers.
-        Narrative formatting is handled by SOAPNote.to_narrative().
-        """
-        raw_s = soap_data.get("subjective", {})
-        raw_o = soap_data.get("objective", {})
-        raw_a = soap_data.get("assessment", {})
-        raw_p = soap_data.get("plan", {})
+def _run_embedding_verification(
+    claims: dict[str, SOAPSentence], transcript_content: str
+) -> None:
+    """Re-rank Call-2 attributions with embedding + NLI signals.
 
-        def _wrap(text: str | None) -> SOAPSentence:
-            return SOAPSentence(text=text or "")
+    Off by default — opt-in via ``ENABLE_EMBEDDING_VERIFICATION=true``.
+    Kept isolated so a missing optional dep / model file fails this
+    block alone without taking down the rest of source attribution.
+    """
+    try:
+        import re as _re
 
-        def _wrap_list(items: list[str] | None) -> list[SOAPSentence] | None:
-            if items is None:
-                return None
-            return [SOAPSentence(text=item) for item in items]
-
-        return SOAPNote(
-            subjective=SubjectiveNote(
-                chief_complaint=_wrap(raw_s.get("chief_complaint")),
-                mood_affect=_wrap(raw_s.get("mood_affect")),
-                symptoms=_wrap_list(raw_s.get("symptoms")),
-                client_narrative=_wrap(raw_s.get("client_narrative")),
-            ),
-            objective=ObjectiveNote(
-                appearance=_wrap(raw_o.get("appearance")),
-                behavior=_wrap(raw_o.get("behavior")),
-                speech=_wrap(raw_o.get("speech")),
-                thought_process=_wrap(raw_o.get("thought_process")),
-                affect_observed=_wrap(raw_o.get("affect_observed")),
-            ),
-            assessment=AssessmentNote(
-                clinical_impression=_wrap(raw_a.get("clinical_impression")),
-                progress=_wrap(raw_a.get("progress")),
-                risk_assessment=_wrap(raw_a.get("risk_assessment")),
-                functioning_level=_wrap(raw_a.get("functioning_level")),
-            ),
-            plan=PlanNote(
-                interventions_used=_wrap_list(raw_p.get("interventions_used")),
-                homework_assignments=_wrap_list(raw_p.get("homework_assignments")),
-                next_steps=_wrap_list(raw_p.get("next_steps")),
-                next_session=_wrap(raw_p.get("next_session")),
-            ),
+        from ..settings import get_settings as _get_settings
+        from .embedding_service import GoogleEmbeddingService
+        from .nli_service import DeBERTaNLIService
+        from .signals import (
+            MINICHECK_AVAILABLE,
+            EmbeddingSimilaritySignal,
+            EntityConsistencySignal,
+            HedgingSignal,
+            MiniCheckSignal,
+            NegationSignal,
+            TemporalConsistencySignal,
+            TokenOverlapSignal,
         )
+        from .source_verification_service import SourceVerificationService
+
+        segments = [
+            _re.sub(r"^\[\d{2}:\d{2}\]\s*\w+:\s*", "", line.strip())
+            for line in transcript_content.strip().splitlines()
+            if line.strip()
+        ]
+        claim_texts = {key: claim.text for key, claim in claims.items() if claim.text}
+        attribution_map = {key: claim.source_segment_ids for key, claim in claims.items()}
+
+        settings = _get_settings()
+        primary = [TokenOverlapSignal(), EmbeddingSimilaritySignal(), HedgingSignal()]
+        if MINICHECK_AVAILABLE:
+            primary.append(MiniCheckSignal(model_path=settings.minicheck_model_path))
+        verification_service = SourceVerificationService(
+            embedding_service=GoogleEmbeddingService(),
+            nli_service=DeBERTaNLIService(model_name=settings.nli_model_path),
+            primary_signals=primary,
+            safety_signals=[
+                NegationSignal(),
+                EntityConsistencySignal(),
+                TemporalConsistencySignal(),
+            ],
+        )
+        results = verification_service.verify_attributions(
+            claim_texts, segments, attribution_map
+        )
+        for result in results:
+            if result.claim_key in claims:
+                claim = claims[result.claim_key]
+                claim.confidence_score = result.confidence_score
+                claim.confidence_level = result.confidence_level
+                claim.possible_match_segment_ids = result.possible_match_segment_ids
+                claim.signal_used = result.signal_used
+        logger.info("Source verification completed: %d claims verified", len(results))
+    except Exception:
+        logger.warning("Source attribution verification failed", exc_info=True)
+
+
+def _coerce_content_to_soap_note(content: dict[str, Any]) -> SOAPNote:
+    """Convert registry-shaped SOAP dict to :class:`SOAPNote` dataclasses.
+
+    The registry shape (``{section: {field: value}}``) matches the SOAP
+    JSON the legacy plugin produced; this is the same field-wrapping
+    code, lifted unchanged from
+    ``_generate_soap_via_plugin._convert_json_to_soap_note``.
+    """
+    s = content.get("subjective") or {}
+    o = content.get("objective") or {}
+    a = content.get("assessment") or {}
+    p = content.get("plan") or {}
+
+    def _wrap(text: str | None) -> SOAPSentence:
+        return SOAPSentence(text=text or "")
+
+    def _wrap_list(items: list[str] | None) -> list[SOAPSentence] | None:
+        if items is None:
+            return None
+        return [SOAPSentence(text=item) for item in items]
+
+    return SOAPNote(
+        subjective=SubjectiveNote(
+            chief_complaint=_wrap(s.get("chief_complaint")),
+            mood_affect=_wrap(s.get("mood_affect")),
+            symptoms=_wrap_list(s.get("symptoms")),
+            client_narrative=_wrap(s.get("client_narrative")),
+        ),
+        objective=ObjectiveNote(
+            appearance=_wrap(o.get("appearance")),
+            behavior=_wrap(o.get("behavior")),
+            speech=_wrap(o.get("speech")),
+            thought_process=_wrap(o.get("thought_process")),
+            affect_observed=_wrap(o.get("affect_observed")),
+        ),
+        assessment=AssessmentNote(
+            clinical_impression=_wrap(a.get("clinical_impression")),
+            progress=_wrap(a.get("progress")),
+            risk_assessment=_wrap(a.get("risk_assessment")),
+            functioning_level=_wrap(a.get("functioning_level")),
+        ),
+        plan=PlanNote(
+            interventions_used=_wrap_list(p.get("interventions_used")),
+            homework_assignments=_wrap_list(p.get("homework_assignments")),
+            next_steps=_wrap_list(p.get("next_steps")),
+            next_session=_wrap(p.get("next_session")),
+        ),
+    )
 
 
 class MockNoteGenerationService(NoteGenerationService):
     """Mock implementation for testing without LLM credentials.
 
     Returns deterministic content for every registered note type. SOAP
-    reuses the pre-change mock SOAP note so existing goldens keep passing.
+    reuses the pre-change mock so existing goldens keep passing.
     """
 
     def __init__(self, registry: NoteTypeRegistry | None = None) -> None:
@@ -518,21 +474,20 @@ def _mock_registry_content(definition: NoteTypeDefinition, patient: Patient) -> 
 # --- Registry-driven prompt + schema composition ---
 
 
-def _build_registry_prompt(
+def _build_registry_user_prompt(
     definition: NoteTypeDefinition,
     transcript: Transcript,
     patient: Patient,
     session_date: datetime,
 ) -> str:
-    """Compose a prompt describing the registry shape and each field's ``ai_hint``."""
+    """Compose a prompt describing the registry shape and each field's ``ai_hint``.
+
+    Used for any definition without an explicit ``prompt_builder``.
+    """
     lines: list[str] = [
-        f"You are a clinical documentation assistant producing a {definition.label} note.",
+        f"Produce a {definition.label} note.",
         "",
         definition.description,
-        "",
-        "Populate each field below using the provided session transcript. Use neutral, "
-        "clinically-appropriate language. If a field cannot be inferred from the "
-        "transcript, return an empty string (or empty list for list fields).",
         "",
         "Fields:",
     ]
@@ -554,18 +509,12 @@ def _build_registry_prompt(
     )
     if patient.diagnosis:
         lines.append(f"Working diagnosis: {patient.diagnosis}")
-    lines.extend(
-        [
-            "",
-            "Transcript:",
-            transcript.content,
-        ]
-    )
+    lines.extend(["", "Transcript:", transcript.content])
     return "\n".join(lines)
 
 
 def _build_registry_response_schema(definition: NoteTypeDefinition) -> dict[str, Any]:
-    """Build a JSON schema stub matching the registry shape."""
+    """JSON schema dict mirroring the registry shape."""
     sections: dict[str, Any] = {}
     for section in definition.sections:
         fields: dict[str, Any] = {}
@@ -583,7 +532,7 @@ def _build_registry_response_schema(definition: NoteTypeDefinition) -> dict[str,
 def _coerce_registry_response(
     definition: NoteTypeDefinition, response: dict[str, Any]
 ) -> dict[str, Any]:
-    """Coerce the LLM response into the registry shape, filling in missing fields."""
+    """Coerce the LLM response into the registry shape, filling missing fields."""
     content: dict[str, Any] = {}
     for section in definition.sections:
         raw_section = response.get(section.key, {}) or {}
@@ -603,3 +552,12 @@ def _coerce_registry_response(
                 section_content[f.key] = str(raw_value).strip() if raw_value else ""
         content[section.key] = section_content
     return content
+
+
+__all__ = [
+    "SOAP_KEY",
+    "GeneratedNote",
+    "MockNoteGenerationService",
+    "NoteGenerationService",
+    "RegistryNoteGenerationService",
+]

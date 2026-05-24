@@ -30,7 +30,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from backend.app.services.structured_llm_gateway import StructuredLLMGateway
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +41,15 @@ logger = logging.getLogger(__name__)
 # (only `gemini-3.5-flash` is GA as of 2026-05-23); flash is competitive
 # on the spike fixtures (caught all planted hallucinations + adjacent
 # overreach) and is cheap enough for routine schedule runs. Swap to
-# `google:gemini-3.5-pro` when it ships. Never use Gemini 2.5.
-# Provider prefix is required by aisuite's `provider:model` format.
-_DEFAULT_JUDGE_MODEL = "google:gemini-3.5-flash"
+# `gemini-3.5-pro` when it ships. Never use Gemini 2.5.
+_DEFAULT_JUDGE_MODEL = "gemini-3.5-flash"
+
+# Permissive schema — the judge's expected shape has fixed top-level
+# keys but variable-length arrays of free-form objects underneath, and
+# Gemini's response_schema can't express "object with these specific
+# property shapes" without rejecting the lists. The model is told the
+# exact shape in the prompt; we validate after.
+_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {"type": "object"}
 
 
 _JUDGE_SYSTEM_PROMPT = """\
@@ -109,6 +118,7 @@ def score(
     generated_soap: str,
     reference_soap: str | None = None,
     model: str | None = None,
+    gateway: StructuredLLMGateway | None = None,
 ) -> JudgeVerdict:
     """Run the LLM judge once. Returns the parsed verdict.
 
@@ -118,12 +128,14 @@ def score(
     JSON with four section keys.
 
     ``model`` defaults to ``_DEFAULT_JUDGE_MODEL`` (gemini-3.5-flash)
-    when not specified. Pass an explicit ``provider:model`` string to
-    override.
+    when not specified. ``gateway`` is injectable for tests; production
+    callers leave it ``None`` to use the process-wide singleton.
     """
-    # Local import to avoid pulling LLMClient into module load (matches
-    # the pattern in note_generation_service.py).
-    from meeting_transcription.utils.llm_client import LLMClient  # noqa: PLC0415
+    # Local import to keep the gateway off the module-load path so
+    # eval-only consumers don't pay it during import.
+    from backend.app.services.structured_llm_gateway import (  # noqa: PLC0415
+        get_default_structured_llm_gateway,
+    )
 
     reference_block = (
         _REFERENCE_BLOCK_TEMPLATE.format(reference_soap=reference_soap) if reference_soap else ""
@@ -133,12 +145,31 @@ def score(
         generated_soap=generated_soap,
         reference_block=reference_block,
     )
-    full_prompt = f"{_JUDGE_SYSTEM_PROMPT}\n\n{user_prompt}"
 
-    client = LLMClient(model=model or _DEFAULT_JUDGE_MODEL)
-    raw = client.call(prompt=full_prompt, max_tokens=4096, temperature=0.0)
+    gw = gateway or get_default_structured_llm_gateway()
+    try:
+        completion = gw.complete_structured(
+            model=model or _DEFAULT_JUDGE_MODEL,
+            system_prompt=_JUDGE_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            response_schema=_JUDGE_RESPONSE_SCHEMA,
+            max_output_tokens=4096,
+            temperature=0.0,
+        )
+        parsed = completion.data
+        raw = json.dumps(parsed)
+    except ValueError as exc:
+        # Gateway raised on invalid JSON — degrade to a failure verdict
+        # rather than crashing the eval run.
+        logger.warning("LLM judge returned unparseable output: %s", exc)
+        return JudgeVerdict(
+            passes=False,
+            hallucinated_facts=[],
+            missing_facts=[],
+            judge_notes=f"Judge returned unparseable output: {exc}",
+            raw_response="",
+        )
 
-    parsed = _parse_judge_response(raw)
     return JudgeVerdict(
         passes=bool(parsed.get("passes", False)),
         hallucinated_facts=parsed.get("hallucinated_facts") or [],

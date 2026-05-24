@@ -10,8 +10,13 @@ so adding a new note type is a configuration change, not a code change.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from ..models import Patient, Transcript
 
 NoteFieldKind = Literal["text", "list", "structured"]
 """Shape of a single field within a section.
@@ -71,6 +76,19 @@ class NoteSectionDef:
         return [f.key for f in self.fields]
 
 
+PromptBuilder = Callable[["NoteTypeDefinition", "Transcript", "Patient", datetime], str]
+"""Optional hook on a :class:`NoteTypeDefinition` to override prompt synthesis.
+
+The default generator builds a prompt from each section/field's ``ai_hint``
+— fine for note types where the hints capture all the nuance. SOAP (and
+likely future formats with strong clinical conventions) uses a hand-tuned
+prompt instead; the builder takes the definition plus the same generation
+inputs (transcript, patient, session date) and returns the full user
+prompt string. The system prompt is supplied separately by the service
+that invokes the gateway.
+"""
+
+
 @dataclass(frozen=True)
 class NoteTypeDefinition:
     """Top-level note format (e.g. SOAP, Narrative, DAP)."""
@@ -81,6 +99,12 @@ class NoteTypeDefinition:
     sections: tuple[NoteSectionDef, ...]
     tier: NoteTier = "core"
     context: NoteContext = "session"
+    prompt_builder: PromptBuilder | None = field(default=None, compare=False)
+    """If set, used instead of the auto-built ``ai_hint``-based prompt.
+
+    Opt-in per note type — DAP/BIRP/etc start with the default and
+    graduate to a custom builder if/when prompt nuance requires it.
+    """
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]
