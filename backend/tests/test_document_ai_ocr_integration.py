@@ -2,36 +2,28 @@
 
 """Live Document AI integration test for the OCR fallback (ak6m.2.3).
 
-Gated behind ``DOCAI_INTEGRATION=1`` so the regular ``make test`` run
-never pays per-page fees. When enabled, the test rasterizes each
-MTSamples Psychiatry fixture into an **image-only PDF** (no embedded
-text), confirms that PyMuPDF returns below the scanned-PDF threshold
-(so the fallback would actually fire in production), calls the real
-``DocumentAiOcrClient`` against the configured processor, and asserts
-that a meaningful fraction of the original words survive the round
-trip.
+Gated behind ``DOCAI_INTEGRATION=1`` so ``make test`` never pays
+per-page fees. When enabled, each MTSamples Psychiatry fixture is
+rasterized into an image-only PDF (no embedded text), the real
+``DocumentAiOcrClient`` is invoked, and the result is checked against
+the original for word-level coverage.
 
 Run::
 
     DOCAI_INTEGRATION=1 \\
-    DOCUMENT_AI_PROJECT_ID=pablohealth-dev \\
-    DOCUMENT_AI_PROCESSOR_ID=e6e0da6723c7466c \\
+    DOCUMENT_AI_PROJECT_ID=<project> \\
+    DOCUMENT_AI_PROCESSOR_ID=<processor-id> \\
     poetry run pytest backend/tests/test_document_ai_ocr_integration.py -v
 
-Cost: ~$0.0015 / page at the time of writing. Each fixture renders
-to 1-3 pages; the full 47-fixture sweep costs roughly $0.10-$0.20.
+Cost: ~$0.0015 / page. Each fixture renders to 1-3 pages.
 
-The fixtures live under ``backend/tests/fixtures/mtsamples/psychiatry``
-and are sourced from MTSamples (https://mtsamples.com). See the
-``NOTICE.md`` in that directory for attribution.
+Fixtures live under ``backend/tests/fixtures/mtsamples/psychiatry``,
+sourced from MTSamples (https://mtsamples.com). See ``NOTICE.md``
+in that directory for attribution.
 
-Why image-only PDFs (not text-PDFs lowered to <100 chars):
-* The production fallback path runs only after PyMuPDF returns less
-  than ``_SCANNED_PDF_TEXT_THRESHOLD`` (100 chars). Image-only PDFs
-  reliably trip that, the way a real faxed page does.
-* Per-character noise is closer to "fax-quality" than a clean text-
-  PDF, so the coverage threshold tests honest OCR performance rather
-  than verifying that we round-trip ASCII through compositing.
+The test rasterizes via PyMuPDF (text-PDF → per-page PNG → image-only
+PDF) so PyMuPDF returns below the scanned-PDF threshold, the way a
+real faxed page does — without that, the OCR fallback wouldn't fire.
 """
 
 from __future__ import annotations
@@ -52,36 +44,20 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "mtsamples" / "psychiatry"
 
-# Word-level coverage required for an OCR pass to count as "successful
-# enough." The MTSamples corpus has medication names, abbreviations,
-# and odd capitalization that Document AI sometimes misses on a fax-
-# resolution render — 0.70 keeps the test sensitive to real regressions
-# without flaking on per-fixture quirks. The harness logs the actual
-# rate per file so trends are observable.
 _MIN_WORD_COVERAGE = 0.70
-
-# Render DPI for the synthetic "scanned" PDF. 150 DPI matches a typical
-# clinical fax; high enough that Document AI can read it but low enough
-# that the test actually exercises OCR (versus an effortless render).
-_RASTER_DPI = 150
+_RASTER_DPI = 150  # ~clinical fax quality
 
 
 # --- helpers ---------------------------------------------------------
 
 
 def _rasterize_to_image_only_pdf(text: str) -> bytes:
-    """Turn ``text`` into a PDF whose pages are PNG images of the text.
-
-    PyMuPDF rasterizes a reportlab text-PDF into per-page PNGs, which
-    we then stack into a fresh PDF. The result has no embedded text
-    layer — PyMuPDF's ``get_text`` returns roughly nothing, the same
-    way it would for a faxed page.
-    """
-    # Step 1: clean text-PDF via reportlab (Helvetica is built in).
+    """Render ``text`` to a text-PDF, then rasterize each page into
+    a fresh PDF whose pages are PNGs — no embedded text layer."""
     text_buf = io.BytesIO()
     c = rl_canvas.Canvas(text_buf, pagesize=LETTER)
     _, height = LETTER
-    margin = 54  # 0.75"
+    margin = 54
     line_height = 12
     max_chars_per_line = 95
     y = height - margin
@@ -97,8 +73,6 @@ def _rasterize_to_image_only_pdf(text: str) -> bytes:
     c.save()
     text_pdf_bytes = text_buf.getvalue()
 
-    # Step 2: rasterize each page of the text PDF into a PNG and stack
-    # them into an image-only PDF.
     scanned_buf = io.BytesIO()
     out_doc = fitz.open()
     with fitz.open(stream=text_pdf_bytes, filetype="pdf") as src:
@@ -141,10 +115,8 @@ _TOKEN_RE = re.compile(r"[a-z0-9]{4,}")
 def _tokenize(text: str) -> set[str]:
     """Lower-case alpha-numeric tokens, length >= 4.
 
-    The length filter drops articles + short OCR confusables ("the",
-    "and", "of") whose presence inflates coverage without measuring
-    much. Unicode normalization handles smart quotes and other
-    typographic substitutions OCR commonly emits.
+    The length filter drops short stop words ("the", "and", "of")
+    whose presence inflates coverage without measuring much.
     """
     normalized = unicodedata.normalize("NFKD", text).lower()
     return set(_TOKEN_RE.findall(normalized))
@@ -184,8 +156,7 @@ def test_ocr_round_trip_recovers_majority_of_words(
     original_text = fixture_path.read_text(encoding="utf-8")
     scanned_pdf = _rasterize_to_image_only_pdf(original_text)
 
-    # Sanity-check the fixture: PyMuPDF must see this as a scanned PDF
-    # so the production fallback path would actually engage.
+    # Confirm the rasterized PDF would actually trip the fallback path.
     with fitz.open(stream=scanned_pdf, filetype="pdf") as doc:
         embedded = "".join(page.get_text() for page in doc).strip()
     assert len(embedded) < _SCANNED_PDF_TEXT_THRESHOLD, (
@@ -211,9 +182,8 @@ def test_ocr_round_trip_recovers_majority_of_words(
     ocr_tokens = _tokenize(result.text)
     coverage = len(original_tokens & ocr_tokens) / max(len(original_tokens), 1)
 
-    # Log so a CI run produces a coverage histogram across the corpus
-    # even when every fixture passes — useful for spotting drift after
-    # a processor-version bump.
+    # Logged on every fixture so a passing run still surfaces drift
+    # in average OCR quality after a processor-version bump.
     print(
         f"{fixture_path.stem}: pages={result.page_count} "
         f"avg_conf={result.avg_confidence:.3f} "

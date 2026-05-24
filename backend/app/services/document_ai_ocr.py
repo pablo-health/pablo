@@ -2,35 +2,17 @@
 
 """Document AI OCR fallback for scanned patient PDFs (THERAPY-ak6m.2.3).
 
-When ``PatientDocumentsService.finalize_upload`` runs PyMuPDF and the
-result is below the "looks like a scanned doc" threshold, this module
-handles the fallback to Google's Document AI OCR processor. The
-service treats every OCR call as best-effort: an exception, a
-configuration gap, or a doc that's too large to OCR sync all map to
-``None`` so finalize completes and the doc lands in the bundler as
-``skipped_no_text`` rather than 500ing the upload.
+Called from ``PatientDocumentsService.finalize_upload`` when PyMuPDF
+returns below the scanned-doc threshold. Every failure mode (no
+config, oversized doc, API error) maps to ``None`` so a flaky OCR
+call never 500s the upload — the doc just lands without
+``extracted_text`` and the chat bundler skips it as it would any
+other scanned PDF.
 
-Design choices encoded here (see ``docs/architecture/patient-
-documents-ocr-oss.md`` for the why):
-
-* **Sync only.** Document AI's online ``processDocument`` API is the
-  v1 surface — fits inside the existing finalize flow without queue
-  infrastructure. The API rejects requests over ~30 pages for the
-  OCR processor, so anything bigger is refused here too with a clear
-  ``unavailable`` outcome. Async batch processing is a follow-up
-  bead (and the existing ``transcription_task_queue`` pattern is the
-  template for it).
-* **One retry, only on transient errors.** Don't burn budget
-  retrying through stable infra problems.
-* **Confidence is surfaced, not gated.** Low-confidence pages get
-  flagged in metadata + the body is prefixed with a "verify before
-  relying on details" marker so the downstream LLM sees the
-  uncertainty. We deliberately do not refuse a low-confidence doc
-  outright — a partial extraction is more useful than nothing.
-* **Hard dep on ``google-cloud-documentai`` is import-deferred.** The
-  factory raises a clean ``OcrUnavailableError`` when the package
-  isn't installed (relevant for slim self-host images that don't
-  need the OCR path).
+Sync only. The OCR processor's ``processDocument`` API caps around
+30 pages, so we cap at the same number; larger docs are out of scope
+for v1. Low confidence prefixes the body with a marker — we don't
+gate, because a partial extraction beats nothing.
 """
 
 from __future__ import annotations
@@ -45,32 +27,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Threshold above which we consider an OCR result low-confidence
-# overall and prefix the body with a warning marker. Calibrated from
-# the design doc against expected faxed-PDF quality; revisit once we
-# have real Kendra samples scored.
 _AVG_CONFIDENCE_LOW_THRESHOLD = 0.5
 
-# Fraction of pages that may be flagged low-confidence before we
-# treat the whole doc as low-confidence (even if avg is OK — a few
-# bad pages in an otherwise clean doc still warrant the marker).
 _LOW_CONFIDENCE_PAGE_FRACTION_THRESHOLD = 0.25
-
-# Per-page confidence below this is flagged as a "low confidence
-# page". Matches the avg threshold for a simple, defensible mental
-# model; tune separately if real samples push for it.
 _PAGE_CONFIDENCE_LOW_THRESHOLD = 0.5
 
-# Backoff between the initial call and the single retry on transient
-# errors. Exposed as a module-level constant so tests can monkeypatch
-# it down to 0; production keeps the 2s default.
+# Exposed as constants so tests can monkeypatch.
 _RETRY_BACKOFF_SECONDS = 2.0
 
-# Per-call deadline for the synchronous Document AI request. The SDK's
-# default is 300s with internal retries — way too long for a user-
-# facing finalize. 60s is enough for a 30-page OCR pass on a normal
-# day; auth or quota failures surface in seconds and our own one-
-# retry loop handles transient blips.
+# Per-call deadline. SDK default is 300s with internal retries; 60s
+# lets auth and quota failures surface in seconds.
 _PROCESS_TIMEOUT_SECONDS = 60.0
 
 _LOW_CONFIDENCE_MARKER = (
@@ -79,24 +45,11 @@ _LOW_CONFIDENCE_MARKER = (
 
 
 class OcrUnavailableError(RuntimeError):
-    """Raised when the OCR client can't be constructed.
-
-    Distinguishes "configured but failed" (logged as a soft failure
-    inside ``extract`` → returns ``None``) from "not even set up"
-    (factory raises so the caller can decide whether to fall back to
-    a no-op client or surface a config error).
-    """
+    """Raised when the OCR client can't be constructed (missing dep)."""
 
 
 @dataclass(frozen=True)
 class OcrResult:
-    """Result of a successful Document AI extraction.
-
-    ``text`` is already prefixed with the low-confidence marker when
-    applicable; the caller stores it verbatim. Metadata is surfaced
-    separately for audit + diagnostics.
-    """
-
     text: str
     page_count: int
     avg_confidence: float
@@ -126,12 +79,7 @@ class DocumentAiOcrClient:
 
     @property
     def is_configured(self) -> bool:
-        """True iff settings carry a processor id AND the kill-switch
-        is on. Service layer checks this to decide whether to call
-        ``extract`` at all — keeps the "no-op when unconfigured"
-        behavior visible at the call site rather than buried in a
-        silent ``None`` return.
-        """
+        """True iff a processor is set and the kill-switch is on."""
         s = self._settings
         return bool(
             s.allow_document_ai_ocr
@@ -140,29 +88,11 @@ class DocumentAiOcrClient:
         )
 
     def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None:
-        """Run OCR on a PDF blob. Returns ``None`` on soft failure.
-
-        Returns ``None`` for:
-
-        * Unconfigured client (kill-switch off, missing processor id,
-          or the optional ``google-cloud-documentai`` dep not
-          installed).
-        * Doc exceeds ``settings.document_ai_max_pages`` (caught
-          before the API call — Document AI's sync OCR caps around
-          30 pages anyway).
-        * Transient API error that persists past one retry.
-        * Permanent API error (Unauthenticated, InvalidArgument,
-          etc.) — logged + treated as soft failure so finalize
-          completes.
-
-        Raises only for programmer errors (bad arg types).
-        """
+        """OCR a PDF. Returns ``None`` on any soft failure."""
         if not self.is_configured:
             return None
 
         if mime_type != "application/pdf":
-            # Image OCR is out of scope for v1 (design doc); the
-            # service skips this code path for PNG/JPEG already.
             return None
 
         try:
@@ -186,7 +116,6 @@ class DocumentAiOcrClient:
         latency_ms = int((time.monotonic() - start) * 1000)
 
         if response is None:
-            # Already logged inside _call_with_one_retry.
             return None
 
         return _parse_response(response, latency_ms=latency_ms)
@@ -214,9 +143,6 @@ class DocumentAiOcrClient:
         return self._client
 
     def _build_request(self, pdf_bytes: bytes) -> Any:
-        # Built lazily so the import only fires when actually invoking
-        # OCR (keeps unit tests + slim images that don't have the dep
-        # importable).
         from google.cloud import documentai  # type: ignore[attr-defined]
 
         s = self._settings
@@ -239,11 +165,6 @@ class DocumentAiOcrClient:
 
 
 def _count_pdf_pages(pdf_bytes: bytes) -> int:
-    """Cheap page count via PyMuPDF (already a dependency).
-
-    Used as a pre-flight check before the Document AI call so we
-    don't pay for a request that the sync API will reject anyway.
-    """
     import fitz  # type: ignore[import-untyped]
 
     with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -251,36 +172,20 @@ def _count_pdf_pages(pdf_bytes: bytes) -> int:
 
 
 def _call_with_one_retry(fn: Any, request: Any) -> Any:
-    """Call ``fn(request)`` with a single retry on transient errors.
+    """Call ``fn(request)`` with one retry on transient errors.
 
-    Distinguishes:
-
-    * Transient (``ServiceUnavailable``, ``DeadlineExceeded``,
-      ``RetryError``) → one retry with a 2s backoff. ``RetryError`` is
-      the SDK's wrapper when its own internal retry exhausts on a
-      transient — usually a flaky upstream or stale auth — and we
-      still want to give it one more shot from our side.
-    * Permanent (``Unauthenticated``, ``PermissionDenied``,
-      ``InvalidArgument``, anything else) → log + return ``None``.
-
-    A short per-call timeout is passed (``_PROCESS_TIMEOUT_SECONDS``)
-    so auth or network failures surface in seconds rather than
-    bouncing through the SDK's 300s internal retry loop. The SDK
-    receives ``retry=None`` so it does not double-retry on top of our
-    explicit logic.
-
-    Returns the response or ``None`` on soft failure.
+    Transient = ServiceUnavailable / DeadlineExceeded / RetryError →
+    sleep + retry once. Anything else → log + return ``None``.
+    ``retry=None`` disables the SDK's own 300s retry loop so we own
+    the policy.
     """
     try:
         from google.api_core import exceptions as gax_exceptions
-        from google.api_core import gapic_v1
     except ImportError:
-        # Without google.api_core we can't distinguish error classes,
-        # so any exception becomes a soft failure.
         try:
             return fn(request=request)
         except Exception:
-            logger.exception("document_ai call failed (no api_core for retry classes)")
+            logger.exception("document_ai call failed")
             return None
 
     transient = (
@@ -291,13 +196,8 @@ def _call_with_one_retry(fn: Any, request: Any) -> Any:
     call_kwargs = {
         "request": request,
         "timeout": _PROCESS_TIMEOUT_SECONDS,
-        "retry": gapic_v1.method.DEFAULT,
+        "retry": None,
     }
-    # The SDK's DEFAULT retry on Document AI's processDocument is a
-    # 300s loop on 503s — useful for batch, painful for our sync
-    # finalize path. Pass retry=None when supported to disable it;
-    # older SDK versions ignore the override harmlessly.
-    call_kwargs["retry"] = None
 
     try:
         return fn(**call_kwargs)
@@ -307,24 +207,14 @@ def _call_with_one_retry(fn: Any, request: Any) -> Any:
         try:
             return fn(**call_kwargs)
         except Exception:
-            logger.exception("document_ai retry failed; treating as soft failure")
+            logger.exception("document_ai retry failed")
             return None
     except Exception:
-        logger.exception("document_ai permanent error; treating as soft failure")
+        logger.exception("document_ai permanent error")
         return None
 
 
 def _parse_response(response: Any, *, latency_ms: int) -> OcrResult:
-    """Extract text + per-page confidence from a Document AI response.
-
-    The Document AI response shape we care about:
-
-    * ``response.document.text`` — the full OCR'd text, ordered.
-    * ``response.document.pages[i].layout.confidence`` — per-page
-      score in ``[0, 1]``. Some processor versions emit 0.0 for
-      pages where the layout itself is uncertain; we treat 0.0 the
-      same as any other low score.
-    """
     document = response.document
     text: str = document.text or ""
     pages = list(document.pages) if document.pages else []

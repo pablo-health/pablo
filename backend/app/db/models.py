@@ -565,14 +565,12 @@ class PatientDocumentRow(Base):
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
     extracted_text: Mapped[str | None] = mapped_column(Text)
-    # Extraction provenance (THERAPY-ak6m.2.3). NULL until finalize,
-    # then "pymupdf" / "document_ai" / "unavailable". CHECK constraint
-    # keeps the column self-describing without a separate enum table.
+    # Which extractor produced extracted_text:
+    # "pymupdf" (native PDF text), "document_ai" (OCR), "unavailable"
+    # (OCR attempted and failed). NULL until finalize.
     extracted_via: Mapped[str | None] = mapped_column(String(32))
     # OCR diagnostics (page_count, avg_confidence, low_confidence_pages,
-    # latency_ms). Stored as JSONB so future fields (model version,
-    # processor revision) don't require a migration. Always NULL for
-    # "pymupdf" rows — the metadata is OCR-specific.
+    # latency_ms). JSONB so adding fields doesn't need a migration.
     extraction_metadata: Mapped[dict | None] = mapped_column(JSONB)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     # Access + disclosure classification. Set at init, immutable.

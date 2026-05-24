@@ -30,11 +30,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class FinalizedExtraction:
-    """Extraction outcome passed to ``mark_finalized``.
-
-    Bundles the three columns the OCR path writes (text +
-    provenance + diagnostics) so the repo signature stays small.
-    """
+    """Text + provenance + diagnostics passed to ``mark_finalized``."""
 
     text: str | None
     via: str | None
@@ -75,15 +71,6 @@ class PatientDocumentRepository(ABC):
         upload, because they don't know the placeholder ID until it
         appears in the list (which only happens after finalize).
         Returns the updated row, or ``None`` if not accessible.
-
-        ``extraction`` carries the three columns the OCR path writes:
-
-        * ``via`` is one of ``"pymupdf"``, ``"document_ai"``,
-          ``"unavailable"``, or ``None`` (image upload — never
-          extracted).
-        * ``metadata`` carries OCR diagnostics (page_count,
-          avg_confidence, low_confidence_pages, latency_ms) when
-          ``via == "document_ai"``; ``None`` otherwise.
         """
 
     @abstractmethod

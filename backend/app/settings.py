@@ -392,18 +392,12 @@ class Settings(BaseSettings):
         default=25 * 1024 * 1024,
         description="Maximum patient-document upload size (bytes).",
     )
-    # Document AI OCR fallback for scanned/faxed PDFs (THERAPY-ak6m.2.3).
-    # When document_ai_processor_id is unset, the fallback is a no-op:
-    # scanned PDFs land with extracted_text=NULL exactly like before,
-    # so local dev and unit tests work without GCP creds.
+    # Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
+    # Leave processor_id unset to disable — scanned PDFs land with
+    # extracted_text=NULL, same as before the feature existed.
     document_ai_project_id: str | None = Field(
         default=None,
-        description=(
-            "GCP project that owns the Document AI OCR processor. "
-            "Usually the same as GCP_PROJECT_ID; broken out so a future "
-            "dedicated AI project can be swapped in without touching "
-            "the data plane."
-        ),
+        description="GCP project that owns the Document AI OCR processor.",
     )
     document_ai_location: str = Field(
         default="us",
@@ -411,30 +405,18 @@ class Settings(BaseSettings):
     )
     document_ai_processor_id: str | None = Field(
         default=None,
-        description=(
-            "Resource id of the OCR processor (the hex suffix after "
-            "/processors/ in the processor name). Leave unset to "
-            "disable the OCR fallback — scanned PDFs will remain "
-            "extracted_text=NULL, same as today."
-        ),
+        description="Resource id of the OCR processor (hex suffix of the processor name).",
     )
     document_ai_max_pages: int = Field(
         default=30,
         description=(
-            "Refuse OCR for documents above this page count. Capped at "
-            "30 by default because Document AI's sync processDocument "
-            "API rejects requests over 30 pages for the OCR processor. "
-            "Larger docs would need the async batchProcessDocuments "
-            "path (follow-up bead)."
+            "Refuse OCR above this page count. Document AI's sync "
+            "processDocument API rejects requests over ~30 pages."
         ),
     )
     allow_document_ai_ocr: bool = Field(
         default=True,
-        description=(
-            "Global kill-switch for the Document AI OCR fallback. Set "
-            "to False to disable per-tenant or environment-wide without "
-            "removing the processor configuration."
-        ),
+        description="Global kill-switch for the OCR fallback.",
     )
     marketing_site_url: str = Field(
         default="",

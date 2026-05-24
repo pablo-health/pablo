@@ -97,14 +97,7 @@ class PatientDocument:
     finalized_at: datetime | None = None
     deleted_at: datetime | None = None
     category: DocumentCategory = field(default=DocumentCategory.CHART)
-    # Extraction provenance (THERAPY-ak6m.2.3). NULL = not yet
-    # finalized OR an image (we never extract text from PNG/JPEG).
-    # "pymupdf" = native-text PDF extracted by PyMuPDF. "document_ai"
-    # = scanned PDF that fell back to the Document AI OCR processor.
-    # "unavailable" = OCR was attempted but failed (or skipped because
-    # of page-count cap) — the doc still appears in lists but the chat
-    # bundler skips it the same way it skipped a pre-OCR scanned PDF.
+    # Which extractor produced extracted_text. See PatientDocumentRow
+    # for the value set.
     extracted_via: str | None = None
-    # Diagnostic metadata for OCR runs (page_count, avg_confidence,
-    # low_confidence_pages, latency_ms). NULL for non-OCR rows.
     extraction_metadata: dict[str, object] | None = None

@@ -136,9 +136,6 @@ class AuditAction(StrEnum):
     PATIENT_DOCUMENT_DOWNLOADED = "patient_document_downloaded"
     PATIENT_DOCUMENT_DOWNLOADED_RESTRICTED = "patient_document_downloaded_restricted"
     PATIENT_DOCUMENT_DELETED = "patient_document_deleted"
-    # OCR fallback (THERAPY-ak6m.2.3): logged at invocation regardless
-    # of success. Payload carries doc id, processor, page count,
-    # latency, and avg confidence — never filename or extracted text.
     PATIENT_DOCUMENT_OCR_INVOKED = "patient_document_ocr_invoked"
 
     # Companion audio signed-URL upload (additive to the existing

@@ -115,10 +115,8 @@ class PatientDocumentsService:
         self._settings = settings
         self._storage_client_factory = storage_client_factory
         self._tenant_id = tenant_id
-        # OCR fallback (THERAPY-ak6m.2.3). ``None`` = caller didn't
-        # wire one (unit tests, or a deployment with the OCR feature
-        # off). When set but unconfigured (no processor id), the
-        # client's own ``is_configured`` check short-circuits.
+        # None = OCR fallback disabled. When set, the client's own
+        # is_configured check short-circuits if no processor id.
         self._ocr = ocr_client
 
     # --- storage plumbing --------------------------------------------
@@ -267,9 +265,8 @@ class PatientDocumentsService:
         if content_type and content_type not in ALLOWED_MIME_TYPES:
             raise UnsupportedMimeTypeError(content_type)
 
-        # PyMuPDF only runs on PDFs. PNG/JPEG land in the bundle as
-        # images; the Document AI OCR path is PDF-only too (image
-        # OCR is out of scope for v1 of ak6m.2.3).
+        # Text extraction is PDF-only. PNG/JPEG land in the bundle as
+        # images and skip both PyMuPDF and the OCR fallback.
         extracted_text: str | None = None
         extracted_via: str | None = None
         extraction_metadata: dict[str, object] | None = None
@@ -284,12 +281,8 @@ class PatientDocumentsService:
             if extracted_text is not None:
                 extracted_via = "pymupdf"
             elif self._ocr is not None and self._ocr.is_configured:
-                # PyMuPDF returned <100 chars — presumed scanned
-                # PDF. Fall back to Document AI. Any failure inside
-                # the client is soft: log + stamp "unavailable" and
-                # finalize succeeds with extracted_text=None, so the
-                # doc still appears in the patient's list (the chat
-                # bundler will skip it as `skipped_no_text`).
+                # PyMuPDF saw fewer than the scanned-doc threshold —
+                # fall back to Document AI. Any failure is soft.
                 ocr_result = self._ocr.extract(
                     pdf_bytes=raw,
                     mime_type=document.mime_type,
