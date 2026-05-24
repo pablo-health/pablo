@@ -325,6 +325,7 @@ SOURCE_KEY_CURRENT_MEDICATIONS     = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE      = "most_recent_intake"
 SOURCE_KEY_PROGRESS_NOTES_RECENT   = "progress_notes_recent"
 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT = "progress_notes_explicit"
+SOURCE_KEY_PATIENT_DOCUMENTS       = "patient_documents"
 SOURCE_KEY_TREATMENT_PLAN_ACTIVE   = "treatment_plan_active"
 SOURCE_KEY_SAFETY_PLAN_ACTIVE      = "safety_plan_active"
 SOURCE_KEY_LAB_VALUES_RECENT       = "lab_values_recent"   # stub — module_not_available
@@ -343,14 +344,21 @@ either:
 - A dict with source-specific params (e.g.
   `{"limit": 5, "include_transcripts": false}` for `progress_notes_recent`;
   `{"content": "free-text snippet"}` for `pasted_text`;
-  `{"note_ids": [...]}` for `progress_notes_explicit`).
+  `{"note_ids": [...]}` for `progress_notes_explicit`;
+  `{"limit": 5}` or `{"document_ids": ["uuid", ...]}` for `patient_documents`
+  — `limit` and `document_ids` are mutually exclusive; `limit` is capped at
+  `PATIENT_DOCUMENTS_LIMIT_MAX = 50`).
 - `False` / missing — skip.
 
 The bundler raises `InvalidSelectionError` on:
 
 - Unknown keys (not in `V1_SOURCE_KEYS`).
 - Wrong-shape values for a known key (e.g. `progress_notes_explicit` with a
-  non-string id).
+  non-string id, `patient_documents` with both `limit` and `document_ids`).
+- `patient_documents` selected without a `patient_documents_repo` passed to
+  `assemble_context_bundle` — the bundler does not import the Postgres impl at
+  module load and refuses to assemble a source whose backing repo wasn't
+  supplied.
 
 ### §7.3 Priority order (truncation order)
 
@@ -366,9 +374,20 @@ dropped.
 | 3        | `safety_plan_active`                | No           |
 | 4        | `most_recent_intake`                | No           |
 | 5        | `progress_notes_explicit`           | Yes (row-level) |
-| 6        | `progress_notes_recent`             | Yes (row-level) |
-| 7        | `treatment_plan_active`             | No           |
-| 8        | `lab_values_recent`, `vitals_recent`| No (stub)    |
+| 6        | `patient_documents`                 | Yes (row-level) |
+| 7        | `progress_notes_recent`             | Yes (row-level) |
+| 8        | `treatment_plan_active`             | No           |
+| 9        | `lab_values_recent`, `vitals_recent`| No (stub)    |
+
+`patient_documents` (THERAPY-ak6m.2.2) sits between explicit progress notes
+and the recent-progress-notes window. The reasoning: uploaded chart artifacts
+(prior-provider PDFs, intake packets, lab printouts) are clinician-curated
+chart material — closer in stature to a progress note than to a stub source —
+but a generic upload set carries less explicit intent than
+`progress_notes_explicit`, which the clinician picked by id. Placing it
+above `progress_notes_recent` means a PMHNP whose chart history lives in
+PDFs keeps that history under budget pressure before the most-recent N
+SOAP notes are trimmed.
 
 **Pasted-text overflow** is a special case: if pasted text alone exceeds the
 budget, the bundler raises `ContextOverflowError` *before* assembly proceeds.
@@ -392,6 +411,15 @@ def default_source_selection() -> dict[str, Any]:
 
 Callers pass their own `defaultSourceSelection` on conversation create; this
 function is the OSS recommended baseline.
+
+`patient_documents` is intentionally **not** in the chat default. Turning it on
+globally would change context shape for every existing chat conversation
+without an explicit opt-in, including conversations whose patients have a
+large legacy chart attached as PDFs (budget pressure, surprise PHI surface).
+The pre-visit-brief (THERAPY-ak6m.1) and letter-generator (THERAPY-ak6m.3)
+callers should opt in via their own `defaultSourceSelection` when those
+beads ship — both rely on uploaded chart history as primary input, where
+the chat surface treats it as opt-in supplemental context.
 
 ### §7.5 Manifest shape
 
@@ -419,6 +447,13 @@ never contains note content, patient names, or clinical text.
       "source_key": "pasted_text",
       "tokens_est": 800,
       "chars": 3200
+    },
+    {
+      "source_key": "patient_documents",
+      "tokens_est": 2400,
+      "row_count": 2,
+      "document_ids": ["uuid-doc-1", "uuid-doc-2"],
+      "skipped_no_text": 1
     }
   ],
   "sources_dropped": [
