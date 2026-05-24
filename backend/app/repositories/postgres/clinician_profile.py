@@ -4,27 +4,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ...db.models import ClinicianProfileRow
+from ...utcnow import utc_now
+from ..clinician_profile import ClinicianProfile, ClinicianProfileRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-@dataclass
-class ClinicianProfile:
-    user_id: str
-    practice_id: str
-    title: str | None = None
-    credentials: str | None = None
-    role: str = "clinician"
-    joined_at: datetime | None = None
+__all__ = ["ClinicianProfile", "PostgresClinicianProfileRepository"]
 
 
-class PostgresClinicianProfileRepository:
+class PostgresClinicianProfileRepository(ClinicianProfileRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
@@ -48,7 +41,7 @@ class PostgresClinicianProfileRepository:
             title=profile.title,
             credentials=profile.credentials,
             role=profile.role,
-            joined_at=profile.joined_at,
+            joined_at=profile.joined_at or utc_now(),
         )
         self._session.add(row)
         self._session.flush()

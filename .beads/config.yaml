@@ -54,3 +54,5 @@
 # - github.repo
 
 sync.remote: "git+https://github.com/pablo-health/pablo.git"
+
+export.path: ".beads/issues.jsonl"

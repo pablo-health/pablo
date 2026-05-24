@@ -37,8 +37,11 @@ from ..models import (
     UserPreferences,
 )
 from ..repositories import (
+    ClinicianProfile,
+    ClinicianProfileRepository,
     IdentityRepository,
     UserRepository,
+    get_clinician_profile_repository,
     get_identity_repository,
     get_user_repository,
 )
@@ -127,6 +130,7 @@ def _resolve_baa_path(version: str) -> Path:
 @router.get("/me/status")
 def get_user_status(
     user: User = Depends(get_current_user_no_mfa),
+    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
 ) -> dict:
     """
     Get current user status without requiring MFA.
@@ -136,12 +140,16 @@ def get_user_status(
     """
     from ..settings import get_settings
 
+    profile = profile_repo.get(user.id)
+
     result: dict = {
         "status": user.status,
         "mfa_enrolled_at": user.mfa_enrolled_at,
         "is_platform_admin": user.is_platform_admin,
         "name": user.name,
         "email": user.email,
+        "title": profile.title if profile else None,
+        "credentials": profile.credentials if profile else None,
         "provider_type": user.provider_type,
         "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
         "security_guide_version": user.security_guide_version,
@@ -243,24 +251,26 @@ def update_current_user_profile(
     request: UpdateUserRequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
+    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
 ) -> User:
     """Partial update of the current user's profile.
 
     Posture: pre-MFA onboarding (route_security.py #2). This is the
-    endpoint the onboarding wizard PATCHes for ``provider_type`` and
-    ``onboarding_state``, both of which run BEFORE the user has
-    completed MFA enrollment / re-sign-in. Same reasoning as the BAA
-    endpoints: an authenticated Firebase token is required, but the
-    second-factor claim isn't a meaningful gate for setting your own
-    profile fields. PHI routes downstream remain MFA-required via
-    ``require_mfa`` and ``require_baa_acceptance``.
+    endpoint the onboarding wizard PATCHes for ``provider_type``,
+    ``onboarding_state``, ``title``, and ``credentials``, all of which
+    run BEFORE the user has completed MFA enrollment / re-sign-in.
+    Same reasoning as the BAA endpoints: an authenticated Firebase
+    token is required, but the second-factor claim isn't a meaningful
+    gate for setting your own profile fields. PHI routes downstream
+    remain MFA-required via ``require_mfa`` and
+    ``require_baa_acceptance``.
 
-    Currently persists ``name``, ``provider_type``, and
-    ``onboarding_state`` on the platform user row. ``title`` /
-    ``credentials`` are accepted by the request schema for
-    forward-compat but live on the per-practice ``ClinicianProfile``
-    and are not wired here yet — a future PR will route them through
-    that repository.
+    ``name``, ``provider_type``, and ``onboarding_state`` persist on
+    the platform user row. ``title`` and ``credentials`` are
+    per-practice profile metadata and persist on the tenant-scoped
+    ``ClinicianProfile`` row — the active search_path is set by
+    :class:`DatabaseSessionMiddleware` from the auth token, so the
+    upsert lands in the correct schema.
     """
     if request.name is not None:
         user.name = request.name
@@ -269,7 +279,71 @@ def update_current_user_profile(
     if request.onboarding_state is not None:
         user.onboarding_state = request.onboarding_state
     user_repo.update(user)
+
+    if request.title is not None or request.credentials is not None:
+        _upsert_clinician_profile(
+            profile_repo,
+            user=user,
+            title=request.title,
+            credentials=request.credentials,
+        )
+        # Mirror onto the response so the client sees the persisted
+        # state without a follow-up GET.
+        if request.title is not None:
+            user.title = request.title
+        if request.credentials is not None:
+            user.credentials = request.credentials
+
     return user
+
+
+def _upsert_clinician_profile(
+    profile_repo: ClinicianProfileRepository,
+    *,
+    user: User,
+    title: str | None,
+    credentials: str | None,
+) -> None:
+    """Upsert title/credentials on the caller's ClinicianProfile row.
+
+    Existing fields are preserved when the corresponding request value
+    is None — PATCH semantics, not PUT. Practice_id is resolved from
+    the caller's email; the row's existing practice_id wins if a
+    profile already exists, so this is a no-op for unmapped emails
+    that have an existing row.
+    """
+    existing = profile_repo.get(user.id)
+    practice_id = existing.practice_id if existing else _resolve_practice_id_for(user)
+    if practice_id is None:
+        # No practice mapping yet — the onboarding flow normally
+        # provisions the practice before reaching this step. Skip the
+        # write rather than failing the whole PATCH; other fields
+        # (name, provider_type, onboarding_state) still persist.
+        logger.warning(
+            "Skipping clinician profile upsert for user_id=%s: no practice mapping",
+            user.id,
+        )
+        return
+
+    profile = ClinicianProfile(
+        user_id=user.id,
+        practice_id=practice_id,
+        title=title if title is not None else (existing.title if existing else None),
+        credentials=(
+            credentials if credentials is not None else (existing.credentials if existing else None)
+        ),
+        role=existing.role if existing else "clinician",
+        joined_at=existing.joined_at if existing else None,
+    )
+    profile_repo.update(profile)
+
+
+def _resolve_practice_id_for(user: User) -> str | None:
+    """Resolve the practice_id for ``user`` from the platform email mapping."""
+    from ..auth.service import _resolve_practice_from_email
+
+    practice = _resolve_practice_from_email(user.email)
+    return practice[0] if practice else None
 
 
 @router.get("/me/baa-status")
