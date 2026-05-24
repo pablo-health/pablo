@@ -6,6 +6,8 @@ name: Deploy
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - ".beads/**"
   workflow_dispatch:
     inputs:
       run_migrations:
