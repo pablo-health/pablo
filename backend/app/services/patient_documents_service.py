@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..models import DocumentCategory, PatientDocument
+from ..repositories.patient_document import FinalizedExtraction
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
     from ..repositories import PatientDocumentRepository
     from ..settings import Settings
+    from .document_ai_ocr import DocumentAiOcrClient
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +109,15 @@ class PatientDocumentsService:
         settings: Settings,
         storage_client_factory: Callable[[], Any] | None = None,
         tenant_id: str | None = None,
+        ocr_client: DocumentAiOcrClient | None = None,
     ) -> None:
         self._repo = repo
         self._settings = settings
         self._storage_client_factory = storage_client_factory
         self._tenant_id = tenant_id
+        # None = OCR fallback disabled. When set, the client's own
+        # is_configured check short-circuits if no processor id.
+        self._ocr = ocr_client
 
     # --- storage plumbing --------------------------------------------
 
@@ -259,10 +265,12 @@ class PatientDocumentsService:
         if content_type and content_type not in ALLOWED_MIME_TYPES:
             raise UnsupportedMimeTypeError(content_type)
 
-        # PyMuPDF only runs on PDFs. PNG/JPEG land in the bundle as
-        # images; ak6m.2.3 will OCR them. We don't attempt to read
-        # image text inline.
+        # Text extraction is PDF-only. PNG/JPEG land in the bundle as
+        # images and skip both PyMuPDF and the OCR fallback.
         extracted_text: str | None = None
+        extracted_via: str | None = None
+        extraction_metadata: dict[str, object] | None = None
+
         if document.mime_type == "application/pdf":
             raw = download_blob_bytes(
                 client=client,
@@ -270,12 +278,38 @@ class PatientDocumentsService:
                 object_name=document.gcs_path,
             )
             extracted_text = _extract_pdf_text(raw)
+            if extracted_text is not None:
+                extracted_via = "pymupdf"
+            elif self._ocr is not None and self._ocr.is_configured:
+                # PyMuPDF saw fewer than the scanned-doc threshold —
+                # fall back to Document AI. Any failure is soft.
+                ocr_result = self._ocr.extract(
+                    pdf_bytes=raw,
+                    mime_type=document.mime_type,
+                )
+                if ocr_result is not None:
+                    extracted_text = ocr_result.text
+                    extracted_via = "document_ai"
+                    extraction_metadata = {
+                        "page_count": ocr_result.page_count,
+                        "avg_confidence": ocr_result.avg_confidence,
+                        "low_confidence_pages": list(
+                            ocr_result.low_confidence_pages
+                        ),
+                        "latency_ms": ocr_result.latency_ms,
+                    }
+                else:
+                    extracted_via = "unavailable"
 
         updated = self._repo.mark_finalized(
             document_id=document_id,
             user_id=user_id,
             size_bytes=size_bytes,
-            extracted_text=extracted_text,
+            extraction=FinalizedExtraction(
+                text=extracted_text,
+                via=extracted_via,
+                metadata=extraction_metadata,
+            ),
             finalized_at=utc_now(),
         )
         if updated is None:

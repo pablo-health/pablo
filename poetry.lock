@@ -1313,6 +1313,28 @@ google-auth = ">=1.25.0,<3.0.0"
 grpc = ["grpcio (>=1.38.0,<2.0.0) ; python_version < \"3.14\"", "grpcio (>=1.75.1,<2.0.0) ; python_version >= \"3.14\"", "grpcio-status (>=1.38.0,<2.0.0)"]
 
 [[package]]
+name = "google-cloud-documentai"
+version = "3.14.0"
+description = "Google Cloud Documentai API client library"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "google_cloud_documentai-3.14.0-py3-none-any.whl", hash = "sha256:809d2b42e6cf04b2408c8a243f5f28b2a8eace980acef175e5c74dabf677d1ee"},
+    {file = "google_cloud_documentai-3.14.0.tar.gz", hash = "sha256:4107d35bd654c4ffd1f980c625578ed2f5b0f8cae90da9158b0b73c9bd7cc527"},
+]
+
+[package.dependencies]
+google-api-core = {version = ">=2.11.0,<3.0.0", extras = ["grpc"]}
+google-auth = ">=2.14.1,<2.24.0 || >2.24.0,<2.25.0 || >2.25.0,<3.0.0"
+grpcio = [
+    {version = ">=1.33.2,<2.0.0"},
+    {version = ">=1.75.1,<2.0.0", markers = "python_version >= \"3.14\""},
+]
+proto-plus = {version = ">=1.25.0,<2.0.0", markers = "python_version >= \"3.13\""}
+protobuf = ">=4.25.8,<8.0.0"
+
+[[package]]
 name = "google-cloud-firestore"
 version = "2.26.0"
 description = "Google Cloud Firestore API client library"
@@ -5059,4 +5081,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.15"
-content-hash = "bdaa2da93c638d47402288363d74939dd6be8a4b66138a331f2bc1c1105c9261"
+content-hash = "ed668ac7b382bc295eef04ddfb5051273a7d40b4cf5834287397ed1467b84642"

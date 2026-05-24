@@ -64,6 +64,10 @@ python-multipart = ">=0.0.29"
 google-cloud-storage = "^2.18.0"
 google-cloud-tasks = "^2.22.0"
 google-cloud-batch = "^0.21.0"
+# Document AI OCR fallback for scanned patient PDFs (THERAPY-ak6m.2.3).
+# Imported lazily inside services/document_ai_ocr.py so containers that
+# leave document_ai_processor_id unset never load the client.
+google-cloud-documentai = "^3.0.0"
 # Audit log dual-write to Cloud Logging for tamper-evident HIPAA retention.
 # See backend/app/services/audit_cloud_logging.py.
 google-cloud-logging = "^3.11.0"
