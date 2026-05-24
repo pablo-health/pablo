@@ -3,10 +3,10 @@
 """Live Document AI integration test for the OCR fallback (ak6m.2.3).
 
 Gated behind ``DOCAI_INTEGRATION=1`` so ``make test`` never pays
-per-page fees. When enabled, each MTSamples Psychiatry fixture is
-rasterized into an image-only PDF (no embedded text), the real
-``DocumentAiOcrClient`` is invoked, and the result is checked against
-the original for word-level coverage.
+per-page fees. When enabled, six representative MTSamples Psychiatry
+fixtures (see ``_SMOKE_FIXTURES``) are rasterized into image-only
+PDFs, run against the real ``DocumentAiOcrClient``, and checked for
+word-level coverage against the original text.
 
 Run::
 
@@ -15,11 +15,16 @@ Run::
     DOCUMENT_AI_PROCESSOR_ID=<processor-id> \\
     poetry run pytest backend/tests/test_document_ai_ocr_integration.py -v
 
-Cost: ~$0.0015 / page. Each fixture renders to 1-3 pages.
+Cost: ~$0.0015 / page; the smoke set runs in ≈1 min for a few cents.
 
 Fixtures live under ``backend/tests/fixtures/mtsamples/psychiatry``,
 sourced from MTSamples (https://mtsamples.com). See ``NOTICE.md``
-in that directory for attribution.
+in that directory for attribution. The smoke set is six of the 47
+committed files, picked for content diversity (short structured note,
+long narrative, acronym-dense discharge summary, numeric tables,
+medication strings, free-form evaluation). The other 41 stay on disk
+for future evals (chat-context relevance, document classification,
+information extraction).
 
 The test rasterizes via PyMuPDF (text-PDF → per-page PNG → image-only
 PDF) so PyMuPDF returns below the scanned-PDF threshold, the way a
@@ -44,8 +49,23 @@ from reportlab.pdfgen import canvas as rl_canvas
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "mtsamples" / "psychiatry"
 
-_MIN_WORD_COVERAGE = 0.70
+_MIN_WORD_COVERAGE = 0.95
 _RASTER_DPI = 150  # ~clinical fax quality
+
+# Diversity-picked smoke set. Each fixture exercises a different OCR
+# failure mode (short structured / long narrative / acronyms / numeric
+# tables / medication strings / free-form). The other 41 fixtures stay
+# on disk for future evals but don't run here.
+_SMOKE_FIXTURES = frozenset(
+    {
+        "mental-status-evaluation",
+        "psych-consult-depression-1",
+        "psychiatric-discharge-summary-1",
+        "neuropsychological-evaluation-1",
+        "recheck-of-adhd-meds",
+        "psychological-evaluation",
+    }
+)
 
 
 # --- helpers ---------------------------------------------------------
@@ -142,7 +162,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _fixture_paths() -> list[Path]:
-    return sorted(p for p in _FIXTURES.glob("*.txt") if p.name != "NOTICE.md")
+    return sorted(p for p in _FIXTURES.glob("*.txt") if p.stem in _SMOKE_FIXTURES)
 
 
 # --- the test --------------------------------------------------------
