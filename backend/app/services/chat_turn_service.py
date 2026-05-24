@@ -43,7 +43,7 @@ from .chat_llm_gateway import StreamEvent, UserAssistantTurn
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from ..repositories import ChatRepository, NotesRepository
+    from ..repositories import ChatRepository, NotesRepository, PatientDocumentRepository
     from .chat_llm_gateway import ChatLLMGateway
     from .llm_usage_meter import LlmUsageMeter
 
@@ -156,6 +156,7 @@ class ChatTurnService:
         notes_repo: NotesRepository,
         gateway: ChatLLMGateway,
         usage_meter: LlmUsageMeter | None = None,
+        patient_documents_repo: PatientDocumentRepository | None = None,
     ) -> None:
         self._chat_repo = chat_repo
         self._notes_repo = notes_repo
@@ -164,6 +165,11 @@ class ChatTurnService:
         # path. The route always wires a real meter in; the absence of
         # one means metering is silently skipped.
         self._usage_meter = usage_meter
+        # Optional for legacy tests whose fixtures pre-date the
+        # ``patient_documents`` source. The route always wires a real
+        # repo; selecting the source without one raises
+        # :class:`InvalidSelectionError` inside the bundler.
+        self._patient_documents_repo = patient_documents_repo
 
     # ------------------------------------------------------------------
     # Entry point
@@ -229,6 +235,7 @@ class ChatTurnService:
         try:
             bundle: ContextBundle = assemble_context_bundle(
                 notes_repo=self._notes_repo,
+                patient_documents_repo=self._patient_documents_repo,
                 patient_id=context.patient_id,
                 user_id=context.requesting_user_id,
                 selection=selection,

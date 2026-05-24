@@ -325,6 +325,7 @@ SOURCE_KEY_CURRENT_MEDICATIONS     = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE      = "most_recent_intake"
 SOURCE_KEY_PROGRESS_NOTES_RECENT   = "progress_notes_recent"
 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT = "progress_notes_explicit"
+SOURCE_KEY_PATIENT_DOCUMENTS       = "patient_documents"
 SOURCE_KEY_TREATMENT_PLAN_ACTIVE   = "treatment_plan_active"
 SOURCE_KEY_SAFETY_PLAN_ACTIVE      = "safety_plan_active"
 SOURCE_KEY_LAB_VALUES_RECENT       = "lab_values_recent"   # stub — module_not_available
@@ -343,14 +344,21 @@ either:
 - A dict with source-specific params (e.g.
   `{"limit": 5, "include_transcripts": false}` for `progress_notes_recent`;
   `{"content": "free-text snippet"}` for `pasted_text`;
-  `{"note_ids": [...]}` for `progress_notes_explicit`).
+  `{"note_ids": [...]}` for `progress_notes_explicit`;
+  `{"limit": 5}` or `{"document_ids": ["uuid", ...]}` for `patient_documents`
+  — `limit` and `document_ids` are mutually exclusive; `limit` is capped at
+  `PATIENT_DOCUMENTS_LIMIT_MAX = 50`).
 - `False` / missing — skip.
 
 The bundler raises `InvalidSelectionError` on:
 
 - Unknown keys (not in `V1_SOURCE_KEYS`).
 - Wrong-shape values for a known key (e.g. `progress_notes_explicit` with a
-  non-string id).
+  non-string id, `patient_documents` with both `limit` and `document_ids`).
+- `patient_documents` selected without a `patient_documents_repo` passed to
+  `assemble_context_bundle` — the bundler does not import the Postgres impl at
+  module load and refuses to assemble a source whose backing repo wasn't
+  supplied.
 
 ### §7.3 Priority order (truncation order)
 
@@ -366,9 +374,20 @@ dropped.
 | 3        | `safety_plan_active`                | No           |
 | 4        | `most_recent_intake`                | No           |
 | 5        | `progress_notes_explicit`           | Yes (row-level) |
-| 6        | `progress_notes_recent`             | Yes (row-level) |
-| 7        | `treatment_plan_active`             | No           |
-| 8        | `lab_values_recent`, `vitals_recent`| No (stub)    |
+| 6        | `patient_documents`                 | Yes (row-level) |
+| 7        | `progress_notes_recent`             | Yes (row-level) |
+| 8        | `treatment_plan_active`             | No           |
+| 9        | `lab_values_recent`, `vitals_recent`| No (stub)    |
+
+`patient_documents` (THERAPY-ak6m.2.2) sits between explicit progress notes
+and the recent-progress-notes window. The reasoning: uploaded chart artifacts
+(prior-provider PDFs, intake packets, lab printouts) are clinician-curated
+chart material — closer in stature to a progress note than to a stub source —
+but a generic upload set carries less explicit intent than
+`progress_notes_explicit`, which the clinician picked by id. Placing it
+above `progress_notes_recent` means a PMHNP whose chart history lives in
+PDFs keeps that history under budget pressure before the most-recent N
+SOAP notes are trimmed.
 
 **Pasted-text overflow** is a special case: if pasted text alone exceeds the
 budget, the bundler raises `ContextOverflowError` *before* assembly proceeds.
@@ -392,6 +411,15 @@ def default_source_selection() -> dict[str, Any]:
 
 Callers pass their own `defaultSourceSelection` on conversation create; this
 function is the OSS recommended baseline.
+
+`patient_documents` is intentionally **not** in the chat default. Turning it on
+globally would change context shape for every existing chat conversation
+without an explicit opt-in, including conversations whose patients have a
+large legacy chart attached as PDFs (budget pressure, surprise PHI surface).
+The pre-visit-brief (THERAPY-ak6m.1) and letter-generator (THERAPY-ak6m.3)
+callers should opt in via their own `defaultSourceSelection` when those
+beads ship — both rely on uploaded chart history as primary input, where
+the chat surface treats it as opt-in supplemental context.
 
 ### §7.5 Manifest shape
 
@@ -419,6 +447,13 @@ never contains note content, patient names, or clinical text.
       "source_key": "pasted_text",
       "tokens_est": 800,
       "chars": 3200
+    },
+    {
+      "source_key": "patient_documents",
+      "tokens_est": 2400,
+      "row_count": 2,
+      "document_ids": ["uuid-doc-1", "uuid-doc-2"],
+      "skipped_no_text": 1
     }
   ],
   "sources_dropped": [
@@ -457,7 +492,178 @@ class ContextBundle:
     text: str                  # ready-to-splice context block
     manifest: dict[str, Any]   # per §7.5; persisted on the user-turn row
     total_tokens_est: int      # estimated tokens consumed by text
+    tools: list[ToolSpec]      # agent-callable tools (§7.9); empty for non-agent strategies
 ```
+
+`tools` is empty for every strategy except `agent_fetch_handle` (§7.8). Existing
+callers that ignore the field keep working unchanged.
+
+### §7.8 Source-strategy dispatch (planned — ak6m.2.4 / ak6m.2.5)
+
+A single source key can be loaded by different **strategies**. The strategy
+choice lives inside the per-source selection dict under a reserved
+`strategy` field. Each strategy returns a `LoadedSource` with the same shape
+(text + extra + tokens_est + truncatable) so the downstream truncation,
+manifest, and budget-enforcement code stays unchanged.
+
+```python
+# Today (ak6m.2.2): default strategy = "raw_text"
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"limit": 5}}
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "raw_text", "limit": 5}}  # explicit
+
+# Planned (ak6m.2.4):
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "summary_only"}}
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "structured_fields"}}
+
+# Planned (ak6m.2.5):
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "agent_fetch_handle"}}
+```
+
+Strategy matrix for `patient_documents`:
+
+| Strategy | Preloaded into `text` | Tools registered | Lands in |
+|----------|------------------------|------------------|----------|
+| `raw_text` | Full extracted text of N docs | none | ak6m.2.2 (shipped) |
+| `summary_only` | Per-doc LLM summary (~300 tok each) | none | ak6m.2.4 |
+| `structured_fields` | FHIR-aligned JSON blob (problems, meds, allergies, dx, key dates) | none | ak6m.2.4 |
+| `agent_fetch_handle` | Summaries + structured fields (cheap preload) | `read_document_section`, `read_full_document`, `search_documents` | ak6m.2.5 |
+
+Selection validation rejects unknown strategy values the same way it rejects
+unknown source keys (`InvalidSelectionError`). The default when `strategy` is
+omitted is `"raw_text"` — guarantees existing chat conversations don't shift
+behavior when later strategies ship.
+
+Strategies are caller-scoped via `defaultSourceSelection`, not bundler-global:
+
+```python
+# Chat (today + after ak6m.2.5 land)
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "agent_fetch_handle"}}
+# → cheap preload, model fetches what it needs
+
+# Pre-visit brief (ak6m.1)
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "summary_only"}}
+# → deterministic, bounded latency, no model wandering
+
+# Letter generator (ak6m.3)
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "structured_fields"}}
+# → JSON only, smallest hallucination surface, predictable for templating
+```
+
+**Where a per-caller policy check belongs:** the bundler trusts the selection
+shape. If a feature *must* use a specific strategy (e.g. letter-gen must never
+load raw text for compliance reasons), enforce that at the route layer — read
+`caller_feature_key`, validate the strategy against an allow-list, 422 on
+violation. Not the bundler's job.
+
+### §7.9 Agent fetch loop (planned — ak6m.2.5)
+
+`agent_fetch_handle` is the only strategy that registers tools. The turn
+service runs an agent loop instead of a single-shot stream.
+
+**`ToolSpec` shape:**
+
+```python
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str                                    # e.g. "read_document_section"
+    json_schema: dict[str, Any]                  # OpenAI/Gemini function-call schema
+    handler: Callable[..., ToolResult]           # bound to (repo, patient_id, user_id)
+
+@dataclass(frozen=True)
+class ToolResult:
+    text: str                                    # what gets fed back into the model
+    tokens_added: int                            # estimated cost
+    truncated: bool                              # did the tool hit a per-call cap?
+    provenance: dict[str, str]                   # e.g. {"doc_id": "uuid", "pages": "4-5"}
+```
+
+Handlers close over the same `(patient_documents_repo, patient_id, user_id)`
+the loader saw, so RLS is inherited — there is no way for the model to call a
+tool against a different patient or as a different user.
+
+**Tool surface (initial, ak6m.2.5):**
+
+| Tool | Args | Returns | Notes |
+|------|------|---------|-------|
+| `read_document_section` | `doc_id: str, query: str` | extracted text near `query` (~1k tokens), provenance | Lightweight chunk retrieval inside one doc. v1: keyword + sliding window. v2: pgvector over per-doc embeddings. |
+| `read_full_document` | `doc_id: str` | entire `extracted_text`, provenance | Capped at per-tool result budget; returns summary + "document exceeded N tokens" marker if oversized. |
+| `search_documents` | `query: str, limit: int = 5` | list of `(doc_id, filename, snippet, score)` | Cross-doc lookup. v1: BM25 over `extracted_text`. Same RLS predicate as `list_for_patient`. |
+
+**Agent loop (lives in `ChatTurnService`):**
+
+```
+loop:
+  chunk = next(gateway.stream_completion(..., tools=bundle.tools))
+  if chunk.is_text:
+    yield delta to client
+  elif chunk.is_tool_call:
+    tool = bundle.tools_by_name[chunk.name]
+    result = tool.handler(**chunk.args)
+    record_to_manifest(tool.name, chunk.args, result)
+    feed result back into model
+    enforce_agent_budgets_or_terminate()
+  elif chunk.is_done:
+    break
+```
+
+**Three new budgets the bundler doesn't have today:**
+
+| Budget | Default | What it caps |
+|--------|---------|--------------|
+| `agent_fetch_token_budget` | 50_000 | Total tokens tools can add across a turn. Separate from the bundler's `token_budget`, which only governs the initial preload. |
+| `agent_max_tool_calls` | 6 | Max tool invocations per turn. Prevents a confused model from looping. |
+| Per-tool result cap | 8_000 | Single `read_*` result. Tools fall back to summary+truncation marker when exceeded. |
+
+Exceeding any budget terminates the loop and the model finalizes with whatever
+it has — same shape as the existing `MAX_GATEWAY_ATTEMPTS` retry behavior.
+
+**Manifest grows by an array — still PHI-free:**
+
+```jsonc
+{
+  "sources_included": [
+    {"source_key": "patient_documents",
+     "strategy": "agent_fetch_handle",
+     "tokens_est": 1850,
+     "document_ids": ["uuid-1", "uuid-2"]}
+  ],
+  "tool_calls": [
+    {"tool": "read_document_section",
+     "doc_id": "uuid-1",
+     "query_hint_chars": 42,        // length, not the query text itself
+     "tokens_added": 1200,
+     "truncated": false},
+    {"tool": "read_full_document",
+     "doc_id": "uuid-2",
+     "tokens_added": 5400,
+     "truncated": false}
+  ],
+  "agent_fetch_tokens": 6600,
+  "agent_fetch_budget": 50000,
+  "agent_tool_calls_used": 2,
+  "agent_max_tool_calls": 6,
+  ...
+}
+```
+
+`query_hint_chars` (length, not text) is the deliberate compromise — the model's
+own query string is a synthesis of the user message + chart context, and could
+itself contain PHI if echoed verbatim. The length is enough for forensic
+analysis without leaking content. The actual fetched text appears in the
+prompt envelope and the LLM provider's logs (BAA-covered); it does not appear
+in our manifest.
+
+**Citation surface:** because every fetched chunk carries `provenance`, the
+model can be prompted to cite (`"according to prior_psychiatry_records.pdf
+page 4..."`). This is what makes the agentic path defensible for clinical use
+in a way that opaque dense-RAG retrieval isn't.
+
+**Caching interaction:** the preloaded part of the bundle (summaries +
+structured fields) is stable per `(patient_id, strategy, doc set version)` and
+is the right cache key for Gemini's context caching. Tool results vary
+per-turn and are not cacheable. This makes `agent_fetch_handle` substantially
+cheaper than `raw_text` on multi-turn conversations even before per-tool
+optimizations — the heavy preload pays once.
 
 ---
 

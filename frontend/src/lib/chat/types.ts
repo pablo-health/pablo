@@ -19,6 +19,7 @@ export const SOURCE_KEYS = [
   "most_recent_intake",
   "progress_notes_recent",
   "progress_notes_explicit",
+  "patient_documents",
   "treatment_plan_active",
   "safety_plan_active",
   "lab_values_recent",
@@ -35,9 +36,10 @@ export type SourceParams =
   | true
   | {
       content?: string // pasted_text
-      limit?: number // progress_notes_recent, lab_values_recent, vitals_recent
+      limit?: number // progress_notes_recent, lab_values_recent, vitals_recent, patient_documents
       include_transcripts?: boolean // progress_notes_recent
       note_ids?: string[] // progress_notes_explicit
+      document_ids?: string[] // patient_documents (mutually exclusive with limit)
     }
 
 export type SourceSelection = Partial<Record<SourceKey, SourceParams>>
@@ -56,6 +58,15 @@ export interface ManifestIncludedEntry {
   tokens_est: number
   row_count?: number
   note_ids?: string[]
+  /** Uploaded-document ids for the ``patient_documents`` source (§7.1). */
+  document_ids?: string[]
+  /**
+   * Count of patient documents skipped because their ``extracted_text``
+   * was empty — scanned PDFs awaiting OCR (ak6m.2.3). Populated only
+   * on the ``patient_documents`` source. Drives the briefing card's
+   * "N skipped (no extracted text)" disclosure.
+   */
+  skipped_no_text?: number
   /**
    * ISO-8601 timestamp of the most-recently-finalized note backing
    * this source. Populated for note-backed sources only; absent on
@@ -66,6 +77,8 @@ export interface ManifestIncludedEntry {
   chars?: number
   rows_dropped?: number
   dropped_note_ids?: string[]
+  /** Document ids dropped by the truncation walk. */
+  dropped_document_ids?: string[]
   reason?: string
 }
 

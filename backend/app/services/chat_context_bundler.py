@@ -39,8 +39,8 @@ from typing import TYPE_CHECKING, Any
 from ..utcnow import utc_now_iso
 
 if TYPE_CHECKING:
-    from ..models import Note
-    from ..repositories import NotesRepository
+    from ..models import Note, PatientDocument
+    from ..repositories import NotesRepository, PatientDocumentRepository
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +55,7 @@ SOURCE_KEY_CURRENT_MEDICATIONS = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE = "most_recent_intake"
 SOURCE_KEY_PROGRESS_NOTES_RECENT = "progress_notes_recent"
 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT = "progress_notes_explicit"
+SOURCE_KEY_PATIENT_DOCUMENTS = "patient_documents"
 SOURCE_KEY_TREATMENT_PLAN_ACTIVE = "treatment_plan_active"
 SOURCE_KEY_SAFETY_PLAN_ACTIVE = "safety_plan_active"
 SOURCE_KEY_LAB_VALUES_RECENT = "lab_values_recent"
@@ -66,6 +67,7 @@ V1_SOURCE_KEYS: tuple[str, ...] = (
     SOURCE_KEY_MOST_RECENT_INTAKE,
     SOURCE_KEY_PROGRESS_NOTES_RECENT,
     SOURCE_KEY_PROGRESS_NOTES_EXPLICIT,
+    SOURCE_KEY_PATIENT_DOCUMENTS,
     SOURCE_KEY_TREATMENT_PLAN_ACTIVE,
     SOURCE_KEY_SAFETY_PLAN_ACTIVE,
     SOURCE_KEY_LAB_VALUES_RECENT,
@@ -97,6 +99,22 @@ PASTED_TEXT_MAX_CHARS = 32_000
 # Upper bound on ``progress_notes_recent.limit`` — guards against a
 # caller asking for an unbounded number of notes.
 PROGRESS_NOTES_LIMIT_MAX = 50
+
+# Upper bound on ``patient_documents.limit`` — mirrors the progress-notes
+# cap. Uploaded chart artifacts can be large (multi-MB intake PDFs); the
+# truncation walk shrinks the source row-by-row if it can't fit, but the
+# explicit cap rejects a runaway ``limit`` upfront.
+PATIENT_DOCUMENTS_LIMIT_MAX = 50
+
+# Per-document render cap. The existing truncation walk only drops *whole*
+# docs once the source can't fit the budget — fine for a chart with several
+# docs, but a single 200-page intake PDF would either consume the entire
+# budget or get dropped wholesale, leaving the clinician with "I don't
+# know." The cap clips any one doc to ~80k tokens (320k chars at the
+# bundler's 4-char heuristic) with an explicit truncation marker, so a
+# long doc contributes its first N pages instead of all-or-nothing. The
+# downstream budget walk still runs after this cap.
+PATIENT_DOCUMENT_MAX_RENDER_CHARS = 320_000
 
 # Bytes-per-token heuristic. Gemini tokenizers run roughly 3.5-4 chars
 # per token on English clinical prose; we use 4 as a slight
@@ -408,7 +426,7 @@ def _load_progress_notes_recent(raw: Any, notes: list[Note]) -> LoadedSource:
         notes=notes,
         note_types=SESSION_NOTE_TYPES,
         key=SOURCE_KEY_PROGRESS_NOTES_RECENT,
-        priority=6,
+        priority=7,
         header="Progress note",
         limit=limit,
         truncatable=True,
@@ -456,6 +474,121 @@ def _load_progress_notes_explicit(raw: Any, notes: list[Note]) -> LoadedSource:
     )
 
 
+def _format_patient_document_section(doc: PatientDocument) -> str:
+    """Render one uploaded document as a subsection block.
+
+    Header carries the filename + upload date so the model can attribute
+    quotes back to a specific document; body is the extracted text. Docs
+    without extracted text (scanned PDFs awaiting OCR — ak6m.2.3) never
+    reach this function — :func:`_load_patient_documents` filters them
+    upstream and counts them under ``skipped_no_text``.
+
+    Bodies over ``PATIENT_DOCUMENT_MAX_RENDER_CHARS`` are clipped with an
+    explicit ``[document truncated — ...]`` marker so the model can tell
+    the difference between a doc that genuinely says nothing further and
+    one whose tail got cut for budget reasons.
+    """
+    uploaded = doc.created_at.date()
+    body = (doc.extracted_text or "").strip()
+    if not body:
+        return ""
+    original_chars = len(body)
+    if original_chars > PATIENT_DOCUMENT_MAX_RENDER_CHARS:
+        omitted = original_chars - PATIENT_DOCUMENT_MAX_RENDER_CHARS
+        body = (
+            body[:PATIENT_DOCUMENT_MAX_RENDER_CHARS]
+            + f"\n\n[document truncated — {omitted} chars omitted; "
+            f"original was {original_chars} chars]"
+        )
+    return f"### {doc.filename} (uploaded {uploaded})\n{body}"
+
+
+def _render_patient_documents_text(rows: list[PatientDocument]) -> str:
+    rendered = [_format_patient_document_section(d) for d in rows]
+    rendered = [r for r in rendered if r]
+    if not rendered:
+        return ""
+    return "## UPLOADED PATIENT DOCUMENTS\n\n" + "\n\n".join(rendered)
+
+
+def _load_patient_documents(  # noqa: PLR0912 — branchy selection validation
+    raw: Any,
+    *,
+    patient_documents_repo: PatientDocumentRepository,
+    patient_id: str,
+    user_id: str,
+) -> LoadedSource:
+    limit: int | None = None
+    explicit_ids: list[str] | None = None
+
+    if isinstance(raw, dict):
+        has_limit = "limit" in raw
+        has_doc_ids = "document_ids" in raw
+        if has_limit and has_doc_ids:
+            raise InvalidSelectionError(
+                f"{SOURCE_KEY_PATIENT_DOCUMENTS}: 'limit' and 'document_ids' "
+                "are mutually exclusive"
+            )
+        if has_limit:
+            try:
+                limit = int(raw["limit"])
+            except (TypeError, ValueError) as exc:
+                raise InvalidSelectionError(
+                    f"{SOURCE_KEY_PATIENT_DOCUMENTS}.limit must be an integer"
+                ) from exc
+            if limit < 1 or limit > PATIENT_DOCUMENTS_LIMIT_MAX:
+                raise InvalidSelectionError(
+                    f"{SOURCE_KEY_PATIENT_DOCUMENTS}.limit must be between "
+                    f"1 and {PATIENT_DOCUMENTS_LIMIT_MAX}"
+                )
+        if has_doc_ids:
+            ids = raw["document_ids"]
+            if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+                raise InvalidSelectionError(
+                    f"{SOURCE_KEY_PATIENT_DOCUMENTS}.document_ids must be a list of strings"
+                )
+            explicit_ids = list(ids)
+    elif raw is not True:
+        raise InvalidSelectionError(
+            f"{SOURCE_KEY_PATIENT_DOCUMENTS} selection must be true, "
+            "{'limit': int}, or {'document_ids': [str, ...]}"
+        )
+
+    if explicit_ids is not None:
+        # Preserve caller-supplied order and silently skip ids the caller
+        # cannot read or that belong to a different patient — matches the
+        # ``progress_notes_explicit`` contract (no existence oracle on a
+        # forbidden id).
+        fetched: list[PatientDocument] = []
+        for did in explicit_ids:
+            doc = patient_documents_repo.get(did, user_id)
+            if doc is not None and doc.patient_id == patient_id:
+                fetched.append(doc)
+        all_for_patient = fetched
+    else:
+        all_for_patient = patient_documents_repo.list_for_patient(patient_id, user_id)
+        if limit is not None:
+            all_for_patient = all_for_patient[:limit]
+
+    skipped_no_text = sum(1 for d in all_for_patient if d.extracted_text is None)
+    usable = [d for d in all_for_patient if d.extracted_text is not None]
+    text = _render_patient_documents_text(usable)
+    extra: dict[str, Any] = {
+        "document_ids": [d.id for d in usable],
+        "row_count_initial": len(usable),
+        "skipped_no_text": skipped_no_text,
+    }
+    return LoadedSource(
+        key=SOURCE_KEY_PATIENT_DOCUMENTS,
+        priority=6,
+        rows=list(usable),
+        extra=extra,
+        text=text,
+        tokens_est=estimate_tokens(text),
+        truncatable=True,
+    )
+
+
 def _load_most_recent_intake(raw: Any, notes: list[Note]) -> LoadedSource:
     if raw is not True:
         raise InvalidSelectionError(
@@ -482,7 +615,7 @@ def _load_treatment_plan_active(raw: Any, notes: list[Note]) -> LoadedSource:
         notes=notes,
         note_types=TREATMENT_PLAN_NOTE_TYPES,
         key=SOURCE_KEY_TREATMENT_PLAN_ACTIVE,
-        priority=7,
+        priority=8,
         header="Treatment plan",
         limit=1,
         truncatable=False,
@@ -553,7 +686,7 @@ def _load_lab_values_recent(raw: Any) -> LoadedSource:
         )
     return _load_empty_stub(
         key=SOURCE_KEY_LAB_VALUES_RECENT,
-        priority=8,
+        priority=9,
     )
 
 
@@ -566,7 +699,7 @@ def _load_vitals_recent(raw: Any) -> LoadedSource:
         )
     return _load_empty_stub(
         key=SOURCE_KEY_VITALS_RECENT,
-        priority=8,
+        priority=9,
     )
 
 
@@ -584,10 +717,13 @@ def _is_truthy(raw: Any) -> bool:
     return not (raw is None or raw is False)
 
 
-def _load_selected_sources(
+def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
     *,
     selection: dict[str, Any],
     notes: list[Note],
+    patient_documents_repo: PatientDocumentRepository | None,
+    patient_id: str,
+    user_id: str,
 ) -> list[LoadedSource]:
     loaded: list[LoadedSource] = []
     for key, raw in selection.items():
@@ -605,6 +741,20 @@ def _load_selected_sources(
             loaded.append(_load_progress_notes_recent(raw, notes))
         elif key == SOURCE_KEY_PROGRESS_NOTES_EXPLICIT:
             loaded.append(_load_progress_notes_explicit(raw, notes))
+        elif key == SOURCE_KEY_PATIENT_DOCUMENTS:
+            if patient_documents_repo is None:
+                raise InvalidSelectionError(
+                    f"{SOURCE_KEY_PATIENT_DOCUMENTS} was selected but the "
+                    "bundler was not given a patient_documents_repo"
+                )
+            loaded.append(
+                _load_patient_documents(
+                    raw,
+                    patient_documents_repo=patient_documents_repo,
+                    patient_id=patient_id,
+                    user_id=user_id,
+                )
+            )
         elif key == SOURCE_KEY_TREATMENT_PLAN_ACTIVE:
             loaded.append(_load_treatment_plan_active(raw, notes))
         elif key == SOURCE_KEY_SAFETY_PLAN_ACTIVE:
@@ -625,9 +775,16 @@ def _truncate_one_row(source: LoadedSource) -> bool:
     """
     if not source.truncatable or not source.rows:
         return False
-    dropped = source.rows.pop()  # NotesRepository returns newest-first; pop oldest
+    dropped = source.rows.pop()  # repos return newest-first; pop oldest
     source.extra.setdefault("dropped_rows", 0)
     source.extra["dropped_rows"] += 1
+    if source.key == SOURCE_KEY_PATIENT_DOCUMENTS:
+        if hasattr(dropped, "id"):
+            source.extra.setdefault("dropped_document_ids", []).append(dropped.id)
+            source.extra["document_ids"] = [d.id for d in source.rows]
+        source.text = _render_patient_documents_text(source.rows)
+        source.tokens_est = estimate_tokens(source.text)
+        return True
     if hasattr(dropped, "id"):
         source.extra.setdefault("dropped_note_ids", []).append(dropped.id)
         source.extra["note_ids"] = [n.id for n in source.rows]
@@ -708,6 +865,11 @@ def _build_manifest(
         note_ids = src.extra.get("note_ids")
         if note_ids:
             entry["note_ids"] = list(note_ids)
+        document_ids = src.extra.get("document_ids")
+        if document_ids is not None and src.key == SOURCE_KEY_PATIENT_DOCUMENTS:
+            entry["document_ids"] = list(document_ids)
+        if src.key == SOURCE_KEY_PATIENT_DOCUMENTS and src.is_present:
+            entry["skipped_no_text"] = src.extra.get("skipped_no_text", 0)
         latest_at = src.extra.get("latest_at")
         if latest_at:
             entry["latest_at"] = latest_at
@@ -717,6 +879,8 @@ def _build_manifest(
             entry["rows_dropped"] = src.extra["dropped_rows"]
             if src.extra.get("dropped_note_ids"):
                 entry["dropped_note_ids"] = list(src.extra["dropped_note_ids"])
+            if src.extra.get("dropped_document_ids"):
+                entry["dropped_document_ids"] = list(src.extra["dropped_document_ids"])
         if src.is_present:
             included.append(entry)
         else:
@@ -751,6 +915,7 @@ def assemble_context_bundle(
     user_id: str,
     selection: dict[str, Any],
     token_budget: int = DEFAULT_TOKEN_BUDGET,
+    patient_documents_repo: PatientDocumentRepository | None = None,
 ) -> ContextBundle:
     """Assemble a context bundle for one chat turn.
 
@@ -759,6 +924,13 @@ def assemble_context_bundle(
     (or the per-message override). Unknown source keys raise
     :class:`InvalidSelectionError`; recognized keys with falsy values
     are skipped.
+
+    Pass ``patient_documents_repo`` when callers may select the
+    ``patient_documents`` source. The bundler does not import the
+    Postgres impl at module load; callers thread the concrete repo via
+    their dependency injection chain. Selecting the source without
+    supplying a repo raises :class:`InvalidSelectionError` — the same
+    surface a misconfigured selection produces.
 
     Raises :class:`ContextOverflowError` only when the pasted-text
     source alone exceeds ``token_budget``. All other budget pressure is
@@ -769,7 +941,13 @@ def assemble_context_bundle(
         raise ValueError("token_budget must be positive")
 
     notes = notes_repo.list_by_patient(patient_id, user_id)
-    loaded = _load_selected_sources(selection=selection, notes=notes)
+    loaded = _load_selected_sources(
+        selection=selection,
+        notes=notes,
+        patient_documents_repo=patient_documents_repo,
+        patient_id=patient_id,
+        user_id=user_id,
+    )
 
     pasted = next((s for s in loaded if s.key == SOURCE_KEY_PASTED_TEXT), None)
     if pasted is not None and pasted.tokens_est > token_budget:
@@ -822,12 +1000,16 @@ __all__ = [
     "INTAKE_NOTE_TYPES",
     "MEDICATIONS_NOTE_TYPES",
     "PASTED_TEXT_MAX_CHARS",
+    "PATIENT_DOCUMENTS_LIMIT_MAX",
+    "PATIENT_DOCUMENT_MAX_RENDER_CHARS",
+    "PROGRESS_NOTES_LIMIT_MAX",
     "SAFETY_PLAN_NOTE_TYPES",
     "SESSION_NOTE_TYPES",
     "SOURCE_KEY_CURRENT_MEDICATIONS",
     "SOURCE_KEY_LAB_VALUES_RECENT",
     "SOURCE_KEY_MOST_RECENT_INTAKE",
     "SOURCE_KEY_PASTED_TEXT",
+    "SOURCE_KEY_PATIENT_DOCUMENTS",
     "SOURCE_KEY_PROGRESS_NOTES_EXPLICIT",
     "SOURCE_KEY_PROGRESS_NOTES_RECENT",
     "SOURCE_KEY_SAFETY_PLAN_ACTIVE",

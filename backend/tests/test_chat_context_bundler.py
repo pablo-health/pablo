@@ -36,6 +36,12 @@ from app.services.chat_context_bundler import (
     estimate_tokens,
 )
 
+# Patient-documents source tests live in
+# ``test_chat_context_bundler_patient_documents.py`` so that the
+# OCR (ak6m.2.3), summary/structured (ak6m.2.4), and agent-fetch
+# (ak6m.2.5) follow-ups can extend that surface without crowding
+# the core bundler tests.
+
 PATIENT_ID = "patient-bundler-1"
 USER_ID = "clinician-bundler-1"
 
