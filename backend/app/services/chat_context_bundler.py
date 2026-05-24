@@ -106,6 +106,16 @@ PROGRESS_NOTES_LIMIT_MAX = 50
 # explicit cap rejects a runaway ``limit`` upfront.
 PATIENT_DOCUMENTS_LIMIT_MAX = 50
 
+# Per-document render cap. The existing truncation walk only drops *whole*
+# docs once the source can't fit the budget — fine for a chart with several
+# docs, but a single 200-page intake PDF would either consume the entire
+# budget or get dropped wholesale, leaving the clinician with "I don't
+# know." The cap clips any one doc to ~80k tokens (320k chars at the
+# bundler's 4-char heuristic) with an explicit truncation marker, so a
+# long doc contributes its first N pages instead of all-or-nothing. The
+# downstream budget walk still runs after this cap.
+PATIENT_DOCUMENT_MAX_RENDER_CHARS = 320_000
+
 # Bytes-per-token heuristic. Gemini tokenizers run roughly 3.5-4 chars
 # per token on English clinical prose; we use 4 as a slight
 # under-estimate of budget headroom (i.e. the assembler treats a chunk
@@ -472,11 +482,24 @@ def _format_patient_document_section(doc: PatientDocument) -> str:
     without extracted text (scanned PDFs awaiting OCR — ak6m.2.3) never
     reach this function — :func:`_load_patient_documents` filters them
     upstream and counts them under ``skipped_no_text``.
+
+    Bodies over ``PATIENT_DOCUMENT_MAX_RENDER_CHARS`` are clipped with an
+    explicit ``[document truncated — ...]`` marker so the model can tell
+    the difference between a doc that genuinely says nothing further and
+    one whose tail got cut for budget reasons.
     """
     uploaded = doc.created_at.date()
     body = (doc.extracted_text or "").strip()
     if not body:
         return ""
+    original_chars = len(body)
+    if original_chars > PATIENT_DOCUMENT_MAX_RENDER_CHARS:
+        omitted = original_chars - PATIENT_DOCUMENT_MAX_RENDER_CHARS
+        body = (
+            body[:PATIENT_DOCUMENT_MAX_RENDER_CHARS]
+            + f"\n\n[document truncated — {omitted} chars omitted; "
+            f"original was {original_chars} chars]"
+        )
     return f"### {doc.filename} (uploaded {uploaded})\n{body}"
 
 
@@ -978,6 +1001,7 @@ __all__ = [
     "MEDICATIONS_NOTE_TYPES",
     "PASTED_TEXT_MAX_CHARS",
     "PATIENT_DOCUMENTS_LIMIT_MAX",
+    "PATIENT_DOCUMENT_MAX_RENDER_CHARS",
     "PROGRESS_NOTES_LIMIT_MAX",
     "SAFETY_PLAN_NOTE_TYPES",
     "SESSION_NOTE_TYPES",

@@ -18,6 +18,8 @@ import pytest
 from app.models import PatientDocument
 from app.repositories import InMemoryNotesRepository, InMemoryPatientDocumentRepository
 from app.services.chat_context_bundler import (
+    DEFAULT_TOKEN_BUDGET,
+    PATIENT_DOCUMENT_MAX_RENDER_CHARS,
     PATIENT_DOCUMENTS_LIMIT_MAX,
     SOURCE_KEY_PATIENT_DOCUMENTS,
     InvalidSelectionError,
@@ -403,3 +405,58 @@ class TestPatientDocumentsSource:
         dropped_keys = {s["source_key"] for s in bundle.manifest["sources_dropped"]}
         assert SOURCE_KEY_PATIENT_DOCUMENTS in dropped_keys
         assert "huge.pdf" not in bundle.text
+
+    def test_single_doc_clipped_at_render_cap_with_marker(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        patient_documents_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        # Single doc longer than the per-doc cap. Without the cap this
+        # would either consume the entire budget or get dropped whole;
+        # with the cap, the first 80k tokens land and the rest is
+        # explicitly marked as truncated.
+        excess = 50_000
+        body = "y" * (PATIENT_DOCUMENT_MAX_RENDER_CHARS + excess)
+        patient_documents_repo.add(
+            _make_patient_document(
+                doc_id="long",
+                filename="long_intake.pdf",
+                extracted_text=body,
+            )
+        )
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_documents_repo=patient_documents_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PATIENT_DOCUMENTS: True},
+            token_budget=DEFAULT_TOKEN_BUDGET,
+        )
+        assert "long_intake.pdf" in bundle.text
+        assert "document truncated" in bundle.text
+        assert f"{excess} chars omitted" in bundle.text
+        # Body content is clipped to exactly the cap — no more, no less.
+        assert bundle.text.count("y") == PATIENT_DOCUMENT_MAX_RENDER_CHARS
+
+    def test_short_doc_not_truncated_no_marker(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        patient_documents_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        # Sanity check: short docs do not get the truncation marker.
+        patient_documents_repo.add(
+            _make_patient_document(
+                doc_id="short",
+                filename="short.pdf",
+                extracted_text="brief note body",
+            )
+        )
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_documents_repo=patient_documents_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PATIENT_DOCUMENTS: True},
+        )
+        assert "document truncated" not in bundle.text
+        assert "brief note body" in bundle.text
