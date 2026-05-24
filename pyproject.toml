@@ -45,9 +45,6 @@ reportlab = "^4.5.1"
 # (ak6m.2.3) — fitz is sufficient for v1.
 pymupdf = "^1.24.0"
 
-# Meeting Transcription Pipeline
-meeting-transcription = {git = "https://github.com/lll-solutions/meeting-transcription.git"}
-
 # NLI Verification — onnxruntime only; sentence-transformers (+ torch)
 # moved to optional nli group since verification is gated by
 # ENABLE_EMBEDDING_VERIFICATION env var.
@@ -103,6 +100,10 @@ httpx = "^0.28.1"
 ruff = "^0.15.13"
 mypy = "^2.1.0"
 types-redis = "^4.6.0"
+# Was pulled in transitively by meeting-transcription before that dep
+# was dropped (THERAPY-71d5); declare explicitly so mypy keeps its
+# dateutil stubs.
+types-python-dateutil = "^2.9.0"
 mcp = "^1.27.1"
 testcontainers = {version = "^4.13.0", extras = ["postgres"]}
 
@@ -258,7 +259,6 @@ module = [
     "firebase_admin.*",
     "redis.*",
     "reportlab.*",
-    "meeting_transcription.*",
     "presidio_analyzer.*",
     "presidio_anonymizer.*",
     "faker.*",

@@ -45,12 +45,12 @@ from ..repositories import (
 )
 from ..services import (
     AuditService,
-    MeetingTranscriptionNoteService,
     NoteAlreadyFinalizedError,
     NoteGenerationService,
     NoteNotFinalizedError,
     NoteNotFoundError,
     NoteService,
+    RegistryNoteGenerationService,
     get_audit_service,
 )
 from ..utcnow import utc_now
@@ -84,7 +84,7 @@ def get_note_service(
 
 def get_note_generation_service() -> NoteGenerationService:
     """Get note generation service for standalone-note dictation flows."""
-    return MeetingTranscriptionNoteService()
+    return RegistryNoteGenerationService()
 
 
 def get_registry() -> NoteTypeRegistry:

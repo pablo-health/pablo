@@ -79,9 +79,9 @@ from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import (
     AuditService,
-    MeetingTranscriptionNoteService,
     NoteService,
     PatientNotFoundError,
+    RegistryNoteGenerationService,
     SessionService,
     get_audit_service,
 )
@@ -331,7 +331,7 @@ def _get_session_service(
     return SessionService(
         session_repo,
         patient_repo,
-        MeetingTranscriptionNoteService(),
+        RegistryNoteGenerationService(),
         NoteService(notes_repo),
     )
 

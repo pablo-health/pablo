@@ -55,10 +55,10 @@ from ..services import (
     AuditService,
     InvalidSessionStatusError,
     InvalidStatusTransitionError,
-    MeetingTranscriptionNoteService,
     NoteGenerationService,
     NoteService,
     PatientNotFoundError,
+    RegistryNoteGenerationService,
     SessionAlreadyInStatusError,
     SessionInTerminalStatusError,
     SessionNotFoundError,
@@ -146,7 +146,7 @@ def get_notes_repository(
 
 def get_note_generation_service() -> NoteGenerationService:
     """Get note generation service instance."""
-    return MeetingTranscriptionNoteService()
+    return RegistryNoteGenerationService()
 
 
 def get_note_service(
