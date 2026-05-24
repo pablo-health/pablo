@@ -49,6 +49,7 @@ from app.models import User  # noqa: E402
 from app.repositories import (  # noqa: E402
     InMemoryAllowlistRepository,
     InMemoryChatRepository,
+    InMemoryClinicianProfileRepository,
     InMemoryEhrPromptRepository,
     InMemoryEhrRouteRepository,
     InMemoryIdentityRepository,
@@ -58,6 +59,7 @@ from app.repositories import (  # noqa: E402
     InMemoryTherapySessionRepository,
     InMemoryUserRepository,
     get_allowlist_repository,
+    get_clinician_profile_repository,
     get_identity_repository,
     get_user_repository,
 )
@@ -200,6 +202,12 @@ def mock_user_repo() -> InMemoryUserRepository:
 
 
 @pytest.fixture
+def mock_clinician_profile_repo() -> InMemoryClinicianProfileRepository:
+    """Create a fresh in-memory clinician profile repository for each test."""
+    return InMemoryClinicianProfileRepository()
+
+
+@pytest.fixture
 def mock_allowlist_repo() -> InMemoryAllowlistRepository:
     """Create a fresh in-memory allowlist repository for each test."""
     return InMemoryAllowlistRepository()
@@ -295,6 +303,7 @@ def client(
     mock_user_id: str,
     mock_user: User,
     mock_user_repo: InMemoryUserRepository,
+    mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
     mock_allowlist_repo: InMemoryAllowlistRepository,
     mock_identity_repo: InMemoryIdentityRepository,
     mock_audit_service: AuditService,
@@ -334,6 +343,9 @@ def client(
     )
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_user_repository] = lambda: mock_user_repo
+    app.dependency_overrides[get_clinician_profile_repository] = (
+        lambda: mock_clinician_profile_repo
+    )
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
     app.dependency_overrides[get_identity_repository] = lambda: mock_identity_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service

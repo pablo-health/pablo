@@ -16,6 +16,11 @@ from .chat import (
     ChatRepository,
     InMemoryChatRepository,
 )
+from .clinician_profile import (
+    ClinicianProfile,
+    ClinicianProfileRepository,
+    InMemoryClinicianProfileRepository,
+)
 from .ehr_prompt import (
     EhrPromptRepository,
     InMemoryEhrPromptRepository,
@@ -163,7 +168,7 @@ def get_ical_sync_config_repository():  # type: ignore[no-untyped-def]
     return PostgresICalSyncConfigRepository(_get_pg_session())
 
 
-def get_clinician_profile_repository():  # type: ignore[no-untyped-def]
+def get_clinician_profile_repository() -> ClinicianProfileRepository:
     """Get clinician profile repository instance (postgres only)."""
     from .postgres.clinician_profile import PostgresClinicianProfileRepository
 
@@ -201,11 +206,14 @@ def get_llm_usage_repository() -> LlmUsageRepository:
 __all__ = [
     "AllowlistRepository",
     "ChatRepository",
+    "ClinicianProfile",
+    "ClinicianProfileRepository",
     "EhrPromptRepository",
     "EhrRouteRepository",
     "IdentityRepository",
     "InMemoryAllowlistRepository",
     "InMemoryChatRepository",
+    "InMemoryClinicianProfileRepository",
     "InMemoryEhrPromptRepository",
     "InMemoryEhrRouteRepository",
     "InMemoryIdentityRepository",

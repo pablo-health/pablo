@@ -10,7 +10,12 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from app.models import User
-from app.repositories import InMemoryIdentityRepository, InMemoryUserRepository
+from app.repositories import (
+    ClinicianProfile,
+    InMemoryClinicianProfileRepository,
+    InMemoryIdentityRepository,
+    InMemoryUserRepository,
+)
 from app.routes.users import _user_has_totp_factor
 
 
@@ -88,6 +93,212 @@ class TestUpdateProfile:
 
         assert response.status_code == 200
         assert response.json()["provider_type"] is None
+
+
+class TestTitleAndCredentials:
+    """Test that PATCH /me persists title/credentials onto the per-practice
+    ClinicianProfile row, and GET /me/status surfaces them (PABLO-ztv.1).
+
+    Pre-fix, the request schema accepted ``title`` and ``credentials`` but
+    they were silently dropped — the inline comment at users.py acknowledged
+    the gap. Tests below assert the round-trip works for both an existing
+    profile (update path) and a new profile (create path, with the practice
+    resolved from the user's email).
+    """
+
+    def test_patch_me_updates_title_on_existing_profile(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                title="Mr.",
+                credentials="LMFT",
+            )
+        )
+
+        response = client.patch("/api/users/me", json={"title": "Dr."})
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "Dr."
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.title == "Dr."
+        # Unspecified field preserved — PATCH, not PUT.
+        assert stored.credentials == "LMFT"
+        # Practice_id never overwritten by PATCH /me.
+        assert stored.practice_id == "practice-abc"
+
+    def test_patch_me_updates_credentials_on_existing_profile(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                title="Dr.",
+                credentials=None,
+            )
+        )
+
+        response = client.patch("/api/users/me", json={"credentials": "PhD, LMFT"})
+
+        assert response.status_code == 200
+        assert response.json()["credentials"] == "PhD, LMFT"
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.credentials == "PhD, LMFT"
+        assert stored.title == "Dr."
+
+    def test_patch_me_creates_profile_when_practice_resolves(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        """First-time onboarding write: no ClinicianProfile row yet, but the
+        practice mapping exists, so the upsert creates the row."""
+        mock_user_repo.update(mock_user)
+        assert mock_clinician_profile_repo.get(mock_user.id) is None
+
+        with patch(
+            "app.auth.service._resolve_practice_from_email",
+            return_value=("practice-fresh", "practice_fresh"),
+        ):
+            response = client.patch(
+                "/api/users/me",
+                json={"title": "Dr.", "credentials": "PsyD"},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["title"] == "Dr."
+        assert body["credentials"] == "PsyD"
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.practice_id == "practice-fresh"
+        assert stored.title == "Dr."
+        assert stored.credentials == "PsyD"
+
+    def test_patch_me_skips_profile_when_no_practice_mapping(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        """If the user has no practice mapping yet (unusual — the wizard
+        should provision the practice before this point), the title/
+        credentials write is skipped silently. Other PATCH fields still
+        persist so the rest of the onboarding step succeeds."""
+        mock_user_repo.update(mock_user)
+
+        with patch(
+            "app.auth.service._resolve_practice_from_email",
+            return_value=None,
+        ):
+            response = client.patch(
+                "/api/users/me",
+                json={"title": "Dr.", "provider_type": "therapist"},
+            )
+
+        assert response.status_code == 200
+        assert mock_clinician_profile_repo.get(mock_user.id) is None
+        stored_user = mock_user_repo.get(mock_user.id)
+        assert stored_user is not None
+        assert stored_user.provider_type == "therapist"
+
+    def test_patch_me_title_and_credentials_are_independent_fields(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        """PATCH semantics: sending only ``title`` must not clear
+        ``credentials`` and vice versa."""
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                title="Dr.",
+                credentials="LMFT",
+            )
+        )
+
+        client.patch("/api/users/me", json={"title": "Ms."})
+        assert mock_clinician_profile_repo.get(mock_user.id).credentials == "LMFT"  # type: ignore[union-attr]
+
+        client.patch("/api/users/me", json={"credentials": "PsyD"})
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.title == "Ms."
+        assert stored.credentials == "PsyD"
+
+    def test_user_status_includes_title_and_credentials(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        """GET /me/status surfaces title/credentials from the
+        per-practice ClinicianProfile row, so the SaaS onboarding wizard
+        and the dashboard layout can render the formal name without a
+        second API call."""
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                title="Dr.",
+                credentials="PsyD, LMFT",
+            )
+        )
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["title"] == "Dr."
+        assert body["credentials"] == "PsyD, LMFT"
+
+    def test_user_status_title_and_credentials_null_without_profile(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+    ) -> None:
+        """A user with no ClinicianProfile row yet (fresh signup) returns
+        null for both fields — the wizard treats this as the
+        'profile-setup-needed' signal."""
+        mock_user_repo.update(mock_user)
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["title"] is None
+        assert body["credentials"] is None
 
 
 class TestOnboardingState:
