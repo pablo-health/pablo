@@ -46,13 +46,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Wall-time of the fan-out scales linearly with tenant count when run
-# serially. Each per-tenant alembic invocation pays a non-trivial cost
-# even when there's nothing to upgrade (ScriptDirectory walks the entire
-# versions/ directory; the engine round-trips to check
-# alembic_version). Default to 8 workers — fits comfortably under
-# Cloud SQL's max_connections and the default engine pool overflow.
-DEFAULT_FAN_OUT_WORKERS = int(os.environ.get("PABLO_MIGRATE_MAX_WORKERS", "8"))
+# Default to serial fan-out. Alembic's EnvironmentContext is a
+# process-global singleton: two threads inside ``command.upgrade`` race
+# on it, and the second call wins/corrupts the first's context. The
+# symptom is a fan-out where every tenant with real DDL fails at once
+# while no-op runs (everyone already at head) pass — which is exactly
+# the behavior that hid the bug until the first multi-tenant DDL since
+# parallelism was enabled. Override via PABLO_MIGRATE_MAX_WORKERS for
+# no-op runs where speed matters more than safety.
+DEFAULT_FAN_OUT_WORKERS = int(os.environ.get("PABLO_MIGRATE_MAX_WORKERS", "1"))
 
 
 class TenantStatus(StrEnum):
