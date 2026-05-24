@@ -1,6 +1,29 @@
 {
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "bd prime",
+            "type": "command"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
   "permissions": {
-    "defaultMode": "acceptEdits",
     "allow": [
       "Bash(make:*)",
       "Bash(poetry run:*)",
@@ -83,6 +106,7 @@
       "Bash(python scripts/check_audit_params.py)",
       "Bash(bash scripts/check-version-sync.sh)"
     ],
+    "defaultMode": "acceptEdits",
     "deny": [
       "Bash(rm -rf /)",
       "Bash(rm -rf /*)",
