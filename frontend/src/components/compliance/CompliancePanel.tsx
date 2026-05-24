@@ -11,9 +11,8 @@ import {
   useCompleteComplianceItem,
 } from "@/hooks/useCompliance"
 import type { ComplianceItem, ComplianceTemplate } from "@/types/compliance"
-import { ComplianceWizard } from "./ComplianceWizard"
 import { HorizonStrip } from "./HorizonStrip"
-import { QuickAddRow } from "./QuickAddRow"
+import { ReminderComposer } from "./ReminderComposer"
 import {
   type EnrichedItem,
   type HorizonId,
@@ -29,7 +28,8 @@ export function CompliancePanel() {
   const { data: items = [], isLoading: itemsLoading } = useComplianceItems()
   const { data: templates = [] } = useComplianceTemplates()
   const completeItem = useCompleteComplianceItem()
-  const [wizardOpen, setWizardOpen] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<ComplianceItem | null>(null)
   const [selection, setSelection] = useState<Selection>("urgent")
 
   const templateByType = useMemo(() => {
@@ -73,12 +73,22 @@ export function CompliancePanel() {
       .sort(sortByDueDate)
   }, [selection, enriched, urgent])
 
+  function openComposerForAdd() {
+    setEditingItem(null)
+    setComposerOpen(true)
+  }
+
+  function openComposerForEdit(item: ComplianceItem) {
+    setEditingItem(item)
+    setComposerOpen(true)
+  }
+
   const hasAny = items.length > 0
 
   if (itemsLoading) {
     return (
       <div className="card">
-        <PanelHeader onManage={() => setWizardOpen(true)} hasAny={false} />
+        <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
         <p className="text-sm text-neutral-500 py-6 text-center">Loading…</p>
       </div>
     )
@@ -87,9 +97,15 @@ export function CompliancePanel() {
   if (!hasAny) {
     return (
       <div className="card">
-        <PanelHeader onManage={() => setWizardOpen(true)} hasAny={false} />
-        <EmptyState onStart={() => setWizardOpen(true)} />
-        <ComplianceWizard open={wizardOpen} onOpenChange={setWizardOpen} />
+        <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
+        <EmptyState onStart={openComposerForAdd} />
+        <ReminderComposer
+          open={composerOpen}
+          onOpenChange={setComposerOpen}
+          templates={templates}
+          items={items}
+          initialItem={editingItem}
+        />
       </div>
     )
   }
@@ -99,7 +115,7 @@ export function CompliancePanel() {
 
   return (
     <div className="card">
-      <PanelHeader onManage={() => setWizardOpen(true)} hasAny />
+      <PanelHeader onAdd={openComposerForAdd} hasAny />
       <HorizonStrip counts={counts} selected={selection} onSelect={setSelection} />
 
       {showAllClear ? (
@@ -112,6 +128,7 @@ export function CompliancePanel() {
             <ItemRow
               key={entry.item.id}
               entry={entry}
+              onEdit={() => openComposerForEdit(entry.item)}
               onComplete={() => completeItem.mutate(entry.item.id)}
               completing={completeItem.isPending}
             />
@@ -119,18 +136,22 @@ export function CompliancePanel() {
         </ul>
       )}
 
-      <QuickAddRow templates={templates} />
-
-      <ComplianceWizard open={wizardOpen} onOpenChange={setWizardOpen} />
+      <ReminderComposer
+        open={composerOpen}
+        onOpenChange={setComposerOpen}
+        templates={templates}
+        items={items}
+        initialItem={editingItem}
+      />
     </div>
   )
 }
 
 function PanelHeader({
-  onManage,
+  onAdd,
   hasAny,
 }: {
-  onManage: () => void
+  onAdd: () => void
   hasAny: boolean
 }) {
   return (
@@ -144,8 +165,8 @@ function PanelHeader({
         </p>
       </div>
       {hasAny && (
-        <Button variant="outline" size="sm" onClick={onManage}>
-          Manage
+        <Button variant="outline" size="sm" onClick={onAdd}>
+          Add reminder
         </Button>
       )}
     </div>
@@ -154,10 +175,12 @@ function PanelHeader({
 
 function ItemRow({
   entry,
+  onEdit,
   onComplete,
   completing,
 }: {
   entry: EnrichedItem
+  onEdit: () => void
   onComplete: () => void
   completing: boolean
 }) {
@@ -165,20 +188,27 @@ function ItemRow({
   const dot = categoryDot(item.item_type)
   const duePill = pillFor(horizon)
 
+  // Row body opens the edit dialog; "Mark done" stopPropagation so the primary
+  // "I just did the thing" action never pops a dialog by accident.
   return (
     <li className="group flex items-center gap-3 rounded-lg border border-neutral-200/70 bg-white/60 px-3 py-2 hover:bg-white hover:border-neutral-300 transition-colors">
       <span
         className={`h-2.5 w-2.5 rounded-full shrink-0 ${dot}`}
         aria-hidden
       />
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={onEdit}
+        className="min-w-0 flex-1 text-left"
+        aria-label={`Edit ${item.label}`}
+      >
         <p className="text-sm font-medium text-neutral-900 truncate">
           {item.label}
         </p>
         <p className="text-xs text-neutral-500 mt-0.5 truncate">
           {item.notes ?? labelForType(item.item_type)}
         </p>
-      </div>
+      </button>
       <span
         className={`hidden sm:inline-flex items-center text-[10.5px] font-medium px-2 py-0.5 rounded-full ${duePill}`}
       >
@@ -187,7 +217,10 @@ function ItemRow({
       <Button
         variant="ghost"
         size="sm"
-        onClick={onComplete}
+        onClick={(e) => {
+          e.stopPropagation()
+          onComplete()
+        }}
         disabled={completing}
         className="opacity-70 group-hover:opacity-100 transition-opacity"
       >
@@ -235,10 +268,10 @@ function EmptyState({ onStart }: { onStart: () => void }) {
       </p>
       <p className="text-sm text-neutral-600 mt-1 max-w-sm">
         Pablo will nudge you before your license, insurance, and attestations
-        come due. Takes about two minutes.
+        come due. Pick the ones you want — skip the rest.
       </p>
       <Button className="mt-4" onClick={onStart}>
-        Start setup
+        Add reminder
       </Button>
     </div>
   )

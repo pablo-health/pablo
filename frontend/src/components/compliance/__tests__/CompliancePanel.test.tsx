@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { CompliancePanel } from "../CompliancePanel"
 import type { ComplianceItem, ComplianceTemplate } from "@/types/compliance"
@@ -12,7 +12,8 @@ const useCompleteComplianceItem = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useCompliance", () => ({
   useComplianceItems: (...args: unknown[]) => useComplianceItems(...args),
-  useComplianceTemplates: (...args: unknown[]) => useComplianceTemplates(...args),
+  useComplianceTemplates: (...args: unknown[]) =>
+    useComplianceTemplates(...args),
   useCompleteComplianceItem: (...args: unknown[]) =>
     useCompleteComplianceItem(...args),
   useCreateComplianceItem: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -70,14 +71,18 @@ describe("CompliancePanel", () => {
     vi.clearAllMocks()
   })
 
-  it("shows the onboarding empty state when no items are saved", () => {
+  it("shows the onboarding empty state with an Add reminder CTA", () => {
     useComplianceItems.mockReturnValue({ data: [], isLoading: false })
     useComplianceTemplates.mockReturnValue({ data: [LICENSE_TEMPLATE] })
 
     renderPanel()
 
-    expect(screen.getByText(/let's set up your reminders/i)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /start setup/i })).toBeInTheDocument()
+    expect(
+      screen.getByText(/let's set up your reminders/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /add reminder/i }),
+    ).toBeInTheDocument()
   })
 
   it("shows the all-clear state when items are saved but none urgent", () => {
@@ -92,9 +97,13 @@ describe("CompliancePanel", () => {
     expect(
       screen.getByText(/you'?re all caught up\. pablo'?s got it from here\./i),
     ).toBeInTheDocument()
+    // Single primary entry point — no separate Manage button anymore.
     expect(
-      screen.getByRole("button", { name: /manage/i }),
+      screen.getByRole("button", { name: /add reminder/i }),
     ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /manage/i }),
+    ).not.toBeInTheDocument()
   })
 
   it("surfaces overdue and due-soon items, sorted by urgency", () => {
@@ -116,7 +125,7 @@ describe("CompliancePanel", () => {
     expect(items[1]).toHaveTextContent(/due in 25 days/i)
   })
 
-  it("calls completeItem.mutate when 'Mark done' is clicked", async () => {
+  it("calls completeItem.mutate when 'Mark done' is clicked", () => {
     const mutate = vi.fn()
     useCompleteComplianceItem.mockReturnValue({ mutate, isPending: false })
     useComplianceItems.mockReturnValue({
@@ -127,9 +136,49 @@ describe("CompliancePanel", () => {
 
     renderPanel()
 
-    const button = screen.getByRole("button", { name: /mark done/i })
-    button.click()
+    fireEvent.click(screen.getByRole("button", { name: /mark done/i }))
 
     expect(mutate).toHaveBeenCalledWith("soon")
+  })
+
+  it("opens the composer in edit mode when a row body is clicked", () => {
+    useComplianceItems.mockReturnValue({
+      data: [
+        makeItem({
+          id: "soon",
+          due_date: "2026-06-01",
+          label: "NY LMHC renewal",
+        }),
+      ],
+      isLoading: false,
+    })
+    useComplianceTemplates.mockReturnValue({ data: [LICENSE_TEMPLATE] })
+
+    renderPanel()
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /edit ny lmhc renewal/i }),
+    )
+
+    // Composer dialog mounted in edit mode for this item.
+    expect(
+      screen.getByText(/edit · ny lmhc renewal/i),
+    ).toBeInTheDocument()
+  })
+
+  it("opens the composer in browse mode when 'Add reminder' is clicked", () => {
+    useComplianceItems.mockReturnValue({
+      data: [makeItem({ due_date: "2027-12-01" })],
+      isLoading: false,
+    })
+    useComplianceTemplates.mockReturnValue({ data: [LICENSE_TEMPLATE] })
+
+    renderPanel()
+
+    fireEvent.click(screen.getByRole("button", { name: /add reminder/i }))
+
+    // Browse-mode header copy is visible (there's already an item, so
+    // the "add or edit" copy renders rather than the empty-state copy).
+    expect(screen.getByText(/add or edit a reminder/i)).toBeInTheDocument()
   })
 })
