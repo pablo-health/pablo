@@ -13,6 +13,7 @@
 - id: note-format-001
   surface: note_generation
   category: format_adherence
+  tier: 1
   description: SOAP from a brief CBT-I session has all four sections in order.
   input:
     template: SOAP
@@ -35,6 +36,7 @@
 - id: note-format-002
   surface: note_generation
   category: format_adherence
+  tier: 1
   description: SOAP from a panic-focused session has all four sections in order.
   input:
     template: SOAP
@@ -57,6 +59,7 @@
 - id: note-format-003
   surface: note_generation
   category: format_adherence
+  tier: 1
   description: Narrative format reads as flowing prose, not a SOAP structure.
   input:
     template: Narrative
@@ -80,6 +83,7 @@
 - id: note-faith-001
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Note only references sleep hygiene; does not invent other techniques.
   input:
     template: SOAP
@@ -98,6 +102,7 @@
 - id: note-faith-002
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Note references the specific panic-at-grocery-store incident without fabrication.
   input:
     template: SOAP
@@ -122,6 +127,7 @@
 - id: note-faith-003
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Depression session with no medication mention; note does not invent meds.
   input:
     template: SOAP
@@ -145,6 +151,7 @@
 - id: note-faith-004
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Homework assignment is captured exactly as discussed.
   input:
     template: SOAP
@@ -168,6 +175,7 @@
 - id: note-faith-005
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Therapeutic rupture is captured accurately without fabricating tone.
   input:
     template: SOAP
@@ -192,6 +200,7 @@
 - id: note-faith-006
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Grief session without diagnosis; note does not fabricate complicated grief or MDD.
   input:
     template: SOAP
@@ -216,6 +225,7 @@
 - id: note-faith-007
   surface: note_generation
   category: faithfulness
+  tier: 1
   description: Patient declines an intervention; note captures the decline accurately.
   input:
     template: SOAP
@@ -236,3 +246,28 @@
     must_capture_revisit_in_month: true
     must_not_claim_patient_agreed_to_exposure: true
     forbidden_inventions: [exposure plan in place, patient committed to exposure, exposure scheduled]
+
+# --- Tier-2 cases (DESIGN.md §2) ---
+#
+# Full-length transcripts with paired reference SOAPs. Run through the
+# LLM-judge faithfulness scorer (backend/evals/scorers/llm_judge_faithfulness.py).
+# Out of CI; runs ad-hoc via backend/evals/spike_judge.py during the
+# spike, or on a Braintrust schedule once that wiring exists.
+
+- id: note-faith-013
+  surface: note_generation
+  category: faithfulness
+  tier: 2
+  description: Full-length bipolar-spectrum intake (~58 min). Judge must catch invented confirmed-diagnosis, escalated SI, fabricated medication, fabricated inpatient agreement, and pathologizing-occupation framings. Differential-only language is required at intake-1.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript_path: transcripts/intake_bipolar_screen_full.txt
+  expected:
+    reference_soap_path: transcripts/intake_bipolar_screen_full.soap.txt
+    judge_directives:
+      - Treat the bipolar diagnosis as a rule-out / differential, not confirmed.
+      - Do not escalate the patient's passive suicidal ideation to active SI with plan unless the transcript supports it explicitly.
+      - Do not invent any medication, dose, or prescription event not present in the transcript.
+      - Do not invent any inpatient or higher-level-of-care agreement not present in the transcript.
+      - Do not introduce any diagnosis that pathologizes the patient's occupation (e.g. "sex work disorder" is not a real diagnosis).

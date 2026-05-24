@@ -1,0 +1,80 @@
+SOAP NOTE - Psychotherapy Session
+Client: Quasi Quincey, 27
+Date: May 8, 2024
+Session #: 1 (Initial Intake)
+Duration: 58 minutes
+Therapist: Dr. Counterfeit Caldwell, Psy.D.
+
+SUBJECTIVE:
+Client is a 27-year-old female presenting for initial evaluation at urging of friend who observed significant mood instability. Client reports experiencing distinct periods of elevated mood lasting 1-2 weeks characterized by decreased need for sleep (3-4 hours/night without fatigue), racing thoughts, pressured speech, increased goal-directed activity (cleaning entire apartment at 3am, starting multiple businesses), increased talkativeness, increased confidence/grandiosity, hypersexuality (booking 3-4 clients per day vs. usual), impulsive spending (spent $3000 in one week on designer clothes and Vegas trip), increased substance use (cocaine "multiple times per week" vs. occasional), and engagement in high-risk behaviors (seeing unscreened clients, unsafe sexual practices). These elevated periods are followed by depressive episodes lasting days to weeks characterized by hypersomnia (12-14 hours/day), anhedonia ("nothing is enjoyable"), anergia (difficulty with basic ADLs), loss of appetite, feelings of worthlessness and shame, passive suicidal ideation ("sometimes I think about taking all my pills at once"), social withdrawal, and impaired occupational functioning (canceling work appointments). Client reports pattern has been present for approximately 4-5 years (since ages 22-23) but has worsened over past year, particularly following family estrangement two years ago after family discovered her occupation. Client works as an escort/sex worker (5 years); describes feeling "powerful and in control" during elevated periods but "disgusting and used" during depressive periods. Reports making poor decisions during elevated phases including inadequate client screening resulting in dangerous situations. History of trauma: multiple instances of physical assault by clients including non-consensual choking, slapping, and being held against will. Reports occasional flashbacks and nightmares related to these incidents, particularly during depressive phases. Current substance use: daily marijuana, regular cocaine use (frequency increases during elevated periods), alcohol use (binge drinking socially during elevated periods, solitary wine consumption during depressive periods). Client denies current plan or intent for suicide but acknowledges passive ideation ("I just want the pain to stop") and access to means (pills). History of non-suicidal self-injury (cutting) in adolescence (ages 16-18), no recent cutting. Reports pattern of intense, unstable relationships characterized by idealization followed by rapid devaluation and ghosting. Financial instability due to impulsive spending during elevated periods despite high income ($6-7K/month). Family history significant for maternal aunt with bipolar disorder (per client report). Client estranged from family (parents and younger sister) for 2 years due to discovery of sex work; family is Southern Baptist and views client's work as "going to hell." Limited support system: friend Mira and roommate Lyric. History of depression in high school, saw school counselor briefly, no psychiatric medication trial (parents "didn't believe in therapy"). Bachelor's degree in Psychology, not utilized due to continued sex work.
+
+OBJECTIVE:
+Client presented for video session appearing as stated age, casually dressed, good hygiene. Eye contact appropriate. Speech was normal rate and volume, coherent and goal-directed. Mood self-described as "pretty level" at present. Affect appropriate to content, became tearful briefly when discussing family estrangement and assault experiences. Client was highly engaged throughout session, answered questions openly and thoughtfully. Demonstrated good insight into mood patterns and their impact on functioning ("I feel like I'm two different people"). Judgment appears impaired during elevated mood states (by history) but intact during current euthymic period. Cognitive functioning grossly intact. Memory appeared intact for both recent and remote events. Client able to provide detailed chronology of mood patterns and life events. No evidence of current psychosis, no hallucinations, delusions, or disorganized thinking evident. Denied homicidal ideation. Endorsed passive suicidal ideation but denied plan, intent, or immediate risk. Client demonstrated understanding of safety planning and agreed to crisis resources.
+
+ASSESSMENT:
+Client presents with complex clinical picture requiring comprehensive differential diagnosis. Primary diagnostic consideration is Bipolar Disorder (Type I vs. Type II to be determined based on severity/duration of elevated episodes and presence of psychotic features, which were not clearly established in initial interview). Client reports distinct periods of elevated/expansive mood with classic manic features including decreased need for sleep, racing thoughts/flight of ideas, pressured speech (by report), increase in goal-directed activity, grandiosity/inflated self-esteem, and excessive involvement in high-risk pleasurable activities (sexual indiscretions, spending sprees, substance use). These episodes are followed by major depressive episodes. Family history is significant for bipolar disorder (maternal aunt), suggesting genetic vulnerability. However, several complicating factors must be carefully evaluated before confirming diagnosis:
+
+1) Substance-Induced Mood Disorder must be ruled out: Client uses cocaine regularly with increased use during elevated periods. Cocaine can induce manic-like symptoms. Marijuana use is daily. Timeline assessment needed to determine if mood symptoms occur independently of substance use or are substance-induced. Client reports elevated mood precedes substance use, but this requires careful longitudinal tracking.
+
+2) Trauma-related symptoms: Client has experienced multiple traumatic assaults in context of sex work. Reports flashbacks, nightmares, and avoidance related to trauma. While mood symptoms appear primary, trauma may be exacerbating or complicating clinical picture. Differential includes PTSD or trauma-related mood dysregulation.
+
+3) Borderline Personality Disorder features: Client demonstrates pattern of unstable intense relationships, affective instability, impulsivity, recurrent suicidal ideation, and history of self-harm. Identity disturbance evident ("I feel like two different people"). However, distinct episodic nature of mood symptoms and decreased need for sleep during elevated periods are more consistent with bipolar disorder than BPD alone. May have both.
+
+4) Occupational factors: The nature of client's work (sex work) involves irregular schedule, nighttime hours, potential sleep disruption, substance use in work context, exposure to violence, and significant psychological stress, all of which could contribute to mood instability. Additionally, societal stigma and family rejection related to work are chronic stressors.
+
+5) Cyclothymic Disorder vs. Bipolar II vs. Bipolar I: Duration and severity of elevated episodes not fully established. Need to determine if elevated episodes meet criteria for hypomanic episodes (4+ days) vs. manic episodes (7+ days or requiring hospitalization). Presence of psychotic features during elevated episodes was not assessed and would distinguish Bipolar I.
+
+Immediate safety concerns: Passive suicidal ideation present but LOW acute risk based on denial of plan/intent, presence of protective factors (friends, does not want to cause harm like unit friend's suicide did to family), future orientation, and engagement with treatment. However, client describes increased SI during depressive episodes and has access to means (pills), requiring close monitoring and safety planning.
+
+Functional impairment: Significant across multiple domains including occupational (canceling work during depressive episodes, dangerous decision-making during elevated episodes), financial (impulsive spending leading to debt), interpersonal (pattern of failed relationships, family estrangement, lost friendships), and personal safety (high-risk behaviors, exposure to violence).
+
+Clinical summary: 27-year-old female with probable Bipolar Disorder (type to be determined) complicated by substance use, trauma history, occupational risk factors, and possible personality disorder features. Requires ongoing diagnostic clarification through mood tracking, detailed timeline analysis, and potential substance use reduction to clarify independent mood episodes. Genetic loading (family history) supports bipolar diagnosis. Client is motivated for treatment and demonstrates good insight.
+
+PLAN:
+1. Continue weekly individual therapy for ongoing assessment and diagnostic clarification
+2. Mood charting: Client to complete daily mood chart tracking mood, energy, sleep hours, substance use, and significant events. This will help establish pattern, duration, and severity of episodes.
+3. Timeline analysis: In subsequent sessions, will construct detailed timeline of mood episodes to determine:
+   - Duration of elevated and depressive episodes
+   - Relationship between substance use and mood episodes
+   - Presence/absence of psychotic features during elevated episodes
+   - Seasonal patterns or identifiable triggers
+   - Impact of occupational stressors
+4. Trauma assessment: Will complete trauma-focused assessment (PCL-5 or similar) to evaluate PTSD symptoms
+5. Personality assessment: Consider structured assessment for personality disorders if BPD features remain prominent after mood stabilization
+6. Safety planning: Established crisis plan. Client has:
+   - Therapist emergency number
+   - Crisis hotline: 988
+   - Crisis Text Line: Text HOME to 741741
+   - Agreement to go to ER or call 911 if suicidal thoughts intensify
+   - Agreed to reach out to friend Mira or roommate Lyric if in distress
+7. Psychoeducation: Provided information about mood disorders and explained diagnostic process. Normalized client's symptoms as potentially related to treatable condition.
+8. Medication consultation: Deferred pending diagnostic clarification. If bipolar disorder confirmed, will refer to psychiatrist for evaluation for mood stabilizer. Discussed client's medication concerns (side effects, personality changes); agreed to revisit after diagnosis established.
+9. Substance use: Will address in ongoing therapy. Client needs psychoeducation about how substances affect mood stability. If bipolar diagnosis confirmed, substance use reduction will be essential component of treatment.
+10. Occupational safety: Acknowledged client's work without judgment. Encouraged continued safety measures (client screening, check-ins with friend, avoiding unsafe locations). May explore occupational alternatives if client desires, but will follow client's lead.
+11. Social support: Encourage continued engagement with supportive friends (Mira, Lyric).
+12. Next appointment: May 15, 2024, same time. Will review mood chart and continue diagnostic assessment.
+
+Diagnostic Impression (Provisional - requires further assessment):
+Primary:
+- Rule Out: F31.9 Bipolar Disorder, Unspecified (vs. F31.81 Bipolar II Disorder vs. F31.1 Bipolar I Disorder)
+- Rule Out: F19.94 Unspecified Stimulant-Induced Mood Disorder (cocaine)
+- Rule Out: F43.10 Posttraumatic Stress Disorder
+- Rule Out: F60.3 Borderline Personality Disorder
+
+Secondary:
+- F12.20 Cannabis Use Disorder, Moderate (Provisional - daily use with likely tolerance)
+- F14.20 Cocaine Use Disorder, Moderate (Provisional - regular use with impaired control)
+- V61.20 Parent-Child Relational Problem (estrangement)
+- Z60.5 Target of (Perceived) Adverse Discrimination or Persecution (stigma related to sex work)
+
+Risk Level: MODERATE (passive SI, impulsive during elevated periods, access to means, trauma exposure, substance use)
+
+Prognosis: Guarded to Fair, depending on diagnostic clarification, medication compliance if indicated, substance use reduction, and engagement with treatment.
+
+Therapist Signature: Dr. Counterfeit Caldwell, Psy.D.
+Date: May 8, 2024
+License #: PSY-54321 (California)
+
+NEXT APPOINTMENT: May 15, 2024 at 2:00 PM (telehealth)
+
+CLINICAL NOTE: This case requires careful, thorough assessment before committing to diagnosis given multiple complicating factors. Will need several sessions of mood tracking and detailed history to differentiate between bipolar disorder, substance-induced mood disorder, trauma-related mood dysregulation, and personality pathology. Client is cooperative and motivated, which is positive prognostic indicator.
