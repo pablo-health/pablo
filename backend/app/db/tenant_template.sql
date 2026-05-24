@@ -144,6 +144,17 @@ CREATE TABLE __TENANT_SCHEMA__.chat_messages (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
+    user_id character varying(128) NOT NULL,
+    practice_id character varying(128) NOT NULL,
+    title character varying(50),
+    credentials character varying(100),
+    role character varying(20) DEFAULT 'clinician'::character varying NOT NULL,
+    joined_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.compliance_documents (
     id uuid NOT NULL,
     compliance_item_id uuid,
@@ -425,6 +436,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.chat_conversations
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.chat_messages
     ADD CONSTRAINT chat_messages_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles
+    ADD CONSTRAINT clinician_profiles_pkey PRIMARY KEY (user_id);
 
 
 
