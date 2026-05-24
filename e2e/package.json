@@ -1,0 +1,23 @@
+{
+  "name": "pablo-oss-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end tests for the deployed pablo OSS image on pablohealth-oss. Runs as a Cloud Run Job. See e2e/README.md.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1",
+    "@types/node": "22.10.5",
+    "tsx": "4.22.3",
+    "typescript": "5.7.3"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "7.19.0",
+    "google-auth-library": "9.15.0",
+    "otplib": "12.0.1"
+  }
+}

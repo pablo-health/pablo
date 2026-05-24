@@ -1,0 +1,71 @@
+name: E2E Image Build
+
+# Rebuild and push the Playwright runner image whenever e2e/ changes
+# land on main. The image lives at
+#   us-central1-docker.pkg.dev/pablohealth-oss/e2e/playwright
+# and is consumed by the pablo-e2e Cloud Run Job (see e2e.yml).
+#
+# Tags pushed:
+#   - <github.sha>        immutable, used for pinning a known-good run
+#   - latest              floats; what oss-e2e + the post-deploy gate use
+#
+# Manual rebuilds via workflow_dispatch are supported (e.g. to pick up
+# a base image security update without an e2e/ change).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'e2e/**'
+      - '.github/workflows/e2e-image-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: e2e-image-build
+  cancel-in-progress: false
+
+env:
+  PROJECT: pablohealth-oss
+  REGION: us-central1
+  REPO: e2e
+  IMAGE: playwright
+
+jobs:
+  build-and-push:
+    name: Build + push e2e/playwright image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure docker to push to AR
+        run: gcloud auth configure-docker ${REGION}-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}"
+          docker build \
+            -t "${REGISTRY}:${{ github.sha }}" \
+            -t "${REGISTRY}:latest" \
+            -f e2e/Dockerfile \
+            e2e
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          REGISTRY="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${IMAGE}"
+          docker push "${REGISTRY}:${{ github.sha }}"
+          docker push "${REGISTRY}:latest"

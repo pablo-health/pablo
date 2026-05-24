@@ -299,9 +299,18 @@ jobs:
           echo "Frontend URL: ${URL}"
           curl -fsS --max-time 30 -o /dev/null -w "HTTP %{http_code}\n" "${URL}/"
 
+  e2e:
+    name: E2E
+    needs: [smoke]
+    # Same skip-propagation guard as smoke — let this job run when
+    # upstream was a transitive skip, but fail it when upstream failed.
+    if: always() && !failure() && !cancelled()
+    uses: ./.github/workflows/e2e.yml
+    secrets: inherit
+
   notify-saas:
     name: Notify pablo-saas (base-bump dispatch)
-    needs: [smoke]
+    needs: [smoke, e2e]
     # Only fire on real merges to main. PR runs and manual workflow_dispatch
     # exercise the deploy path but should not roll the SaaS base image.
     # Use `always() && !failure() && !cancelled()` (not `success()`) so the

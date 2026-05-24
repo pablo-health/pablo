@@ -1,0 +1,126 @@
+name: E2E
+
+# Run the Playwright e2e suite against the deployed pablo environment
+# on pablohealth-oss via the pablo-e2e Cloud Run Job.
+#
+# Triggered:
+#   - automatically from deploy.yml after a successful smoke step (via
+#     workflow_call), so every push to main exercises the user-facing
+#     paths.
+#   - manually via workflow_dispatch for on-demand runs (debugging,
+#     post-bootstrap verification, or running a specific spec).
+#
+# Bootstrap (one-time per environment): see e2e/README.md. The job
+# spec is owned by this workflow — first run on a fresh environment
+# creates the job; subsequent runs update it.
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        type: string
+        required: false
+        default: latest
+      args:
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "E2E runner image tag (default: latest)"
+        required: false
+        default: latest
+      args:
+        description: "Playwright args (e.g. specs/health-smoke.spec.ts). Empty = full suite."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT: pablohealth-oss
+  REGION: us-central1
+  JOB_NAME: pablo-e2e
+  RUNNER_SA: pablo-e2e-runner@pablohealth-oss.iam.gserviceaccount.com
+  ARTIFACTS_BUCKET: pablohealth-oss-e2e-artifacts
+  IMAGE_REGISTRY: us-central1-docker.pkg.dev/pablohealth-oss/e2e/playwright
+
+jobs:
+  run-e2e:
+    name: Run pablo-e2e Cloud Run Job
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.OSS_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.OSS_GCP_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Discover deployed pablo-frontend URL
+        id: frontend
+        run: |
+          set -euo pipefail
+          URL=$(gcloud run services describe pablo-frontend \
+            --project="$PROJECT" --region="$REGION" \
+            --format='value(status.url)')
+          if [[ -z "$URL" ]]; then
+            echo "::error::pablo-frontend has no status.url — is it deployed?"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "[discover] PLAYWRIGHT_BASE_URL=$URL"
+
+      - name: Create-or-update pablo-e2e Cloud Run Job
+        run: |
+          set -euo pipefail
+          # `gcloud run jobs deploy` is create-or-update. On first run for
+          # a fresh environment this creates the job; on subsequent runs
+          # it patches the image and env vars in place.
+          gcloud run jobs deploy "$JOB_NAME" \
+            --project="$PROJECT" --region="$REGION" \
+            --image="${IMAGE_REGISTRY}:${{ inputs.image_tag }}" \
+            --service-account="$RUNNER_SA" \
+            --task-timeout=1500 \
+            --max-retries=0 \
+            --cpu=1 --memory=2Gi \
+            --set-env-vars="^|^PLAYWRIGHT_BASE_URL=${{ steps.frontend.outputs.url }}|E2E_ARTIFACTS_BUCKET=${ARTIFACTS_BUCKET}|RUN_ID=gh-${{ github.run_id }}-${{ github.run_attempt }}" \
+            --set-secrets="^|^FIREBASE_API_KEY=e2e-oss-pinned-firebase-api-key:latest|TEST_PASSWORD=e2e-oss-pinned-password:latest|PINNED_EMAIL=e2e-oss-pinned-email:latest|TOTP_SECRET=e2e-oss-pinned-totp-secret:latest" \
+            --quiet
+
+      - name: Execute job (wait for completion)
+        id: execute
+        run: |
+          set -o pipefail
+          ARGS_JSON='${{ inputs.args }}'
+          if [ -n "$ARGS_JSON" ]; then
+            gcloud run jobs execute "$JOB_NAME" \
+              --project="$PROJECT" --region="$REGION" \
+              --args="$ARGS_JSON" --wait 2>&1 | tee execute.log
+          else
+            gcloud run jobs execute "$JOB_NAME" \
+              --project="$PROJECT" --region="$REGION" \
+              --wait 2>&1 | tee execute.log
+          fi
+          EXECUTION=$(grep -oE 'pablo-e2e-[a-z0-9]+' execute.log | head -1 || true)
+          echo "execution=$EXECUTION" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch task logs
+        if: always() && steps.execute.outputs.execution != ''
+        run: |
+          gcloud logging read \
+            "resource.type=cloud_run_job AND resource.labels.job_name=$JOB_NAME AND labels.\"run.googleapis.com/execution_name\"=\"${{ steps.execute.outputs.execution }}\"" \
+            --project="$PROJECT" --limit=500 --order=asc \
+            --format='value(textPayload)' || true
+
+      - name: Surface artifact bucket path
+        if: always()
+        run: |
+          echo "Artifacts (HTML report, JUnit, traces) for this run:"
+          echo "  gs://${ARTIFACTS_BUCKET}/gh-${{ github.run_id }}-${{ github.run_attempt }}/"
+          echo "Browse: https://console.cloud.google.com/storage/browser/${ARTIFACTS_BUCKET}/gh-${{ github.run_id }}-${{ github.run_attempt }}?project=${PROJECT}"
