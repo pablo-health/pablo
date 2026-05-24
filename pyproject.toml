@@ -68,6 +68,14 @@ google-cloud-batch = "^0.21.0"
 # See backend/app/services/audit_cloud_logging.py.
 google-cloud-logging = "^3.11.0"
 
+# Vertex Gemini SDK — used by ChatLLMGateway, StructuredLLMGateway,
+# EhrNavigationService, and EmbeddingService. Imported lazily inside
+# each module's _get_client(), so a missing dep won't fail container
+# startup — it will fail the first Gemini call. Was previously
+# transitive via meeting-transcription's optional google extra;
+# THERAPY-71d5 dropped meeting-transcription, so pin explicitly.
+google-genai = "^1.56.0"
+
 # TOTP generation — pentest identity bootstrap (backend/app/jobs/pentest_identity.py)
 # creates ephemeral MFA-enrolled Firebase users for the automated pentest.
 pyotp = "^2.9.0"
