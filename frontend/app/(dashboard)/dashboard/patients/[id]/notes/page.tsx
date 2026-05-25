@@ -17,40 +17,10 @@ import { usePatient } from "@/hooks/usePatients"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
-import type { Note } from "@/types/notes"
+import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
 
 interface PageProps {
   params: Promise<{ id: string }>
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return "—"
-  return new Date(value).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
-function noteHref(patientId: string, note: Note): string {
-  return note.session_id
-    ? `/dashboard/sessions/${note.session_id}`
-    : `/dashboard/patients/${patientId}/notes/${note.id}`
-}
-
-function noteStatus(note: Note): { label: string; className: string } {
-  if (note.finalized_at) {
-    return {
-      label: "Finalized",
-      className: "bg-secondary-100 text-secondary-700",
-    }
-  }
-  return {
-    label: "Draft",
-    className: "bg-yellow-100 text-yellow-800",
-  }
 }
 
 export default function PatientNotesListPage({ params }: PageProps) {
@@ -154,7 +124,7 @@ export default function PatientNotesListPage({ params }: PageProps) {
                       {note.session_id ? "Session" : "Standalone"}
                     </td>
                     <td className="px-4 py-4 text-sm text-neutral-600">
-                      {formatDateTime(note.finalized_at ?? note.updated_at)}
+                      {formatNoteDateTime(note.finalized_at ?? note.updated_at)}
                     </td>
                     <td className="px-4 py-4">
                       <span
