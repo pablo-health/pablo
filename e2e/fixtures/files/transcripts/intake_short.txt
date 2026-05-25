@@ -1,0 +1,48 @@
+Session Date: 2026-05-22
+Session Type: Initial Intake
+Duration: 50 minutes
+
+[00:00:08]
+THERAPIST: Hi Bayer, thanks for coming in today. Before we get started, I want to remind you that what we discuss is confidential, with the standard limits — risk of harm to self or others, suspected abuse. Does that work for you?
+
+[00:00:24]
+PATIENT (Bayer Mountain, fictional): Yes, that's fine.
+
+[00:00:27]
+THERAPIST: Great. So what brings you in today?
+
+[00:00:32]
+PATIENT: I've been having a really hard time sleeping for about three months. I lie awake for hours. My primary care doctor suggested I try therapy before we look at medication.
+
+[00:00:48]
+THERAPIST: Tell me more about the sleep. What time do you go to bed, and what does the night look like?
+
+[00:00:55]
+PATIENT: I'm in bed by ten-thirty, but I'm still awake at one or two most nights. I check my phone, get more wound up. Then I'm exhausted at work.
+
+[00:01:14]
+THERAPIST: That sounds frustrating. Any pattern to what your mind is doing when you're lying there?
+
+[00:01:22]
+PATIENT: Mostly work. I run a small bakery and I keep replaying conversations with my staff, things I should have said differently.
+
+[00:01:36]
+THERAPIST: Any low mood during the day, or just the fatigue?
+
+[00:01:41]
+PATIENT: Just tired. I still enjoy things on the weekends. It's really the sleep.
+
+[00:01:50]
+THERAPIST: Okay. Any caffeine, alcohol, screens late at night?
+
+[00:01:56]
+PATIENT: Coffee in the morning only. A glass of wine maybe twice a week. Phone in bed, I admit.
+
+[00:02:08]
+THERAPIST: Got it. I think this looks like a good candidate for CBT for insomnia — CBT-I. We'd work on stimulus control, a consistent wake time, and the rumination piece. Sound reasonable?
+
+[00:02:24]
+PATIENT: Yes. I'd like to try that.
+
+[00:02:28]
+THERAPIST: Let's plan weekly sessions to start, and I'll send you a sleep diary to fill out before next time.

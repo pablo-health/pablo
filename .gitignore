@@ -51,3 +51,7 @@ backend/data/nli-therapy-*
 # Operator-local scripts and notes (never committed; common convention
 # for keeping environment-specific automation alongside the checkout).
 local/
+
+# Beads writes a stray DB export to the repo root on some commands;
+# the canonical export is .beads/issues.jsonl. Never commit the root copy.
+/issues.jsonl

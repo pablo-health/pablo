@@ -12,6 +12,40 @@ Runs the Playwright suite against the deployed pablo environment on
 The runner image is published to
 `us-central1-docker.pkg.dev/pablohealth-oss/e2e/playwright:{sha,latest}`.
 
+## Spec coverage
+
+The suite exercises the day-1 user-facing paths against the deployed
+app. All auth-gated specs use the tiered fixtures in
+`fixtures/auth.ts`; pick the cheapest fixture that gives you the state
+you need (`enrolledUser` for API-only tests, `signedInPage` for UI).
+
+| Spec | What it covers | Fixture |
+| --- | --- | --- |
+| `health-smoke` | API `/api/health` + frontend root | none |
+| `spa-smoke` | SPA boots, config loads, unauthed → `/login` | none |
+| `auth-fixtures` | `unenrolledUser` provisions a fresh, pre-MFA user | `unenrolledUser` |
+| `onboarding` | full UI onboarding wizard → dashboard | `unenrolledUser` |
+| `chart-render-smoke` | patient chart mounts with no console errors | `signedInPage` |
+| `route-walk-smoke` | every top-level route renders cleanly | `signedInPage` |
+| `patient-document-upload` | upload → byte round-trip → delete | `signedInPage` |
+| `soap-from-transcript` | transcript upload drafts a SOAP note | `enrolledUser` |
+| `manual-soap` | author/edit/finalize a standalone SOAP note | `enrolledUser` |
+| `chat` | patient-context chat SSE + history + save-as-note | `enrolledUser` |
+
+Two specs create a **fresh** user each run (`onboarding`,
+`auth-fixtures`) via REST `signUp` + an admin `accounts:update` to mark
+the email verified. That admin call needs `roles/firebaseauth.admin` on
+the runtime SA — see the note in bootstrap step 3 about keeping (not
+revoking) that role if you want these two specs in CI. The other specs
+run in pinned mode and need only password sign-in via the gated API key.
+
+`patient-document-upload` has an optional **layer 2** that inspects the
+GCS object directly (size/MD5/content-type/ACL). It runs only when
+`PATIENT_DOCS_BUCKET` is set and the runner has `storage.objectViewer`
+on that bucket; otherwise the byte round-trip through the app (layer 1)
+runs alone. Single-tenant deploys store objects under a fixed
+`default/<category>/<uuid>` prefix.
+
 ## Local development
 
 ```bash
@@ -72,17 +106,21 @@ gcloud storage buckets add-iam-policy-binding gs://pablohealth-oss-e2e-artifacts
   --member="serviceAccount:pablo-e2e-runner@pablohealth-oss.iam.gserviceaccount.com" \
   --role=roles/storage.objectAdmin
 
-# For one-time provisioning (provision-pinned-user.ts), also grant the
-# Firebase admin role. After the pinned user is provisioned, this role
-# is no longer needed on the runtime SA — the e2e runtime only does
-# password sign-in via the gated API key, never admin-token operations.
+# For one-time provisioning (provision-pinned-user.ts), grant the
+# Firebase admin role.
 gcloud projects add-iam-policy-binding pablohealth-oss \
   --member="serviceAccount:pablo-e2e-runner@pablohealth-oss.iam.gserviceaccount.com" \
   --role=roles/firebaseauth.admin
-# Revoke this after provisioning:
+# Most specs run in pinned mode and need only password sign-in via the
+# gated API key — for those you can revoke this role after provisioning:
 #   gcloud projects remove-iam-policy-binding pablohealth-oss \
 #     --member="serviceAccount:pablo-e2e-runner@pablohealth-oss.iam.gserviceaccount.com" \
 #     --role=roles/firebaseauth.admin
+# BUT the fresh-user specs (onboarding, auth-fixtures) call
+# accounts:update to mark a freshly-signed-up user's email verified,
+# which needs firebaseauth.admin at runtime. Keep the role if you want
+# those two specs in CI; otherwise exclude them (e.g. pass an `args`
+# filter to the e2e workflow).
 ```
 
 ### 4. Provision the pinned user
