@@ -320,27 +320,32 @@
 }
 
 [data-theme="boring-ehr"] {
-  /* Boring EHR™: the anti-goal, made selectable. Do not enjoy. */
-  --color-neutral-50: #f1f5f9;
-  --background: #f1f5f9;
-  --foreground: #0f172a;
+  /* Boring EHR™: the anti-goal, made selectable. Do not enjoy.
+     Times-New-Roman headings, Arial body, sharp corners, hospital blue,
+     cold fluorescent grey — everything Pablo refuses to be. */
+  --font-sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  --font-display: "Times New Roman", Times, serif;
+  --radius: 0rem;
+  --color-neutral-50: #e7eaee;
+  --background: #e7eaee;
+  --foreground: #1f2933;
   --card: #ffffff;
-  --border: #e2e8f0;
-  --color-primary-50: #eff6ff;
-  --color-primary-100: #dbeafe;
-  --color-primary-600: #2563eb;
-  --color-primary-700: #1d4ed8;
-  --primary: #2563eb;
+  --border: #b9c2cc;
+  --color-primary-50: #e8eef5;
+  --color-primary-100: #cfe0f0;
+  --color-primary-600: #0b5394;
+  --color-primary-700: #073763;
+  --primary: #0b5394;
   --primary-foreground: #ffffff;
 
-  --auth-radius: 0.25rem;
-  --auth-canvas: #f1f5f9;
-  --brand-panel-bg: #334155;
-  --brand-panel-fg: #e2e8f0;
-  --brand-panel-muted: rgba(226, 232, 240, 0.7);
-  --brand-panel-accent: #3b82f6;
-  --auth-action-bg: #2563eb;
-  --auth-action-bg-hover: #1d4ed8;
+  --auth-radius: 0rem;
+  --auth-canvas: #e7eaee;
+  --brand-panel-bg: #475569;
+  --brand-panel-fg: #dfe3e8;
+  --brand-panel-muted: rgba(223, 227, 232, 0.65);
+  --brand-panel-accent: #0b5394;
+  --auth-action-bg: #0b5394;
+  --auth-action-bg-hover: #073763;
   --auth-action-fg: #ffffff;
 }
 
