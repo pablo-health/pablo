@@ -322,10 +322,10 @@
   /* Midnight: warm dark. The neutral scale is inverted (50 = darkest canvas,
      900 = lightest ink) so every text-neutral-900 / bg-neutral-50 in the app
      flips correctly without per-component edits. Honey stays the accent. */
-  --color-neutral-50: #1c1511;
-  --color-neutral-100: #251c16;
-  --color-neutral-200: #3a2c24;
-  --color-neutral-300: #4a3a30;
+  --color-neutral-50: #17110c;
+  --color-neutral-100: #221a14;
+  --color-neutral-200: #473a2e;
+  --color-neutral-300: #564537;
   --color-neutral-400: #8a7563;
   --color-neutral-500: #a89280;
   --color-neutral-600: #c4ad9a;
@@ -337,15 +337,15 @@
   --color-primary-600: #e8a849;
   --color-primary-700: #f0be6f;
 
-  --background: #1c1511;
+  --background: #17110c;
   --foreground: #f5ece0;
-  --card: #251c16;
+  --card: #261d16;
   --card-foreground: #f5ece0;
-  --popover: #251c16;
+  --popover: #261d16;
   --popover-foreground: #f5ece0;
-  --border: #3a2c24;
-  --input: #3a2c24;
-  --muted: #251c16;
+  --border: #473a2e;
+  --input: #473a2e;
+  --muted: #261d16;
   --muted-foreground: #a89280;
   --primary: #e8a849;
   --primary-foreground: #1c1511;
