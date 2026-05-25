@@ -3,11 +3,12 @@
 "use client"
 
 import { use } from "react"
-import { ArrowLeft, FileText } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import Link from "next/link"
 import { PatientExport } from "@/components/patients/PatientExport"
 import { PatientSummary } from "@/components/patients/PatientSummary"
 import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
+import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
@@ -75,6 +76,7 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
           <span>Back to Patients</span>
         </Link>
         <div className="flex items-center gap-2">
+          <PatientChatDialog patientId={patient.id} />
           <NewNoteButton patientId={patient.id} />
           <PatientExport
             patientId={patient.id}
@@ -86,26 +88,6 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
       <PatientSummary patient={patient} />
 
       <PatientChartTabs patientId={patient.id} />
-
-      {/* Notes */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-display font-bold text-neutral-900">
-            Notes
-          </h2>
-          <Link
-            href={`/dashboard/patients/${patient.id}/notes`}
-            className="text-sm text-primary-700 hover:text-primary-900 inline-flex items-center gap-1"
-          >
-            <FileText className="w-4 h-4" />
-            View all notes
-          </Link>
-        </div>
-        <p className="text-neutral-500 text-sm">
-          Click <strong>New note</strong> above to start a standalone note for
-          this patient, or open the notes list to review prior session notes.
-        </p>
-      </div>
 
       <PatientDocuments patientId={patient.id} />
 
