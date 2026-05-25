@@ -72,6 +72,19 @@ def _revoked_key(uid: str, auth_time: int) -> str:
     return f"idle:revoked:{uid}:{auth_time}"
 
 
+def _idle_timeout_exc() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "error": {
+                "code": "IDLE_TIMEOUT",
+                "message": "Session expired due to inactivity. Please sign in again.",
+                "details": {},
+            }
+        },
+    )
+
+
 def check_and_touch(decoded_token: dict[str, Any]) -> None:
     """Enforce the idle window for this token's session.
 
@@ -114,18 +127,7 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
             logger.info(
                 "Rejected revoked idle session: uid=%s auth_time=%s", uid, auth_time
             )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "error": {
-                        "code": "IDLE_TIMEOUT",
-                        "message": (
-                            "Session expired due to inactivity. Please sign in again."
-                        ),
-                        "details": {},
-                    }
-                },
-            )
+            raise _idle_timeout_exc()
 
         marker_exists = bool(redis.exists(marker_key))
         if not marker_exists:
@@ -146,16 +148,7 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
         pipe.set(revoked_key, "1", ex=_SESSION_MARKER_TTL_SECONDS)
         pipe.execute()
         logger.info("Idle session timeout: uid=%s auth_time=%s", uid, auth_time)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": "IDLE_TIMEOUT",
-                    "message": ("Session expired due to inactivity. Please sign in again."),
-                    "details": {},
-                }
-            },
-        )
+        raise _idle_timeout_exc()
     except HTTPException:
         raise
     except Exception as exc:
