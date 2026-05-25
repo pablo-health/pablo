@@ -10,7 +10,6 @@ import { PatientSummary } from "@/components/patients/PatientSummary"
 import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
 import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
-import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { usePatient } from "@/hooks/usePatients"
 
@@ -88,8 +87,6 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
       <PatientSummary patient={patient} />
 
       <PatientChartTabs patientId={patient.id} />
-
-      <PatientDocuments patientId={patient.id} />
 
       <PatientChartExtras patientId={patient.id} />
     </div>
