@@ -14,9 +14,10 @@
  * the `x-goog-content-length-range` header that mirrors the size cap.
  */
 
-import { buildApiUrl, del, get, post } from "./client"
+import { del, get, post } from "./client"
 import type {
   DeleteDocumentResponse,
+  DocumentDownloadUrlResponse,
   InitUploadRequest,
   InitUploadResponse,
   PatientDocumentListResponse,
@@ -99,11 +100,19 @@ export async function uploadFileToSignedUrl(
 }
 
 /**
- * Returns a backend URL that 302s to the short-lived signed download URL.
- * Suitable for an `<a href>` — opening it in a new tab triggers the
- * browser's normal download path with a friendly filename via
- * Content-Disposition.
+ * Fetches a short-lived signed GCS download URL through the authenticated
+ * API client (bearer token attached), mirroring the upload path's signed
+ * PUT URL. The returned URL is GCS-signed, so the caller navigates to it
+ * directly with no auth header. A raw `<a href>` to `/file` can't carry
+ * our bearer token and 401s (PABLO-47h).
  */
-export function buildPatientDocumentDownloadUrl(documentId: string): string {
-  return buildApiUrl(`/api/documents/${documentId}/file`)
+export async function getPatientDocumentDownloadUrl(
+  documentId: string,
+  token?: string,
+): Promise<string> {
+  const { url } = await get<DocumentDownloadUrlResponse>(
+    `/api/documents/${documentId}/file`,
+    token,
+  )
+  return url
 }
