@@ -47,6 +47,7 @@ class _FakeBlob:
         self.size: int | None = None
         self.content_type: str | None = None
         self._data: bytes = b""
+        self.last_signed_kwargs: dict[str, Any] = {}
 
     def reload(self) -> None:
         if self.size is None:
@@ -61,6 +62,7 @@ class _FakeBlob:
         return self._data
 
     def generate_signed_url(self, **kwargs: Any) -> str:
+        self.last_signed_kwargs = kwargs
         return f"https://fake.googleusercontent.example/{self.name}?sig=xyz"
 
 
@@ -375,6 +377,66 @@ class TestDocumentSurface:
         assert response.status_code == 200
         assert response.json()["url"].startswith("https://fake.googleusercontent.example/")
 
+    def test_download_disposition_defaults_to_attachment(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        mock_user_id: str,
+    ) -> None:
+        init = _init_upload(documents_client, "patient-1")
+        gcs_path = doc_repo.get(init["document_id"], mock_user_id).gcs_path  # type: ignore[union-attr]
+        _put_blob(
+            fake_gcs, "pablo-docs-test", gcs_path, _native_text_pdf_bytes(), "application/pdf"
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+
+        documents_client.get(f"/api/documents/{init['document_id']}/file")
+
+        blob = fake_gcs.bucket("pablo-docs-test").blob(gcs_path)
+        assert blob.last_signed_kwargs["response_disposition"].startswith("attachment;")
+
+    def test_download_inline_disposition_for_viewer(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        mock_user_id: str,
+    ) -> None:
+        init = _init_upload(documents_client, "patient-1")
+        gcs_path = doc_repo.get(init["document_id"], mock_user_id).gcs_path  # type: ignore[union-attr]
+        _put_blob(
+            fake_gcs, "pablo-docs-test", gcs_path, _native_text_pdf_bytes(), "application/pdf"
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+
+        response = documents_client.get(
+            f"/api/documents/{init['document_id']}/file?disposition=inline",
+        )
+        assert response.status_code == 200
+
+        blob = fake_gcs.bucket("pablo-docs-test").blob(gcs_path)
+        assert blob.last_signed_kwargs["response_disposition"].startswith("inline;")
+
+    def test_download_rejects_unknown_disposition(
+        self,
+        documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        mock_user_id: str,
+    ) -> None:
+        init = _init_upload(documents_client, "patient-1")
+        gcs_path = doc_repo.get(init["document_id"], mock_user_id).gcs_path  # type: ignore[union-attr]
+        _put_blob(
+            fake_gcs, "pablo-docs-test", gcs_path, _native_text_pdf_bytes(), "application/pdf"
+        )
+        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+
+        response = documents_client.get(
+            f"/api/documents/{init['document_id']}/file?disposition=evil",
+        )
+        assert response.status_code == 422
+
     def test_soft_delete_removes_row_from_list_and_get(
         self,
         documents_client: TestClient,
@@ -594,9 +656,7 @@ class TestAccessPredicate:
         # therapist_private from psychotherapy_notes within the same
         # restricted action.
         restricted_entries = [
-            e
-            for e in audit_repo.list_for_user(mock_user_id)
-            if e.action.endswith("_restricted")
+            e for e in audit_repo.list_for_user(mock_user_id) if e.action.endswith("_restricted")
         ]
         for entry in restricted_entries:
             assert (entry.changes or {}).get("category") == "psychotherapy_notes"

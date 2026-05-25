@@ -26,8 +26,9 @@ the backstop in case an app-layer filter is dropped.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 
 from ..api_errors import (
@@ -407,6 +408,7 @@ def get_document(
 def download_document_file(
     document_id: str,
     http_request: Request,
+    disposition: Literal["attachment", "inline"] = Query("attachment"),
     user: User = Depends(require_baa_acceptance),
     service: PatientDocumentsService = Depends(get_patient_documents_service),
     audit: AuditService = Depends(get_audit_service),
@@ -418,13 +420,19 @@ def download_document_file(
     <a href> navigation can't carry our Authorization header, so a 302
     here would 401 before the redirect ever fired (PABLO-47h).
 
+    ``disposition=inline`` mints a URL the in-app viewer can render in
+    place (PDF/image); the default ``attachment`` forces a download with
+    a friendly filename.
+
     Audit emission happens BEFORE the URL is returned so a dropped
     connection after the URL is minted still leaves a record of the
     access. The URL itself is short-lived (5 min default) so it expires
     before any log harvesting that might surface it.
     """
     try:
-        result = service.signed_download_url(document_id, user.id)
+        result = service.signed_download_url(
+            document_id, user.id, disposition=disposition
+        )
     except DocumentsBucketNotConfiguredError as exc:
         raise ServerError(
             "Patient document uploads are not configured on this deployment",
