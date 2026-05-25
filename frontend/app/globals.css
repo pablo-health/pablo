@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "./calendar-theme.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -317,6 +316,55 @@
   --auth-action-bg: #d4952f;
   --auth-action-bg-hover: #b07a24;
   --auth-action-fg: #ffffff;
+}
+
+[data-theme="midnight"] {
+  /* Midnight: warm dark. The neutral scale is inverted (50 = darkest canvas,
+     900 = lightest ink) so every text-neutral-900 / bg-neutral-50 in the app
+     flips correctly without per-component edits. Honey stays the accent. */
+  --color-neutral-50: #1c1511;
+  --color-neutral-100: #251c16;
+  --color-neutral-200: #3a2c24;
+  --color-neutral-300: #4a3a30;
+  --color-neutral-400: #8a7563;
+  --color-neutral-500: #a89280;
+  --color-neutral-600: #c4ad9a;
+  --color-neutral-700: #d8c6b4;
+  --color-neutral-800: #ebe0d2;
+  --color-neutral-900: #f5ece0;
+  --color-primary-50: #2c2014;
+  --color-primary-100: #382a18;
+  --color-primary-600: #e8a849;
+  --color-primary-700: #f0be6f;
+
+  --background: #1c1511;
+  --foreground: #f5ece0;
+  --card: #251c16;
+  --card-foreground: #f5ece0;
+  --popover: #251c16;
+  --popover-foreground: #f5ece0;
+  --border: #3a2c24;
+  --input: #3a2c24;
+  --muted: #251c16;
+  --muted-foreground: #a89280;
+  --primary: #e8a849;
+  --primary-foreground: #1c1511;
+  --ring: #e8a849;
+
+  --auth-radius: 1rem;
+  --auth-canvas: linear-gradient(135deg, #1c1511 0%, #100b08 100%);
+  --brand-panel-bg: radial-gradient(
+      120% 120% at 80% 0%,
+      rgba(232, 168, 73, 0.16) 0%,
+      transparent 55%
+    ),
+    #100b08;
+  --brand-panel-fg: #f5ece0;
+  --brand-panel-muted: rgba(245, 236, 224, 0.7);
+  --brand-panel-accent: #e8a849;
+  --auth-action-bg: #e8a849;
+  --auth-action-bg-hover: #f0be6f;
+  --auth-action-fg: #1c1511;
 }
 
 [data-theme="boring-ehr"] {
