@@ -14,6 +14,7 @@ from .validators import validate_iso_date
 
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
+ThemeName = Literal["warm-paper", "cozy", "classic-cream", "boring-ehr"]
 
 
 class UpdateUserRequest(BaseModel):
@@ -48,6 +49,13 @@ class UserPreferences(BaseModel):
         default="America/New_York",
         description="IANA timezone. Auto-detected from browser on first save.",
     )
+    theme: ThemeName = "warm-paper"
+
+
+class UpdateThemeRequest(BaseModel):
+    """Targeted update of just the UI theme preference."""
+
+    theme: ThemeName
 
 
 class AcceptBAARequest(BaseModel):

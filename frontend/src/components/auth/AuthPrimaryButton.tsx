@@ -8,13 +8,7 @@ export function AuthPrimaryButton({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button
-      className={
-        className ??
-        "w-full bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-      }
-      {...props}
-    >
+    <button className={className ?? "auth-primary"} {...props}>
       {children}
     </button>
   )

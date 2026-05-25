@@ -32,6 +32,7 @@ from ..models import (
     AcknowledgeSecurityGuideRequest,
     BAAStatusResponse,
     SecurityGuideStatusResponse,
+    UpdateThemeRequest,
     UpdateUserRequest,
     User,
     UserPreferences,
@@ -532,6 +533,18 @@ def save_preferences(
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> UserPreferences:
     """Save user preferences (full replace)."""
+    return user_repo.save_preferences(user.id, prefs)
+
+
+@router.put("/me/preferences/theme")
+def save_theme_preference(
+    request: UpdateThemeRequest,
+    user: User = Depends(get_current_user),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> UserPreferences:
+    """Update just the UI theme without round-tripping the full prefs blob."""
+    prefs = user_repo.get_preferences(user.id)
+    prefs.theme = request.theme
     return user_repo.save_preferences(user.id, prefs)
 
 

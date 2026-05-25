@@ -8,6 +8,7 @@ import { useEffect, useState } from "react"
 import { ConfigProvider } from "@/lib/config-provider"
 import { AuthProvider } from "@/lib/auth-context"
 import { ToastProvider } from "@/components/ui/Toast"
+import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -31,10 +32,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ConfigProvider>
         <AuthProvider>
-          <ToastProvider>
-            {children}
-            <ReactQueryDevtools initialIsOpen={false} />
-          </ToastProvider>
+          <ThemeProvider>
+            <ToastProvider>
+              {children}
+              <ReactQueryDevtools initialIsOpen={false} />
+            </ToastProvider>
+          </ThemeProvider>
         </AuthProvider>
       </ConfigProvider>
     </QueryClientProvider>

@@ -10,6 +10,7 @@ import { getBAAStatus, getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
+import { ThemeSync } from "@/components/theme/ThemeSync"
 
 export const dynamic = "force-dynamic"
 
@@ -101,6 +102,7 @@ export default async function DashboardLayout({
         </main>
       </div>
       <IdleTimeout />
+      <ThemeSync />
     </div>
   )
 }
