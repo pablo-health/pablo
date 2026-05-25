@@ -45,9 +45,9 @@ export default function CalendarPage() {
   const [syncStatus, setSyncStatus] = useState<ICalConnectionStatus[]>([])
   const [syncResult, setSyncResult] = useState<string | null>(null)
 
-  // The editorial calendar follows the global theme: Midnight → dark, all
-  // other (light) themes → light, which derives its --ed-* from global tokens.
-  const editorialTheme = theme === "midnight" ? "dark" : "light"
+  // The editorial calendar follows the global theme: Dark → dark, all other
+  // (light) themes → light, which derives its --ed-* from global tokens.
+  const editorialTheme = theme === "dark" ? "dark" : "light"
 
   const syncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 

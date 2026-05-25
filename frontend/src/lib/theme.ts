@@ -7,24 +7,19 @@ export const THEMES = [
     description: "Crisp near-white, honey accents — the default.",
   },
   {
-    id: "cozy",
-    label: "Cozy",
-    description: "Softer cream and blush, fireside warmth.",
+    id: "dark",
+    label: "Dark",
+    description: "Easy on the eyes in low light.",
   },
   {
-    id: "classic-cream",
-    label: "Classic Cream",
-    description: "The original all-cream look.",
-  },
-  {
-    id: "midnight",
-    label: "Midnight",
-    description: "Warm dark — easy on the eyes after hours.",
+    id: "high-contrast",
+    label: "High Contrast",
+    description: "Maximum legibility.",
   },
   {
     id: "boring-ehr",
-    label: "Boring EHR™",
-    description: "The anti-goal, made selectable. Don't.",
+    label: "Boring EHR 🙂",
+    description: "The anti-goal, made selectable. You have been warned.",
   },
 ] as const
 

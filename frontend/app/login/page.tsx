@@ -278,7 +278,7 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthCard toolbar={<ThemeSwitcher />} brandPanel={<LoginBrandPanel />}>
+    <AuthCard brandPanel={<LoginBrandPanel />}>
       <AuthHeader
         title="Pablo"
         titleSize="4xl"
@@ -395,6 +395,11 @@ export default function LoginPage() {
       </div>
 
       <AuthFooter />
+
+      {/* Brand panel (with the theme picker) is hidden on mobile, so offer it here. */}
+      <div className="mt-6 flex justify-center lg:hidden">
+        <ThemeSwitcher />
+      </div>
     </AuthCard>
   )
 }
@@ -415,6 +420,9 @@ function LoginBrandPanel() {
         >
           The therapy paperwork you&rsquo;re actually allowed to like.
         </p>
+        <div className="mt-8">
+          <ThemeSwitcher />
+        </div>
       </div>
       <div className="flex flex-1 items-center justify-center py-8">
         <Image
