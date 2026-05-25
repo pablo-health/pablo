@@ -155,7 +155,7 @@ function defaultProps() {
     callerSystemPrompt: "You are an assistant.",
     defaultSourceSelection: {
       progress_notes_recent: { limit: 3 } as const,
-      current_medications: true as const,
+      patient_documents: true as const,
     },
   }
 }
@@ -202,7 +202,7 @@ describe("ChatPanel — chip rail", () => {
   it("renders one chip per source in the default selection", () => {
     render(<ChatPanel {...defaultProps()} />)
     expect(screen.getByText("Progress notes")).toBeInTheDocument()
-    expect(screen.getByText("Medications")).toBeInTheDocument()
+    expect(screen.getByText("Uploaded documents")).toBeInTheDocument()
     const rail = screen
       .getByText("Progress notes")
       .closest("[data-slot=chat-source-rail]")
@@ -213,14 +213,14 @@ describe("ChatPanel — chip rail", () => {
     mockStream.mockImplementation(happyStreamImpl())
     render(<ChatPanel {...defaultProps()} />)
 
-    // Click the Medications chip body (the toggle button) to deactivate it.
-    // The chip has two buttons (toggle + details); use aria-pressed to
-    // pick the toggle.
-    const medsToggle = screen
+    // Click the Uploaded documents chip body (the toggle button) to
+    // deactivate it. The chip has two buttons (toggle + details); use
+    // aria-pressed to pick the toggle.
+    const docsToggle = screen
       .getAllByRole("button", { pressed: true })
-      .find((el) => el.textContent?.startsWith("Medications"))
-    expect(medsToggle).toBeDefined()
-    fireEvent.click(medsToggle!)
+      .find((el) => el.textContent?.startsWith("Uploaded documents"))
+    expect(docsToggle).toBeDefined()
+    fireEvent.click(docsToggle!)
 
     // Send a message.
     const textarea = screen.getByRole("textbox", { name: "Message" })
@@ -230,7 +230,7 @@ describe("ChatPanel — chip rail", () => {
     await waitFor(() => expect(mockStream).toHaveBeenCalled())
     const [, body] = mockStream.mock.calls[0]
     expect(body.content).toBe("Hello there")
-    expect(body.source_selection).not.toHaveProperty("current_medications")
+    expect(body.source_selection).not.toHaveProperty("patient_documents")
     expect(body.source_selection).toHaveProperty("progress_notes_recent")
   })
 })
