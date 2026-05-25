@@ -21,12 +21,20 @@ single-key design conflates:
 
   marker present, activity present  → active session; refresh activity.
   marker present, activity missing  → activity TTL expired → idle timeout.
-                                       Delete marker; reject 401 IDLE_TIMEOUT.
+                                       Delete marker, set revoked tombstone;
+                                       reject 401 IDLE_TIMEOUT.
   marker missing                    → first request after sign-in (or Redis
                                        flush). Create both; allow. A flush
                                        silently resets every active session's
                                        idle window — accepted tradeoff vs.
                                        false-positive lockouts.
+
+A third key, idle:revoked:{uid}:{auth_time}, tombstones a timed-out
+session. Without it, "marker missing" can't distinguish a fresh sign-in
+from a session burned minutes ago — a refresh-token swap reuses the same
+auth_time, so the next request would revive the session via the
+"create both, allow" branch. The tombstone makes idle-out terminal for
+that auth_time; only a real re-auth (new auth_time) recovers.
 
 Skipped when ``settings.use_redis`` is false (single-instance OSS
 self-hosters who run without Redis fall back to the client-side
@@ -58,6 +66,23 @@ def _session_marker_key(uid: str, auth_time: int) -> str:
 
 def _activity_key(uid: str, auth_time: int) -> str:
     return f"idle:activity:{uid}:{auth_time}"
+
+
+def _revoked_key(uid: str, auth_time: int) -> str:
+    return f"idle:revoked:{uid}:{auth_time}"
+
+
+def _idle_timeout_exc() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "error": {
+                "code": "IDLE_TIMEOUT",
+                "message": "Session expired due to inactivity. Please sign in again.",
+                "details": {},
+            }
+        },
+    )
 
 
 def check_and_touch(decoded_token: dict[str, Any]) -> None:
@@ -93,9 +118,17 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
 
     marker_key = _session_marker_key(str(uid), auth_time)
     activity_key = _activity_key(str(uid), auth_time)
+    revoked_key = _revoked_key(str(uid), auth_time)
     idle_ttl = settings.idle_timeout_seconds
 
     try:
+        if redis.exists(revoked_key):
+            # Already timed out; a refresh-token swap must not re-arm it.
+            logger.info(
+                "Rejected revoked idle session: uid=%s auth_time=%s", uid, auth_time
+            )
+            raise _idle_timeout_exc()
+
         marker_exists = bool(redis.exists(marker_key))
         if not marker_exists:
             pipe = redis.pipeline()
@@ -109,20 +142,13 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
             return
 
         # Marker present, activity absent → idle TTL elapsed. Burn the
-        # marker so a replayed token can't re-arm this session without
-        # going through a real re-auth.
-        redis.delete(marker_key)
+        # marker and tombstone this auth_time atomically.
+        pipe = redis.pipeline()
+        pipe.delete(marker_key)
+        pipe.set(revoked_key, "1", ex=_SESSION_MARKER_TTL_SECONDS)
+        pipe.execute()
         logger.info("Idle session timeout: uid=%s auth_time=%s", uid, auth_time)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": "IDLE_TIMEOUT",
-                    "message": ("Session expired due to inactivity. Please sign in again."),
-                    "details": {},
-                }
-            },
-        )
+        raise _idle_timeout_exc()
     except HTTPException:
         raise
     except Exception as exc:

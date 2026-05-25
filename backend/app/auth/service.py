@@ -452,6 +452,13 @@ def get_current_user_no_mfa(
     decoded_token = _get_cached_token(request, token)
     if decoded_token is None:
         decoded_token = verify_firebase_token(token)
+
+    # Skipping MFA enrollment doesn't mean skipping the idle gate.
+    # Lazy import avoids a circular service <-> idle_session import.
+    from . import idle_session
+
+    idle_session.check_and_touch(decoded_token)
+
     return _resolve_user(decoded_token, user_repo, allowlist_repo, identity_repo, request)
 
 
