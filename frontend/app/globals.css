@@ -369,9 +369,9 @@
 
 [data-theme="boring-ehr"] {
   /* Boring EHR™: the anti-goal, made selectable. Do not enjoy.
-     Times-New-Roman headings, Arial body, sharp corners, hospital blue,
-     cold fluorescent grey — everything Pablo refuses to be. */
-  --font-sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
+     Times New Roman throughout, sharp corners, hospital blue, cold
+     fluorescent grey — everything Pablo refuses to be. */
+  --font-sans: "Times New Roman", Times, serif;
   --font-display: "Times New Roman", Times, serif;
   --radius: 0rem;
   --color-neutral-50: #e7eaee;
