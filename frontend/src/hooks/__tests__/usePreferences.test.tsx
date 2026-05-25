@@ -22,6 +22,7 @@ const mockPreferences: usersApi.UserPreferences = {
   working_hours_end: 18,
   calendar_default_view: "week",
   timezone: "America/New_York",
+  theme: "warm-paper",
 }
 
 function createWrapper() {

@@ -14,7 +14,8 @@ import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Settings2, User } from "lucide-react"
+import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
+import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Palette, Settings2, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
 
@@ -87,6 +88,14 @@ export default function SettingsPage() {
           )}
         </div>
       </div>
+
+      <SettingsSection
+        icon={Palette}
+        title="Appearance"
+        description="Pick the look of your workspace. Saved to your account."
+      >
+        <ThemeSwitcher />
+      </SettingsSection>
 
       <SettingsSection
         icon={User}

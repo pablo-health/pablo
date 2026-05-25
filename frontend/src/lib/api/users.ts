@@ -7,6 +7,7 @@
  */
 
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
+import type { ThemeId } from "@/lib/theme"
 import { get, patch, post, put } from "./client"
 
 export type ProviderType = "therapist" | "prescriber" | "both"
@@ -176,6 +177,7 @@ export interface UserPreferences {
   working_hours_end: number
   calendar_default_view: string
   timezone: string
+  theme: ThemeId
 }
 
 export async function getPreferences(
@@ -189,4 +191,11 @@ export async function savePreferences(
   token?: string
 ): Promise<UserPreferences> {
   return put<UserPreferences>("/api/users/me/preferences", prefs, token)
+}
+
+export async function saveThemePreference(
+  theme: ThemeId,
+  token?: string
+): Promise<UserPreferences> {
+  return put<UserPreferences>("/api/users/me/preferences/theme", { theme }, token)
 }

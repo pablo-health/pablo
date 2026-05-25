@@ -95,7 +95,7 @@
 
   /* Card component - subtle shadow, spacious */
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-neutral-200 p-6 hover:shadow-lg transition-all duration-300;
+    @apply bg-card rounded-xl shadow-sm border border-border p-6 hover:shadow-lg transition-all duration-300;
   }
 
   /* Input field - calming design */
@@ -241,16 +241,23 @@
 /* =========================================================================
    Pablo theme system — see design/brand.md.
    Each theme = a set of CSS-variable overrides applied via [data-theme] on
-   <html>. The default (Warm Paper) lives in :root below; ThemeProvider sets
-   data-theme and a no-FOUC script applies it before paint.
+   <html>. ThemeProvider sets data-theme; a no-FOUC script applies it before
+   paint. The default (Warm Paper) lives in :root.
 
-   Scoped to the --auth-*/--brand-* vars for now: the login pilot consumes
-   them, the rest of the app is untouched until its surfaces migrate to
-   semantic tokens (the app-wide adoption follow-up).
+   Themes override the existing palette + semantic tokens (canvas, cards,
+   honey accents, shadcn surfaces), so the whole app re-skins without
+   per-screen edits. The --brand-*/--auth-* vars drive the login panel's
+   bespoke flourishes on top of that.
    ========================================================================= */
 
 :root {
-  /* Warm Paper (default): crisp near-white, deep-brown brand panel, honey CTA */
+  /* Warm Paper (default): crisp near-white canvas, white cards, honey accents */
+  --color-neutral-50: #fefcf8;
+  --background: #fefcf8;
+  --foreground: #2c1810;
+  --card: #ffffff;
+  --border: #ece0cf;
+
   --auth-radius: 1rem;
   --auth-canvas: linear-gradient(135deg, #fefcf8 0%, #faf3e8 100%);
   --brand-panel-bg: radial-gradient(
@@ -268,7 +275,15 @@
 }
 
 [data-theme="cozy"] {
-  /* Cozy: softer cream + blush, deeper-brown panel, fireside */
+  /* Cozy: softer warm cream, blush accents, fireside */
+  --color-neutral-50: #fbf3ea;
+  --background: #fbf3ea;
+  --foreground: #2c1810;
+  --card: #fffdf9;
+  --border: #ecdcc9;
+  --color-primary-600: #e8a849;
+  --color-primary-700: #d4952f;
+
   --auth-radius: 1.25rem;
   --auth-canvas: linear-gradient(135deg, #fdf6ec 0%, #f3d9ce 100%);
   --brand-panel-bg: radial-gradient(
@@ -286,7 +301,13 @@
 }
 
 [data-theme="classic-cream"] {
-  /* Classic Cream: today's look, for side-by-side comparison */
+  /* Classic Cream: today's all-cream look, for side-by-side comparison */
+  --color-neutral-50: #fdf6ec;
+  --background: #fdf6ec;
+  --foreground: #2c1810;
+  --card: #ffffff;
+  --border: #e8d5b5;
+
   --auth-radius: 1rem;
   --auth-canvas: linear-gradient(135deg, #fdf6ec 0%, #f2f7f3 50%, #e0ede2 100%);
   --brand-panel-bg: linear-gradient(160deg, #f5d08e 0%, #e8a849 100%);
@@ -300,6 +321,18 @@
 
 [data-theme="boring-ehr"] {
   /* Boring EHR™: the anti-goal, made selectable. Do not enjoy. */
+  --color-neutral-50: #f1f5f9;
+  --background: #f1f5f9;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --border: #e2e8f0;
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+
   --auth-radius: 0.25rem;
   --auth-canvas: #f1f5f9;
   --brand-panel-bg: #334155;
