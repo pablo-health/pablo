@@ -26,6 +26,26 @@ import {
 
 import type { SourceFamily, SourceKey } from "./types"
 
+/**
+ * Source keys the UI surfaces today — the ones with a live data path
+ * (PABLO-6x5.9). The others stay registered in SOURCE_META + the backend
+ * loaders (forward-compatible for when their note types ship) but get no
+ * chip, so the rail reads honestly and every visible source works:
+ *
+ * - progress_notes_recent — soap/narrative notes (the registered types)
+ * - patient_documents — uploaded chart documents (all, or a picked subset)
+ * - pasted_text — free text for this conversation
+ *
+ * Deliberately excludes progress_notes_explicit ('Selected sessions'),
+ * which needs a note-multiselect to supply note_ids and errored on a
+ * bare toggle, and the always-empty note-backed sources.
+ */
+export const SUPPORTED_SOURCE_KEYS: readonly SourceKey[] = [
+  "progress_notes_recent",
+  "patient_documents",
+  "pasted_text",
+]
+
 interface SourceMeta {
   /** Display label for the chip + manifest. */
   label: string

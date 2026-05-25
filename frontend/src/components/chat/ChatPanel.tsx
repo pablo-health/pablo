@@ -29,6 +29,7 @@ import {
   type ChatMessage,
   type ContextManifest,
   type SourceKey,
+  type SourceParams,
   type SourceSelection,
 } from "@/lib/chat/types"
 
@@ -384,8 +385,24 @@ export function ChatPanel({
   }, [])
 
   const handleAddSource = useCallback((key: SourceKey) => {
-    setSelection((prev) => ({ ...prev, [key]: true }))
+    // pasted_text needs a {content} shape — a bare `true` would error on
+    // send (PABLO-6x5.9). Seed it empty and open the editor so the
+    // clinician fills it in. Other supported sources opt in with `true`.
+    setSelection((prev) => ({
+      ...prev,
+      [key]: key === "pasted_text" ? { content: "" } : true,
+    }))
+    if (key === "pasted_text" || key === "patient_documents") {
+      setDetailFor(key)
+    }
   }, [])
+
+  const handleApplySourceParams = useCallback(
+    (key: SourceKey, params: SourceParams) => {
+      setSelection((prev) => ({ ...prev, [key]: params }))
+    },
+    [],
+  )
 
   const handleSetAsDefault = useCallback(
     async (key: SourceKey) => {
@@ -549,9 +566,12 @@ export function ChatPanel({
       <SourceChipDetail
         open={detailFor !== null}
         sourceKey={detailFor}
+        patientId={patientId}
+        selectionValue={detailFor ? selection[detailFor] : undefined}
         manifest={latestManifest}
         isDefault={isDetailDefault}
         onOpenChange={(open) => !open && setDetailFor(null)}
+        onApplyParams={handleApplySourceParams}
         onSetAsDefault={(key) => {
           void handleSetAsDefault(key)
           setDetailFor(null)

@@ -20,9 +20,8 @@ import {
   ContextManifest,
   SourceKey,
   SourceSelection,
-  SOURCE_KEYS,
 } from "@/lib/chat/types"
-import { SOURCE_META } from "@/lib/chat/sourceMeta"
+import { SOURCE_META, SUPPORTED_SOURCE_KEYS } from "@/lib/chat/sourceMeta"
 
 import { SourceChip } from "./SourceChip"
 
@@ -41,13 +40,15 @@ export function SourceChipRail({
   onOpenDetail,
   onAdd,
 }: SourceChipRailProps) {
-  const activeKeys = SOURCE_KEYS.filter((key) => selection[key])
+  // Only surface sources with a live data path. A stale/unsupported key
+  // left in an older conversation's selection simply isn't shown.
+  const activeKeys = SUPPORTED_SOURCE_KEYS.filter((key) => selection[key])
   const unavailableKeys = new Set(
     (latestManifest?.sources_dropped ?? [])
       .filter((entry) => entry.reason === "module_not_available")
       .map((entry) => entry.source_key),
   )
-  const addableKeys = SOURCE_KEYS.filter(
+  const addableKeys = SUPPORTED_SOURCE_KEYS.filter(
     (key) => !selection[key] && !unavailableKeys.has(key),
   )
 
