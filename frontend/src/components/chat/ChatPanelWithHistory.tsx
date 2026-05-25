@@ -39,7 +39,17 @@ export function ChatPanelWithHistory({
   className,
   initialConversationId,
 }: ChatPanelWithHistoryProps) {
+  // Drives ONLY the sidebar highlight. Updated by select/new AND by the
+  // lazy create-on-first-send so the new row lights up immediately.
   const [activeConversationId, setActiveConversationId] = useState<
+    string | null
+  >(initialConversationId ?? null)
+  // The conversation the mounted panel was opened with. Drives the
+  // panel's hydrate prop + remount key, and changes ONLY when the user
+  // picks a row or starts a new chat — never on lazy create. Keeping it
+  // stable across the first send is what stops React from unmounting the
+  // in-flight panel and losing the first message (PABLO-6x5.8).
+  const [mountedConversationId, setMountedConversationId] = useState<
     string | null
   >(initialConversationId ?? null)
   // Re-mount key for the panel — bump to force a fresh "new chat" state
@@ -50,11 +60,13 @@ export function ChatPanelWithHistory({
 
   const handleSelect = useCallback((conversationId: string) => {
     setActiveConversationId(conversationId)
+    setMountedConversationId(conversationId)
     setPanelMountId((n) => n + 1)
   }, [])
 
   const handleNew = useCallback(() => {
     setActiveConversationId(null)
+    setMountedConversationId(null)
     setPanelMountId((n) => n + 1)
   }, [])
 
@@ -88,16 +100,17 @@ export function ChatPanelWithHistory({
       </div>
       <div className="flex-1 min-w-0">
         <ChatPanel
-          // Re-mount the panel on selection changes so internal state
-          // (selection, messages, manifest) resets cleanly. Without
-          // this, switching conversations would replay a stale stream
-          // against the new conversation id.
-          key={`${activeConversationId ?? "new"}::${panelMountId}`}
+          // Re-mount the panel only on user-driven select/new (which bump
+          // panelMountId) so internal state resets cleanly. Crucially NOT
+          // keyed on the conversation id — the lazy create on first send
+          // would otherwise change the key and unmount the in-flight
+          // panel, losing the first message (PABLO-6x5.8).
+          key={panelMountId}
           patientId={patientId}
           callerFeatureKey={callerFeatureKey}
           callerSystemPrompt={callerSystemPrompt}
           defaultSourceSelection={defaultSourceSelection}
-          conversationId={activeConversationId ?? undefined}
+          conversationId={mountedConversationId ?? undefined}
           title={title}
           onArchived={handleArchived}
           // Notify the sidebar when the panel reports its own
