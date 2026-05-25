@@ -137,10 +137,12 @@ BASE_URL=$(gcloud run services describe pablo-frontend \
 # Pick a strong password, run the script. ADC must be a principal with
 # roles/firebaseauth.admin on pablohealth-oss (your user, or a service
 # account you've impersonated via `gcloud auth application-default
-# login --impersonate-service-account=...`).
+# login --impersonate-service-account=...`). Credentials are written to
+# OUT_PATH with mode 0600 — never to stdout.
 TEST_PASSWORD='<strong-random-password>' \
+  OUT_PATH=/tmp/pinned.json \
   PLAYWRIGHT_BASE_URL="$BASE_URL" \
-  ./node_modules/.bin/tsx scripts/provision-pinned-user.ts > /tmp/pinned.json
+  ./node_modules/.bin/tsx scripts/provision-pinned-user.ts
 
 # Inspect — the JSON has email/password/totpSecret/uid.
 jq . /tmp/pinned.json
