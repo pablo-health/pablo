@@ -19,15 +19,13 @@ interface PatientChatDialogProps {
   patientId: string
 }
 
-// Neutral OSS default context — recent progress notes plus the standing
-// clinical documents. No proprietary tuning; SaaS resolves its own prompt
-// server-side (we pass no callerSystemPrompt).
+// Neutral OSS default context — recent progress notes only. The other
+// note-backed sources (intake, treatment/safety plan, medications) aren't
+// registered note types yet, so they'd return empty; the chip rail only
+// surfaces sources with a live data path (PABLO-6x5.9). No proprietary
+// tuning; SaaS resolves its own prompt server-side (no callerSystemPrompt).
 const DEFAULT_SELECTION: SourceSelection = {
   progress_notes_recent: { limit: 3 },
-  most_recent_intake: true,
-  treatment_plan_active: true,
-  safety_plan_active: true,
-  current_medications: true,
 }
 
 export function PatientChatDialog({ patientId }: PatientChatDialogProps) {

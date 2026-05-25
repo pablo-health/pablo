@@ -28,12 +28,24 @@ import type {
   ManifestDroppedEntry,
   ManifestIncludedEntry,
   SourceKey,
+  SourceParams,
 } from "@/lib/chat/types"
 import { SOURCE_META } from "@/lib/chat/sourceMeta"
+
+import { SourceParamsEditor } from "./SourceParamsEditor"
+
+const EDITABLE_SOURCES: ReadonlySet<SourceKey> = new Set<SourceKey>([
+  "pasted_text",
+  "patient_documents",
+])
 
 interface SourceChipDetailProps {
   open: boolean
   sourceKey: SourceKey | null
+  /** Patient whose documents the patient_documents picker lists. */
+  patientId: string
+  /** Current per-turn params for this source, used to seed the editor. */
+  selectionValue?: SourceParams
   /** Most recent manifest, used to pull this source's forensic entry. */
   manifest: ContextManifest | null
   /**
@@ -42,6 +54,8 @@ interface SourceChipDetailProps {
    */
   isDefault: boolean
   onOpenChange: (open: boolean) => void
+  /** Persist shaped params (pasted_text content, picked document_ids). */
+  onApplyParams: (key: SourceKey, params: SourceParams) => void
   onSetAsDefault: (key: SourceKey) => void
   onOpenNote?: (noteId: string) => void
 }
@@ -49,15 +63,19 @@ interface SourceChipDetailProps {
 export function SourceChipDetail({
   open,
   sourceKey,
+  patientId,
+  selectionValue,
   manifest,
   isDefault,
   onOpenChange,
+  onApplyParams,
   onSetAsDefault,
   onOpenNote,
 }: SourceChipDetailProps) {
   if (!sourceKey) return null
 
   const meta = SOURCE_META[sourceKey]
+  const isEditable = EDITABLE_SOURCES.has(sourceKey)
   const includedEntry: ManifestIncludedEntry | undefined = manifest?.sources_included.find(
     (e) => e.source_key === sourceKey,
   )
@@ -76,7 +94,18 @@ export function SourceChipDetail({
           <DialogDescription>{meta.description}</DialogDescription>
         </DialogHeader>
 
-        {includedEntry ? (
+        {isEditable ? (
+          <SourceParamsEditor
+            key={sourceKey}
+            sourceKey={sourceKey}
+            patientId={patientId}
+            value={selectionValue}
+            onApply={(params) => {
+              onApplyParams(sourceKey, params)
+              onOpenChange(false)
+            }}
+          />
+        ) : includedEntry ? (
           <IncludedDetail entry={includedEntry} onOpenNote={onOpenNote} />
         ) : droppedEntry ? (
           <DroppedDetail entry={droppedEntry} />
