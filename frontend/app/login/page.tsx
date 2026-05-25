@@ -37,6 +37,7 @@ import {
   MfaChallengeScreen,
   VerifyEmailScreen,
 } from "@/components/auth"
+import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 
 type LoginStep = "sign-in" | "mfa" | "verify-email"
 
@@ -276,7 +277,7 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthCard>
+    <AuthCard toolbar={<ThemeSwitcher />} brandPanel={<LoginBrandPanel />}>
       <AuthHeader
         title="Pablo"
         titleSize="4xl"
@@ -394,5 +395,34 @@ export default function LoginPage() {
 
       <AuthFooter />
     </AuthCard>
+  )
+}
+
+function LoginBrandPanel() {
+  const points = [
+    "SOAP notes from your session transcript",
+    "Dual-method verification — LLM + classical NLP",
+    "HIPAA-compliant by design",
+  ]
+  return (
+    <>
+      <div>
+        <span className="font-display text-3xl font-bold">Pablo</span>
+        <p
+          className="mt-6 max-w-xs font-display text-2xl leading-snug"
+          style={{ color: "var(--brand-panel-fg)" }}
+        >
+          The therapy paperwork you&rsquo;re actually allowed to like.
+        </p>
+      </div>
+      <ul className="mt-10 space-y-3 text-sm">
+        {points.map((point) => (
+          <li key={point} className="flex items-start gap-3">
+            <span style={{ color: "var(--brand-panel-accent)" }}>✦</span>
+            <span style={{ color: "var(--brand-panel-muted)" }}>{point}</span>
+          </li>
+        ))}
+      </ul>
+    </>
   )
 }

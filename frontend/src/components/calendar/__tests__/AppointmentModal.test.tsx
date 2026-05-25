@@ -5,6 +5,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AppointmentModal } from "../AppointmentModal"
+import type { UserPreferences } from "@/lib/api/users"
 
 vi.mock("@/hooks/usePatients", () => ({
   usePatientList: () => ({
@@ -160,7 +161,7 @@ describe("AppointmentModal", () => {
   })
 
   describe("Preferences as Defaults", () => {
-    const prefs = {
+    const prefs: UserPreferences = {
       default_video_platform: "teams",
       default_session_type: "couples",
       default_duration_minutes: 60,
@@ -171,6 +172,7 @@ describe("AppointmentModal", () => {
       working_hours_end: 18,
       calendar_default_view: "timeGridWeek",
       timezone: "America/New_York",
+      theme: "warm-paper",
     }
 
     it("uses preference duration for new appointments", () => {
