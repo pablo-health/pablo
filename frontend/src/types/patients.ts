@@ -88,7 +88,9 @@ export interface DeletePatientResponse {
  * (omitted) lists only live patients.
  */
 export interface PatientListParams {
+  /** Case-insensitive substring matched against both first and last name. */
   search?: string
-  search_by?: "first_name" | "last_name"
+  page?: number
+  page_size?: number
   include_deleted?: "recent"
 }

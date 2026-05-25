@@ -103,12 +103,15 @@ class PostgresPatientRepository(PatientRepository):
         self,
         user_id: str,
         search: str | None = None,
-        search_by: str = "last_name",
         *,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Patient], int]:
         """List patients the user has a grant for, with pagination.
+
+        ``search`` is a case-insensitive substring matched against both
+        first and last name (the lower-cased indexed columns), so a name
+        fragment or a first name finds the patient without a field toggle.
 
         The join through ``patient_clinicians`` returns rows where
         ``user_id`` has any non-expired grant — primary, co-treating,
@@ -126,10 +129,12 @@ class PostgresPatientRepository(PatientRepository):
 
         if search:
             search_lower = search.lower()
-            if search_by == "first_name":
-                query = query.filter(PatientRow.first_name_lower.startswith(search_lower))
-            else:
-                query = query.filter(PatientRow.last_name_lower.startswith(search_lower))
+            query = query.filter(
+                or_(
+                    PatientRow.first_name_lower.contains(search_lower),
+                    PatientRow.last_name_lower.contains(search_lower),
+                )
+            )
 
         query = query.order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
 

@@ -107,38 +107,38 @@ describe("Patient API Functions", () => {
       expect(client.get).toHaveBeenCalledWith("/api/patients", undefined)
     })
 
-    it("builds query string correctly for search by last name", async () => {
+    it("builds query string with search and page_size", async () => {
       const mockResponse = {
         data: [],
         total: 0,
         page: 1,
-        page_size: 50,
+        page_size: 100,
       }
 
       vi.mocked(client.get).mockResolvedValue(mockResponse)
 
-      await listPatients({ search: "Smith", search_by: "last_name" })
+      await listPatients({ search: "smith", page_size: 100 })
 
       expect(client.get).toHaveBeenCalledWith(
-        "/api/patients?search=Smith&search_by=last_name",
+        "/api/patients?search=smith&page_size=100",
         undefined
       )
     })
 
-    it("builds query string correctly for search by first name", async () => {
+    it("builds query string with page and page_size", async () => {
       const mockResponse = {
         data: [],
         total: 0,
-        page: 1,
-        page_size: 50,
+        page: 2,
+        page_size: 100,
       }
 
       vi.mocked(client.get).mockResolvedValue(mockResponse)
 
-      await listPatients({ search: "Jane", search_by: "first_name" })
+      await listPatients({ page: 2, page_size: 100 })
 
       expect(client.get).toHaveBeenCalledWith(
-        "/api/patients?search=Jane&search_by=first_name",
+        "/api/patients?page=2&page_size=100",
         undefined
       )
     })

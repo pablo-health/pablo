@@ -37,11 +37,11 @@ describe("Query Keys", () => {
 
     it("generates list key with full params", () => {
       expect(
-        queryKeys.patients.list({ search: "Smith", search_by: "last_name" })
+        queryKeys.patients.list({ search: "Smith", page_size: 100 })
       ).toEqual([
         "patients",
         "list",
-        { search: "Smith", search_by: "last_name" },
+        { search: "Smith", page_size: 100 },
       ])
     })
 
@@ -52,15 +52,9 @@ describe("Query Keys", () => {
       expect(key1).not.toEqual(key2)
     })
 
-    it("generates different keys for different search_by params", () => {
-      const key1 = queryKeys.patients.list({
-        search: "Jane",
-        search_by: "first_name",
-      })
-      const key2 = queryKeys.patients.list({
-        search: "Jane",
-        search_by: "last_name",
-      })
+    it("generates different keys for different page params", () => {
+      const key1 = queryKeys.patients.list({ search: "Jane", page: 1 })
+      const key2 = queryKeys.patients.list({ search: "Jane", page: 2 })
 
       expect(key1).not.toEqual(key2)
     })
@@ -173,12 +167,11 @@ describe("Query Keys", () => {
     })
 
     it("patient list params are type-safe", () => {
-      // Valid search_by values
-      queryKeys.patients.list({ search: "Smith", search_by: "first_name" })
-      queryKeys.patients.list({ search: "Smith", search_by: "last_name" })
+      queryKeys.patients.list({ search: "Smith" })
+      queryKeys.patients.list({ search: "Smith", page: 2, page_size: 100 })
 
-      // TypeScript would error on invalid values:
-      // queryKeys.patients.list({ search: "Smith", search_by: "invalid" })
+      // TypeScript would error on unknown keys:
+      // queryKeys.patients.list({ search: "Smith", search_by: "last_name" })
     })
   })
 
