@@ -8,6 +8,7 @@ import Link from "next/link"
 import { PatientExport } from "@/components/patients/PatientExport"
 import { PatientSummary } from "@/components/patients/PatientSummary"
 import { PatientChartTabs } from "@/components/patients/PatientChartTabs"
+import { PatientChatDialog } from "@/components/patients/PatientChatDialog"
 import { PatientChartExtras } from "@/components/patients/PatientChartExtras"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
@@ -75,6 +76,7 @@ export default function PatientDetailPage({ params }: PatientDetailPageProps) {
           <span>Back to Patients</span>
         </Link>
         <div className="flex items-center gap-2">
+          <PatientChatDialog patientId={patient.id} />
           <NewNoteButton patientId={patient.id} />
           <PatientExport
             patientId={patient.id}
