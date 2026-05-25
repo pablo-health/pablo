@@ -49,8 +49,8 @@ export async function createPatient(
  * // Get all patients
  * const patients = await listPatients()
  *
- * // Search by last name
- * const results = await listPatients({ search: "Smith", search_by: "last_name" })
+ * // Substring search across first and last name
+ * const results = await listPatients({ search: "smith", page_size: 100 })
  */
 export async function listPatients(
   params?: PatientListParams,
@@ -60,8 +60,11 @@ export async function listPatients(
   if (params?.search) {
     queryParams.append("search", params.search)
   }
-  if (params?.search_by) {
-    queryParams.append("search_by", params.search_by)
+  if (params?.page !== undefined) {
+    queryParams.append("page", String(params.page))
+  }
+  if (params?.page_size !== undefined) {
+    queryParams.append("page_size", String(params.page_size))
   }
   if (params?.include_deleted) {
     queryParams.append("include_deleted", params.include_deleted)

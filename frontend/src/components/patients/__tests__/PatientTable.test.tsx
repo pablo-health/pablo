@@ -308,7 +308,56 @@ describe("PatientTable", () => {
 
       render(<PatientTable />, { wrapper: Wrapper })
 
-      expect(screen.getByPlaceholderText(/search patients by name/i)).toBeInTheDocument()
+      expect(screen.getByPlaceholderText(/search patients/i)).toBeInTheDocument()
+    })
+
+    it("requests page_size=100 so a roster over 20 is fully visible", async () => {
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients,
+        total: 3,
+        page: 1,
+        page_size: 100,
+      })
+
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      await waitFor(() =>
+        expect(patientsApi.listPatients).toHaveBeenCalledWith(
+          expect.objectContaining({ page_size: 100 }),
+          undefined,
+        ),
+      )
+    })
+
+    it("shows the total count", async () => {
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients,
+        total: 3,
+        page: 1,
+        page_size: 100,
+      })
+
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      expect(await screen.findByText("3 patients")).toBeInTheDocument()
+    })
+
+    it("surfaces the cap when the roster exceeds the page size", async () => {
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients, // 3 rows on this page
+        total: 137,
+        page: 1,
+        page_size: 100,
+      })
+
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      expect(
+        await screen.findByText("Showing 3 of 137 patients"),
+      ).toBeInTheDocument()
     })
   })
 

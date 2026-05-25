@@ -339,14 +339,12 @@ def test_delete_patient_not_found(client: TestClient) -> None:
 # Priority 4: Search Functionality Tests
 
 
-def test_list_patients_search_by_last_name(client: TestClient) -> None:
-    """Test search by last name with prefix matching."""
-    # Create patients with different last names
+def test_list_patients_search_matches_last_name(client: TestClient) -> None:
+    """Search matches against last name."""
     client.post("/api/patients", json={"first_name": "John", "last_name": "Doe"})
     client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
     client.post("/api/patients", json={"first_name": "Bob", "last_name": "Doe"})
 
-    # Search for "Doe"
     response = client.get("/api/patients?search=Doe")
 
     assert response.status_code == status.HTTP_200_OK
@@ -355,20 +353,32 @@ def test_list_patients_search_by_last_name(client: TestClient) -> None:
     assert all(p["last_name"] == "Doe" for p in data["data"])
 
 
-def test_list_patients_search_by_first_name(client: TestClient) -> None:
-    """Test search by first name with search_by parameter."""
-    # Create patients
-    client.post("/api/patients", json={"first_name": "John", "last_name": "Doe"})
-    client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
-    client.post("/api/patients", json={"first_name": "Bob", "last_name": "Johnson"})
+def test_list_patients_search_matches_first_name_without_toggle(
+    client: TestClient,
+) -> None:
+    """A first name finds the patient — no search_by toggle needed (PABLO-bgr)."""
+    client.post("/api/patients", json={"first_name": "Jane", "last_name": "Doe"})
+    client.post("/api/patients", json={"first_name": "Bob", "last_name": "Smith"})
 
-    # Search by first name
-    response = client.get("/api/patients?search=J&search_by=first_name")
+    response = client.get("/api/patients?search=Jane")
 
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
-    assert len(data["data"]) == 2
-    assert all(p["first_name"].startswith("J") for p in data["data"])
+    assert len(data["data"]) == 1
+    assert data["data"][0]["first_name"] == "Jane"
+
+
+def test_list_patients_search_matches_substring(client: TestClient) -> None:
+    """A mid-name fragment matches (substring, not just prefix) (PABLO-bgr)."""
+    client.post("/api/patients", json={"first_name": "Mary", "last_name": "Hammersmith"})
+    client.post("/api/patients", json={"first_name": "Bob", "last_name": "Jones"})
+
+    response = client.get("/api/patients?search=mersmith")
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert len(data["data"]) == 1
+    assert data["data"][0]["last_name"] == "Hammersmith"
 
 
 def test_list_patients_search_case_insensitive(client: TestClient) -> None:
@@ -406,36 +416,22 @@ def test_list_patients_sorted_by_name(client: TestClient) -> None:
     assert data["data"][2]["first_name"] == "Charlie"
 
 
-def test_list_patients_invalid_search_by_parameter(client: TestClient) -> None:
-    """Test that invalid search_by parameter returns 422."""
-    # Create a patient
+def test_list_patients_legacy_search_by_param_ignored(client: TestClient) -> None:
+    """A leftover ``search_by`` query param is harmlessly ignored (PABLO-bgr).
+
+    The toggle was dropped; search always spans both names. An old client
+    still sending ``search_by`` must not 422 or change the result.
+    """
     client.post("/api/patients", json={"first_name": "John", "last_name": "Doe"})
 
-    # Try to search with invalid search_by parameter
-    response = client.get("/api/patients?search=John&search_by=invalid_field")
+    # "John" is the first name; with the old last_name default this would
+    # have returned nothing. Both-field search finds it, param ignored.
+    response = client.get("/api/patients?search=John&search_by=last_name")
 
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
-
-
-def test_list_patients_valid_search_by_values(client: TestClient) -> None:
-    """Test that both valid search_by values (first_name, last_name) work."""
-    # Create patients
-    client.post("/api/patients", json={"first_name": "John", "last_name": "Doe"})
-    client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"})
-
-    # Test search_by=first_name
-    response = client.get("/api/patients?search=John&search_by=first_name")
     assert response.status_code == status.HTTP_200_OK
     data = response.json()
     assert len(data["data"]) == 1
     assert data["data"][0]["first_name"] == "John"
-
-    # Test search_by=last_name (explicit)
-    response = client.get("/api/patients?search=Smith&search_by=last_name")
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert len(data["data"]) == 1
-    assert data["data"][0]["last_name"] == "Smith"
 
 
 # Priority 5: Data Integrity Tests

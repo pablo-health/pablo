@@ -53,12 +53,16 @@ export function PatientTable() {
   // Debounce search term
   const debouncedSearch = useDebounce(searchTerm, 500)
 
-  // Fetch patients with search
+  // Fetch patients with search. page_size=100 (the API max) so a roster
+  // larger than the old default of 20 is fully visible; revisit with real
+  // pagination if a practice grows past 100 (PABLO-y93).
   const { data: patientsResponse, isLoading, error } = usePatientList({
     search: debouncedSearch || undefined,
+    page_size: 100,
   })
 
   const patients = patientsResponse?.data || []
+  const total = patientsResponse?.total ?? 0
 
   const deletePatient = useDeletePatient()
 
@@ -136,7 +140,7 @@ export function PatientTable() {
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-neutral-400 w-4 h-4" />
             <Input
               type="text"
-              placeholder="Search patients by name..."
+              placeholder="Search patients..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
@@ -167,6 +171,11 @@ export function PatientTable() {
             </div>
           ) : (
             <div className="overflow-x-auto">
+              <p className="mb-3 text-sm text-neutral-500">
+                {patients.length < total
+                  ? `Showing ${patients.length} of ${total} patients`
+                  : `${total} ${total === 1 ? "patient" : "patients"}`}
+              </p>
               <Table>
                 <TableHeader>
                   <TableRow>

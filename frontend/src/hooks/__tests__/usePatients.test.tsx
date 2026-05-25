@@ -85,7 +85,7 @@ describe("usePatients hooks", () => {
 
       vi.mocked(patientsApi.listPatients).mockResolvedValue(mockData)
 
-      const params = { search: "Smith", search_by: "last_name" as const }
+      const params = { search: "Smith", page_size: 100 }
       renderHook(() => usePatientList(params), {
         wrapper: createWrapper(),
       })
