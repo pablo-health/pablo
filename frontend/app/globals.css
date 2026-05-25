@@ -246,7 +246,7 @@
 
    Themes override the existing palette + semantic tokens (canvas, cards,
    honey accents, shadcn surfaces), so the whole app re-skins without
-   per-screen edits. The --brand-*/--auth-* vars drive the login panel's
+   per-screen edits. The --brand- and --auth- vars drive the login panel's
    bespoke flourishes on top of that.
    ========================================================================= */
 
