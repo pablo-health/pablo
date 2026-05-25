@@ -134,6 +134,10 @@ class User:
     chat_quality_review_opt_in: bool = False
     chat_quality_review_opt_in_at: datetime | None = None
     chat_quality_review_opt_out_at: datetime | None = None
+    session_notes_quality_review_opt_in: bool = False
+    session_notes_quality_review_opt_in_at: datetime | None = None
+    session_notes_quality_review_opt_out_at: datetime | None = None
+    quality_review_consent_prompted_at: datetime | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -196,6 +200,16 @@ class User:
             chat_quality_review_opt_in=data.get("chat_quality_review_opt_in", False),
             chat_quality_review_opt_in_at=data.get("chat_quality_review_opt_in_at"),
             chat_quality_review_opt_out_at=data.get("chat_quality_review_opt_out_at"),
+            session_notes_quality_review_opt_in=data.get(
+                "session_notes_quality_review_opt_in", False
+            ),
+            session_notes_quality_review_opt_in_at=data.get(
+                "session_notes_quality_review_opt_in_at"
+            ),
+            session_notes_quality_review_opt_out_at=data.get(
+                "session_notes_quality_review_opt_out_at"
+            ),
+            quality_review_consent_prompted_at=data.get("quality_review_consent_prompted_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:

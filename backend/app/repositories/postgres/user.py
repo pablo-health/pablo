@@ -79,6 +79,10 @@ def _row_to_user(row: PlatformUserRow) -> User:
         chat_quality_review_opt_in=row.chat_quality_review_opt_in,
         chat_quality_review_opt_in_at=row.chat_quality_review_opt_in_at,
         chat_quality_review_opt_out_at=row.chat_quality_review_opt_out_at,
+        session_notes_quality_review_opt_in=row.session_notes_quality_review_opt_in,
+        session_notes_quality_review_opt_in_at=row.session_notes_quality_review_opt_in_at,
+        session_notes_quality_review_opt_out_at=row.session_notes_quality_review_opt_out_at,
+        quality_review_consent_prompted_at=row.quality_review_consent_prompted_at,
     )
 
 
@@ -105,3 +109,7 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.chat_quality_review_opt_in = user.chat_quality_review_opt_in
     row.chat_quality_review_opt_in_at = user.chat_quality_review_opt_in_at
     row.chat_quality_review_opt_out_at = user.chat_quality_review_opt_out_at
+    row.session_notes_quality_review_opt_in = user.session_notes_quality_review_opt_in
+    row.session_notes_quality_review_opt_in_at = user.session_notes_quality_review_opt_in_at
+    row.session_notes_quality_review_opt_out_at = user.session_notes_quality_review_opt_out_at
+    row.quality_review_consent_prompted_at = user.quality_review_consent_prompted_at

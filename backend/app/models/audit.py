@@ -106,6 +106,15 @@ class AuditAction(StrEnum):
     CHAT_QUALITY_REVIEW_OPT_OUT = "chat_quality_review_opt_out"
     CHAT_QUALITY_REVIEW_PURGE_REQUESTED = "chat_quality_review_purge_requested"
 
+    # Per-user opt-in for quality review of session-derived notes
+    # (session transcript + generated note text). Separate from the chat
+    # consent above because session-derived content is a distinct surface;
+    # recorded on every state change. Same no-PHI payload rule — `changes`
+    # carries the bare new state, e.g. ``{"opt_in": true}``.
+    SESSION_NOTES_QUALITY_REVIEW_OPT_IN = "session_notes_quality_review_opt_in"
+    SESSION_NOTES_QUALITY_REVIEW_OPT_OUT = "session_notes_quality_review_opt_out"
+    SESSION_NOTES_QUALITY_REVIEW_PURGE_REQUESTED = "session_notes_quality_review_purge_requested"
+
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
     # land in the audit log; per-turn detail lives on chat_messages rows.
