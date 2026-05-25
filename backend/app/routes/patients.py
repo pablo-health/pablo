@@ -49,13 +49,6 @@ from ..utcnow import utc_now
 logger = logging.getLogger(__name__)
 
 
-class PatientSearchField(StrEnum):
-    """Valid fields for patient search."""
-
-    FIRST_NAME = "first_name"
-    LAST_NAME = "last_name"
-
-
 class IncludeDeletedMode(StrEnum):
     """Soft-delete visibility for ``GET /api/patients`` (THERAPY-yg2).
 
@@ -156,9 +149,9 @@ def create_patient(
 @router.get("")
 def list_patients(
     request: Request,
-    search: str | None = Query(None, description="Search by patient name"),
-    search_by: PatientSearchField = Query(
-        PatientSearchField.LAST_NAME, description="Search field: first_name or last_name"
+    search: str | None = Query(
+        None,
+        description="Case-insensitive substring matched against first and last name",
     ),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -176,8 +169,8 @@ def list_patients(
     """
     List patients for the current user with pagination.
 
-    - **search**: Optional search term for patient name
-    - **search_by**: Field to search (first_name or last_name, defaults to last_name)
+    - **search**: Optional case-insensitive substring matched against
+      both first and last name
     - **page**: Page number (default 1)
     - **page_size**: Items per page (default 20, max 100)
     - **include_deleted**: ``recent`` switches to the 30-day soft-delete
@@ -212,7 +205,7 @@ def list_patients(
         )
 
     patients, total = repo.list_by_user(
-        user.id, search=search, search_by=search_by.value, page=page, page_size=page_size
+        user.id, search=search, page=page, page_size=page_size
     )
 
     responses = [PatientResponse.from_patient(p) for p in patients]

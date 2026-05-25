@@ -33,14 +33,14 @@ class PatientRepository(ABC):
         self,
         user_id: str,
         search: str | None = None,
-        search_by: str = "last_name",
         *,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Patient], int]:
         """List patients for a user with pagination.
 
-        Returns a tuple of (paginated_patients, total_count).
+        ``search`` is a case-insensitive substring matched against both
+        first and last name. Returns (paginated_patients, total_count).
         """
         pass
 
@@ -188,7 +188,6 @@ class InMemoryPatientRepository(PatientRepository):
         self,
         user_id: str,
         search: str | None = None,
-        search_by: str = "last_name",
         *,
         page: int = 1,
         page_size: int = 20,
@@ -202,10 +201,12 @@ class InMemoryPatientRepository(PatientRepository):
 
         if search:
             search_lower = search.lower()
-            if search_by == "first_name":
-                patients = [p for p in patients if p.first_name_lower.startswith(search_lower)]
-            else:  # last_name (default, clinical standard)
-                patients = [p for p in patients if p.last_name_lower.startswith(search_lower)]
+            patients = [
+                p
+                for p in patients
+                if search_lower in p.first_name_lower
+                or search_lower in p.last_name_lower
+            ]
 
         # Sort by last name, then first name (clinical standard)
         patients.sort(key=lambda p: (p.last_name_lower, p.first_name_lower))
