@@ -4,6 +4,7 @@ import type { Metadata } from "next"
 import { DM_Sans, Fraunces } from "next/font/google"
 import "./globals.css"
 import { Providers } from "@/components/providers"
+import { DEFAULT_THEME, THEME_STORAGE_KEY } from "@/lib/theme"
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -25,8 +26,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const themeInit = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
+    THEME_STORAGE_KEY,
+  )});document.documentElement.dataset.theme=t||${JSON.stringify(
+    DEFAULT_THEME,
+  )};}catch(e){document.documentElement.dataset.theme=${JSON.stringify(
+    DEFAULT_THEME,
+  )};}})();`
+
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
+      </head>
       <body className={`${dmSans.variable} ${fraunces.variable} font-sans`}>
         <Providers>{children}</Providers>
       </body>

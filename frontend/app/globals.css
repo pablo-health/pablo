@@ -237,3 +237,97 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* =========================================================================
+   Pablo theme system — see design/brand.md.
+   Each theme = a set of CSS-variable overrides applied via [data-theme] on
+   <html>. The default (Warm Paper) lives in :root below; ThemeProvider sets
+   data-theme and a no-FOUC script applies it before paint.
+
+   Scoped to the --auth-*/--brand-* vars for now: the login pilot consumes
+   them, the rest of the app is untouched until its surfaces migrate to
+   semantic tokens (the app-wide adoption follow-up).
+   ========================================================================= */
+
+:root {
+  /* Warm Paper (default): crisp near-white, deep-brown brand panel, honey CTA */
+  --auth-radius: 1rem;
+  --auth-canvas: linear-gradient(135deg, #fefcf8 0%, #faf3e8 100%);
+  --brand-panel-bg: radial-gradient(
+      120% 120% at 80% 0%,
+      rgba(232, 168, 73, 0.18) 0%,
+      transparent 55%
+    ),
+    #3d2b1f;
+  --brand-panel-fg: #fdf6ec;
+  --brand-panel-muted: rgba(253, 246, 236, 0.72);
+  --brand-panel-accent: #e8a849;
+  --auth-action-bg: #d4952f;
+  --auth-action-bg-hover: #b07a24;
+  --auth-action-fg: #ffffff;
+}
+
+[data-theme="cozy"] {
+  /* Cozy: softer cream + blush, deeper-brown panel, fireside */
+  --auth-radius: 1.25rem;
+  --auth-canvas: linear-gradient(135deg, #fdf6ec 0%, #f3d9ce 100%);
+  --brand-panel-bg: radial-gradient(
+      120% 120% at 80% 0%,
+      rgba(232, 180, 162, 0.22) 0%,
+      transparent 55%
+    ),
+    #2c1810;
+  --brand-panel-fg: #fdf6ec;
+  --brand-panel-muted: rgba(253, 246, 236, 0.72);
+  --brand-panel-accent: #e8b4a2;
+  --auth-action-bg: #e8a849;
+  --auth-action-bg-hover: #d4952f;
+  --auth-action-fg: #2c1810;
+}
+
+[data-theme="classic-cream"] {
+  /* Classic Cream: today's look, for side-by-side comparison */
+  --auth-radius: 1rem;
+  --auth-canvas: linear-gradient(135deg, #fdf6ec 0%, #f2f7f3 50%, #e0ede2 100%);
+  --brand-panel-bg: linear-gradient(160deg, #f5d08e 0%, #e8a849 100%);
+  --brand-panel-fg: #2c1810;
+  --brand-panel-muted: rgba(44, 24, 16, 0.7);
+  --brand-panel-accent: #7a9e7e;
+  --auth-action-bg: #d4952f;
+  --auth-action-bg-hover: #b07a24;
+  --auth-action-fg: #ffffff;
+}
+
+[data-theme="boring-ehr"] {
+  /* Boring EHR™: the anti-goal, made selectable. Do not enjoy. */
+  --auth-radius: 0.25rem;
+  --auth-canvas: #f1f5f9;
+  --brand-panel-bg: #334155;
+  --brand-panel-fg: #e2e8f0;
+  --brand-panel-muted: rgba(226, 232, 240, 0.7);
+  --brand-panel-accent: #3b82f6;
+  --auth-action-bg: #2563eb;
+  --auth-action-bg-hover: #1d4ed8;
+  --auth-action-fg: #ffffff;
+}
+
+@layer components {
+  .auth-canvas {
+    background: var(--auth-canvas);
+  }
+
+  .auth-brand-panel {
+    background: var(--brand-panel-bg);
+    color: var(--brand-panel-fg);
+  }
+
+  .auth-primary {
+    @apply w-full px-6 py-3 font-medium transition-all duration-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+    border-radius: calc(var(--auth-radius) * 0.625);
+    background: var(--auth-action-bg);
+    color: var(--auth-action-fg);
+  }
+  .auth-primary:hover:not(:disabled) {
+    background: var(--auth-action-bg-hover);
+  }
+}
