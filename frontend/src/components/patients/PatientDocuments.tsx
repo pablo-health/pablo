@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 
 import { ApiError } from "@/lib/api/client"
-import { buildPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
+import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
 import {
   useDeletePatientDocument,
   usePatientDocuments,
@@ -82,6 +82,8 @@ function formatDate(iso: string): string {
 export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [category, setCategory] = useState<DocumentCategory>("chart")
 
   const { data, isLoading, error: listError } = usePatientDocuments(patientId)
@@ -113,6 +115,33 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
         },
       },
     )
+  }
+
+  const handleDownload = async (doc: PatientDocumentResponse) => {
+    setDownloadError(null)
+    setDownloadingId(doc.id)
+    // Open the tab synchronously within the click gesture; awaiting the
+    // signed-URL fetch first would lose the gesture and trip popup
+    // blockers (Safari). Null the opener to avoid reverse-tabnabbing.
+    const tab = window.open("about:blank", "_blank")
+    if (tab) tab.opener = null
+    try {
+      const url = await getPatientDocumentDownloadUrl(doc.id)
+      if (tab) {
+        tab.location.href = url
+      } else {
+        window.location.assign(url)
+      }
+    } catch (err) {
+      tab?.close()
+      setDownloadError(
+        err instanceof ApiError || err instanceof Error
+          ? err.message
+          : "Download failed",
+      )
+    } finally {
+      setDownloadingId(null)
+    }
   }
 
   const handleDelete = (doc: PatientDocumentResponse) => {
@@ -201,6 +230,12 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
         </div>
       )}
 
+      {downloadError && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {downloadError}
+        </div>
+      )}
+
       {isLoading ? (
         <p className="text-neutral-500 text-sm">Loading documents…</p>
       ) : listError ? (
@@ -246,15 +281,19 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                <a
-                  href={buildPatientDocumentDownloadUrl(doc.id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
                   className="btn-secondary inline-flex items-center gap-1 text-sm"
+                  onClick={() => handleDownload(doc)}
+                  disabled={downloadingId === doc.id}
                 >
-                  <Download className="w-4 h-4" />
+                  {downloadingId === doc.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
                   Download
-                </a>
+                </button>
                 <button
                   type="button"
                   className="btn-secondary inline-flex items-center gap-1 text-sm text-red-600 hover:text-red-700"

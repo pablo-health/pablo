@@ -75,3 +75,7 @@ export interface InitUploadResponse {
 export interface DeleteDocumentResponse {
   message: string
 }
+
+export interface DocumentDownloadUrlResponse {
+  url: string
+}

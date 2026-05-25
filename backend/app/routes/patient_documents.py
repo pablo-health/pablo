@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, Request, status
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from ..api_errors import (
@@ -205,6 +204,13 @@ class PatientDocumentListResponse(BaseModel):
 
 class DeleteDocumentResponse(BaseModel):
     message: str
+
+
+class DocumentDownloadUrlResponse(BaseModel):
+    # Short-lived signed GCS URL. The signature authorizes the object
+    # fetch, so the client navigates to it directly (no bearer token) —
+    # a raw <a href> to /file can't carry our Authorization header.
+    url: str
 
 
 # --- Routes ----------------------------------------------------------
@@ -397,24 +403,25 @@ def get_document(
     return PatientDocumentResponse.from_document(document, include_extracted_text=True)
 
 
-@documents_router.get(
-    "/{document_id}/file",
-    status_code=status.HTTP_302_FOUND,
-    response_class=RedirectResponse,
-)
+@documents_router.get("/{document_id}/file")
 def download_document_file(
     document_id: str,
     http_request: Request,
     user: User = Depends(require_baa_acceptance),
     service: PatientDocumentsService = Depends(get_patient_documents_service),
     audit: AuditService = Depends(get_audit_service),
-) -> RedirectResponse:
-    """302 to a short-lived signed GET URL for the GCS object.
+) -> DocumentDownloadUrlResponse:
+    """Return a short-lived signed GET URL for the GCS object as JSON.
 
-    Audit emission happens BEFORE the redirect so a dropped connection
-    after the URL is minted still leaves a record of the access. The
-    URL itself is short-lived (5 min default) so it expires before any
-    log harvesting that might surface it.
+    The client fetches this through the authenticated API client (bearer
+    token attached) and then navigates to the signed URL directly. A raw
+    <a href> navigation can't carry our Authorization header, so a 302
+    here would 401 before the redirect ever fired (PABLO-47h).
+
+    Audit emission happens BEFORE the URL is returned so a dropped
+    connection after the URL is minted still leaves a record of the
+    access. The URL itself is short-lived (5 min default) so it expires
+    before any log harvesting that might surface it.
     """
     try:
         result = service.signed_download_url(document_id, user.id)
@@ -437,7 +444,7 @@ def download_document_file(
         size_bytes=document.size_bytes,
         category=document.category.value,
     )
-    return RedirectResponse(url=signed_url, status_code=status.HTTP_302_FOUND)
+    return DocumentDownloadUrlResponse(url=signed_url)
 
 
 @documents_router.delete("/{document_id}")
