@@ -119,7 +119,7 @@ ${i + 1}. ${new Date(s.session_date).toLocaleString()}
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="btn-primary flex items-center gap-2"
+        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary-600 px-3 text-sm font-medium text-white transition-colors hover:bg-primary-700"
       >
         <Download className="w-4 h-4" />
         Export Patient Data
