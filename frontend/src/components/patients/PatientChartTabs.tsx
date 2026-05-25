@@ -7,6 +7,7 @@ import { FileText, Folder } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
+import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
 import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
@@ -136,11 +137,7 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
           <NotesTab patientId={patientId} />
         </TabsContent>
         <TabsContent value="documents" className="pt-4">
-          <p className="text-sm text-neutral-500">
-            {documentCount > 0
-              ? `${documentCount} document${documentCount === 1 ? "" : "s"} on file.`
-              : "No documents yet."}
-          </p>
+          <PatientDocuments patientId={patientId} />
         </TabsContent>
       </Tabs>
     </div>

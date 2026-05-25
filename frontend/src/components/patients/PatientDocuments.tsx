@@ -6,6 +6,7 @@ import { ChangeEvent, useRef, useState } from "react"
 import {
   AlertCircle,
   Download,
+  Eye,
   FileText,
   Loader2,
   Lock,
@@ -15,6 +16,7 @@ import {
 
 import { ApiError } from "@/lib/api/client"
 import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
+import { DocumentViewerSheet } from "@/components/patients/DocumentViewerSheet"
 import {
   useDeletePatientDocument,
   usePatientDocuments,
@@ -84,6 +86,7 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const [viewerDoc, setViewerDoc] = useState<PatientDocumentResponse | null>(null)
   const [category, setCategory] = useState<DocumentCategory>("chart")
 
   const { data, isLoading, error: listError } = usePatientDocuments(patientId)
@@ -165,16 +168,11 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   })()
 
   return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-xl font-display font-bold text-neutral-900">
-            Documents
-          </h2>
-          <p className="text-sm text-neutral-500">
-            Upload PDFs, PNGs, or JPEGs to attach to this patient&apos;s chart.
-          </p>
-        </div>
+    <div>
+      <div className="flex items-end justify-between gap-3 mb-4">
+        <p className="text-sm text-neutral-500">
+          Upload PDFs, PNGs, or JPEGs to attach to this patient&apos;s chart.
+        </p>
         <div className="flex items-end gap-3">
           <label className="inline-flex flex-col gap-0.5 text-sm text-neutral-600">
             <span className="text-xs text-neutral-500">Visibility</span>
@@ -284,6 +282,14 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                 <button
                   type="button"
                   className="btn-secondary inline-flex items-center gap-1 text-sm"
+                  onClick={() => setViewerDoc(doc)}
+                >
+                  <Eye className="w-4 h-4" />
+                  View
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary inline-flex items-center gap-1 text-sm"
                   onClick={() => handleDownload(doc)}
                   disabled={downloadingId === doc.id}
                 >
@@ -310,6 +316,14 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
           ))}
         </ul>
       )}
+
+      <DocumentViewerSheet
+        document={viewerDoc}
+        open={viewerDoc !== null}
+        onOpenChange={(open) => {
+          if (!open) setViewerDoc(null)
+        }}
+      />
     </div>
   )
 }
