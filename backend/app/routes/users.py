@@ -160,6 +160,10 @@ def get_user_status(
         # frontend/overlay/src/lib/onboarding/steps.ts). Version-aware
         # re-prompt is still driven by /me/baa-status.
         "baa_accepted_at": user.baa_accepted_at,
+        # When the user was shown (and answered) the optional quality-review
+        # consent step during onboarding. Lets the wizard avoid re-prompting
+        # once answered, independent of the opt-in flags themselves.
+        "quality_review_consent_prompted_at": user.quality_review_consent_prompted_at,
     }
 
     settings = get_settings()
