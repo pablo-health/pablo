@@ -16,11 +16,7 @@ import { EditorialViewSwitcher } from "./EditorialViewSwitcher"
 import { EditorialWeekView } from "./EditorialWeekView"
 import { EditorialDayView } from "./EditorialDayView"
 import { EditorialMonthView } from "./EditorialMonthView"
-import {
-  EditorialSidebar,
-  type CalendarStyle,
-  type EditorialTheme,
-} from "./EditorialSidebar"
+import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
 
@@ -40,9 +36,6 @@ interface EditorialCalendarProps {
   defaultView?: EditorialView
   workingHoursStart?: number
   theme: EditorialTheme
-  onThemeChange: (theme: EditorialTheme) => void
-  style: CalendarStyle
-  onStyleChange: (style: CalendarStyle) => void
   onSelectSlot: (start: string, end: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
   onCreateNew: () => void
@@ -53,9 +46,6 @@ export function EditorialCalendar({
   defaultView = "week",
   workingHoursStart = 8,
   theme,
-  onThemeChange,
-  style,
-  onStyleChange,
   onSelectSlot,
   onSelectAppointment,
   onCreateNew,
@@ -129,13 +119,9 @@ export function EditorialCalendar({
       <EditorialSidebar
         selected={anchor}
         statusFilters={statusFilters}
-        theme={theme}
-        style={style}
         onSelectDate={(d) => setAnchor(d)}
         onCreateNew={onCreateNew}
         onToggleStatus={handleToggleStatus}
-        onThemeChange={onThemeChange}
-        onStyleChange={onStyleChange}
       />
 
       <div className="relative flex flex-1 flex-col gap-6 px-6 py-6 sm:px-8 sm:py-8">

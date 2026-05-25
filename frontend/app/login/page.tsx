@@ -3,6 +3,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
   signInWithPopup,
@@ -415,7 +416,17 @@ function LoginBrandPanel() {
           The therapy paperwork you&rsquo;re actually allowed to like.
         </p>
       </div>
-      <ul className="mt-10 space-y-3 text-sm">
+      <div className="flex flex-1 items-center justify-center py-8">
+        <Image
+          src="/pablo-login.webp"
+          alt="Pablo, the friendly bear in a tie"
+          width={240}
+          height={240}
+          priority
+          className="drop-shadow-2xl"
+        />
+      </div>
+      <ul className="space-y-3 text-sm">
         {points.map((point) => (
           <li key={point} className="flex items-start gap-3">
             <span style={{ color: "var(--brand-panel-accent)" }}>✦</span>

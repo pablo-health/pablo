@@ -15,6 +15,7 @@ import { TranscriptionSettings } from "@/components/settings/TranscriptionSettin
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
+import { ThemeFlavorNote } from "@/components/theme/ThemeFlavorNote"
 import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Palette, Settings2, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
@@ -95,6 +96,7 @@ export default function SettingsPage() {
         description="Pick the look of your workspace. Saved to your account."
       >
         <ThemeSwitcher />
+        <ThemeFlavorNote />
       </SettingsSection>
 
       <SettingsSection

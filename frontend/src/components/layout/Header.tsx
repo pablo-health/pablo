@@ -8,6 +8,7 @@ import { signOut } from "firebase/auth"
 import { getFirebaseAuth } from "@/lib/firebase"
 import Image from "next/image"
 import { UserCircle, LogOut } from "lucide-react"
+import { ThemeMenu } from "@/components/theme/ThemeMenu"
 
 interface HeaderProps {
   user: {
@@ -32,7 +33,7 @@ export function Header({ user }: HeaderProps) {
   }
 
   return (
-    <header className="h-16 bg-white border-b border-neutral-200">
+    <header className="h-16 bg-card border-b border-neutral-200">
       <div className="h-full px-6 flex items-center justify-end">
         <div className="relative">
           <button
@@ -67,7 +68,8 @@ export function Header({ user }: HeaderProps) {
                 className="fixed inset-0 z-10"
                 onClick={() => setIsMenuOpen(false)}
               />
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-neutral-200 py-1 z-20 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="absolute right-0 mt-2 w-52 bg-card rounded-lg shadow-lg border border-neutral-200 py-1 z-20 animate-in fade-in slide-in-from-top-2 duration-200">
+                <ThemeMenu />
                 <button
                   onClick={handleSignOut}
                   className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors duration-150"
