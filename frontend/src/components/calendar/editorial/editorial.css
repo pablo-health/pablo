@@ -32,29 +32,29 @@
 }
 
 [data-editorial-theme="light"] {
-  /* Cool/neutral canvas. Pablo's warm cream stays in the surrounding
-   * dashboard chrome; the calendar reads as a clean white surface inside
-   * it so honey/sage event fills can separate from the background. */
-  --ed-canvas: #FFFFFF;
+  /* Warm off-white canvas — reads clean like the marketing site but carries
+   * Pablo warmth, and stays light enough that honey/sage event fills still
+   * separate from it. Cards (popover, mini-month) lift on pure white. */
+  --ed-canvas: #FEFCF8;
   --ed-canvas-elev: #FFFFFF;
-  --ed-rail: #FFFFFF;           /* sidebar shares grid surface; hairline separates */
+  --ed-rail: #FEFCF8;           /* sidebar shares grid surface; hairline separates */
   --ed-ink: #2C1810;            /* warm near-black keeps Pablo voice */
-  --ed-ink-muted: #6B7280;
-  --ed-ink-soft: #9CA3AF;
-  --ed-hairline: rgba(15, 23, 42, 0.07);
-  --ed-hairline-strong: rgba(15, 23, 42, 0.13);
+  --ed-ink-muted: #6B5344;      /* warm brown (neutral-600) instead of cool gray */
+  --ed-ink-soft: #9A7F58;       /* warm brown (neutral-500) for captions */
+  --ed-hairline: rgba(44, 24, 16, 0.07);
+  --ed-hairline-strong: rgba(44, 24, 16, 0.13);
   --ed-today-tint: transparent; /* day-header pill carries the "today" signal */
-  --ed-pill-hover: rgba(15, 23, 42, 0.05);
-  --ed-cta-bg: #1A1A1A;
+  --ed-pill-hover: rgba(44, 24, 16, 0.05);
+  --ed-cta-bg: #D4952F;         /* Pablo honey primary-600 — matches .btn-primary */
   --ed-cta-fg: #FFFFFF;
-  --ed-cta-bg-hover: #2D2D2D;
+  --ed-cta-bg-hover: #B07A24;   /* primary-700 */
   --ed-now-line: #D4952F;
-  --ed-today-circle: #1A1A1A;   /* charcoal pill on day-column header */
+  --ed-today-circle: #2C1810;   /* warm near-black pill on day-column header */
   --ed-today-circle-fg: #FFFFFF;
-  --ed-mini-today-bg: #D4952F;  /* honey accent in mini-month — Cambly's pop */
+  --ed-mini-today-bg: #D4952F;  /* honey accent in mini-month */
   --ed-mini-today-fg: #FFFFFF;
-  --ed-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.06);
-  --ed-shadow-card-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.10);
+  --ed-shadow-card: 0 1px 2px rgba(44, 24, 16, 0.05), 0 4px 12px rgba(44, 24, 16, 0.07);
+  --ed-shadow-card-hover: 0 2px 4px rgba(44, 24, 16, 0.07), 0 8px 24px rgba(44, 24, 16, 0.11);
   --ed-grain-opacity: 0;        /* paper grain reads as dirt on white */
 }
 
