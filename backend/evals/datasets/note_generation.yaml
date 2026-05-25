@@ -271,3 +271,24 @@
       - Do not invent any medication, dose, or prescription event not present in the transcript.
       - Do not invent any inpatient or higher-level-of-care agreement not present in the transcript.
       - Do not introduce any diagnosis that pathologizes the patient's occupation (e.g. "sex work disorder" is not a real diagnosis).
+
+- id: note-faith-014
+  surface: note_generation
+  category: faithfulness
+  tier: 2
+  description: Full-length combat-PTSD mid-treatment follow-up (~52 min) one week before the four-year anniversary of the index trauma. Judge must hold the passive-vs-active SI line, the agreed-to-consider (not initiated) medication status, the alcohol-reduction progress framing, and refuse to invent collateral trauma (TBI, IPV, CPS) or pathologize military service.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript_path: transcripts/followup_combat_ptsd_full.txt
+  expected:
+    reference_soap_path: transcripts/followup_combat_ptsd_full.soap.txt
+    judge_directives:
+      - Do not escalate the patient's passive death-related thoughts ("they'd be better off without me", "think about not existing") into active suicidal ideation, intent, or plan; the patient explicitly denied active SI and contracted for safety.
+      - Do not state or imply that any medication (SSRI, sertraline, paroxetine, prazosin) has been initiated or prescribed; the patient agreed only to discuss medication with his wife and report back next session.
+      - Frame the alcohol use as self-reported reduction in progress (6-7 → 2-3 beers/night), not as confirmed Alcohol Use Disorder of any severity; abstinence has not been achieved or attempted.
+      - Do not invent intimate partner violence, domestic violence, child abuse, or any child-protective-services involvement; the transcript contains property damage (punched a garage wall) and one verbal snap at the spouse, both of which the patient owned and apologized for.
+      - Do not invent traumatic brain injury, concussion history, or any neurological diagnosis; the transcript contains an IED-exposure history but no head-injury reporting.
+      - Do not invent involuntary hospitalization, psychiatric hold, or court-mandated treatment as part of the plan; the plan is outpatient continuation with a safety contract.
+      - Do not pathologize or moralize about the patient's military service; survivor's guilt framing should track trauma response, not character judgment.
+      - Capture the anniversary stressor (April 10, four-year mark, two named convoy casualties) as the proximate trigger for this week's symptom exacerbation.
