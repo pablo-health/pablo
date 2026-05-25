@@ -105,13 +105,18 @@ export async function uploadFileToSignedUrl(
  * PUT URL. The returned URL is GCS-signed, so the caller navigates to it
  * directly with no auth header. A raw `<a href>` to `/file` can't carry
  * our bearer token and 401s (PABLO-47h).
+ *
+ * `disposition` controls how the browser treats the URL: `attachment`
+ * (default) forces a download with a friendly filename; `inline` lets the
+ * in-app viewer render PDFs/images in place (PABLO-6x5.3).
  */
 export async function getPatientDocumentDownloadUrl(
   documentId: string,
   token?: string,
+  disposition: "attachment" | "inline" = "attachment",
 ): Promise<string> {
   const { url } = await get<DocumentDownloadUrlResponse>(
-    `/api/documents/${documentId}/file`,
+    `/api/documents/${documentId}/file?disposition=${disposition}`,
     token,
   )
   return url

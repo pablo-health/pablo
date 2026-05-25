@@ -55,4 +55,7 @@
 
 sync.remote: "git+https://github.com/pablo-health/pablo.git"
 
-export.path: ".beads/issues.jsonl"
+# Resolved relative to the .beads/ home dir, so this is just the
+# filename — NOT ".beads/issues.jsonl" (that doubled to
+# .beads/.beads/issues.jsonl and failed auto-export on every commit).
+export.path: "issues.jsonl"
