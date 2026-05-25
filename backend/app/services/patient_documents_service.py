@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..models import DocumentCategory, PatientDocument
 from ..repositories.patient_document import FinalizedExtraction
@@ -328,20 +328,26 @@ class PatientDocumentsService:
         return self._repo.list_for_patient(patient_id, user_id)
 
     def signed_download_url(
-        self, document_id: str, user_id: str
+        self,
+        document_id: str,
+        user_id: str,
+        *,
+        disposition: Literal["attachment", "inline"] = "attachment",
     ) -> tuple[PatientDocument, str] | None:
         from .signed_upload import make_download_url
 
         document = self.get(document_id, user_id)
         if document is None:
             return None
+        # inline lets the in-app viewer render PDFs/images in-page;
+        # attachment forces a download with a friendly filename.
         url = make_download_url(
             client=self._storage_client(),
             bucket=self._bucket(),
             object_name=document.gcs_path,
             ttl_seconds=self._settings.patient_documents_download_url_ttl_seconds,
             response_disposition=(
-                f'attachment; filename="{_sanitize_filename(document.filename)}"'
+                f'{disposition}; filename="{_sanitize_filename(document.filename)}"'
             ),
         )
         return document, url
