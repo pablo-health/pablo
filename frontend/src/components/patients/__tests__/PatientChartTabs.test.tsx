@@ -106,7 +106,7 @@ describe("PatientChartTabs", () => {
     })
   })
 
-  it("switches to the Documents tab on click", async () => {
+  it("switches to the Documents tab and mounts the documents panel", async () => {
     const user = userEvent.setup()
     render(<PatientChartTabs patientId="p1" />, { wrapper: createWrapper() })
 
@@ -116,7 +116,12 @@ describe("PatientChartTabs", () => {
       "data-state",
       "active",
     )
-    expect(screen.getByText(/document.* on file/i)).toBeInTheDocument()
+    // PatientDocuments renders its upload control; the mocked list is
+    // empty so it falls through to the empty state.
+    expect(
+      screen.getByRole("button", { name: /upload document/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/no documents uploaded yet/i)).toBeInTheDocument()
   })
 
   it("shows count badges sourced from the list hooks", async () => {
