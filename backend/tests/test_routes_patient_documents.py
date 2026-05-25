@@ -352,7 +352,7 @@ class TestDocumentSurface:
         assert body["extracted_text"] is not None
         assert "Fixture PDF for ak6m.2" in body["extracted_text"]
 
-    def test_download_302s_to_signed_url(
+    def test_download_returns_signed_url_as_json(
         self,
         documents_client: TestClient,
         fake_gcs: _FakeStorageClient,
@@ -371,10 +371,9 @@ class TestDocumentSurface:
 
         response = documents_client.get(
             f"/api/documents/{init['document_id']}/file",
-            follow_redirects=False,
         )
-        assert response.status_code == 302
-        assert response.headers["location"].startswith("https://fake.googleusercontent.example/")
+        assert response.status_code == 200
+        assert response.json()["url"].startswith("https://fake.googleusercontent.example/")
 
     def test_soft_delete_removes_row_from_list_and_get(
         self,
@@ -432,10 +431,7 @@ class TestAuditEmission:
         )
         documents_client.post(f"/api/documents/{init['document_id']}/finalize")
         documents_client.get(f"/api/documents/{init['document_id']}")
-        documents_client.get(
-            f"/api/documents/{init['document_id']}/file",
-            follow_redirects=False,
-        )
+        documents_client.get(f"/api/documents/{init['document_id']}/file")
         documents_client.delete(f"/api/documents/{init['document_id']}")
 
         actions = [e.action for e in audit_repo._entries]
@@ -589,10 +585,7 @@ class TestAccessPredicate:
         documents_client.post(f"/api/documents/{init['document_id']}/finalize")
         audit_repo.list_for_user(mock_user_id).clear()
         documents_client.get(f"/api/documents/{init['document_id']}")
-        documents_client.get(
-            f"/api/documents/{init['document_id']}/file",
-            follow_redirects=False,
-        )
+        documents_client.get(f"/api/documents/{init['document_id']}/file")
 
         actions = [entry.action for entry in audit_repo.list_for_user(mock_user_id)]
         assert "patient_document_viewed_restricted" in actions
