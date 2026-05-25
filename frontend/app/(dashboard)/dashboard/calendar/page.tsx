@@ -3,15 +3,12 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { CalendarView } from "@/components/calendar/CalendarView"
-import { StatusLegend } from "@/components/calendar/StatusLegend"
 import { AppointmentModal } from "@/components/calendar/AppointmentModal"
 import {
   EditorialCalendar,
-  type CalendarStyle,
-  type EditorialTheme,
   type EditorialView,
 } from "@/components/calendar/editorial"
+import { useTheme } from "@/components/theme/ThemeProvider"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import {
   getICalSyncStatus,
@@ -22,15 +19,6 @@ import {
 import { useAuth } from "@/lib/auth-context"
 import { Loader2, RefreshCw } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
-
-const STYLE_KEY = "pablo.calendar.style"
-const THEME_KEY = "pablo.calendar.theme"
-
-function readStored<T extends string>(key: string, fallback: T, valid: T[]): T {
-  if (typeof window === "undefined") return fallback
-  const raw = window.localStorage.getItem(key) as T | null
-  return raw && valid.includes(raw) ? raw : fallback
-}
 
 function toEditorialView(raw: string | undefined): EditorialView | undefined {
   if (raw === "timeGridDay") return "day"
@@ -45,6 +33,7 @@ function fromEditorialView(v: EditorialView): string {
 
 export default function CalendarPage() {
   const { loading: authLoading } = useAuth()
+  const { theme } = useTheme()
   const { data: preferences } = usePreferences()
   const saveMutation = useSavePreferences()
   const lastSavedView = useRef<string | undefined>(undefined)
@@ -55,22 +44,10 @@ export default function CalendarPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<ICalConnectionStatus[]>([])
   const [syncResult, setSyncResult] = useState<string | null>(null)
-  const [calendarStyle, setCalendarStyle] = useState<CalendarStyle>(() =>
-    readStored<CalendarStyle>(STYLE_KEY, "editorial", ["editorial", "classic"]),
-  )
-  const [editorialTheme, setEditorialTheme] = useState<EditorialTheme>(() =>
-    readStored<EditorialTheme>(THEME_KEY, "light", ["light", "dark"]),
-  )
 
-  useEffect(() => {
-    if (typeof window !== "undefined")
-      window.localStorage.setItem(STYLE_KEY, calendarStyle)
-  }, [calendarStyle])
-
-  useEffect(() => {
-    if (typeof window !== "undefined")
-      window.localStorage.setItem(THEME_KEY, editorialTheme)
-  }, [editorialTheme])
+  // The editorial calendar follows the global theme: Midnight → dark, all
+  // other (light) themes → light, which derives its --ed-* from global tokens.
+  const editorialTheme = theme === "midnight" ? "dark" : "light"
 
   const syncTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
@@ -198,51 +175,17 @@ export default function CalendarPage() {
         )}
       </div>
 
-      {calendarStyle === "classic" && <StatusLegend />}
-
-      {calendarStyle === "editorial" ? (
-        <div aria-label="Weekly appointment calendar">
-          <EditorialCalendar
-            theme={editorialTheme}
-            onThemeChange={setEditorialTheme}
-            style={calendarStyle}
-            onStyleChange={setCalendarStyle}
-            workingHoursStart={preferences?.working_hours_start}
-            defaultView={toEditorialView(preferences?.calendar_default_view) ?? "week"}
-            onSelectSlot={handleSelectSlot}
-            onSelectAppointment={handleSelectAppointment}
-            onCreateNew={handleCreateNew}
-            onViewChange={handleEditorialViewChange}
-          />
-        </div>
-      ) : (
-        <>
-          <div className="flex items-center justify-between rounded-lg border border-neutral-200 bg-primary-50/60 px-4 py-2.5">
-            <span className="text-sm text-neutral-700">
-              You&rsquo;re using the classic calendar.
-            </span>
-            <button
-              type="button"
-              onClick={() => setCalendarStyle("editorial")}
-              className="inline-flex items-center gap-1.5 rounded-full bg-neutral-900 px-4 py-1.5 text-sm font-medium text-primary-50 transition-colors hover:bg-neutral-800"
-            >
-              Switch to editorial
-              <span aria-hidden>→</span>
-            </button>
-          </div>
-          <div className="card p-4" aria-label="Weekly appointment calendar">
-            <CalendarView
-              onSelectSlot={handleSelectSlot}
-              onSelectAppointment={handleSelectAppointment}
-              onCreateNew={handleCreateNew}
-              workingHoursStart={preferences?.working_hours_start}
-              workingHoursEnd={preferences?.working_hours_end}
-              defaultView={preferences?.calendar_default_view}
-              onViewChange={handleViewChange}
-            />
-          </div>
-        </>
-      )}
+      <div aria-label="Weekly appointment calendar">
+        <EditorialCalendar
+          theme={editorialTheme}
+          workingHoursStart={preferences?.working_hours_start}
+          defaultView={toEditorialView(preferences?.calendar_default_view) ?? "week"}
+          onSelectSlot={handleSelectSlot}
+          onSelectAppointment={handleSelectAppointment}
+          onCreateNew={handleCreateNew}
+          onViewChange={handleEditorialViewChange}
+        />
+      </div>
 
       <AppointmentModal
         open={modalOpen}

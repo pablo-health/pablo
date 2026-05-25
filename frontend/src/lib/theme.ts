@@ -17,6 +17,11 @@ export const THEMES = [
     description: "The original all-cream look.",
   },
   {
+    id: "midnight",
+    label: "Midnight",
+    description: "Warm dark — easy on the eyes after hours.",
+  },
+  {
     id: "boring-ehr",
     label: "Boring EHR™",
     description: "The anti-goal, made selectable. Don't.",

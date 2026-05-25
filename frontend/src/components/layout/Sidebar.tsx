@@ -12,6 +12,7 @@ import {
   Settings,
 } from "lucide-react"
 import { AdminNav } from "./AdminNav"
+import { PabloNote } from "./PabloNote"
 import { SidebarFooter } from "./SidebarFooter"
 
 const navigation = [
@@ -30,7 +31,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
   const pathname = usePathname()
 
   return (
-    <div className="flex h-full w-64 flex-col bg-white border-r border-neutral-200">
+    <div className="flex h-full w-64 flex-col bg-card border-r border-neutral-200">
       <div className="flex h-16 items-center px-6 border-b border-neutral-200">
         <h1 className="text-xl font-display font-bold text-primary-600">
           Pablo
@@ -63,6 +64,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
         {isAdmin && <AdminNav />}
       </nav>
 
+      <PabloNote />
       <SidebarFooter />
     </div>
   )

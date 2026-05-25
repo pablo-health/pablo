@@ -14,7 +14,9 @@ from .validators import validate_iso_date
 
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
-ThemeName = Literal["warm-paper", "cozy", "classic-cream", "boring-ehr"]
+ThemeName = Literal[
+    "warm-paper", "cozy", "classic-cream", "midnight", "boring-ehr"
+]
 
 
 class UpdateUserRequest(BaseModel):

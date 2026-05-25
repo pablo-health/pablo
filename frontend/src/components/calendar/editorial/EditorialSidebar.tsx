@@ -2,12 +2,12 @@
 
 "use client"
 
-import { Plus, Sun, Moon, Sparkles, LayoutGrid } from "lucide-react"
+import { Plus } from "lucide-react"
 import type { AppointmentStatus } from "@/types/scheduling"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 
+// "light" tracks any light Pablo theme (via global tokens); "dark" = Midnight.
 export type EditorialTheme = "light" | "dark"
-export type CalendarStyle = "editorial" | "classic"
 
 const STATUS_OPTIONS: { value: AppointmentStatus; label: string }[] = [
   { value: "confirmed", label: "Confirmed" },
@@ -19,25 +19,17 @@ const STATUS_OPTIONS: { value: AppointmentStatus; label: string }[] = [
 interface EditorialSidebarProps {
   selected: Date
   statusFilters: Set<AppointmentStatus>
-  theme: EditorialTheme
-  style: CalendarStyle
   onSelectDate: (date: Date) => void
   onCreateNew: () => void
   onToggleStatus: (status: AppointmentStatus) => void
-  onThemeChange: (theme: EditorialTheme) => void
-  onStyleChange: (style: CalendarStyle) => void
 }
 
 export function EditorialSidebar({
   selected,
   statusFilters,
-  theme,
-  style,
   onSelectDate,
   onCreateNew,
   onToggleStatus,
-  onThemeChange,
-  onStyleChange,
 }: EditorialSidebarProps) {
   return (
     <aside
@@ -112,29 +104,6 @@ export function EditorialSidebar({
           })}
         </div>
       </Section>
-
-      <Divider />
-
-      <Section title="Appearance">
-        <div className="flex flex-col gap-3">
-          <SegmentedToggle<EditorialTheme>
-            value={theme}
-            onChange={onThemeChange}
-            options={[
-              { value: "light", label: "Light", icon: Sun },
-              { value: "dark", label: "Dark", icon: Moon },
-            ]}
-          />
-          <SegmentedToggle<CalendarStyle>
-            value={style}
-            onChange={onStyleChange}
-            options={[
-              { value: "editorial", label: "Editorial", icon: Sparkles },
-              { value: "classic", label: "Classic", icon: LayoutGrid },
-            ]}
-          />
-        </div>
-      </Section>
     </aside>
   )
 }
@@ -156,49 +125,5 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Divider() {
   return (
     <div className="h-px w-full" style={{ backgroundColor: "var(--ed-hairline)" }} />
-  )
-}
-
-interface SegmentedToggleProps<T extends string> {
-  value: T
-  onChange: (next: T) => void
-  options: {
-    value: T
-    label: string
-    icon: React.ComponentType<{ className?: string }>
-  }[]
-}
-
-function SegmentedToggle<T extends string>({
-  value,
-  onChange,
-  options,
-}: SegmentedToggleProps<T>) {
-  return (
-    <div
-      className="flex w-full rounded-full p-0.5"
-      style={{ backgroundColor: "var(--ed-canvas-elev)" }}
-    >
-      {options.map((opt) => {
-        const active = opt.value === value
-        const Icon = opt.icon
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            onClick={() => onChange(opt.value)}
-            className="flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all"
-            style={{
-              backgroundColor: active ? "var(--ed-ink)" : "transparent",
-              color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
-            }}
-            aria-pressed={active}
-          >
-            <Icon className="h-3.5 w-3.5" />
-            {opt.label}
-          </button>
-        )
-      })}
-    </div>
   )
 }
