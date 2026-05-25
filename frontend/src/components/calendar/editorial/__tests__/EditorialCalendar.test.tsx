@@ -39,9 +39,6 @@ function wrap() {
 function defaults() {
   return {
     theme: "light" as const,
-    onThemeChange: vi.fn(),
-    style: "editorial" as const,
-    onStyleChange: vi.fn(),
     onSelectSlot: vi.fn(),
     onSelectAppointment: vi.fn(),
     onCreateNew: vi.fn(),
@@ -70,20 +67,6 @@ describe("EditorialCalendar", () => {
     render(<EditorialCalendar {...props} />, { wrapper: wrap() })
     fireEvent.click(screen.getByRole("button", { name: /new appointment/i }))
     expect(props.onCreateNew).toHaveBeenCalledTimes(1)
-  })
-
-  it("toggles theme via the appearance switch", () => {
-    const props = defaults()
-    render(<EditorialCalendar {...props} />, { wrapper: wrap() })
-    fireEvent.click(screen.getByRole("button", { name: /^dark$/i }))
-    expect(props.onThemeChange).toHaveBeenCalledWith("dark")
-  })
-
-  it("toggles style via the appearance switch", () => {
-    const props = defaults()
-    render(<EditorialCalendar {...props} />, { wrapper: wrap() })
-    fireEvent.click(screen.getByRole("button", { name: /^classic$/i }))
-    expect(props.onStyleChange).toHaveBeenCalledWith("classic")
   })
 
   it("renders weekday header in week view by default", () => {
