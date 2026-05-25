@@ -128,6 +128,17 @@ make format     # Auto-fix formatting
    to "quickly see what main looks like" — that's a foot-gun, not a
    diff.
 
+10. **Don't let beads state ride into code commits.** `core.hooksPath`
+    is set to `.beads/hooks/`, so a `pre-commit` hook runs on every
+    commit and a fresh worktree's `post-checkout` dirties the beads
+    DB. `export.git-add` is set to `false` (`bd config get
+    export.git-add`), so the auto-exported `.beads/issues.jsonl` is no
+    longer auto-staged — but it still shows as modified in `git
+    status`. When committing code, `git add` explicit paths (never
+    `git add -A` / `git add .`) so that churn stays out of your commit.
+    If beads files ever sneak into the index, `git restore --staged`
+    them.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

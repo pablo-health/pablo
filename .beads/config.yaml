@@ -59,3 +59,5 @@ sync.remote: "git+https://github.com/pablo-health/pablo.git"
 # filename — NOT ".beads/issues.jsonl" (that doubled to
 # .beads/.beads/issues.jsonl and failed auto-export on every commit).
 export.path: "issues.jsonl"
+
+export.git-add: false
