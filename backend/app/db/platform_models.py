@@ -124,6 +124,18 @@ class PlatformUserRow(PlatformBase):
     chat_quality_review_opt_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     chat_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     chat_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    session_notes_quality_review_opt_in: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    session_notes_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    session_notes_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    quality_review_consent_prompted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
 
 class UserIdentityRow(PlatformBase):
