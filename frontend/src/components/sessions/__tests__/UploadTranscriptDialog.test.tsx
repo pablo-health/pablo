@@ -841,4 +841,60 @@ describe("UploadTranscriptDialog", () => {
       })
     })
   })
+
+  describe("Patient-locked (chart context)", () => {
+    it("hides the patient picker when patientId is provided", () => {
+      render(
+        <UploadTranscriptDialog patientId="patient-1" open onOpenChange={() => {}} />,
+        { wrapper: createWrapper() }
+      )
+
+      expect(screen.getByText("Upload Session Transcript")).toBeInTheDocument()
+      expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+    })
+
+    it("renders no default trigger when controlled", () => {
+      render(
+        <UploadTranscriptDialog
+          patientId="patient-1"
+          open={false}
+          onOpenChange={() => {}}
+        />,
+        { wrapper: createWrapper() }
+      )
+
+      expect(screen.queryByText("Upload Session")).not.toBeInTheDocument()
+    })
+
+    it("uploads against the pre-filled patient without picking one", async () => {
+      const user = userEvent.setup()
+      vi.mocked(sessionsApi.uploadSession).mockResolvedValue(mockSession)
+
+      render(
+        <UploadTranscriptDialog patientId="patient-1" open onOpenChange={() => {}} />,
+        { wrapper: createWrapper() }
+      )
+
+      const dateInput = screen.getByLabelText(/Session Date/)
+      await user.type(dateInput, "2024-01-15T14:30")
+
+      const file = new File(
+        ["WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nTest content"],
+        "transcript.vtt",
+        { type: "text/vtt" }
+      )
+      const fileInput = screen.getByLabelText(/Transcript File/)
+      await user.upload(fileInput, file)
+
+      await user.click(screen.getByText("Upload & Generate SOAP"))
+
+      await waitFor(() => {
+        expect(sessionsApi.uploadSession).toHaveBeenCalledWith(
+          "patient-1",
+          expect.objectContaining({ patient_id: "patient-1" }),
+          undefined
+        )
+      })
+    })
+  })
 })

@@ -3,10 +3,13 @@
 /**
  * NewNoteButton
  *
- * Patient-scoped entry point for creating a standalone clinical note (no
- * recording session). Opens a picker filtered to ``context=session`` types
- * (SOAP, Narrative, ...), POSTs to ``/api/patients/{pid}/notes`` with empty
- * content, and routes the user to the new note in edit mode.
+ * Patient-scoped entry point for creating a clinical note. Offers two
+ * on-ramps: uploading a session transcript (which generates a SOAP note via
+ * a recording session), or creating a blank note of a ``context=session``
+ * type (SOAP, Narrative, ...) to fill in by hand. Blank notes POST to
+ * ``/api/patients/{pid}/notes`` with empty content and route to edit mode;
+ * the transcript path hands off to ``UploadTranscriptDialog`` with the
+ * patient pre-filled.
  *
  * Types reported as ``is_locked`` by the backend (e.g. Practice-tier
  * extension formats the caller hasn't subscribed to) render with a lock
@@ -19,7 +22,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { FileText, Lock, Plus, Sparkles } from "lucide-react"
+import { FileText, Lock, Plus, Sparkles, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -29,6 +32,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { UploadTranscriptDialog } from "@/components/sessions/UploadTranscriptDialog"
 import { useToast } from "@/components/ui/Toast"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { useCreateStandaloneNote } from "@/hooks/useNotes"
@@ -40,6 +44,7 @@ export interface NewNoteButtonProps {
 
 export function NewNoteButton({ patientId }: NewNoteButtonProps) {
   const [open, setOpen] = useState(false)
+  const [transcriptOpen, setTranscriptOpen] = useState(false)
   const router = useRouter()
   const { showToast } = useToast()
   const { data: catalog, isLoading } = useNoteTypes()
@@ -74,7 +79,8 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <>
+      <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button size="sm">
           <Plus className="w-4 h-4 mr-2" />
@@ -83,22 +89,48 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New clinical note</DialogTitle>
+          <DialogTitle>New note</DialogTitle>
           <DialogDescription>
-            Choose a note type. Notes are saved against the current patient and
-            can be edited until you finalize them.
+            Start from a session transcript, or create a blank note to fill in
+            yourself. Everything is saved against this patient.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2 pt-2">
-          {isLoading && (
-            <p className="text-sm text-neutral-500">Loading note types…</p>
-          )}
-          {!isLoading && sessionTypes.length === 0 && (
-            <p className="text-sm text-neutral-500">
-              No note types available.
-            </p>
-          )}
-          {sessionTypes.map((type) => {
+        <div className="space-y-4 pt-2">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              setTranscriptOpen(true)
+            }}
+            className="w-full text-left rounded-lg border border-neutral-200 p-4 hover:border-primary-400 hover:bg-primary-50/40 transition-colors"
+          >
+            <div className="flex items-start gap-3">
+              <Upload className="w-5 h-5 text-primary-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-medium text-neutral-900">
+                  From a transcript
+                </div>
+                <div className="text-sm text-neutral-600">
+                  Upload a session transcript (VTT, JSON, or TXT) to generate a
+                  SOAP note.
+                </div>
+              </div>
+            </div>
+          </button>
+
+          <div className="space-y-2">
+            <div className="text-xs font-medium uppercase tracking-wide text-neutral-500">
+              Or start blank
+            </div>
+            {isLoading && (
+              <p className="text-sm text-neutral-500">Loading note types…</p>
+            )}
+            {!isLoading && sessionTypes.length === 0 && (
+              <p className="text-sm text-neutral-500">
+                No note types available.
+              </p>
+            )}
+            {sessionTypes.map((type) => {
             const locked = !!type.is_locked
             return (
               <button
@@ -143,10 +175,17 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
                   </div>
                 </div>
               </button>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+      <UploadTranscriptDialog
+        patientId={patientId}
+        open={transcriptOpen}
+        onOpenChange={setTranscriptOpen}
+      />
+    </>
   )
 }
