@@ -3,8 +3,8 @@
 export const THEMES = [
   {
     id: "warm-paper",
-    label: "Warm Paper",
-    description: "Crisp near-white, honey accents — the default.",
+    label: "Pablo",
+    description: "The Pablo look — crisp near-white with honey accents.",
   },
   {
     id: "dark",

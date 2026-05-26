@@ -6,6 +6,7 @@ import { useMemo } from "react"
 import { format, isSameDay, isSameMonth, isToday } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { monthGridDays } from "./dateUtils"
+import { editorialStatusMeta } from "./status"
 
 interface EditorialMonthViewProps {
   anchor: Date
@@ -17,13 +18,6 @@ interface EditorialMonthViewProps {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 const MAX_CHIPS_PER_DAY = 3
-
-const STATUS_DOT: Record<string, string> = {
-  confirmed: "var(--ed-status-confirmed-rail)",
-  completed: "var(--ed-status-completed-rail)",
-  cancelled: "var(--ed-status-cancelled-rail)",
-  no_show: "var(--ed-status-noshow-rail)",
-}
 
 export function EditorialMonthView({
   anchor,
@@ -137,6 +131,8 @@ export function EditorialMonthView({
                   const start = new Date(appt.start_at)
                   const name = patientMap.get(appt.patient_id) ?? appt.title
                   const cancelled = appt.status === "cancelled"
+                  const meta = editorialStatusMeta(appt.status)
+                  const StatusIcon = meta.Icon
                   return (
                     <span
                       key={appt.id}
@@ -153,6 +149,7 @@ export function EditorialMonthView({
                           onSelectAppointment(appt)
                         }
                       }}
+                      aria-label={`${name} at ${format(start, "h:mm a")} — ${meta.label}`}
                       className="ed-event group flex items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-[11px]"
                       style={{
                         color: "var(--ed-ink)",
@@ -160,13 +157,10 @@ export function EditorialMonthView({
                         opacity: cancelled ? 0.6 : 1,
                       }}
                     >
-                      <span
+                      <StatusIcon
                         aria-hidden
-                        className="h-1.5 w-1.5 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor:
-                            STATUS_DOT[appt.status] ?? STATUS_DOT.confirmed,
-                        }}
+                        className="h-3 w-3 shrink-0"
+                        style={{ color: meta.rail }}
                       />
                       <span
                         className="shrink-0 font-semibold tabular-nums"
