@@ -55,6 +55,7 @@ from ..logging_config import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.trace import Span
 
     from ..settings import Settings
@@ -228,6 +229,21 @@ def _endpoint_audience(endpoint: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
+def _build_resource(settings: Settings) -> Resource:
+    """Build the OTel resource for exported spans.
+
+    ``service.name`` always; ``openinference.project.name`` only when
+    ``llm_trace_project`` is set — that attribute is what Phoenix uses to
+    route spans into a project (absent it, they land in ``default``).
+    """
+    from opentelemetry.sdk.resources import Resource
+
+    attributes: dict[str, str] = {"service.name": settings.llm_trace_service_name}
+    if settings.llm_trace_project:
+        attributes["openinference.project.name"] = settings.llm_trace_project
+    return Resource.create(attributes)
+
+
 def init_llm_tracing(settings: Settings) -> None:
     """Install the global tracer provider + OTLP/HTTP exporter, if configured.
 
@@ -252,7 +268,6 @@ def init_llm_tracing(settings: Settings) -> None:
             return
 
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
@@ -261,8 +276,7 @@ def init_llm_tracing(settings: Settings) -> None:
             session = _build_id_token_session(_endpoint_audience(endpoint))
 
         exporter = OTLPSpanExporter(endpoint=endpoint, session=session)
-        resource = Resource.create({"service.name": settings.llm_trace_service_name})
-        provider = TracerProvider(resource=resource)
+        provider = TracerProvider(resource=_build_resource(settings))
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
         _provider_installed.append(True)

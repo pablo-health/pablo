@@ -535,6 +535,16 @@ class Settings(BaseSettings):
         default="pablo-backend",
         description="OTel resource service.name attached to exported LLM spans.",
     )
+    llm_trace_project: str = Field(
+        default="",
+        description=(
+            "Phoenix project the exported LLM spans land in (set as the "
+            "OpenInference 'openinference.project.name' resource attribute). "
+            "Use a per-deployment name (e.g. one per environment) to keep "
+            "traces from different deployments from mixing. Empty groups them "
+            "under the collector's 'default' project."
+        ),
+    )
 
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(
