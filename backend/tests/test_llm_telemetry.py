@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import fields
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -31,6 +32,7 @@ from backend.app.services.chat_llm_gateway import GeminiChatLLMGateway, StreamEv
 from backend.app.services.llm_telemetry import (
     LLMSpanRecorder,
     LLMSpanRequest,
+    _build_resource,
     llm_span,
 )
 from backend.app.services.structured_llm_gateway import GeminiStructuredLLMGateway
@@ -314,3 +316,21 @@ class TestLLMSpanBuilder:
             == OpenInferenceSpanKindValues.EMBEDDING.value
         )
         assert attrs[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] == 5
+
+
+class TestResourceProject:
+    """The Phoenix project is set via the ``openinference.project.name``
+    resource attribute when ``llm_trace_project`` is configured."""
+
+    def test_project_set_when_configured(self) -> None:
+        settings = SimpleNamespace(
+            llm_trace_service_name="pablo-backend", llm_trace_project="pablo-prod"
+        )
+        attrs = dict(_build_resource(settings).attributes)  # type: ignore[arg-type]
+        assert attrs["openinference.project.name"] == "pablo-prod"
+        assert attrs["service.name"] == "pablo-backend"
+
+    def test_project_absent_when_unset(self) -> None:
+        settings = SimpleNamespace(llm_trace_service_name="pablo-backend", llm_trace_project="")
+        attrs = dict(_build_resource(settings).attributes)  # type: ignore[arg-type]
+        assert "openinference.project.name" not in attrs
