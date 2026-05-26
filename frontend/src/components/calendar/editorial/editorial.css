@@ -59,24 +59,27 @@
 }
 
 [data-editorial-theme="dark"] {
-  --ed-canvas: #1B140E;
-  --ed-canvas-elev: #241B14;
-  --ed-rail: #15100B;
-  --ed-ink: #F5EBD9;
-  --ed-ink-muted: #B89B6D;
-  --ed-ink-soft: #6B5344;
-  --ed-hairline: rgba(245, 235, 217, 0.08);
-  --ed-hairline-strong: rgba(245, 235, 217, 0.16);
+  /* Canvas/ink/accent derive from the global Dark theme tokens so the calendar
+   * matches the rest of the app; only dark-specific texture, hairlines, and
+   * status fills are bespoke below. */
+  --ed-canvas: var(--background);
+  --ed-canvas-elev: var(--card);
+  --ed-rail: var(--background);
+  --ed-ink: var(--color-neutral-900);
+  --ed-ink-muted: var(--color-neutral-600);
+  --ed-ink-soft: var(--color-neutral-500);
+  --ed-hairline: rgba(245, 241, 234, 0.08);
+  --ed-hairline-strong: rgba(245, 241, 234, 0.16);
   --ed-today-tint: rgba(95, 133, 99, 0.10);
   --ed-pill-hover: rgba(232, 168, 73, 0.14);
-  --ed-cta-bg: #FDF6EC;
-  --ed-cta-fg: #2C1810;
-  --ed-cta-bg-hover: #F5EBD9;
-  --ed-now-line: #ECA94F;
-  --ed-today-circle: #F5EBD9;
-  --ed-today-circle-fg: #15100B;
-  --ed-mini-today-bg: #ECA94F;
-  --ed-mini-today-fg: #15100B;
+  --ed-cta-bg: var(--color-primary-600);
+  --ed-cta-fg: #1b1815;
+  --ed-cta-bg-hover: var(--color-primary-700);
+  --ed-now-line: var(--color-primary-600);
+  --ed-today-circle: var(--color-primary-600);
+  --ed-today-circle-fg: #1b1815;
+  --ed-mini-today-bg: var(--color-primary-600);
+  --ed-mini-today-fg: #1b1815;
   --ed-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 6px 18px rgba(0, 0, 0, 0.40);
   --ed-shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.40), 0 12px 28px rgba(0, 0, 0, 0.55);
   --ed-grain-opacity: 0.025;
