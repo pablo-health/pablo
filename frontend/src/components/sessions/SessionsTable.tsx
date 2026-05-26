@@ -9,16 +9,22 @@
 
 "use client"
 
+import type { ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { AlertCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useSessionList } from "@/hooks/useSessions"
+import type { SessionResponse } from "@/types/sessions"
 import { QualityRating } from "./QualityRating"
 import { SessionStatusBadge } from "./SessionStatusBadge"
 
 export interface SessionsTableProps {
   className?: string
+  /** Optional predicate to narrow which sessions are shown (e.g. the review worklist). */
+  filter?: (session: SessionResponse) => boolean
+  /** Rendered in place of the default copy when no sessions match. */
+  emptyState?: ReactNode
 }
 
 function formatSessionDate(dateString: string): string {
@@ -45,7 +51,11 @@ function SessionsTableSkeleton() {
   )
 }
 
-export function SessionsTable({ className }: SessionsTableProps) {
+export function SessionsTable({
+  className,
+  filter,
+  emptyState,
+}: SessionsTableProps) {
   const router = useRouter()
   const { data, isLoading, isError, error, refetch } = useSessionList()
 
@@ -74,14 +84,17 @@ export function SessionsTable({ className }: SessionsTableProps) {
     )
   }
 
-  const sessions = data?.data ?? []
+  const allSessions = data?.data ?? []
+  const sessions = filter ? allSessions.filter(filter) : allSessions
 
   if (sessions.length === 0) {
     return (
       <div className="card text-center py-12">
-        <p className="text-neutral-600">
-          No sessions found. Upload a transcript to get started.
-        </p>
+        {emptyState ?? (
+          <p className="text-neutral-600">
+            No sessions found. Upload a transcript to get started.
+          </p>
+        )}
       </div>
     )
   }

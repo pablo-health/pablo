@@ -49,6 +49,15 @@ export interface UploadTranscriptDialogProps {
   trigger?: React.ReactNode
   onSuccess?: (session: SessionResponse) => void
   className?: string
+  /**
+   * When set, the patient is locked to this id and the picker is hidden —
+   * used by the patient-chart "New note" flow where the patient is already
+   * in context.
+   */
+  patientId?: string
+  /** Controlled open state. When provided, the parent owns visibility. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 // Zod v4 uses `error` (not v3's `required_error`) for the missing-field
@@ -76,9 +85,19 @@ export function UploadTranscriptDialog({
   trigger,
   onSuccess,
   className,
+  patientId,
+  open: controlledOpen,
+  onOpenChange,
 }: UploadTranscriptDialogProps) {
   const router = useRouter()
-  const [open, setOpen] = useState(false)
+  const isControlled = controlledOpen !== undefined
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next)
+    else setInternalOpen(next)
+  }
+  const lockedPatient = patientId != null
   const [isDragging, setIsDragging] = useState(false)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
@@ -97,6 +116,7 @@ export function UploadTranscriptDialog({
     formState: { errors },
   } = useForm<UploadFormData>({
     resolver: zodResolver(uploadSchema),
+    defaultValues: { patient_id: patientId ?? "" },
   })
 
   // eslint-disable-next-line react-hooks/incompatible-library -- React Hook Form's watch() is designed for this usage
@@ -219,12 +239,14 @@ export function UploadTranscriptDialog({
       {trigger ? (
         <DialogTrigger asChild>{trigger}</DialogTrigger>
       ) : (
-        <DialogTrigger asChild>
-          <Button>
-            <Upload className="w-4 h-4 mr-2" />
-            Upload Session
-          </Button>
-        </DialogTrigger>
+        !isControlled && (
+          <DialogTrigger asChild>
+            <Button>
+              <Upload className="w-4 h-4 mr-2" />
+              Upload Session
+            </Button>
+          </DialogTrigger>
+        )
       )}
 
       <DialogContent className={cn("sm:max-w-[600px]", className)}>
@@ -236,34 +258,38 @@ export function UploadTranscriptDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          {/* Patient Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="patient_id">
-              Patient <span className="text-destructive">*</span>
-            </Label>
-            <Select
-              value={watchedPatientId || ""}
-              onValueChange={(value) => setValue("patient_id", value)}
-              disabled={isLoadingPatients}
-            >
-              <SelectTrigger
-                id="patient_id"
-                className={cn(errors.patient_id && "border-destructive")}
+          {/* Patient Selection — hidden when the patient is already in context */}
+          {!lockedPatient && (
+            <div className="space-y-2">
+              <Label htmlFor="patient_id">
+                Patient <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={watchedPatientId || ""}
+                onValueChange={(value) => setValue("patient_id", value)}
+                disabled={isLoadingPatients}
               >
-                <SelectValue placeholder="Select a patient..." />
-              </SelectTrigger>
-              <SelectContent>
-                {patientsData?.data.map((patient) => (
-                  <SelectItem key={patient.id} value={patient.id}>
-                    {patient.last_name}, {patient.first_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {errors.patient_id && (
-              <p className="text-sm text-destructive">{errors.patient_id.message}</p>
-            )}
-          </div>
+                <SelectTrigger
+                  id="patient_id"
+                  className={cn(errors.patient_id && "border-destructive")}
+                >
+                  <SelectValue placeholder="Select a patient..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {patientsData?.data.map((patient) => (
+                    <SelectItem key={patient.id} value={patient.id}>
+                      {patient.last_name}, {patient.first_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.patient_id && (
+                <p className="text-sm text-destructive">
+                  {errors.patient_id.message}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Session Date */}
           <div className="space-y-2">

@@ -8,7 +8,7 @@ import {
   Calendar,
   Home,
   Users,
-  FileText,
+  ClipboardCheck,
   Settings,
 } from "lucide-react"
 import { AdminNav } from "./AdminNav"
@@ -19,7 +19,7 @@ const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
   { name: "Patients", href: "/dashboard/patients", icon: Users },
-  { name: "Sessions", href: "/dashboard/sessions", icon: FileText },
+  { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ]
 

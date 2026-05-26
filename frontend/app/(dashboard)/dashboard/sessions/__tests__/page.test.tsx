@@ -1,114 +1,72 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * Tests for Sessions List Page
+ * Tests for Review Worklist Page
  */
 
 import { describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 
-import SessionsPage from "../page"
+import ReviewPage from "../page"
+import type { SessionResponse } from "@/types/sessions"
 
-// Mock child components
+// Capture the props the page hands to SessionsTable so we can assert on the
+// review-status filter without standing up the real data layer.
+let capturedFilter: ((s: SessionResponse) => boolean) | undefined
+
 vi.mock("@/components/sessions/SessionsTable", () => ({
-  SessionsTable: () => (
-    <div data-testid="sessions-table">
-      Sessions Table Component
-    </div>
-  ),
+  SessionsTable: ({ filter }: { filter?: (s: SessionResponse) => boolean }) => {
+    capturedFilter = filter
+    return <div data-testid="sessions-table">Sessions Table Component</div>
+  },
 }))
 
-vi.mock("@/components/sessions/UploadTranscriptDialog", () => ({
-  UploadTranscriptDialog: ({ trigger }: any) => (
-    <div data-testid="upload-dialog-wrapper">
-      {trigger}
-    </div>
-  ),
-}))
+function sessionWithStatus(status: SessionResponse["status"]): SessionResponse {
+  return { status } as SessionResponse
+}
 
-describe("SessionsPage", () => {
+describe("ReviewPage", () => {
   describe("Page Structure", () => {
-    it("renders page header", () => {
-      render(<SessionsPage />)
+    it("renders the Review heading", () => {
+      render(<ReviewPage />)
 
-      expect(screen.getByRole("heading", { name: "Sessions" })).toBeInTheDocument()
-      expect(screen.getByText("View and manage therapy sessions")).toBeInTheDocument()
-    })
-
-    it("renders upload button", () => {
-      render(<SessionsPage />)
-
-      expect(screen.getByRole("button", { name: /upload session/i })).toBeInTheDocument()
-    })
-
-    it("renders SessionsTable component", () => {
-      render(<SessionsPage />)
-
-      expect(screen.getByTestId("sessions-table")).toBeInTheDocument()
-    })
-
-    it("has proper heading hierarchy", () => {
-      render(<SessionsPage />)
-
-      const heading = screen.getByRole("heading", { name: "Sessions" })
+      const heading = screen.getByRole("heading", { name: "Review" })
+      expect(heading).toBeInTheDocument()
       expect(heading.tagName).toBe("H1")
     })
 
-    it("renders upload dialog wrapper", () => {
-      render(<SessionsPage />)
+    it("describes the worklist purpose", () => {
+      render(<ReviewPage />)
 
-      expect(screen.getByTestId("upload-dialog-wrapper")).toBeInTheDocument()
+      expect(
+        screen.getByText(/waiting for your review before they're finalized/i),
+      ).toBeInTheDocument()
     })
-  })
 
-  describe("Layout", () => {
-    it("renders header and table sections", () => {
-      render(<SessionsPage />)
+    it("renders SessionsTable", () => {
+      render(<ReviewPage />)
 
-      // Header section
-      expect(screen.getByText("Sessions")).toBeInTheDocument()
-      expect(screen.getByText("View and manage therapy sessions")).toBeInTheDocument()
-
-      // Upload button
-      expect(screen.getByRole("button", { name: /upload session/i })).toBeInTheDocument()
-
-      // Table section (delegated to SessionsTable component)
       expect(screen.getByTestId("sessions-table")).toBeInTheDocument()
     })
   })
 
-  describe("Component Integration", () => {
-    it("passes trigger prop to UploadTranscriptDialog", () => {
-      render(<SessionsPage />)
+  describe("Review filter", () => {
+    it("keeps sessions that still need attention", () => {
+      render(<ReviewPage />)
 
-      // The upload button should be rendered inside the upload dialog wrapper
-      const uploadButton = screen.getByRole("button", { name: /upload session/i })
-      const dialogWrapper = screen.getByTestId("upload-dialog-wrapper")
-
-      expect(dialogWrapper).toContainElement(uploadButton)
+      expect(capturedFilter).toBeDefined()
+      expect(capturedFilter!(sessionWithStatus("pending_review"))).toBe(true)
+      expect(capturedFilter!(sessionWithStatus("processing"))).toBe(true)
+      expect(capturedFilter!(sessionWithStatus("queued"))).toBe(true)
+      expect(capturedFilter!(sessionWithStatus("failed"))).toBe(true)
     })
 
-    it("renders SessionsTable which handles data loading internally", () => {
-      render(<SessionsPage />)
+    it("excludes terminal and not-yet-recorded sessions", () => {
+      render(<ReviewPage />)
 
-      // SessionsTable is responsible for handling its own loading/error states
-      expect(screen.getByTestId("sessions-table")).toBeInTheDocument()
-    })
-  })
-
-  describe("Accessibility", () => {
-    it("has accessible button for uploading sessions", () => {
-      render(<SessionsPage />)
-
-      const uploadButton = screen.getByRole("button", { name: /upload session/i })
-      expect(uploadButton).toBeInTheDocument()
-    })
-
-    it("has proper heading structure", () => {
-      render(<SessionsPage />)
-
-      const heading = screen.getByRole("heading", { level: 1 })
-      expect(heading).toHaveTextContent("Sessions")
+      expect(capturedFilter!(sessionWithStatus("finalized"))).toBe(false)
+      expect(capturedFilter!(sessionWithStatus("cancelled"))).toBe(false)
+      expect(capturedFilter!(sessionWithStatus("scheduled"))).toBe(false)
     })
   })
 })
