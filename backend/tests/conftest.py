@@ -15,6 +15,15 @@ os.environ["PABLO_EDITION"] = "solo"
 # manual smoke step at deploy time, not by a unit test (the app builds
 # its router list once at import).
 os.environ["ENABLE_PATIENT_CHAT"] = "true"
+# Disable the audit Cloud Logging dual-write for the whole suite. The
+# dual-write builds a google-cloud-logging client, which does GCP
+# credential/metadata discovery on first use. Test runners (CI and local)
+# have no GCP metadata server, so that discovery blocks on a connect
+# timeout — a multi-second-to-minute stall on the first audited request.
+# Worse, a runner that *does* have ADC would write test audit entries into
+# a real Cloud Logging stream. Tests that specifically exercise the
+# dual-write re-enable the flag per-test (see TestCloudLoggingDualWrite).
+os.environ["AUDIT_DUAL_WRITE_ENABLED"] = "false"
 # Provide a dummy DATABASE_URL so settings validation passes (never actually connected to)
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 
@@ -343,9 +352,7 @@ def client(
     )
     app.dependency_overrides[require_active_subscription] = lambda: mock_user
     app.dependency_overrides[get_user_repository] = lambda: mock_user_repo
-    app.dependency_overrides[get_clinician_profile_repository] = (
-        lambda: mock_clinician_profile_repo
-    )
+    app.dependency_overrides[get_clinician_profile_repository] = lambda: mock_clinician_profile_repo
     app.dependency_overrides[get_allowlist_repository] = lambda: mock_allowlist_repo
     app.dependency_overrides[get_identity_repository] = lambda: mock_identity_repo
     app.dependency_overrides[get_audit_service] = lambda: mock_audit_service
