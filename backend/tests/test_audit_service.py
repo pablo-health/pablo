@@ -2,6 +2,7 @@
 
 """Tests for audit logging service."""
 
+from collections.abc import Iterator
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -239,8 +240,13 @@ class TestCloudLoggingDualWrite:
     """
 
     @pytest.fixture(autouse=True)
-    def _clear_settings_cache(self) -> None:
+    def _clear_settings_cache(self) -> Iterator[None]:
         # get_settings() is @lru_cache; clear so per-test env vars take effect.
+        # Clear on teardown too: a flag-on test must not leave a cached
+        # ``True`` behind once the suite default is off (conftest), or a
+        # later file's first audited request would hit the real GCP client.
+        get_settings.cache_clear()
+        yield
         get_settings.cache_clear()
 
     def test_flag_off_skips_cloud_logging_import(
