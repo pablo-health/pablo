@@ -30,6 +30,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,6 +127,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             ) from exc
 
         client = self._get_client()
+        normalized_model = self._normalize_model(model)
         schema = _to_gemini_schema(types, response_schema)
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
@@ -134,15 +137,24 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             max_output_tokens=max_output_tokens,
         )
 
-        try:
-            response = client.models.generate_content(
-                model=self._normalize_model(model),
-                contents=user_prompt,
-                config=config,
+        with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
+            try:
+                response = client.models.generate_content(
+                    model=normalized_model,
+                    contents=user_prompt,
+                    config=config,
+                )
+            except Exception as exc:
+                logger.exception("Gemini structured completion failed")
+                raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
+            prompt_tokens, output_tokens, total_tokens = usage_tokens(
+                getattr(response, "usage_metadata", None)
             )
-        except Exception as exc:
-            logger.exception("Gemini structured completion failed")
-            raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
+            span.set_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=total_tokens,
+            )
 
         raw_text = getattr(response, "text", "") or ""
         try:
@@ -151,9 +163,6 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
         if not isinstance(data, dict):
             raise ValueError(f"LLM returned non-object JSON ({type(data).__name__})")
-
-        usage = getattr(response, "usage_metadata", None)
-        output_tokens = getattr(usage, "candidates_token_count", None) if usage else None
 
         finish_reason = "stop"
         candidates = getattr(response, "candidates", None) or []
@@ -187,9 +196,7 @@ def _to_gemini_schema(types: Any, schema: dict[str, Any]) -> Any:
     if json_type == "object":
         kwargs["type"] = type_.OBJECT
         props = schema.get("properties") or {}
-        kwargs["properties"] = {
-            key: _to_gemini_schema(types, sub) for key, sub in props.items()
-        }
+        kwargs["properties"] = {key: _to_gemini_schema(types, sub) for key, sub in props.items()}
         required = schema.get("required")
         if required:
             kwargs["required"] = list(required)

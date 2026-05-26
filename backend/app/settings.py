@@ -508,6 +508,34 @@ class Settings(BaseSettings):
         ),
     )
 
+    # LLM trace telemetry (OpenInference over OTLP/HTTP).
+    # Unset endpoint => the tracer stays a no-op and no spans are
+    # exported, so a deployment runs with LLM tracing off until an
+    # operator points this at a collector. Any OTLP/HTTP backend works
+    # (Phoenix, Honeycomb, Tempo, Cloud Trace) — switching is an endpoint
+    # change, not a re-instrumentation. Spans carry metadata only (model,
+    # token counts, latency, error class, request/user/tenant ids); never
+    # prompt or response content.
+    phoenix_collector_endpoint: str = Field(
+        default="",
+        description=(
+            "OTLP/HTTP traces endpoint for content-free LLM spans (e.g. "
+            "https://collector.example/v1/traces). Unset disables export."
+        ),
+    )
+    llm_trace_use_id_token: bool = Field(
+        default=True,
+        description=(
+            "Authenticate trace export with a Google-minted ID token whose "
+            "audience is the collector origin (Cloud Run + run.invoker). "
+            "Disable for a collector using static OTEL_EXPORTER_OTLP_* headers."
+        ),
+    )
+    llm_trace_service_name: str = Field(
+        default="pablo-backend",
+        description="OTel resource service.name attached to exported LLM spans.",
+    )
+
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(
         default=SecretStr(""),
