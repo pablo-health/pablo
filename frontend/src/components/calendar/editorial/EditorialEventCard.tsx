@@ -5,29 +5,7 @@
 import type { AppointmentResponse } from "@/types/scheduling"
 import { User, Users, Video } from "lucide-react"
 import { format } from "date-fns"
-
-const STATUS_TOKENS: Record<string, { bg: string; fg: string; rail: string }> = {
-  confirmed: {
-    bg: "var(--ed-status-confirmed-bg)",
-    fg: "var(--ed-status-confirmed-fg)",
-    rail: "var(--ed-status-confirmed-rail)",
-  },
-  completed: {
-    bg: "var(--ed-status-completed-bg)",
-    fg: "var(--ed-status-completed-fg)",
-    rail: "var(--ed-status-completed-rail)",
-  },
-  cancelled: {
-    bg: "var(--ed-status-cancelled-bg)",
-    fg: "var(--ed-status-cancelled-fg)",
-    rail: "var(--ed-status-cancelled-rail)",
-  },
-  no_show: {
-    bg: "var(--ed-status-noshow-bg)",
-    fg: "var(--ed-status-noshow-fg)",
-    rail: "var(--ed-status-noshow-rail)",
-  },
-}
+import { editorialStatusMeta } from "./status"
 
 interface EditorialEventCardProps {
   appointment: AppointmentResponse
@@ -43,12 +21,13 @@ export function EditorialEventCard({
   onClick,
   compact,
 }: EditorialEventCardProps) {
-  const tokens = STATUS_TOKENS[appointment.status] ?? STATUS_TOKENS.confirmed
+  const meta = editorialStatusMeta(appointment.status)
   const isGroup =
     appointment.session_type === "group" || appointment.session_type === "couples"
   const start = new Date(appointment.start_at)
   const end = new Date(appointment.end_at)
   const Icon = isGroup ? Users : User
+  const StatusIcon = meta.Icon
   const title = patientName ?? appointment.title
   const cancelled = appointment.status === "cancelled"
 
@@ -58,16 +37,16 @@ export function EditorialEventCard({
       onClick={() => onClick(appointment)}
       className="ed-event group relative flex h-full w-full flex-col items-start overflow-hidden rounded-[10px] px-2.5 py-1.5 text-left"
       style={{
-        backgroundColor: tokens.bg,
-        color: tokens.fg,
+        backgroundColor: meta.bg,
+        color: meta.fg,
         textDecoration: cancelled ? "line-through" : undefined,
       }}
-      aria-label={`${title} at ${format(start, "h:mm a")}`}
+      aria-label={`${title} at ${format(start, "h:mm a")} — ${meta.label}`}
     >
       <span
         aria-hidden
         className="absolute left-0 top-0 h-full w-[3px] rounded-l-[10px]"
-        style={{ backgroundColor: tokens.rail }}
+        style={{ backgroundColor: meta.rail }}
       />
       <div className="flex min-w-0 items-start gap-1.5 pl-1">
         <Icon className="mt-0.5 h-3 w-3 shrink-0 opacity-70" aria-hidden />
@@ -82,6 +61,11 @@ export function EditorialEventCard({
         {appointment.video_link && !compact && (
           <Video className="mt-0.5 h-3 w-3 shrink-0 opacity-60" aria-hidden />
         )}
+        {/* Non-color status cue — distinct shape per status. */}
+        <StatusIcon
+          className="mt-0.5 h-3 w-3 shrink-0 opacity-80"
+          aria-hidden
+        />
       </div>
     </button>
   )

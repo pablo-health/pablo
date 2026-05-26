@@ -273,98 +273,98 @@
   --auth-action-fg: #ffffff;
 }
 
-[data-theme="cozy"] {
-  /* Cozy: softer warm cream, blush accents, fireside */
-  --color-neutral-50: #fbf3ea;
-  --background: #fbf3ea;
-  --foreground: #2c1810;
-  --card: #fffdf9;
-  --border: #ecdcc9;
+[data-theme="dark"] {
+  /* Dark: a restrained warm-charcoal — not Pablo-brown. Honey is a small
+     accent, not the atmosphere. The neutral scale is inverted (50 = darkest
+     canvas, 900 = lightest ink) so the whole app flips with no per-component
+     edits. Tuned for WCAG-AA body/heading contrast. */
+  --color-neutral-50: #1b1815;
+  --color-neutral-100: #24211d;
+  --color-neutral-200: #35302a;
+  --color-neutral-300: #443e36;
+  --color-neutral-400: #8d867b;
+  --color-neutral-500: #a39c90;
+  --color-neutral-600: #c0b8ac;
+  --color-neutral-700: #d6cfc4;
+  --color-neutral-800: #e9e3da;
+  --color-neutral-900: #f5f1ea;
+  --color-primary-50: #2a2118;
+  --color-primary-100: #34291b;
   --color-primary-600: #e8a849;
-  --color-primary-700: #d4952f;
+  --color-primary-700: #f0c074;
 
-  --auth-radius: 1.25rem;
-  --auth-canvas: linear-gradient(135deg, #fdf6ec 0%, #f3d9ce 100%);
-  --brand-panel-bg: radial-gradient(
-      120% 120% at 80% 0%,
-      rgba(232, 180, 162, 0.22) 0%,
-      transparent 55%
-    ),
-    #2c1810;
-  --brand-panel-fg: #fdf6ec;
-  --brand-panel-muted: rgba(253, 246, 236, 0.72);
-  --brand-panel-accent: #e8b4a2;
-  --auth-action-bg: #e8a849;
-  --auth-action-bg-hover: #d4952f;
-  --auth-action-fg: #2c1810;
-}
-
-[data-theme="classic-cream"] {
-  /* Classic Cream: today's all-cream look, for side-by-side comparison */
-  --color-neutral-50: #fdf6ec;
-  --background: #fdf6ec;
-  --foreground: #2c1810;
-  --card: #ffffff;
-  --border: #e8d5b5;
-
-  --auth-radius: 1rem;
-  --auth-canvas: linear-gradient(135deg, #fdf6ec 0%, #f2f7f3 50%, #e0ede2 100%);
-  --brand-panel-bg: linear-gradient(160deg, #f5d08e 0%, #e8a849 100%);
-  --brand-panel-fg: #2c1810;
-  --brand-panel-muted: rgba(44, 24, 16, 0.7);
-  --brand-panel-accent: #7a9e7e;
-  --auth-action-bg: #d4952f;
-  --auth-action-bg-hover: #b07a24;
-  --auth-action-fg: #ffffff;
-}
-
-[data-theme="midnight"] {
-  /* Midnight: warm dark. The neutral scale is inverted (50 = darkest canvas,
-     900 = lightest ink) so every text-neutral-900 / bg-neutral-50 in the app
-     flips correctly without per-component edits. Honey stays the accent. */
-  --color-neutral-50: #17110c;
-  --color-neutral-100: #221a14;
-  --color-neutral-200: #473a2e;
-  --color-neutral-300: #564537;
-  --color-neutral-400: #8a7563;
-  --color-neutral-500: #a89280;
-  --color-neutral-600: #c4ad9a;
-  --color-neutral-700: #d8c6b4;
-  --color-neutral-800: #ebe0d2;
-  --color-neutral-900: #f5ece0;
-  --color-primary-50: #2c2014;
-  --color-primary-100: #382a18;
-  --color-primary-600: #e8a849;
-  --color-primary-700: #f0be6f;
-
-  --background: #17110c;
-  --foreground: #f5ece0;
-  --card: #261d16;
-  --card-foreground: #f5ece0;
-  --popover: #261d16;
-  --popover-foreground: #f5ece0;
-  --border: #473a2e;
-  --input: #473a2e;
-  --muted: #261d16;
-  --muted-foreground: #a89280;
+  --background: #1b1815;
+  --foreground: #f5f1ea;
+  --card: #24211d;
+  --card-foreground: #f5f1ea;
+  --popover: #24211d;
+  --popover-foreground: #f5f1ea;
+  --border: #35302a;
+  --input: #35302a;
+  --muted: #24211d;
+  --muted-foreground: #a39c90;
   --primary: #e8a849;
-  --primary-foreground: #1c1511;
+  --primary-foreground: #1b1815;
   --ring: #e8a849;
 
   --auth-radius: 1rem;
-  --auth-canvas: linear-gradient(135deg, #1c1511 0%, #100b08 100%);
+  --auth-canvas: linear-gradient(135deg, #1b1815 0%, #110f0c 100%);
   --brand-panel-bg: radial-gradient(
       120% 120% at 80% 0%,
-      rgba(232, 168, 73, 0.16) 0%,
+      rgba(232, 168, 73, 0.14) 0%,
       transparent 55%
     ),
-    #100b08;
-  --brand-panel-fg: #f5ece0;
-  --brand-panel-muted: rgba(245, 236, 224, 0.7);
+    #14110d;
+  --brand-panel-fg: #f5f1ea;
+  --brand-panel-muted: rgba(245, 241, 234, 0.7);
   --brand-panel-accent: #e8a849;
   --auth-action-bg: #e8a849;
-  --auth-action-bg-hover: #f0be6f;
-  --auth-action-fg: #1c1511;
+  --auth-action-bg-hover: #f0c074;
+  --auth-action-fg: #1b1815;
+}
+
+[data-theme="high-contrast"] {
+  /* High Contrast: maximum legibility. Black ink on white, strong borders,
+     a dark-amber accent that passes AA with white text. Surfaces separate by
+     border rather than subtle fills. */
+  --color-neutral-50: #ffffff;
+  --color-neutral-100: #f2f2f2;
+  --color-neutral-200: #595959;
+  --color-neutral-300: #404040;
+  --color-neutral-400: #333333;
+  --color-neutral-500: #1f1f1f;
+  --color-neutral-600: #141414;
+  --color-neutral-700: #0a0a0a;
+  --color-neutral-800: #000000;
+  --color-neutral-900: #000000;
+  --color-primary-50: #fff4e0;
+  --color-primary-100: #ffe6bf;
+  --color-primary-600: #8a5300;
+  --color-primary-700: #6b4000;
+
+  --background: #ffffff;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --border: #595959;
+  --input: #404040;
+  --muted: #f2f2f2;
+  --muted-foreground: #1f1f1f;
+  --primary: #8a5300;
+  --primary-foreground: #ffffff;
+  --ring: #8a5300;
+
+  --auth-radius: 0.5rem;
+  --auth-canvas: #ffffff;
+  --brand-panel-bg: #000000;
+  --brand-panel-fg: #ffffff;
+  --brand-panel-muted: rgba(255, 255, 255, 0.88);
+  --brand-panel-accent: #ffd479;
+  --auth-action-bg: #8a5300;
+  --auth-action-bg-hover: #6b4000;
+  --auth-action-fg: #ffffff;
 }
 
 [data-theme="boring-ehr"] {
