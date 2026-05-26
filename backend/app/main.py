@@ -62,6 +62,11 @@ if settings.is_development:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Manage background tasks across the application lifecycle."""
+    from .services.llm_telemetry import init_llm_tracing
+
+    # No-op unless a collector endpoint is configured (see settings).
+    init_llm_tracing(settings)
+
     task = None
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
         from .background_sync import calendar_sync_loop

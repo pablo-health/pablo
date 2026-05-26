@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 
 if TYPE_CHECKING:
     from ..repositories.ehr_prompt import EhrPromptRepository
@@ -150,17 +151,26 @@ class GeminiEhrNavigationService(EhrNavigationService):
             )
 
             client = self._get_client()
-            response = client.models.generate_content(
-                model=self.model,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    response_mime_type="application/json",
-                    response_schema=response_schema,
-                    temperature=0.1,
-                    max_output_tokens=2048,
-                ),
-            )
+            with llm_span(LLMSpanRequest(operation="ehr_navigation", model=self.model)) as span:
+                response = client.models.generate_content(
+                    model=self.model,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        response_mime_type="application/json",
+                        response_schema=response_schema,
+                        temperature=0.1,
+                        max_output_tokens=2048,
+                    ),
+                )
+                prompt_tokens, completion_tokens, total_tokens = usage_tokens(
+                    getattr(response, "usage_metadata", None)
+                )
+                span.set_token_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                )
             return self._parse_response(response.text)
         except LookupError:
             raise

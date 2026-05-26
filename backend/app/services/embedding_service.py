@@ -11,6 +11,8 @@ import struct
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,11 +92,20 @@ class GoogleEmbeddingService(EmbeddingService):
             from google.genai import types
 
             client = self._get_client()
-            response = client.models.embed_content(
-                model=self.model_name,
-                contents=texts,
-                config=types.EmbedContentConfig(output_dimensionality=768),
-            )
+            with llm_span(LLMSpanRequest(operation="embedding", model=self.model_name)) as span:
+                response = client.models.embed_content(
+                    model=self.model_name,
+                    contents=texts,
+                    config=types.EmbedContentConfig(output_dimensionality=768),
+                )
+                prompt_tokens, completion_tokens, total_tokens = usage_tokens(
+                    getattr(response, "metadata", None)
+                )
+                span.set_token_usage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                )
             return [list(emb.values) for emb in response.embeddings]
         except ImportError as err:
             msg = "google-genai package is required for GoogleEmbeddingService"

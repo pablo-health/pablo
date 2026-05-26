@@ -35,6 +35,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from .llm_telemetry import LLMSpanRequest, llm_span
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
 
@@ -251,17 +253,26 @@ class GeminiChatLLMGateway(ChatLLMGateway):
                 loop.call_soon_threadsafe(queue.put_nowait, None)
 
         future = loop.run_in_executor(None, _pump)
-        try:
-            while True:
-                event = await queue.get()
-                if event is None:
-                    break
-                yield event
-        finally:
-            # ``run_in_executor`` returns a Future we don't need to
-            # await, but cancelling here prevents zombie threads if the
-            # async iterator is closed early (e.g. client disconnect).
-            future.cancel()
+        # The span brackets the whole stream so its latency reflects
+        # first-byte-to-last. Token count and error class are lifted off
+        # the final StreamEvent as it passes through — never the deltas,
+        # which carry response text.
+        with llm_span(LLMSpanRequest(operation="chat", model=model)) as span:
+            try:
+                while True:
+                    event = await queue.get()
+                    if event is None:
+                        break
+                    if event.output_tokens is not None:
+                        span.set_token_usage(completion_tokens=event.output_tokens)
+                    if event.finish_reason == "error" and event.error_code is not None:
+                        span.set_error_class(event.error_code)
+                    yield event
+            finally:
+                # ``run_in_executor`` returns a Future we don't need to
+                # await, but cancelling here prevents zombie threads if the
+                # async iterator is closed early (e.g. client disconnect).
+                future.cancel()
 
 
 def _build_contents(
