@@ -168,7 +168,27 @@ class GeminiChatLLMGateway(ChatLLMGateway):
             self._client = genai.Client(vertexai=True)
         return self._client
 
-    async def stream_completion(  # noqa: PLR0915 — streaming pump + finish-reason handling
+    def _finish_reason_from_chunk(self, chunk: Any) -> FinishReason | None:
+        """Map a chunk's candidate finish reason to our coarse enum, or None.
+
+        Returns the first recognized terminal reason across the chunk's
+        candidates; ``None`` when the chunk is a mid-stream delta with no
+        finish reason yet.
+        """
+        for cand in getattr(chunk, "candidates", None) or []:
+            reason = getattr(cand, "finish_reason", None)
+            if reason is None:
+                continue
+            reason_str = str(reason).upper().rsplit(".", 1)[-1]
+            if reason_str in self._SAFETY_FINISH_REASONS:
+                return "safety"
+            if reason_str in self._LENGTH_FINISH_REASONS:
+                return "length"
+            if reason_str == "STOP":
+                return "stop"
+        return None
+
+    async def stream_completion(
         self,
         *,
         model: str,
@@ -193,86 +213,58 @@ class GeminiChatLLMGateway(ChatLLMGateway):
 
         client = self._get_client()
 
-        # The SDK exposes a synchronous streaming generator. We pump it
-        # on a worker thread so the FastAPI event loop stays
-        # responsive — the alternative (async streaming via the SDK's
-        # async API) would tie us to a specific version.
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
-
-        def _pump() -> None:
+        # Stream over the SDK's native async API (``client.aio``) rather than
+        # pumping the blocking sync iterator on a worker thread. This keeps
+        # the event loop responsive without a thread + queue bridge, and —
+        # crucially — when this generator is closed early (client disconnect)
+        # the underlying request is actually aborted. The old thread-pump
+        # could not be interrupted (``Future.cancel`` is a no-op once the
+        # thread is running), so a disconnect left a thread draining Gemini
+        # to completion in the background and holding a pool slot.
+        #
+        # The span brackets the whole stream so its latency reflects
+        # first-byte-to-last. Only token counts and a coarse error code are
+        # recorded — never the delta text, which is the response content.
+        with llm_span(LLMSpanRequest(operation="chat", model=model)) as span:
+            output_token_total = 0
+            final_reason: FinishReason | None = None
             try:
-                stream = client.models.generate_content_stream(
+                stream = await client.aio.models.generate_content_stream(
                     model=model,
                     contents=contents,
                     config=config,
                 )
-                output_token_total = 0
-                final_reason: FinishReason | None = None
-                for chunk in stream:
+                async for chunk in stream:
                     delta_text = getattr(chunk, "text", None) or ""
                     if delta_text:
-                        loop.call_soon_threadsafe(queue.put_nowait, StreamEvent(delta=delta_text))
-                    candidates = getattr(chunk, "candidates", None) or []
-                    for cand in candidates:
-                        reason = getattr(cand, "finish_reason", None)
-                        if reason is None:
-                            continue
-                        reason_str = str(reason).upper().rsplit(".", 1)[-1]
-                        if reason_str in self._SAFETY_FINISH_REASONS:
-                            final_reason = "safety"
-                        elif reason_str in self._LENGTH_FINISH_REASONS:
-                            final_reason = "length"
-                        elif reason_str == "STOP":
-                            final_reason = "stop"
+                        yield StreamEvent(delta=delta_text)
+                    reason = self._finish_reason_from_chunk(chunk)
+                    if reason is not None:
+                        final_reason = reason
                     usage = getattr(chunk, "usage_metadata", None)
                     if usage is not None:
                         ct = getattr(usage, "candidates_token_count", None)
                         if ct:
                             output_token_total = ct
-                if final_reason is None:
-                    final_reason = "stop"
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    StreamEvent(
-                        finish_reason=final_reason,
-                        output_tokens=output_token_total or None,
-                    ),
-                )
             except Exception as exc:
                 logger.exception("Gemini stream failed")
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    StreamEvent(
-                        finish_reason="error",
-                        error_code=_classify_error(exc),
-                        error_message=type(exc).__name__,
-                    ),
+                error_code = _classify_error(exc)
+                span.set_error_class(error_code)
+                yield StreamEvent(
+                    finish_reason="error",
+                    error_code=error_code,
+                    error_message=type(exc).__name__,
                 )
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, None)
+                return
 
-        future = loop.run_in_executor(None, _pump)
-        # The span brackets the whole stream so its latency reflects
-        # first-byte-to-last. Token count and error class are lifted off
-        # the final StreamEvent as it passes through — never the deltas,
-        # which carry response text.
-        with llm_span(LLMSpanRequest(operation="chat", model=model)) as span:
-            try:
-                while True:
-                    event = await queue.get()
-                    if event is None:
-                        break
-                    if event.output_tokens is not None:
-                        span.set_token_usage(completion_tokens=event.output_tokens)
-                    if event.finish_reason == "error" and event.error_code is not None:
-                        span.set_error_class(event.error_code)
-                    yield event
-            finally:
-                # ``run_in_executor`` returns a Future we don't need to
-                # await, but cancelling here prevents zombie threads if the
-                # async iterator is closed early (e.g. client disconnect).
-                future.cancel()
+            if final_reason is None:
+                final_reason = "stop"
+            if output_token_total:
+                span.set_token_usage(completion_tokens=output_token_total)
+            yield StreamEvent(
+                finish_reason=final_reason,
+                output_tokens=output_token_total or None,
+            )
 
 
 def _build_contents(

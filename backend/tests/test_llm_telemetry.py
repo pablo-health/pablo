@@ -133,18 +133,29 @@ class _FakeChunk:
         )
 
 
-class _FakeChatModels:
-    def generate_content_stream(self, **kwargs: Any) -> list[_FakeChunk]:
-        return [
-            _FakeChunk(text=_SECRET_RESPONSE[:10]),
-            _FakeChunk(text=_SECRET_RESPONSE[10:]),
-            _FakeChunk(finish=True, completion_tokens=9),
-        ]
+class _FakeAioChatModels:
+    """Mirrors ``client.aio.models``: an awaitable returning an async iterator."""
+
+    async def generate_content_stream(self, **kwargs: Any) -> Any:
+        async def _gen() -> Any:
+            for chunk in (
+                _FakeChunk(text=_SECRET_RESPONSE[:10]),
+                _FakeChunk(text=_SECRET_RESPONSE[10:]),
+                _FakeChunk(finish=True, completion_tokens=9),
+            ):
+                yield chunk
+
+        return _gen()
+
+
+class _FakeAio:
+    def __init__(self) -> None:
+        self.models = _FakeAioChatModels()
 
 
 class _FakeChatClient:
     def __init__(self) -> None:
-        self.models = _FakeChatModels()
+        self.aio = _FakeAio()
 
 
 # ---------------------------------------------------------------------------
