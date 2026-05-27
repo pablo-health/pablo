@@ -259,6 +259,24 @@ describe("NoteViewer (SOAP)", () => {
       expect(screen.getByText("Next Session")).toBeInTheDocument()
     })
 
+    it("associates sub-field labels with editable textareas", () => {
+      renderViewer()
+      fireEvent.click(screen.getByText("Edit"))
+
+      expect(screen.getByRole("textbox", { name: "Chief Complaint" })).toHaveValue(
+        "Anxiety about work",
+      )
+      expect(screen.getByRole("textbox", { name: "Symptoms" })).toHaveValue(
+        "Insomnia\nRacing thoughts",
+      )
+      expect(screen.getByRole("textbox", { name: "Clinical Impression" })).toHaveValue(
+        "Improving",
+      )
+      expect(screen.getByRole("textbox", { name: "Next Session" })).toHaveValue(
+        "One week",
+      )
+    })
+
     it("populates sub-fields from narrative **Label:** text", () => {
       renderViewer()
       fireEvent.click(screen.getByText("Edit"))
