@@ -94,13 +94,18 @@ export function SubFieldEditor({ sectionKey, data, onChange }: SubFieldEditorPro
         const displayValue = f.type === "list"
           ? listToText(rawValue as SOAPSentence[] | null)
           : (rawValue as SOAPSentence | null)?.text ?? ""
+        const fieldId = `note-${sectionKey}-${f.key}`
 
         return (
           <div key={f.key}>
-            <label className="block text-sm font-medium text-neutral-600 mb-1">
+            <label
+              htmlFor={fieldId}
+              className="block text-sm font-medium text-neutral-600 mb-1"
+            >
               {f.label}
             </label>
             <textarea
+              id={fieldId}
               value={displayValue}
               onChange={(e) => handleChange(f.key, f.type, e.target.value)}
               className="w-full min-h-[80px] p-3 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm"
