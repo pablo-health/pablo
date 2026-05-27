@@ -21,7 +21,7 @@
  *   \n
  */
 
-import { buildApiUrl, getAuthHeader } from "@/lib/api/client"
+import { TOKEN_REFRESH_RETRY_CODES, buildApiUrl, getAuthHeader } from "@/lib/api/client"
 
 import type {
   ChatStreamCallbacks,
@@ -56,18 +56,40 @@ export async function streamChatMessages(
   const url = buildApiUrl(
     `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`,
   )
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-    ...(await getAuthHeader()),
+
+  const doFetch = async (forceRefresh: boolean): Promise<Response> => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+      ...(await getAuthHeader(undefined, forceRefresh)),
+    }
+    return fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: callbacks.signal,
+    })
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: callbacks.signal,
-  })
+  let response = await doFetch(false)
+
+  // A token-level 401 (stale/expired id token) is recoverable — the
+  // Firebase SDK's proactive refresh lags in backgrounded tabs, so the
+  // cached token can reach the backend dead. Force a refresh and retry
+  // once. IDLE_TIMEOUT is intentionally not retried (refreshing would
+  // defeat the idle control); it falls through to onError below.
+  if (response.status === 401) {
+    const firstBody = await safeReadText(response)
+    if (isRetryableTokenError(firstBody)) {
+      response = await doFetch(true)
+    } else {
+      callbacks.onError({
+        error: mapHttpStatusToErrorCode(response.status),
+        message: firstBody,
+      })
+      return
+    }
+  }
 
   if (!response.ok) {
     // Pre-stream HTTP errors (404 / 409 / 422). Surface as an onError
@@ -168,6 +190,21 @@ function dispatch(frame: ParsedEvent, callbacks: ChatStreamCallbacks): void {
       // Unknown event kinds are ignored — forwards-compat with future
       // protocol additions.
       return
+  }
+}
+
+/**
+ * True when a 401 response body carries a recoverable token-error code
+ * (expired / invalid id token) — as opposed to IDLE_TIMEOUT or another
+ * deliberate rejection. Parses the JSON ``{error:{code}}`` envelope;
+ * unparseable bodies are treated as non-retryable.
+ */
+function isRetryableTokenError(body: string): boolean {
+  try {
+    const data = JSON.parse(body) as { error?: { code?: string } }
+    return TOKEN_REFRESH_RETRY_CODES.has(data?.error?.code ?? "")
+  } catch {
+    return false
   }
 }
 
