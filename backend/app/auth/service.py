@@ -136,6 +136,10 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         decoded_token: dict[str, Any] = firebase_auth.verify_id_token(token, check_revoked=True)
         return decoded_token
     except firebase_auth.ExpiredIdTokenError as err:
+        # Logged so a client that fell behind on token refresh is
+        # distinguishable from revoked / malformed tokens when triaging
+        # 401s. No PHI: the failure reason only, never token material.
+        logger.warning("Firebase ID token rejected: expired (TOKEN_EXPIRED)")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -147,6 +151,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
             },
         ) from err
     except firebase_auth.RevokedIdTokenError as err:
+        logger.warning("Firebase ID token rejected: revoked (TOKEN_REVOKED)")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -158,6 +163,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
             },
         ) from err
     except firebase_auth.UserDisabledError as err:
+        logger.warning("Firebase ID token rejected: user disabled (USER_DISABLED)")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -169,6 +175,7 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
             },
         ) from err
     except firebase_auth.InvalidIdTokenError as err:
+        logger.warning("Firebase ID token rejected: invalid (INVALID_TOKEN): %s", err)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={

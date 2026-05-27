@@ -82,6 +82,18 @@ interface FetchOptions extends RequestInit {
 }
 
 /**
+ * Backend auth error codes that mean "the id token we sent was stale" —
+ * as opposed to a real authorization failure (MFA_REQUIRED) or a
+ * deliberately-terminated session (IDLE_TIMEOUT). These are recoverable
+ * by minting a fresh token and retrying once; the others are not.
+ *
+ * Firebase's proactive token refresh lags in backgrounded / throttled
+ * tabs, so a cached id token can outlive its 1h expiry and reach the
+ * backend dead. ``getIdToken(true)`` force-refreshes past that.
+ */
+export const TOKEN_REFRESH_RETRY_CODES = new Set(["TOKEN_EXPIRED", "INVALID_TOKEN"])
+
+/**
  * Resolve the bearer token for an authenticated request.
  *
  * Client-side: prefers the supplied token, else asks Firebase for the
@@ -89,14 +101,20 @@ interface FetchOptions extends RequestInit {
  * null. Shared by ``apiClient`` and the SSE consumer so SSE calls land
  * with the same auth posture as regular API calls without going
  * through the JSON fetch wrapper.
+ *
+ * ``forceRefresh`` bypasses the SDK's cached token — used by the retry
+ * path after a token-level 401.
  */
-export async function getAuthHeader(token?: string): Promise<Record<string, string>> {
+export async function getAuthHeader(
+  token?: string,
+  forceRefresh = false,
+): Promise<Record<string, string>> {
   let authToken = token
   if (!authToken && typeof window !== "undefined") {
     try {
       const currentUser = getFirebaseAuth().currentUser
       if (currentUser) {
-        authToken = await currentUser.getIdToken()
+        authToken = await currentUser.getIdToken(forceRefresh)
       }
     } catch {
       // Firebase not initialized or no current user — proceed without token
@@ -107,6 +125,23 @@ export async function getAuthHeader(token?: string): Promise<Record<string, stri
 
 export function buildApiUrl(endpoint: string): string {
   return `${getApiUrl()}${endpoint}`
+}
+
+/**
+ * Read the backend error ``code`` from a non-OK JSON response *without*
+ * consuming its body — clones first so the caller can still read the
+ * full error payload afterward. Returns null for non-JSON or unparseable
+ * bodies.
+ */
+async function peekErrorCode(response: Response): Promise<string | null> {
+  const contentType = response.headers.get("content-type")
+  if (!contentType?.includes("application/json")) return null
+  try {
+    const data = (await response.clone().json()) as ApiErrorResponse
+    return data?.error?.code ?? null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -123,20 +158,32 @@ export async function apiClient<T>(
 
   const url = buildApiUrl(endpoint)
 
-  const headers: Record<string, string> = {
-    // Don't set Content-Type for FormData — browser must set it with multipart boundary
-    ...(fetchOptions.body instanceof FormData
-      ? {}
-      : { "Content-Type": "application/json" }),
-    ...(fetchOptions.headers as Record<string, string>),
-    ...(await getAuthHeader(token)),
+  const doFetch = async (forceRefresh: boolean): Promise<Response> => {
+    const headers: Record<string, string> = {
+      // Don't set Content-Type for FormData — browser must set it with multipart boundary
+      ...(fetchOptions.body instanceof FormData
+        ? {}
+        : { "Content-Type": "application/json" }),
+      ...(fetchOptions.headers as Record<string, string>),
+      ...(await getAuthHeader(token, forceRefresh)),
+    }
+    return fetch(url, { ...fetchOptions, headers })
   }
 
   try {
-    const response = await fetch(url, {
-      ...fetchOptions,
-      headers,
-    })
+    let response = await doFetch(false)
+
+    // A token-level 401 (stale/expired id token) is recoverable: force a
+    // token refresh and retry the request once. Scoped to client-managed
+    // tokens (no caller-supplied `token`) and to the token-error codes —
+    // IDLE_TIMEOUT must stay terminal (a refresh would defeat the idle
+    // control) and is handled below.
+    if (response.status === 401 && !token && typeof window !== "undefined") {
+      const retryCode = (await peekErrorCode(response)) ?? ""
+      if (TOKEN_REFRESH_RETRY_CODES.has(retryCode)) {
+        response = await doFetch(true)
+      }
+    }
 
     if (response.ok) {
       const contentType = response.headers.get("content-type")
