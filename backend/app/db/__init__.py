@@ -55,43 +55,48 @@ PLATFORM_SCHEMA = "platform"
 def get_engine() -> Engine:
     """Create and cache the SQLAlchemy engine.
 
+    Pool sizing and per-connection timeouts are env-driven so each
+    deployment tier (self-hosted f1-micro, managed g1-small, custom-N)
+    can match the database's ``max_connections`` ceiling without a code
+    change. Defaults are conservative (sized for a self-hosted Postgres
+    with ``max_connections=25``).
+
     ``connect_args.options`` sets per-connection Postgres GUCs that bound
     how long any one statement / transaction can hold locks. Defense in
     depth for the THERAPY-da7t class of bug: even if a request path
     accidentally holds locks across a slow external call, the connection
-    self-heals instead of stalling the whole pool.
+    self-heals instead of stalling the whole pool. A value of ``0`` for
+    any of the three timeout settings drops that GUC from the options
+    string so the server default applies.
 
-    * ``lock_timeout=5000`` -- a statement waiting on a lock fails fast
-      instead of stalling for the default 30s+ deadlock-detection cycle.
-      Surfaces contention as a retryable 500 to the user.
-    * ``idle_in_transaction_session_timeout=30000`` -- kills any
-      connection idling inside an open transaction. Catches "transaction
-      opened around a slow external call" regressions in dev/e2e.
-    * ``statement_timeout=60000`` -- generous upper bound on any single
-      query; bad joins or runaway scans surface as failures rather than
-      indefinite hangs.
-
-    Pool sizing is bumped from (5/10) to (10/20) so transient e2e load
-    or a burst of concurrent SOAP-write requests doesn't starve the pool
-    while a few connections sit waiting on Cloud SQL.
+    Pool budget rule of thumb: ``(pool_size + max_overflow) * max
+    instance count`` must stay under the database's ``max_connections``
+    minus ~10 reserved for migrations / admin / monitoring.
     """
     settings = get_settings()
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
         raise ValueError(msg)
+
+    option_parts: list[str] = []
+    if settings.database_lock_timeout_ms > 0:
+        option_parts.append(f"-c lock_timeout={settings.database_lock_timeout_ms}")
+    if settings.database_idle_in_transaction_timeout_ms > 0:
+        option_parts.append(
+            "-c idle_in_transaction_session_timeout="
+            f"{settings.database_idle_in_transaction_timeout_ms}"
+        )
+    if settings.database_statement_timeout_ms > 0:
+        option_parts.append(f"-c statement_timeout={settings.database_statement_timeout_ms}")
+    connect_args = {"options": " ".join(option_parts)} if option_parts else {}
+
     return create_engine(
         settings.database_url,
-        pool_size=10,
-        max_overflow=20,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
         pool_pre_ping=True,
         echo=settings.debug,
-        connect_args={
-            "options": (
-                "-c lock_timeout=5000 "
-                "-c idle_in_transaction_session_timeout=30000 "
-                "-c statement_timeout=60000"
-            ),
-        },
+        connect_args=connect_args,
     )
 
 
