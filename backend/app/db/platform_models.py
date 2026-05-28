@@ -58,6 +58,18 @@ class PracticeRow(PlatformBase):
     # dropped. Acts as the "this practice is gone" post-condition;
     # admin queries filter on deleted_at IS NULL.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Async-provisioning gate. ``in_progress`` means the platform row
+    # exists but the per-tenant schema DDL hasn't finished yet -- the
+    # auth path returns 503 for these so we don't query an empty
+    # schema. ``ready`` is the default for pre-existing rows
+    # (provisioned the old synchronous way) and the terminal state new
+    # rows reach once the background ``provision_tenant`` task succeeds.
+    # ``failed`` means the background task raised; operator intervention
+    # required.  THERAPY-da7t (and the migration adding it,
+    # a4f7e2c81b9d, in the same commit).
+    provisioning_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="ready", server_default="ready"
+    )
 
 
 class EmailTenantMappingRow(PlatformBase):

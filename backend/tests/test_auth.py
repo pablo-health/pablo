@@ -840,6 +840,12 @@ class TestGetTenantContext:
                 "app.auth.service._resolve_practice_from_email",
                 return_value=("practice-abc", "practice_abc"),
             ),
+            # The post-resolve provisioning_status gate (THERAPY-da7t)
+            # queries platform.practices via a fresh standalone session;
+            # this unit test mocks the upstream resolver and has no real
+            # platform row to find, so skip the gate here. Integration
+            # tests exercise the gate end-to-end.
+            patch("app.auth.service._await_provisioning_ready"),
         ):
             mock_settings.return_value.multi_tenancy_enabled = True
 

@@ -34,6 +34,18 @@ _request_session: ContextVar[Session | None] = ContextVar("_request_session", de
 # standalone sessions) set search_path explicitly.
 _current_tenant_schema: ContextVar[str | None] = ContextVar("_current_tenant_schema", default=None)
 
+# Request-scoped clinician user id, used to re-arm the transaction-local
+# ``app.current_user_id`` GUC on every fresh transaction. The GUC is set
+# ``is_local=true`` (xact-scoped) so connection-pool reuse can't leak a
+# previous request's user identity across requests — but that means a
+# mid-request commit (THERAPY-da7t's lock-release pattern) clears the
+# GUC and the next transaction's queries would otherwise see an empty
+# value and silently return zero rows under RLS. The ``after_begin``
+# event listener below re-applies the GUC at the start of every new
+# transaction whenever this ContextVar is set, so explicit commits in
+# service code are safe.
+_current_user_id: ContextVar[str | None] = ContextVar("_current_user_id", default=None)
+
 # Default practice schema for Pablo Solo (single practice)
 DEFAULT_PRACTICE_SCHEMA = "practice"
 PLATFORM_SCHEMA = "platform"
@@ -41,17 +53,45 @@ PLATFORM_SCHEMA = "platform"
 
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
-    """Create and cache the SQLAlchemy engine."""
+    """Create and cache the SQLAlchemy engine.
+
+    ``connect_args.options`` sets per-connection Postgres GUCs that bound
+    how long any one statement / transaction can hold locks. Defense in
+    depth for the THERAPY-da7t class of bug: even if a request path
+    accidentally holds locks across a slow external call, the connection
+    self-heals instead of stalling the whole pool.
+
+    * ``lock_timeout=5000`` -- a statement waiting on a lock fails fast
+      instead of stalling for the default 30s+ deadlock-detection cycle.
+      Surfaces contention as a retryable 500 to the user.
+    * ``idle_in_transaction_session_timeout=30000`` -- kills any
+      connection idling inside an open transaction. Catches "transaction
+      opened around a slow external call" regressions in dev/e2e.
+    * ``statement_timeout=60000`` -- generous upper bound on any single
+      query; bad joins or runaway scans surface as failures rather than
+      indefinite hangs.
+
+    Pool sizing is bumped from (5/10) to (10/20) so transient e2e load
+    or a burst of concurrent SOAP-write requests doesn't starve the pool
+    while a few connections sit waiting on Cloud SQL.
+    """
     settings = get_settings()
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
         raise ValueError(msg)
     return create_engine(
         settings.database_url,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=10,
+        max_overflow=20,
         pool_pre_ping=True,
         echo=settings.debug,
+        connect_args={
+            "options": (
+                "-c lock_timeout=5000 "
+                "-c idle_in_transaction_session_timeout=30000 "
+                "-c statement_timeout=60000"
+            ),
+        },
     )
 
 
@@ -133,6 +173,53 @@ def set_tenant_schema(session: Session, practice_schema: str = DEFAULT_PRACTICE_
     _validate_schema_name(practice_schema)
     session.execute(text(f"SET search_path = {practice_schema}, {PLATFORM_SCHEMA}, public"))
     _current_tenant_schema.set(practice_schema)
+
+
+def set_current_user_id(user_id: str) -> None:
+    """Stash the request's clinician user id for transaction-local RLS.
+
+    Pairs with the ``after_begin`` Session listener below: every new
+    transaction begun on a session (including the auto-begin after an
+    explicit ``session.commit()``) re-applies
+    ``set_config('app.current_user_id', :uid, true)`` from this
+    ContextVar. Callers in service code can therefore commit mid-
+    request to release locks (THERAPY-da7t) without losing RLS context
+    on the next query.
+
+    The ContextVar is cleared by ``DatabaseSessionMiddleware`` at
+    request end (alongside ``_current_tenant_schema``) so connection
+    pool reuse can never leak the user id across requests.
+    """
+    _current_user_id.set(user_id)
+
+
+@event.listens_for(Session, "after_begin")
+def _rearm_rls_user_id_on_txn_begin(  # type: ignore[no-untyped-def]
+    _session, _transaction, connection
+) -> None:
+    """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
+
+    ``set_config(name, value, is_local=true)`` is xact-scoped: commits
+    (including the mid-request commits ``_commit_intermediate`` uses
+    to release locks before the SOAP-generation LLM call) clear the
+    GUC. Without this listener the next query in the request would see
+    an empty value and RLS would silently return zero rows — fail-
+    closed by design, but a regression from the prior "one transaction
+    per request" model.
+
+    The listener fires for every new transaction on every Session,
+    inside the new transaction (``after_begin`` runs after the BEGIN
+    has been issued). It no-ops when the request-scoped ContextVar
+    isn't set — CLI scripts, alembic, integration test fixtures that
+    arm the GUC themselves all stay unaffected.
+    """
+    user_id = _current_user_id.get()
+    if user_id is None:
+        return
+    connection.execute(
+        text("SELECT set_config('app.current_user_id', :uid, true)"),
+        {"uid": user_id},
+    )
 
 
 @event.listens_for(Engine, "checkout")
