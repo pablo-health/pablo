@@ -349,13 +349,14 @@ def get_tenant_context(
         practice = _resolve_practice_from_email(email)
         if practice:
             practice_id, schema_name = practice
+            _await_provisioning_ready(practice_id)
             tenant_id_var.set(practice_id)
             # search_path is already set by DatabaseSessionMiddleware
             # before any dependency runs — see
             # `app.db.middleware.DatabaseSessionMiddleware._resolve_schema_from_request`.
             # We still need the active session here to set the
             # RLS user-id variable below.
-            from ..db import get_db_session
+            from ..db import get_db_session, set_current_user_id
 
             session = get_db_session()
 
@@ -366,8 +367,15 @@ def get_tenant_context(
             # Uses set_config() instead of SET LOCAL because SET
             # doesn't support bind parameters. The third arg (true)
             # makes it transaction-local — auto-cleared on commit.
+            # ``set_current_user_id`` stashes the user id in a
+            # request-scoped ContextVar so the ``after_begin`` Session
+            # listener can re-arm the GUC on every fresh transaction.
+            # Without it, mid-request commits (THERAPY-da7t lock
+            # release) would leave subsequent queries with no GUC
+            # and RLS would silently return zero rows.
             from sqlalchemy import text
 
+            set_current_user_id(str(pablo_user_id))
             session.execute(
                 text("SELECT set_config('app.current_user_id', :uid, true)"),
                 {"uid": pablo_user_id},
@@ -423,6 +431,71 @@ def _resolve_practice_from_email(email: str) -> tuple[str, str] | None:
         if not practice or not practice.is_active:
             return None
         return (practice.id, practice.schema_name)
+
+
+# Brief poll window before 503-ing on an in-flight provisioning. Five
+# rounds at 200ms = 1s max wall time, comfortably under any reasonable
+# request timeout while covering the typical ~1-2s DDL window. If the
+# tenant is still ``in_progress`` after the budget, the caller gets a
+# 503 with Retry-After so the frontend's standard retry logic kicks in.
+_PROVISIONING_POLL_INTERVAL_S = 0.2
+_PROVISIONING_POLL_ROUNDS = 5
+
+
+def _await_provisioning_ready(practice_id: str) -> None:
+    """Block until a freshly-async-provisioned tenant flips to ready.
+
+    Paired with the background-task provisioning split added by
+    THERAPY-da7t: the marketing-signup endpoint inserts the platform
+    row with ``provisioning_status='in_progress'`` and schedules the
+    DDL on FastAPI ``BackgroundTasks``. Until that DDL commits and the
+    row flips to ``ready``, any request from the new tenant's owner
+    would try to read an empty per-tenant schema and 500.
+
+    Polls the row up to ``_PROVISIONING_POLL_ROUNDS`` times with a
+    short interval. On ``ready`` returns; on ``failed`` raises 503 with
+    a permanent message; on persistent ``in_progress`` raises 503 with
+    Retry-After so the caller retries.
+    """
+    import time
+
+    from ..db import create_standalone_session
+    from ..db.platform_models import PracticeRow
+
+    for _attempt in range(_PROVISIONING_POLL_ROUNDS):
+        with create_standalone_session() as db:
+            row = db.get(PracticeRow, practice_id)
+        if row is None or row.provisioning_status == "ready":
+            return
+        if row.provisioning_status == "failed":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": {
+                        "code": "TENANT_PROVISIONING_FAILED",
+                        "message": (
+                            "Your account is in a stuck provisioning state. "
+                            "Please contact support."
+                        ),
+                        "details": {"practice_id": practice_id},
+                    }
+                },
+            )
+        time.sleep(_PROVISIONING_POLL_INTERVAL_S)
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "error": {
+                "code": "TENANT_PROVISIONING_IN_PROGRESS",
+                "message": (
+                    "Your account is still being set up. Please retry in a few seconds."
+                ),
+                "details": {"practice_id": practice_id},
+            }
+        },
+        headers={"Retry-After": "5"},
+    )
 
 
 def _email_has_tenant_mapping(email: str) -> bool:
