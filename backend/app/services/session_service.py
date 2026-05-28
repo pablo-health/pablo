@@ -645,6 +645,15 @@ class SessionService:
         existing_note = self.note_service.get_note_by_session_id(session.id, user_id)
         note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
 
+        # The patient + existing-note SELECTs above autobegin a fresh
+        # transaction on the request session. If we entered the LLM call
+        # with that transaction still open, the connection would sit
+        # idle-in-transaction for the full Gemini round-trip and Postgres
+        # would terminate it via idle_in_transaction_session_timeout
+        # (30s on this engine). Commit here so the LLM call runs with no
+        # open transaction; the next DB op autobegins on a fresh checkout.
+        _commit_intermediate(user_id)
+
         try:
             logger.info("Starting note generation for session %s", session.id)
             note = self._generate_and_persist_note(session, patient, note_type, user_id)
