@@ -45,15 +45,25 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Both statements must be idempotent: platform.practices is a
+    # cross-tenant table, but tenant migrations run the alembic chain
+    # once per practice schema, so every per-tenant pass re-applies
+    # the same DDL against the shared platform table. ADD COLUMN IF
+    # NOT EXISTS handles the column directly; Postgres has no ADD
+    # CONSTRAINT IF NOT EXISTS so the constraint is wrapped in a DO
+    # block that swallows duplicate_object.
     op.execute(
         "ALTER TABLE platform.practices "
         "ADD COLUMN IF NOT EXISTS provisioning_status VARCHAR(20) "
         "NOT NULL DEFAULT 'ready'"
     )
     op.execute(
+        "DO $$ BEGIN "
         "ALTER TABLE platform.practices "
         "ADD CONSTRAINT practices_provisioning_status_chk "
-        "CHECK (provisioning_status IN ('in_progress', 'ready', 'failed'))"
+        "CHECK (provisioning_status IN ('in_progress', 'ready', 'failed')); "
+        "EXCEPTION WHEN duplicate_object THEN NULL; "
+        "END $$"
     )
 
 
