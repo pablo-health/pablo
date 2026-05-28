@@ -112,7 +112,18 @@ export async function getAuthHeader(
   let authToken = token
   if (!authToken && typeof window !== "undefined") {
     try {
-      const currentUser = getFirebaseAuth().currentUser
+      const auth = getFirebaseAuth()
+      // Wait for the auth-state listener to settle once before reading
+      // ``currentUser``. ``multiFactor.enroll()`` briefly tears down the
+      // pre-MFA user and signs the post-MFA user back in during the
+      // onboarding MFA step; a request fired in that window finds
+      // ``currentUser`` null, we'd silently drop the Authorization
+      // header, and the backend (correctly) 401s — so the user sees
+      // "Couldn't save that" with no idea their session is fine.
+      // ``authStateReady`` resolves on the first listener tick and is a
+      // no-op once it has, so the steady-state cost is one microtask.
+      await auth.authStateReady()
+      const currentUser = auth.currentUser
       if (currentUser) {
         authToken = await currentUser.getIdToken(forceRefresh)
       }
