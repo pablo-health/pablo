@@ -7,9 +7,19 @@
  * Handles authentication, error handling, and type-safe responses.
  */
 
-import { signOut } from "firebase/auth"
+import { onAuthStateChanged, signOut, type Auth, type User } from "firebase/auth"
 
 import { getFirebaseAuth } from "@/lib/firebase"
+
+/**
+ * Upper bound on how long ``resolveCurrentUser`` will wait for Firebase
+ * to deliver a restored user after ``authStateReady()`` returned null.
+ * Covers two races (see ``resolveCurrentUser`` for the full story); the
+ * window is generous because the cost only lands on requests that would
+ * have failed without it (genuinely signed-out callers don't hit
+ * ``apiClient`` in normal flows).
+ */
+const AUTH_RESTORE_WAIT_MS = 1500
 
 let idleTimeoutLogoutInFlight = false
 
@@ -105,6 +115,55 @@ export const TOKEN_REFRESH_RETRY_CODES = new Set(["TOKEN_EXPIRED", "INVALID_TOKE
  * ``forceRefresh`` bypasses the SDK's cached token — used by the retry
  * path after a token-level 401.
  */
+/**
+ * Resolve Firebase's ``currentUser`` for an authenticated request.
+ *
+ * ``authStateReady()`` resolves on the first auth-state-listener tick
+ * and covers the common case. Two restoration races land here with a
+ * null ``currentUser`` and a user who is in fact signed in:
+ *
+ *   1. ``multiFactor.enroll()`` briefly tears down the pre-MFA user and
+ *      signs the post-MFA user back in. A request fired in that gap
+ *      sees ``currentUser`` null even though the post-MFA user is
+ *      about to install — surfaced by pablo#307.
+ *   2. A hard navigation (``page.goto`` in Playwright, a real reload
+ *      in a browser tab) reinits the SDK. The first ``authStateReady``
+ *      tick can fire before IndexedDB persistence is observed, so
+ *      ``currentUser`` is null for a few hundred ms after restoration
+ *      starts — surfaced by chart-render-smoke@dev on 2026-05-28.
+ *
+ * Both races resolve themselves within a window measured in tens to
+ * hundreds of milliseconds. We give ``onAuthStateChanged`` up to
+ * ``AUTH_RESTORE_WAIT_MS`` to deliver a non-null user before giving
+ * up; if the user really is signed out, we still resolve null and the
+ * caller proceeds without an ``Authorization`` header (and the
+ * backend's 401 is the right answer).
+ *
+ * Cost: zero for the steady-state signed-in case (``authStateReady``
+ * returns synchronously after the first tick and ``currentUser`` is
+ * populated). Up to ``AUTH_RESTORE_WAIT_MS`` for genuinely-signed-out
+ * requests — but ``apiClient`` only targets the backend, which always
+ * requires auth, so unauthenticated callers don't hit this in normal
+ * flows.
+ */
+async function resolveCurrentUser(auth: Auth): Promise<User | null> {
+  await auth.authStateReady()
+  if (auth.currentUser) return auth.currentUser
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      unsubscribe()
+      resolve(auth.currentUser)
+    }, AUTH_RESTORE_WAIT_MS)
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        clearTimeout(timer)
+        unsubscribe()
+        resolve(user)
+      }
+    })
+  })
+}
+
 export async function getAuthHeader(
   token?: string,
   forceRefresh = false,
@@ -113,17 +172,7 @@ export async function getAuthHeader(
   if (!authToken && typeof window !== "undefined") {
     try {
       const auth = getFirebaseAuth()
-      // Wait for the auth-state listener to settle once before reading
-      // ``currentUser``. ``multiFactor.enroll()`` briefly tears down the
-      // pre-MFA user and signs the post-MFA user back in during the
-      // onboarding MFA step; a request fired in that window finds
-      // ``currentUser`` null, we'd silently drop the Authorization
-      // header, and the backend (correctly) 401s — so the user sees
-      // "Couldn't save that" with no idea their session is fine.
-      // ``authStateReady`` resolves on the first listener tick and is a
-      // no-op once it has, so the steady-state cost is one microtask.
-      await auth.authStateReady()
-      const currentUser = auth.currentUser
+      const currentUser = await resolveCurrentUser(auth)
       if (currentUser) {
         authToken = await currentUser.getIdToken(forceRefresh)
       }
