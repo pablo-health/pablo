@@ -17,6 +17,7 @@ from ..settings import get_settings
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
     _current_tenant_schema,
+    _current_user_id,
     _request_session,
     get_session_factory,
     set_tenant_schema,
@@ -117,6 +118,11 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             session.close()
             _request_session.set(None)
             _current_tenant_schema.set(None)
+            # Clear the RLS user id so a future request reusing this
+            # ContextVar slot (only possible if a future code path
+            # ever shares it across requests) sees a clean slate.
+            # Belt-and-braces against cross-tenant identity leak.
+            _current_user_id.set(None)
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:

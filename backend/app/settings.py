@@ -278,6 +278,48 @@ class Settings(BaseSettings):
         default="",
         description=("PostgreSQL connection URL. Format: postgresql://user:pass@host:port/dbname"),
     )
+    database_pool_size: int = Field(
+        default=5,
+        description=(
+            "SQLAlchemy QueuePool ``pool_size`` -- warm connections kept in the pool per "
+            "app instance. Per-instance * instance count must stay under the database's "
+            "``max_connections`` ceiling minus headroom for migrations/admin. Conservative "
+            "default sized for a self-hosted Postgres with ``max_connections=25``; managed "
+            "deployments should set this via env var to match the actual tier."
+        ),
+    )
+    database_max_overflow: int = Field(
+        default=10,
+        description=(
+            "SQLAlchemy QueuePool ``max_overflow`` -- extra connections briefly opened "
+            "above ``pool_size`` under burst. Counts against the same database "
+            "``max_connections`` budget as ``pool_size``."
+        ),
+    )
+    database_lock_timeout_ms: int = Field(
+        default=5000,
+        description=(
+            "Per-connection ``lock_timeout`` GUC, in milliseconds. A statement waiting on "
+            "a lock fails fast rather than stalling for the default deadlock-detection "
+            "cycle. Set 0 to disable."
+        ),
+    )
+    database_idle_in_transaction_timeout_ms: int = Field(
+        default=30000,
+        description=(
+            "Per-connection ``idle_in_transaction_session_timeout`` GUC, in milliseconds. "
+            "Kills connections that sit idle inside an open transaction (catches "
+            "'transaction held across slow external call' regressions). Set 0 to disable."
+        ),
+    )
+    database_statement_timeout_ms: int = Field(
+        default=60000,
+        description=(
+            "Per-connection ``statement_timeout`` GUC, in milliseconds. Generous upper "
+            "bound on any single query so runaway scans surface as failures. Set 0 to "
+            "disable."
+        ),
+    )
 
     # Google Cloud
     gcp_project_id: str = Field(

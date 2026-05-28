@@ -302,6 +302,30 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     """
     _validate_schema_name(schema_name)
 
+    # Serialize concurrent provisioning of the same schema (THERAPY-da7t).
+    # A session-scoped advisory lock on ``hashtext(schema_name)`` blocks
+    # any second caller for this exact schema until the first commits its
+    # template + RLS DDL. Different schemas don't contend (they hash to
+    # different keys), so unrelated tenant provisioning runs in parallel.
+    # Belt for the failure mode where a retried background task races
+    # itself, a double-clicked signup fires two requests, or any other
+    # concurrent caller appears -- the second caller sees a populated
+    # schema and takes the idempotent legacy-reconcile path.
+    with engine.connect() as lock_conn:
+        lock_conn.execute(
+            text("SELECT pg_advisory_lock(hashtext(:s))"), {"s": schema_name}
+        )
+        try:
+            _create_practice_schema_locked(engine, schema_name)
+        finally:
+            lock_conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:s))"), {"s": schema_name}
+            )
+            lock_conn.commit()
+
+
+def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
+    """Body of :func:`create_practice_schema` once the advisory lock is held."""
     is_default_template = schema_name == DEFAULT_PRACTICE_SCHEMA
     schema_already_populated = _schema_has_tables(engine, schema_name)
 

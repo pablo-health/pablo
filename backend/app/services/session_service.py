@@ -149,6 +149,33 @@ def _now() -> datetime:
     return utc_now()
 
 
+def _commit_intermediate(user_id: str) -> None:
+    """Commit the request-scoped DB transaction mid-flight.
+
+    Used at lock-release seams in long request flows (notably either side
+    of the multi-second LLM call in ``upload_session``) so row locks held
+    since request entry release before the slow external call begins.
+
+    ``user_id`` is accepted but not used directly: the ``after_begin``
+    Session listener in ``app.db`` re-arms ``app.current_user_id`` on
+    every fresh transaction from the request-scoped ContextVar set by
+    ``set_current_user_id`` at auth time. The argument is kept on the
+    helper signature so call sites read as "commit the locks held for
+    this user" -- self-documenting at the seam, and gives us a hook
+    point if we ever need per-call diagnostics.
+
+    No-ops when no request-scoped session is in context (unit tests with
+    in-memory fakes, CLI scripts that never installed the middleware) --
+    there's no transaction to commit there.
+    """
+    del user_id  # listener-driven re-arm; see app.db._rearm_rls_user_id_on_txn_begin
+    from ..db import _request_session
+
+    session = _request_session.get()
+    if session is not None:
+        session.commit()
+
+
 class SessionService:
     """Orchestrates multi-step session operations."""
 
@@ -226,28 +253,32 @@ class SessionService:
 
         session_number = self.session_repo.get_session_number_for_patient(patient_id)
 
+        # Txn 1: persist the session row in PROCESSING and commit before
+        # the LLM call. Holding row locks on therapy_sessions and the
+        # RLS read on patient_clinicians across a multi-second Gemini
+        # call is the deadlock-amplifying window THERAPY-da7t hit.
         session = TherapySession(
             id=str(uuid.uuid4()),
             user_id=user_id,
             patient_id=patient_id,
             session_date=request.session_date,
             session_number=session_number,
-            status=SessionStatus.QUEUED,
+            status=SessionStatus.PROCESSING,
             transcript=Transcript(
                 format=request.transcript.format,
                 content=request.transcript.content,
             ),
             created_at=now,
+            processing_started_at=now,
         )
         session = self.session_repo.create(session)
-
-        # Transition to processing
-        session.status = SessionStatus.PROCESSING
-        session.processing_started_at = _now()
-        session = self.session_repo.update(session)
+        _commit_intermediate(user_id)
 
         try:
             logger.info("Starting note generation for session %s", session.id)
+            # The LLM call inside _generate_and_persist_note runs with
+            # no open DB transaction. The note INSERT autobegins a new
+            # short-lived transaction immediately before the flush.
             note = self._generate_and_persist_note(session, patient, DEFAULT_NOTE_TYPE, user_id)
             logger.info("Note generation completed for session %s", session.id)
 
@@ -260,9 +291,15 @@ class SessionService:
             session.status = SessionStatus.FAILED
             session.error = "SOAP generation failed"
             self.session_repo.update(session)
+            # Persist FAILED status before the middleware-level rollback
+            # discards it -- the prior behavior left no DB audit trail
+            # of failed uploads.
+            _commit_intermediate(user_id)
             raise SOAPGenerationFailedError from e
 
-        # Update patient metadata
+        # Patient-metadata + audit log commit together at request end
+        # via the middleware. Lock window for txn 2 is bounded by the
+        # session/note/patient writes plus the audit insert.
         patient.session_count += 1
         if patient.last_session_date is None or request.session_date > patient.last_session_date:
             patient.last_session_date = request.session_date
@@ -589,16 +626,15 @@ class SessionService:
         if session.status not in (SessionStatus.RECORDING_COMPLETE, SessionStatus.FAILED):
             raise InvalidSessionStatusError(session.status, "recording_complete or failed")
 
-        # Store the transcript
+        # Txn 1: persist transcript + PROCESSING status, then commit so
+        # row locks release before the LLM call. Same anti-deadlock
+        # pattern as upload_session (THERAPY-da7t).
         session.transcript = Transcript(format=request.format, content=request.content)
-
-        session.status = SessionStatus.QUEUED
-        session.updated_at = _now()
-        session = self.session_repo.update(session)
-
         session.status = SessionStatus.PROCESSING
         session.processing_started_at = _now()
+        session.updated_at = _now()
         session = self.session_repo.update(session)
+        _commit_intermediate(user_id)
 
         patient = self.patient_repo.get(session.patient_id, user_id)
         if not patient:
@@ -623,6 +659,7 @@ class SessionService:
             session.status = SessionStatus.FAILED
             session.error = "SOAP generation failed"
             self.session_repo.update(session)
+            _commit_intermediate(user_id)
             raise SOAPGenerationFailedError from e
 
         return session, note
