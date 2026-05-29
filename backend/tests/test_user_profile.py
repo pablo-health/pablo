@@ -4,6 +4,7 @@
 
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -504,6 +505,144 @@ class TestSecurityGuideAcknowledgment:
         assert body["security_guide_acknowledged_at"] is not None
 
 
+class TestProfessionalInfo:
+    """PATCH /api/users/me/professional-info splits professional
+    credentials to their natural owners: ``legal_name`` to the user
+    row, ``license_*`` to the clinician profile, ``business_address``
+    to the practice row.
+    """
+
+    def test_legal_name_persists_on_user(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+            response = client.patch(
+                "/api/users/me/professional-info",
+                json={"legal_name": "Jane Q. Therapist"},
+            )
+        assert response.status_code == 200
+        assert response.json()["legal_name"] == "Jane Q. Therapist"
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.legal_name == "Jane Q. Therapist"
+
+    def test_license_persists_on_existing_profile(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                title="Dr.",
+            )
+        )
+        response = client.patch(
+            "/api/users/me/professional-info",
+            json={"license_number": "PSY9001", "license_state": "NY"},
+        )
+        assert response.status_code == 200
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.license_number == "PSY9001"
+        assert stored.license_state == "NY"
+        # Unspecified field preserved — PATCH, not PUT.
+        assert stored.title == "Dr."
+
+    def test_business_address_persists_on_practice(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = SimpleNamespace(address=None)
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.patch(
+                "/api/users/me/professional-info",
+                json={"business_address": "5 Oak Ave, Town, NY 10001"},
+            )
+        assert response.status_code == 200
+        assert practice.address == "5 Oak Ave, Town, NY 10001"
+
+
+class TestAcceptBaaSnapshot:
+    """accept-baa snapshots the agreement onto the practice (the covered
+    entity) and stamps the gate fields on the user row. Credentials are
+    read from stored professional-info, not the request body.
+    """
+
+    def test_snapshot_written_to_practice_and_user_gate_stamped(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user.baa_accepted_at = None
+        mock_user.legal_name = "Jane Q. Therapist"
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-1",
+                license_number="PSY9001",
+                license_state="NY",
+            )
+        )
+        practice = SimpleNamespace(
+            name="Jane's Practice",
+            address="5 Oak Ave",
+            baa_accepted_at=None,
+            baa_version=None,
+            baa_legal_name=None,
+            baa_license_number=None,
+            baa_license_state=None,
+            baa_practice_name=None,
+            baa_business_address=None,
+            baa_full_text=None,
+        )
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+            patch("app.routes.users._resolve_baa_path") as mock_path,
+        ):
+            mock_path.return_value.read_text.return_value = "BAA TEXT BODY"
+            response = client.post(
+                "/api/users/me/accept-baa",
+                json={"accepted": True, "version": "2024-01-01"},
+            )
+        assert response.status_code == 200
+        # Snapshot landed on the practice (the covered entity).
+        assert practice.baa_legal_name == "Jane Q. Therapist"
+        assert practice.baa_license_number == "PSY9001"
+        assert practice.baa_license_state == "NY"
+        assert practice.baa_practice_name == "Jane's Practice"
+        assert practice.baa_business_address == "5 Oak Ave"
+        assert practice.baa_full_text == "BAA TEXT BODY"
+        assert practice.baa_accepted_at is not None
+        # Fast per-request gate stamped on the user row.
+        stored = mock_user_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.baa_accepted_at is not None
+        assert stored.baa_version == "2024-01-01"
+
+
 class TestBaaEndpointsNoMfaPosture:
     """Regression guard: BAA endpoints must be pre-MFA-onboarding (#2),
     not MFA-required (#1).
@@ -540,18 +679,16 @@ class TestBaaEndpointsNoMfaPosture:
     ) -> None:
         mock_user.baa_accepted_at = None
         mock_user_repo.update(mock_user)
-        response = client.post(
-            "/api/users/me/accept-baa",
-            json={
-                "accepted": True,
-                "version": "2024-01-01",
-                "legal_name": "Test Therapist",
-                "license_number": "LMFT12345",
-                "license_state": "CA",
-                "business_address": "1 Main St, Anywhere, CA 94000",
-                "practice_name": "Test Practice",
-            },
-        )
+        # Credentials are read from stored professional-info now, not the
+        # request body — the body carries only version + accepted. Patch
+        # the practice resolver to None so the practice-snapshot branch is
+        # skipped (OSS single-tenant has no practice row); the user-row
+        # gate stamp still runs.
+        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+            response = client.post(
+                "/api/users/me/accept-baa",
+                json={"accepted": True, "version": "2024-01-01"},
+            )
         # Whether or not the version is bundled, the failure mode that
         # matters here is "403 MFA_REQUIRED" — anything else (200 success
         # or 404 unknown version) confirms the no-MFA posture.

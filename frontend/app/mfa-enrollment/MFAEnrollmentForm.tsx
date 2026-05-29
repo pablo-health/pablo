@@ -368,8 +368,8 @@ export function MFAEnrollmentForm({ returnTo: returnToProp }: MFAEnrollmentFormP
           </div>
 
           <p className="text-sm text-neutral-700 mb-4">
-            Use an authenticator app like Google Authenticator, Duo Mobile, or 1Password
-            to scan this QR code:
+            Use an authenticator app — Authy, Google Authenticator, or 1Password — to scan
+            this QR code. Pick one with cloud backup so a lost phone doesn&apos;t lock you out.
           </p>
 
           <div className="bg-white p-6 rounded-lg border-2 border-neutral-200 flex justify-center">

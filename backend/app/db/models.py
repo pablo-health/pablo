@@ -45,6 +45,8 @@ class ClinicianProfileRow(Base):
     credentials: Mapped[str | None] = mapped_column(String(100))
     role: Mapped[str] = mapped_column(String(20), default="clinician")
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    license_number: Mapped[str | None] = mapped_column(String(100))
+    license_state: Mapped[str | None] = mapped_column(String(2))
 
 
 class PatientRow(Base):
