@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from .validators import validate_iso_date, validate_phone
+from .validators import validate_phone
 
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
@@ -21,23 +21,18 @@ class UpdateUserRequest(BaseModel):
     """Request to update user profile."""
 
     name: str | None = Field(None, min_length=1, max_length=255)
+    legal_name: str | None = Field(None, min_length=1, max_length=255)
     title: str | None = Field(None, max_length=50)
     credentials: str | None = Field(None, max_length=100)
     provider_type: ProviderType | None = None
     onboarding_state: OnboardingState | None = None
     phone: str | None = Field(None, max_length=50)
-    baa_accepted_at: datetime | None = None
 
     @field_validator("phone")
     @classmethod
     def _validate_phone(cls, v: str | None) -> str | None:
         """Normalize/validate an optional phone number (None when blank)."""
         return validate_phone(v)
-
-    @classmethod
-    def validate_baa_date(cls, v: str | None) -> str | None:
-        """Validate baa_accepted_at is ISO format."""
-        return validate_iso_date(v, "baa_accepted_at")
 
 
 class UserPreferences(BaseModel):
@@ -66,15 +61,25 @@ class UpdateThemeRequest(BaseModel):
 
 
 class AcceptBAARequest(BaseModel):
-    """Request to accept Business Associate Agreement."""
+    """Request to accept Business Associate Agreement.
 
-    legal_name: str = Field(min_length=1, max_length=255)
-    license_number: str = Field(min_length=1, max_length=100)
-    license_state: str = Field(min_length=2, max_length=2)
-    practice_name: str | None = Field(None, max_length=255)
-    business_address: str = Field(min_length=1, max_length=500)
+    Credential fields are no longer submitted here — they are read from
+    the already-stored professional-info (legal_name on the user row,
+    license_* on the clinician profile, address on the practice row).
+    The snapshot is built server-side at acceptance time.
+    """
+
     version: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     accepted: bool = True
+
+
+class UpdateProfessionalInfoRequest(BaseModel):
+    """Request to save professional credentials at the onboarding step."""
+
+    legal_name: str | None = Field(None, min_length=1, max_length=255)
+    license_number: str | None = Field(None, min_length=1, max_length=100)
+    license_state: str | None = Field(None, min_length=2, max_length=2)
+    business_address: str | None = Field(None, min_length=1, max_length=500)
 
 
 class BAAStatusResponse(BaseModel):
@@ -123,12 +128,7 @@ class User:
     phone: str | None = None
     baa_accepted_at: datetime | None = None
     baa_version: str | None = None
-    baa_legal_name: str | None = None
-    baa_license_number: str | None = None
-    baa_license_state: str | None = None
-    baa_practice_name: str | None = None
-    baa_business_address: str | None = None
-    baa_full_text: str | None = None
+    legal_name: str | None = None
     is_platform_admin: bool = False
     status: str = "approved"
     mfa_enrolled_at: datetime | None = None
@@ -190,12 +190,7 @@ class User:
             phone=data.get("phone"),
             baa_accepted_at=data.get("baa_accepted_at"),
             baa_version=data.get("baa_version"),
-            baa_legal_name=data.get("baa_legal_name"),
-            baa_license_number=data.get("baa_license_number"),
-            baa_license_state=data.get("baa_license_state"),
-            baa_practice_name=data.get("baa_practice_name"),
-            baa_business_address=data.get("baa_business_address"),
-            baa_full_text=data.get("baa_full_text"),
+            legal_name=data.get("legal_name"),
             is_platform_admin=data.get("is_platform_admin", data.get("is_admin", False)),
             status=data.get("status", "approved"),
             mfa_enrolled_at=data.get("mfa_enrolled_at"),

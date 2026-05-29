@@ -64,12 +64,7 @@ def _row_to_user(row: PlatformUserRow) -> User:
         phone=row.phone,
         baa_accepted_at=row.baa_accepted_at,
         baa_version=row.baa_version,
-        baa_legal_name=row.baa_legal_name,
-        baa_license_number=row.baa_license_number,
-        baa_license_state=row.baa_license_state,
-        baa_practice_name=row.baa_practice_name,
-        baa_business_address=row.baa_business_address,
-        baa_full_text=row.baa_full_text,
+        legal_name=row.legal_name,
         is_platform_admin=row.is_platform_admin,
         status=row.status,
         mfa_enrolled_at=row.mfa_enrolled_at,
@@ -95,12 +90,7 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.phone = user.phone
     row.baa_accepted_at = user.baa_accepted_at
     row.baa_version = user.baa_version
-    row.baa_legal_name = user.baa_legal_name
-    row.baa_license_number = user.baa_license_number
-    row.baa_license_state = user.baa_license_state
-    row.baa_practice_name = user.baa_practice_name
-    row.baa_business_address = user.baa_business_address
-    row.baa_full_text = user.baa_full_text
+    row.legal_name = user.legal_name
     row.is_platform_admin = user.is_platform_admin
     row.status = user.status
     row.mfa_enrolled_at = user.mfa_enrolled_at

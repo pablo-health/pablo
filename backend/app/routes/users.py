@@ -32,6 +32,7 @@ from ..models import (
     AcknowledgeSecurityGuideRequest,
     BAAStatusResponse,
     SecurityGuideStatusResponse,
+    UpdateProfessionalInfoRequest,
     UpdateThemeRequest,
     UpdateUserRequest,
     User,
@@ -151,6 +152,9 @@ def get_user_status(
         "email": user.email,
         "title": profile.title if profile else None,
         "credentials": profile.credentials if profile else None,
+        "legal_name": user.legal_name,
+        "license_number": profile.license_number if profile else None,
+        "license_state": profile.license_state if profile else None,
         "provider_type": user.provider_type,
         "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
         "security_guide_version": user.security_guide_version,
@@ -279,6 +283,8 @@ def update_current_user_profile(
     """
     if request.name is not None:
         user.name = request.name
+    if request.legal_name is not None:
+        user.legal_name = request.legal_name
     if request.provider_type is not None:
         user.provider_type = request.provider_type
     if request.onboarding_state is not None:
@@ -310,16 +316,19 @@ def _upsert_clinician_profile(
     profile_repo: ClinicianProfileRepository,
     *,
     user: User,
-    title: str | None,
-    credentials: str | None,
+    title: str | None = None,
+    credentials: str | None = None,
+    license_number: str | None = None,
+    license_state: str | None = None,
 ) -> None:
-    """Upsert title/credentials on the caller's ClinicianProfile row.
+    """Upsert profile metadata on the caller's ClinicianProfile row.
 
-    Existing fields are preserved when the corresponding request value
-    is None — PATCH semantics, not PUT. Practice_id is resolved from
-    the caller's email; the row's existing practice_id wins if a
-    profile already exists, so this is a no-op for unmapped emails
-    that have an existing row.
+    Handles title/credentials (set at profile-basics) and license_*
+    (set at the professional-info step). Existing fields are preserved
+    when the corresponding value is None — PATCH semantics, not PUT.
+    Practice_id is resolved from the caller's email; the row's existing
+    practice_id wins if a profile already exists, so this is a no-op for
+    unmapped emails that have an existing row.
     """
     existing = profile_repo.get(user.id)
     practice_id = existing.practice_id if existing else _resolve_practice_id_for(user)
@@ -343,6 +352,16 @@ def _upsert_clinician_profile(
         ),
         role=existing.role if existing else "clinician",
         joined_at=existing.joined_at if existing else None,
+        license_number=(
+            license_number
+            if license_number is not None
+            else (existing.license_number if existing else None)
+        ),
+        license_state=(
+            license_state
+            if license_state is not None
+            else (existing.license_state if existing else None)
+        ),
     )
     profile_repo.update(profile)
 
@@ -353,6 +372,64 @@ def _resolve_practice_id_for(user: User) -> str | None:
 
     practice = _resolve_practice_from_email(user.email)
     return practice[0] if practice else None
+
+
+@router.patch("/me/professional-info")
+def update_professional_info(
+    request: UpdateProfessionalInfoRequest,
+    user: User = Depends(get_current_user_no_mfa),
+    user_repo: UserRepository = Depends(get_user_repository),
+    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+) -> dict:
+    """Persist professional credentials collected at the onboarding
+    professional-info step.
+
+    Splits the fields by their natural owner:
+    - ``legal_name`` → platform user row (a person attribute).
+    - ``license_number`` / ``license_state`` → tenant clinician profile
+      (professional credentials, alongside title/credentials).
+    - ``business_address`` → practice row (the covered entity's address,
+      reused to build the BAA snapshot at acceptance time).
+
+    Posture: pre-MFA onboarding (route_security.py #2), same as the
+    other onboarding-gate writes. PATCH semantics — a None field leaves
+    the stored value untouched.
+    """
+    if request.legal_name is not None:
+        user.legal_name = request.legal_name
+        user_repo.update(user)
+
+    if request.license_number is not None or request.license_state is not None:
+        _upsert_clinician_profile(
+            profile_repo,
+            user=user,
+            license_number=request.license_number,
+            license_state=request.license_state,
+        )
+
+    if request.business_address is not None:
+        practice_id = _resolve_practice_id_for(user)
+        if practice_id is not None:
+            from ..db import get_db_session
+            from ..db.platform_models import PracticeRow
+
+            session = get_db_session()
+            practice = session.get(PracticeRow, practice_id)
+            if practice is not None:
+                practice.address = request.business_address
+                session.flush()
+        else:
+            logger.warning(
+                "Skipping practice address write for user_id=%s: no practice mapping",
+                user.id,
+            )
+
+    return {
+        "legal_name": user.legal_name,
+        "license_number": request.license_number,
+        "license_state": request.license_state,
+        "business_address": request.business_address,
+    }
 
 
 @router.get("/me/baa-status")
@@ -391,6 +468,7 @@ def accept_baa(
     request: AcceptBAARequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
+    profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
 ) -> BAAStatusResponse:
     """
     Accept the Business Associate Agreement.
@@ -403,40 +481,59 @@ def accept_baa(
     cannot be reached until ``baa_accepted_at`` is set anyway via
     ``require_baa_acceptance``.
 
-    This endpoint records the user's acceptance of the BAA with their
-    professional credentials and practice information for HIPAA compliance.
+    The BAA is between Pablo and the *covered entity* (the practice),
+    not the individual clinician. The legal snapshot (signer name,
+    license, address, full text) is therefore written onto the practice
+    row. The credentials are read from the professional-info already
+    collected earlier in onboarding — ``legal_name`` from the user row,
+    ``license_*`` from the tenant clinician profile, ``name`` /
+    ``address`` from the practice row — not re-submitted here.
 
-    Required fields:
-    - legal_name: User's full legal name
-    - license_number: Professional license number
-    - license_state: Two-letter state code where licensed
-    - business_address: Complete business address
-    - practice_name: Practice/business name (optional)
-    - version: BAA version being accepted
+    ``baa_accepted_at`` + ``baa_version`` are ALSO stamped on the user
+    row so ``require_baa_acceptance`` can gate every PHI request without
+    a per-request practice lookup.
     """
     if not request.accepted:
         raise BadRequestError("BAA must be accepted")
 
-    # Load the full BAA text for audit trail
+    # Load the full BAA text for the audit-trail snapshot.
     baa_path = _resolve_baa_path(request.version)
     baa_full_text = baa_path.read_text()
 
-    # Update user with BAA acceptance
     now = utc_now()
+
+    # Snapshot onto the practice row (the covered entity). PracticeRow is
+    # schema-qualified to ``platform`` so it writes through the same
+    # request-scoped session as the user update — one transaction, one
+    # commit at request end.
+    profile = profile_repo.get(user.id)
+    practice_id = _resolve_practice_id_for(user)
+    if practice_id is not None:
+        from ..db import get_db_session
+        from ..db.platform_models import PracticeRow
+
+        session = get_db_session()
+        practice = session.get(PracticeRow, practice_id)
+        if practice is not None:
+            practice.baa_accepted_at = now
+            practice.baa_version = request.version
+            practice.baa_legal_name = user.legal_name
+            practice.baa_license_number = profile.license_number if profile else None
+            practice.baa_license_state = profile.license_state if profile else None
+            practice.baa_practice_name = practice.name
+            practice.baa_business_address = practice.address
+            practice.baa_full_text = baa_full_text
+            session.flush()
+
+    # Stamp the fast-path gate fields on the user row regardless of
+    # whether a practice exists (self-hosted single-tenant has none).
     user.baa_accepted_at = now
     user.baa_version = request.version
-    user.baa_legal_name = request.legal_name
-    user.baa_license_number = request.license_number
-    user.baa_license_state = request.license_state
-    user.baa_practice_name = request.practice_name
-    user.baa_business_address = request.business_address
-    user.baa_full_text = baa_full_text
-
     user_repo.update(user)
 
     return BAAStatusResponse(
         accepted=True,
-        accepted_at=utc_now(),
+        accepted_at=now,
         version=request.version,
         current_version=request.version,
     )
