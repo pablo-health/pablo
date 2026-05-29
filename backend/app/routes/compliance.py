@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ..api_errors import BadRequestError, NotFoundError
-from ..auth.service import get_current_user
+from ..auth.service import get_current_user, get_tenant_context
 from ..compliance import (
     ComplianceTemplate,
     Edition,
@@ -34,7 +34,17 @@ from ..repositories.postgres.compliance_item import (
 from ..settings import get_settings
 from ..utcnow import utc_now
 
-router = APIRouter(prefix="/api/compliance", tags=["compliance"])
+# ``compliance_items`` (and the compliance_* reminder tables) live in the
+# tenant schema with row-level security keyed on ``app.current_user_id``.
+# That GUC is only set as a side effect of ``get_tenant_context`` — without
+# it every query fail-closes to zero rows. Declaring it as a router-level
+# dependency guarantees the GUC is armed before any handler touches the repo,
+# even though the handlers read the user via ``get_current_user``.
+router = APIRouter(
+    prefix="/api/compliance",
+    tags=["compliance"],
+    dependencies=[Depends(get_tenant_context)],
+)
 
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
