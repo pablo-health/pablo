@@ -269,6 +269,35 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Pluggable OIDC auth backend (additive — independent of auth_mode).
+    # When oidc_issuer is non-empty the backend will additionally accept
+    # ID tokens from this issuer, dispatched on the token's `iss` claim and
+    # resolved through the same user_identities mapping as Firebase. All
+    # three empty (the default) means Firebase-only, identical behavior.
+    oidc_issuer: str = Field(
+        default="",
+        description=(
+            "OIDC issuer URL (the `iss` claim) of an additional accepted "
+            "token issuer, e.g. https://keycloak.example.com/realms/pablo. "
+            "Empty disables the OIDC backend (Firebase-only)."
+        ),
+    )
+    oidc_audience: str = Field(
+        default="",
+        description=(
+            "Expected `aud` claim on OIDC ID tokens. Required when "
+            "oidc_issuer is set."
+        ),
+    )
+    oidc_jwks_uri: str = Field(
+        default="",
+        description=(
+            "JWKS endpoint URL for the OIDC issuer's RS256 signing keys, "
+            "e.g. https://keycloak.example.com/realms/pablo/protocol/"
+            "openid-connect/certs. Required when oidc_issuer is set."
+        ),
+    )
+
     # Firebase Blocking Function OIDC Verification
     # The blocking functions (beforeCreate / beforeSignIn) call this backend
     # with a Google-signed OIDC token. We verify audience + issuer + caller

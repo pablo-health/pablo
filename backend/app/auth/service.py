@@ -5,9 +5,11 @@
 import logging
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
@@ -26,6 +28,12 @@ from ..settings import get_settings
 from ..utcnow import utc_now
 from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
+from .providers import (
+    FirebaseVerifier,
+    OidcVerifier,
+    VerifiedIdentity,
+    VerifierRegistry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,54 +76,62 @@ def _get_cached_token(request: Request | None, token: str) -> dict[str, Any] | N
 
 def _resolve_pablo_user_id(
     request: Request | None,
-    firebase_uid: str,
+    subject_id: str,
     identity_repo: IdentityRepository,
     *,
     create_if_missing: bool,
+    provider: str = "firebase",
 ) -> str:
-    """Translate a Firebase uid to Pablo's internal user_id.
+    """Translate an auth provider's subject id to Pablo's internal user_id.
 
     Pablo decouples its storage identity from the auth provider's
-    subject ID via the ``platform.user_identities`` mapping table.
-    Routes use the value returned here for every downstream DB
-    operation, so migrating off a provider (or linking a second
-    provider to the same user) is a row insert, not a schema rewrite.
+    subject ID via the ``platform.user_identities`` mapping table, keyed
+    on ``(provider, subject_id)``. Routes use the value returned here for
+    every downstream DB operation, so migrating off a provider (or
+    linking a second provider to the same user) is a row insert, not a
+    schema rewrite.
 
     ``create_if_missing=False`` is the lookup-only path used by general
     request dependencies. If no mapping exists yet — e.g., for a user
     provisioned before the indirection table — it falls back to the
-    Firebase uid. The auto-provision path (`_resolve_user`) passes
+    provider subject id. The auto-provision path (`_resolve_user`) passes
     ``create_if_missing=True`` so the first successful auth pass
     establishes the mapping.
 
+    ``provider`` defaults to ``"firebase"`` so existing call sites are
+    unchanged; the dual-issuer path passes the verified identity's
+    provider through.
+
     Result is cached on ``request.state`` to avoid re-resolving across
-    multiple dependencies in the same request.
+    multiple dependencies in the same request. The cache key includes the
+    provider so two issuers that happen to share a subject id can't
+    cross-contaminate.
     """
     # Only the "real mapping found" path is cacheable. A fallback to
-    # firebase_uid (no mapping yet) must not poison the cache, or a
+    # the subject id (no mapping yet) must not poison the cache, or a
     # later auto-provision call would short-circuit and skip the
     # resolve_or_create.
     if request is not None and not create_if_missing:
-        cached_uid = getattr(request.state, "pablo_user_id_firebase_uid", None)
+        cached_key = getattr(request.state, "pablo_user_id_subject_key", None)
         cached_pid = getattr(request.state, "pablo_user_id", None)
         if (
-            isinstance(cached_uid, str)
-            and cached_uid == firebase_uid
+            isinstance(cached_key, tuple)
+            and cached_key == (provider, subject_id)
             and isinstance(cached_pid, str)
         ):
             return cached_pid
 
     if create_if_missing:
-        pablo_id = identity_repo.resolve_or_create("firebase", firebase_uid)
+        pablo_id = identity_repo.resolve_or_create(provider, subject_id)
         cacheable = True
     else:
-        looked_up = identity_repo.get_user_id("firebase", firebase_uid)
+        looked_up = identity_repo.get_user_id(provider, subject_id)
         cacheable = looked_up is not None
-        pablo_id = looked_up or firebase_uid
+        pablo_id = looked_up or subject_id
 
     if request is not None and cacheable:
         request.state.pablo_user_id = pablo_id
-        request.state.pablo_user_id_firebase_uid = firebase_uid
+        request.state.pablo_user_id_subject_key = (provider, subject_id)
     return pablo_id
 
 
@@ -188,6 +204,98 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
         ) from err
 
 
+@lru_cache
+def _get_verifier_registry() -> VerifierRegistry:
+    """Build the issuer->verifier registry from settings (cached).
+
+    Firebase is always present. The generic OIDC backend is added only
+    when ``oidc_issuer`` is configured; with it empty the registry is
+    Firebase-only and ``verify_token`` behaves exactly as
+    ``verify_firebase_token`` did before this seam existed.
+    """
+    settings = get_settings()
+    oidc: OidcVerifier | None = None
+    if settings.oidc_issuer:
+        oidc = OidcVerifier(
+            issuer=settings.oidc_issuer,
+            audience=settings.oidc_audience,
+            jwks_uri=settings.oidc_jwks_uri,
+        )
+        logger.info("OIDC auth backend enabled for issuer %s", settings.oidc_issuer)
+    return VerifierRegistry(firebase=FirebaseVerifier(), oidc=oidc)
+
+
+def _unverified_issuer(token: str) -> str | None:
+    """Read the ``iss`` claim without verifying, for routing only.
+
+    The selected verifier re-checks ``iss`` against its configured issuer
+    as part of full signature verification, so this unverified read is
+    used solely to pick a verifier — it never grants trust on its own.
+    """
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None
+    issuer = claims.get("iss")
+    return str(issuer) if issuer is not None else None
+
+
+def verify_token(token: str) -> VerifiedIdentity:
+    """Verify a bearer ID token from any registered issuer.
+
+    Dispatches on the token's ``iss`` claim: a configured OIDC issuer
+    routes to the OIDC backend, anything else (including Firebase tokens
+    and unparseable tokens) routes to Firebase, which performs the real
+    verification and raises the appropriate 401 on failure.
+    """
+    issuer = _unverified_issuer(token)
+    verifier = _get_verifier_registry().get_verifier(issuer)
+    return verifier.verify(token)
+
+
+def _verify_request_identity(request: Request | None, token: str) -> VerifiedIdentity:
+    """Resolve a token to a VerifiedIdentity, reusing the middleware cache.
+
+    The DatabaseSessionMiddleware pre-verifies (and caches) Firebase
+    tokens during schema resolution. When that Firebase cache hits we wrap
+    it directly — no second round-trip, identical to the prior behavior.
+    Otherwise we route through ``verify_token`` (Firebase by default; the
+    OIDC issuer when one is configured and the token's ``iss`` matches).
+    """
+    cached = _get_cached_token(request, token)
+    if cached is not None:
+        identity = FirebaseVerifier().verify_from_decoded(cached)
+    else:
+        identity = verify_token(token)
+    # Stash on request.state so downstream deps that only receive the
+    # decoded-claims dict (enforce_idle_session -> get_tenant_context,
+    # get_current_user) can recover the provider + subject id without
+    # re-verifying. Keyed to the raw token so a mismatched cache is ignored.
+    if request is not None:
+        request.state.verified_identity = identity
+        request.state.verified_identity_token = token
+    return identity
+
+
+def _identity_for_decoded(
+    request: Request | None, decoded_token: dict[str, Any]
+) -> VerifiedIdentity:
+    """Recover the VerifiedIdentity that produced ``decoded_token``.
+
+    The MFA/idle dependency chain passes only the decoded-claims dict
+    downstream. ``require_mfa`` (via ``_verify_request_identity``) has
+    already stashed the full identity on ``request.state``; prefer it so
+    OIDC subject ids and provider survive. Falls back to a Firebase
+    interpretation of the dict for any path that bypassed that stash
+    (preserves prior Firebase-only behavior).
+    """
+    if request is not None:
+        stashed = getattr(request.state, "verified_identity", None)
+        if isinstance(stashed, VerifiedIdentity) and stashed.claims is decoded_token:
+            return stashed
+    return FirebaseVerifier().verify_from_decoded(decoded_token)
+
+
 def get_current_user_id(
     request: Request,
     auth_credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -214,25 +322,14 @@ def get_current_user_id(
         HTTPException: If authentication fails
     """
     token = auth_credentials.credentials
-    decoded_token = _get_cached_token(request, token)
-    if decoded_token is None:
-        decoded_token = verify_firebase_token(token)
-    firebase_uid = decoded_token.get("uid")
-
-    if not firebase_uid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": "INVALID_TOKEN",
-                    "message": "User ID not found in token",
-                    "details": {},
-                }
-            },
-        )
+    identity = _verify_request_identity(request, token)
 
     pablo_user_id = _resolve_pablo_user_id(
-        request, str(firebase_uid), identity_repo, create_if_missing=False
+        request,
+        identity.subject_id,
+        identity_repo,
+        create_if_missing=False,
+        provider=identity.provider,
     )
     user_id_var.set(str(pablo_user_id))
     return pablo_user_id
@@ -245,7 +342,9 @@ def require_mfa(
     """
     Verify that the user authenticated with MFA.
 
-    Checks for the `firebase.sign_in_second_factor` claim in the token.
+    Honors the verified identity's ``mfa_satisfied`` signal — for Firebase
+    that is the ``firebase.sign_in_second_factor`` claim; for an OIDC
+    issuer it's the AMR/ACR step-up signal (see ``auth.providers``).
     Skipped when `settings.require_mfa` is False or in development mode.
 
     Returns:
@@ -255,9 +354,8 @@ def require_mfa(
         HTTPException: 403 if MFA not used when required
     """
     token = auth_credentials.credentials
-    decoded_token = _get_cached_token(request, token)
-    if decoded_token is None:
-        decoded_token = verify_firebase_token(token)
+    identity = _verify_request_identity(request, token)
+    decoded_token = identity.claims
 
     settings = get_settings()
     if not settings.require_mfa:
@@ -276,8 +374,7 @@ def require_mfa(
             logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
             return decoded_token
 
-    firebase_claims = decoded_token.get("firebase", {})
-    if not firebase_claims.get("sign_in_second_factor"):
+    if not identity.mfa_satisfied:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -321,21 +418,13 @@ def get_tenant_context(
     Postgres. Platform admins without a practice mapping get admin-only
     access.
     """
-    firebase_uid = decoded_token.get("uid")
-    if not firebase_uid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": "INVALID_TOKEN",
-                    "message": "User ID not found in token",
-                    "details": {},
-                }
-            },
-        )
-
+    identity = _identity_for_decoded(request, decoded_token)
     pablo_user_id = _resolve_pablo_user_id(
-        request, str(firebase_uid), identity_repo, create_if_missing=False
+        request,
+        identity.subject_id,
+        identity_repo,
+        create_if_missing=False,
+        provider=identity.provider,
     )
     user_id_var.set(str(pablo_user_id))
 
@@ -529,9 +618,8 @@ def get_current_user_no_mfa(
     No tenant schema resolution needed — user_repo reads from platform.users.
     """
     token = auth_credentials.credentials
-    decoded_token = _get_cached_token(request, token)
-    if decoded_token is None:
-        decoded_token = verify_firebase_token(token)
+    identity = _verify_request_identity(request, token)
+    decoded_token = identity.claims
 
     # Skipping MFA enrollment doesn't mean skipping the idle gate.
     # Lazy import avoids a circular service <-> idle_session import.
@@ -553,13 +641,14 @@ def _resolve_user(
 
     Looks up Pablo's internal user_id via the user_identities mapping
     (lazy-creating on first sign-in). The new user record is keyed by
-    that internal id, not the Firebase uid — that's the decoupling that
-    makes a future provider migration a row insert rather than a
-    full-schema rewrite.
+    that internal id, not the provider's subject id — that's the
+    decoupling that makes a future provider migration (or accepting a
+    second issuer) a row insert rather than a full-schema rewrite.
     """
-    firebase_uid = decoded_token.get("uid")
+    identity = _identity_for_decoded(request, decoded_token)
+    subject_id = identity.subject_id
 
-    if not firebase_uid:
+    if not subject_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -571,29 +660,33 @@ def _resolve_user(
             },
         )
 
-    firebase_uid_str = str(firebase_uid)
-
     # Lookup-only first: if a mapping exists, use it. If not, defer the
     # creation until after the allowlist gate so rejected users don't
     # leave stray rows.
     pablo_user_id = _resolve_pablo_user_id(
-        request, firebase_uid_str, identity_repo, create_if_missing=False
+        request,
+        subject_id,
+        identity_repo,
+        create_if_missing=False,
+        provider=identity.provider,
     )
 
     user = user_repo.get(pablo_user_id)
     if not user:
-        email = _extract_email(decoded_token)
+        email = identity.email or _extract_email(decoded_token)
 
-        # Fallback: look up email from Firebase Auth if token lacks it
-        if not email:
+        # Fallback: look up email from Firebase Auth if a Firebase token
+        # lacked it. Only meaningful for the Firebase provider — an OIDC
+        # token carries its own verified `email` claim.
+        if not email and identity.provider == "firebase":
             try:
-                fb_user = firebase_auth.get_user(firebase_uid_str)
+                fb_user = firebase_auth.get_user(subject_id)
                 email = (fb_user.email or "").lower()
-                logger.info("Resolved email from Firebase Auth: uid=%s", firebase_uid_str)
+                logger.info("Resolved email from Firebase Auth: uid=%s", subject_id)
             except Exception as exc:
                 logger.warning(
                     "Could not look up email from Firebase Auth for uid=%s: %s",
-                    firebase_uid_str,
+                    subject_id,
                     exc,
                 )
 
@@ -617,7 +710,7 @@ def _resolve_user(
             and not is_provisioned_tenant
             and (not email or not allowlist_repo.is_allowed(email))
         ):
-            logger.warning("Blocked non-allowlisted user: uid=%s", firebase_uid_str)
+            logger.warning("Blocked non-allowlisted user: uid=%s", subject_id)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -633,7 +726,11 @@ def _resolve_user(
         # via the legacy backfill) so downstream queries see a stable
         # Pablo user_id.
         pablo_user_id = _resolve_pablo_user_id(
-            request, firebase_uid_str, identity_repo, create_if_missing=True
+            request,
+            subject_id,
+            identity_repo,
+            create_if_missing=True,
+            provider=identity.provider,
         )
 
         # Auto-provision user on first login from Firebase token claims
