@@ -152,7 +152,27 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
     except HTTPException:
         raise
     except Exception as exc:
-        # Redis transient failure must not lock the user out. Log and
-        # let the request through; the next successful Redis round-trip
-        # will re-establish the activity key.
-        logger.warning("Idle session check failed (allowing request): %s", exc)
+        # A Redis error must not silently disable the HIPAA auto-logoff
+        # control. Default (fail closed): reject with 503 so the caller
+        # retries once Redis recovers — without falsely burning the session
+        # as an idle timeout. Self-hosters who prefer availability over
+        # strict enforcement can opt into the old allow-through behaviour
+        # via IDLE_SESSION_FAIL_OPEN=true.
+        if settings.idle_session_fail_open:
+            logger.error(
+                "Idle session check failed; allowing request "
+                "(IDLE_SESSION_FAIL_OPEN=true): %s",
+                exc,
+            )
+            return
+        logger.error("Idle session check failed; failing closed (503): %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": "IDLE_CHECK_UNAVAILABLE",
+                    "message": "Session service temporarily unavailable. Please retry.",
+                    "details": {},
+                }
+            },
+        ) from exc

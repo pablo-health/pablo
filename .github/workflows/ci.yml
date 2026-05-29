@@ -134,21 +134,21 @@ jobs:
 
       # Postgres comes up via testcontainers — see
       # backend/tests_integration/conftest.py. Docker is preinstalled on
-      # ubuntu-latest runners; no extra setup needed.
+      # ubuntu-latest runners; no extra setup needed. The conftest
+      # provisions a non-superuser ``pablo`` role (NOSUPERUSER
+      # NOBYPASSRLS) so the tenant-isolation / RLS-invariant suite
+      # actually exercises row-level security rather than silently
+      # passing as a superuser.
       #
-      # TEMPORARY: scoped back to the original audit-write tests while
-      # we investigate a runner-side hang on the broader suite (test
-      # process gets stuck inside step 8 for 10+ minutes vs the ~25s
-      # the same command takes locally). See THERAPY-* "CI integration
-      # suite hangs on broader make test-integration". The full
-      # ``make test-integration`` runs locally; switch this step back
-      # to ``make test-integration`` once the hang is root-caused.
-      - name: Run audit-write integration tests
-        run: |
-          cd backend && poetry run pytest \
-            tests_integration/database/test_audit_writes.py \
-            tests_integration/database/test_platform_audit_writes.py \
-            -v
+      # Runs the full suite via ``make test-integration`` — the
+      # cross-tenant isolation and RLS-invariant tests
+      # (tests_integration/database/test_tenant_isolation.py,
+      # test_rls_invariants.py) gate every merge. Two modules with
+      # documented pre-existing breakage are skipped at the module
+      # level (THERAPY-o1zh soft-delete uuid drift, THERAPY-n0ac
+      # tenant-fan-out semantics); re-enable them as those issues close.
+      - name: Run integration tests
+        run: make test-integration
 
   tenant-template-drift:
     # Catches the failure mode that produced the 2026-05-19 incident:

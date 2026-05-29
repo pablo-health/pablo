@@ -170,11 +170,11 @@ def test_source_ip_recorded(auth_logs: io.StringIO) -> None:
 
 
 def test_x_forwarded_for_used_when_present(auth_logs: io.StringIO) -> None:
-    # Cloud Run sets X-Forwarded-For for the client IP. extract_request_context
-    # takes the first hop, which is the source we alert on.
+    # The trusted proxy (Cloud Run) appends the real client IP on the RIGHT;
+    # a client-supplied leftmost value is spoofable and must be ignored.
     TestClient(_build_app()).get(
         "/unauth-token-expired",
-        headers={"X-Forwarded-For": "203.0.113.7, 10.0.0.1"},
+        headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.7"},
     )
     payloads = _lines(auth_logs)
     assert payloads[0]["source_ip"] == "203.0.113.7"
