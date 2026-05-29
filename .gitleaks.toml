@@ -1,0 +1,19 @@
+# Gitleaks configuration for Pablo.
+#
+# Used by the pre-commit hook and the secret-scan CI workflow. Extends the
+# built-in default ruleset; the allowlist below suppresses known non-secrets
+# (test placeholders, public client identifiers) so the gate stays signal.
+
+title = "pablo gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known non-secret test placeholders and public identifiers"
+regexes = [
+  # Dummy Stripe key used in the test harness (backend/tests/conftest.py).
+  '''sk_test_dummy''',
+  # Generic test/dummy/example placeholder tokens.
+  '''(?i)(dummy|example|placeholder|changeme|test[-_]?secret)''',
+]
