@@ -14,12 +14,18 @@ Before any deletes, the writer's ``is_supported`` probes the DB; if False,
 exit **2** (misconfigured deployment or DDL not applied).
 
 Retention stub semantics live in ``hard_purge_retention_stub``. Cloud Storage
-audio cleanup runs inside the per-patient transaction (THERAPY-zu4): blobs
-referenced by ``therapy_sessions.audio_gcs_path`` are deleted **before** the
-clinical-row DELETE commits, so a GCS failure rolls the whole purge back
-rather than leaving an audit row claiming a deletion that didn't happen.
-The BAA §7 Stage 2 promise covers audio of soft-deleted patients regardless
-of the per-practice audio retention slider.
+cleanup runs inside the per-patient transaction (THERAPY-zu4): blobs referenced
+by ``therapy_sessions.audio_gcs_path`` **and** ``patient_documents.gcs_path``
+are deleted **before** the clinical-row DELETE commits, so a GCS failure rolls
+the whole purge back rather than leaving an audit row claiming a deletion that
+didn't happen. The BAA §7 Stage 2 promise covers audio of soft-deleted patients
+regardless of the per-practice audio retention slider.
+
+The clinical-row delete removes every patient-associated surface: appointments,
+notes, therapy_sessions, ical_client_mappings, chat history
+(chat_conversations + chat_messages — which have no FK cascade from patients),
+patient_documents (FK cascade), and the patients row itself. A hard purge
+leaves zero rows and zero blobs for the patient across all surfaces.
 
 Invoked from repo ``backend/``::
 
@@ -141,6 +147,24 @@ def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     conn.execute(
         text("DELETE FROM ical_client_mappings WHERE patient_id = :pid"), {"pid": patient_id}
     )
+    # Chat history is patient-associated but chat_conversations.patient_id has no
+    # FK to patients, so it is NOT removed by the patients-row cascade. Delete the
+    # messages (defensively, even though chat_messages cascades from its parent
+    # conversation) then the conversations, so a purged patient leaves no chat
+    # rows behind.
+    conn.execute(
+        text(
+            "DELETE FROM chat_messages WHERE conversation_id IN "
+            "(SELECT id FROM chat_conversations WHERE patient_id = :pid)"
+        ),
+        {"pid": patient_id},
+    )
+    conn.execute(
+        text("DELETE FROM chat_conversations WHERE patient_id = :pid"), {"pid": patient_id}
+    )
+    # patient_documents rows DO cascade from the patients delete below (FK
+    # ON DELETE CASCADE); their GCS blobs are removed separately in run()
+    # before this commit (see _delete_document_blobs).
     conn.execute(text("DELETE FROM patients WHERE id = :pid"), {"pid": patient_id})
 
 
@@ -196,6 +220,74 @@ def _delete_audio_blobs(objects: list[str]) -> None:
             bucket.blob(object_name).delete()
         except NotFound:
             logger.info("hard_purge_audio_blob_already_gone object=%s", object_name)
+
+
+def _document_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[str]:
+    """Return GCS object names for the patient's uploaded documents.
+
+    Covers every ``patient_documents`` row for the patient regardless of
+    ``deleted_at`` or ``category`` — a hard purge removes all of them. The
+    DB rows themselves cascade away with the patients delete; this collects
+    the blob names so the objects can be deleted too.
+    """
+    _validate_schema_name(schema)
+    conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+    rows = conn.execute(
+        text(
+            "SELECT gcs_path FROM patient_documents "
+            "WHERE patient_id = :pid AND gcs_path IS NOT NULL"
+        ),
+        {"pid": patient_id},
+    ).fetchall()
+    objects: list[str] = []
+    for (raw,) in rows:
+        stripped = str(raw).strip() if raw is not None else ""
+        if stripped:
+            objects.append(stripped)
+    return objects
+
+
+def _resolve_documents_bucket() -> Any | None:
+    """Return the GCS Bucket holding patient documents, or None if unconfigured.
+
+    Patched in unit tests. Self-hosted deployments without the documents
+    feature leave ``patient_documents_gcs_bucket`` unset.
+    """
+    from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
+
+    from ..settings import get_settings  # noqa: PLC0415
+
+    settings = get_settings()
+    bucket_name = settings.patient_documents_gcs_bucket
+    if not bucket_name:
+        return None
+    return storage.Client().bucket(bucket_name)
+
+
+def _delete_document_blobs(objects: list[str]) -> None:
+    """Delete patient-document GCS blobs. Idempotent on missing.
+
+    Raises on any non-404 GCS failure so the caller's transaction rolls back.
+    If documents exist but no bucket is configured, logs loudly rather than
+    silently leaving PHI blobs behind.
+    """
+    if not objects:
+        return
+    from google.api_core.exceptions import NotFound  # noqa: PLC0415
+
+    bucket = _resolve_documents_bucket()
+    if bucket is None:
+        logger.error(
+            "hard_purge_document_blobs_orphaned count=%s "
+            "(patient_documents_gcs_bucket not configured)",
+            len(objects),
+        )
+        return
+    for object_name in objects:
+        try:
+            bucket.blob(object_name).delete()
+        except NotFound:
+            logger.info("hard_purge_document_blob_already_gone object=%s", object_name)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -258,6 +350,8 @@ def run(argv: list[str] | None = None) -> int:
                     _append_purge_audit(conn, schema_name, patient_id)
                     audio_objects = _audio_objects_for_patient(conn, schema_name, patient_id)
                     _delete_audio_blobs(audio_objects)
+                    document_objects = _document_objects_for_patient(conn, schema_name, patient_id)
+                    _delete_document_blobs(document_objects)
                     _delete_clinical_rows(conn, schema_name, patient_id)
                     processed += 1
             except Exception:
