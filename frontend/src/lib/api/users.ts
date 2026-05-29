@@ -21,6 +21,7 @@ export interface UserProfile {
   is_platform_admin: boolean
   baa_accepted_at: string | null
   provider_type: ProviderType | null
+  phone: string | null
 }
 
 export interface UserStatus {
@@ -47,6 +48,8 @@ export interface UpdateUserRequest {
   title?: string
   credentials?: string
   provider_type?: ProviderType
+  /** Optional contact number. May be used for account recovery or support. */
+  phone?: string
 }
 
 /**

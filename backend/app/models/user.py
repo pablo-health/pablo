@@ -8,9 +8,9 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from .validators import validate_iso_date
+from .validators import validate_iso_date, validate_phone
 
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
@@ -25,7 +25,14 @@ class UpdateUserRequest(BaseModel):
     credentials: str | None = Field(None, max_length=100)
     provider_type: ProviderType | None = None
     onboarding_state: OnboardingState | None = None
+    phone: str | None = Field(None, max_length=50)
     baa_accepted_at: datetime | None = None
+
+    @field_validator("phone")
+    @classmethod
+    def _validate_phone(cls, v: str | None) -> str | None:
+        """Normalize/validate an optional phone number (None when blank)."""
+        return validate_phone(v)
 
     @classmethod
     def validate_baa_date(cls, v: str | None) -> str | None:
@@ -113,6 +120,7 @@ class User:
     title: str | None = None
     credentials: str | None = None
     picture: str | None = None
+    phone: str | None = None
     baa_accepted_at: datetime | None = None
     baa_version: str | None = None
     baa_legal_name: str | None = None
@@ -179,6 +187,7 @@ class User:
             title=data.get("title"),
             credentials=data.get("credentials"),
             picture=data.get("picture"),
+            phone=data.get("phone"),
             baa_accepted_at=data.get("baa_accepted_at"),
             baa_version=data.get("baa_version"),
             baa_legal_name=data.get("baa_legal_name"),
