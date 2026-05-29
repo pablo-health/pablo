@@ -43,7 +43,7 @@ class TestPlatformAuditService:
         service = PlatformAuditService(repo)
         mock_request = MagicMock()
         mock_request.headers = {
-            "X-Forwarded-For": "203.0.113.10, 10.0.0.1",
+            "X-Forwarded-For": "10.0.0.1, 203.0.113.10",
             "User-Agent": "pablo-pentest/1",
         }
 
@@ -58,7 +58,8 @@ class TestPlatformAuditService:
         assert entry.action == "pentest_tenant_provisioned"
         assert entry.resource_type == "tenant"
         assert entry.tenant_schema == "practice_pentest_a1b2c3"
-        # X-Forwarded-For: use leftmost (the real client)
+        # X-Forwarded-For: the trusted proxy appends the real client IP on
+        # the right; the spoofable leftmost entry must be ignored.
         assert entry.ip_address == "203.0.113.10"
         assert entry.user_agent == "pablo-pentest/1"
 

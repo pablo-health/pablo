@@ -111,6 +111,18 @@ class Settings(BaseSettings):
             "Requires Redis; no-op when USE_REDIS=false."
         ),
     )
+    idle_session_fail_open: bool = Field(
+        default=False,
+        description=(
+            "Behaviour when the idle-session Redis check raises an error "
+            "(transient outage). False (default, HIPAA-safe): fail closed — "
+            "reject the request with 503 so the auto-logoff control is never "
+            "silently disabled. True: allow the request through (availability "
+            "over strict enforcement). Note: this governs the *error* path "
+            "only; when Redis is intentionally disabled (USE_REDIS=false) the "
+            "check is a no-op regardless."
+        ),
+    )
 
     # HIPAA Audit Logging — defense-in-depth dual-write
     audit_dual_write_enabled: bool = Field(
@@ -141,6 +153,18 @@ class Settings(BaseSettings):
             "Empty string (default): trust no proxies (secure default). "
             "'*': trust all proxies (use for Cloud Run/GKE). "
             "Comma-separated IPs: trust specific proxies."
+        ),
+    )
+    trusted_proxy_hops: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Number of trusted reverse-proxy hops in front of the app, used "
+            "to pick the real client IP out of X-Forwarded-For. The client "
+            "IP is read this many entries from the RIGHT (the proxy-appended "
+            "end), never the leftmost (client-spoofable) entry. Cloud Run "
+            "directly = 1 (GFE appends the real client IP last); add 1 per "
+            "extra trusted proxy (e.g. an external HTTP(S) load balancer)."
         ),
     )
 
