@@ -14,7 +14,7 @@ import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Matches -prod, -production, -prod<N> at end of project id. The
@@ -297,6 +297,32 @@ class Settings(BaseSettings):
             "openid-connect/certs. Required when oidc_issuer is set."
         ),
     )
+
+    @model_validator(mode="after")
+    def _validate_oidc_config(self) -> "Settings":
+        """Fail fast if the OIDC backend is half-configured.
+
+        When ``oidc_issuer`` is set, the audience and JWKS URI must be too —
+        otherwise ``OidcVerifier`` would be built with an empty audience and
+        rely on PyJWT's empty-aud handling as an implicit backstop. We refuse
+        that at startup instead. (http issuers are intentionally allowed so a
+        local Keycloak spike on http://localhost works; production uses https.)
+        """
+        if self.oidc_issuer:
+            missing = [
+                name
+                for name, value in (
+                    ("oidc_audience", self.oidc_audience),
+                    ("oidc_jwks_uri", self.oidc_jwks_uri),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    f"oidc_issuer is set but {', '.join(missing)} must also be "
+                    "set to enable the OIDC auth backend"
+                )
+        return self
 
     # Firebase Blocking Function OIDC Verification
     # The blocking functions (beforeCreate / beforeSignIn) call this backend
