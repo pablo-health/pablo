@@ -105,7 +105,7 @@ jobs:
           echo "Single head, good."
 
       - name: Test (pytest)
-        run: cd backend && poetry run pytest tests/ -m "not spacy" --cov=app --cov-report=term-missing --cov-report=html
+        run: cd backend && poetry run pytest tests/ -m "not spacy" --cov=app --cov-report=term-missing --cov-report=html --cov-fail-under=67
 
   backend-integration:
     name: Backend integration (Postgres)
