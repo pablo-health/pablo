@@ -70,6 +70,18 @@ class PracticeRow(PlatformBase):
     provisioning_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="ready", server_default="ready"
     )
+    # Business address for the practice (set at professional-info onboarding step).
+    address: Mapped[str | None] = mapped_column(String(500))
+    # BAA snapshot — written once at acceptance time and immutable thereafter.
+    # These are the legal record: who signed, under what credentials, on what text.
+    baa_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    baa_version: Mapped[str | None] = mapped_column(String(10))
+    baa_legal_name: Mapped[str | None] = mapped_column(String(255))
+    baa_license_number: Mapped[str | None] = mapped_column(String(100))
+    baa_license_state: Mapped[str | None] = mapped_column(String(2))
+    baa_practice_name: Mapped[str | None] = mapped_column(String(255))
+    baa_business_address: Mapped[str | None] = mapped_column(String(500))
+    baa_full_text: Mapped[str | None] = mapped_column(Text)
 
 
 class EmailTenantMappingRow(PlatformBase):
@@ -124,14 +136,11 @@ class PlatformUserRow(PlatformBase):
     status: Mapped[str] = mapped_column(String(20), default="approved")
     mfa_enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Fast auth gate — kept on the user row so require_baa_acceptance avoids
+    # a practice lookup on every PHI request. Written in sync with practice.baa_*.
     baa_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     baa_version: Mapped[str | None] = mapped_column(String(10))
-    baa_legal_name: Mapped[str | None] = mapped_column(String(255))
-    baa_license_number: Mapped[str | None] = mapped_column(String(100))
-    baa_license_state: Mapped[str | None] = mapped_column(String(2))
-    baa_practice_name: Mapped[str | None] = mapped_column(String(255))
-    baa_business_address: Mapped[str | None] = mapped_column(String(500))
-    baa_full_text: Mapped[str | None] = mapped_column(Text)
+    legal_name: Mapped[str | None] = mapped_column(String(255))
     provider_type: Mapped[str | None] = mapped_column(String(32))
     security_guide_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     security_guide_version: Mapped[str | None] = mapped_column(String(20))

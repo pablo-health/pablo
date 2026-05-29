@@ -23,6 +23,8 @@ class ClinicianProfile:
     credentials: str | None = None
     role: str = "clinician"
     joined_at: datetime | None = None
+    license_number: str | None = None
+    license_state: str | None = None
 
 
 class ClinicianProfileRepository(ABC):
