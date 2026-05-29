@@ -136,15 +136,24 @@ def _get_preauth_limiter() -> RateLimiter:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract the real client IP, using X-Forwarded-For when behind a proxy.
+    """Extract the real client IP from X-Forwarded-For when behind a proxy.
 
-    Cloud Run always sets X-Forwarded-For with the real client IP as the
-    first entry. We use it when present to avoid rate-limiting all users
-    collectively via the load balancer IP.
+    The client controls the *leftmost* X-Forwarded-For entries (it can send
+    any value it likes), while a trusted reverse proxy *appends* the real
+    peer IP on the right. Reading the leftmost entry therefore lets a caller
+    forge a unique IP per request and defeat the rate limiter entirely. We
+    instead read ``settings.trusted_proxy_hops`` entries from the right —
+    the proxy-controlled end — which is the real client IP for our Cloud Run
+    deployment (one trusted hop) and stays correct if more proxies are added.
     """
+    from .settings import get_settings  # noqa: PLC0415
+
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            hops = min(get_settings().trusted_proxy_hops, len(parts))
+            return parts[-hops]
     return request.client.host if request.client else "unknown"
 
 

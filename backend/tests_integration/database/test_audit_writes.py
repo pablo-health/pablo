@@ -214,10 +214,12 @@ class TestGenericLog:
 
     def test_x_forwarded_for_takes_precedence_over_client_host(self, pg_session: Session) -> None:
         service = _build_service(pg_session)
+        # The trusted proxy appends the real client IP on the right; the
+        # spoofable leftmost entry (10.0.0.1 here) must not be recorded.
         service.log(
             action=AuditAction.PATIENT_VIEWED,
             user=_build_user(),
-            request=_build_request(forwarded_for="203.0.113.9, 10.0.0.1"),
+            request=_build_request(forwarded_for="10.0.0.1, 203.0.113.9"),
             resource_type=ResourceType.PATIENT,
             resource_id="p1",
         )

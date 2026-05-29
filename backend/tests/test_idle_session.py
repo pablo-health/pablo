@@ -21,11 +21,17 @@ _REVOKED_KEY = "idle:revoked:user-123:1700000000"
 _MARKER_TTL = 31 * 24 * 60 * 60
 
 
-def _patch_deps(redis: MagicMock | None, *, is_development: bool = False):
+def _patch_deps(
+    redis: MagicMock | None,
+    *,
+    is_development: bool = False,
+    fail_open: bool = False,
+):
     """Patch get_redis_client + get_settings together."""
     settings = MagicMock()
     settings.is_development = is_development
     settings.idle_timeout_seconds = 900
+    settings.idle_session_fail_open = fail_open
     return (
         patch("app.auth.idle_session.get_redis_client", return_value=redis),
         patch("app.auth.idle_session.get_settings", return_value=settings),
@@ -115,12 +121,27 @@ class TestCheckAndTouch:
             assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
             assert exc.value.detail["error"]["code"] == "INVALID_TOKEN"  # type: ignore[index]
 
-    def test_redis_failure_does_not_lock_user_out(self) -> None:
-        """Transient Redis errors must not become a denial-of-service for users."""
+    def test_redis_failure_fails_closed_by_default(self) -> None:
+        """A Redis error must not silently disable the auto-logoff control.
+
+        Default is fail-closed: reject with 503 (retryable) rather than
+        allowing the request through with no idle enforcement.
+        """
         redis = MagicMock()
         redis.exists.side_effect = RuntimeError("redis went away")
 
         rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch, pytest.raises(HTTPException) as exc:
+            check_and_touch(_TOKEN)
+        assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert exc.value.detail["error"]["code"] == "IDLE_CHECK_UNAVAILABLE"  # type: ignore[index]
+
+    def test_redis_failure_allows_when_fail_open_enabled(self) -> None:
+        """Opt-in availability mode: a Redis error lets the request through."""
+        redis = MagicMock()
+        redis.exists.side_effect = RuntimeError("redis went away")
+
+        rc_patch, set_patch = _patch_deps(redis, fail_open=True)
         with rc_patch, set_patch:
             check_and_touch(_TOKEN)  # no raise
 
