@@ -10,6 +10,7 @@ Priority jobs use SPOT with on-demand fallback; standard jobs are spot-only.
 import base64
 import json
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -18,6 +19,20 @@ from google.cloud import batch_v1, storage  # type: ignore[attr-defined]
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+_SAFE_EXT_RE = re.compile(r"^[a-z0-9]{1,5}$")
+
+
+def _safe_audio_extension(filename: str) -> str:
+    """Return a safe lowercase extension for an uploaded audio file.
+
+    The extension becomes part of the stored GCS object name (and downstream
+    flows into audit records), so a client-supplied filename must not be able
+    to inject quotes, commas, slashes, or other structure-breaking characters.
+    Anything that isn't a short alphanumeric token falls back to ``wav``.
+    """
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "wav"
+    return ext if _SAFE_EXT_RE.match(ext) else "wav"
 
 
 class TranscriptionQueueService:
@@ -48,7 +63,7 @@ class TranscriptionQueueService:
     def upload_audio(self, audio_data: bytes, session_id: str, filename: str) -> str:
         """Upload audio to GCS. Returns the GCS object path (not full URI)."""
         date_prefix = datetime.now(UTC).strftime("%Y/%m/%d")
-        ext = filename.rsplit(".", 1)[-1] if "." in filename else "wav"
+        ext = _safe_audio_extension(filename)
         gcs_path = f"{date_prefix}/{session_id}/{uuid.uuid4().hex}.{ext}"
 
         bucket = self.storage_client.bucket(self.gcs_bucket)
