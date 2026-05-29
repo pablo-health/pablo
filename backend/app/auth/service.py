@@ -262,6 +262,14 @@ def _verify_request_identity(request: Request | None, token: str) -> VerifiedIde
     Otherwise we route through ``verify_token`` (Firebase by default; the
     OIDC issuer when one is configured and the token's ``iss`` matches).
     """
+    # Reuse an identity the middleware already verified+stashed for this
+    # token (works for both Firebase and OIDC, so an OIDC token isn't
+    # verified twice). Keyed to the raw token so a stale stash is ignored.
+    if request is not None:
+        stashed = getattr(request.state, "verified_identity", None)
+        stashed_token = getattr(request.state, "verified_identity_token", None)
+        if isinstance(stashed, VerifiedIdentity) and stashed_token == token:
+            return stashed
     cached = _get_cached_token(request, token)
     if cached is not None:
         identity = FirebaseVerifier().verify_from_decoded(cached)

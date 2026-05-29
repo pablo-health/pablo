@@ -209,13 +209,14 @@ class Settings(BaseSettings):
         description="Allow credentials in CORS requests",
     )
 
-    # Multi-Tenancy Settings (Identity Platform)
+    # Multi-Tenancy Settings
     multi_tenancy_enabled: bool = Field(
         default=False,
         description=(
-            "Enable Identity Platform multi-tenancy. "
-            "When enabled, JWTs must contain a firebase.tenant claim "
-            "and requests are routed to per-practice PostgreSQL schemas."
+            "Enable per-practice multi-tenancy. When enabled, requests are "
+            "routed to per-practice PostgreSQL schemas, resolved from the "
+            "authenticated user's email via the platform.email_tenant_mappings "
+            "table (not from a token claim)."
         ),
     )
 
