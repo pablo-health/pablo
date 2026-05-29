@@ -62,7 +62,7 @@ class AllowlistEntry(BaseModel):
 
     email: str
     added_by: str
-    added_at: str
+    added_at: datetime | None
 
 
 class AllowlistResponse(BaseModel):
