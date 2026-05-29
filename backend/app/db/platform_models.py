@@ -118,6 +118,9 @@ class PlatformUserRow(PlatformBase):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     picture: Mapped[str | None] = mapped_column(Text)
+    # Optional contact number, collected during onboarding. May be used
+    # for account recovery or support; never a sole authentication factor.
+    phone: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="approved")
     mfa_enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False)

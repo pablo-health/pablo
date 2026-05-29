@@ -61,6 +61,7 @@ def _row_to_user(row: PlatformUserRow) -> User:
         name=row.name,
         created_at=row.created_at,
         picture=row.picture,
+        phone=row.phone,
         baa_accepted_at=row.baa_accepted_at,
         baa_version=row.baa_version,
         baa_legal_name=row.baa_legal_name,
@@ -91,6 +92,7 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.name = user.name
     row.created_at = user.created_at
     row.picture = user.picture
+    row.phone = user.phone
     row.baa_accepted_at = user.baa_accepted_at
     row.baa_version = user.baa_version
     row.baa_legal_name = user.baa_legal_name

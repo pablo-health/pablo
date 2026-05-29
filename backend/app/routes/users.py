@@ -283,6 +283,10 @@ def update_current_user_profile(
         user.provider_type = request.provider_type
     if request.onboarding_state is not None:
         user.onboarding_state = request.onboarding_state
+    if request.phone is not None:
+        # Validator already stripped/normalized; blanks arrive as None and
+        # leave the existing value untouched (PATCH semantics).
+        user.phone = request.phone
     user_repo.update(user)
 
     if request.title is not None or request.credentials is not None:
