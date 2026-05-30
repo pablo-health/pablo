@@ -23,6 +23,15 @@ beforeAll(() => {
 
 vi.mock("@/lib/api/patients")
 vi.mock("@/lib/api/sessions")
+vi.mock("@/lib/config", () => ({
+  useConfig: () => ({ dataMode: "api" }),
+}))
+vi.mock("next/image", () => ({
+  default: ({ src, alt, ...props }: { src: string; alt: string; [k: string]: unknown }) => (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={src} alt={alt} {...props} />
+  ),
+}))
 
 const mockPush = vi.fn()
 vi.mock("next/navigation", () => ({
@@ -76,6 +85,14 @@ describe("UploadTranscriptDialog", () => {
     vi.mocked(patientsApi.listPatients).mockResolvedValue({
       data: mockPatients,
       total: 2,
+      page: 1,
+      page_size: 50,
+    })
+
+    // Default: session list is empty (overlay will not find an in-flight session)
+    vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+      data: [],
+      total: 0,
       page: 1,
       page_size: 50,
     })
@@ -586,10 +603,18 @@ describe("UploadTranscriptDialog", () => {
       })
     })
 
-    it("navigates to session detail on success by default", async () => {
+    it("shows the generating overlay on success by default", async () => {
       const user = userEvent.setup()
 
+      // Upload returns the session right away (in tests the POST resolves quickly)
       vi.mocked(sessionsApi.uploadSession).mockResolvedValue(mockSession)
+      // Overlay polls the list and finds the processing session
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [{ ...mockSession, status: "processing" }],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
 
       render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
 
@@ -621,7 +646,55 @@ describe("UploadTranscriptDialog", () => {
         expect(screen.getByText("transcript.txt")).toBeInTheDocument()
       })
 
-      // Submit
+      // Submit — dialog closes immediately and overlay appears
+      await user.click(screen.getByText("Upload & Generate SOAP"))
+
+      await waitFor(() => {
+        expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
+        expect(screen.getByText("Pablo is writing your note")).toBeInTheDocument()
+      })
+    })
+
+    it("navigates to session detail once note is ready (overlay polling)", async () => {
+      const user = userEvent.setup()
+
+      vi.mocked(sessionsApi.uploadSession).mockResolvedValue(mockSession)
+      // List returns processing session so overlay finds the id
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [{ ...mockSession, patient_id: "patient-1", status: "processing" }],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+      // Detail immediately returns pending_review — triggers navigation
+      vi.mocked(sessionsApi.getSession).mockResolvedValue({
+        ...mockSession,
+        patient_id: "patient-1",
+        status: "pending_review",
+      })
+
+      render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("Upload Session"))
+
+      await waitFor(() => {
+        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+      })
+
+      const selectTrigger = screen.getByRole("combobox")
+      await user.click(selectTrigger)
+      const doeJaneOptions = await screen.findAllByText("Doe, Jane")
+      await user.click(doeJaneOptions[doeJaneOptions.length - 1])
+
+      const dateInput = screen.getByLabelText(/Session Date/)
+      await user.type(dateInput, "2024-01-15T14:30")
+
+      const file = new File(["Test content"], "transcript.txt", {
+        type: "text/plain",
+      })
+      const fileInput = screen.getByLabelText(/Transcript File/)
+      await user.upload(fileInput, file)
+
       await user.click(screen.getByText("Upload & Generate SOAP"))
 
       await waitFor(() => {
@@ -629,14 +702,56 @@ describe("UploadTranscriptDialog", () => {
       })
     })
 
-    it("shows loading state during upload", async () => {
+    it("shows the generating overlay while upload is in flight", async () => {
       const user = userEvent.setup()
 
+      // Upload never resolves — simulates the slow server-side generation
       vi.mocked(sessionsApi.uploadSession).mockImplementation(
-        () => new Promise(() => {}) // Never resolves
+        () => new Promise(() => {}),
       )
 
       render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("Upload Session"))
+
+      await waitFor(() => {
+        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+      })
+
+      // Select patient
+      const selectTrigger = screen.getByRole("combobox")
+      await user.click(selectTrigger)
+      const doeJaneOptions = await screen.findAllByText("Doe, Jane")
+      await user.click(doeJaneOptions[doeJaneOptions.length - 1])
+
+      // Fill date
+      const dateInput = screen.getByLabelText(/Session Date/)
+      await user.type(dateInput, "2024-01-15T14:30")
+
+      // Upload file
+      const file = new File(["Test"], "transcript.txt", { type: "text/plain" })
+
+      const fileInput = screen.getByLabelText(/Transcript File/)
+      await user.upload(fileInput, file)
+
+      // Submit — dialog closes immediately; overlay is shown
+      await user.click(screen.getByText("Upload & Generate SOAP"))
+
+      await waitFor(() => {
+        expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
+        expect(screen.getByText("Pablo is writing your note")).toBeInTheDocument()
+      })
+    })
+
+    it("shows loading state during upload (onSuccess path)", async () => {
+      const user = userEvent.setup()
+      const onSuccess = vi.fn()
+
+      vi.mocked(sessionsApi.uploadSession).mockImplementation(
+        () => new Promise(() => {}), // Never resolves
+      )
+
+      render(<UploadTranscriptDialog onSuccess={onSuccess} />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("Upload Session"))
 
@@ -668,14 +783,15 @@ describe("UploadTranscriptDialog", () => {
       })
     })
 
-    it("displays error message when upload fails", async () => {
+    it("displays error message when upload fails (onSuccess path)", async () => {
       const user = userEvent.setup()
+      const onSuccess = vi.fn()
 
       vi.mocked(sessionsApi.uploadSession).mockRejectedValue(
-        new Error("Upload failed")
+        new Error("Upload failed"),
       )
 
-      render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
+      render(<UploadTranscriptDialog onSuccess={onSuccess} />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("Upload Session"))
 
@@ -707,14 +823,62 @@ describe("UploadTranscriptDialog", () => {
       })
     })
 
-    it("allows retry after error", async () => {
+    it("clears overlay and re-opens dialog with error when fire-and-forget upload fails", async () => {
       const user = userEvent.setup()
+
+      // No onSuccess — uses fire-and-forget path
+      vi.mocked(sessionsApi.uploadSession).mockRejectedValue(
+        new Error("Network error"),
+      )
+
+      render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("Upload Session"))
+
+      await waitFor(() => {
+        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+      })
+
+      // Select patient
+      const selectTrigger = screen.getByRole("combobox")
+      await user.click(selectTrigger)
+      const doeJaneOptions = await screen.findAllByText("Doe, Jane")
+      await user.click(doeJaneOptions[doeJaneOptions.length - 1])
+
+      // Fill date
+      const dateInput = screen.getByLabelText(/Session Date/)
+      await user.type(dateInput, "2024-01-15T14:30")
+
+      // Upload file
+      const file = new File(["Test content"], "transcript.txt", {
+        type: "text/plain",
+      })
+      const fileInput = screen.getByLabelText(/Transcript File/)
+      await user.upload(fileInput, file)
+
+      // Submit — dialog closes immediately, overlay mounts
+      await user.click(screen.getByText("Upload & Generate SOAP"))
+
+      // After the upload rejects, overlay should disappear and dialog re-open
+      // with the error message surfaced
+      await waitFor(() => {
+        expect(screen.queryByText("Pablo is writing your note")).not.toBeInTheDocument()
+        expect(screen.getByText("Network error")).toBeInTheDocument()
+      })
+
+      // Dialog is open again
+      expect(screen.getByText("Upload Session Transcript")).toBeInTheDocument()
+    })
+
+    it("allows retry after error (onSuccess path)", async () => {
+      const user = userEvent.setup()
+      const onSuccess = vi.fn()
 
       vi.mocked(sessionsApi.uploadSession)
         .mockRejectedValueOnce(new Error("Upload failed"))
         .mockResolvedValue(mockSession)
 
-      render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
+      render(<UploadTranscriptDialog onSuccess={onSuccess} />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("Upload Session"))
 
@@ -749,7 +913,7 @@ describe("UploadTranscriptDialog", () => {
       await user.click(screen.getByText("Upload & Generate SOAP"))
 
       await waitFor(() => {
-        expect(mockPush).toHaveBeenCalledWith("/dashboard/sessions/session-123")
+        expect(onSuccess).toHaveBeenCalledWith(mockSession)
       })
     })
   })

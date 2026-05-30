@@ -2,9 +2,11 @@
 
 "use client"
 
+import { useState, useEffect } from "react"
 import { useQuery, type UseQueryOptions } from "@tanstack/react-query"
 import type {
   FinalizeSessionRequest,
+  SessionListResponse,
   SessionResponse,
   UpdateSessionRatingRequest,
   UploadSessionRequest,
@@ -24,7 +26,10 @@ import { useAuthMutation } from "./useAuthQuery"
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
 
-export function useSessionList(token?: string) {
+export function useSessionList(
+  token?: string,
+  options?: Omit<UseQueryOptions<SessionListResponse>, "queryKey" | "queryFn">,
+) {
   const { loading } = useAuth()
   const { dataMode } = useConfig()
   const isMock = dataMode === "mock"
@@ -34,8 +39,71 @@ export function useSessionList(token?: string) {
     queryFn: () =>
       isMock ? Promise.resolve(mockSessionListResponse) : listSessions(token),
     staleTime: isMock ? Infinity : 60 * 1000,
-    enabled: isMock || !loading,
+    enabled: (options?.enabled ?? true) && (isMock || !loading),
+    ...options,
   })
+}
+
+const SESSION_DISCOVERY_TIMEOUT_MS = 60_000
+
+/**
+ * Polls the session list after a transcript upload until the newly-created
+ * in-flight session (queued/processing) for `patientId` becomes visible, then
+ * returns its id so the caller can poll the session detail.
+ *
+ * Keeps polling until the session is discovered — the row may not be committed
+ * for ~1s after the upload POST starts, and the list cache is usually warm —
+ * then locks the id and stops. If nothing appears within
+ * SESSION_DISCOVERY_TIMEOUT_MS the upload almost certainly failed, so it reports
+ * `timedOut` and the caller surfaces an error instead of spinning forever.
+ */
+export function useSessionProcessing(patientId: string | null): {
+  sessionId: string | null
+  timedOut: boolean
+} {
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [timedOut, setTimedOut] = useState(false)
+
+  // Reset state whenever the tracked patient changes (overlay open/close/re-upload).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSessionId(null)
+    setTimedOut(false)
+  }, [patientId])
+
+  const searching = patientId !== null && sessionId === null && !timedOut
+
+  const { data: list } = useSessionList(undefined, {
+    enabled: searching,
+    staleTime: 0,
+    refetchInterval: searching ? 2000 : false,
+  })
+
+  // Respond to each new list snapshot: lock in the session id when it appears.
+  useEffect(() => {
+    if (!searching) return
+    const inFlight = list?.data.find(
+      (s) =>
+        s.patient_id === patientId &&
+        (s.status === "queued" || s.status === "processing"),
+    )
+    if (inFlight) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSessionId(inFlight.id)
+    }
+  }, [list, searching, patientId])
+
+  // Backstop: if no session is found within the discovery window, mark as
+  // timed out so the caller can surface an error instead of spinning forever.
+  useEffect(() => {
+    if (!searching) return
+    const timerId = setTimeout(() => {
+      setTimedOut(true)
+    }, SESSION_DISCOVERY_TIMEOUT_MS)
+    return () => clearTimeout(timerId)
+  }, [searching])
+
+  return { sessionId, timedOut }
 }
 
 export function useSession(
