@@ -11,6 +11,7 @@ import pytest
 from app.auth.service import (
     TenantContext,
     _get_cached_token,
+    _get_verifier_registry,
     get_current_user,
     get_current_user_id,
     get_tenant_context,
@@ -142,6 +143,8 @@ class TestTokenCaching:
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.oidc_issuer = ""
+            _get_verifier_registry.cache_clear()
             result = require_mfa(mock_request, mock_credentials)
 
         assert result["uid"] == "user123"
@@ -162,6 +165,8 @@ class TestTokenCaching:
         with patch("app.auth.service.get_settings") as mock_settings:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = True
+            mock_settings.return_value.oidc_issuer = ""
+            _get_verifier_registry.cache_clear()
             result = require_mfa(mock_request, mock_credentials)
 
         assert result["uid"] == "user123"
