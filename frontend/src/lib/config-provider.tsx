@@ -17,6 +17,7 @@ export interface RuntimeConfig {
   firebaseAppId: string
   ratingFeedbackRequiredBelow: number
   showVerificationBadges: boolean
+  introVideoUrl: string
 }
 
 interface ConfigContextValue {
