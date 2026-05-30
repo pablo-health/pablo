@@ -38,7 +38,14 @@ interface PageProps {
 
 export default function SessionDetailPage({ params }: PageProps) {
   const { id } = use(params)
-  const { data: session, isLoading, error } = useSession(id)
+  const { data: session, isLoading, error } = useSession(id, undefined, {
+    // Poll while the note is being generated so the page updates itself
+    // without a manual refresh.
+    refetchInterval: (query) => {
+      const s = query.state.data?.status
+      return s === "queued" || s === "processing" ? 3000 : false
+    },
+  })
   const updateRatingMutation = useUpdateSessionRating()
 
   // Local state for quality rating and feedback during review (before finalization)
