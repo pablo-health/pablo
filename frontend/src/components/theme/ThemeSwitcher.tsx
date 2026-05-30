@@ -12,7 +12,7 @@ export function ThemeSwitcher() {
     <div
       role="radiogroup"
       aria-label="Color theme"
-      className="flex flex-wrap items-center justify-center gap-1 rounded-2xl border border-neutral-300/70 bg-white/80 p-1 shadow-sm backdrop-blur"
+      className="flex flex-wrap items-center justify-center gap-1 rounded-2xl border border-neutral-300/70 bg-card/80 p-1 shadow-sm backdrop-blur"
     >
       {THEMES.map((t) => {
         const active = t.id === theme
