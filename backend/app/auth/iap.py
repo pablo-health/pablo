@@ -13,6 +13,8 @@ account authentication before traffic reaches Cloud Run.
 """
 
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 IAP_CERTS_URL = "https://www.gstatic.com/iap/verify/public_key"
 
 
-def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> dict[str, object]:
+def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> Mapping[str, Any]:
     """Verify a Google Cloud IAP JWT assertion.
 
     Args:
@@ -31,17 +33,16 @@ def verify_iap_jwt(iap_jwt: str, expected_audience: str) -> dict[str, object]:
             /projects/{number}/global/backendServices/{id}.
 
     Returns:
-        The decoded JWT claims dict (sub, email, etc.).
+        The decoded JWT claims (sub, email, etc.).
 
     Raises:
         ValueError: If the JWT is invalid, expired, or has wrong audience.
     """
-    decoded = id_token.verify_token(
+    decoded: Mapping[str, Any] = id_token.verify_token(
         iap_jwt,
         google_requests.Request(),
         audience=expected_audience,
         certs_url=IAP_CERTS_URL,
     )
     logger.debug("IAP JWT verified for user: %s", decoded.get("sub", "unknown"))
-    result: dict[str, object] = decoded
-    return result
+    return decoded
