@@ -7,7 +7,7 @@ export function AuthDivider() {
         <div className="w-full border-t border-neutral-300"></div>
       </div>
       <div className="relative flex justify-center text-sm">
-        <span className="px-2 bg-white text-neutral-500">or</span>
+        <span className="px-2 bg-card text-neutral-500">or</span>
       </div>
     </div>
   )

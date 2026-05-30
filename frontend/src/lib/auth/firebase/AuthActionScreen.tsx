@@ -170,7 +170,7 @@ function AuthActionContent() {
   }
 
   return (
-    <AuthCard className="w-full max-w-md space-y-6 bg-white p-10 rounded-2xl shadow-xl border border-neutral-100">
+    <AuthCard className="w-full max-w-md space-y-6 bg-card p-10 rounded-2xl shadow-xl border border-neutral-100">
       <div className="text-center">
         <h1 className="text-4xl font-display font-bold text-primary-600">Pablo</h1>
         <h2 className="mt-3 text-xl font-semibold text-neutral-800">
