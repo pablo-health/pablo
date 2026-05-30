@@ -286,14 +286,18 @@ export function FirebaseLoginScreen() {
 
   return (
     <AuthCard brandPanel={<LoginBrandPanel />}>
+      <div className="mb-6 flex flex-col items-center gap-2 lg:hidden">
+        <div className="flex items-center gap-2.5">
+          <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
+          <span className="font-display text-2xl font-bold text-primary-600">Pablo</span>
+        </div>
+        <span className="text-xs text-neutral-500">AI documentation for mental health clinicians</span>
+      </div>
+
       <AuthHeader
-        title="Pablo"
+        title={isSignUp ? "Create your account" : "Welcome back"}
         titleSize="4xl"
-        subtitle={
-          isSignUp
-            ? "Create your account to get started"
-            : "Therapy session management"
-        }
+        titleColor="foreground"
       />
 
       <div className="mt-8 space-y-4">
@@ -405,7 +409,12 @@ export function FirebaseLoginScreen() {
 
       {/* Brand panel (with the theme picker) is hidden on mobile, so offer it here. */}
       <div className="mt-6 flex justify-center lg:hidden">
-        <ThemeSwitcher />
+        <div className="flex flex-col items-center gap-2">
+          <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-neutral-500">
+            Theme
+          </span>
+          <ThemeSwitcher />
+        </div>
       </div>
     </AuthCard>
   )
@@ -413,21 +422,31 @@ export function FirebaseLoginScreen() {
 
 function LoginBrandPanel() {
   const points = [
-    "SOAP notes from your session transcript",
-    "Dual-method verification — LLM + classical NLP",
+    "AI drafts your SOAP notes from the session for you to review, edit, and finalize",
+    "Chat right on a patient's chart to get answers in context",
+    "Compliance items and notes to finalize, tracked in one place",
     "HIPAA-compliant by design",
   ]
   return (
     <>
       <div>
+        <span
+          className="mb-2.5 block text-xs font-semibold uppercase tracking-[0.12em]"
+          style={{ color: "var(--brand-panel-accent)" }}
+        >
+          For mental health clinicians
+        </span>
         <span className="font-display text-3xl font-bold">Pablo</span>
         <p
           className="mt-6 max-w-xs font-display text-2xl leading-snug"
           style={{ color: "var(--brand-panel-fg)" }}
         >
-          The therapy paperwork you&rsquo;re actually allowed to like.
+          Let AI carry the documentation, so your evenings and weekends are yours again.
         </p>
-        <div className="mt-8">
+        <div className="mt-8 flex flex-col gap-2">
+          <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-brand-panel-muted">
+            Theme
+          </span>
           <ThemeSwitcher />
         </div>
       </div>

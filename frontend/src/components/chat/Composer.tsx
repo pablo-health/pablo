@@ -70,7 +70,7 @@ export function Composer({
 
   return (
     <div data-slot="chat-composer" className="flex flex-col gap-1">
-      <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-white px-3 py-2 shadow-sm focus-within:border-neutral-400 transition-colors">
+      <div className="flex items-end gap-2 rounded-2xl border border-neutral-200 bg-card px-3 py-2 shadow-sm focus-within:border-neutral-400 transition-colors">
         <textarea
           ref={textareaRef}
           value={value}

@@ -178,14 +178,14 @@ export function ChatHistorySidebar({
         <button
           type="button"
           onClick={onNewConversation}
-          className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
+          className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-card px-2 py-1 text-xs font-medium text-neutral-700 hover:bg-neutral-100"
           data-testid="chat-history-new"
         >
           <Plus className="size-3" /> New
         </button>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto rounded-md border border-neutral-200 bg-white">
+      <div className="flex-1 min-h-0 overflow-y-auto rounded-md border border-neutral-200 bg-card">
         {loading ? (
           <div className="flex items-center justify-center p-4 text-xs text-neutral-500">
             <Loader2 className="size-3 animate-spin mr-1" /> Loading…
@@ -321,7 +321,7 @@ export function ChatHistorySidebar({
                         <button
                           type="button"
                           onClick={() => setPendingDelete(null)}
-                          className="rounded border border-neutral-300 bg-white px-2 py-1 hover:bg-neutral-100"
+                          className="rounded border border-neutral-300 bg-card px-2 py-1 hover:bg-neutral-100"
                         >
                           Cancel
                         </button>

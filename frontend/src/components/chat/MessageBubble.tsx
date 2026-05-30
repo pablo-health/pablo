@@ -76,7 +76,7 @@ export function MessageBubble({
     <div data-slot="chat-message" data-role="assistant" className="flex flex-col items-start gap-1">
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl rounded-bl-md bg-white border border-neutral-200 shadow-sm",
+          "max-w-[85%] rounded-2xl rounded-bl-md bg-card border border-neutral-200 shadow-sm",
           "px-4 py-2.5 text-sm leading-relaxed text-neutral-900 whitespace-pre-wrap break-words",
         )}
       >
