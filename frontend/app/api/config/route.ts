@@ -19,5 +19,6 @@ export async function GET() {
     firebaseAppId: process.env.FIREBASE_APP_ID || process.env.NEXT_PUBLIC_FIREBASE_APP_ID || '',
     ratingFeedbackRequiredBelow: parseInt(process.env.RATING_FEEDBACK_REQUIRED_BELOW || '5', 10),
     showVerificationBadges: process.env.SHOW_VERIFICATION_BADGES === 'true',
+    introVideoUrl: process.env.INTRO_VIDEO_URL || '',
   })
 }
