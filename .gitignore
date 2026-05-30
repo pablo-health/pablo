@@ -52,6 +52,9 @@ backend/data/nli-therapy-*
 # for keeping environment-specific automation alongside the checkout).
 local/
 
+# Playwright MCP session artifacts (console logs, page snapshots) — local debug only
+.playwright-mcp/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
