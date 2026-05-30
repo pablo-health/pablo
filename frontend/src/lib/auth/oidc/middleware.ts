@@ -76,17 +76,26 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname.startsWith(p))
 }
 
-export default async function oidcAuthMiddleware(request: NextRequest) {
-  // Dev mode: skip auth, just add security headers.
-  if (IS_DEV_MODE) {
-    return addSecurityHeaders(NextResponse.next())
-  }
-
+/**
+ * The protected handler, wrapped by Auth.js `auth()`.
+ *
+ * Wrapping (rather than calling `auth()` imperatively) is load-bearing: when
+ * the session read triggers a Keycloak token rotation in the `jwt` callback,
+ * the `auth()` wrapper writes the rotated token back to the cookie on the
+ * outgoing response. A bare `await auth()` would refresh the token but drop
+ * the new value, so the next request would refresh again with an
+ * already-consumed refresh token — forcing a spurious re-login.
+ *
+ * NOTE: even with persistence, multiple session readers in one request
+ * (middleware + SSR + the client session endpoint) can each attempt a
+ * refresh. Keycloak realms with refresh-token rotation enabled should
+ * disable it for this client (or accept reuse) so concurrent refreshes
+ * don't invalidate each other. See the deployment notes.
+ */
+const handleProtected = auth((request) => {
   const { pathname } = request.nextUrl
-
-  // Auth.js `auth()` in edge context reads and decrypts the session cookie.
-  const session = await auth()
-  const isAuthenticated = !!session && !(session as { error?: string }).error
+  const session = request.auth as { error?: string } | null
+  const isAuthenticated = !!session && !session.error
 
   if (isAuthenticated) {
     // Authenticated user on /login → redirect to dashboard.
@@ -106,4 +115,14 @@ export default async function oidcAuthMiddleware(request: NextRequest) {
   const loginUrl = new URL("/login", request.url)
   loginUrl.searchParams.set("callbackUrl", request.url)
   return addSecurityHeaders(NextResponse.redirect(loginUrl))
+})
+
+export default function oidcAuthMiddleware(request: NextRequest) {
+  // Dev mode: skip auth entirely (no IdP configured), just add headers.
+  // Done before `auth()` runs so it isn't invoked without a configured secret.
+  if (IS_DEV_MODE) {
+    return addSecurityHeaders(NextResponse.next())
+  }
+  // Delegate to the auth()-wrapped handler so cookie rotation is persisted.
+  return (handleProtected as unknown as (req: NextRequest) => Promise<NextResponse>)(request)
 }

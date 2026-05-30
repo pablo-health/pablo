@@ -12,13 +12,15 @@
  * (next-auth@beta) manages the session cookie and token rotation.
  */
 
-import { useSession, signOut as nextAuthSignOut } from "next-auth/react"
+import { useSession, signOut as nextAuthSignOut, getSession } from "next-auth/react"
 import type { AuthState, AuthUser, ClientAuthProvider } from "@/lib/auth/types"
 
 /** Extend the Auth.js session type with the fields we add in config.ts. */
 interface OidcSession {
   idToken: string | null
   error: string | null
+  /** OIDC subject id, surfaced by the `session` callback in config.ts. */
+  sub?: string | null
   user?: {
     name?: string | null
     email?: string | null
@@ -29,21 +31,11 @@ interface OidcSession {
 function toAuthUser(session: OidcSession): AuthUser | null {
   if (!session.user && !session.idToken) return null
 
-  // Derive a stable uid from the id_token subject claim. Auth.js puts the
-  // sub claim in session.user.name in some configurations, but we can also
-  // parse it from the JWT payload directly as a fallback.
-  let uid = ""
-  if (session.idToken) {
-    try {
-      const payload = JSON.parse(atob(session.idToken.split(".")[1]))
-      uid = (payload.sub as string) || ""
-    } catch {
-      // Malformed token — uid stays empty; won't affect auth behaviour.
-    }
-  }
-
+  // uid comes from the OIDC subject id surfaced server-side by the session
+  // callback — no client-side token parsing (id_token payloads are
+  // base64url, which `atob` mis-decodes).
   return {
-    uid,
+    uid: session.sub ?? "",
     email: session.user?.email ?? null,
     displayName: session.user?.name ?? null,
     photoURL: session.user?.image ?? null,
@@ -86,8 +78,6 @@ export function useOidcAuthState(): AuthState {
 export async function getOidcIdToken(forceRefresh = false): Promise<string | null> {
   if (typeof window === "undefined") return null
 
-  const { getSession } = await import("next-auth/react")
-
   if (forceRefresh) {
     // Bypass any in-memory session cache by fetching the session endpoint
     // directly. Auth.js re-runs the jwt callback server-side, which invokes
@@ -121,42 +111,56 @@ export async function getOidcIdToken(forceRefresh = false): Promise<string | nul
  * redirect.
  */
 export async function oidcSignOut(): Promise<void> {
+  // 1. Capture the id_token BEFORE clearing the local session. Keycloak's
+  //    end-session endpoint needs it as `id_token_hint` for a clean,
+  //    prompt-free RP-initiated logout that honors post_logout_redirect_uri
+  //    (without the hint, Keycloak ≥18 shows a confirmation interstitial and
+  //    may ignore the redirect). Once we sign out locally the token is gone,
+  //    so the ordering here is load-bearing.
+  let idToken: string | null = null
   try {
-    // Auth.js signOut clears the session cookie. `redirect: false` lets us
-    // handle the navigation ourselves after the IdP logout completes.
-    await nextAuthSignOut({ redirect: false })
+    const session = (await getSession()) as unknown as OidcSession | null
+    idToken = session?.idToken ?? null
   } catch {
-    // Cookie clear failed — still attempt IdP logout below.
+    // No session to read — proceed; logout falls back to a local redirect.
   }
 
-  // RP-initiated logout: redirect through Keycloak's end_session_endpoint
-  // so the IdP session (SSO cookie) is terminated. We discover the endpoint
-  // from the OIDC issuer's well-known config. Best-effort — if discovery
-  // fails we just navigate to /login.
-  try {
-    const issuer = process.env.NEXT_PUBLIC_KEYCLOAK_ISSUER
-    if (issuer) {
+  // 2. Resolve Keycloak's end_session_endpoint and build the logout URL
+  //    (best-effort). Discovery needs the public issuer URL.
+  let endSessionUrl: string | null = null
+  const issuer = process.env.NEXT_PUBLIC_KEYCLOAK_ISSUER
+  if (issuer) {
+    try {
       const metaRes = await fetch(`${issuer}/.well-known/openid-configuration`)
       if (metaRes.ok) {
         const meta = (await metaRes.json()) as { end_session_endpoint?: string }
         if (meta.end_session_endpoint) {
-          const logoutUrl = new URL(meta.end_session_endpoint)
-          logoutUrl.searchParams.set(
+          const url = new URL(meta.end_session_endpoint)
+          url.searchParams.set(
             "post_logout_redirect_uri",
             `${window.location.origin}/login`
           )
-          window.location.assign(logoutUrl.toString())
-          return
+          if (idToken) url.searchParams.set("id_token_hint", idToken)
+          endSessionUrl = url.toString()
         }
       }
+    } catch {
+      // Discovery failed — fall through to a local redirect below.
     }
-  } catch {
-    // Discovery failed — fall through to local redirect.
   }
 
-  // Fallback: navigate to login without IdP logout. The local session is
-  // already cleared so the user is signed out from this app.
-  window.location.assign("/login")
+  // 3. Clear the local Auth.js session cookie.
+  try {
+    await nextAuthSignOut({ redirect: false })
+  } catch {
+    // Cookie clear failed — still navigate below.
+  }
+
+  // 4. Prefer RP-initiated logout so the Keycloak SSO session is terminated;
+  //    otherwise fall back to a local redirect. NOTE: the fallback leaves the
+  //    IdP SSO cookie intact, so the next login can be silent — keep
+  //    NEXT_PUBLIC_KEYCLOAK_ISSUER set in any OIDC deployment.
+  window.location.assign(endSessionUrl ?? "/login")
 }
 
 export const oidcClientProvider: ClientAuthProvider = {

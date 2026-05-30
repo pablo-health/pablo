@@ -119,15 +119,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     },
 
     /**
-     * Expose the id_token and any error flag on the session object so both
-     * client components (via `useSession`) and server code (via `auth()`)
-     * can read `session.idToken`.
+     * Expose the id_token, error flag, and subject id on the session object
+     * so both client components (via `useSession`) and server code (via
+     * `auth()`) can read `session.idToken` / `session.sub`.
      */
     async session({ session, token }) {
       return {
         ...session,
         idToken: (token.idToken as string | undefined) ?? null,
         error: (token.error as string | undefined) ?? null,
+        // Surface the OIDC subject id here so the client can derive a stable
+        // uid without parsing the (base64url-encoded) id_token in the browser.
+        sub: (token.sub as string | undefined) ?? null,
       }
     },
   },
