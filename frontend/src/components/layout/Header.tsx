@@ -4,8 +4,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { signOut } from "firebase/auth"
-import { getFirebaseAuth } from "@/lib/firebase"
+import { getClientAuthProvider } from "@/lib/auth/provider"
 import Image from "next/image"
 import { UserCircle, LogOut } from "lucide-react"
 import { ThemeMenu } from "@/components/theme/ThemeMenu"
@@ -24,11 +23,10 @@ export function Header({ user }: HeaderProps) {
 
   const handleSignOut = async () => {
     try {
-      await signOut(getFirebaseAuth())
+      await getClientAuthProvider().signOut()
     } catch {
-      // Firebase not initialized (dev mode) — just redirect
+      // Provider not initialized (dev mode) — just redirect.
     }
-    await fetch("/api/logout")
     router.push("/login")
   }
 

@@ -14,7 +14,7 @@ import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Matches -prod, -production, -prod<N> at end of project id. The
@@ -209,13 +209,14 @@ class Settings(BaseSettings):
         description="Allow credentials in CORS requests",
     )
 
-    # Multi-Tenancy Settings (Identity Platform)
+    # Multi-Tenancy Settings
     multi_tenancy_enabled: bool = Field(
         default=False,
         description=(
-            "Enable Identity Platform multi-tenancy. "
-            "When enabled, JWTs must contain a firebase.tenant claim "
-            "and requests are routed to per-practice PostgreSQL schemas."
+            "Enable per-practice multi-tenancy. When enabled, requests are "
+            "routed to per-practice PostgreSQL schemas, resolved from the "
+            "authenticated user's email via the platform.email_tenant_mappings "
+            "table (not from a token claim)."
         ),
     )
 
@@ -268,6 +269,61 @@ class Settings(BaseSettings):
             "Required when auth_mode=iap."
         ),
     )
+
+    # Pluggable OIDC auth backend (additive — independent of auth_mode).
+    # When oidc_issuer is non-empty the backend will additionally accept
+    # ID tokens from this issuer, dispatched on the token's `iss` claim and
+    # resolved through the same user_identities mapping as Firebase. All
+    # three empty (the default) means Firebase-only, identical behavior.
+    oidc_issuer: str = Field(
+        default="",
+        description=(
+            "OIDC issuer URL (the `iss` claim) of an additional accepted "
+            "token issuer, e.g. https://keycloak.example.com/realms/pablo. "
+            "Empty disables the OIDC backend (Firebase-only)."
+        ),
+    )
+    oidc_audience: str = Field(
+        default="",
+        description=(
+            "Expected `aud` claim on OIDC ID tokens. Required when "
+            "oidc_issuer is set."
+        ),
+    )
+    oidc_jwks_uri: str = Field(
+        default="",
+        description=(
+            "JWKS endpoint URL for the OIDC issuer's RS256 signing keys, "
+            "e.g. https://keycloak.example.com/realms/pablo/protocol/"
+            "openid-connect/certs. Required when oidc_issuer is set."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_oidc_config(self) -> "Settings":
+        """Fail fast if the OIDC backend is half-configured.
+
+        When ``oidc_issuer`` is set, the audience and JWKS URI must be too —
+        otherwise ``OidcVerifier`` would be built with an empty audience and
+        rely on PyJWT's empty-aud handling as an implicit backstop. We refuse
+        that at startup instead. (http issuers are intentionally allowed so a
+        local Keycloak spike on http://localhost works; production uses https.)
+        """
+        if self.oidc_issuer:
+            missing = [
+                name
+                for name, value in (
+                    ("oidc_audience", self.oidc_audience),
+                    ("oidc_jwks_uri", self.oidc_jwks_uri),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(
+                    f"oidc_issuer is set but {', '.join(missing)} must also be "
+                    "set to enable the OIDC auth backend"
+                )
+        return self
 
     # Firebase Blocking Function OIDC Verification
     # The blocking functions (beforeCreate / beforeSignIn) call this backend
