@@ -78,7 +78,7 @@ google-cloud-logging = "^3.11.0"
 # startup — it will fail the first Gemini call. Was previously
 # transitive via meeting-transcription's optional google extra;
 # THERAPY-71d5 dropped meeting-transcription, so pin explicitly.
-google-genai = "^1.56.0"
+google-genai = "^2.7.0"
 
 # TOTP generation — pentest identity bootstrap (backend/app/jobs/pentest_identity.py)
 # creates ephemeral MFA-enrolled Firebase users for the automated pentest.
