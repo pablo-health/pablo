@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
 
@@ -77,8 +77,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 __all__ = ["run_in_tenant", "tenant_db_session"]
-
-_T = TypeVar("_T")
 
 
 @contextmanager

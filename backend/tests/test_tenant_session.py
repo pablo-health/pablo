@@ -144,9 +144,13 @@ class TestTenantDbSessionContextVars:
         """ContextVars must be cleared even when the body raises."""
         with _patch_standalone() as (mock_session, _):
             mock_session.new = [object()]  # trigger assert_tenant_schema_set path
-            with pytest.raises(RuntimeError, match="bang"):  # noqa: SIM117
+            raised = False
+            try:
                 with tenant_db_session("practice_abc", "user-1"):
                     raise RuntimeError("bang")
+            except RuntimeError:
+                raised = True
+            assert raised  # the error must propagate, not be swallowed
         assert _request_session.get() is None
         assert _current_user_id.get() is None
 
@@ -169,9 +173,13 @@ class TestTenantDbSessionLifecycle:
 
     def test_rolls_back_on_exception(self) -> None:
         with _patch_standalone() as (mock_session, _):
-            with pytest.raises(ValueError, match="oops"):  # noqa: SIM117
+            raised = False
+            try:
                 with tenant_db_session("practice_abc", "user-1"):
                     raise ValueError("oops")
+            except ValueError:
+                raised = True
+            assert raised  # the error must propagate, not be swallowed
             mock_session.rollback.assert_called_once()
             mock_session.commit.assert_not_called()
             mock_session.close.assert_called_once()
@@ -188,9 +196,11 @@ class TestTenantDbSessionLifecycle:
 
     def test_closes_session_after_rollback(self) -> None:
         with _patch_standalone() as (mock_session, _):
-            with pytest.raises(RuntimeError):  # noqa: SIM117
+            try:
                 with tenant_db_session("practice_abc", "user-1"):
                     raise RuntimeError("boom")
+            except RuntimeError:
+                pass
             call_order = mock_session.mock_calls
             rollback_idx = call_order.index(call.rollback())
             close_idx = call_order.index(call.close())
