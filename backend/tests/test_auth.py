@@ -18,7 +18,7 @@ from app.auth.service import (
     require_mfa,
     verify_firebase_token,
 )
-from app.db import _request_session
+from app.db import _current_user_id, _request_session
 from app.models import User
 from app.repositories import (
     InMemoryAllowlistRepository,
@@ -857,6 +857,7 @@ class TestGetTenantContext:
             # Set request-scoped DB session (normally done by middleware)
             mock_session = MagicMock()
             token = _request_session.set(mock_session)
+            user_id_token = _current_user_id.set(None)
             try:
                 ctx = get_tenant_context(
                     _mock_request(),
@@ -864,8 +865,26 @@ class TestGetTenantContext:
                     InMemoryUserRepository(),
                     _identity_repo_for("user123"),
                 )
+
+                # Returning the right TenantContext is not enough — the
+                # function must actually ARM RLS, or queries silently return
+                # zero rows under row-level security. Assert the side effects,
+                # so a regression that drops the RLS-arming arm fails loudly.
+                # 1. set_current_user_id stashed the id in the ContextVar the
+                #    after_begin listener re-arms the GUC from on each txn.
+                assert _current_user_id.get() == "user123"
+                # 2. The app.current_user_id GUC was set on the live session.
+                guc_calls = [
+                    ex
+                    for ex in mock_session.execute.call_args_list
+                    if "set_config" in str(ex.args[0])
+                    and "app.current_user_id" in str(ex.args[0])
+                ]
+                assert guc_calls, "get_tenant_context did not arm the RLS GUC"
+                assert guc_calls[0].args[1] == {"uid": "user123"}
             finally:
                 _request_session.reset(token)
+                _current_user_id.reset(user_id_token)
 
         assert ctx == TenantContext(
             user_id="user123",
