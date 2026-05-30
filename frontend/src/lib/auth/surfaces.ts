@@ -10,6 +10,7 @@
 import { type AuthSurfaces } from "./types"
 import { activeAuthProviderId } from "./provider"
 import { firebaseAuthSurfaces } from "./firebase/surfaces"
+import { oidcAuthSurfaces } from "./oidc/surfaces"
 
 export function getAuthSurfaces(): AuthSurfaces {
   const id = activeAuthProviderId()
@@ -17,9 +18,7 @@ export function getAuthSurfaces(): AuthSurfaces {
     case "firebase":
       return firebaseAuthSurfaces
     case "oidc":
-      // Wired in step 5 (login → signIn("keycloak"); MFA on Keycloak's
-      // pages → no-op surface). Dev stays on `firebase` until step 7.
-      throw new Error("OIDC auth surfaces are not wired yet (step 5).")
+      return oidcAuthSurfaces
     default:
       throw new Error(`Unknown NEXT_PUBLIC_AUTH_PROVIDER: ${id}`)
   }
