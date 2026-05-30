@@ -49,6 +49,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session as OrmSession
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -285,3 +286,95 @@ class TestRlsFailsClosedWithoutGuc:
             "unset GUC, or the pablo role gained BYPASSRLS. "
             f"Leaks: {leaks}. All probed: {visible_counts}."
         )
+
+
+class TestRlsGucRearmedAcrossCommit:
+    """The ``after_begin`` Session listener must re-arm ``app.current_user_id``
+    on every new transaction.
+
+    ``set_config(..., is_local=true)`` is transaction-scoped, so a mid-request
+    commit (e.g. the lock-release commit before SOAP generation) clears it.
+    Without ``_rearm_rls_user_id_on_txn_begin``, the next query in the request
+    would start a fresh transaction with no GUC and RLS would silently return
+    zero rows — patient data vanishing mid-request, indistinguishable from
+    "no data". That listener had no test coverage.
+    """
+
+    def test_guc_survives_mid_session_commit(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        from app.db import _current_user_id  # noqa: PLC0415
+
+        seed_user = "rearm-test-user"
+        patient_id = str(uuid.uuid4())
+
+        # Seed a patient + grant with the GUC set so the policy USING/CHECK
+        # clauses accept the writes (mirrors the fail-closed test's seed).
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": seed_user},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, "
+                    "first_name_lower, last_name_lower, status, "
+                    "session_count, created_at, updated_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Ada', 'Lovelace', "
+                    "'ada', 'lovelace', 'active', 0, now(), now())"
+                ),
+                {"pid": patient_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patient_clinicians (patient_id, user_id, "
+                    "granted_by) VALUES (CAST(:pid AS uuid), :u, :u)"
+                ),
+                {"pid": patient_id, "u": seed_user},
+            )
+
+        count_sql = text(
+            f"SELECT count(*) FROM {tenant_schema}.patients "  # noqa: S608
+            "WHERE id = CAST(:pid AS uuid)"
+        )
+
+        # Arm the request-scoped ContextVar the after_begin listener reads.
+        # Use an ORM Session (not a raw connection) — the listener is
+        # registered on Session, so it only fires for ORM transactions.
+        token = _current_user_id.set(seed_user)
+        session = OrmSession(bind=engine)
+        try:
+            session.execute(
+                text(f"SET search_path = {tenant_schema}, platform, public")
+            )
+
+            before = session.execute(count_sql, {"pid": patient_id}).scalar_one()
+            assert before == 1, "patient should be visible with the GUC armed"
+
+            # Mid-request commit clears the transaction-local GUC.
+            session.commit()
+
+            # The next query begins a fresh transaction; after_begin must
+            # re-arm the GUC from the ContextVar so the row stays visible.
+            after = session.execute(count_sql, {"pid": patient_id}).scalar_one()
+            assert after == 1, (
+                "RLS GUC was not re-armed after a mid-session commit — the "
+                "after_begin listener did not fire and the patient vanished."
+            )
+
+            # Control: clear the ContextVar. The next transaction's listener
+            # no-ops, the GUC stays empty, and RLS hides the row. This proves
+            # the assertions above are real RLS enforcement, not a vacuous
+            # pass (RLS disabled / superuser bypass).
+            session.commit()
+            _current_user_id.set(None)
+            without_guc = session.execute(count_sql, {"pid": patient_id}).scalar_one()
+            assert without_guc == 0, (
+                "With app.current_user_id unset the patient must be hidden; "
+                "a non-zero count means RLS is not actually enforcing and the "
+                "re-arm assertions above are vacuous."
+            )
+        finally:
+            session.close()
+            _current_user_id.reset(token)
