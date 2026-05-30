@@ -21,6 +21,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from app.db import _current_tenant_schema, set_tenant_schema
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -101,22 +102,42 @@ def setup_test_schemas(engine):
 
 @pytest.fixture
 def db_alpha(engine, setup_test_schemas):
-    """Session scoped to the Alpha practice schema."""
-    session = sessionmaker(bind=engine, expire_on_commit=False)()
-    session.execute(text(f"SET search_path = {SCHEMA_ALPHA}, {PLATFORM_SCHEMA}, public"))
+    """Session scoped to the Alpha practice schema.
+
+    Sets the search_path through the production ``set_tenant_schema`` helper
+    (not raw SQL) so the test exercises our tenant-scoping code. Binds to a
+    dedicated held connection so the path stays stable for the fixture's
+    lifetime — the two-tenant interleave needs Alpha and Beta live at once,
+    which the single ``_current_tenant_schema`` context var cannot represent.
+    """
+    conn = engine.connect()
+    session = sessionmaker(bind=conn, expire_on_commit=False)()
+    set_tenant_schema(session, SCHEMA_ALPHA)
     yield session
     session.rollback()
     session.close()
+    conn.close()
+    _current_tenant_schema.set(None)
 
 
 @pytest.fixture
 def db_beta(engine, setup_test_schemas):
-    """Session scoped to the Beta practice schema."""
-    session = sessionmaker(bind=engine, expire_on_commit=False)()
-    session.execute(text(f"SET search_path = {SCHEMA_BETA}, {PLATFORM_SCHEMA}, public"))
+    """Session scoped to the Beta practice schema.
+
+    Sets the search_path through the production ``set_tenant_schema`` helper
+    (not raw SQL) so the test exercises our tenant-scoping code. Binds to a
+    dedicated held connection so the path stays stable for the fixture's
+    lifetime — the two-tenant interleave needs Alpha and Beta live at once,
+    which the single ``_current_tenant_schema`` context var cannot represent.
+    """
+    conn = engine.connect()
+    session = sessionmaker(bind=conn, expire_on_commit=False)()
+    set_tenant_schema(session, SCHEMA_BETA)
     yield session
     session.rollback()
     session.close()
+    conn.close()
+    _current_tenant_schema.set(None)
 
 
 def _insert_patient(db: Session, patient_id: str, user_id: str, name: str) -> None:
