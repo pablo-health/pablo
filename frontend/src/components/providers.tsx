@@ -10,6 +10,7 @@ import { AuthProvider } from "@/lib/auth-context"
 import { ToastProvider } from "@/components/ui/Toast"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
+import { OidcSessionProviderWrapper } from "@/lib/auth/oidc/SessionProviderWrapper"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -30,16 +31,20 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider>
-        <AuthProvider>
-          <ThemeProvider>
-            <ToastProvider>
-              {children}
-              <ReactQueryDevtools initialIsOpen={false} />
-            </ToastProvider>
-          </ThemeProvider>
-        </AuthProvider>
-      </ConfigProvider>
+      {/* OidcSessionProviderWrapper is a no-op when the active provider is
+          not `oidc` — the Firebase path is unchanged at runtime. */}
+      <OidcSessionProviderWrapper>
+        <ConfigProvider>
+          <AuthProvider>
+            <ThemeProvider>
+              <ToastProvider>
+                {children}
+                <ReactQueryDevtools initialIsOpen={false} />
+              </ToastProvider>
+            </ThemeProvider>
+          </AuthProvider>
+        </ConfigProvider>
+      </OidcSessionProviderWrapper>
     </QueryClientProvider>
   )
 }
