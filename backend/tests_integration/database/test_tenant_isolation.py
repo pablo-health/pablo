@@ -101,22 +101,36 @@ def setup_test_schemas(engine):
 
 @pytest.fixture
 def db_alpha(engine, setup_test_schemas):
-    """Session scoped to the Alpha practice schema."""
-    session = sessionmaker(bind=engine, expire_on_commit=False)()
-    session.execute(text(f"SET search_path = {SCHEMA_ALPHA}, {PLATFORM_SCHEMA}, public"))
+    """Session scoped to the Alpha practice schema.
+
+    Binds to a dedicated held connection so the search_path never
+    round-trips the pool — the checkin reset cannot fire on a
+    connection that is still checked out for the fixture's lifetime.
+    """
+    conn = engine.connect()
+    conn.execute(text(f"SET search_path = {SCHEMA_ALPHA}, {PLATFORM_SCHEMA}, public"))
+    session = sessionmaker(bind=conn, expire_on_commit=False)()
     yield session
     session.rollback()
     session.close()
+    conn.close()
 
 
 @pytest.fixture
 def db_beta(engine, setup_test_schemas):
-    """Session scoped to the Beta practice schema."""
-    session = sessionmaker(bind=engine, expire_on_commit=False)()
-    session.execute(text(f"SET search_path = {SCHEMA_BETA}, {PLATFORM_SCHEMA}, public"))
+    """Session scoped to the Beta practice schema.
+
+    Binds to a dedicated held connection so the search_path never
+    round-trips the pool — the checkin reset cannot fire on a
+    connection that is still checked out for the fixture's lifetime.
+    """
+    conn = engine.connect()
+    conn.execute(text(f"SET search_path = {SCHEMA_BETA}, {PLATFORM_SCHEMA}, public"))
+    session = sessionmaker(bind=conn, expire_on_commit=False)()
     yield session
     session.rollback()
     session.close()
+    conn.close()
 
 
 def _insert_patient(db: Session, patient_id: str, user_id: str, name: str) -> None:

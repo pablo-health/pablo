@@ -334,7 +334,13 @@ def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ig
         dbapi_conn.autocommit = True
         cursor = dbapi_conn.cursor()
         try:
-            cursor.execute("SET search_path = public")
+            # Neutral baseline = platform, public (mirrors the no-tenant tail of
+            # set_tenant_schema). Drops any tenant schema — so tenant tables are
+            # unreachable and a forgetful checkout fails closed — while keeping
+            # the shared platform schema (audit log, users) reachable. Resetting
+            # to bare ``public`` would also hide platform tables and break every
+            # platform-level write on a re-pooled connection.
+            cursor.execute(f"SET search_path = {PLATFORM_SCHEMA}, public")
         finally:
             cursor.close()
     finally:

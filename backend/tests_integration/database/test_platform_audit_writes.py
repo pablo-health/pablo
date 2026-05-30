@@ -23,7 +23,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
+from app.db import (
+    DEFAULT_PRACTICE_SCHEMA,
+    PLATFORM_SCHEMA,
+    _current_tenant_schema,
+    set_tenant_schema,
+)
 from app.db.models import Base
 from app.db.platform_models import PlatformBase
 from app.models.audit import AUDIT_LOG_RETENTION_DAYS
@@ -66,12 +71,13 @@ def engine() -> Iterator[Engine]:
 def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
-    session.execute(text("SET search_path = practice, platform, public"))
+    set_tenant_schema(session)
     session.execute(text("TRUNCATE TABLE platform.platform_audit_logs"))
     session.commit()
     try:
         yield session
     finally:
+        _current_tenant_schema.set(None)
         session.rollback()
         session.close()
 
