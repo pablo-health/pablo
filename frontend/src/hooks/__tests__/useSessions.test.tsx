@@ -7,12 +7,13 @@
  * Includes optimistic update and cache invalidation tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { renderHook, waitFor, act } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
   useSessionList,
   useSession,
+  useSessionProcessing,
   useUploadSession,
   useFinalizeSession,
   useUpdateSessionRating,
@@ -412,6 +413,199 @@ describe("useSessions hooks", () => {
         queryKey: ["sessions", "list"],
       })
     })
+  })
+
+  describe("useSessionProcessing", () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("returns { sessionId: null, timedOut: false } when patientId is null", () => {
+      const { result } = renderHook(() => useSessionProcessing(null), {
+        wrapper: createWrapper(),
+      })
+      expect(result.current).toEqual({ sessionId: null, timedOut: false })
+    })
+
+    it("returns sessionId: null when no in-flight session found for patient", async () => {
+      const finishedSession = createMockSession({
+        id: "session-done",
+        patient_id: "patient-1",
+        status: "pending_review",
+      })
+
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [finishedSession],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+
+      const { result } = renderHook(() => useSessionProcessing("patient-1"), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => expect(sessionsApi.listSessions).toHaveBeenCalled())
+
+      expect(result.current.sessionId).toBeNull()
+      expect(result.current.timedOut).toBe(false)
+    })
+
+    it("returns sessionId when a queued session is found for the patient", async () => {
+      const queuedSession = createMockSession({
+        id: "session-queued",
+        patient_id: "patient-1",
+        status: "queued",
+      })
+
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [queuedSession],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+
+      const { result } = renderHook(() => useSessionProcessing("patient-1"), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.sessionId).toBe("session-queued")
+      })
+      expect(result.current.timedOut).toBe(false)
+    })
+
+    it("returns sessionId when a processing session is found for the patient", async () => {
+      const processingSession = createMockSession({
+        id: "session-processing",
+        patient_id: "patient-1",
+        status: "processing",
+      })
+
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [processingSession],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+
+      const { result } = renderHook(() => useSessionProcessing("patient-1"), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.sessionId).toBe("session-processing")
+      })
+      expect(result.current.timedOut).toBe(false)
+    })
+
+    it("ignores processing sessions for other patients", async () => {
+      const otherPatientSession = createMockSession({
+        id: "session-other",
+        patient_id: "patient-2",
+        status: "processing",
+      })
+
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [otherPatientSession],
+        total: 1,
+        page: 1,
+        page_size: 50,
+      })
+
+      const { result } = renderHook(() => useSessionProcessing("patient-1"), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => expect(sessionsApi.listSessions).toHaveBeenCalled())
+
+      expect(result.current.sessionId).toBeNull()
+    })
+
+    it("does not fetch when patientId is null", () => {
+      renderHook(() => useSessionProcessing(null), {
+        wrapper: createWrapper(),
+      })
+
+      expect(sessionsApi.listSessions).not.toHaveBeenCalled()
+    })
+
+    it("keeps polling and discovers session when first list response is empty", async () => {
+      const processingSession = createMockSession({
+        id: "session-late",
+        patient_id: "patient-1",
+        status: "processing",
+      })
+
+      // First call: empty list (warm cache misses the new row)
+      vi.mocked(sessionsApi.listSessions)
+        .mockResolvedValueOnce({ data: [], total: 0, page: 1, page_size: 50 })
+        // Second call: session has appeared
+        .mockResolvedValue({
+          data: [processingSession],
+          total: 1,
+          page: 1,
+          page_size: 50,
+        })
+
+      vi.useFakeTimers()
+
+      const { result } = renderHook(() => useSessionProcessing("patient-1"), {
+        wrapper: createWrapper(),
+      })
+
+      // Let the initial fetch resolve (flush timers + promises).
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+
+      expect(result.current.sessionId).toBeNull()
+      expect(result.current.timedOut).toBe(false)
+
+      // Advance past the 2 s refetch interval so the second fetch fires and
+      // the session is discovered.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500)
+      })
+
+      expect(result.current.sessionId).toBe("session-late")
+      expect(result.current.timedOut).toBe(false)
+
+      vi.useRealTimers()
+    }, 15_000)
+
+    it("sets timedOut after SESSION_DISCOVERY_TIMEOUT_MS with no session", async () => {
+      // Always return empty — session never appears
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue({
+        data: [],
+        total: 0,
+        page: 1,
+        page_size: 50,
+      })
+
+      vi.useFakeTimers()
+
+      const { result } = renderHook(() => useSessionProcessing("patient-1"), {
+        wrapper: createWrapper(),
+      })
+
+      // Let the initial fetch resolve.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+
+      expect(result.current.timedOut).toBe(false)
+
+      // Jump past the 60 s timeout and trigger another refetch cycle.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(62_000)
+      })
+
+      expect(result.current.timedOut).toBe(true)
+      expect(result.current.sessionId).toBeNull()
+
+      vi.useRealTimers()
+    }, 15_000)
   })
 
   describe("useUpdateSessionRating", () => {

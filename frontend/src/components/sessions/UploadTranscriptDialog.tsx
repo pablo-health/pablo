@@ -9,7 +9,7 @@
 
 "use client"
 
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -43,6 +43,7 @@ import {
   getFileExtension,
   formatFileSize,
 } from "@/lib/utils/fileValidation"
+import { SessionGeneratingOverlay } from "./SessionGeneratingOverlay"
 import type { SessionResponse, TranscriptFormat } from "@/types/sessions"
 
 export interface UploadTranscriptDialogProps {
@@ -102,6 +103,8 @@ export function UploadTranscriptDialog({
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  // The patient id whose session is currently being generated (overlay active).
+  const [generatingPatientId, setGeneratingPatientId] = useState<string | null>(null)
 
   const { data: patientsData, isLoading: isLoadingPatients } = usePatientList()
   const uploadMutation = useUploadSession()
@@ -181,37 +184,74 @@ export function UploadTranscriptDialog({
   const onSubmit = async (data: UploadFormData) => {
     setUploadError(null)
 
+    let transcript: Awaited<ReturnType<typeof parseTranscriptFile>>
     try {
-      // Parse file content
-      const transcript = await parseTranscriptFile(data.transcript_file)
+      transcript = await parseTranscriptFile(data.transcript_file)
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Failed to read transcript file"
+      setUploadError(message)
+      return
+    }
 
-      // Upload session
-      const session = await uploadMutation.mutateAsync({
+    if (onSuccess) {
+      // Caller owns the post-upload experience — keep the dialog open while
+      // the mutation is in flight so "Uploading..." is visible, then close on
+      // success (or surface the error in-dialog on failure).
+      try {
+        const session = await uploadMutation.mutateAsync({
+          patientId: data.patient_id,
+          data: {
+            patient_id: data.patient_id,
+            session_date: data.session_date,
+            transcript,
+          },
+        })
+        setOpen(false)
+        reset()
+        setSelectedFile(null)
+        setFileError(null)
+        onSuccess(session)
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Failed to upload session"
+        setUploadError(message)
+      }
+      return
+    }
+
+    // Default path: close the dialog immediately so the clinician is not
+    // blocked, then fire-and-forget the upload.  The overlay polls until the
+    // note reaches pending_review, then navigates.
+    setOpen(false)
+    reset()
+    setSelectedFile(null)
+    setFileError(null)
+    setGeneratingPatientId(data.patient_id)
+    uploadMutation.mutate(
+      {
         patientId: data.patient_id,
         data: {
           patient_id: data.patient_id,
           session_date: data.session_date,
           transcript,
         },
-      })
-
-      // Success
-      setOpen(false)
-      reset()
-      setSelectedFile(null)
-      setFileError(null)
-
-      if (onSuccess) {
-        onSuccess(session)
-      } else {
-        // Navigate to session detail by default
-        router.push(`/dashboard/sessions/${session.id}`)
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "Failed to upload session"
-      setUploadError(message)
-    }
+      },
+      {
+        onError: (error: unknown) => {
+          setGeneratingPatientId(null)
+          const message =
+            error instanceof Error ? error.message : "Failed to upload session"
+          setUploadError(message)
+          setOpen(true)
+        },
+      },
+    )
   }
+
+  const handleOverlayDone = useCallback(() => {
+    setGeneratingPatientId(null)
+  }, [])
 
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
@@ -235,6 +275,13 @@ export function UploadTranscriptDialog({
   }
 
   return (
+    <>
+    {generatingPatientId !== null && (
+      <SessionGeneratingOverlay
+        patientId={generatingPatientId}
+        onDone={handleOverlayDone}
+      />
+    )}
     <Dialog open={open} onOpenChange={handleOpenChange}>
       {trigger ? (
         <DialogTrigger asChild>{trigger}</DialogTrigger>
@@ -410,5 +457,6 @@ export function UploadTranscriptDialog({
         </form>
       </DialogContent>
     </Dialog>
+    </>
   )
 }
