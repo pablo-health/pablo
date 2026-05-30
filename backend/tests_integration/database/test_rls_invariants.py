@@ -303,7 +303,7 @@ class TestRlsGucRearmedAcrossCommit:
     def test_guc_survives_mid_session_commit(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        from app.db import _current_user_id  # noqa: PLC0415
+        from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
 
         seed_user = "rearm-test-user"
         patient_id = str(uuid.uuid4())
@@ -339,10 +339,18 @@ class TestRlsGucRearmedAcrossCommit:
             "WHERE id = CAST(:pid AS uuid)"
         )
 
-        # Arm the request-scoped ContextVar the after_begin listener reads.
-        # Use an ORM Session (not a raw connection) — the listener is
-        # registered on Session, so it only fires for ORM transactions.
+        # Arm the request-scoped ContextVars the session listeners read.
+        # Use an ORM Session (not a raw connection) — the after_begin
+        # listener is registered on Session, so it only fires for ORM
+        # transactions. _current_tenant_schema arms the pool-checkout
+        # listener that re-applies search_path: the mid-request commit
+        # below releases the connection (checkin resets search_path to a
+        # neutral value) and the next query re-checks it out, so without
+        # this the RLS policy's unqualified ``patient_clinicians`` lookup
+        # would fail to resolve once the connection is re-checked-out.
+        # This mirrors what DatabaseSessionMiddleware sets on every request.
         token = _current_user_id.set(seed_user)
+        schema_token = _current_tenant_schema.set(tenant_schema)
         session = OrmSession(bind=engine)
         try:
             session.execute(
@@ -378,3 +386,4 @@ class TestRlsGucRearmedAcrossCommit:
         finally:
             session.close()
             _current_user_id.reset(token)
+            _current_tenant_schema.reset(schema_token)
