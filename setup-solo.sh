@@ -1609,7 +1609,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --service-account="$BACKEND_SA" \
             --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=24,PYTHONPATH=/app/backend" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
-            --command="python3.13" \
+            --command="python" \
             --args="-m,app.jobs.hipaa_log_review" \
             --max-retries=2 --task-timeout=15m >/dev/null
     else
@@ -1626,7 +1626,7 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --service-account="$BACKEND_SA" \
             --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},VERTEX_REGION=global,REVIEW_WINDOW_HOURS=720,PYTHONPATH=/app/backend" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
-            --command="python3.13" \
+            --command="python" \
             --args="-m,app.jobs.hipaa_log_review" \
             --max-retries=2 --task-timeout=30m >/dev/null
     else
@@ -1642,8 +1642,8 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --image="$BACKEND_IMAGE" \
             --service-account="$BACKEND_SA" \
             --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET}" \
-            --command="python3.13" \
-            --args="-m,backend.app.jobs.pipeline_heartbeat" \
+            --command="python" \
+            --args="-m,app.jobs.pipeline_heartbeat" \
             --max-retries=1 --task-timeout=2m >/dev/null
     else
         echo "  Cloud Run Job pipeline-heartbeat already exists"
@@ -1659,8 +1659,8 @@ if [[ "$ENABLE_ROUTINES" =~ ^[Yy]$ ]]; then
             --service-account="$BACKEND_SA" \
             --set-env-vars="COMPLIANCE_REPORT_BUCKET=${COMPLIANCE_BUCKET},GCP_PROJECT_ID=${PROJECT_ID},PABLO_VERSION=${PABLO_VERSION:-unknown}" \
             --set-secrets="DATABASE_URL=pablo-database-url:latest" \
-            --command="python3.13" \
-            --args="-m,backend.app.jobs.hipaa_attestation" \
+            --command="python" \
+            --args="-m,app.jobs.hipaa_attestation" \
             --max-retries=1 --task-timeout=5m >/dev/null
     else
         echo "  Cloud Run Job hipaa-attestation already exists"
