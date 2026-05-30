@@ -103,7 +103,7 @@ optional = true
 
 [tool.poetry.group.evals.dependencies]
 braintrust = ">=0.22.1"
-openai = ">=1.50.0"
+openai = ">=2.38.0"
 pyyaml = ">=6.0"
 
 
