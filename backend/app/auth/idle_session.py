@@ -100,11 +100,15 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
     if redis is None:
         return
 
-    uid = decoded_token.get("uid")
+    # Subject is the provider's stable user id: Firebase puts it in `uid`,
+    # OIDC issuers (e.g. Keycloak) in `sub`. `auth_time` anchors the marker
+    # to one authentication event and is stable across token refreshes, so
+    # the idle clock survives refresh — we keep requiring it as the freshness
+    # anchor. Firebase always carries it; OIDC interactive (auth-code) flows
+    # do too. A token missing either fails closed.
+    subject = decoded_token.get("uid") or decoded_token.get("sub")
     auth_time = decoded_token.get("auth_time")
-    if not uid or not isinstance(auth_time, int):
-        # Verified Firebase tokens always carry both. Missing either
-        # means something is very wrong upstream; fail closed.
+    if not subject or not isinstance(auth_time, int):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -116,16 +120,16 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
             },
         )
 
-    marker_key = _session_marker_key(str(uid), auth_time)
-    activity_key = _activity_key(str(uid), auth_time)
-    revoked_key = _revoked_key(str(uid), auth_time)
+    marker_key = _session_marker_key(str(subject), auth_time)
+    activity_key = _activity_key(str(subject), auth_time)
+    revoked_key = _revoked_key(str(subject), auth_time)
     idle_ttl = settings.idle_timeout_seconds
 
     try:
         if redis.exists(revoked_key):
             # Already timed out; a refresh-token swap must not re-arm it.
             logger.info(
-                "Rejected revoked idle session: uid=%s auth_time=%s", uid, auth_time
+                "Rejected revoked idle session: subject=%s auth_time=%s", subject, auth_time
             )
             raise _idle_timeout_exc()
 
@@ -147,7 +151,7 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
         pipe.delete(marker_key)
         pipe.set(revoked_key, "1", ex=_SESSION_MARKER_TTL_SECONDS)
         pipe.execute()
-        logger.info("Idle session timeout: uid=%s auth_time=%s", uid, auth_time)
+        logger.info("Idle session timeout: subject=%s auth_time=%s", subject, auth_time)
         raise _idle_timeout_exc()
     except HTTPException:
         raise

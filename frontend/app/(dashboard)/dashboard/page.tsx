@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { cookies } from "next/headers"
-import { getTokens } from "next-firebase-auth-edge"
 import { mockUser } from "@/lib/mockData"
-import { authConfig } from "@/lib/auth-config"
+import { getServerSession } from "@/lib/auth/server"
 import { getUserStatus } from "@/lib/api/users"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
@@ -22,21 +20,21 @@ export default async function DashboardPage() {
   if (IS_DEV_MODE) {
     user = mockUser
   } else {
-    const tokens = await getTokens(await cookies(), authConfig)
-    const decodedToken = tokens?.decodedToken
+    const session = await getServerSession()
+    const claims = session?.claims
     user = {
-      name: decodedToken?.name || decodedToken?.email,
-      email: decodedToken?.email,
-      image: decodedToken?.picture,
+      name: claims?.name || claims?.email,
+      email: claims?.email,
+      image: claims?.picture,
     }
-    if (tokens?.token) {
+    if (session?.token) {
       try {
-        const status = await getUserStatus(tokens.token)
+        const status = await getUserStatus(session.token)
         isPlatformAdmin = status.is_platform_admin
         user = {
           name: status.name || user.name,
           email: status.email || user.email,
-          image: decodedToken?.picture,
+          image: claims?.picture,
         }
       } catch {
         // Layout already gates access on this call; fall through to clinician view.

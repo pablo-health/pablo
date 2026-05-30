@@ -4,8 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { signOut } from "firebase/auth"
-import { getFirebaseAuth } from "@/lib/firebase"
+import { getClientAuthProvider } from "@/lib/auth/provider"
 import {
   Dialog,
   DialogContent,
@@ -43,11 +42,10 @@ export function IdleTimeout() {
     if (signingOutRef.current) return
     signingOutRef.current = true
     try {
-      await signOut(getFirebaseAuth())
+      await getClientAuthProvider().signOut()
     } catch {
-      // Firebase not initialized (dev mode)
+      // Provider not initialized (dev mode) — still redirect.
     }
-    await fetch("/api/logout")
     router.push("/login?reason=idle_timeout")
   }, [router])
 

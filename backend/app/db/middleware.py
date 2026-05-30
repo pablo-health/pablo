@@ -36,9 +36,12 @@ logger = logging.getLogger(__name__)
 def _resolve_schema_from_request(request: Request) -> str | None:
     """Extract tenant schema from the Authorization header.
 
-    Decodes the Firebase token to get the user's email, then resolves
-    the practice schema. Returns None if unauthenticated or no mapping.
-    Errors are swallowed — auth dependencies will reject bad tokens later.
+    Verifies the bearer token (Firebase by default, or a configured OIDC
+    issuer — dispatched on the token's ``iss``) to get the user's email,
+    then resolves the practice schema. Tenant resolution is email-based,
+    so it is provider-agnostic; only the verification step differs.
+    Returns None if unauthenticated or no mapping. Errors are swallowed —
+    auth dependencies will reject bad tokens later.
     """
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -46,24 +49,24 @@ def _resolve_schema_from_request(request: Request) -> str | None:
 
     token = auth_header[7:]
     try:
-        from ..auth.service import (
-            _extract_email,
-            _resolve_practice_from_email,
-            verify_firebase_token,
-        )
+        from ..auth.service import _resolve_practice_from_email, verify_token
 
-        decoded = verify_firebase_token(token)
+        identity = verify_token(token)
 
-        # Cache the decoded token on request.state so downstream dependencies
-        # (require_mfa, get_current_user_id, etc.) can skip re-verification.
-        # request.state is request-scoped — no cross-request leakage.
-        request.state.decoded_firebase_token = decoded
-        request.state.verified_firebase_token_raw = token
+        # Cache the verified identity on request.state so downstream
+        # dependencies (require_mfa, get_current_user_id, etc.) reuse it
+        # instead of re-verifying. request.state is request-scoped — no
+        # cross-request leakage. Firebase tokens also populate the legacy
+        # decoded-token cache for the _get_cached_token fast-path.
+        request.state.verified_identity = identity
+        request.state.verified_identity_token = token
+        if identity.provider == "firebase":
+            request.state.decoded_firebase_token = identity.claims
+            request.state.verified_firebase_token_raw = token
 
-        email = _extract_email(decoded)
-        if not email:
+        if not identity.email:
             return None
-        practice = _resolve_practice_from_email(email)
+        practice = _resolve_practice_from_email(identity.email)
         if practice:
             return practice[1]  # schema_name
     except Exception:

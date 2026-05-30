@@ -19,9 +19,9 @@ def initialize_firebase_app() -> firebase_admin.App:
     - Emulator (FIREBASE_AUTH_EMULATOR_HOST set): no credentials needed
     - Otherwise: Application Default Credentials (ADC)
 
-    Identity Platform multi-tenancy is configured at the GCP project level.
-    The same App instance supports both single-tenant and multi-tenant modes —
-    tenant_mgt functions use the App's credentials automatically.
+    Note: Pablo's multi-tenancy is resolved from the user's email to a
+    practice schema (see ``multi_tenancy_enabled``), not from Identity
+    Platform tenants — this App is a plain single-pool token verifier.
     """
     settings = get_settings()
     project_id = settings.effective_firebase_project_id

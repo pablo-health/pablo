@@ -10,10 +10,8 @@
  * the dashboard layout (which would create a redirect loop when checking MFA status).
  */
 
-import { cookies } from "next/headers"
-import { getTokens } from "next-firebase-auth-edge"
 import { redirect } from "next/navigation"
-import { authConfig } from "@/lib/auth-config"
+import { getServerSession } from "@/lib/auth/server"
 import { MFAEnrollmentForm } from "./MFAEnrollmentForm"
 
 const IS_DEV_MODE = process.env.DEV_MODE === "true"
@@ -25,8 +23,8 @@ export default async function MFAEnrollmentPage() {
   }
 
   // Require authentication
-  const tokens = await getTokens(await cookies(), authConfig)
-  if (!tokens) {
+  const session = await getServerSession()
+  if (!session) {
     redirect("/login")
   }
 

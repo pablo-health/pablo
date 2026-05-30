@@ -1,13 +1,11 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { cookies } from "next/headers"
-import { getTokens } from "next-firebase-auth-edge"
 import { Sidebar } from "@/components/layout/Sidebar"
 import { Header } from "@/components/layout/Header"
 import { redirect } from "next/navigation"
 import { mockUser } from "@/lib/mockData"
 import { getBAAStatus, getUserStatus } from "@/lib/api/users"
-import { authConfig } from "@/lib/auth-config"
+import { getServerSession } from "@/lib/auth/server"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
@@ -35,13 +33,13 @@ export default async function DashboardLayout({
     user = mockUser
     isAdmin = true
   } else {
-    const tokens = await getTokens(await cookies(), authConfig)
-    if (!tokens) {
+    const session = await getServerSession()
+    if (!session) {
       redirect("/login")
     }
 
-    const { decodedToken } = tokens
-    token = tokens.token
+    const { claims } = session
+    token = session.token
 
     // Check user status and MFA enrollment
     // Uses /api/users/me/status which does NOT require MFA (pre-enrollment check)
@@ -52,9 +50,9 @@ export default async function DashboardLayout({
 
       // Use backend user data for display (token claims may be stripped by auth edge)
       user = {
-        name: userStatus.name || decodedToken.name || decodedToken.email,
-        email: userStatus.email || decodedToken.email,
-        image: decodedToken.picture,
+        name: userStatus.name || claims.name || claims.email,
+        email: userStatus.email || claims.email,
+        image: claims.picture,
       }
       isAdmin = userStatus.is_platform_admin
 
