@@ -8,6 +8,7 @@
 
 import { DEFAULT_AUTH_PROVIDER, type AuthProviderId, type ServerSession } from "./types"
 import { getFirebaseServerSession } from "./firebase/server"
+import { getOidcServerSession } from "./oidc/server"
 
 function activeAuthProviderId(): AuthProviderId {
   return (process.env.NEXT_PUBLIC_AUTH_PROVIDER as AuthProviderId | undefined) || DEFAULT_AUTH_PROVIDER
@@ -19,9 +20,7 @@ export function getServerSession(): Promise<ServerSession | null> {
     case "firebase":
       return getFirebaseServerSession()
     case "oidc":
-      // Wired in step 4 (Auth.js `auth()` → session id_token). Dev stays
-      // on `firebase` until step 7.
-      throw new Error("OIDC server auth provider is not wired yet (step 4).")
+      return getOidcServerSession()
     default:
       throw new Error(`Unknown NEXT_PUBLIC_AUTH_PROVIDER: ${id}`)
   }
