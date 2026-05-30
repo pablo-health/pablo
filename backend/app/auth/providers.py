@@ -68,7 +68,8 @@ class TokenVerifier(Protocol):
 
     issuer: str
 
-    def verify(self, token: str) -> VerifiedIdentity: ...
+    def verify(self, token: str) -> VerifiedIdentity:
+        raise NotImplementedError
 
 
 class FirebaseVerifier:
