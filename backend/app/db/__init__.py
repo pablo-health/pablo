@@ -10,6 +10,17 @@ Usage:
     from app.db import get_db_session, get_engine
 
     session = get_db_session()  # gets the request-scoped session from contextvar
+
+Off-request tenant context (background tasks, workers):
+
+    from app.db import run_in_tenant, tenant_db_session
+
+    # Async helper — opens the session inside the worker thread:
+    result = await run_in_tenant(schema, user_id, my_sync_fn)
+
+    # Sync context manager — use inside a worker (not on the event loop):
+    with tenant_db_session(schema, user_id) as session:
+        ...
 """
 
 import re
@@ -556,3 +567,13 @@ def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
                 continue
             logger.info("Applying RLS to schema '%s'", schema_name)
             enable_rls_on_schema(session, schema_name)
+
+
+# Re-export the off-request tenant-session primitives so callers can
+# import them from the package root without knowing the sub-module.
+from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402
+
+__all__ = [
+    "run_in_tenant",
+    "tenant_db_session",
+]
