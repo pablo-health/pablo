@@ -7,19 +7,7 @@
  * Handles authentication, error handling, and type-safe responses.
  */
 
-import { onAuthStateChanged, signOut, type Auth, type User } from "firebase/auth"
-
-import { getFirebaseAuth } from "@/lib/firebase"
-
-/**
- * Upper bound on how long ``resolveCurrentUser`` will wait for Firebase
- * to deliver a restored user after ``authStateReady()`` returned null.
- * Covers two races (see ``resolveCurrentUser`` for the full story); the
- * window is generous because the cost only lands on requests that would
- * have failed without it (genuinely signed-out callers don't hit
- * ``apiClient`` in normal flows).
- */
-const AUTH_RESTORE_WAIT_MS = 1500
+import { getClientAuthProvider } from "@/lib/auth/provider"
 
 let idleTimeoutLogoutInFlight = false
 
@@ -28,14 +16,11 @@ function handleIdleTimeoutLogout() {
   idleTimeoutLogoutInFlight = true
   void (async () => {
     try {
-      await signOut(getFirebaseAuth())
+      // Provider sign-out clears both the client SDK session and the
+      // server cookie (best-effort on each).
+      await getClientAuthProvider().signOut()
     } catch {
-      // Firebase not initialized — proceed to clear server-side cookie anyway.
-    }
-    try {
-      await fetch("/api/logout")
-    } catch {
-      // Best-effort: still redirect even if the cookie-clear endpoint fails.
+      // Provider not initialized — still redirect.
     }
     window.location.assign("/login?reason=idle_timeout")
   })()
@@ -106,64 +91,16 @@ export const TOKEN_REFRESH_RETRY_CODES = new Set(["TOKEN_EXPIRED", "INVALID_TOKE
 /**
  * Resolve the bearer token for an authenticated request.
  *
- * Client-side: prefers the supplied token, else asks Firebase for the
- * current user's id token. Server-side: returns the supplied token or
- * null. Shared by ``apiClient`` and the SSE consumer so SSE calls land
- * with the same auth posture as regular API calls without going
- * through the JSON fetch wrapper.
+ * Client-side: prefers the supplied token, else asks the active auth
+ * provider for the current user's id token. Server-side: returns the
+ * supplied token or null. Shared by ``apiClient`` and the SSE consumer so
+ * SSE calls land with the same auth posture as regular API calls without
+ * going through the JSON fetch wrapper.
  *
- * ``forceRefresh`` bypasses the SDK's cached token — used by the retry
- * path after a token-level 401.
+ * ``forceRefresh`` bypasses the provider's cached token — used by the
+ * retry path after a token-level 401. The provider owns any token-restore
+ * races (e.g. Firebase's IndexedDB restoration window).
  */
-/**
- * Resolve Firebase's ``currentUser`` for an authenticated request.
- *
- * ``authStateReady()`` resolves on the first auth-state-listener tick
- * and covers the common case. Two restoration races land here with a
- * null ``currentUser`` and a user who is in fact signed in:
- *
- *   1. ``multiFactor.enroll()`` briefly tears down the pre-MFA user and
- *      signs the post-MFA user back in. A request fired in that gap
- *      sees ``currentUser`` null even though the post-MFA user is
- *      about to install — surfaced by pablo#307.
- *   2. A hard navigation (``page.goto`` in Playwright, a real reload
- *      in a browser tab) reinits the SDK. The first ``authStateReady``
- *      tick can fire before IndexedDB persistence is observed, so
- *      ``currentUser`` is null for a few hundred ms after restoration
- *      starts — surfaced by chart-render-smoke@dev on 2026-05-28.
- *
- * Both races resolve themselves within a window measured in tens to
- * hundreds of milliseconds. We give ``onAuthStateChanged`` up to
- * ``AUTH_RESTORE_WAIT_MS`` to deliver a non-null user before giving
- * up; if the user really is signed out, we still resolve null and the
- * caller proceeds without an ``Authorization`` header (and the
- * backend's 401 is the right answer).
- *
- * Cost: zero for the steady-state signed-in case (``authStateReady``
- * returns synchronously after the first tick and ``currentUser`` is
- * populated). Up to ``AUTH_RESTORE_WAIT_MS`` for genuinely-signed-out
- * requests — but ``apiClient`` only targets the backend, which always
- * requires auth, so unauthenticated callers don't hit this in normal
- * flows.
- */
-async function resolveCurrentUser(auth: Auth): Promise<User | null> {
-  await auth.authStateReady()
-  if (auth.currentUser) return auth.currentUser
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      unsubscribe()
-      resolve(auth.currentUser)
-    }, AUTH_RESTORE_WAIT_MS)
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        clearTimeout(timer)
-        unsubscribe()
-        resolve(user)
-      }
-    })
-  })
-}
-
 export async function getAuthHeader(
   token?: string,
   forceRefresh = false,
@@ -171,13 +108,9 @@ export async function getAuthHeader(
   let authToken = token
   if (!authToken && typeof window !== "undefined") {
     try {
-      const auth = getFirebaseAuth()
-      const currentUser = await resolveCurrentUser(auth)
-      if (currentUser) {
-        authToken = await currentUser.getIdToken(forceRefresh)
-      }
+      authToken = (await getClientAuthProvider().getIdToken(forceRefresh)) ?? undefined
     } catch {
-      // Firebase not initialized or no current user — proceed without token
+      // Provider not initialized or no current user — proceed without token.
     }
   }
   return authToken ? { Authorization: `Bearer ${authToken}` } : {}
@@ -207,7 +140,7 @@ async function peekErrorCode(response: Response): Promise<string | null> {
 /**
  * Make an authenticated API request
  *
- * Client-side: gets token from Firebase Auth current user
+ * Client-side: gets the token from the active auth provider
  * Server-side: token must be passed explicitly via the `token` option
  */
 export async function apiClient<T>(
