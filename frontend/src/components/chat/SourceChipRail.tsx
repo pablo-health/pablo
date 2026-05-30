@@ -134,7 +134,7 @@ function AddSourceButton({
             role="menu"
             data-slot="chat-add-source-menu"
             className={cn(
-              "absolute z-10 mt-1 min-w-[220px] rounded-md border border-neutral-200 bg-white shadow-md p-1",
+              "absolute z-10 mt-1 min-w-[220px] rounded-md border border-neutral-200 bg-popover shadow-md p-1",
             )}
           >
             {addable.map((key) => {

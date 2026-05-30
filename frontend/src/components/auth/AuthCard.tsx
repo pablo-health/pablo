@@ -19,7 +19,7 @@ export function AuthCard({
 }: AuthCardProps) {
   const cardClass =
     className ??
-    "w-full max-w-md space-y-8 bg-white p-10 shadow-xl border border-neutral-100"
+    "w-full max-w-md space-y-8 bg-card p-10 shadow-xl border border-neutral-100"
 
   if (brandPanel) {
     return (

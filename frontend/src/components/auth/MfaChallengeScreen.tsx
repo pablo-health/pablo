@@ -3,6 +3,7 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 import {
   TotpMultiFactorGenerator,
   type MultiFactorResolver,
@@ -56,8 +57,14 @@ export function MfaChallengeScreen({ resolver, onSuccess, onCancel }: MfaChallen
 
   return (
     <AuthCard>
+      <div className="mb-7 flex items-center justify-center gap-2.5">
+        <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
+        <span className="font-display text-2xl font-bold text-primary-600">Pablo</span>
+      </div>
+
       <AuthHeader
         title="Two-Factor Authentication"
+        titleColor="foreground"
         subtitle="Enter the code from your authenticator app"
       />
       <form onSubmit={handleVerify} className="space-y-4">

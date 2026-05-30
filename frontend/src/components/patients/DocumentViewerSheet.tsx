@@ -107,7 +107,7 @@ export function DocumentViewerSheet({
             <embed
               src={url}
               type="application/pdf"
-              className="h-full w-full rounded border border-neutral-200 bg-white"
+              className="h-full w-full rounded border border-neutral-200 bg-card"
             />
           )}
 
@@ -116,7 +116,7 @@ export function DocumentViewerSheet({
             <img
               src={url}
               alt={document?.filename ?? "Document"}
-              className="mx-auto max-w-full rounded border border-neutral-200 bg-white"
+              className="mx-auto max-w-full rounded border border-neutral-200 bg-card"
             />
           )}
 
