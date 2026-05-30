@@ -260,6 +260,87 @@ def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> N
         cursor.close()
 
 
+@event.listens_for(Engine, "checkin")
+def _reset_search_path_on_checkin(dbapi_conn, _conn_record) -> None:  # type: ignore[no-untyped-def]
+    """Return the connection to a neutral ``search_path`` on pool checkin.
+
+    PostgreSQL's ``SET search_path`` is session-level and persists across
+    transactions, so a connection that was scoped to ``practice_abc`` during
+    request A will still have that search_path when it is handed to request B
+    — even after the pool's ``reset_on_return='rollback'`` has cleared any
+    open transaction.  A checkout that forgets to call ``set_tenant_schema``
+    (background tasks, worker threads, CLI code) would then silently resolve
+    unqualified table names against the *previous* request's tenant schema
+    instead of failing visibly — a fail-open data-isolation hazard.
+
+    This listener fires after the pool's own ``reset_on_return`` rollback has
+    already completed (the ``checkin`` event fires after ``_reset()``, which
+    issues the ROLLBACK, inside ``ConnectionPoolEntry.checkin()``).  The
+    connection is post-ROLLBACK at this point, but psycopg2's default
+    ``autocommit=False`` mode would start a new implicit transaction block
+    on the very first SQL statement, so the implementation explicitly sets
+    ``autocommit = True`` for the duration of the ``SET`` (see inline
+    comments in the body below).
+
+    ``SET search_path = public`` is used rather than ``DISCARD ALL`` for two
+    reasons:
+    1. ``DISCARD ALL`` also clears session-level GUCs set via
+       ``connect_args={'options': '-c lock_timeout=... -c statement_timeout=...'}``
+       at physical connection open time.  Those timeouts are defense-in-depth
+       and must survive across pool cycles.
+    2. The narrow ``SET search_path`` is sufficient: the only session state
+       that this codebase legitimately stamps onto pooled connections is the
+       tenant ``search_path``; everything else is either transaction-local
+       (``app.current_user_id`` via ``is_local=true``) or connection-level
+       GUCs that should not be cleared.
+
+    Pair with the ``checkout`` listener above (checkin neutral → checkout
+    re-stamps the correct tenant schema from the ContextVar): a connection
+    sitting idle in the pool always holds a neutral path, and a checkout with
+    an armed ContextVar immediately gets the right one.  A checkout without
+    an armed ContextVar (background worker, forgetful caller) resolves to
+    ``public`` — which has no tenant tables — so it fails closed rather than
+    inheriting a prior tenant's data.
+
+    ``public`` is safe as the neutral sentinel: it contains only
+    platform-level shared objects and no patient data.  ``None`` / connection
+    failure is handled by the ``dbapi_conn is None`` guard — the pool can
+    pass ``None`` when the connection was invalidated.
+    """
+    if dbapi_conn is None:
+        # Invalidated connection — nothing to reset.
+        return
+    # ``SET search_path`` is session-level (not transaction-local), so it
+    # persists through a subsequent ROLLBACK — which is exactly what we
+    # want.  However, psycopg2 in its default ``autocommit=False`` mode
+    # implicitly opens a new transaction block on the very first SQL
+    # statement after a ROLLBACK.  Executing ``SET search_path = public``
+    # here would therefore leave the connection sitting in an open
+    # (empty) transaction, which causes ``pool_pre_ping`` on the next
+    # checkout to fail with "set_session cannot be used inside a
+    # transaction" when it tries to set ``autocommit = True``.
+    #
+    # Fix: set ``autocommit = True`` for the duration of the SET so the
+    # statement executes outside any transaction block, then restore the
+    # prior mode.  This is safe because:
+    #  * The connection is post-ROLLBACK — any tenant transaction has
+    #    already been committed or rolled back by ``reset_on_return``.
+    #  * ``SET search_path`` is idempotent and has no transaction
+    #    semantics; it takes effect immediately regardless of autocommit.
+    #  * Restoring ``autocommit = False`` leaves the connection in the
+    #    mode SQLAlchemy expects when it checks it out for a new request.
+    prior_autocommit = dbapi_conn.autocommit
+    try:
+        dbapi_conn.autocommit = True
+        cursor = dbapi_conn.cursor()
+        try:
+            cursor.execute("SET search_path = public")
+        finally:
+            cursor.close()
+    finally:
+        dbapi_conn.autocommit = prior_autocommit
+
+
 def create_standalone_session(practice_schema: str | None = None) -> Session:
     """Create a standalone session outside of request context.
 
