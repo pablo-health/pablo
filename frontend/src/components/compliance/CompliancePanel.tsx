@@ -253,11 +253,18 @@ function labelForType(type: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
+const REMINDER_MONTHS = [
+  "jan", "feb", "mar", "apr", "may", "jun",
+  "jul", "aug", "sep", "oct", "nov", "dec",
+] as const
+
 function EmptyState({ onStart }: { onStart: () => void }) {
+  // Pablo holds up a desk calendar showing the current month.
+  const month = useMemo(() => REMINDER_MONTHS[new Date().getMonth()], [])
   return (
     <div className="flex flex-col items-center text-center py-6">
       <Image
-        src="/pablo-tie.webp"
+        src={`/pablo-reminders-${month}.webp`}
         alt="Pablo bear, your documentation companion"
         width={96}
         height={96}
