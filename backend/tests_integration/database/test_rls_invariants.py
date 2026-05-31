@@ -385,6 +385,123 @@ class TestRlsGucRearmedAcrossCommit:
             _current_tenant_schema.reset(schema_token)
 
 
+class TestRlsGucRearmedAcrossCommitOnSyncRoute:
+    """The mid-request-commit re-arm must work even when the request
+    ContextVar is gone — the sync-route case.
+
+    Sync routes (``def`` endpoints) and their sync dependencies each run
+    in a *separate* anyio threadpool worker, and ``run_in_threadpool``
+    copies the event-loop context into a throwaway worker per call. So a
+    ``ContextVar.set()`` performed by ``arm_current_user_id`` inside the
+    sync auth dependency is discarded when that worker returns — the
+    endpoint (which calls ``_commit_intermediate`` before the SOAP LLM
+    call) later runs in a *different* worker whose context copy never saw
+    the set, leaving ``_current_user_id`` at ``None``. The previous
+    ContextVar-only re-arm therefore no-oped on every post-commit
+    transaction, and under NOBYPASSRLS the note read/write and the
+    FAILED-status update saw zero rows / failed ``WITH CHECK``
+    (``POST /api/patients/{id}/sessions/upload`` -> 500).
+
+    The fix arms the user id on ``session.info`` — which rides the shared
+    Session object across both workers — so the ``after_begin`` listener
+    re-arms regardless of the ContextVar. ``TestRlsGucRearmedAcrossCommit``
+    above covers the async (ContextVar present) path; this test isolates
+    the sync path by arming and then dropping the ContextVar, emulating
+    the threadpool-worker boundary.
+    """
+
+    def test_guc_survives_mid_session_commit_without_contextvar(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        from app.db import (  # noqa: PLC0415
+            _RLS_USER_ID_KEY,
+            _current_tenant_schema,
+            _current_user_id,
+            arm_current_user_id,
+        )
+
+        seed_user = "sync-route-rearm-user"
+        patient_id = str(uuid.uuid4())
+
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": seed_user},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, "
+                    "first_name_lower, last_name_lower, status, "
+                    "session_count, created_at, updated_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Ada', 'Lovelace', "
+                    "'ada', 'lovelace', 'active', 0, now(), now())"
+                ),
+                {"pid": patient_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patient_clinicians (patient_id, user_id, "
+                    "granted_by) VALUES (CAST(:pid AS uuid), :u, :u)"
+                ),
+                {"pid": patient_id, "u": seed_user},
+            )
+
+        count_sql = text(
+            f"SELECT count(*) FROM {tenant_schema}.patients "  # noqa: S608
+            "WHERE id = CAST(:pid AS uuid)"
+        )
+
+        # Only the search_path ContextVar is set (the pool-checkout listener
+        # needs it). Critically, _current_user_id is left UNSET — this is the
+        # state the endpoint worker sees, because the auth dependency armed it
+        # in a different, now-discarded worker context.
+        schema_token = _current_tenant_schema.set(tenant_schema)
+        session = OrmSession(bind=engine)
+        try:
+            session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+
+            # Auth-dependency phase: arm on the request session. This stashes
+            # the id on session.info AND set_config's the open txn.
+            arm_current_user_id(session, seed_user)
+            assert session.info[_RLS_USER_ID_KEY] == seed_user
+
+            # Emulate the threadpool-worker boundary: the ContextVar mutation
+            # arm_current_user_id just made does not survive into the endpoint
+            # worker's context copy. session.info, riding the Session object,
+            # does.
+            _current_user_id.set(None)
+
+            before = session.execute(count_sql, {"pid": patient_id}).scalar_one()
+            assert before == 1, "patient should be visible right after arming"
+
+            # Endpoint phase: mid-request commit (lock release before the LLM
+            # call) clears the xact-local GUC; the next query begins a fresh
+            # txn whose after_begin must re-arm from session.info.
+            session.commit()
+            after = session.execute(count_sql, {"pid": patient_id}).scalar_one()
+            assert after == 1, (
+                "RLS GUC was not re-armed from session.info after a mid-request "
+                "commit on a sync route (ContextVar absent) — this is the "
+                "upload-session 500 regression."
+            )
+
+            # Control: drop session.info too. With neither source the listener
+            # no-ops, the GUC stays empty, and RLS hides the row — proving the
+            # assertion above is real enforcement, not a vacuous pass.
+            session.commit()
+            session.info.pop(_RLS_USER_ID_KEY, None)
+            without_any = session.execute(count_sql, {"pid": patient_id}).scalar_one()
+            assert without_any == 0, (
+                "With neither session.info nor the ContextVar set, the patient "
+                "must be hidden; a non-zero count means RLS is not enforcing and "
+                "the re-arm assertion above is vacuous."
+            )
+        finally:
+            session.close()
+            _current_tenant_schema.reset(schema_token)
+
+
 class TestArmCurrentUserIdEnablesProfileWrite:
     """``clinician_profiles`` is RLS-scoped by ``user_id``, so the pre-MFA
     onboarding upsert must arm ``app.current_user_id`` first.

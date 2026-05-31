@@ -53,9 +53,19 @@ _current_tenant_schema: ContextVar[str | None] = ContextVar("_current_tenant_sch
 # GUC and the next transaction's queries would otherwise see an empty
 # value and silently return zero rows under RLS. The ``after_begin``
 # event listener below re-applies the GUC at the start of every new
-# transaction whenever this ContextVar is set, so explicit commits in
-# service code are safe.
+# transaction from the user id armed on ``Session.info`` (with this
+# ContextVar as a fallback), so explicit commits in service code are
+# safe — including on sync routes, where this ContextVar would be lost
+# across threadpool workers (see ``arm_current_user_id``).
 _current_user_id: ContextVar[str | None] = ContextVar("_current_user_id", default=None)
+
+# Key under which the request's clinician user id is stashed on
+# ``Session.info``. The ``after_begin`` listener prefers this over the
+# ContextVar because the Session object is shared by reference across the
+# threadpool workers that run a sync route's dependencies and endpoint,
+# whereas a ContextVar set inside a sync dependency is discarded with that
+# worker thread (see :func:`arm_current_user_id`).
+_RLS_USER_ID_KEY = "rls_current_user_id"
 
 # Default practice schema for Pablo Solo (single practice)
 DEFAULT_PRACTICE_SCHEMA = "practice"
@@ -212,18 +222,39 @@ def set_current_user_id(user_id: str) -> None:
 def arm_current_user_id(session: Session, user_id: str) -> None:
     """Arm the RLS ``app.current_user_id`` GUC for a tenant-scoped write.
 
-    Combines the two steps every write path needs when it can't go
-    through ``get_tenant_context`` (e.g. pre-MFA onboarding routes that
-    upsert the caller's own tenant row): stash the id in the request
-    ContextVar via :func:`set_current_user_id` so the ``after_begin``
-    listener re-applies the GUC across any mid-request commit, and
-    issue ``set_config`` once for the transaction that's already open
-    (the first ``BEGIN`` fires lazily on the first query, before we get
-    here, so the listener won't have armed it yet).
+    Combines the steps every write path needs when it can't go through
+    ``get_tenant_context`` (e.g. pre-MFA onboarding routes that upsert
+    the caller's own tenant row):
+
+    1. Stash the id on ``session.info`` so the ``after_begin`` listener
+       can re-apply the GUC across any mid-request commit from *the
+       session object itself*, not a ContextVar.
+    2. Stash the id in the request ContextVar via
+       :func:`set_current_user_id` too — kept for the off-request
+       primitives (``tenant_db_session`` / ``run_in_tenant``) that arm
+       the GUC through the ContextVar on a single worker thread.
+    3. Issue ``set_config`` once for the transaction that's already open
+       (the first ``BEGIN`` fires lazily on the first query, before we
+       get here, so the listener won't have armed it yet).
+
+    Why ``session.info`` and not just the ContextVar: **sync** routes run
+    in FastAPI's anyio threadpool, and so do their sync dependencies.
+    Each ``run_in_threadpool`` call copies the event-loop context into a
+    *throwaway* worker thread, so a ``ContextVar.set()`` inside the sync
+    auth dependency is discarded when that thread returns — the endpoint
+    runs later in a *different* worker thread whose context copy never
+    saw the set, leaving ``_current_user_id`` at ``None``. The
+    request-scoped ``Session``, by contrast, is shared by reference
+    across those threads (the middleware publishes it on a ContextVar
+    that *does* survive, because it's set in the event-loop context), so
+    a value on ``session.info`` is visible wherever that session is used.
+    That's what makes the post-commit re-arm work for sync routes that
+    ``_commit_intermediate`` mid-request before the SOAP LLM call.
 
     ``session`` must be the request-scoped session the subsequent write
     runs through, so the GUC lands on the same transaction.
     """
+    session.info[_RLS_USER_ID_KEY] = user_id
     set_current_user_id(user_id)
     session.execute(
         text("SELECT set_config('app.current_user_id', :uid, true)"),
@@ -233,7 +264,7 @@ def arm_current_user_id(session: Session, user_id: str) -> None:
 
 @event.listens_for(Session, "after_begin")
 def _rearm_rls_user_id_on_txn_begin(  # type: ignore[no-untyped-def]
-    _session, _transaction, connection
+    session, _transaction, connection
 ) -> None:
     """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
 
@@ -247,11 +278,17 @@ def _rearm_rls_user_id_on_txn_begin(  # type: ignore[no-untyped-def]
 
     The listener fires for every new transaction on every Session,
     inside the new transaction (``after_begin`` runs after the BEGIN
-    has been issued). It no-ops when the request-scoped ContextVar
-    isn't set — CLI scripts, alembic, integration test fixtures that
+    has been issued). It reads the armed user id from ``session.info``
+    first and falls back to the request ContextVar. ``session.info`` is
+    the source of truth because it rides the Session object itself, so
+    it survives across the separate threadpool workers that run a sync
+    route's dependency (where the GUC is armed) and its endpoint (where
+    the mid-request commit happens); a ContextVar set in the dependency's
+    worker would not — see :func:`arm_current_user_id`. It no-ops when
+    neither is set — CLI scripts, alembic, integration test fixtures that
     arm the GUC themselves all stay unaffected.
     """
-    user_id = _current_user_id.get()
+    user_id = session.info.get(_RLS_USER_ID_KEY) or _current_user_id.get()
     if user_id is None:
         return
     connection.execute(
