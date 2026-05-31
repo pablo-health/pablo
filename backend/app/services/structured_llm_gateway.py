@@ -35,6 +35,19 @@ from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 logger = logging.getLogger(__name__)
 
 
+class StructuredOutputTruncatedError(ValueError):
+    """Raised when a structured completion is cut off at ``max_output_tokens``.
+
+    Distinct from a generic invalid-JSON error so callers can retry with a
+    larger output budget instead of treating it as a malformed response.
+    Thinking models (e.g. ``gemini-3.x`` pro) spend part of the output
+    budget on reasoning tokens before emitting the answer, so a cap that's
+    fine for a non-thinking model can leave too little room for the JSON
+    tail — the response comes back ``finish_reason=MAX_TOKENS`` with the
+    JSON cut mid-string. See ``note_generation_service`` for the retry.
+    """
+
+
 @dataclass(frozen=True)
 class StructuredCompletion:
     """Result of a single structured-output call.
@@ -156,14 +169,10 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                 total_tokens=total_tokens,
             )
 
-        raw_text = getattr(response, "text", "") or ""
-        try:
-            data = json.loads(raw_text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
-        if not isinstance(data, dict):
-            raise ValueError(f"LLM returned non-object JSON ({type(data).__name__})")
-
+        # Classify the finish reason *before* parsing: a length-truncated
+        # response yields partial JSON, so we must distinguish "model hit the
+        # token cap" from "model emitted malformed JSON" — otherwise the
+        # JSONDecodeError below masks the real, retryable cause.
         finish_reason = "stop"
         candidates = getattr(response, "candidates", None) or []
         if candidates:
@@ -174,6 +183,23 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
                     finish_reason = "safety"
                 elif reason_str == "MAX_TOKENS":
                     finish_reason = "length"
+
+        raw_text = getattr(response, "text", "") or ""
+
+        if finish_reason == "length":
+            raise StructuredOutputTruncatedError(
+                f"LLM output truncated at max_output_tokens={max_output_tokens} "
+                f"(model={normalized_model}, {len(raw_text)} chars returned). "
+                "Retry with a larger output budget."
+            )
+
+        try:
+            data = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"LLM returned non-object JSON ({type(data).__name__})")
+
         return StructuredCompletion(
             data=data,
             output_tokens=output_tokens,
