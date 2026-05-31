@@ -300,9 +300,7 @@ class TestRlsGucRearmedAcrossCommit:
     "no data". That listener had no test coverage.
     """
 
-    def test_guc_survives_mid_session_commit(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
+    def test_guc_survives_mid_session_commit(self, engine: Engine, tenant_schema: str) -> None:
         from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
 
         seed_user = "rearm-test-user"
@@ -353,9 +351,7 @@ class TestRlsGucRearmedAcrossCommit:
         schema_token = _current_tenant_schema.set(tenant_schema)
         session = OrmSession(bind=engine)
         try:
-            session.execute(
-                text(f"SET search_path = {tenant_schema}, platform, public")
-            )
+            session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
 
             before = session.execute(count_sql, {"pid": patient_id}).scalar_one()
             assert before == 1, "patient should be visible with the GUC armed"
@@ -386,4 +382,105 @@ class TestRlsGucRearmedAcrossCommit:
         finally:
             session.close()
             _current_user_id.reset(token)
+            _current_tenant_schema.reset(schema_token)
+
+
+class TestArmCurrentUserIdEnablesProfileWrite:
+    """``clinician_profiles`` is RLS-scoped by ``user_id``, so the pre-MFA
+    onboarding upsert must arm ``app.current_user_id`` first.
+
+    Regression test for the onboarding-wizard stall surfaced when the
+    ``pablo`` role was flipped to NOBYPASSRLS: ``PATCH /api/users/me`` and
+    ``/me/professional-info`` run pre-MFA (``get_current_user_no_mfa``),
+    never pass through ``get_tenant_context``, and so left the GUC unset.
+    The ``clinician_profiles`` ``WITH CHECK (user_id = current_setting(...))``
+    policy then rejected the upsert with ``InsufficientPrivilege``. The fix
+    is ``arm_current_user_id``, called from ``_upsert_clinician_profile``.
+
+    This proves both halves: unset GUC ⇒ insert rejected (the bug, now the
+    fail-closed contract), and ``arm_current_user_id`` ⇒ insert accepted.
+    """
+
+    def test_clinician_profiles_has_rls_forced(self, engine: Engine, tenant_schema: str) -> None:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT c.relrowsecurity, c.relforcerowsecurity "
+                        "FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE n.nspname = :schema AND c.relname = 'clinician_profiles'"
+                    ),
+                    {"schema": tenant_schema},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        assert row is not None, "clinician_profiles missing from the provisioned tenant schema"
+        # user_id-scoped, not skipped (the enable_rls_on_schema docstring
+        # once wrongly claimed otherwise).
+        assert row["relrowsecurity"], f"clinician_profiles must have RLS enabled. Got {dict(row)}."
+        assert row["relforcerowsecurity"], (
+            f"clinician_profiles must have RLS forced. Got {dict(row)}."
+        )
+
+    def test_unarmed_profile_insert_is_rejected(self, engine: Engine, tenant_schema: str) -> None:
+        from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
+
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_user_id"))
+            with pytest.raises(ProgrammingError) as exc:
+                conn.execute(
+                    text(
+                        "INSERT INTO clinician_profiles "
+                        "(user_id, practice_id, role, joined_at) "
+                        "VALUES (:u, :p, 'clinician', now())"
+                    ),
+                    {"u": "unarmed-user", "p": "practice-x"},
+                )
+            conn.rollback()
+        assert "row-level security" in str(exc.value).lower(), (
+            "Expected an RLS WITH CHECK violation when the GUC is unset; "
+            f"got a different error: {exc.value}"
+        )
+
+    def test_arm_current_user_id_allows_profile_insert(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        from app.db import (  # noqa: PLC0415
+            _current_tenant_schema,
+            _current_user_id,
+            arm_current_user_id,
+        )
+
+        clinician = "armed-clinician"
+        schema_token = _current_tenant_schema.set(tenant_schema)
+        user_token = _current_user_id.set(None)
+        session = OrmSession(bind=engine)
+        try:
+            session.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            arm_current_user_id(session, clinician)
+            session.execute(
+                text(
+                    "INSERT INTO clinician_profiles "
+                    "(user_id, practice_id, role, joined_at) "
+                    "VALUES (:u, :p, 'clinician', now())"
+                ),
+                {"u": clinician, "p": "practice-x"},
+            )
+            session.commit()
+
+            # Visible to its owner (after_begin re-arms the GUC post-commit).
+            count = session.execute(
+                text("SELECT count(*) FROM clinician_profiles WHERE user_id = :u"),
+                {"u": clinician},
+            ).scalar_one()
+            assert count == 1, (
+                "armed clinician should see their own profile row after the "
+                "upsert; the after_begin re-arm may have failed"
+            )
+        finally:
+            session.close()
+            _current_user_id.reset(user_token)
             _current_tenant_schema.reset(schema_token)

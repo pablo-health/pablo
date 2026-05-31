@@ -363,6 +363,14 @@ def _upsert_clinician_profile(
             else (existing.license_state if existing else None)
         ),
     )
+    # Arm the RLS GUC for this write. The onboarding routes that reach
+    # here run pre-MFA (get_current_user_no_mfa), so they never pass
+    # through get_tenant_context and app.current_user_id is unset —
+    # under a NOBYPASSRLS role the clinician_profiles WITH CHECK policy
+    # would reject the upsert. The caller only ever writes their own row.
+    from ..db import arm_current_user_id, get_db_session
+
+    arm_current_user_id(get_db_session(), str(user.id))
     profile_repo.update(profile)
 
 
