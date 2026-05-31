@@ -175,7 +175,7 @@ class OidcVerifier:
             )
         except jwt.PyJWTError as err:
             # No PHI / token material in logs — failure reason only.
-            logger.warning("OIDC ID token rejected: %s", err)
+            logger.warning("OIDC ID token rejected: %s", err)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak — logs exception message, not the token value
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
