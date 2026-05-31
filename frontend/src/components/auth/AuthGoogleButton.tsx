@@ -33,7 +33,7 @@ export function AuthGoogleButton({ onClick }: AuthGoogleButtonProps) {
           style={{ fill: "#EA4335" }}
         />
       </svg>
-      Sign in with Google
+      Continue with Google
     </button>
   )
 }
