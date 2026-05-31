@@ -88,7 +88,8 @@ describe("firebaseAuthErrorOutcome — existing paths still work", () => {
     ]) {
       expect(firebaseAuthErrorOutcome({ code }, "sign-in")).toEqual({
         kind: "message",
-        message: "Invalid email or password",
+        message:
+          "Invalid email or password. If you signed up with Google, use the “Continue with Google” button above.",
       })
     }
   })

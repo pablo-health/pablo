@@ -55,18 +55,22 @@ function getUrlParam(name: string): string {
   return params.get(name) || ""
 }
 
-type AuthMethod = "google" | "password"
+// "google" = Google sign-in; "email" = the email/password form. The tag is
+// just which button to flag, not a credential — keep it free of any
+// password/secret value so it stays safe to persist in the clear.
+type AuthMethod = "google" | "email"
 
 // Remember how this device last signed in so we can surface a "Last used"
-// hint on the matching button. We store only the method — never the email —
-// so a shared workstation reveals nothing about who has an account here.
+// hint on the matching button. We store only the method tag — never the
+// email or password — so a shared workstation reveals nothing about who has
+// an account here.
 const LAST_AUTH_METHOD_KEY = "pablo:lastAuthMethod"
 
 function readLastAuthMethod(): AuthMethod | null {
   if (typeof window === "undefined") return null
   try {
     const v = window.localStorage.getItem(LAST_AUTH_METHOD_KEY)
-    return v === "google" || v === "password" ? v : null
+    return v === "google" || v === "email" ? v : null
   } catch {
     return null
   }
@@ -109,7 +113,7 @@ export function FirebaseLoginScreen() {
   // "Last used" hint, and the method that kicked off an in-progress MFA
   // challenge (so we record the right one once the challenge resolves).
   const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
-  const [pendingMethod, setPendingMethod] = useState<AuthMethod>("password")
+  const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
 
   // Show notice when redirected from idle timeout
   useEffect(() => {
@@ -202,11 +206,11 @@ export function FirebaseLoginScreen() {
 
     try {
       const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
-      await finishLogin(credential, "password")
+      await finishLogin(credential, "email")
     } catch (err) {
       const outcome = firebaseAuthErrorOutcome(err, "sign-in")
       if (outcome.kind === "mfa-required") {
-        handleMfaRequired(err as MultiFactorError, "password")
+        handleMfaRequired(err as MultiFactorError, "email")
       } else if (outcome.kind === "message") {
         setError(outcome.message)
       }
@@ -413,7 +417,7 @@ export function FirebaseLoginScreen() {
                   ? "Create Account"
                   : "Sign In"}
             </AuthPrimaryButton>
-            {!isSignUp && lastMethod === "password" && <LastUsedPill />}
+            {!isSignUp && lastMethod === "email" && <LastUsedPill />}
           </div>
 
           <div className="flex items-center justify-between text-sm">
