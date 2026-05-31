@@ -285,10 +285,7 @@ class Settings(BaseSettings):
     )
     oidc_audience: str = Field(
         default="",
-        description=(
-            "Expected `aud` claim on OIDC ID tokens. Required when "
-            "oidc_issuer is set."
-        ),
+        description=("Expected `aud` claim on OIDC ID tokens. Required when oidc_issuer is set."),
     )
     oidc_jwks_uri: str = Field(
         default="",
@@ -614,6 +611,18 @@ class Settings(BaseSettings):
             "Flash-tier model used by chat callers by default. Cheaper "
             "than ``ai_model`` and sufficient for grounded chat. When "
             "unset, chat callers fall through to ``ai_model``."
+        ),
+    )
+    note_max_output_tokens: int = Field(
+        default=16384,
+        description=(
+            "Output-token budget for structured note generation (SOAP and "
+            "other registry note types). Must be generous: thinking models "
+            "(e.g. gemini-3.x pro) spend part of the output budget on "
+            "reasoning tokens before emitting the JSON, so a value sized for "
+            "a non-thinking model truncates the note on real, full-length "
+            "transcripts. On truncation the generator retries once at twice "
+            "this value. Tune per-deployment via NOTE_MAX_OUTPUT_TOKENS."
         ),
     )
     # LLM quota enforcement switch for the chat primitive
