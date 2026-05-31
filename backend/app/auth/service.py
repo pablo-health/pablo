@@ -191,7 +191,8 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
             },
         ) from err
     except firebase_auth.InvalidIdTokenError as err:
-        logger.warning("Firebase ID token rejected: invalid (INVALID_TOKEN): %s", err)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak — logs exception message, not the token value
+        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak — logs exception message, not the token value
+        logger.warning("Firebase ID token rejected: invalid (INVALID_TOKEN): %s", err)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
@@ -233,7 +234,8 @@ def _unverified_issuer(token: str) -> str | None:
     used solely to pick a verifier — it never grants trust on its own.
     """
     try:
-        claims = jwt.decode(token, options={"verify_signature": False})  # nosemgrep: python.jwt.security.unverified-jwt-decode — routing helper only; downstream verifier re-checks signature
+        # nosemgrep: python.jwt.security.unverified-jwt-decode — routing helper only; downstream verifier re-checks signature
+        claims = jwt.decode(token, options={"verify_signature": False})
     except jwt.PyJWTError:
         return None
     issuer = claims.get("iss")
@@ -379,7 +381,8 @@ def require_mfa(
     if settings.e2e_test_emails and not settings.is_prod_project:
         email = decoded_token.get("email", "")
         if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
-            logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak — logs uid string, not a credential
+            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak — logs uid string, not a credential
+            logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
             return decoded_token
 
     if not identity.mfa_satisfied:
