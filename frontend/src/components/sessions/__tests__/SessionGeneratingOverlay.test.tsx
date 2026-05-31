@@ -114,6 +114,85 @@ describe("SessionGeneratingOverlay", () => {
     })
   })
 
+  describe("Dismissible while processing", () => {
+    it("renders a Close button and a Continue in the background button", () => {
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue(processingListResponse)
+      vi.mocked(sessionsApi.getSession).mockResolvedValue(processingSession)
+
+      render(<SessionGeneratingOverlay patientId="patient-1" />, {
+        wrapper: createWrapper(),
+      })
+
+      expect(screen.getByRole("button", { name: /close/i })).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: /continue in the background/i }),
+      ).toBeInTheDocument()
+    })
+
+    it("calls onDone when Continue in the background is clicked", async () => {
+      const user = userEvent.setup()
+      const onDone = vi.fn()
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue(processingListResponse)
+      vi.mocked(sessionsApi.getSession).mockResolvedValue(processingSession)
+
+      render(<SessionGeneratingOverlay patientId="patient-1" onDone={onDone} />, {
+        wrapper: createWrapper(),
+      })
+
+      await user.click(
+        screen.getByRole("button", { name: /continue in the background/i }),
+      )
+
+      expect(onDone).toHaveBeenCalled()
+    })
+
+    it("calls onDone when the Close button is clicked", async () => {
+      const user = userEvent.setup()
+      const onDone = vi.fn()
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue(processingListResponse)
+      vi.mocked(sessionsApi.getSession).mockResolvedValue(processingSession)
+
+      render(<SessionGeneratingOverlay patientId="patient-1" onDone={onDone} />, {
+        wrapper: createWrapper(),
+      })
+
+      await user.click(screen.getByRole("button", { name: /close/i }))
+
+      expect(onDone).toHaveBeenCalled()
+    })
+
+    it("calls onDone when Escape is pressed", async () => {
+      const user = userEvent.setup()
+      const onDone = vi.fn()
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue(processingListResponse)
+      vi.mocked(sessionsApi.getSession).mockResolvedValue(processingSession)
+
+      render(<SessionGeneratingOverlay patientId="patient-1" onDone={onDone} />, {
+        wrapper: createWrapper(),
+      })
+
+      await user.keyboard("{Escape}")
+
+      expect(onDone).toHaveBeenCalled()
+    })
+
+    it("does not navigate when dismissed mid-processing", async () => {
+      const user = userEvent.setup()
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue(processingListResponse)
+      vi.mocked(sessionsApi.getSession).mockResolvedValue(processingSession)
+
+      render(<SessionGeneratingOverlay patientId="patient-1" />, {
+        wrapper: createWrapper(),
+      })
+
+      await user.click(
+        screen.getByRole("button", { name: /continue in the background/i }),
+      )
+
+      expect(mockPush).not.toHaveBeenCalled()
+    })
+  })
+
   describe("Processing state", () => {
     it("shows the main heading", () => {
       vi.mocked(sessionsApi.listSessions).mockResolvedValue(processingListResponse)

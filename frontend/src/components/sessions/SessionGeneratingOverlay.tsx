@@ -10,6 +10,11 @@
  * Design: Pablo bear image + rotating encouraging copy + spinner.
  * The overlay sits above the dashboard shell via fixed positioning so
  * the clinician stays oriented without a jarring navigation.
+ *
+ * Non-blocking: the overlay is dismissible at any time (corner ✕,
+ * "Continue in the background", or Escape). Dismissing only hides the
+ * overlay — generation continues server-side and the note surfaces on
+ * the dashboard as "awaiting review" once it's ready.
  */
 
 "use client"
@@ -17,7 +22,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
-import { Loader2, AlertCircle } from "lucide-react"
+import { Loader2, AlertCircle, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useSession, useSessionProcessing } from "@/hooks/useSessions"
@@ -114,12 +119,29 @@ export function SessionGeneratingOverlay({
     }
   }, [session, onDone, router])
 
+  // Dismiss the overlay without leaving the page. Generation continues
+  // server-side; the note surfaces on the dashboard as "awaiting review"
+  // once it reaches pending_review.
+  const handleDismiss = useCallback(() => {
+    onDone?.()
+  }, [onDone])
+
   // Navigate automatically when the note is ready.
   useEffect(() => {
     if (session?.status === "pending_review") {
       handleNavigate()
     }
   }, [session, handleNavigate])
+
+  // Escape dismisses the overlay so the clinician is never trapped here.
+  useEffect(() => {
+    if (!patientId) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleDismiss()
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+  }, [patientId, handleDismiss])
 
   if (!patientId) return null
 
@@ -136,6 +158,17 @@ export function SessionGeneratingOverlay({
         className,
       )}
     >
+      {/* Corner dismiss — the overlay is non-blocking; the clinician can
+          step away while the note finishes generating in the background. */}
+      <button
+        type="button"
+        onClick={handleDismiss}
+        aria-label="Close"
+        className="absolute right-4 top-4 rounded-md p-2 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
+      >
+        <X className="h-5 w-5" aria-hidden="true" />
+      </button>
+
       {/* Pablo bear */}
       <Image
         src="/pablo-today.webp"
@@ -197,6 +230,9 @@ export function SessionGeneratingOverlay({
             className="w-8 h-8 text-primary-600 animate-spin"
             aria-hidden="true"
           />
+          <Button variant="ghost" size="sm" onClick={handleDismiss}>
+            Continue in the background
+          </Button>
         </div>
       )}
     </div>
