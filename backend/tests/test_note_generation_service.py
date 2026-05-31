@@ -27,6 +27,7 @@ from app.services.note_generation_service import (
 from app.services.structured_llm_gateway import (
     FakeStructuredLLMGateway,
     StructuredCompletion,
+    StructuredOutputTruncatedError,
 )
 
 
@@ -513,6 +514,62 @@ class TestRegistryGeneration:
                 patient,
                 datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
             )
+
+    def test_truncated_output_retries_at_double_budget(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """A first-attempt truncation (thinking model ate the output budget on
+        a real transcript) retries once at twice the budget and succeeds — the
+        regression for the SOAP 'Failed to generate' failure."""
+        transcript = Transcript(format="txt", content="[00:00] Client: hello")
+        narrative = {"note": {"body": "Client greeted the therapist."}}
+        gateway = FakeStructuredLLMGateway(
+            responses=[
+                StructuredOutputTruncatedError("hit max_output_tokens"),
+                StructuredCompletion(data=narrative),
+            ]
+        )
+        service = RegistryNoteGenerationService(
+            registry=isolated_registry, llm_gateway=gateway
+        )
+
+        result = service.generate_note(
+            "narrative",
+            transcript,
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        assert result.content == narrative
+        # Two attempts: the retry doubled the output budget.
+        assert len(gateway.calls) == 2
+        assert gateway.calls[1]["max_output_tokens"] == 2 * gateway.calls[0]["max_output_tokens"]
+
+    def test_truncated_output_twice_raises_value_error(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """If even the doubled budget truncates, generation fails loud as a
+        ValueError (the caller marks the session FAILED) rather than surfacing
+        a confusing JSONDecodeError."""
+        transcript = Transcript(format="txt", content="[00:00] Client: hello")
+        gateway = FakeStructuredLLMGateway(
+            responses=[
+                StructuredOutputTruncatedError("truncated #1"),
+                StructuredOutputTruncatedError("truncated #2"),
+            ]
+        )
+        service = RegistryNoteGenerationService(
+            registry=isolated_registry, llm_gateway=gateway
+        )
+
+        with pytest.raises(ValueError, match="Note generation failed"):
+            service.generate_note(
+                "narrative",
+                transcript,
+                patient,
+                datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+            )
+        assert len(gateway.calls) == 2
 
     def test_mock_narrative_returns_registry_shape(self, patient: Patient) -> None:
         reg = NoteTypeRegistry()

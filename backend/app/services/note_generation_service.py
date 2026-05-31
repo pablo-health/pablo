@@ -42,7 +42,9 @@ from .source_attribution_service import (
     parse_attribution_response,
 )
 from .structured_llm_gateway import (
+    StructuredCompletion,
     StructuredLLMGateway,
+    StructuredOutputTruncatedError,
     get_default_structured_llm_gateway,
 )
 
@@ -159,35 +161,79 @@ class RegistryNoteGenerationService(NoteGenerationService):
         session_date: datetime,
     ) -> dict[str, Any]:
         if definition.prompt_builder is not None:
-            user_prompt = definition.prompt_builder(
-                definition, transcript, patient, session_date
-            )
+            user_prompt = definition.prompt_builder(definition, transcript, patient, session_date)
             system_prompt = (
                 SOAP_SYSTEM_PROMPT
                 if definition.key == SOAP_KEY
                 else _DEFAULT_GENERATION_PROMPT_SYSTEM
             )
         else:
-            user_prompt = _build_registry_user_prompt(
-                definition, transcript, patient, session_date
-            )
+            user_prompt = _build_registry_user_prompt(definition, transcript, patient, session_date)
             system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
         schema = _build_registry_response_schema(definition)
-        try:
-            completion = self._llm_gateway.complete_structured(
-                model=self._resolve_model(),
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                response_schema=schema,
-                max_output_tokens=4096,
-                temperature=0.2,
-            )
-        except Exception as exc:
-            logger.exception("LLM generation failed for note_type=%s", definition.key)
-            raise ValueError(f"Note generation failed: {exc}") from exc
+        completion = self._complete_structured_with_retry(
+            note_key=definition.key,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=schema,
+        )
 
         return _coerce_registry_response(definition, completion.data)
+
+    def _complete_structured_with_retry(
+        self,
+        *,
+        note_key: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any],
+        temperature: float = 0.2,
+    ) -> StructuredCompletion:
+        """Run a structured note completion, retrying once if truncated.
+
+        The output budget comes from ``note_max_output_tokens`` (env-tunable,
+        generous by default). Thinking models spend part of that budget on
+        reasoning, so a real, full-length transcript can still truncate the
+        JSON tail; when the gateway reports the response was cut at the token
+        cap we retry once at twice the budget before giving up. Any other
+        failure (or a second truncation) raises ``ValueError`` so the caller's
+        SOAP-generation-failed path runs — preserving the existing log line.
+        """
+        base_budget = get_settings().note_max_output_tokens
+        budgets = (base_budget, base_budget * 2)
+        last_truncation: StructuredOutputTruncatedError | None = None
+        for budget in budgets:
+            try:
+                return self._llm_gateway.complete_structured(
+                    model=self._resolve_model(),
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    response_schema=response_schema,
+                    max_output_tokens=budget,
+                    temperature=temperature,
+                )
+            except StructuredOutputTruncatedError as exc:
+                last_truncation = exc
+                logger.warning(
+                    "Structured note output truncated for note_type=%s at "
+                    "max_output_tokens=%d (%s)",
+                    note_key,
+                    budget,
+                    "retrying at 2x" if budget == base_budget else "giving up after retry",
+                )
+                continue
+            except Exception as exc:
+                logger.exception("LLM generation failed for note_type=%s", note_key)
+                raise ValueError(f"Note generation failed: {exc}") from exc
+
+        logger.error(
+            "LLM generation failed for note_type=%s: output still truncated "
+            "after retry at %d tokens",
+            note_key,
+            budgets[-1],
+        )
+        raise ValueError(f"Note generation failed: {last_truncation}") from last_truncation
 
     def _run_source_attribution(self, soap_note: SOAPNote, transcript_content: str) -> None:
         """Run Call-2: ask the model which transcript segments support each claim.
@@ -215,7 +261,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 ),
                 user_prompt=prompt,
                 response_schema=_SOAP_ATTRIBUTION_SCHEMA,
-                max_output_tokens=2000,
+                # Generous so a thinking model's reasoning tokens don't crowd
+                # out the claim->segment mapping on a long note (the mapping
+                # itself is small, but reasoning shares this budget). This
+                # call is non-fatal — truncation just drops source links —
+                # but we'd rather keep grounding working on real transcripts.
+                max_output_tokens=8192,
                 temperature=0.0,
             )
             parse_attribution_response(
@@ -234,9 +285,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
             )
 
 
-def _run_embedding_verification(
-    claims: dict[str, SOAPSentence], transcript_content: str
-) -> None:
+def _run_embedding_verification(claims: dict[str, SOAPSentence], transcript_content: str) -> None:
     """Re-rank Call-2 attributions with embedding + NLI signals.
 
     Off by default — opt-in via ``ENABLE_EMBEDDING_VERIFICATION=true``.
@@ -283,9 +332,7 @@ def _run_embedding_verification(
                 TemporalConsistencySignal(),
             ],
         )
-        results = verification_service.verify_attributions(
-            claim_texts, segments, attribution_map
-        )
+        results = verification_service.verify_attributions(claim_texts, segments, attribution_map)
         for result in results:
             if result.claim_key in claims:
                 claim = claims[result.claim_key]
