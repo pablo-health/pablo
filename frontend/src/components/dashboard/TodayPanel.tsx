@@ -151,7 +151,7 @@ function CompanionFooter() {
 function EmptyDay() {
   return (
     <div className="flex flex-col items-center text-center py-6">
-      <Image src="/pablo-tie.webp" alt="Pablo bear" width={64} height={64} />
+      <Image src="/pablo-rest.webp" alt="Pablo bear" width={72} height={72} />
       <p className="text-sm text-neutral-700 mt-3">
         No sessions today. Enjoy the breathing room.
       </p>
