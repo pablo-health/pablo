@@ -158,11 +158,14 @@ def _commit_intermediate(user_id: str) -> None:
 
     ``user_id`` is accepted but not used directly: the ``after_begin``
     Session listener in ``app.db`` re-arms ``app.current_user_id`` on
-    every fresh transaction from the request-scoped ContextVar set by
-    ``set_current_user_id`` at auth time. The argument is kept on the
-    helper signature so call sites read as "commit the locks held for
-    this user" -- self-documenting at the seam, and gives us a hook
-    point if we ever need per-call diagnostics.
+    every fresh transaction from the user id armed on ``Session.info`` at
+    auth time (``arm_current_user_id``). Using ``Session.info`` rather
+    than a ContextVar is what makes this work on sync routes, whose
+    dependency and endpoint run in separate threadpool workers that don't
+    share ContextVar mutations. The argument is kept on the helper
+    signature so call sites read as "commit the locks held for this
+    user" -- self-documenting at the seam, and gives us a hook point if
+    we ever need per-call diagnostics.
 
     No-ops when no request-scoped session is in context (unit tests with
     in-memory fakes, CLI scripts that never installed the middleware) --
