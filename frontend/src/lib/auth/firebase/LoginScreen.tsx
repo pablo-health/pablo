@@ -55,6 +55,44 @@ function getUrlParam(name: string): string {
   return params.get(name) || ""
 }
 
+// "google" = Google sign-in; "email" = the email/password form. The tag is
+// just which button to flag, not a credential — keep it free of any
+// password/secret value so it stays safe to persist in the clear.
+type AuthMethod = "google" | "email"
+
+// Remember how this device last signed in so we can surface a "Last used"
+// hint on the matching button. We store only the method tag — never the
+// email or password — so a shared workstation reveals nothing about who has
+// an account here.
+const LAST_AUTH_METHOD_KEY = "pablo:lastAuthMethod"
+
+function readLastAuthMethod(): AuthMethod | null {
+  if (typeof window === "undefined") return null
+  try {
+    const v = window.localStorage.getItem(LAST_AUTH_METHOD_KEY)
+    return v === "google" || v === "email" ? v : null
+  } catch {
+    return null
+  }
+}
+
+function rememberAuthMethod(method: AuthMethod): void {
+  try {
+    window.localStorage.setItem(LAST_AUTH_METHOD_KEY, method)
+  } catch {
+    // localStorage blocked (private mode / cookies off) — the hint is
+    // best-effort, so a failure here is fine to swallow.
+  }
+}
+
+function LastUsedPill() {
+  return (
+    <span className="pointer-events-none absolute -top-2 right-3 rounded-full bg-primary-600 px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm ring-2 ring-card">
+      Last used
+    </span>
+  )
+}
+
 export function FirebaseLoginScreen() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
@@ -71,6 +109,11 @@ export function FirebaseLoginScreen() {
 
   const [step, setStep] = useState<LoginStep>("sign-in")
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
+
+  // "Last used" hint, and the method that kicked off an in-progress MFA
+  // challenge (so we record the right one once the challenge resolves).
+  const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
+  const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
 
   // Show notice when redirected from idle timeout
   useEffect(() => {
@@ -90,6 +133,11 @@ export function FirebaseLoginScreen() {
         "We cleared a stuck sign-in state from a previous attempt. Please try signing in again."
       )
     }
+  }, [])
+
+  // Surface the method this device signed in with last.
+  useEffect(() => {
+    setLastMethod(readLastAuthMethod())
   }, [])
 
   // Exchange setup token from marketing signup to pre-fill email
@@ -133,19 +181,21 @@ export function FirebaseLoginScreen() {
     }
   }, [user, authLoading, router, step, isSignUp])
 
-  const handleMfaRequired = (err: MultiFactorError) => {
+  const handleMfaRequired = (err: MultiFactorError, method: AuthMethod) => {
+    setPendingMethod(method)
     const resolver = getMultiFactorResolver(getFirebaseAuth(), err)
     setMfaResolver(resolver)
     setStep("mfa")
     setError("")
   }
 
-  const finishLogin = async (credential: UserCredential) => {
+  const finishLogin = async (credential: UserCredential, method: AuthMethod) => {
     const idToken = await credential.user.getIdToken()
     await fetch("/api/login", {
       method: "POST",
       headers: { Authorization: `Bearer ${idToken}` },
     })
+    rememberAuthMethod(method)
     router.push("/dashboard")
   }
 
@@ -156,11 +206,11 @@ export function FirebaseLoginScreen() {
 
     try {
       const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
-      await finishLogin(credential)
+      await finishLogin(credential, "email")
     } catch (err) {
       const outcome = firebaseAuthErrorOutcome(err, "sign-in")
       if (outcome.kind === "mfa-required") {
-        handleMfaRequired(err as MultiFactorError)
+        handleMfaRequired(err as MultiFactorError, "email")
       } else if (outcome.kind === "message") {
         setError(outcome.message)
       }
@@ -205,11 +255,11 @@ export function FirebaseLoginScreen() {
 
     try {
       const result = await signInWithPopup(auth, provider)
-      await finishLogin(result)
+      await finishLogin(result, "google")
     } catch (err) {
       const outcome = firebaseAuthErrorOutcome(err, "google")
       if (outcome.kind === "mfa-required") {
-        handleMfaRequired(err as MultiFactorError)
+        handleMfaRequired(err as MultiFactorError, "google")
       } else if (outcome.kind === "popup-blocked") {
         console.log("Popup blocked, falling back to redirect")
         await signInWithRedirect(auth, provider)
@@ -238,7 +288,7 @@ export function FirebaseLoginScreen() {
     return (
       <MfaChallengeScreen
         resolver={mfaResolver}
-        onSuccess={finishLogin}
+        onSuccess={(credential) => finishLogin(credential, pendingMethod)}
         onCancel={() => {
           setMfaResolver(null)
           setError("")
@@ -301,6 +351,13 @@ export function FirebaseLoginScreen() {
       />
 
       <div className="mt-8 space-y-4">
+        <div className="relative">
+          <AuthGoogleButton onClick={handleGoogleLogin} />
+          {!isSignUp && lastMethod === "google" && <LastUsedPill />}
+        </div>
+
+        <AuthDivider />
+
         <form
           onSubmit={isSignUp ? handleEmailSignUp : handleEmailLogin}
           className="space-y-4"
@@ -350,15 +407,18 @@ export function FirebaseLoginScreen() {
             </AuthFeedback>
           )}
 
-          <AuthPrimaryButton type="submit" disabled={loading}>
-            {loading
-              ? isSignUp
-                ? "Creating account..."
-                : "Signing in..."
-              : isSignUp
-                ? "Create Account"
-                : "Sign In"}
-          </AuthPrimaryButton>
+          <div className="relative">
+            <AuthPrimaryButton type="submit" disabled={loading}>
+              {loading
+                ? isSignUp
+                  ? "Creating account..."
+                  : "Signing in..."
+                : isSignUp
+                  ? "Create Account"
+                  : "Sign In"}
+            </AuthPrimaryButton>
+            {!isSignUp && lastMethod === "email" && <LastUsedPill />}
+          </div>
 
           <div className="flex items-center justify-between text-sm">
             {!isSignUp && (
@@ -377,10 +437,6 @@ export function FirebaseLoginScreen() {
             </AuthLinkButton>
           </div>
         </form>
-
-        <AuthDivider />
-
-        <AuthGoogleButton onClick={handleGoogleLogin} />
 
         <p className="mt-6 text-center text-sm text-neutral-500">
           By signing in, you agree to our{" "}
