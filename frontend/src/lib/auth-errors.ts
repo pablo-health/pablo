@@ -51,6 +51,17 @@ export function firebaseAuthErrorOutcome(err: unknown, variant: AuthErrorVariant
     return { kind: "popup-blocked" }
   }
 
+  // The user proved control of the Google account but an email/password
+  // account already exists for the same address. Safe to name the method —
+  // they own the email, so this doesn't leak account existence to a stranger.
+  if (code === "auth/account-exists-with-different-credential") {
+    return {
+      kind: "message",
+      message:
+        "You already have an account with this email created using a password. Sign in with your email and password below.",
+    }
+  }
+
   if (code === "auth/blocking-function-error-response") {
     const fallback = variant === "sign-up" ? "Sign-up blocked by administrator." : "Sign-in blocked by administrator."
     return { kind: "message", message: message || fallback }
@@ -117,7 +128,13 @@ export function firebaseAuthErrorOutcome(err: unknown, variant: AuthErrorVariant
     code === "auth/wrong-password" ||
     code === "auth/user-disabled"
   ) {
-    return { kind: "message", message: "Invalid email or password" }
+    // Shown for every failed credential regardless of whether the account
+    // exists, so the Google nudge can't be used to probe account existence.
+    return {
+      kind: "message",
+      message:
+        "Invalid email or password. If you signed up with Google, use the “Continue with Google” button above.",
+    }
   }
   if (code === "auth/too-many-requests") {
     return { kind: "message", message: "Too many attempts. Please try again later." }
