@@ -453,30 +453,15 @@ def get_tenant_context(
             # `app.db.middleware.DatabaseSessionMiddleware._resolve_schema_from_request`.
             # We still need the active session here to set the
             # RLS user-id variable below.
-            from ..db import get_db_session, set_current_user_id
+            from ..db import arm_current_user_id, get_db_session
 
-            session = get_db_session()
-
-            # RLS defense-in-depth: set the current user ID as a
-            # transaction-scoped session variable so PostgreSQL
-            # row-level security policies can enforce per-clinician
-            # isolation within the tenant schema.
-            # Uses set_config() instead of SET LOCAL because SET
-            # doesn't support bind parameters. The third arg (true)
-            # makes it transaction-local — auto-cleared on commit.
-            # ``set_current_user_id`` stashes the user id in a
-            # request-scoped ContextVar so the ``after_begin`` Session
-            # listener can re-arm the GUC on every fresh transaction.
-            # Without it, mid-request commits (THERAPY-da7t lock
-            # release) would leave subsequent queries with no GUC
-            # and RLS would silently return zero rows.
-            from sqlalchemy import text
-
-            set_current_user_id(str(pablo_user_id))
-            session.execute(
-                text("SELECT set_config('app.current_user_id', :uid, true)"),
-                {"uid": pablo_user_id},
-            )
+            # RLS defense-in-depth: arm app.current_user_id so row-level
+            # security policies enforce per-clinician isolation within the
+            # tenant schema. arm_current_user_id sets it on the open
+            # transaction and stashes it in the request ContextVar so the
+            # after_begin listener re-arms the GUC after any mid-request
+            # commit (THERAPY-da7t lock release).
+            arm_current_user_id(get_db_session(), str(pablo_user_id))
             return TenantContext(
                 user_id=pablo_user_id,
                 practice_id=practice_id,
@@ -571,8 +556,7 @@ def _await_provisioning_ready(practice_id: str) -> None:
                     "error": {
                         "code": "TENANT_PROVISIONING_FAILED",
                         "message": (
-                            "Your account is in a stuck provisioning state. "
-                            "Please contact support."
+                            "Your account is in a stuck provisioning state. Please contact support."
                         ),
                         "details": {"practice_id": practice_id},
                     }
@@ -585,9 +569,7 @@ def _await_provisioning_ready(practice_id: str) -> None:
         detail={
             "error": {
                 "code": "TENANT_PROVISIONING_IN_PROGRESS",
-                "message": (
-                    "Your account is still being set up. Please retry in a few seconds."
-                ),
+                "message": ("Your account is still being set up. Please retry in a few seconds."),
                 "details": {"practice_id": practice_id},
             }
         },
@@ -766,6 +748,21 @@ def _resolve_user(
         )
 
     user_id_var.set(str(pablo_user_id))
+    # Arm the RLS ``app.current_user_id`` GUC for the resolved user, right
+    # beside the logging var above. Both name "who this request is"; they
+    # drifted apart historically — only ``get_tenant_context`` armed the RLS
+    # var, so pre-MFA paths (``get_current_user_no_mfa`` -> here) and any PHI
+    # route using ``get_current_user`` without ``get_tenant_context`` left it
+    # unset and read/wrote zero rows under a NOBYPASSRLS role. Arming at this
+    # single shared seam covers every authenticated HTTP request; off-request
+    # work arms via ``tenant_db_session`` / ``run_in_tenant``. Guarded:
+    # token-exchange / CLI callers pass ``request=None`` and have no
+    # request-scoped session to arm.
+    from ..db import _request_session, arm_current_user_id
+
+    db_session = _request_session.get()
+    if db_session is not None:
+        arm_current_user_id(db_session, str(pablo_user_id))
     return user
 
 
