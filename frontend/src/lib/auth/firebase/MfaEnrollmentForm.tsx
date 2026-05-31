@@ -368,7 +368,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
           </div>
 
           <p className="text-sm text-neutral-700 mb-4">
-            Use an authenticator app — Authy, Google Authenticator, or 1Password — to scan
+            Use an authenticator app (Google Authenticator, Authy, or 1Password) to scan
             this QR code. Pick one with cloud backup so a lost phone doesn&apos;t lock you out.
           </p>
 
