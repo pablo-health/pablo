@@ -209,6 +209,28 @@ def set_current_user_id(user_id: str) -> None:
     _current_user_id.set(user_id)
 
 
+def arm_current_user_id(session: Session, user_id: str) -> None:
+    """Arm the RLS ``app.current_user_id`` GUC for a tenant-scoped write.
+
+    Combines the two steps every write path needs when it can't go
+    through ``get_tenant_context`` (e.g. pre-MFA onboarding routes that
+    upsert the caller's own tenant row): stash the id in the request
+    ContextVar via :func:`set_current_user_id` so the ``after_begin``
+    listener re-applies the GUC across any mid-request commit, and
+    issue ``set_config`` once for the transaction that's already open
+    (the first ``BEGIN`` fires lazily on the first query, before we get
+    here, so the listener won't have armed it yet).
+
+    ``session`` must be the request-scoped session the subsequent write
+    runs through, so the GUC lands on the same transaction.
+    """
+    set_current_user_id(user_id)
+    session.execute(
+        text("SELECT set_config('app.current_user_id', :uid, true)"),
+        {"uid": user_id},
+    )
+
+
 @event.listens_for(Session, "after_begin")
 def _rearm_rls_user_id_on_txn_begin(  # type: ignore[no-untyped-def]
     _session, _transaction, connection
@@ -388,9 +410,14 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
       table — supports primary, co-treating, supervisor, and coverage
       grants without further policy churn.
 
-    Tables with neither column (audit_logs, clinician_profiles, etc.)
-    are intentionally skipped; they're not patient-scoped and live
-    behind the tenant-schema boundary plus application-layer checks.
+    The user_id shape also covers ``clinician_profiles`` — each
+    clinician owns their single profile row — so writes to it require
+    ``app.current_user_id`` to be armed (see ``arm_current_user_id``;
+    the pre-MFA onboarding routes that upsert it can't go through
+    ``get_tenant_context``, so they arm it directly). Tables with none
+    of ``user_id`` / ``patient_id`` / ``id`` (e.g. audit_logs) are
+    skipped; they're not row-scoped and live behind the tenant-schema
+    boundary plus application-layer checks.
 
     ``FORCE ROW LEVEL SECURITY`` applies the policy even to the table
     owner (defense-in-depth for HIPAA isolation). ``current_setting``
