@@ -4,6 +4,7 @@ import { mockUser } from "@/lib/mockData"
 import { getServerSession } from "@/lib/auth/server"
 import { getUserStatus } from "@/lib/api/users"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
+import { AwaitingReviewPanel } from "@/components/dashboard/AwaitingReviewPanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
@@ -63,6 +64,7 @@ export default async function DashboardPage() {
       ) : (
         <>
           <DashboardBanners />
+          <AwaitingReviewPanel />
           <TodayPanel />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <WeekPanel />
