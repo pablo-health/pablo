@@ -220,6 +220,18 @@ export interface UpdateSessionRatingRequest {
 }
 
 /**
+ * Update editable session metadata (e.g. correcting the session date on an
+ * imported note). All fields optional; only provided fields are changed.
+ */
+export interface UpdateSessionMetadataRequest {
+  session_date?: string
+  scheduled_at?: string
+  video_link?: string
+  duration_minutes?: number
+  notes?: string
+}
+
+/**
  * Export queue item for admin review
  */
 export interface ExportQueueItem {
