@@ -19,21 +19,15 @@ import Link from "next/link"
 import { useMemo } from "react"
 import { FileText } from "lucide-react"
 import { useSessionList } from "@/hooks/useSessions"
+import { useUserTimeZone, formatInUserTimeZone } from "@/hooks/usePreferences"
 import { SessionStatusBadge } from "@/components/sessions/SessionStatusBadge"
 
 // Show at most this many rows inline; the rest live on the Review worklist.
 const MAX_ROWS = 5
 
-function formatSessionDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
-}
-
 export function AwaitingReviewPanel() {
   const { data, isLoading } = useSessionList()
+  const timeZone = useUserTimeZone()
 
   const pending = useMemo(
     () =>
@@ -78,7 +72,11 @@ export function AwaitingReviewPanel() {
                   {session.patient_name}
                 </span>
                 <span className="shrink-0 text-xs text-neutral-500">
-                  {formatSessionDate(session.session_date)}
+                  {formatInUserTimeZone(session.session_date, timeZone, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
                 </span>
               </span>
               <SessionStatusBadge

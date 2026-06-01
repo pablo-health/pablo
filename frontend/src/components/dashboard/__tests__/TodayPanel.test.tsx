@@ -18,6 +18,10 @@ vi.mock("@/hooks/usePatients", () => ({
   usePatientList: (...args: unknown[]) => usePatientList(...args),
 }))
 
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => "America/New_York",
+}))
+
 function makeAppointment(
   overrides: Partial<AppointmentResponse> = {},
 ): AppointmentResponse {
