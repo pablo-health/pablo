@@ -305,7 +305,7 @@ async def import_session(
     try:
         parsed = note_import_service.parse_soap_note(text)
     except ValueError as exc:
-        logger.exception("Imported-note parse failed for patient %s", patient_id)
+        logger.exception("Imported-note parse failed")
         raise ServerError("Could not read the SOAP note from this document.") from exc
 
     resolved_date = _resolve_import_session_date(session_date, parsed.session_datetime())
