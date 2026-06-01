@@ -22,7 +22,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { FileText, Lock, Plus, Sparkles, Upload } from "lucide-react"
+import { FileText, FileUp, Lock, Plus, Sparkles, Upload } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,6 +33,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { UploadTranscriptDialog } from "@/components/sessions/UploadTranscriptDialog"
+import { ImportNotesDialog } from "@/components/sessions/ImportNotesDialog"
 import { useToast } from "@/components/ui/Toast"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { useCreateStandaloneNote } from "@/hooks/useNotes"
@@ -45,6 +46,7 @@ export interface NewNoteButtonProps {
 export function NewNoteButton({ patientId }: NewNoteButtonProps) {
   const [open, setOpen] = useState(false)
   const [transcriptOpen, setTranscriptOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const router = useRouter()
   const { showToast } = useToast()
   const { data: catalog, isLoading } = useNoteTypes()
@@ -118,6 +120,28 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
             </div>
           </button>
 
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              setImportOpen(true)
+            }}
+            className="w-full text-left rounded-lg border border-neutral-200 p-4 hover:border-primary-400 hover:bg-primary-50/40 transition-colors"
+          >
+            <div className="flex items-start gap-3">
+              <FileUp className="w-5 h-5 text-primary-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-medium text-neutral-900">
+                  Import existing notes
+                </div>
+                <div className="text-sm text-neutral-600">
+                  Upload one or many existing SOAP notes (PDF or TXT) — we
+                  extract the date and S/O/A/P sections for your review.
+                </div>
+              </div>
+            </div>
+          </button>
+
           <div className="space-y-2">
             <div className="text-xs font-medium uppercase tracking-wide text-neutral-500">
               Or start blank
@@ -185,6 +209,11 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
         patientId={patientId}
         open={transcriptOpen}
         onOpenChange={setTranscriptOpen}
+      />
+      <ImportNotesDialog
+        patientId={patientId}
+        open={importOpen}
+        onOpenChange={setImportOpen}
       />
     </>
   )
