@@ -416,7 +416,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
           </div>
 
           <p className="text-sm text-neutral-700 mb-4">
-            Enter the 6-digit code from your authenticator app to verify the setup:
+            Enter the 6-digit code from your authenticator app to verify the setup.
           </p>
 
           <form onSubmit={handleEnroll} className="space-y-4">
