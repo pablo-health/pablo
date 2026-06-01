@@ -429,7 +429,9 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
     return session
 
 
-def enable_rls_on_schema(session: Session, schema_name: str) -> None:
+def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
+    session: Session, schema_name: str
+) -> None:
     """Enable Row-Level Security on every patient-scoped table in the schema.
 
     Two policy shapes, picked by what columns the table has:
@@ -451,10 +453,27 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
     clinician owns their single profile row — so writes to it require
     ``app.current_user_id`` to be armed (see ``arm_current_user_id``;
     the pre-MFA onboarding routes that upsert it can't go through
-    ``get_tenant_context``, so they arm it directly). Tables with none
-    of ``user_id`` / ``patient_id`` / ``id`` (e.g. audit_logs) are
-    skipped; they're not row-scoped and live behind the tenant-schema
-    boundary plus application-layer checks.
+    ``get_tenant_context``, so they arm it directly). The
+    ``compliance_documents`` table owns rows via ``uploaded_by_user_id``
+    (not the literal ``user_id``), so it gets the same direct-ownership
+    shape keyed on that column.
+
+    Two kinds of tables are deliberately NOT given a row policy:
+      * Tables with none of ``user_id`` / ``patient_id`` / ``id`` (e.g.
+        audit_logs, ehr_prompts) never reach the loop — the column
+        query above doesn't select them.
+      * Tables that DO carry an ``id`` but aren't owned by a single
+        user — ``ehr_routes`` (tenant-level EHR config) and the
+        vestigial per-tenant ``users`` table — are listed in
+        ``not_row_scoped`` and have RLS left off explicitly. Their
+        isolation boundary is the tenant schema (search_path), not a
+        per-row predicate. Forcing RLS on them would leave no policy =
+        a silent deny-all under a NOBYPASSRLS role.
+
+    Any other table that carries one of the scoping columns but matches
+    no policy shape raises — refusing to ship a force-RLS'd table with
+    no policy. That guards against a newly-added table silently
+    becoming deny-all (the trap the chat_messages branch documents).
 
     ``FORCE ROW LEVEL SECURITY`` applies the policy even to the table
     owner (defense-in-depth for HIPAA isolation). ``current_setting``
@@ -463,7 +482,8 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
     ``app.current_user_id`` sees zero rows — fail-closed.
 
     Idempotent: DROP POLICY IF EXISTS before each CREATE so the policy
-    body always tracks the current code.
+    body always tracks the current code; not_row_scoped tables DISABLE
+    RLS each run to heal a schema a prior version forced it on.
     """
     import logging
 
@@ -504,8 +524,27 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
     # this is can see it. Other grants for the same patient are
     # invisible to peers, which matches the v1 "primary clinician owns
     # the relationship" model.
+    # Tables that are NOT owned by a single user: their isolation
+    # boundary is the tenant schema itself (search_path), not a per-row
+    # predicate. They still get caught by the column query above (they
+    # have an ``id``), but forcing RLS on them leaves no policy to
+    # create — a silent deny-all under a NOBYPASSRLS role. Leave RLS off
+    # explicitly, and DISABLE idempotently to heal any schema a prior
+    # run forced it on.
+    #   * ehr_routes — tenant-level EHR automation config keyed by
+    #     ``ehr_system``, with no owning user. Its sibling ``ehr_prompts``
+    #     has no id/user_id/patient_id column so it never reaches this
+    #     loop; ehr_routes only does because it carries an ``id``.
+    #   * users — vestigial per-tenant table. Runtime identity lives in
+    #     the platform schema; nothing reads this per-tenant copy.
+    not_row_scoped = {"ehr_routes", "users"}
+
     for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
+        if table_name in not_row_scoped:
+            session.execute(text(f"ALTER TABLE {qualified} DISABLE ROW LEVEL SECURITY"))
+            logger.info("RLS intentionally not applied to %s (not row-scoped)", qualified)
+            continue
         session.execute(text(f"ALTER TABLE {qualified} ENABLE ROW LEVEL SECURITY"))
         session.execute(text(f"ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
@@ -687,6 +726,36 @@ def enable_rls_on_schema(session: Session, schema_name: str) -> None:
             logger.info(
                 "RLS (chat_message_access via parent conversation) enabled on %s",
                 qualified,
+            )
+        elif table_name == "compliance_documents":
+            # compliance_documents owns rows directly via
+            # ``uploaded_by_user_id`` — but the column isn't literally
+            # named ``user_id``, so the user_id branch above misses it
+            # and the table would otherwise fall through to a deny-all.
+            # Gate by the uploader rather than the parent
+            # ``compliance_item_id`` (which is nullable, so a parent-based
+            # policy would hide item-less documents); uploaded_by_user_id
+            # is NOT NULL, so every row is attributable.
+            owner = "uploaded_by_user_id = current_setting('app.current_user_id', true)"
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_user_isolation ON {qualified} "
+                    f"USING ({owner}) WITH CHECK ({owner})"
+                )
+            )
+            logger.info("RLS (uploaded_by_user_id) enabled on %s", qualified)
+        else:
+            # We force-enabled RLS at the top of the loop but matched no
+            # policy shape. Leaving it here would be a silent deny-all
+            # (the exact trap the chat_messages branch calls out). Fail
+            # loud so a newly-added tenant table can't ship deny-all:
+            # the author must add a policy branch above, or list the
+            # table in ``not_row_scoped`` if it isn't row-owned.
+            raise RuntimeError(
+                f"enable_rls_on_schema: no RLS policy defined for {qualified} "
+                f"(columns present: {sorted(columns)}). Add a policy branch "
+                f"or list the table in ``not_row_scoped`` — refusing to leave "
+                f"it deny-all."
             )
 
     session.commit()
