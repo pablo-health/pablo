@@ -365,6 +365,24 @@
   --auth-action-bg: #8a5300;
   --auth-action-bg-hover: #6b4000;
   --auth-action-fg: #ffffff;
+
+  /* Editorial calendar status chips, retuned for maximum contrast. The
+     defaults derive from --color-secondary-*/danger-* (warm sage/red) which
+     this theme doesn't override, so they'd read soft; pin them to the
+     high-contrast neutral/primary/danger ramp instead. Non-color cues (icon
+     shape + aria label) still come from status.ts. */
+  --ed-status-confirmed-bg: var(--color-primary-100);
+  --ed-status-confirmed-fg: var(--color-primary-700);
+  --ed-status-confirmed-rail: var(--color-primary-600);
+  --ed-status-completed-bg: var(--color-neutral-900);
+  --ed-status-completed-fg: var(--color-neutral-50);
+  --ed-status-completed-rail: var(--color-neutral-900);
+  --ed-status-cancelled-bg: var(--color-neutral-100);
+  --ed-status-cancelled-fg: var(--color-neutral-500);
+  --ed-status-cancelled-rail: var(--color-neutral-300);
+  --ed-status-noshow-bg: var(--color-neutral-50);
+  --ed-status-noshow-fg: var(--color-danger-800);
+  --ed-status-noshow-rail: var(--color-danger-800);
 }
 
 [data-theme="boring-ehr"] {
@@ -395,6 +413,25 @@
   --auth-action-bg: #0b5394;
   --auth-action-bg-hover: #073763;
   --auth-action-fg: #ffffff;
+
+  /* Editorial calendar status chips, recast in cold hospital greys/blues.
+     The warm-paper defaults lean on --color-secondary-*/danger-* (sage/red)
+     which this theme leaves warm, clashing with the fluorescent-grey canvas;
+     derive every chip from this theme's blue primary + neutral surface tokens
+     (--card/--border/--foreground) instead. No red token here — the no-show
+     icon + aria label in status.ts carry that meaning. */
+  --ed-status-confirmed-bg: var(--color-primary-100);
+  --ed-status-confirmed-fg: var(--color-primary-700);
+  --ed-status-confirmed-rail: var(--color-primary-600);
+  --ed-status-completed-bg: var(--color-primary-600);
+  --ed-status-completed-fg: var(--primary-foreground);
+  --ed-status-completed-rail: var(--color-primary-700);
+  --ed-status-cancelled-bg: color-mix(in srgb, var(--border) 45%, var(--card));
+  --ed-status-cancelled-fg: color-mix(in srgb, var(--foreground) 60%, var(--card));
+  --ed-status-cancelled-rail: var(--border);
+  --ed-status-noshow-bg: color-mix(in srgb, var(--foreground) 12%, var(--card));
+  --ed-status-noshow-fg: var(--foreground);
+  --ed-status-noshow-rail: var(--foreground);
 }
 
 @layer components {

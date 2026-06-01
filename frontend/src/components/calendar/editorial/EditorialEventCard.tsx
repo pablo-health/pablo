@@ -35,7 +35,7 @@ export function EditorialEventCard({
     <button
       type="button"
       onClick={() => onClick(appointment)}
-      className="ed-event group relative flex h-full w-full flex-col items-start overflow-hidden rounded-[10px] px-2.5 py-1.5 text-left"
+      className="ed-event group relative flex h-full w-full flex-col items-start overflow-hidden px-2.5 py-1.5 text-left"
       style={{
         backgroundColor: meta.bg,
         color: meta.fg,
@@ -45,7 +45,7 @@ export function EditorialEventCard({
     >
       <span
         aria-hidden
-        className="absolute left-0 top-0 h-full w-[3px] rounded-l-[10px]"
+        className="ed-event-rail absolute left-0 top-0 h-full w-[3px]"
         style={{ backgroundColor: meta.rail }}
       />
       <div className="flex min-w-0 items-start gap-1.5 pl-1">

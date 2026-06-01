@@ -13,6 +13,13 @@
   /* hour-row height in week/day views */
   --ed-row-h: 72px;
 
+  /* Corner radii follow the active global theme (--radius): warm-paper/dark
+   * keep their rounded feel, boring-ehr flattens to sharp 0, high-contrast
+   * uses the default. Bound here so all four themes adapt without per-theme
+   * editorial overrides. */
+  --ed-radius: var(--radius);
+  --ed-radius-sm: calc(var(--radius) * 0.6);
+
   /* status accents — same hues as classic, shifted for editorial mood */
   --ed-status-confirmed-bg: var(--color-primary-100);
   --ed-status-confirmed-fg: var(--color-primary-800);
@@ -41,10 +48,14 @@
   --ed-ink: var(--color-neutral-900);
   --ed-ink-muted: var(--color-neutral-600);
   --ed-ink-soft: var(--color-neutral-500);
-  --ed-hairline: rgba(44, 24, 16, 0.07);
-  --ed-hairline-strong: rgba(44, 24, 16, 0.13);
+  /* Hairlines derive from the global --border so they adapt per theme: warm
+   * and faint in Warm Paper (#ece0cf), the strong grey rule in High Contrast
+   * (#595959), and boring-ehr's cold #b9c2cc — instead of a fixed warm rgba
+   * that fought the cooler themes. */
+  --ed-hairline: var(--border);
+  --ed-hairline-strong: var(--border);
   --ed-today-tint: transparent; /* day-header pill carries the "today" signal */
-  --ed-pill-hover: rgba(44, 24, 16, 0.05);
+  --ed-pill-hover: color-mix(in srgb, var(--color-neutral-900) 5%, transparent);
   --ed-cta-bg: var(--color-primary-600);
   --ed-cta-fg: #ffffff;
   --ed-cta-bg-hover: var(--color-primary-700);
@@ -68,10 +79,12 @@
   --ed-ink: var(--color-neutral-900);
   --ed-ink-muted: var(--color-neutral-600);
   --ed-ink-soft: var(--color-neutral-500);
-  --ed-hairline: rgba(245, 241, 234, 0.08);
-  --ed-hairline-strong: rgba(245, 241, 234, 0.16);
-  --ed-today-tint: rgba(95, 133, 99, 0.10);
-  --ed-pill-hover: rgba(232, 168, 73, 0.14);
+  /* Dark's --border (#35302a) is a subtle warm rule — bind to it so hairlines
+   * stay consistent with the rest of the app chrome. */
+  --ed-hairline: var(--border);
+  --ed-hairline-strong: color-mix(in srgb, var(--border) 70%, var(--color-neutral-900));
+  --ed-today-tint: color-mix(in srgb, var(--color-secondary-500) 10%, transparent);
+  --ed-pill-hover: color-mix(in srgb, var(--color-primary-600) 14%, transparent);
   --ed-cta-bg: var(--color-primary-600);
   --ed-cta-fg: #1b1815;
   --ed-cta-bg-hover: var(--color-primary-700);
@@ -170,10 +183,16 @@
   right: 0;
 }
 
-/* Event card lift on hover. */
+/* Event card lift on hover. Radius follows --ed-radius so boring-ehr renders
+ * sharp corners and the warm themes stay rounded. */
 .ed-event {
+  border-radius: var(--ed-radius);
   box-shadow: var(--ed-shadow-card);
   transition: transform 180ms ease, box-shadow 180ms ease;
+}
+.ed-event .ed-event-rail {
+  border-top-left-radius: var(--ed-radius);
+  border-bottom-left-radius: var(--ed-radius);
 }
 .ed-event:hover {
   transform: translateY(-2px);
