@@ -47,9 +47,9 @@ logger = logging.getLogger(__name__)
 # always means a scanned / image-only PDF with no embedded text layer.
 _SCANNED_PDF_TEXT_THRESHOLD = 100
 
-# Cap the decompressed size of a .docx's document.xml so a small "zip bomb"
-# can't expand to gigabytes in memory. A real note's body is well under this.
-_MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
+# Cap the total *uncompressed* size of a .docx so a small "zip bomb" can't
+# expand to gigabytes in memory when python-docx reads the package.
+_MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 
 # Cap the extracted text fed to the parser. A single SOAP note is a few KB;
 # anything past this is either not one note or an attempt to run up LLM cost.
@@ -174,57 +174,76 @@ def _looks_like_docx(content_type: str | None, filename: str | None) -> bool:
     return bool(filename and filename.lower().endswith(".docx"))
 
 
-# A WordprocessingML text run (<w:t>…</w:t>) or a paragraph end (</w:p>).
-# Scanning these in order reconstructs the flat text with paragraph breaks.
-_DOCX_RUN_OR_PARA = re.compile(r"<w:t[^>]*>(?P<text>.*?)</w:t>|</w:p>", re.DOTALL)
+def _docx_block_lines(document: Any) -> list[str]:
+    """Yield the document body's text in order — paragraphs and table cells.
+
+    python-docx exposes paragraphs and tables separately; iterating the body
+    element preserves their document order (so a leading metadata table reads
+    before the narrative).
+    """
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    lines: list[str] = []
+    for child in document.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            text = Paragraph(child, document).text
+            if text.strip():
+                lines.append(text)
+        elif isinstance(child, CT_Tbl):
+            for row in Table(child, document).rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        lines.append(cell.text)
+    return lines
 
 
 def _extract_docx_text(data: bytes) -> str:
-    """Pull the flat text out of a .docx with the standard library.
+    """Extract a .docx's text with python-docx.
 
-    A .docx is a zip whose ``word/document.xml`` holds the body. We read the
-    text runs in document order (table-cell text included) with a newline per
-    paragraph — exactly the flat text the parser wants.
-
-    Rather than hand user-uploaded XML to a DTD-processing parser, we scan the
-    text runs directly: entity-expansion ("billion laughs") and XXE need a
-    parser that resolves entities, so this extraction is immune to them by
-    construction. Combined with the bounded read below (zip-bomb guard), a
-    malicious .docx can't blow up memory or read host files.
+    Reads page headers/footers (clinical templates often put the date there),
+    body paragraphs, and table cells in document order. python-docx's parser
+    does not resolve XML entities, so entity-expansion ("billion laughs") /
+    XXE don't apply; the uncompressed-size guard below covers zip bombs.
     """
-    import html
     import io
     import zipfile
 
+    import docx
+
+    # Zip-bomb guard: reject if the package's declared uncompressed size
+    # exceeds the cap before python-docx reads the whole thing into memory.
     try:
-        archive = zipfile.ZipFile(io.BytesIO(data))
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
     except zipfile.BadZipFile as exc:
         raise DocumentTextExtractionError(
             "This doesn't look like a readable Word (.docx) document."
         ) from exc
-    with archive:
-        try:
-            info = archive.getinfo("word/document.xml")
-        except KeyError as exc:
-            raise DocumentTextExtractionError(
-                "This doesn't look like a readable Word (.docx) document."
-            ) from exc
-        # Bound the decompressed read so a small zip can't expand to GBs.
-        # The declared size is a cheap first check; the bounded read is the
-        # real guard since a crafted zip can lie about it.
-        if info.file_size > _MAX_DOCX_XML_BYTES:
-            raise DocumentTextExtractionError("This Word document is too large to import.")
-        with archive.open("word/document.xml") as handle:
-            raw = handle.read(_MAX_DOCX_XML_BYTES + 1)
-    if len(raw) > _MAX_DOCX_XML_BYTES:
+    if "word/document.xml" not in names:
+        raise DocumentTextExtractionError(
+            "This doesn't look like a readable Word (.docx) document."
+        )
+    if total_uncompressed > _MAX_DOCX_UNCOMPRESSED_BYTES:
         raise DocumentTextExtractionError("This Word document is too large to import.")
 
-    xml = raw.decode("utf-8", errors="replace")
-    parts: list[str] = []
-    for token in _DOCX_RUN_OR_PARA.finditer(xml):
-        text = token.group("text")
-        parts.append(text if text is not None else "\n")
-    body = html.unescape("".join(parts)).strip()
+    try:
+        document = docx.Document(io.BytesIO(data))
+    except Exception as exc:
+        raise DocumentTextExtractionError(
+            "This Word document's contents could not be read."
+        ) from exc
+
+    lines: list[str] = []
+    for section in document.sections:
+        for container in (section.header, section.footer):
+            lines.extend(p.text for p in container.paragraphs if p.text.strip())
+    lines.extend(_docx_block_lines(document))
+
+    body = "\n".join(lines).strip()
     if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
         raise DocumentTextExtractionError(
             "This Word document has no extractable text. Upload a text-based export instead."
