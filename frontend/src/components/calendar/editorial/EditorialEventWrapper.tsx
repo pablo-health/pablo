@@ -37,6 +37,12 @@ interface EditorialEventWrapperProps {
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   /** Double click → open the edit flow. */
   onEdit: (appointment: AppointmentResponse) => void
+  /** Right click → open the status menu at the cursor (clientX/clientY). */
+  onContextMenu?: (
+    appointment: AppointmentResponse,
+    x: number,
+    y: number,
+  ) => void
   /** Pointer-drag-to-reschedule config. Omit to disable dragging (e.g. month). */
   drag?: DragConfig
   /** The positioned event card. */
@@ -59,6 +65,7 @@ export function EditorialEventWrapper({
   appointment,
   onPeek,
   onEdit,
+  onContextMenu,
   drag,
   children,
   className,
@@ -176,6 +183,19 @@ export function EditorialEventWrapper({
     onEdit(appointment)
   }
 
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!onContextMenu) return
+    // Suppress the native menu and a pending single-click peek; the custom
+    // status menu opens at the cursor instead.
+    e.preventDefault()
+    e.stopPropagation()
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current)
+      clickTimer.current = null
+    }
+    onContextMenu(appointment, e.clientX, e.clientY)
+  }
+
   return (
     <div
       ref={ref}
@@ -183,6 +203,7 @@ export function EditorialEventWrapper({
       onPointerDown={handlePointerDown}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
+      onContextMenu={handleContextMenu}
       className={className}
       style={{ ...style, touchAction: drag ? "none" : undefined }}
     >

@@ -31,6 +31,8 @@ interface EditorialDayViewProps {
   onEdit: (appointment: AppointmentResponse) => void
   /** Drag-to-reschedule → preserve duration, shift start (vertical only). */
   onMove: (appointment: AppointmentResponse, newStartIso: string) => void
+  /** Right click on an event → open the status menu at the cursor. */
+  onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
   scrollToHour?: number
   /** Working-hours window. Pass 0/24 to render the full day. */
   dayStart?: number
@@ -45,6 +47,7 @@ export function EditorialDayView({
   onPeek,
   onEdit,
   onMove,
+  onContextMenu,
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
@@ -129,6 +132,7 @@ export function EditorialDayView({
                   appointment={appointment}
                   onPeek={onPeek}
                   onEdit={onEdit}
+                  onContextMenu={onContextMenu}
                   drag={{
                     mode: "day",
                     rowHeightPx: HOUR_ROW_PX,

@@ -19,6 +19,7 @@ import { EditorialMonthView } from "./EditorialMonthView"
 import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { EditorialEventPeek } from "./EditorialEventPeek"
+import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
 import { shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
 
 const ALL_STATUSES: AppointmentStatus[] = [
@@ -49,6 +50,12 @@ interface PeekState {
   anchorRect: DOMRect
 }
 
+interface CtxMenuState {
+  appointment: AppointmentResponse
+  x: number
+  y: number
+}
+
 export function EditorialCalendar({
   defaultView = "week",
   workingHoursStart = 8,
@@ -65,6 +72,7 @@ export function EditorialCalendar({
   )
   const [pickerOpen, setPickerOpen] = useState(false)
   const [peek, setPeek] = useState<PeekState | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null)
 
   const range = useMemo(() => visibleRange(view, anchor), [view, anchor])
   const { data } = useAppointmentList(
@@ -132,6 +140,27 @@ export function EditorialCalendar({
       onSelectAppointment(appointment)
     },
     [onSelectAppointment],
+  )
+
+  const handleContextMenu = useCallback(
+    (appointment: AppointmentResponse, x: number, y: number) => {
+      setPeek(null)
+      setCtxMenu({ appointment, x, y })
+    },
+    [],
+  )
+
+  const handleSetStatus = useCallback(
+    (appointment: AppointmentResponse, status: AppointmentStatus) => {
+      if (status !== appointment.status) {
+        updateAppointment.mutate({
+          appointmentId: appointment.id,
+          data: { status },
+        })
+      }
+      setCtxMenu(null)
+    },
+    [updateAppointment],
   )
 
   const handleMove = useCallback(
@@ -222,6 +251,7 @@ export function EditorialCalendar({
             onPeek={handlePeek}
             onEdit={handleEdit}
             onMove={handleMove}
+            onContextMenu={handleContextMenu}
             scrollToHour={workingHoursStart}
           />
         )}
@@ -234,6 +264,7 @@ export function EditorialCalendar({
             onPeek={handlePeek}
             onEdit={handleEdit}
             onMove={handleMove}
+            onContextMenu={handleContextMenu}
             scrollToHour={workingHoursStart}
           />
         )}
@@ -245,6 +276,7 @@ export function EditorialCalendar({
             onSelectDay={handleMonthDaySelect}
             onPeek={handlePeek}
             onEdit={handleEdit}
+            onContextMenu={handleContextMenu}
           />
         )}
 
@@ -258,6 +290,17 @@ export function EditorialCalendar({
           patientName={peekPatientName}
           anchorRect={peek.anchorRect}
           onClose={() => setPeek(null)}
+          onEdit={handleEdit}
+        />
+      )}
+
+      {ctxMenu && (
+        <EditorialEventContextMenu
+          appointment={ctxMenu.appointment}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onSetStatus={handleSetStatus}
           onEdit={handleEdit}
         />
       )}

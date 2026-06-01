@@ -21,6 +21,8 @@ interface EditorialMonthViewProps {
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   /** Double click on a chip → open the edit flow. */
   onEdit: (appointment: AppointmentResponse) => void
+  /** Right click on a chip → open the status menu at the cursor. */
+  onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -33,6 +35,7 @@ export function EditorialMonthView({
   onSelectDay,
   onPeek,
   onEdit,
+  onContextMenu,
 }: EditorialMonthViewProps) {
   const days = useMemo(() => monthGridDays(anchor), [anchor])
 
@@ -142,6 +145,7 @@ export function EditorialMonthView({
                     name={patientMap.get(appt.patient_id) ?? appt.title}
                     onPeek={onPeek}
                     onEdit={onEdit}
+                    onContextMenu={onContextMenu}
                   />
                 ))}
                 {overflow > 0 && (
@@ -166,11 +170,13 @@ interface MonthChipProps {
   name: string
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   onEdit: (appointment: AppointmentResponse) => void
+  onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
 }
 
-/** A single month-view event chip with click (peek) / dblclick (edit)
- * disambiguation matching the week/day {@link EditorialEventWrapper}. */
-function MonthChip({ appointment, name, onPeek, onEdit }: MonthChipProps) {
+/** A single month-view event chip with click (peek) / dblclick (edit) /
+ * right-click (status menu) disambiguation matching the week/day
+ * {@link EditorialEventWrapper}. */
+function MonthChip({ appointment, name, onPeek, onEdit, onContextMenu }: MonthChipProps) {
   const ref = useRef<HTMLSpanElement>(null)
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const start = new Date(appointment.start_at)
@@ -214,6 +220,15 @@ function MonthChip({ appointment, name, onPeek, onEdit }: MonthChipProps) {
       onDoubleClick={(e) => {
         e.stopPropagation()
         edit()
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (clickTimer.current) {
+          clearTimeout(clickTimer.current)
+          clickTimer.current = null
+        }
+        onContextMenu(appointment, e.clientX, e.clientY)
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {

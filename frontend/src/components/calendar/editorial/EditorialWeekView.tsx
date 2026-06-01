@@ -32,6 +32,8 @@ interface EditorialWeekViewProps {
   onEdit: (appointment: AppointmentResponse) => void
   /** Drag-to-reschedule → preserve duration, shift start (and day). */
   onMove: (appointment: AppointmentResponse, newStartIso: string) => void
+  /** Right click on an event → open the status menu at the cursor. */
+  onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
   /** Hour to scroll to on mount / day change (defaults to 8). */
   scrollToHour?: number
   /** Working-hours window. Pass 0/24 to render the full day. */
@@ -47,6 +49,7 @@ export function EditorialWeekView({
   onPeek,
   onEdit,
   onMove,
+  onContextMenu,
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
@@ -98,6 +101,7 @@ export function EditorialWeekView({
                 onPeek={onPeek}
                 onEdit={onEdit}
                 onMove={onMove}
+                onContextMenu={onContextMenu}
                 dayStart={dayStart}
                 dayEnd={dayEnd}
               />
@@ -181,6 +185,7 @@ function DayColumn({
   onPeek,
   onEdit,
   onMove,
+  onContextMenu,
   dayStart,
   dayEnd,
 }: {
@@ -191,6 +196,7 @@ function DayColumn({
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   onEdit: (appointment: AppointmentResponse) => void
   onMove: (appointment: AppointmentResponse, newStartIso: string) => void
+  onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
   dayStart: number
   dayEnd: number
 }) {
@@ -237,6 +243,7 @@ function DayColumn({
             appointment={appointment}
             onPeek={onPeek}
             onEdit={onEdit}
+            onContextMenu={onContextMenu}
             drag={{
               mode: "week",
               rowHeightPx: HOUR_ROW_PX,

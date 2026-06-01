@@ -260,3 +260,11 @@
 .ed-iconbtn:hover {
   background-color: var(--ed-pill-hover);
 }
+
+.ed-ctx-item {
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+.ed-ctx-item:hover {
+  background-color: var(--ed-pill-hover);
+}
