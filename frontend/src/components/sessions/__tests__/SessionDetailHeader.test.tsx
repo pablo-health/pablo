@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { SessionDetailHeader } from "../SessionDetailHeader"
 import type { SessionStatus } from "@/types/sessions"
 
@@ -145,6 +145,48 @@ describe("SessionDetailHeader", () => {
     it("renders names with special characters", () => {
       render(<SessionDetailHeader {...defaultProps} patientName="María José O'Brien-Smith" />)
       expect(screen.getByRole("heading", { name: "María José O'Brien-Smith" })).toBeInTheDocument()
+    })
+  })
+
+  describe("Editable session date", () => {
+    it("hides the edit affordance by default", () => {
+      render(<SessionDetailHeader {...defaultProps} />)
+      expect(screen.queryByLabelText("Edit session date")).not.toBeInTheDocument()
+    })
+
+    it("edits and saves the session date", () => {
+      const onSessionDateChange = vi.fn()
+      render(
+        <SessionDetailHeader
+          {...defaultProps}
+          editableSessionDate
+          onSessionDateChange={onSessionDateChange}
+        />,
+      )
+
+      fireEvent.click(screen.getByLabelText("Edit session date"))
+      const input = screen.getByLabelText("Session date and time")
+      fireEvent.change(input, { target: { value: "2026-01-21T09:30" } })
+      fireEvent.click(screen.getByLabelText("Save date"))
+
+      expect(onSessionDateChange).toHaveBeenCalledWith("2026-01-21T09:30")
+    })
+
+    it("cancel discards the edit", () => {
+      const onSessionDateChange = vi.fn()
+      render(
+        <SessionDetailHeader
+          {...defaultProps}
+          editableSessionDate
+          onSessionDateChange={onSessionDateChange}
+        />,
+      )
+
+      fireEvent.click(screen.getByLabelText("Edit session date"))
+      fireEvent.click(screen.getByLabelText("Cancel editing date"))
+
+      expect(onSessionDateChange).not.toHaveBeenCalled()
+      expect(screen.queryByLabelText("Session date and time")).not.toBeInTheDocument()
     })
   })
 })

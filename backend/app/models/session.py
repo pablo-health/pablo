@@ -113,6 +113,9 @@ class UpdateSessionMetadataRequest(BaseModel):
     """Request to update session metadata (reschedule, change video link, etc.)."""
 
     scheduled_at: datetime | None = None
+    # The date/time the session occurred. Editable on review so a clinician can
+    # correct a date the importer read from a document (e.g. a misparsed date).
+    session_date: datetime | None = None
     video_link: str | None = None
     video_platform: VideoPlatform | None = None
     duration_minutes: int | None = Field(default=None, ge=1, le=480)

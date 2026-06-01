@@ -8,6 +8,7 @@ import type {
   FinalizeSessionRequest,
   SessionListResponse,
   SessionResponse,
+  UpdateSessionMetadataRequest,
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
@@ -15,6 +16,7 @@ import {
   finalizeSession,
   getSession,
   listSessions,
+  updateSessionMetadata,
   updateSessionRating,
   uploadSession,
 } from "@/lib/api/sessions"
@@ -205,6 +207,28 @@ export function useUpdateSessionRating(token?: string) {
           ? { ...previous.note, quality_rating: data.quality_rating }
           : previous.note,
       }),
+    },
+  })
+}
+
+export function useUpdateSessionMetadata(token?: string) {
+  return useAuthMutation<
+    SessionResponse,
+    { sessionId: string; data: UpdateSessionMetadataRequest },
+    SessionResponse
+  >({
+    mutationFn: ({ sessionId, data }) =>
+      updateSessionMetadata(sessionId, data, token),
+    invalidateKeys: ({ sessionId }) => [
+      queryKeys.sessions.detail(sessionId),
+      queryKeys.sessions.lists(),
+    ],
+    optimistic: {
+      queryKey: ({ sessionId }) => queryKeys.sessions.detail(sessionId),
+      updater: (previous, { data }) =>
+        data.session_date
+          ? { ...previous, session_date: data.session_date }
+          : previous,
     },
   })
 }
