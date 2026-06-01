@@ -435,10 +435,10 @@ class TestUpdateRating:
 
 
 _IMPORTED_CONTENT = {
-    "subjective": {"client_narrative": "Client reported marital distress."},
-    "objective": {"appearance": "Appropriately groomed."},
-    "assessment": {"clinical_impression": "Significant marital distress."},
-    "plan": {"next_steps": ["revisit couples counseling"]},
+    "subjective": {"client_narrative": "Client discussed progress on weekly goals."},
+    "objective": {"appearance": "Well groomed."},
+    "assessment": {"clinical_impression": "Steady progress."},
+    "plan": {"next_steps": ["continue weekly sessions"]},
 }
 
 

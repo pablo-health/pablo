@@ -55,32 +55,34 @@ def _register_builtin_note_types() -> None:
 
 
 # A complete, registry-shaped SOAP response as the model would return it,
-# with the two extra session date/time keys the import schema adds.
+# with the two extra session date/time keys the import schema adds. The
+# content is deliberately bland, synthetic placeholder text — these tests
+# only exercise field mapping and date parsing, not clinical realism.
 _FAKE_SOAP_RESPONSE = {
     "subjective": {
-        "chief_complaint": "Marital dissatisfaction.",
-        "mood_affect": "Emotional and frustrated.",
-        "symptoms": ["emotional emptiness", "ambivalence"],
-        "client_narrative": "Client reported ongoing dissatisfaction in a 25-year marriage.",
+        "chief_complaint": "Follow-up for stress management.",
+        "mood_affect": "Reports feeling calmer this week.",
+        "symptoms": ["occasional stress", "mild fatigue"],
+        "client_narrative": "Client discussed progress on weekly goals.",
     },
     "objective": {
-        "appearance": "Appropriately groomed.",
-        "behavior": "Engaged and forthcoming.",
+        "appearance": "Well groomed.",
+        "behavior": "Cooperative and engaged.",
         "speech": "Normal rate and volume.",
-        "thought_process": "Linear and organized.",
-        "affect_observed": "Congruent with reported mood.",
+        "thought_process": "Linear and goal-directed.",
+        "affect_observed": "Bright and congruent.",
     },
     "assessment": {
-        "clinical_impression": "Significant marital distress with escalating pattern.",
-        "progress": "Mixed; insight increasing.",
-        "risk_assessment": "Denied SI/HI; passive divorce ideation only.",
-        "functioning_level": "Functioning in daily activities.",
+        "clinical_impression": "Adjusting well; steady progress.",
+        "progress": "Improving since last session.",
+        "risk_assessment": "No safety concerns reported.",
+        "functioning_level": "Functioning well day to day.",
     },
     "plan": {
-        "interventions_used": ["supportive listening", "validation"],
-        "homework_assignments": ["communicate needs to spouse"],
-        "next_steps": ["revisit couples counseling readiness"],
-        "next_session": "Tuesday, February 11, 2026 at 2:30 PM",
+        "interventions_used": ["supportive listening", "goal review"],
+        "homework_assignments": ["practice a breathing exercise"],
+        "next_steps": ["continue weekly sessions"],
+        "next_session": "Next week, same time",
     },
     "session_date": "2026-02-04",
     "session_time": "",
@@ -103,12 +105,12 @@ class TestParseSoapNote:
 
         # Content is the registry SOAP shape, ready for the editor unchanged.
         assert set(result.content) == {"subjective", "objective", "assessment", "plan"}
-        assert result.content["subjective"]["chief_complaint"] == "Marital dissatisfaction."
+        assert result.content["subjective"]["chief_complaint"] == "Follow-up for stress management."
         assert result.content["subjective"]["symptoms"] == [
-            "emotional emptiness",
-            "ambivalence",
+            "occasional stress",
+            "mild fatigue",
         ]
-        assert result.content["plan"]["homework_assignments"] == ["communicate needs to spouse"]
+        assert result.content["plan"]["homework_assignments"] == ["practice a breathing exercise"]
 
     def test_parses_time_when_present(self) -> None:
         response = {**_FAKE_SOAP_RESPONSE, "session_time": "14:30"}
