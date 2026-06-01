@@ -251,6 +251,11 @@ export default function SessionDetailPage({ params }: PageProps) {
                   session_number: session.session_number,
                   session_date: session.session_date,
                 }}
+                groundingSource={
+                  session.source === "imported"
+                    ? session.transcript.content
+                    : undefined
+                }
                 readonly={session.status !== "pending_review"}
                 onSave={
                   session.status === "pending_review" ? handleNoteSave : undefined
