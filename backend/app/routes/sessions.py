@@ -7,9 +7,10 @@ Thin HTTP handlers that delegate business logic to SessionService.
 """
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -67,6 +68,12 @@ from ..services import (
     get_audit_service,
 )
 from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
+from ..services.note_import_service import (
+    DocumentTextExtractionError,
+    NoteImportService,
+    UnsupportedDocumentTypeError,
+    extract_document_text,
+)
 from ..services.transcription_queue_service import (
     MockTranscriptionQueueService,
     TranscriptionQueueService,
@@ -149,6 +156,11 @@ def get_note_generation_service() -> NoteGenerationService:
     return RegistryNoteGenerationService()
 
 
+def get_note_import_service() -> NoteImportService:
+    """Get the imported-note parse service instance."""
+    return NoteImportService()
+
+
 def get_note_service(
     notes_repo: NotesRepository = Depends(get_notes_repository),
 ) -> NoteService:
@@ -212,6 +224,102 @@ def upload_session(
         session, patient, note = session_service.upload_session(patient_id, user.id, request)
     except PatientNotFoundError as e:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from e
+
+    audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
+
+    return SessionResponse.from_session(session, patient.display_name, _embed_note(note))
+
+
+# Generous guardrail for an uploaded note document. A single SOAP note is
+# tiny; this only guards against accidental large uploads.
+_MAX_IMPORT_DOC_BYTES = 15 * 1024 * 1024
+
+
+def _resolve_import_session_date(override: str | None, extracted: datetime | None) -> datetime:
+    """Pick the session date for an import: caller override > document > now.
+
+    Falls back to upload time (as a naive datetime, matching the date the
+    transcript-upload path stores from a ``datetime-local`` input) so the
+    import still succeeds when no date is found; the clinician can correct
+    it during review.
+    """
+    if override:
+        try:
+            return datetime.fromisoformat(override)
+        except ValueError as exc:
+            raise BadRequestError(
+                "Invalid session_date; expected ISO 8601.",
+                {"session_date": override},
+                code="INVALID_SESSION_DATE",
+            ) from exc
+    if extracted is not None:
+        return extracted
+    logger.warning("Imported note had no detectable session date; defaulting to now")
+    return utc_now().replace(tzinfo=None)
+
+
+@router.post(
+    "/api/patients/{patient_id}/sessions/import",
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_session(
+    patient_id: str,
+    file: UploadFile,
+    http_request: Request,
+    session_date: str | None = Form(default=None),
+    _ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
+    session_service: SessionService = Depends(get_session_service),
+    note_import_service: NoteImportService = Depends(get_note_import_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> SessionResponse:
+    """Import an existing SOAP note (PDF or TXT) as a pending-review session.
+
+    Extracts the document's text, parses it into a structured SOAP note plus
+    the date the session took place, and creates a session dated from the
+    document — or from ``session_date`` when the caller overrides it. The
+    original text is kept as the session transcript so it can be reviewed
+    beside the parsed note. One file per request; the client uploads several
+    in parallel for a bulk chart import.
+    """
+    _gate_trial_session(user.email)
+
+    data = await file.read()
+    if len(data) > _MAX_IMPORT_DOC_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Max {_MAX_IMPORT_DOC_BYTES // (1024 * 1024)} MB.",
+        )
+
+    try:
+        text = extract_document_text(data, content_type=file.content_type, filename=file.filename)
+    except UnsupportedDocumentTypeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
+        ) from exc
+    except DocumentTextExtractionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    try:
+        parsed = note_import_service.parse_soap_note(text)
+    except ValueError as exc:
+        logger.exception("Imported-note parse failed")
+        raise ServerError("Could not read the SOAP note from this document.") from exc
+
+    resolved_date = _resolve_import_session_date(session_date, parsed.session_datetime())
+
+    try:
+        session, patient, note = session_service.import_session(
+            patient_id,
+            user.id,
+            session_date=resolved_date,
+            source_text=text,
+            note_content=parsed.content,
+        )
+    except PatientNotFoundError as exc:
+        raise NotFoundError("Patient not found", {"patient_id": patient_id}) from exc
 
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 

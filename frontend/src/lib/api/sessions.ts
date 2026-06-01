@@ -13,7 +13,7 @@ import type {
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
-import { get, patch, post } from "./client"
+import { apiClient, get, patch, post } from "./client"
 
 /**
  * Upload a session transcript for SOAP note generation
@@ -56,6 +56,38 @@ export async function uploadSession(
     data,
     token
   )
+}
+
+/**
+ * Import an existing, already-written SOAP note (PDF or TXT) as a session.
+ *
+ * The backend extracts the document's text, parses it into a structured SOAP
+ * note plus the date the session took place, and creates a session in
+ * "pending_review" dated from the document (or from `sessionDate` if given).
+ * One file per call — the caller uploads several in parallel for a bulk
+ * chart import.
+ *
+ * @param patientId - Patient this note belongs to
+ * @param file - The PDF or TXT document
+ * @param options.sessionDate - Optional ISO override for the session date
+ * @param options.token - Optional auth token for server-side calls
+ * @returns The created pending-review session with its parsed note
+ */
+export async function importNote(
+  patientId: string,
+  file: File,
+  options: { sessionDate?: string; token?: string } = {}
+): Promise<SessionResponse> {
+  const form = new FormData()
+  form.append("file", file)
+  if (options.sessionDate) {
+    form.append("session_date", options.sessionDate)
+  }
+  return apiClient<SessionResponse>(`/api/patients/${patientId}/sessions/import`, {
+    method: "POST",
+    body: form,
+    token: options.token,
+  })
 }
 
 /**

@@ -52,6 +52,16 @@ vi.mock("@/components/sessions/UploadTranscriptDialog", () => ({
   },
 }))
 
+// Stubbed for the same reason as the transcript dialog: it pulls in
+// react-query (useImportNotes), which this picker-focused test doesn't wire.
+vi.mock("@/components/sessions/ImportNotesDialog", () => ({
+  ImportNotesDialog: (props: { patientId?: string; open?: boolean }) => (
+    <div data-testid="import-dialog" data-open={String(props.open)}>
+      import dialog ({props.patientId})
+    </div>
+  ),
+}))
+
 function soapType(): NoteTypeSchema {
   return {
     key: "soap",
