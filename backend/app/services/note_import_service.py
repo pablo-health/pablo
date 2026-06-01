@@ -55,14 +55,21 @@ _SESSION_TIME_KEY = "session_time"
 EXTRACT_SYSTEM_PROMPT = (
     "You are a clinical documentation assistant. You are given the full text "
     "of an existing, already-written therapy progress note in SOAP format "
-    "(often exported from another records system). Your job is to faithfully "
-    "reorganize that note's existing content into the named fields provided. "
-    "Do NOT invent, infer, summarize away, or add any clinical content that "
-    "is not present in the source text — preserve the clinician's original "
-    "wording as closely as possible. When the source files a detail under a "
-    "different heading than ours, place it in the field that best matches its "
-    "meaning. If the source has no content for a field, return an empty "
-    "string (or an empty list for list fields)."
+    "(often exported from another records system). Your job is to RELOCATE "
+    "that note's existing text into the named fields below — not to rewrite "
+    "it.\n\n"
+    "Rules:\n"
+    "- Quote the source text VERBATIM. Copy the clinician's exact words into "
+    "each field. Do not rephrase, summarize, paraphrase, reorder words, "
+    "normalize pronouns, or otherwise 'clean up' the wording — not even "
+    "slightly.\n"
+    "- Do NOT invent, infer, or add any content that is not present in the "
+    "source text.\n"
+    "- When the source files a detail under a heading we do not have, place "
+    "it under the field whose meaning fits best, but keep the source's exact "
+    "wording (including any sub-labels) intact.\n"
+    "- If the source has no content for a field, return an empty string (or "
+    "an empty list for list fields). Never fabricate text to fill a field."
 )
 
 
@@ -272,7 +279,8 @@ class NoteImportService:
                     user_prompt=user_prompt,
                     response_schema=response_schema,
                     max_output_tokens=budget,
-                    temperature=0.1,
+                    # Verbatim relocation, not generation: keep it deterministic.
+                    temperature=0.0,
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc
