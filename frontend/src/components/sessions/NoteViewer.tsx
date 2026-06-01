@@ -15,8 +15,9 @@
 "use client"
 
 import { useState } from "react"
-import { Download, Edit, X, Save } from "lucide-react"
+import { AlertTriangle, Check, Download, Edit, X, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { areAllGrounded, isTextGrounded } from "@/lib/utils/grounding"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -69,6 +70,12 @@ export interface NoteViewerProps {
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
+  /**
+   * Original document text for an imported note. When set, each SOAP field
+   * shows whether its text was found verbatim in the source ("from your
+   * note" vs "review"). Omit for recorded/generated notes.
+   */
+  groundingSource?: string
   className?: string
 }
 
@@ -79,6 +86,7 @@ export function NoteViewer({
   pdfMetadata,
   onSave,
   onClaimClick,
+  groundingSource,
   className,
 }: NoteViewerProps) {
   const noteType = note.note_type
@@ -107,6 +115,7 @@ export function NoteViewer({
       pdfMetadata={pdfMetadata}
       onSave={onSave}
       onClaimClick={onClaimClick}
+      groundingSource={groundingSource}
       className={className}
     />
   )
@@ -137,6 +146,7 @@ interface SOAPViewProps {
   pdfMetadata?: PDFExportMetadata
   onSave?: (editedNote: NoteContent) => void
   onClaimClick?: (sourceSegmentIds: number[]) => void
+  groundingSource?: string
   className?: string
 }
 
@@ -155,6 +165,7 @@ function SOAPNoteView({
   pdfMetadata,
   onSave,
   onClaimClick,
+  groundingSource,
   className,
 }: SOAPViewProps) {
   // When the note has no AI-generated content and no clinician edits yet
@@ -332,6 +343,7 @@ function SOAPNoteView({
                     sectionKey={section.key}
                     structured={structured}
                     onClaimClick={onClaimClick}
+                    groundingSource={groundingSource}
                   />
                 ) : (
                   <NarrativeContent text={displayNote[section.key]} />
@@ -385,14 +397,36 @@ function SOAPNoteView({
  * Renders structured SOAP sub-fields with source verification indicators.
  * Uses the structured data model to show verified/unverified badges per claim.
  */
+function GroundingBadge({ grounded }: { grounded: boolean }) {
+  return grounded ? (
+    <span
+      className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[11px] font-medium text-green-700 bg-green-50"
+      title="Found in the original document"
+    >
+      <Check className="h-3 w-3" />
+      from your note
+    </span>
+  ) : (
+    <span
+      className="ml-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 align-middle text-[11px] font-medium text-amber-700 bg-amber-50"
+      title="Not found verbatim in the original document — please review"
+    >
+      <AlertTriangle className="h-3 w-3" />
+      review
+    </span>
+  )
+}
+
 function StructuredContent({
   sectionKey,
   structured,
   onClaimClick,
+  groundingSource,
 }: {
   sectionKey: string
   structured: StructuredSOAPNoteModel
   onClaimClick?: (sourceSegmentIds: number[]) => void
+  groundingSource?: string
 }) {
   const fields = SECTION_SUBFIELDS[sectionKey]
   if (!fields) return null
@@ -415,6 +449,14 @@ function StructuredContent({
             <div key={field.key}>
               <h5 className="text-sm font-medium text-neutral-600 mb-1">
                 {field.label}
+                {groundingSource !== undefined && (
+                  <GroundingBadge
+                    grounded={areAllGrounded(
+                      items.map((it) => it.text),
+                      groundingSource,
+                    )}
+                  />
+                )}
               </h5>
               <ul className="space-y-1">
                 {items.map((item, i) => {
@@ -485,6 +527,11 @@ function StructuredContent({
                 confidenceLevel={sentence.confidence_level}
                 confidenceScore={sentence.confidence_score}
               />
+              {groundingSource !== undefined && (
+                <GroundingBadge
+                  grounded={isTextGrounded(sentence.text, groundingSource)}
+                />
+              )}
             </h5>
             <p className="text-sm text-neutral-900 whitespace-pre-wrap leading-relaxed">
               {sentence.text}
