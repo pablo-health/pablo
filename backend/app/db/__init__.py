@@ -429,6 +429,35 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
     return session
 
 
+# Tenant tables that a deployment knows are NOT row-scoped — their
+# isolation boundary is the tenant schema (search_path), not a per-row
+# predicate — but that carry an ``id`` column and so would otherwise be
+# rejected by ``enable_rls_on_schema``'s deny-all guard. Core ships none;
+# a deployment that adds its own non-row-scoped tenant tables registers
+# them here (see ``register_overlay_not_row_scoped``) so the guard treats
+# them exactly like the built-in ``ehr_routes`` / ``users`` entries.
+_OVERLAY_NOT_ROW_SCOPED: set[str] = set()
+
+
+def register_overlay_not_row_scoped(*table_names: str) -> None:
+    """Register additional tenant tables as not-row-scoped.
+
+    ``enable_rls_on_schema`` force-enables row-level security on every
+    tenant table carrying a ``user_id`` / ``patient_id`` / ``id`` column
+    and refuses (raises) to leave such a table with no policy, since that
+    would be a silent deny-all. A deployment that introduces its own
+    tenant table whose isolation boundary is the tenant schema rather
+    than a per-row predicate (e.g. tenant-level config with only an
+    ``id``) registers the table name here. Registered tables then take
+    the same code path as the built-in ``ehr_routes`` / ``users``
+    entries: RLS is left disabled rather than the guard raising.
+
+    Core itself registers none — the default registry is empty. This is
+    purely a hook for deployment-specific tenant tables.
+    """
+    _OVERLAY_NOT_ROW_SCOPED.update(table_names)
+
+
 def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
     session: Session, schema_name: str
 ) -> None:
@@ -468,7 +497,9 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         ``not_row_scoped`` and have RLS left off explicitly. Their
         isolation boundary is the tenant schema (search_path), not a
         per-row predicate. Forcing RLS on them would leave no policy =
-        a silent deny-all under a NOBYPASSRLS role.
+        a silent deny-all under a NOBYPASSRLS role. Deployments can add
+        their own non-row-scoped tenant tables to this set via
+        ``register_overlay_not_row_scoped`` (core registers none).
 
     Any other table that carries one of the scoping columns but matches
     no policy shape raises — refusing to ship a force-RLS'd table with
@@ -537,7 +568,11 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     #     loop; ehr_routes only does because it carries an ``id``.
     #   * users — vestigial per-tenant table. Runtime identity lives in
     #     the platform schema; nothing reads this per-tenant copy.
-    not_row_scoped = {"ehr_routes", "users"}
+    # Deployments may register their own non-row-scoped tenant tables via
+    # ``register_overlay_not_row_scoped``; merge them so deployment-
+    # specific tables take this same RLS-off path instead of tripping the
+    # deny-all guard below.
+    not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
 
     for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
@@ -794,6 +829,7 @@ def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
 from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402
 
 __all__ = [
+    "register_overlay_not_row_scoped",
     "run_in_tenant",
     "tenant_db_session",
 ]
