@@ -18,7 +18,8 @@ shape-identical to a generated note and renders in the editor unchanged.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Any
 
@@ -51,6 +52,13 @@ _SCANNED_PDF_TEXT_THRESHOLD = 100
 # leak into the rendered note body.
 _SESSION_DATE_KEY = "session_date"
 _SESSION_TIME_KEY = "session_time"
+
+# A parsed field counts as "grounded" in the source when it is a
+# whitespace-normalized substring of the source, or its word-token overlap
+# with the source is at least this high (the model sometimes joins several
+# verbatim source passages into one field, which breaks contiguous-substring
+# matching but keeps every word). Below this, the field is flagged for review.
+GROUNDING_OVERLAP_THRESHOLD = 0.9
 
 EXTRACT_SYSTEM_PROMPT = (
     "You are a clinical documentation assistant. You are given the full text "
@@ -87,6 +95,21 @@ class UnsupportedDocumentTypeError(ValueError):
 
 
 @dataclass(frozen=True)
+class FieldGrounding:
+    """Whether one parsed field's text is grounded in the source document.
+
+    ``path`` is the field location (e.g. ``subjective.client_narrative`` or
+    ``plan.homework_assignments[1]`` for a list item). ``overlap`` is the
+    fraction of the field's word tokens that also appear in the source.
+    ``grounded`` is the verdict (verbatim substring or high overlap).
+    """
+
+    path: str
+    grounded: bool
+    overlap: float
+
+
+@dataclass(frozen=True)
 class ParsedImportedNote:
     """Result of parsing an uploaded SOAP note.
 
@@ -94,11 +117,19 @@ class ParsedImportedNote:
     generated note's ``content`` — and renders in the note editor unchanged.
     ``session_date`` / ``session_time`` are read from the document, or
     ``None`` when the document did not state them (the time often is absent).
+    ``grounding`` reports, per field, whether the parse stayed faithful to
+    the source text (see :func:`check_grounding`).
     """
 
     content: dict[str, Any]
     session_date: date | None
     session_time: time | None
+    grounding: tuple[FieldGrounding, ...] = field(default_factory=tuple)
+
+    @property
+    def ungrounded(self) -> tuple[FieldGrounding, ...]:
+        """Fields whose text was not found in the source — flag for review."""
+        return tuple(g for g in self.grounding if not g.grounded)
 
     def session_datetime(self, *, default_time: time = time(0, 0)) -> datetime | None:
         """Combine the parsed date and time into a naive datetime.
@@ -241,6 +272,49 @@ def _parse_iso_time(raw: Any) -> time | None:
         return None
 
 
+def _norm_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def _word_tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def check_grounding(content: dict[str, Any], source_text: str) -> tuple[FieldGrounding, ...]:
+    """Check each parsed field's text against the source — no LLM call.
+
+    A field is grounded when its whitespace-normalized text is a substring of
+    the source, or its word-token overlap with the source is at least
+    :data:`GROUNDING_OVERLAP_THRESHOLD`. This catches paraphrase and
+    fabrication deterministically: text the model invented or reworded will
+    not be found in the source. List fields are checked per item.
+    """
+    normalized_source = _norm_ws(source_text)
+    source_tokens = set(_word_tokens(source_text))
+
+    results: list[FieldGrounding] = []
+    for section, fields in content.items():
+        if not isinstance(fields, dict):
+            continue
+        for key, value in fields.items():
+            is_list = isinstance(value, list)
+            items = value if is_list else ([value] if value else [])
+            for index, item in enumerate(items):
+                text = str(item).strip()
+                if not text:
+                    continue
+                path = f"{section}.{key}" + (f"[{index}]" if is_list else "")
+                tokens = _word_tokens(text)
+                overlap = (
+                    1.0 if not tokens else sum(t in source_tokens for t in tokens) / len(tokens)
+                )
+                grounded = (
+                    _norm_ws(text) in normalized_source or overlap >= GROUNDING_OVERLAP_THRESHOLD
+                )
+                results.append(FieldGrounding(path=path, grounded=grounded, overlap=overlap))
+    return tuple(results)
+
+
 class NoteImportService:
     """Parse an existing SOAP note's text into the structured note shape."""
 
@@ -304,8 +378,20 @@ class NoteImportService:
             response_schema=_build_extract_schema(definition),
         )
         data = completion.data
+        content = _coerce_registry_response(definition, data)
+        grounding = check_grounding(content, source_text)
+        ungrounded = [g.path for g in grounding if not g.grounded]
+        if ungrounded:
+            # Field PATHS only — never the field text (no PHI in logs).
+            logger.warning(
+                "Imported note: %d/%d fields not grounded verbatim in source: %s",
+                len(ungrounded),
+                len(grounding),
+                ungrounded,
+            )
         return ParsedImportedNote(
-            content=_coerce_registry_response(definition, data),
+            content=content,
             session_date=_parse_iso_date(data.get(_SESSION_DATE_KEY)),
             session_time=_parse_iso_time(data.get(_SESSION_TIME_KEY)),
+            grounding=grounding,
         )

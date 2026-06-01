@@ -35,6 +35,7 @@ from backend.app.services.note_import_service import (
     NoteImportService,
     ParsedImportedNote,
     UnsupportedDocumentTypeError,
+    check_grounding,
     extract_document_text,
 )
 from backend.app.services.structured_llm_gateway import (
@@ -172,6 +173,51 @@ class TestExtractDocumentText:
             extract_document_text(
                 b"PK\x03\x04", content_type="application/zip", filename="archive.zip"
             )
+
+
+class TestGrounding:
+    _SOURCE = (
+        "Client reported improved sleep and lower stress this week. "
+        "Affect was bright. Plan: continue weekly sessions and a breathing exercise."
+    )
+
+    def test_flags_fabrication_passes_verbatim(self) -> None:
+        content = {
+            "subjective": {
+                # Verbatim substring of the source.
+                "client_narrative": "Client reported improved sleep and lower stress this week.",
+                # Not in the source at all — fabricated.
+                "chief_complaint": "Patient is training for a marathon.",
+            },
+            "objective": {"affect_observed": "Affect was bright."},
+            "plan": {"next_steps": ["continue weekly sessions"]},
+        }
+        by_path = {g.path: g for g in check_grounding(content, self._SOURCE)}
+
+        assert by_path["subjective.client_narrative"].grounded
+        assert by_path["objective.affect_observed"].grounded
+        assert by_path["plan.next_steps[0]"].grounded
+        assert not by_path["subjective.chief_complaint"].grounded
+
+    def test_high_overlap_counts_as_grounded(self) -> None:
+        # Words all drawn from the source but not one contiguous substring.
+        content = {"assessment": {"clinical_impression": "improved sleep and lower stress"}}
+        result = check_grounding(content, self._SOURCE)[0]
+
+        assert result.overlap == 1.0
+        assert result.grounded
+
+    def test_empty_fields_are_skipped(self) -> None:
+        content = {"subjective": {"chief_complaint": "", "symptoms": []}}
+        assert check_grounding(content, "anything") == ()
+
+    def test_parse_attaches_grounding(self) -> None:
+        # The fixture content does not appear in this source, so every field
+        # is flagged — confirming the guard is wired into the parse result.
+        result = _fake_service(_FAKE_SOAP_RESPONSE).parse_soap_note("unrelated source text")
+
+        assert len(result.grounding) > 0
+        assert result.ungrounded == result.grounding
 
 
 # ---------------------------------------------------------------------------
