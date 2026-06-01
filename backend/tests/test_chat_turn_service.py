@@ -25,9 +25,11 @@ from app.repositories import (
     InMemoryNotesRepository,
 )
 from app.services import LlmUsageMeter
+from app.services.chat_context_bundler import SOURCE_KEY_PASTED_TEXT, ContextBundle
 from app.services.chat_llm_gateway import (
     FakeChatLLMGateway,
     StreamEvent,
+    UserAssistantTurn,
 )
 from app.services.chat_turn_service import (
     ChatTurnService,
@@ -35,6 +37,11 @@ from app.services.chat_turn_service import (
     TurnContext,
     _compose_system_prompt,
 )
+from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 CONVERSATION_ID = "conv-turn-1"
 PATIENT_ID = "patient-turn-1"
@@ -576,9 +583,9 @@ class TestComposeSystemPromptEmptyChartMarker:
             caller_system_prompt=self._CALLER_PROMPT,
             context_text="",
         ).lower()
-        assert (
-            "do not infer" in result or "do not invent" in result
-        ), "Empty-chart marker must instruct the model not to invent patient details"
+        assert "do not infer" in result or "do not invent" in result, (
+            "Empty-chart marker must instruct the model not to invent patient details"
+        )
 
     def test_non_empty_context_passes_through_unchanged(self) -> None:
         """When real context is present, no empty-chart marker should appear."""
@@ -602,3 +609,131 @@ class TestComposeSystemPromptEmptyChartMarker:
         assert result.startswith("You are Pablo.")
         # And the marker still follows
         assert "PATIENT CONTEXT" in result
+
+
+# ---------------------------------------------------------------------------
+# Retrieval span + content-capture hook
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def span_exporter():
+    """In-memory span exporter on the active provider (mirrors test_llm_telemetry)."""
+    provider = trace.get_tracer_provider()
+    if not isinstance(provider, TracerProvider):
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    exporter.clear()
+    yield exporter
+    exporter.clear()
+
+
+def _pasted_context(content: str = "External sleep log entry.") -> TurnContext:
+    return TurnContext(
+        conversation_id=CONVERSATION_ID,
+        patient_id=PATIENT_ID,
+        requesting_user_id=OWNER_USER_ID,
+        caller_system_prompt="You are a clinical assistant.",
+        caller_feature_key="chart_qa",
+        user_message="What does the pasted log show?",
+        source_selection={SOURCE_KEY_PASTED_TEXT: {"content": content}},
+        model="gemini-test-flash",
+    )
+
+
+class TestRetrievalSpanAndContentHook:
+    def test_turn_emits_content_free_retrieval_span(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+        span_exporter: InMemorySpanExporter,
+    ) -> None:
+        service, _ = _make_service(
+            chat_repo,
+            notes_repo,
+            script=[StreamEvent(delta="ok"), StreamEvent(finish_reason="stop", output_tokens=3)],
+        )
+        _drain(service, _pasted_context())
+
+        retrieval = [
+            s for s in span_exporter.get_finished_spans() if s.name == "retrieval.chat_context"
+        ]
+        assert len(retrieval) == 1
+        attrs = dict(retrieval[0].attributes or {})
+        assert (
+            attrs[SpanAttributes.OPENINFERENCE_SPAN_KIND]
+            == OpenInferenceSpanKindValues.RETRIEVER.value
+        )
+        assert attrs["pablo.retrieval.document_count"] >= 1
+        assert (
+            attrs[f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.0.document.id"] == SOURCE_KEY_PASTED_TEXT
+        )
+        # Content-free: no document text, and the pasted content never appears.
+        assert not any(key.endswith(".document.content") for key in attrs)
+        haystack = " ".join(f"{k}={v}" for k, v in attrs.items())
+        assert "External sleep log entry." not in haystack
+
+    def test_record_turn_content_hook_receives_envelope(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        captured: dict = {}
+
+        class _CapturingService(ChatTurnService):
+            def _record_turn_content(
+                self,
+                *,
+                context: TurnContext,
+                bundle: ContextBundle,
+                system_prompt: str,
+                prior_turns: list[UserAssistantTurn],
+                assistant_text: str,
+                input_tokens: int | None,
+                output_tokens: int | None,
+            ) -> None:
+                captured.update(
+                    bundle=bundle,
+                    system_prompt=system_prompt,
+                    prior_turns=prior_turns,
+                    assistant_text=assistant_text,
+                    output_tokens=output_tokens,
+                )
+
+        gateway = FakeChatLLMGateway(
+            script=[
+                StreamEvent(delta="Hi "),
+                StreamEvent(delta="there."),
+                StreamEvent(finish_reason="stop", output_tokens=5),
+            ]
+        )
+        service = _CapturingService(chat_repo=chat_repo, notes_repo=notes_repo, gateway=gateway)
+        _drain(service, _pasted_context())
+
+        assert captured["assistant_text"] == "Hi there."
+        assert "You are a clinical assistant." in captured["system_prompt"]
+        assert isinstance(captured["bundle"], ContextBundle)
+        # The structured per-document content is handed to the hook (the seam
+        # that lets the overlay capture per-document content for evals).
+        assert any(d.source_key == SOURCE_KEY_PASTED_TEXT for d in captured["bundle"].documents)
+        assert all(isinstance(t, UserAssistantTurn) for t in captured["prior_turns"])
+        assert captured["output_tokens"] == 5
+
+    def test_hook_exception_does_not_break_the_turn(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        class _BoomService(ChatTurnService):
+            def _record_turn_content(self, **kwargs: object) -> None:
+                raise RuntimeError("hook boom")
+
+        gateway = FakeChatLLMGateway(
+            script=[StreamEvent(delta="ok"), StreamEvent(finish_reason="stop", output_tokens=2)]
+        )
+        service = _BoomService(chat_repo=chat_repo, notes_repo=notes_repo, gateway=gateway)
+        events = _drain(service, _pasted_context())
+        # The turn still completes — a misbehaving hook never breaks delivery.
+        assert events[-1].kind == "done"

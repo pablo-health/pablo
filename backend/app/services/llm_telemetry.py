@@ -33,15 +33,20 @@ endpoint change, never a re-instrumentation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+from openinference.semconv.trace import (
+    DocumentAttributes,
+    OpenInferenceSpanKindValues,
+    SpanAttributes,
+)
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
@@ -53,7 +58,7 @@ from ..logging_config import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.trace import Span
@@ -76,6 +81,9 @@ _ATTR_ROUTE_TEMPLATE = "pablo.route_template"
 _ATTR_PROMPT_TEMPLATE_ID = "pablo.prompt_template_id"
 _ATTR_ERROR_CLASS = "pablo.error_class"
 _ATTR_LATENCY_MS = "pablo.latency_ms"
+_ATTR_RETRIEVAL_OPERATION = "pablo.retrieval_operation"
+_ATTR_RETRIEVAL_DOC_COUNT = "pablo.retrieval.document_count"
+_ATTR_CONTEXT_TOKENS_EST = "pablo.retrieval.context_tokens_est"
 
 
 @dataclass(frozen=True)
@@ -210,6 +218,105 @@ def llm_span(request: LLMSpanRequest) -> Iterator[LLMSpanRecorder]:
 
 
 # ---------------------------------------------------------------------------
+# Retrieval tracing (content-free, same discipline as the LLM span above)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RetrievedDocumentRef:
+    """Content-free reference to one retrieved context document.
+
+    Mirrors :class:`LLMSpanRequest`'s discipline: the type has *no* field
+    for the document's text — only its id, its source, and a token
+    estimate — so a retrieval span built from these refs cannot leak chart
+    content into the telemetry backend. ``document_id`` is the chart id
+    (note id / patient-document id) where one exists, else the source key.
+    """
+
+    document_id: str
+    source: str | None = None
+    tokens_est: int | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
+
+
+class RetrievalSpanRecorder:
+    """Handle for attaching *metadata only* to an in-flight retrieval span.
+
+    Like :class:`LLMSpanRecorder`, it offers no method that accepts
+    document text — only the content-free :class:`RetrievedDocumentRef`
+    list and an aggregate token estimate.
+    """
+
+    __slots__ = ("_span",)
+
+    def __init__(self, span: Span) -> None:
+        self._span = span
+
+    def set_documents(self, documents: Sequence[RetrievedDocumentRef]) -> None:
+        """Record which documents were retrieved (ids + counts; never text)."""
+        self._span.set_attribute(_ATTR_RETRIEVAL_DOC_COUNT, len(documents))
+        docs_prefix = SpanAttributes.RETRIEVAL_DOCUMENTS
+        for i, doc in enumerate(documents):
+            self._span.set_attribute(
+                f"{docs_prefix}.{i}.{DocumentAttributes.DOCUMENT_ID}", doc.document_id
+            )
+            metadata: dict[str, object] = dict(doc.metadata)
+            if doc.source is not None:
+                metadata.setdefault("source", doc.source)
+            if doc.tokens_est is not None:
+                metadata.setdefault("tokens_est", doc.tokens_est)
+            if metadata:
+                self._span.set_attribute(
+                    f"{docs_prefix}.{i}.{DocumentAttributes.DOCUMENT_METADATA}",
+                    json.dumps(metadata, sort_keys=True, default=str),
+                )
+
+    def set_context_tokens(self, total_tokens_est: int) -> None:
+        """Record the total estimated token size of the assembled context."""
+        self._span.set_attribute(_ATTR_CONTEXT_TOKENS_EST, total_tokens_est)
+
+
+@contextmanager
+def retrieval_span(*, operation: str) -> Iterator[RetrievalSpanRecorder]:
+    """Open a content-free OpenInference RETRIEVER span for one context assembly.
+
+    The retrieval counterpart to :func:`llm_span`: it makes *which* chart
+    sources fed a turn queryable in any OTLP backend, alongside the LLM
+    span the gateway already emits. Same guarantees — metadata only,
+    latency on exit, error class (not message) on exception, and a no-op
+    tracer when no collector is configured.
+
+    Usage::
+
+        with retrieval_span(operation="chat_context") as rec:
+            bundle = assemble_context_bundle(...)
+            rec.set_documents([RetrievedDocumentRef(document_id=...), ...])
+            rec.set_context_tokens(bundle.total_tokens_est)
+    """
+    tracer = trace.get_tracer(_TRACER_NAME)
+    start = time.perf_counter()
+    with tracer.start_as_current_span(f"retrieval.{operation}") as span:
+        span.set_attribute(
+            SpanAttributes.OPENINFERENCE_SPAN_KIND,
+            OpenInferenceSpanKindValues.RETRIEVER.value,
+        )
+        span.set_attribute(_ATTR_RETRIEVAL_OPERATION, operation)
+        _set_context_attributes(span)
+        recorder = RetrievalSpanRecorder(span)
+        try:
+            yield recorder
+        except (GeneratorExit, asyncio.CancelledError):
+            raise
+        except BaseException as exc:
+            span.set_attribute(_ATTR_ERROR_CLASS, type(exc).__name__)
+            span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            raise
+        finally:
+            latency_ms = round((time.perf_counter() - start) * 1000.0, 2)
+            span.set_attribute(_ATTR_LATENCY_MS, latency_ms)
+
+
+# ---------------------------------------------------------------------------
 # Exporter wiring (config-driven; no-op until an endpoint is configured)
 # ---------------------------------------------------------------------------
 
@@ -277,6 +384,11 @@ def init_llm_tracing(settings: Settings) -> None:
 
         exporter = OTLPSpanExporter(endpoint=endpoint, session=session)
         provider = TracerProvider(resource=_build_resource(settings))
+        # BatchSpanProcessor exports off-thread, so span.end() never blocks the
+        # request path on the collector. Keep it Batch (never SimpleSpanProcessor)
+        # — a synchronous exporter would couple request latency to the
+        # collector's responsiveness, including its cold-start when it scales to
+        # zero.
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
         _provider_installed.append(True)
@@ -307,7 +419,10 @@ def _build_id_token_session(audience: str) -> object:
 __all__ = [
     "LLMSpanRecorder",
     "LLMSpanRequest",
+    "RetrievalSpanRecorder",
+    "RetrievedDocumentRef",
     "init_llm_tracing",
     "llm_span",
+    "retrieval_span",
     "usage_tokens",
 ]

@@ -31,6 +31,7 @@ from app.services.chat_context_bundler import (
     SOURCE_KEY_VITALS_RECENT,
     ContextOverflowError,
     InvalidSelectionError,
+    RetrievedDocument,
     assemble_context_bundle,
     default_source_selection,
     estimate_tokens,
@@ -145,7 +146,7 @@ class TestPastedText:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={SOURCE_KEY_PASTED_TEXT: {"content": too_big}},
             )
 
@@ -154,7 +155,7 @@ class TestPastedText:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={SOURCE_KEY_PASTED_TEXT: True},
             )
 
@@ -166,7 +167,7 @@ class TestPastedText:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={SOURCE_KEY_PASTED_TEXT: {"content": content}},
                 token_budget=100,
             )
@@ -249,7 +250,7 @@ class TestProgressNotesRecent:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: {"limit": 0}},
             )
 
@@ -329,7 +330,7 @@ class TestProgressNotesExplicit:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={SOURCE_KEY_PROGRESS_NOTES_EXPLICIT: {"note_ids": [1, 2]}},
             )
 
@@ -444,7 +445,7 @@ class TestPatientDocumentSources:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={SOURCE_KEY_SAFETY_PLAN_ACTIVE: {"limit": 1}},
             )
 
@@ -496,7 +497,7 @@ class TestSelectionPlumbing:
             assemble_context_bundle(
                 notes_repo=notes_repo,
                 patient_id=PATIENT_ID,
-            user_id=USER_ID,
+                user_id=USER_ID,
                 selection={"not_a_real_source": True},
             )
 
@@ -742,3 +743,99 @@ class TestIntegration:
                 if isinstance(value, str):
                     assert "Sertraline" not in value
                     assert "anxiety" not in value.lower() or value == entry.get("source_key", "")
+
+
+# ---------------------------------------------------------------------------
+# Per-document breakdown (ContextBundle.documents)
+# ---------------------------------------------------------------------------
+
+
+class TestRetrievedDocuments:
+    def test_notes_expose_one_document_per_note_with_ids(
+        self,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        base = datetime.now(UTC)
+        first = _make_note(
+            note_type="narrative",
+            content={"note": {"body": "Reports improved sleep onset."}},
+            created_at=base.replace(microsecond=1),
+            finalized_at=base.replace(microsecond=1),
+        )
+        second = _make_note(
+            note_type="narrative",
+            content={"note": {"body": "Discussed medication adherence."}},
+            created_at=base.replace(microsecond=2),
+            finalized_at=base.replace(microsecond=2),
+        )
+        notes_repo.add(first)
+        notes_repo.add(second)
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: True},
+        )
+
+        docs = [d for d in bundle.documents if d.source_key == SOURCE_KEY_PROGRESS_NOTES_RECENT]
+        assert {d.document_id for d in docs} == {first.id, second.id}
+        # Each carries its own note's body text (per-document, not the blob).
+        by_id = {d.document_id: d for d in docs}
+        assert "improved sleep onset" in by_id[first.id].text
+        assert "medication adherence" in by_id[second.id].text
+        assert all(isinstance(d, RetrievedDocument) for d in docs)
+        assert all(d.tokens_est > 0 for d in docs)
+
+    def test_documents_reflect_truncation(
+        self,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        base = datetime.now(UTC)
+        for i in range(3):
+            notes_repo.add(
+                _make_note(
+                    note_type="narrative",
+                    content={"note": {"body": f"Visit {i}"}},
+                    created_at=base.replace(microsecond=i),
+                    finalized_at=base.replace(microsecond=i),
+                )
+            )
+        # limit=1 keeps only the most recent note — documents must match.
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: {"limit": 1}},
+        )
+        docs = [d for d in bundle.documents if d.source_key == SOURCE_KEY_PROGRESS_NOTES_RECENT]
+        assert len(docs) == 1
+
+    def test_pasted_text_is_a_single_document(
+        self,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PASTED_TEXT: {"content": "External note body."}},
+        )
+        pasted = [d for d in bundle.documents if d.source_key == SOURCE_KEY_PASTED_TEXT]
+        assert len(pasted) == 1
+        assert pasted[0].document_id == SOURCE_KEY_PASTED_TEXT
+        assert "External note body." in pasted[0].text
+
+    def test_documents_empty_when_no_source_has_content(
+        self,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        # progress_notes_recent selected but the patient has no notes.
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: True},
+        )
+        assert bundle.documents == ()
+        assert bundle.text == ""
