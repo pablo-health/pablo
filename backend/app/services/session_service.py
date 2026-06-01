@@ -26,6 +26,7 @@ from ..models import (
     SessionStatus,
     TherapySession,
     Transcript,
+    TranscriptFormat,
     UpdateSessionMetadataRequest,
     UpdateSessionRatingRequest,
     UpdateSessionStatusRequest,
@@ -306,6 +307,66 @@ class SessionService:
         patient.session_count += 1
         if patient.last_session_date is None or request.session_date > patient.last_session_date:
             patient.last_session_date = request.session_date
+        self.patient_repo.update(patient)
+
+        return session, patient, note
+
+    def import_session(
+        self,
+        patient_id: str,
+        user_id: str,
+        *,
+        session_date: datetime,
+        source_text: str,
+        note_content: dict[str, Any],
+        note_type: str = DEFAULT_NOTE_TYPE,
+    ) -> tuple[TherapySession, Patient, Note]:
+        """Create a session from an already-written note imported as a file.
+
+        Unlike :meth:`upload_session`, the note content is supplied by the
+        caller — parsed from an uploaded SOAP document — rather than
+        generated from a transcript, so there is no LLM call here. The
+        original document text is stored as the session transcript so it can
+        be shown beside the parsed note during review. The session lands in
+        ``PENDING_REVIEW``, exactly like a generated note.
+
+        Returns ``(session, patient, note)``.
+
+        Raises:
+            PatientNotFoundError: If patient doesn't exist or doesn't belong
+                to the user.
+        """
+        patient = self.patient_repo.get(patient_id, user_id)
+        if not patient:
+            raise PatientNotFoundError(f"Patient {patient_id} not found")
+
+        now = _now()
+        session_number = self.session_repo.get_session_number_for_patient(patient_id)
+        session = TherapySession(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            patient_id=patient_id,
+            session_date=session_date,
+            session_number=session_number,
+            status=SessionStatus.PENDING_REVIEW,
+            transcript=Transcript(format=TranscriptFormat.TXT, content=source_text),
+            created_at=now,
+            processing_started_at=now,
+            processing_completed_at=now,
+        )
+        session = self.session_repo.create(session)
+
+        note = self.note_service.create_or_update_for_session(
+            session_id=session.id,
+            patient_id=session.patient_id,
+            note_type=note_type,
+            content=note_content,
+            user_id=user_id,
+        )
+
+        patient.session_count += 1
+        if patient.last_session_date is None or session_date > patient.last_session_date:
+            patient.last_session_date = session_date
         self.patient_repo.update(patient)
 
         return session, patient, note

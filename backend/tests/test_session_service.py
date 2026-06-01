@@ -432,3 +432,60 @@ class TestUpdateRating:
 
         assert note.quality_rating == 1
         assert old_rating == 5
+
+
+_IMPORTED_CONTENT = {
+    "subjective": {"client_narrative": "Client reported marital distress."},
+    "objective": {"appearance": "Appropriately groomed."},
+    "assessment": {"clinical_impression": "Significant marital distress."},
+    "plan": {"next_steps": ["revisit couples counseling"]},
+}
+
+
+class TestImportSession:
+    """Importing an already-written note as a pending-review session."""
+
+    def test_creates_pending_review_session_with_parsed_content(
+        self,
+        service: SessionService,
+        patient: Patient,
+        user_id: str,
+    ) -> None:
+        session_date = datetime(2026, 2, 4, 14, 30)
+
+        session, returned_patient, note = service.import_session(
+            patient.id,
+            user_id,
+            session_date=session_date,
+            source_text="S/O/A/P original document text",
+            note_content=_IMPORTED_CONTENT,
+        )
+
+        # Lands ready for review, no LLM generation involved.
+        assert session.status == SessionStatus.PENDING_REVIEW
+        assert session.session_date == session_date
+        # Original text is preserved as the transcript for side-by-side review.
+        assert session.transcript is not None
+        assert session.transcript.content == "S/O/A/P original document text"
+        assert session.transcript.format == TranscriptFormat.TXT
+        # The parsed content is persisted verbatim as the note body.
+        assert note.note_type == "soap"
+        assert note.content == _IMPORTED_CONTENT
+        assert note.session_id == session.id
+        # Patient metadata advances like any other session.
+        assert returned_patient.session_count == 1
+        assert returned_patient.last_session_date == session_date
+
+    def test_unknown_patient_raises(
+        self,
+        service: SessionService,
+        user_id: str,
+    ) -> None:
+        with pytest.raises(PatientNotFoundError):
+            service.import_session(
+                "missing-patient",
+                user_id,
+                session_date=datetime(2026, 2, 4),
+                source_text="text",
+                note_content=_IMPORTED_CONTENT,
+            )
