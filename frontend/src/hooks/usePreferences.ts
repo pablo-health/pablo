@@ -32,3 +32,23 @@ export function useSavePreferences(token?: string) {
     },
   })
 }
+
+/**
+ * The IANA timezone to render dates/times in. Prefers the clinician's saved
+ * preference and falls back to the browser's detected zone. Use this anywhere
+ * the UI formats a date so every surface agrees on which day it is — see
+ * `formatInUserTimeZone`.
+ */
+export function useUserTimeZone(token?: string): string {
+  const { data } = usePreferences(token)
+  return data?.timezone || detectBrowserTimezone()
+}
+
+/** Format a date in the user's timezone (see `useUserTimeZone`). */
+export function formatInUserTimeZone(
+  date: Date | string,
+  timeZone: string,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  return new Date(date).toLocaleDateString("en-US", { ...options, timeZone })
+}

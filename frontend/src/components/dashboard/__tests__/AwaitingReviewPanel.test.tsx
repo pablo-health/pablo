@@ -20,6 +20,15 @@ vi.mock("@/hooks/useSessions", () => ({
   useSessionList: (...args: unknown[]) => useSessionList(...args),
 }))
 
+vi.mock("@/hooks/usePreferences", () => ({
+  useUserTimeZone: () => "America/New_York",
+  formatInUserTimeZone: (
+    date: Date | string,
+    timeZone: string,
+    options: Intl.DateTimeFormatOptions,
+  ) => new Date(date).toLocaleDateString("en-US", { ...options, timeZone }),
+}))
+
 // Stub the status badge — it polls via useSession, which we don't mock here.
 vi.mock("@/components/sessions/SessionStatusBadge", () => ({
   SessionStatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
