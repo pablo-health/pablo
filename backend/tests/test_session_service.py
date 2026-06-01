@@ -278,6 +278,26 @@ class TestFinalizeSession:
         assert result_note.quality_rating == 5
         assert result_note.finalized_at is not None
 
+    def test_finalization_without_rating(
+        self,
+        service: SessionService,
+        patient: Patient,
+        user_id: str,
+        session_repo: InMemoryTherapySessionRepository,
+        note_service: NoteService,
+    ) -> None:
+        """A clinician can finalize a note without supplying a quality rating."""
+        session = _make_pending_session(session_repo, note_service, user_id, patient.id)
+
+        request = FinalizeSessionRequest()
+        result_session, _result_patient, result_note = service.finalize_session(
+            session.id, user_id, request
+        )
+
+        assert result_session.status == SessionStatus.FINALIZED
+        assert result_note.quality_rating is None
+        assert result_note.finalized_at is not None
+
     def test_session_not_found(
         self,
         service: SessionService,

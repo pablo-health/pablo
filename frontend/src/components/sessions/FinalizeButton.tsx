@@ -9,7 +9,7 @@
  * Features:
  * - Disabled when not in "pending_review" status
  * - Shows loading spinner during mutation
- * - Requires quality rating to be set
+ * - Quality rating is optional; finalizing is never gated on a rating
  * - Can include edited SOAP note
  */
 
@@ -42,18 +42,14 @@ export function FinalizeButton({
   const finalizeMutation = useFinalizeSession()
 
   const isDisabled =
-    status !== "pending_review" ||
-    qualityRating === null ||
-    finalizeMutation.isPending
+    status !== "pending_review" || finalizeMutation.isPending
 
   const handleFinalize = async () => {
-    if (!qualityRating) return
-
     try {
       await finalizeMutation.mutateAsync({
         sessionId,
         data: {
-          quality_rating: qualityRating,
+          ...(qualityRating !== null && { quality_rating: qualityRating }),
           ...(qualityRatingReason && { quality_rating_reason: qualityRatingReason }),
           ...(qualityRatingSections &&
             qualityRatingSections.length > 0 && {

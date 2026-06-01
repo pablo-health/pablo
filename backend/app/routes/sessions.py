@@ -361,7 +361,7 @@ def finalize_session(
     Finalize a session after therapist review.
 
     - **session_id**: The session's unique identifier
-    - **quality_rating**: Quality rating 1-5 (required)
+    - **quality_rating**: Quality rating 1-5 (optional)
     - **quality_rating_reason**: Textual explanation for the rating (optional)
     - **quality_rating_sections**: SOAP sections needing improvement (optional)
     - **soap_note_edited**: Edited SOAP note if therapist made changes (optional)
