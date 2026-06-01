@@ -13,7 +13,11 @@
 "use client"
 
 import { use, useState, useRef, useCallback, useEffect } from "react"
-import { useSession, useUpdateSessionRating } from "@/hooks/useSessions"
+import {
+  useSession,
+  useUpdateSessionMetadata,
+  useUpdateSessionRating,
+} from "@/hooks/useSessions"
 import { SessionDetailHeader } from "@/components/sessions/SessionDetailHeader"
 import {
   TranscriptViewer,
@@ -47,6 +51,7 @@ export default function SessionDetailPage({ params }: PageProps) {
     },
   })
   const updateRatingMutation = useUpdateSessionRating()
+  const updateMetadataMutation = useUpdateSessionMetadata()
 
   // Local state for quality rating and feedback during review (before finalization)
   const [localRatingFeedback, setLocalRatingFeedback] = useState<RatingFeedback>({
@@ -184,6 +189,14 @@ export default function SessionDetailPage({ params }: PageProps) {
         sessionNumber={session.session_number}
         status={session.status}
         sessionId={session.id}
+        editableSessionDate={session.status === "pending_review"}
+        savingSessionDate={updateMetadataMutation.isPending}
+        onSessionDateChange={(value) =>
+          updateMetadataMutation.mutate({
+            sessionId: session.id,
+            data: { session_date: value },
+          })
+        }
       />
 
       {/* Split-pane layout: side-by-side on lg+, stacked below */}
@@ -191,13 +204,15 @@ export default function SessionDetailPage({ params }: PageProps) {
         className="lg:grid lg:grid-cols-2 lg:gap-6 space-y-6 lg:space-y-0"
         data-testid="split-pane"
       >
-        {/* Left pane — Transcript */}
+        {/* Left pane — the source: a recorded transcript, or the original
+            document for an imported note (shown beside the parsed note so the
+            clinician can verify the parse). */}
         <section
           className="lg:overflow-y-auto lg:max-h-[calc(100vh-12rem)] lg:sticky lg:top-6"
           data-testid="transcript-pane"
         >
           <h2 className="text-lg font-semibold text-neutral-900 mb-3 lg:sticky lg:top-0 lg:bg-white lg:z-10 lg:pb-2">
-            Transcript
+            {session.source === "imported" ? "Original document" : "Transcript"}
           </h2>
           <TranscriptViewer
             ref={transcriptRef}

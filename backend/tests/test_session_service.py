@@ -14,6 +14,7 @@ from app.models import (
     TherapySession,
     Transcript,
     TranscriptFormat,
+    UpdateSessionMetadataRequest,
     UpdateSessionRatingRequest,
     UploadSessionRequest,
 )
@@ -468,6 +469,8 @@ class TestImportSession:
         assert session.transcript is not None
         assert session.transcript.content == "S/O/A/P original document text"
         assert session.transcript.format == TranscriptFormat.TXT
+        # Marked as imported so the review UI can label/verify it accordingly.
+        assert session.source == "imported"
         # The parsed content is persisted verbatim as the note body.
         assert note.note_type == "soap"
         assert note.content == _IMPORTED_CONTENT
@@ -489,3 +492,27 @@ class TestImportSession:
                 source_text="text",
                 note_content=_IMPORTED_CONTENT,
             )
+
+    def test_update_metadata_can_correct_session_date(
+        self,
+        service: SessionService,
+        patient: Patient,
+        user_id: str,
+    ) -> None:
+        # A clinician fixes a date the importer misread from the document.
+        session, _, _ = service.import_session(
+            patient.id,
+            user_id,
+            session_date=datetime(2026, 2, 4),
+            source_text="original document text",
+            note_content=_IMPORTED_CONTENT,
+        )
+        corrected = datetime(2026, 1, 21, 9, 30)
+
+        updated, _ = service.update_session_metadata(
+            session.id,
+            user_id,
+            UpdateSessionMetadataRequest(session_date=corrected),
+        )
+
+        assert updated.session_date == corrected

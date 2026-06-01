@@ -10,6 +10,7 @@ import type {
   FinalizeSessionRequest,
   SessionListResponse,
   SessionResponse,
+  UpdateSessionMetadataRequest,
   UpdateSessionRatingRequest,
   UploadSessionRequest,
 } from "@/types/sessions"
@@ -184,4 +185,15 @@ export async function updateSessionRating(
   token?: string
 ): Promise<SessionResponse> {
   return patch<SessionResponse>(`/api/sessions/${sessionId}/rating`, data, token)
+}
+
+/**
+ * Update editable session metadata (e.g. correct the session date).
+ */
+export async function updateSessionMetadata(
+  sessionId: string,
+  data: UpdateSessionMetadataRequest,
+  token?: string
+): Promise<SessionResponse> {
+  return patch<SessionResponse>(`/api/sessions/${sessionId}`, data, token)
 }
