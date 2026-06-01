@@ -9,6 +9,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# Runtime import: Pydantic resolves this annotation at runtime for validation,
+# so it cannot live in a TYPE_CHECKING block.
+from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
+
 
 class StartSessionFromAppointmentRequest(BaseModel):
     """Optional body for starting a session from an appointment.
@@ -74,6 +78,7 @@ class UpdateAppointmentRequest(BaseModel):
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    status: AppointmentStatus | None = None
 
 
 class AppointmentResponse(BaseModel):

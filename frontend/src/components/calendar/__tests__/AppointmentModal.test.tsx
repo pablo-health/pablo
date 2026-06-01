@@ -1,11 +1,12 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AppointmentModal } from "../AppointmentModal"
 import type { UserPreferences } from "@/lib/api/users"
+import type { AppointmentResponse } from "@/types/scheduling"
 
 vi.mock("@/hooks/usePatients", () => ({
   usePatientList: () => ({
@@ -53,6 +54,30 @@ vi.mock("@/lib/config", () => ({
   useConfig: () => ({ dataMode: "api" }),
 }))
 
+const baseAppointment: AppointmentResponse = {
+  id: "a1",
+  user_id: "u1",
+  patient_id: "p1",
+  title: "Old Title",
+  start_at: "2026-03-20T10:00:00Z",
+  end_at: "2026-03-20T10:50:00Z",
+  duration_minutes: 50,
+  status: "confirmed",
+  session_type: "individual",
+  video_link: null,
+  video_platform: null,
+  notes: null,
+  recurrence_rule: null,
+  recurring_appointment_id: null,
+  recurrence_index: null,
+  is_exception: false,
+  google_event_id: null,
+  google_sync_status: null,
+  session_id: null,
+  created_at: "2026-03-20T09:00:00Z",
+  updated_at: null,
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -65,224 +90,201 @@ function createWrapper() {
 }
 
 describe("AppointmentModal", () => {
-  it("renders new appointment title when no appointment provided", () => {
-    render(
-      <AppointmentModal open onClose={vi.fn()} />,
-      { wrapper: createWrapper() }
-    )
-    expect(screen.getByText("New Appointment")).toBeInTheDocument()
+  it("renders the new-appointment header when no appointment provided", () => {
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    expect(screen.getByText("New appointment")).toBeInTheDocument()
   })
 
-  it("renders edit appointment title when appointment provided", () => {
-    const appointment = {
-      id: "a1",
-      user_id: "u1",
-      patient_id: "p1",
-      title: "Session",
-      start_at: "2026-03-20T10:00:00Z",
-      end_at: "2026-03-20T10:50:00Z",
-      duration_minutes: 50,
-      status: "confirmed" as const,
-      session_type: "individual",
-      video_link: null,
-      video_platform: null,
-      notes: null,
-      recurrence_rule: null,
-      recurring_appointment_id: null,
-      recurrence_index: null,
-      is_exception: false,
-      google_event_id: null,
-      google_sync_status: null,
-      session_id: null,
-      created_at: "2026-03-20T09:00:00Z",
-      updated_at: null,
+  it("renders the edit-appointment header when an appointment is provided", () => {
+    render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+      wrapper: createWrapper(),
+    })
+    expect(screen.getByText("Edit appointment")).toBeInTheDocument()
+  })
+
+  it("renders the fast-path field labels", () => {
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    expect(screen.getByText("Patient")).toBeInTheDocument()
+    expect(screen.getByText("When")).toBeInTheDocument()
+    expect(screen.getByText("Length")).toBeInTheDocument()
+    expect(screen.getByText("Session type")).toBeInTheDocument()
+  })
+
+  it("does not render a primary Title field (title is a tucked-away caption)", () => {
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    // No patient chosen yet => no title caption either.
+    expect(screen.queryByText(/^Title:/)).not.toBeInTheDocument()
+  })
+
+  it("disables the Schedule button until a patient is chosen", () => {
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    expect(screen.getByRole("button", { name: "Schedule" })).toBeDisabled()
+  })
+
+  it("offers quick-pick length chips with 45 selected by default", () => {
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    for (const min of [30, 45, 50, 60, 90]) {
+      expect(screen.getByRole("button", { name: `${min} min` })).toBeInTheDocument()
     }
-
-    render(
-      <AppointmentModal open onClose={vi.fn()} appointment={appointment} />,
-      { wrapper: createWrapper() }
+    expect(screen.getByRole("button", { name: "45 min" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     )
-    expect(screen.getByText("Edit Appointment")).toBeInTheDocument()
   })
 
-  it("has a dialog description for accessibility", () => {
-    render(
-      <AppointmentModal open onClose={vi.fn()} />,
-      { wrapper: createWrapper() }
+  it("uses the preference default duration as the selected chip", () => {
+    const prefs = { default_duration_minutes: 60 } as UserPreferences
+    render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
+      wrapper: createWrapper(),
+    })
+    expect(screen.getByRole("button", { name: "60 min" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
     )
+  })
+
+  it("lets the user pick a different length chip", async () => {
+    const user = userEvent.setup()
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await user.click(screen.getByRole("button", { name: "30 min" }))
+    expect(screen.getByRole("button", { name: "30 min" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+  })
+
+  it("adds a custom length chip and selects it", async () => {
+    const user = userEvent.setup()
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    await user.click(screen.getByRole("button", { name: /add/i }))
+    const input = screen.getByLabelText("Custom length")
+    await user.type(input, "25{Enter}")
+    expect(screen.getByRole("button", { name: "25 min" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+  })
+
+  it("renders a Session type segmented control with Individual checked", () => {
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    const group = screen.getByRole("radiogroup", { name: /session type/i })
+    expect(within(group).getByRole("radio", { name: "Individual" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    )
+  })
+
+  it("tucks video link, note type, and notes behind More options", async () => {
+    const user = userEvent.setup()
+    render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+    expect(screen.queryByLabelText("Video link")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /more options/i }))
+    expect(screen.getByLabelText("Video link")).toBeInTheDocument()
+    expect(screen.getByRole("combobox", { name: /note type/i })).toBeInTheDocument()
+    expect(screen.getByLabelText("Notes")).toBeInTheDocument()
+  })
+
+  it("auto-expands More options in edit mode when notes exist", () => {
+    render(
+      <AppointmentModal
+        open
+        onClose={vi.fn()}
+        appointment={{ ...baseAppointment, notes: "prior note" }}
+      />,
+      { wrapper: createWrapper() },
+    )
+    expect(screen.getByLabelText("Notes")).toBeInTheDocument()
+  })
+
+  it("adds a non-standard edit duration to the chip list, pre-selected", () => {
+    render(
+      <AppointmentModal
+        open
+        onClose={vi.fn()}
+        appointment={{ ...baseAppointment, duration_minutes: 75 }}
+      />,
+      { wrapper: createWrapper() },
+    )
+    expect(screen.getByRole("button", { name: "75 min" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+  })
+
+  it("shows the destructive Cancel appointment action only in edit mode", () => {
+    const { rerender } = render(<AppointmentModal open onClose={vi.fn()} />, {
+      wrapper: createWrapper(),
+    })
     expect(
-      screen.getByText("Fill in the details to schedule a new appointment.")
+      screen.queryByRole("button", { name: /cancel appointment/i }),
+    ).not.toBeInTheDocument()
+    rerender(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />)
+    expect(
+      screen.getByRole("button", { name: /cancel appointment/i }),
     ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeInTheDocument()
   })
 
-  it("renders form section labels", () => {
-    render(
-      <AppointmentModal open onClose={vi.fn()} />,
-      { wrapper: createWrapper() }
-    )
-    expect(screen.getByText("Patient & Title")).toBeInTheDocument()
-    expect(screen.getByText("Schedule")).toBeInTheDocument()
-    expect(screen.getByText("Session Details")).toBeInTheDocument()
-    // "Notes" appears as both section label and form label
-    expect(screen.getAllByText("Notes")).toHaveLength(2)
-  })
-
-  it("disables Create button when patient is not selected", () => {
-    render(
-      <AppointmentModal open onClose={vi.fn()} />,
-      { wrapper: createWrapper() }
-    )
-    const createButton = screen.getByRole("button", { name: "Create" })
-    expect(createButton).toBeDisabled()
-  })
-
-  it("calls onClose when Close button is clicked", async () => {
+  it("calls onClose when the secondary footer button is clicked", async () => {
     const onClose = vi.fn()
     const user = userEvent.setup()
-
-    render(
-      <AppointmentModal open onClose={onClose} />,
-      { wrapper: createWrapper() }
-    )
-
-    // Multiple "close" buttons (radix X + our button) — find the explicit one
-    const closeButtons = screen.getAllByRole("button", { name: /close/i })
-    const explicitClose = closeButtons.find((btn) => btn.textContent === "Close")!
-    await user.click(explicitClose)
+    render(<AppointmentModal open onClose={onClose} />, { wrapper: createWrapper() })
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
     expect(onClose).toHaveBeenCalled()
   })
 
   it("does not render when closed", () => {
-    render(
-      <AppointmentModal open={false} onClose={vi.fn()} />,
-      { wrapper: createWrapper() }
-    )
-    expect(screen.queryByText("New Appointment")).not.toBeInTheDocument()
+    render(<AppointmentModal open={false} onClose={vi.fn()} />, {
+      wrapper: createWrapper(),
+    })
+    expect(screen.queryByText("New appointment")).not.toBeInTheDocument()
   })
 
-  describe("Preferences as Defaults", () => {
-    const prefs: UserPreferences = {
-      default_video_platform: "teams",
-      default_session_type: "couples",
-      default_duration_minutes: 60,
-      auto_transcribe: true,
-      quality_preset: "balanced",
-      therapist_display_name: null,
-      working_hours_start: 8,
-      working_hours_end: 18,
-      calendar_default_view: "timeGridWeek",
-      timezone: "America/New_York",
-      theme: "warm-paper",
-    }
+  describe("Auto-title caption", () => {
+    it("auto-generates the title caption when a patient is selected", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-    it("uses preference duration for new appointments", () => {
-      render(
-        <AppointmentModal open onClose={vi.fn()} preferences={prefs} />,
-        { wrapper: createWrapper() }
-      )
-      const durationInput = screen.getByLabelText("Duration (min)") as HTMLInputElement
-      expect(durationInput.value).toBe("60")
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+
+      expect(screen.getByText("Jane Doe — Individual")).toBeInTheDocument()
     })
 
-    it("uses appointment values over preferences when editing", () => {
-      const appointment = {
-        id: "a1",
-        user_id: "u1",
-        patient_id: "p1",
-        title: "Session",
-        start_at: "2026-03-20T10:00:00Z",
-        end_at: "2026-03-20T10:50:00Z",
-        duration_minutes: 50,
-        status: "confirmed" as const,
-        session_type: "individual",
-        video_link: null,
-        video_platform: null,
-        notes: null,
-        recurrence_rule: null,
-        recurring_appointment_id: null,
-        recurrence_index: null,
-        is_exception: false,
-        google_event_id: null,
-        google_sync_status: null,
-        session_id: null,
-        created_at: "2026-03-20T09:00:00Z",
-        updated_at: null,
-      }
+    it("lets the user override the title and reset it back to auto", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
 
-      render(
-        <AppointmentModal
-          open
-          onClose={vi.fn()}
-          appointment={appointment}
-          preferences={prefs}
-        />,
-        { wrapper: createWrapper() }
-      )
-      const durationInput = screen.getByLabelText("Duration (min)") as HTMLInputElement
-      expect(durationInput.value).toBe("50")
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+
+      await user.click(screen.getByRole("button", { name: "Edit" }))
+      const titleInput = screen.getByLabelText("Title") as HTMLInputElement
+      await user.clear(titleInput)
+      await user.type(titleInput, "Custom Title")
+      expect(titleInput.value).toBe("Custom Title")
+
+      // Blur out of the inline editor to commit the override.
+      await user.tab()
+      expect(screen.getByText("Custom Title")).toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "reset" }))
+      expect(screen.getByText("Jane Doe — Individual")).toBeInTheDocument()
     })
   })
 
-  describe("Note Type Picker", () => {
-    it("renders the picker with SOAP selected by default", () => {
-      render(
-        <AppointmentModal open onClose={vi.fn()} />,
-        { wrapper: createWrapper() }
-      )
+  describe("Note type picker", () => {
+    it("defaults to SOAP and lets the user pick another", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await user.click(screen.getByRole("button", { name: /more options/i }))
       const trigger = screen.getByRole("combobox", { name: /note type/i })
       expect(trigger).toHaveTextContent("SOAP")
-    })
-
-    it("lets the user pick another note type", async () => {
-      const user = userEvent.setup()
-      render(
-        <AppointmentModal open onClose={vi.fn()} />,
-        { wrapper: createWrapper() }
-      )
-      const trigger = screen.getByRole("combobox", { name: /note type/i })
       await user.click(trigger)
-      const narrativeOption = screen.getByRole("option", { name: /narrative/i })
-      await user.click(narrativeOption)
+      await user.click(screen.getByRole("option", { name: /narrative/i }))
       expect(trigger).toHaveTextContent("Narrative")
-    })
-  })
-
-  describe("Auto-title Generation", () => {
-    it("auto-generates title when patient is selected", async () => {
-      const user = userEvent.setup()
-      render(
-        <AppointmentModal open onClose={vi.fn()} />,
-        { wrapper: createWrapper() }
-      )
-
-      // Open patient dropdown and select Jane Doe
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
-      await user.click(patientTrigger)
-      const option = screen.getByRole("option", { name: /Doe, Jane/i })
-      await user.click(option)
-
-      const titleInput = screen.getByLabelText("Title") as HTMLInputElement
-      expect(titleInput.value).toBe("Jane Doe - Individual")
-    })
-
-    it("preserves manual title edits", async () => {
-      const user = userEvent.setup()
-      render(
-        <AppointmentModal open onClose={vi.fn()} />,
-        { wrapper: createWrapper() }
-      )
-
-      // Manually type a title first
-      const titleInput = screen.getByLabelText("Title") as HTMLInputElement
-      await user.type(titleInput, "Custom Title")
-
-      // Select a patient — should NOT overwrite manual title
-      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
-      await user.click(patientTrigger)
-      const option = screen.getByRole("option", { name: /Doe, Jane/i })
-      await user.click(option)
-
-      expect(titleInput.value).toBe("Custom Title")
     })
   })
 })
