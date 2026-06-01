@@ -33,11 +33,9 @@ const SESSION_TYPES: { value: SessionType; label: string }[] = [
   { value: "couples", label: "Couples" },
   { value: "group", label: "Group" },
 ]
-const SESSION_TYPE_LABELS: Record<string, string> = {
-  individual: "Individual",
-  couples: "Couples",
-  group: "Group",
-}
+const SESSION_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  SESSION_TYPES.map((s) => [s.value, s.label]),
+)
 const QUICK_LENGTHS = [45, 50, 30, 60, 90]
 
 function buildTitle(patient: PatientResponse | undefined, sessionType: string): string {
@@ -188,9 +186,8 @@ function AppointmentForm({
 
   const defaultDuration =
     appointment?.duration_minutes ?? preferences?.default_duration_minutes ?? 45
-  const defaultSessionType = (appointment?.session_type ??
-    preferences?.default_session_type ??
-    "individual") as string
+  const defaultSessionType =
+    appointment?.session_type ?? preferences?.default_session_type ?? "individual"
 
   const start0 = useMemo(() => {
     if (appointment) return new Date(appointment.start_at)
@@ -236,7 +233,12 @@ function AppointmentForm({
   const start = fromInputs(dateStr, timeStr)
   const end = new Date(start.getTime() + duration * 60000)
   const computedTitle = buildTitle(patient, sessionType)
-  const title = titleOverride != null ? titleOverride : computedTitle
+  // An empty/whitespace override means "no override" — the caption and the
+  // submitted payload fall back to the auto title.
+  const title = titleOverride?.trim() ? titleOverride : computedTitle
+  // The inline editor binds to the raw override so it can be cleared and
+  // retyped; a null override (auto mode) seeds it with the computed title.
+  const titleInputValue = titleOverride ?? computedTitle
 
   const addLength = () => {
     const v = parseInt(newLen, 10)
@@ -338,7 +340,7 @@ function AppointmentForm({
               {editingTitle ? (
                 <Input
                   autoFocus
-                  value={title}
+                  value={titleInputValue}
                   aria-label="Title"
                   onChange={(e) => setTitleOverride(e.target.value)}
                   onBlur={() => setEditingTitle(false)}

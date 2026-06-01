@@ -36,7 +36,7 @@ interface EditorialCalendarProps {
   defaultView?: EditorialView
   workingHoursStart?: number
   theme: EditorialTheme
-  onSelectSlot: (start: string, end: string) => void
+  onSelectSlot: (start: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
   onCreateNew: () => void
   onViewChange?: (view: EditorialView) => void

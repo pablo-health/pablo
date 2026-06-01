@@ -5,7 +5,11 @@
 import { useEffect, useMemo, useRef } from "react"
 import { format, isSameDay, isToday, startOfDay } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
-import { EditorialEventCard } from "./EditorialEventCard"
+import {
+  EditorialEventCard,
+  EVENT_COMPACT_PX,
+  EVENT_MICRO_PX,
+} from "./EditorialEventCard"
 import { assignLanes } from "./laneLayout"
 import { HOUR_ROW_PX, minutesSinceMidnight, weekDays } from "./dateUtils"
 
@@ -13,7 +17,7 @@ interface EditorialWeekViewProps {
   anchor: Date
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
-  onSelectSlot: (start: string, end: string) => void
+  onSelectSlot: (start: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
   /** Hour to scroll to on mount / day change (defaults to 8). */
   scrollToHour?: number
@@ -155,7 +159,7 @@ function DayColumn({
   day: Date
   lanes: ReturnType<typeof assignLanes>
   patientMap: Map<string, string>
-  onSelectSlot: (start: string, end: string) => void
+  onSelectSlot: (start: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
 }) {
   const today = isToday(day)
@@ -168,8 +172,7 @@ function DayColumn({
     const minutesFromMidnight = Math.max(0, Math.floor((y / HOUR_ROW_PX) * 60))
     const snapped = Math.floor(minutesFromMidnight / 15) * 15
     const start = new Date(startOfDay(day).getTime() + snapped * 60_000)
-    const end = new Date(start.getTime() + 50 * 60_000)
-    onSelectSlot(start.toISOString(), end.toISOString())
+    onSelectSlot(start.toISOString())
   }
 
   return (
@@ -189,8 +192,8 @@ function DayColumn({
         const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 22)
         const widthPct = 100 / laneCount
         const left = lane * widthPct
-        const micro = height < 30
-        const compact = height < 44
+        const micro = height < EVENT_MICRO_PX
+        const compact = height < EVENT_COMPACT_PX
         return (
           <div
             key={appointment.id}

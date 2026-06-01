@@ -8,6 +8,11 @@ import { Video } from "lucide-react"
 import { format } from "date-fns"
 import { editorialStatusMeta } from "./status"
 
+/** Below this rendered height (px) a block drops to its tightest form. */
+export const EVENT_MICRO_PX = 30
+/** Below this rendered height (px) a block hides its time subline + video icon. */
+export const EVENT_COMPACT_PX = 44
+
 interface EditorialEventCardProps {
   appointment: AppointmentResponse
   patientName: string | undefined
