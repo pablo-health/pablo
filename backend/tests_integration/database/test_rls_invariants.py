@@ -601,3 +601,93 @@ class TestArmCurrentUserIdEnablesProfileWrite:
             session.close()
             _current_user_id.reset(user_token)
             _current_tenant_schema.reset(schema_token)
+
+
+class TestOverlayNotRowScopedRegistry:
+    """A deployment can register extra non-row-scoped tenant tables.
+
+    ``enable_rls_on_schema`` refuses to leave a force-RLS'd tenant table
+    with no policy (a silent deny-all). A deployment-specific tenant
+    table that carries only an ``id`` column — its isolation boundary is
+    the tenant schema, not a per-row predicate — would trip that guard.
+    ``register_overlay_not_row_scoped`` lets the deployment opt such a
+    table into the same RLS-off path as the built-in ``ehr_routes`` /
+    ``users`` entries.
+    """
+
+    @pytest.fixture
+    def bare_schema(self, engine: Engine) -> Iterator[str]:
+        """A throwaway schema holding a single id-only table.
+
+        Built by hand (not through provisioning) so the only scoping
+        column present is ``id`` — the exact shape that has no policy
+        branch and would otherwise raise.
+        """
+        schema = f"practice_test_overlay_{uuid.uuid4().hex[:8]}"
+        with engine.connect() as conn:
+            conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            conn.execute(
+                text(
+                    f'CREATE TABLE "{schema}".overlay_only_table '
+                    "(id uuid PRIMARY KEY, created_at timestamptz DEFAULT now())"
+                )
+            )
+            conn.commit()
+        yield schema
+        with engine.connect() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.commit()
+
+    @staticmethod
+    def _rls_state(engine: Engine, schema: str, table: str) -> tuple[bool, bool]:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT c.relrowsecurity, c.relforcerowsecurity "
+                        "FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE n.nspname = :schema AND c.relname = :table"
+                    ),
+                    {"schema": schema, "table": table},
+                )
+                .mappings()
+                .one()
+            )
+        return row["relrowsecurity"], row["relforcerowsecurity"]
+
+    def test_unregistered_id_only_table_raises(self, engine: Engine, bare_schema: str) -> None:
+        from app.db import enable_rls_on_schema  # noqa: PLC0415
+
+        with OrmSession(bind=engine) as session, pytest.raises(RuntimeError) as exc:
+            enable_rls_on_schema(session, bare_schema)
+        assert "no RLS policy defined" in str(exc.value), (
+            "An id-only tenant table with no policy branch and no "
+            "registration must raise the deny-all guard."
+        )
+
+    def test_registered_table_is_treated_as_not_row_scoped(
+        self, engine: Engine, bare_schema: str
+    ) -> None:
+        from app.db import (  # noqa: PLC0415
+            _OVERLAY_NOT_ROW_SCOPED,
+            enable_rls_on_schema,
+            register_overlay_not_row_scoped,
+        )
+
+        register_overlay_not_row_scoped("overlay_only_table")
+        try:
+            # (a) No RuntimeError — the guard now treats it as not-row-scoped.
+            with OrmSession(bind=engine) as session:
+                enable_rls_on_schema(session, bare_schema)
+
+            # (b) Same RLS state as a built-in not_row_scoped table:
+            # ``enable_rls_on_schema`` leaves RLS disabled on those.
+            rowsec, forcesec = self._rls_state(engine, bare_schema, "overlay_only_table")
+            assert rowsec is False, (
+                "A registered not-row-scoped table must have RLS left "
+                "disabled (same as ehr_routes/users), not force-enabled."
+            )
+            assert forcesec is False
+        finally:
+            _OVERLAY_NOT_ROW_SCOPED.discard("overlay_only_table")
