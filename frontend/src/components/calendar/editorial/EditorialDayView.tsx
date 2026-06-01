@@ -92,6 +92,8 @@ export function EditorialDayView({
               const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 26)
               const widthPct = 100 / laneCount
               const left = lane * widthPct
+              const micro = height < 30
+              const compact = height < 44
               return (
                 <div
                   key={appointment.id}
@@ -107,6 +109,8 @@ export function EditorialDayView({
                     appointment={appointment}
                     patientName={patientMap.get(appointment.patient_id)}
                     onClick={onSelectAppointment}
+                    micro={micro}
+                    compact={compact}
                   />
                 </div>
               )

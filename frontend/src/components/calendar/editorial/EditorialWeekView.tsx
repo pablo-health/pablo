@@ -189,7 +189,8 @@ function DayColumn({
         const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 22)
         const widthPct = 100 / laneCount
         const left = lane * widthPct
-        const compact = height < 36
+        const micro = height < 30
+        const compact = height < 44
         return (
           <div
             key={appointment.id}
@@ -205,6 +206,7 @@ function DayColumn({
               appointment={appointment}
               patientName={patientMap.get(appointment.patient_id)}
               onClick={onSelectAppointment}
+              micro={micro}
               compact={compact}
             />
           </div>
