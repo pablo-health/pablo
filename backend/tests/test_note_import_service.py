@@ -107,14 +107,20 @@ class TestParseSoapNote:
         # Document stated no session time -> None (the "time if it exists" case).
         assert result.session_time is None
 
-        # Content is the registry SOAP shape, ready for the editor unchanged.
+        # Content is the SOAPSentence shape a generated note uses (each field a
+        # {"text", "source_segment_ids", ...} dict), so it renders in the editor
+        # identically. source_segment_ids are empty — there's no transcript.
         assert set(result.content) == {"subjective", "objective", "assessment", "plan"}
-        assert result.content["subjective"]["chief_complaint"] == "Follow-up for stress management."
-        assert result.content["subjective"]["symptoms"] == [
+        cc = result.content["subjective"]["chief_complaint"]
+        assert cc["text"] == "Follow-up for stress management."
+        assert cc["source_segment_ids"] == []
+        assert [s["text"] for s in result.content["subjective"]["symptoms"]] == [
             "occasional stress",
             "mild fatigue",
         ]
-        assert result.content["plan"]["homework_assignments"] == ["practice a breathing exercise"]
+        assert [s["text"] for s in result.content["plan"]["homework_assignments"]] == [
+            "practice a breathing exercise"
+        ]
 
     def test_parses_time_when_present(self) -> None:
         response = {**_FAKE_SOAP_RESPONSE, "session_time": "14:30"}
@@ -372,5 +378,5 @@ def test_parse_real_sample_pdf_end_to_end() -> None:
     # The sample is dated 02/04/2026 with no explicit session time.
     assert result.session_date == date(2026, 2, 4)
     # Faithful extraction should populate the narrative sections.
-    assert result.content["subjective"]["client_narrative"].strip()
-    assert result.content["assessment"]["clinical_impression"].strip()
+    assert result.content["subjective"]["client_narrative"]["text"].strip()
+    assert result.content["assessment"]["clinical_impression"]["text"].strip()
