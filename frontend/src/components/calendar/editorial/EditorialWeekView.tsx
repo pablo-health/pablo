@@ -30,6 +30,8 @@ interface EditorialWeekViewProps {
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   /** Double click on an event → open the edit flow. */
   onEdit: (appointment: AppointmentResponse) => void
+  /** Drag-to-reschedule → preserve duration, shift start (and day). */
+  onMove: (appointment: AppointmentResponse, newStartIso: string) => void
   /** Hour to scroll to on mount / day change (defaults to 8). */
   scrollToHour?: number
   /** Working-hours window. Pass 0/24 to render the full day. */
@@ -44,6 +46,7 @@ export function EditorialWeekView({
   onSelectSlot,
   onPeek,
   onEdit,
+  onMove,
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
@@ -81,6 +84,7 @@ export function EditorialWeekView({
         <div className="flex">
           <HourRail hours={hours} />
           <div
+            data-weekgrid="1"
             className="ed-daycols ed-hourlines relative grid flex-1"
             style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
           >
@@ -93,6 +97,7 @@ export function EditorialWeekView({
                 onSelectSlot={onSelectSlot}
                 onPeek={onPeek}
                 onEdit={onEdit}
+                onMove={onMove}
                 dayStart={dayStart}
                 dayEnd={dayEnd}
               />
@@ -175,6 +180,7 @@ function DayColumn({
   onSelectSlot,
   onPeek,
   onEdit,
+  onMove,
   dayStart,
   dayEnd,
 }: {
@@ -184,6 +190,7 @@ function DayColumn({
   onSelectSlot: (start: string) => void
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   onEdit: (appointment: AppointmentResponse) => void
+  onMove: (appointment: AppointmentResponse, newStartIso: string) => void
   dayStart: number
   dayEnd: number
 }) {
@@ -230,6 +237,12 @@ function DayColumn({
             appointment={appointment}
             onPeek={onPeek}
             onEdit={onEdit}
+            drag={{
+              mode: "week",
+              rowHeightPx: HOUR_ROW_PX,
+              gridSelector: "[data-weekgrid]",
+              onMove,
+            }}
             className="absolute z-10 px-0.5"
             style={{
               top,

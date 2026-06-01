@@ -10,6 +10,7 @@ const APPOINTMENTS: AppointmentResponse[] = []
 
 vi.mock("@/hooks/useAppointments", () => ({
   useAppointmentList: () => ({ data: { data: APPOINTMENTS } }),
+  useUpdateAppointment: () => ({ mutate: vi.fn() }),
 }))
 
 vi.mock("@/hooks/usePatients", () => ({

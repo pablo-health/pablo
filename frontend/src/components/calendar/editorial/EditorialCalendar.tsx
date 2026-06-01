@@ -3,7 +3,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
-import { useAppointmentList } from "@/hooks/useAppointments"
+import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
 import { usePatientList } from "@/hooks/usePatients"
 import type {
   AppointmentResponse,
@@ -72,6 +72,7 @@ export function EditorialCalendar({
     range.end.toISOString(),
   )
   const { data: patientData } = usePatientList()
+  const updateAppointment = useUpdateAppointment()
 
   const patientMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -131,6 +132,22 @@ export function EditorialCalendar({
       onSelectAppointment(appointment)
     },
     [onSelectAppointment],
+  )
+
+  const handleMove = useCallback(
+    (appointment: AppointmentResponse, newStartIso: string) => {
+      // Preserve the original duration; the new start arrives already snapped
+      // and clamped within its day by the event wrapper.
+      const newEnd = new Date(
+        new Date(newStartIso).getTime() +
+          appointment.duration_minutes * 60_000,
+      ).toISOString()
+      updateAppointment.mutate({
+        appointmentId: appointment.id,
+        data: { start_at: newStartIso, end_at: newEnd },
+      })
+    },
+    [updateAppointment],
   )
 
   const peekPatientName = peek
@@ -204,6 +221,7 @@ export function EditorialCalendar({
             onSelectSlot={onSelectSlot}
             onPeek={handlePeek}
             onEdit={handleEdit}
+            onMove={handleMove}
             scrollToHour={workingHoursStart}
           />
         )}
@@ -215,6 +233,7 @@ export function EditorialCalendar({
             onSelectSlot={onSelectSlot}
             onPeek={handlePeek}
             onEdit={handleEdit}
+            onMove={handleMove}
             scrollToHour={workingHoursStart}
           />
         )}

@@ -29,6 +29,8 @@ interface EditorialDayViewProps {
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   /** Double click on an event → open the edit flow. */
   onEdit: (appointment: AppointmentResponse) => void
+  /** Drag-to-reschedule → preserve duration, shift start (vertical only). */
+  onMove: (appointment: AppointmentResponse, newStartIso: string) => void
   scrollToHour?: number
   /** Working-hours window. Pass 0/24 to render the full day. */
   dayStart?: number
@@ -42,6 +44,7 @@ export function EditorialDayView({
   onSelectSlot,
   onPeek,
   onEdit,
+  onMove,
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
@@ -99,6 +102,7 @@ export function EditorialDayView({
           </div>
 
           <div
+            data-daycanvas="1"
             className="ed-hourlines relative flex-1 cursor-pointer"
             style={{
               height: totalHeight,
@@ -125,6 +129,12 @@ export function EditorialDayView({
                   appointment={appointment}
                   onPeek={onPeek}
                   onEdit={onEdit}
+                  drag={{
+                    mode: "day",
+                    rowHeightPx: HOUR_ROW_PX,
+                    gridSelector: "[data-daycanvas]",
+                    onMove,
+                  }}
                   className="absolute z-10 px-1"
                   style={{
                     top,
