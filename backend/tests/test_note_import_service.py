@@ -23,7 +23,9 @@ Two layers:
 
 from __future__ import annotations
 
+import io
 import os
+import zipfile
 from datetime import date, datetime, time
 from pathlib import Path
 
@@ -218,6 +220,84 @@ class TestGrounding:
 
         assert len(result.grounding) > 0
         assert result.ungrounded == result.grounding
+
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _make_docx(paragraphs: list[str] | None = None, *, raw_xml: str | None = None) -> bytes:
+    """Build a minimal .docx (zip with word/document.xml) for tests."""
+    if raw_xml is None:
+        body = "".join(f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in (paragraphs or []))
+        raw_xml = (
+            '<?xml version="1.0"?>'
+            f'<w:document xmlns:w="{_W_NS}"><w:body>{body}</w:body></w:document>'
+        )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr("word/document.xml", raw_xml)
+    return buf.getvalue()
+
+
+class TestExtractDocx:
+    _LONG = (
+        "Client reported steady progress on weekly goals and described "
+        "improved sleep and a calmer mood across the past two weeks."
+    )
+
+    def test_extracts_paragraphs_in_order(self) -> None:
+        data = _make_docx(["S — Subjective", self._LONG, "Plan: continue weekly sessions."])
+        text = extract_document_text(data, filename="note.docx")
+        assert text.startswith("S — Subjective\n")
+        assert self._LONG in text
+
+    def test_routed_by_content_type(self) -> None:
+        data = _make_docx([self._LONG, self._LONG])
+        text = extract_document_text(
+            data,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert self._LONG in text
+
+    def test_decodes_standard_entities(self) -> None:
+        data = _make_docx([f"Smith &amp; Jones — {self._LONG}"])
+        text = extract_document_text(data, filename="note.docx")
+        assert "Smith & Jones" in text
+
+    def test_custom_dtd_entities_are_not_expanded(self) -> None:
+        # A malicious .docx can't trigger entity expansion: we never hand the
+        # XML to a DTD-processing parser, so a custom entity stays literal.
+        raw = (
+            '<?xml version="1.0"?>'
+            '<!DOCTYPE w:document [<!ENTITY boom "EXPANDED-PAYLOAD">]>'
+            f'<w:document xmlns:w="{_W_NS}"><w:body>'
+            f"<w:p><w:r><w:t>{self._LONG} &boom;</w:t></w:r></w:p>"
+            "</w:body></w:document>"
+        )
+        text = extract_document_text(_make_docx(raw_xml=raw), filename="note.docx")
+        assert "EXPANDED-PAYLOAD" not in text
+        assert self._LONG in text
+
+    def test_not_a_zip_raises(self) -> None:
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(b"this is not a docx", filename="note.docx")
+
+    def test_textless_docx_raises(self) -> None:
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(_make_docx(["hi"]), filename="tiny.docx")
+
+
+class TestExtractionHardening:
+    def test_malformed_pdf_raises_clean_error(self) -> None:
+        # Corrupt/non-PDF bytes must surface as a handled extraction error,
+        # not an uncaught exception (which the route would turn into a 500).
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(b"this is definitely not a pdf", filename="x.pdf")
+
+    def test_oversized_text_is_rejected(self) -> None:
+        huge = ("a " * 600_000).encode("utf-8")  # > 1M chars
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(huge, filename="huge.txt")
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,14 @@ logger = logging.getLogger(__name__)
 # always means a scanned / image-only PDF with no embedded text layer.
 _SCANNED_PDF_TEXT_THRESHOLD = 100
 
+# Cap the decompressed size of a .docx's document.xml so a small "zip bomb"
+# can't expand to gigabytes in memory. A real note's body is well under this.
+_MAX_DOCX_XML_BYTES = 50 * 1024 * 1024
+
+# Cap the extracted text fed to the parser. A single SOAP note is a few KB;
+# anything past this is either not one note or an attempt to run up LLM cost.
+_MAX_EXTRACTED_CHARS = 1_000_000
+
 # Keys we add to the SOAP response schema so the model also reports when the
 # session occurred. Kept distinct from the note ``content`` so they never
 # leak into the rendered note body.
@@ -160,6 +168,70 @@ def _looks_like_text(content_type: str | None, filename: str | None) -> bool:
     return bool(filename and filename.lower().endswith(".txt"))
 
 
+def _looks_like_docx(content_type: str | None, filename: str | None) -> bool:
+    if content_type and "wordprocessingml" in content_type.lower():
+        return True
+    return bool(filename and filename.lower().endswith(".docx"))
+
+
+# A WordprocessingML text run (<w:t>…</w:t>) or a paragraph end (</w:p>).
+# Scanning these in order reconstructs the flat text with paragraph breaks.
+_DOCX_RUN_OR_PARA = re.compile(r"<w:t[^>]*>(?P<text>.*?)</w:t>|</w:p>", re.DOTALL)
+
+
+def _extract_docx_text(data: bytes) -> str:
+    """Pull the flat text out of a .docx with the standard library.
+
+    A .docx is a zip whose ``word/document.xml`` holds the body. We read the
+    text runs in document order (table-cell text included) with a newline per
+    paragraph — exactly the flat text the parser wants.
+
+    Rather than hand user-uploaded XML to a DTD-processing parser, we scan the
+    text runs directly: entity-expansion ("billion laughs") and XXE need a
+    parser that resolves entities, so this extraction is immune to them by
+    construction. Combined with the bounded read below (zip-bomb guard), a
+    malicious .docx can't blow up memory or read host files.
+    """
+    import html
+    import io
+    import zipfile
+
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise DocumentTextExtractionError(
+            "This doesn't look like a readable Word (.docx) document."
+        ) from exc
+    with archive:
+        try:
+            info = archive.getinfo("word/document.xml")
+        except KeyError as exc:
+            raise DocumentTextExtractionError(
+                "This doesn't look like a readable Word (.docx) document."
+            ) from exc
+        # Bound the decompressed read so a small zip can't expand to GBs.
+        # The declared size is a cheap first check; the bounded read is the
+        # real guard since a crafted zip can lie about it.
+        if info.file_size > _MAX_DOCX_XML_BYTES:
+            raise DocumentTextExtractionError("This Word document is too large to import.")
+        with archive.open("word/document.xml") as handle:
+            raw = handle.read(_MAX_DOCX_XML_BYTES + 1)
+    if len(raw) > _MAX_DOCX_XML_BYTES:
+        raise DocumentTextExtractionError("This Word document is too large to import.")
+
+    xml = raw.decode("utf-8", errors="replace")
+    parts: list[str] = []
+    for token in _DOCX_RUN_OR_PARA.finditer(xml):
+        text = token.group("text")
+        parts.append(text if text is not None else "\n")
+    body = html.unescape("".join(parts)).strip()
+    if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
+        raise DocumentTextExtractionError(
+            "This Word document has no extractable text. Upload a text-based export instead."
+        )
+    return body
+
+
 def _extract_pdf_text(data: bytes) -> str:
     """Pull the embedded text layer out of a PDF via PyMuPDF.
 
@@ -168,8 +240,15 @@ def _extract_pdf_text(data: bytes) -> str:
     """
     import fitz  # type: ignore[import-untyped]  # PyMuPDF, imported lazily
 
-    with fitz.open(stream=data, filetype="pdf") as doc:
-        body = "".join(page.get_text() for page in doc).strip()
+    try:
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            body = "".join(page.get_text() for page in doc).strip()
+    except Exception as exc:
+        # MuPDF raises a range of errors on corrupt / encrypted / non-PDF
+        # input; surface a clean 4xx rather than a 500 with a traceback.
+        raise DocumentTextExtractionError(
+            "Couldn't read this PDF — it may be corrupted, password-protected, or not a PDF."
+        ) from exc
     if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
         raise DocumentTextExtractionError(
             "This PDF has no extractable text — it looks like a scan or image. "
@@ -186,23 +265,28 @@ def extract_document_text(
 ) -> str:
     """Extract plain text from an uploaded clinical document.
 
-    Supports text-based PDFs (PyMuPDF) and plain-text files. Word (.docx)
-    support is tracked separately. Raises
-    :class:`UnsupportedDocumentTypeError` for anything else and
-    :class:`DocumentTextExtractionError` when a supported file yields no
-    usable text.
+    Supports text-based PDFs (PyMuPDF), Word .docx (standard-library zip/XML),
+    and plain-text files. Raises :class:`UnsupportedDocumentTypeError` for
+    anything else and :class:`DocumentTextExtractionError` when a supported
+    file yields no usable text.
     """
     if _looks_like_pdf(content_type, filename):
-        return _extract_pdf_text(data)
-    if _looks_like_text(content_type, filename):
-        body = data.decode("utf-8", errors="replace").strip()
-        if not body:
+        text = _extract_pdf_text(data)
+    elif _looks_like_docx(content_type, filename):
+        text = _extract_docx_text(data)
+    elif _looks_like_text(content_type, filename):
+        text = data.decode("utf-8", errors="replace").strip()
+        if not text:
             raise DocumentTextExtractionError("The uploaded file is empty.")
-        return body
-    raise UnsupportedDocumentTypeError(
-        f"Unsupported document type (content_type={content_type!r}, "
-        f"filename={filename!r}). Supported formats: PDF, TXT."
-    )
+    else:
+        raise UnsupportedDocumentTypeError(
+            f"Unsupported document type (content_type={content_type!r}, "
+            f"filename={filename!r}). Supported formats: PDF, Word (.docx), TXT."
+        )
+
+    if len(text) > _MAX_EXTRACTED_CHARS:
+        raise DocumentTextExtractionError("This document is too long to import as a single note.")
+    return text
 
 
 # ---------------------------------------------------------------------------
