@@ -32,6 +32,7 @@ from ..settings import get_settings
 from .note_generation_service import (
     SOAP_KEY,
     _build_registry_response_schema,
+    _coerce_content_to_soap_note,
     _coerce_registry_response,
 )
 from .structured_llm_gateway import (
@@ -481,8 +482,9 @@ class NoteImportService:
             response_schema=_build_extract_schema(definition),
         )
         data = completion.data
-        content = _coerce_registry_response(definition, data)
-        grounding = check_grounding(content, source_text)
+        # Plain registry shape (strings / lists) — the form grounding checks.
+        registry_content = _coerce_registry_response(definition, data)
+        grounding = check_grounding(registry_content, source_text)
         ungrounded = [g.path for g in grounding if not g.grounded]
         if ungrounded:
             # Field PATHS only — never the field text (no PHI in logs).
@@ -492,6 +494,10 @@ class NoteImportService:
                 len(grounding),
                 ungrounded,
             )
+        # Store the SOAPSentence-shaped content a *generated* SOAP note uses, so
+        # an imported note renders and edits in the note viewer identically.
+        # source_segment_ids stay empty — there is no transcript to attribute to.
+        content = _coerce_content_to_soap_note(registry_content).to_dict()
         return ParsedImportedNote(
             content=content,
             session_date=_parse_iso_date(data.get(_SESSION_DATE_KEY)),
