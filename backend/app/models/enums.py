@@ -45,6 +45,9 @@ class SessionSource(StrEnum):
     COMPANION = "companion"
     CALENDAR = "calendar"
     PRACTICE = "practice"
+    # An existing, already-written note imported from a document (PDF/Word/TXT)
+    # rather than recorded or transcribed in-app.
+    IMPORTED = "imported"
 
 
 class SOAPSection(StrEnum):

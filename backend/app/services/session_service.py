@@ -23,6 +23,7 @@ from ..models import (
     Note,
     Patient,
     ScheduleSessionRequest,
+    SessionSource,
     SessionStatus,
     TherapySession,
     Transcript,
@@ -350,6 +351,7 @@ class SessionService:
             session_number=session_number,
             status=SessionStatus.PENDING_REVIEW,
             transcript=Transcript(format=TranscriptFormat.TXT, content=source_text),
+            source=SessionSource.IMPORTED.value,
             created_at=now,
             processing_started_at=now,
             processing_completed_at=now,
@@ -654,6 +656,8 @@ class SessionService:
         if request.scheduled_at is not None:
             session.scheduled_at = request.scheduled_at
             session.session_date = request.scheduled_at
+        if request.session_date is not None:
+            session.session_date = request.session_date
         if request.video_link is not None:
             session.video_link = request.video_link
         if request.video_platform is not None:
