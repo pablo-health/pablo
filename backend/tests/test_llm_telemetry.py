@@ -22,7 +22,11 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
+from openinference.semconv.trace import (
+    DocumentAttributes,
+    OpenInferenceSpanKindValues,
+    SpanAttributes,
+)
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -32,8 +36,11 @@ from backend.app.services.chat_llm_gateway import GeminiChatLLMGateway, StreamEv
 from backend.app.services.llm_telemetry import (
     LLMSpanRecorder,
     LLMSpanRequest,
+    RetrievalSpanRecorder,
+    RetrievedDocumentRef,
     _build_resource,
     llm_span,
+    retrieval_span,
 )
 from backend.app.services.structured_llm_gateway import GeminiStructuredLLMGateway
 
@@ -316,6 +323,67 @@ class TestLLMSpanBuilder:
             == OpenInferenceSpanKindValues.EMBEDDING.value
         )
         assert attrs[SpanAttributes.LLM_TOKEN_COUNT_PROMPT] == 5
+
+
+class TestRetrievalSpan:
+    """The retrieval span mirrors the LLM span's content-free discipline."""
+
+    def test_recorder_exposes_no_content_setter(self) -> None:
+        public = {name for name in dir(RetrievalSpanRecorder) if not name.startswith("_")}
+        assert public == {"set_documents", "set_context_tokens"}
+
+    def test_ref_has_no_text_field(self) -> None:
+        names = {f.name for f in fields(RetrievedDocumentRef)}
+        assert names == {"document_id", "source", "tokens_est", "metadata"}
+        assert "text" not in names
+        assert "content" not in names
+
+    def test_emits_retriever_span_with_ids_and_no_content(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        with retrieval_span(operation="chat_context") as rec:
+            rec.set_documents(
+                [
+                    RetrievedDocumentRef(
+                        document_id="note-1", source="progress_notes_recent", tokens_est=42
+                    ),
+                    RetrievedDocumentRef(
+                        document_id="doc-9", source="patient_documents", tokens_est=7
+                    ),
+                ]
+            )
+            rec.set_context_tokens(49)
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        attrs = dict(span.attributes or {})
+        assert span.name == "retrieval.chat_context"
+        assert (
+            attrs[SpanAttributes.OPENINFERENCE_SPAN_KIND]
+            == OpenInferenceSpanKindValues.RETRIEVER.value
+        )
+        assert attrs["pablo.retrieval.document_count"] == 2
+        assert attrs["pablo.retrieval.context_tokens_est"] == 49
+        assert attrs[
+            f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.0.{DocumentAttributes.DOCUMENT_ID}"
+        ] == ("note-1")
+        assert attrs[
+            f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.1.{DocumentAttributes.DOCUMENT_ID}"
+        ] == ("doc-9")
+        assert attrs["pablo.latency_ms"] >= 0.0
+        # By construction the span carries no document text — assert the
+        # OpenInference content key is never set on any document.
+        content_suffix = f".{DocumentAttributes.DOCUMENT_CONTENT}"
+        assert not any(key.endswith(content_suffix) for key in attrs)
+        _assert_no_content(attrs)
+
+    def test_error_inside_block_tags_error_class(self, span_exporter: InMemorySpanExporter) -> None:
+        with pytest.raises(ValueError, match="boom"), retrieval_span(operation="chat_context"):
+            raise ValueError("boom")
+
+        attrs = dict(span_exporter.get_finished_spans()[0].attributes or {})
+        assert attrs["pablo.error_class"] == "ValueError"
 
 
 class TestResourceProject:

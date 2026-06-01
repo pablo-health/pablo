@@ -214,6 +214,32 @@ class LoadedSource:
 
 
 @dataclass(frozen=True)
+class RetrievedDocument:
+    """One retrieved item that contributed to the assembled context.
+
+    The structured, per-item counterpart to the flattened ``text`` blob:
+    a single note, patient document, or pasted block — reflecting the
+    *final* (post-truncation) set the model actually received. Carrying
+    each item's id and text separately is what lets retrieval quality be
+    evaluated per document (relevance to the question) rather than only
+    in aggregate.
+    """
+
+    source_key: str
+    """Which selection source produced this item (e.g. ``progress_notes_recent``)."""
+
+    document_id: str
+    """Chart id of the item (note id / patient-document id) where one
+    exists; the source key for synthesised single-block sources."""
+
+    text: str
+    """The item's rendered content (chart material — treat as PHI)."""
+
+    tokens_est: int
+    """Estimated tokens for ``text``."""
+
+
+@dataclass(frozen=True)
 class ContextBundle:
     """Frozen result of assembling context for a single turn."""
 
@@ -228,6 +254,12 @@ class ContextBundle:
 
     total_tokens_est: int
     """Estimated tokens consumed by ``text``."""
+
+    documents: tuple[RetrievedDocument, ...] = ()
+    """Per-item breakdown of the retrieved context, in assembled order.
+    Empty when no source had content. Derived from the same final source
+    rows as ``text``; carries chart material, so it is never persisted on
+    the (PHI-free) manifest."""
 
 
 # ---------------------------------------------------------------------------
@@ -526,8 +558,7 @@ def _load_patient_documents(  # noqa: PLR0912 — branchy selection validation
         has_doc_ids = "document_ids" in raw
         if has_limit and has_doc_ids:
             raise InvalidSelectionError(
-                f"{SOURCE_KEY_PATIENT_DOCUMENTS}: 'limit' and 'document_ids' "
-                "are mutually exclusive"
+                f"{SOURCE_KEY_PATIENT_DOCUMENTS}: 'limit' and 'document_ids' are mutually exclusive"
             )
         if has_limit:
             try:
@@ -908,6 +939,49 @@ def _build_text(loaded: list[LoadedSource]) -> str:
     return "\n\n".join(sections)
 
 
+def _document_text_for_row(source_key: str, row: Any) -> tuple[str, str]:
+    """Return ``(document_id, text)`` for one final source row.
+
+    Renders the row with the same single-item renderer the section build
+    uses, so the per-document text reflects exactly what survived
+    truncation. Dispatches on source: pasted text is a raw string row,
+    patient documents are :class:`PatientDocument`, everything else is a
+    note-backed :class:`Note`.
+    """
+    if source_key == SOURCE_KEY_PASTED_TEXT:
+        return SOURCE_KEY_PASTED_TEXT, row if isinstance(row, str) else str(row)
+    if source_key == SOURCE_KEY_PATIENT_DOCUMENTS:
+        return row.id, _format_patient_document_section(row)
+    return row.id, _note_display_text(row)
+
+
+def _documents_from_loaded(loaded: list[LoadedSource]) -> tuple[RetrievedDocument, ...]:
+    """Build the per-document breakdown from the final loaded sources.
+
+    Read-only: walks each present source's surviving rows (post-budget)
+    in the same priority order as ``_build_text`` and renders each item.
+    Rows that render empty are skipped, matching the section build.
+    """
+    documents: list[RetrievedDocument] = []
+    for src in sorted(loaded, key=lambda s: s.priority):
+        if not src.is_present:
+            continue
+        for row in src.rows:
+            document_id, text = _document_text_for_row(src.key, row)
+            text = text.strip()
+            if not text:
+                continue
+            documents.append(
+                RetrievedDocument(
+                    source_key=src.key,
+                    document_id=document_id,
+                    text=text,
+                    tokens_est=estimate_tokens(text),
+                )
+            )
+    return tuple(documents)
+
+
 def assemble_context_bundle(
     *,
     notes_repo: NotesRepository,
@@ -966,6 +1040,7 @@ def assemble_context_bundle(
         text=text,
         manifest=manifest,
         total_tokens_est=total_tokens_est,
+        documents=_documents_from_loaded(loaded),
     )
 
 
