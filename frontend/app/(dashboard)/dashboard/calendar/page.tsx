@@ -40,7 +40,6 @@ export default function CalendarPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentResponse | null>(null)
   const [defaultStart, setDefaultStart] = useState<string>()
-  const [defaultEnd, setDefaultEnd] = useState<string>()
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<ICalConnectionStatus[]>([])
   const [syncResult, setSyncResult] = useState<string | null>(null)
@@ -102,17 +101,15 @@ export default function CalendarPage() {
     }
   }, [])
 
-  const handleSelectSlot = useCallback((start: string, end: string) => {
+  const handleSelectSlot = useCallback((start: string) => {
     setSelectedAppointment(null)
     setDefaultStart(start)
-    setDefaultEnd(end)
     setModalOpen(true)
   }, [])
 
   const handleSelectAppointment = useCallback((appointment: AppointmentResponse) => {
     setSelectedAppointment(appointment)
     setDefaultStart(undefined)
-    setDefaultEnd(undefined)
     setModalOpen(true)
   }, [])
 
@@ -120,11 +117,10 @@ export default function CalendarPage() {
     setModalOpen(false)
     setSelectedAppointment(null)
     setDefaultStart(undefined)
-    setDefaultEnd(undefined)
   }, [])
 
   const handleCreateNew = useCallback(() => {
-    handleSelectSlot(new Date().toISOString(), "")
+    handleSelectSlot(new Date().toISOString())
   }, [handleSelectSlot])
 
   const handleViewChange = useCallback(
@@ -191,9 +187,9 @@ export default function CalendarPage() {
         open={modalOpen}
         onClose={handleClose}
         defaultStart={defaultStart}
-        defaultEnd={defaultEnd}
         appointment={selectedAppointment}
         preferences={preferences}
+        theme={editorialTheme}
       />
     </div>
   )

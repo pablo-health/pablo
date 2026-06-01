@@ -63,4 +63,5 @@ export interface UpdateAppointmentRequest {
   video_link?: string | null
   video_platform?: string | null
   notes?: string | null
+  status?: AppointmentStatus
 }
