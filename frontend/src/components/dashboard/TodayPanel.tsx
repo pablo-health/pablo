@@ -8,6 +8,7 @@ import { useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppointmentList } from "@/hooks/useAppointments"
 import { usePatientList } from "@/hooks/usePatients"
+import { useUserTimeZone } from "@/hooks/usePreferences"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
@@ -25,6 +26,7 @@ function startSessionUri(appointmentId: string): string {
 
 export function TodayPanel() {
   const { start, end } = todayBounds()
+  const timeZone = useUserTimeZone()
   const { data, isLoading } = useAppointmentList(start, end)
   const { data: patientData } = usePatientList()
 
@@ -47,7 +49,7 @@ export function TodayPanel() {
             Today
           </h2>
           <p className="text-sm text-neutral-600 mt-1">
-            Sessions scheduled for {todayLabel()}.
+            Sessions scheduled for {todayLabel(timeZone)}.
           </p>
         </div>
         <Link
@@ -70,6 +72,7 @@ export function TodayPanel() {
                 key={a.id}
                 appointment={a}
                 lastVisit={lastVisitByPatient.get(a.patient_id) ?? null}
+                timeZone={timeZone}
               />
             ))}
           </ul>
@@ -83,13 +86,19 @@ export function TodayPanel() {
 interface AppointmentRowProps {
   appointment: AppointmentResponse
   lastVisit: string | null
+  timeZone: string
 }
 
-function AppointmentRow({ appointment, lastVisit }: AppointmentRowProps) {
+function AppointmentRow({
+  appointment,
+  lastVisit,
+  timeZone,
+}: AppointmentRowProps) {
   const start = new Date(appointment.start_at)
-  const time = start.toLocaleTimeString(undefined, {
+  const time = start.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone,
   })
   const badge = STATUS_BADGES[appointment.status]
   const startable =
@@ -159,6 +168,11 @@ function EmptyDay() {
   )
 }
 
+// The query window is the browser's local day. Day *labels* and times
+// follow the user's timezone preference (see todayLabel / AppointmentRow);
+// these line up whenever the preference matches the browser zone, which is
+// the default. A tz-aware window would only matter for a clinician viewing
+// the dashboard from a different zone than their preference near midnight.
 function todayBounds(): { start: string; end: string } {
   const start = new Date()
   start.setHours(0, 0, 0, 0)
@@ -190,10 +204,11 @@ export function formatLastVisit(
   return `last visit ${months}mo ago`
 }
 
-function todayLabel(): string {
-  return new Date().toLocaleDateString(undefined, {
+function todayLabel(timeZone: string): string {
+  return new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
+    timeZone,
   })
 }

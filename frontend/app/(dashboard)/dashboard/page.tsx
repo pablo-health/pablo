@@ -6,6 +6,7 @@ import { getUserStatus } from "@/lib/api/users"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { AwaitingReviewPanel } from "@/components/dashboard/AwaitingReviewPanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
+import { DashboardGreeting } from "@/components/dashboard/DashboardGreeting"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
 
@@ -43,21 +44,9 @@ export default async function DashboardPage() {
     }
   }
 
-  const formattedDate = new Date().toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  })
-
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-display font-bold text-neutral-900">
-          {greetingFor()}, {user?.name?.split(" ")[0]}
-        </h1>
-        <p className="text-neutral-600 mt-2">{formattedDate}</p>
-      </div>
+      <DashboardGreeting name={user?.name} />
 
       {isPlatformAdmin ? (
         <PlatformAdminPanel />
@@ -90,11 +79,4 @@ function PlatformAdminPanel() {
       </p>
     </div>
   )
-}
-
-function greetingFor(): string {
-  const hour = new Date().getHours()
-  if (hour < 12) return "Good morning"
-  if (hour < 18) return "Good afternoon"
-  return "Good evening"
 }
