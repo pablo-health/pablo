@@ -10,6 +10,7 @@ import {
   EVENT_COMPACT_PX,
   EVENT_MICRO_PX,
 } from "./EditorialEventCard"
+import { EditorialEventWrapper } from "./EditorialEventWrapper"
 import { assignLanes } from "./laneLayout"
 import {
   DAY_END_HOUR,
@@ -24,7 +25,10 @@ interface EditorialDayViewProps {
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
   onSelectSlot: (start: string) => void
-  onSelectAppointment: (appointment: AppointmentResponse) => void
+  /** Single click on an event → open the peek popover anchored to its rect. */
+  onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
+  /** Double click on an event → open the edit flow. */
+  onEdit: (appointment: AppointmentResponse) => void
   scrollToHour?: number
   /** Working-hours window. Pass 0/24 to render the full day. */
   dayStart?: number
@@ -36,7 +40,8 @@ export function EditorialDayView({
   appointments,
   patientMap,
   onSelectSlot,
-  onSelectAppointment,
+  onPeek,
+  onEdit,
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
@@ -115,8 +120,11 @@ export function EditorialDayView({
               const micro = height < EVENT_MICRO_PX
               const compact = height < EVENT_COMPACT_PX
               return (
-                <div
+                <EditorialEventWrapper
                   key={appointment.id}
+                  appointment={appointment}
+                  onPeek={onPeek}
+                  onEdit={onEdit}
                   className="absolute z-10 px-1"
                   style={{
                     top,
@@ -128,11 +136,10 @@ export function EditorialDayView({
                   <EditorialEventCard
                     appointment={appointment}
                     patientName={patientMap.get(appointment.patient_id)}
-                    onClick={onSelectAppointment}
                     micro={micro}
                     compact={compact}
                   />
-                </div>
+                </EditorialEventWrapper>
               )
             })}
             {today && <DayNowLine dayStart={dayStart} dayEnd={dayEnd} />}

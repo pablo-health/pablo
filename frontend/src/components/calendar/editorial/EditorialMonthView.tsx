@@ -2,18 +2,25 @@
 
 "use client"
 
-import { useMemo } from "react"
-import { format, isSameDay, isSameMonth, isToday } from "date-fns"
+import { useEffect, useMemo, useRef } from "react"
+import { format, isSameMonth, isToday } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { monthGridDays } from "./dateUtils"
 import { editorialStatusMeta } from "./status"
+
+/** Click/double-click disambiguation window (ms) — mirrors the wrapper used
+ * by week/day views so month chips behave identically. */
+const CLICK_DELAY_MS = 220
 
 interface EditorialMonthViewProps {
   anchor: Date
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
   onSelectDay: (date: Date) => void
-  onSelectAppointment: (appointment: AppointmentResponse) => void
+  /** Single click on a chip → open the peek popover anchored to its rect. */
+  onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
+  /** Double click on a chip → open the edit flow. */
+  onEdit: (appointment: AppointmentResponse) => void
 }
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -24,7 +31,8 @@ export function EditorialMonthView({
   appointments,
   patientMap,
   onSelectDay,
-  onSelectAppointment,
+  onPeek,
+  onEdit,
 }: EditorialMonthViewProps) {
   const days = useMemo(() => monthGridDays(anchor), [anchor])
 
@@ -127,51 +135,15 @@ export function EditorialMonthView({
               </div>
 
               <div className="flex flex-col gap-0.5">
-                {visible.map((appt) => {
-                  const start = new Date(appt.start_at)
-                  const name = patientMap.get(appt.patient_id) ?? appt.title
-                  const cancelled = appt.status === "cancelled"
-                  const meta = editorialStatusMeta(appt.status)
-                  const StatusIcon = meta.Icon
-                  return (
-                    <span
-                      key={appt.id}
-                      role="button"
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onSelectAppointment(appt)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          onSelectAppointment(appt)
-                        }
-                      }}
-                      aria-label={`${name} at ${format(start, "h:mm a")} — ${meta.label}`}
-                      className="ed-event group flex items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-[11px]"
-                      style={{
-                        color: "var(--ed-ink)",
-                        textDecoration: cancelled ? "line-through" : undefined,
-                        opacity: cancelled ? 0.6 : 1,
-                      }}
-                    >
-                      <StatusIcon
-                        aria-hidden
-                        className="h-3 w-3 shrink-0"
-                        style={{ color: meta.rail }}
-                      />
-                      <span
-                        className="shrink-0 font-semibold tabular-nums"
-                        style={{ color: "var(--ed-ink-muted)" }}
-                      >
-                        {format(start, "h:mm")}
-                      </span>
-                      <span className="truncate">{name}</span>
-                    </span>
-                  )
-                })}
+                {visible.map((appt) => (
+                  <MonthChip
+                    key={appt.id}
+                    appointment={appt}
+                    name={patientMap.get(appt.patient_id) ?? appt.title}
+                    onPeek={onPeek}
+                    onEdit={onEdit}
+                  />
+                ))}
                 {overflow > 0 && (
                   <span
                     className="px-1.5 text-[10px] font-medium"
@@ -186,5 +158,90 @@ export function EditorialMonthView({
         })}
       </div>
     </div>
+  )
+}
+
+interface MonthChipProps {
+  appointment: AppointmentResponse
+  name: string
+  onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
+  onEdit: (appointment: AppointmentResponse) => void
+}
+
+/** A single month-view event chip with click (peek) / dblclick (edit)
+ * disambiguation matching the week/day {@link EditorialEventWrapper}. */
+function MonthChip({ appointment, name, onPeek, onEdit }: MonthChipProps) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const start = new Date(appointment.start_at)
+  const cancelled = appointment.status === "cancelled"
+  const meta = editorialStatusMeta(appointment.status)
+  const StatusIcon = meta.Icon
+
+  useEffect(() => {
+    return () => {
+      if (clickTimer.current) clearTimeout(clickTimer.current)
+    }
+  }, [])
+
+  const peek = () => {
+    if (clickTimer.current) clearTimeout(clickTimer.current)
+    const rect = ref.current?.getBoundingClientRect()
+    if (!rect) return
+    clickTimer.current = setTimeout(() => {
+      clickTimer.current = null
+      onPeek(appointment, rect)
+    }, CLICK_DELAY_MS)
+  }
+
+  const edit = () => {
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current)
+      clickTimer.current = null
+    }
+    onEdit(appointment)
+  }
+
+  return (
+    <span
+      ref={ref}
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation()
+        peek()
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation()
+        edit()
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          e.stopPropagation()
+          edit()
+        }
+      }}
+      aria-label={`${name} at ${format(start, "h:mm a")} — ${meta.label}`}
+      className="ed-event group flex items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-[11px]"
+      style={{
+        color: "var(--ed-ink)",
+        textDecoration: cancelled ? "line-through" : undefined,
+        opacity: cancelled ? 0.6 : 1,
+      }}
+    >
+      <StatusIcon
+        aria-hidden
+        className="h-3 w-3 shrink-0"
+        style={{ color: meta.rail }}
+      />
+      <span
+        className="shrink-0 font-semibold tabular-nums"
+        style={{ color: "var(--ed-ink-muted)" }}
+      >
+        {format(start, "h:mm")}
+      </span>
+      <span className="truncate">{name}</span>
+    </span>
   )
 }

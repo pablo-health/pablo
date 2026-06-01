@@ -18,6 +18,7 @@ import { EditorialDayView } from "./EditorialDayView"
 import { EditorialMonthView } from "./EditorialMonthView"
 import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
+import { EditorialEventPeek } from "./EditorialEventPeek"
 import { shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
 
 const ALL_STATUSES: AppointmentStatus[] = [
@@ -37,9 +38,15 @@ interface EditorialCalendarProps {
   workingHoursStart?: number
   theme: EditorialTheme
   onSelectSlot: (start: string) => void
+  /** Edit entrypoint — opens the edit sheet (double-click or peek's Edit). */
   onSelectAppointment: (appointment: AppointmentResponse) => void
   onCreateNew: () => void
   onViewChange?: (view: EditorialView) => void
+}
+
+interface PeekState {
+  appointment: AppointmentResponse
+  anchorRect: DOMRect
 }
 
 export function EditorialCalendar({
@@ -57,6 +64,7 @@ export function EditorialCalendar({
     DEFAULT_STATUS_FILTERS,
   )
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [peek, setPeek] = useState<PeekState | null>(null)
 
   const range = useMemo(() => visibleRange(view, anchor), [view, anchor])
   const { data } = useAppointmentList(
@@ -109,6 +117,25 @@ export function EditorialCalendar({
     setAnchor(date)
     setPickerOpen(false)
   }, [])
+
+  const handlePeek = useCallback(
+    (appointment: AppointmentResponse, anchorRect: DOMRect) => {
+      setPeek({ appointment, anchorRect })
+    },
+    [],
+  )
+
+  const handleEdit = useCallback(
+    (appointment: AppointmentResponse) => {
+      setPeek(null)
+      onSelectAppointment(appointment)
+    },
+    [onSelectAppointment],
+  )
+
+  const peekPatientName = peek
+    ? patientMap.get(peek.appointment.patient_id)
+    : undefined
 
   return (
     <div
@@ -175,7 +202,8 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             onSelectSlot={onSelectSlot}
-            onSelectAppointment={onSelectAppointment}
+            onPeek={handlePeek}
+            onEdit={handleEdit}
             scrollToHour={workingHoursStart}
           />
         )}
@@ -185,7 +213,8 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             onSelectSlot={onSelectSlot}
-            onSelectAppointment={onSelectAppointment}
+            onPeek={handlePeek}
+            onEdit={handleEdit}
             scrollToHour={workingHoursStart}
           />
         )}
@@ -195,13 +224,24 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             onSelectDay={handleMonthDaySelect}
-            onSelectAppointment={onSelectAppointment}
+            onPeek={handlePeek}
+            onEdit={handleEdit}
           />
         )}
 
         <UnmatchedBanner appointments={filteredAppointments} />
         <StatusFooter statusFilters={statusFilters} />
       </div>
+
+      {peek && (
+        <EditorialEventPeek
+          appointment={peek.appointment}
+          patientName={peekPatientName}
+          anchorRect={peek.anchorRect}
+          onClose={() => setPeek(null)}
+          onEdit={handleEdit}
+        />
+      )}
     </div>
   )
 }
