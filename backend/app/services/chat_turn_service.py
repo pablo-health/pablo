@@ -39,6 +39,7 @@ from .chat_context_bundler import (
     default_source_selection,
 )
 from .chat_llm_gateway import StreamEvent, UserAssistantTurn
+from .llm_telemetry import RetrievedDocumentRef, retrieval_span
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -233,13 +234,28 @@ class ChatTurnService:
         # truncated and reported in the manifest.
         selection = context.source_selection or default_source_selection()
         try:
-            bundle: ContextBundle = assemble_context_bundle(
-                notes_repo=self._notes_repo,
-                patient_documents_repo=self._patient_documents_repo,
-                patient_id=context.patient_id,
-                user_id=context.requesting_user_id,
-                selection=selection,
-            )
+            # Content-free retrieval span: records which chart documents fed
+            # this turn (ids + token estimates only — never their text), as a
+            # RETRIEVER span sitting beside the gateway's LLM span.
+            with retrieval_span(operation="chat_context") as retrieval_rec:
+                bundle: ContextBundle = assemble_context_bundle(
+                    notes_repo=self._notes_repo,
+                    patient_documents_repo=self._patient_documents_repo,
+                    patient_id=context.patient_id,
+                    user_id=context.requesting_user_id,
+                    selection=selection,
+                )
+                retrieval_rec.set_documents(
+                    [
+                        RetrievedDocumentRef(
+                            document_id=doc.document_id,
+                            source=doc.source_key,
+                            tokens_est=doc.tokens_est,
+                        )
+                        for doc in bundle.documents
+                    ]
+                )
+                retrieval_rec.set_context_tokens(bundle.total_tokens_est)
         except ContextOverflowError as exc:
             yield _error_event(
                 code="context_too_large",
@@ -406,6 +422,26 @@ class ChatTurnService:
                 output_tokens=assistant_message.output_tokens or 0,
             )
 
+        # Instrumentation hook (no-op in the base service). Hands a subclass
+        # the exact envelope the model received — composed system prompt,
+        # retrieved documents, prior turns, reply — for optional capture. Any
+        # error here is swallowed: instrumentation must never break the turn.
+        try:
+            self._record_turn_content(
+                context=context,
+                bundle=bundle,
+                system_prompt=system_prompt,
+                prior_turns=prior_turns,
+                assistant_text=full_text,
+                input_tokens=assistant_message.input_tokens,
+                output_tokens=assistant_message.output_tokens,
+            )
+        except Exception:
+            logger.exception(
+                "turn content hook raised for conversation %s (turn delivery unaffected)",
+                context.conversation_id,
+            )
+
         yield TurnStreamEvent(
             kind="done",
             data={
@@ -413,6 +449,36 @@ class ChatTurnService:
                 "finish_reason": final_event.finish_reason,
             },
         )
+
+    # ------------------------------------------------------------------
+    # Instrumentation hook
+    # ------------------------------------------------------------------
+
+    def _record_turn_content(
+        self,
+        *,
+        context: TurnContext,
+        bundle: ContextBundle,
+        system_prompt: str,
+        prior_turns: list[UserAssistantTurn],
+        assistant_text: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> None:
+        """Hook fired once per successful turn — no-op in the base service.
+
+        Receives the exact prompt envelope the model saw (the composed
+        ``system_prompt``, the structured retrieved ``bundle.documents``,
+        the ``prior_turns``, and the assistant reply) so an instrumentation
+        subclass can record it — e.g. attach redacted content to the
+        retrieval/LLM spans for quality review or eval capture.
+
+        The base implementation deliberately does nothing: by default
+        chart content stays out of telemetry. Overrides run on the request
+        event loop while the DB session is live, must not block (schedule
+        their own background work), and must not raise — the caller swallows
+        exceptions, but an override should still treat this as best-effort.
+        """
 
     # ------------------------------------------------------------------
     # Helpers
