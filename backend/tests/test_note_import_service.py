@@ -23,10 +23,13 @@ Two layers:
 
 from __future__ import annotations
 
+import io
 import os
+import zipfile
 from datetime import date, datetime, time
 from pathlib import Path
 
+import docx
 import pytest
 
 from backend.app.notes import get_default_registry, register_builtin_note_types
@@ -218,6 +221,118 @@ class TestGrounding:
 
         assert len(result.grounding) > 0
         assert result.ungrounded == result.grounding
+
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _make_docx(
+    paragraphs: list[str] | None = None,
+    *,
+    header: str | None = None,
+    table: list[list[str]] | None = None,
+) -> bytes:
+    """Build a real .docx via python-docx (body, optional header + table)."""
+    document = docx.Document()
+    if header is not None:
+        document.sections[0].header.paragraphs[0].text = header
+    for para in paragraphs or []:
+        document.add_paragraph(para)
+    if table is not None:
+        built = document.add_table(rows=len(table), cols=len(table[0]))
+        for r, row in enumerate(table):
+            for c, value in enumerate(row):
+                built.cell(r, c).text = value
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
+
+
+def _docx_with_document_xml(document_xml: str) -> bytes:
+    """Take a valid .docx and swap in a tampered word/document.xml."""
+    valid = _make_docx(["placeholder paragraph for a valid package"])
+    src, out = io.BytesIO(valid), io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w") as zout:
+        for item in zin.infolist():
+            payload = (
+                document_xml.encode("utf-8")
+                if item.filename == "word/document.xml"
+                else zin.read(item.filename)
+            )
+            zout.writestr(item, payload)
+    return out.getvalue()
+
+
+class TestExtractDocx:
+    _LONG = (
+        "Client reported steady progress on weekly goals and described "
+        "improved sleep and a calmer mood across the past two weeks."
+    )
+
+    def test_extracts_body_paragraphs(self) -> None:
+        data = _make_docx(["S — Subjective", self._LONG, "Plan: continue weekly sessions."])
+        text = extract_document_text(data, filename="note.docx")
+        assert "S — Subjective" in text
+        assert self._LONG in text
+
+    def test_extracts_table_cells(self) -> None:
+        data = _make_docx(
+            [self._LONG],
+            table=[["Date", "02/04/2026"], ["Clinician", "Dr. Smith"]],
+        )
+        text = extract_document_text(data, filename="note.docx")
+        assert "02/04/2026" in text
+        assert "Clinician" in text
+
+    def test_extracts_page_header(self) -> None:
+        # Clinical templates often put the session date in the page header —
+        # the gap that motivated using a real Word library.
+        data = _make_docx([self._LONG], header="Client: KN   Date: 02/04/2026")
+        text = extract_document_text(data, filename="note.docx")
+        assert "Date: 02/04/2026" in text
+
+    def test_routed_by_content_type(self) -> None:
+        data = _make_docx([self._LONG, self._LONG])
+        text = extract_document_text(
+            data,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        assert self._LONG in text
+
+    def test_custom_dtd_entities_are_not_expanded(self) -> None:
+        # Defense-in-depth: even a tampered document.xml with a defined entity
+        # must not expand — python-docx's parser does not resolve entities.
+        tampered = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<!DOCTYPE w:document [<!ENTITY boom "EXPANDED-PAYLOAD">]>'
+            f'<w:document xmlns:w="{_W_NS}"><w:body>'
+            f"<w:p><w:r><w:t>{self._LONG} &boom;</w:t></w:r></w:p>"
+            "</w:body></w:document>"
+        )
+        text = extract_document_text(_docx_with_document_xml(tampered), filename="x.docx")
+        assert "EXPANDED-PAYLOAD" not in text
+        assert self._LONG in text
+
+    def test_not_a_zip_raises(self) -> None:
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(b"this is not a docx", filename="note.docx")
+
+    def test_textless_docx_raises(self) -> None:
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(_make_docx(["hi"]), filename="tiny.docx")
+
+
+class TestExtractionHardening:
+    def test_malformed_pdf_raises_clean_error(self) -> None:
+        # Corrupt/non-PDF bytes must surface as a handled extraction error,
+        # not an uncaught exception (which the route would turn into a 500).
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(b"this is definitely not a pdf", filename="x.pdf")
+
+    def test_oversized_text_is_rejected(self) -> None:
+        huge = ("a " * 600_000).encode("utf-8")  # > 1M chars
+        with pytest.raises(DocumentTextExtractionError):
+            extract_document_text(huge, filename="huge.txt")
 
 
 # ---------------------------------------------------------------------------
