@@ -17,7 +17,22 @@ import {
 
 export type EditorialView = "day" | "week" | "month"
 
-export const HOUR_ROW_PX = 72
+/** Height of one hour row in week/day views, in px. Must stay in sync with
+ * `--ed-row-h` in editorial.css (JS positions events; CSS draws gridlines). */
+export const HOUR_ROW_PX = 54
+
+/** Default working-hours window for the cropped week/day grid (7am–8pm). */
+export const DAY_START_HOUR = 7
+export const DAY_END_HOUR = 20
+
+/** Full-day window, available as an opt-in fallback (renders 0–24). */
+export const FULL_DAY_START_HOUR = 0
+export const FULL_DAY_END_HOUR = 24
+
+/** Hours rendered in the grid for a given window, e.g. [7, 8, …, 19]. */
+export function gridHours(dayStart = DAY_START_HOUR, dayEnd = DAY_END_HOUR): number[] {
+  return Array.from({ length: dayEnd - dayStart }, (_, i) => dayStart + i)
+}
 
 export function weekDays(anchor: Date): Date[] {
   const start = startOfWeek(anchor, { weekStartsOn: 0 })

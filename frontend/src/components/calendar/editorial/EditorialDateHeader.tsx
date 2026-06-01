@@ -26,7 +26,7 @@ export function EditorialDateHeader({
   const { primary, secondary } = rangeLabel(view, anchor)
 
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="flex flex-wrap items-center gap-3">
       <button
         type="button"
         onClick={onPickerOpen}
@@ -34,13 +34,13 @@ export function EditorialDateHeader({
         aria-label="Jump to a date"
       >
         <h2
-          className="font-display text-[24px] font-semibold leading-[1.1] tracking-[-0.01em] sm:text-[28px]"
+          className="font-display text-[25px] font-semibold leading-[1.1] tracking-[-0.01em]"
           style={{ color: "var(--ed-ink)" }}
         >
           {primary}
         </h2>
         <span
-          className="font-display text-[20px] font-light tracking-tight sm:text-[22px]"
+          className="font-display text-[19px] font-light tracking-tight"
           style={{ color: "var(--ed-ink-soft)" }}
         >
           {secondary}

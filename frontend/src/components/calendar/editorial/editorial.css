@@ -10,8 +10,12 @@
  */
 
 [data-editorial-theme] {
-  /* hour-row height in week/day views */
-  --ed-row-h: 72px;
+  /* hour-row height in week/day views — MUST match HOUR_ROW_PX in dateUtils.ts */
+  --ed-row-h: 54px;
+
+  /* compact stack density for the calendar content column */
+  --ed-stack-gap: 10px;
+  --ed-stack-pad-y: 14px;
 
   /* Corner radii follow the active global theme (--radius): warm-paper/dark
    * keep their rounded feel, boring-ehr flattens to sharp 0, high-contrast

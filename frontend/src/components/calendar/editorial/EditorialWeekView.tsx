@@ -11,7 +11,14 @@ import {
   EVENT_MICRO_PX,
 } from "./EditorialEventCard"
 import { assignLanes } from "./laneLayout"
-import { HOUR_ROW_PX, minutesSinceMidnight, weekDays } from "./dateUtils"
+import {
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  HOUR_ROW_PX,
+  gridHours,
+  minutesSinceMidnight,
+  weekDays,
+} from "./dateUtils"
 
 interface EditorialWeekViewProps {
   anchor: Date
@@ -21,9 +28,10 @@ interface EditorialWeekViewProps {
   onSelectAppointment: (appointment: AppointmentResponse) => void
   /** Hour to scroll to on mount / day change (defaults to 8). */
   scrollToHour?: number
+  /** Working-hours window. Pass 0/24 to render the full day. */
+  dayStart?: number
+  dayEnd?: number
 }
-
-const HOURS = Array.from({ length: 24 }, (_, i) => i)
 
 export function EditorialWeekView({
   anchor,
@@ -32,15 +40,18 @@ export function EditorialWeekView({
   onSelectSlot,
   onSelectAppointment,
   scrollToHour = 8,
+  dayStart = DAY_START_HOUR,
+  dayEnd = DAY_END_HOUR,
 }: EditorialWeekViewProps) {
   const days = useMemo(() => weekDays(anchor), [anchor])
+  const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
   const scrollerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (scrollerRef.current) {
-      scrollerRef.current.scrollTop = scrollToHour * HOUR_ROW_PX
+      scrollerRef.current.scrollTop = Math.max(scrollToHour - dayStart, 0) * HOUR_ROW_PX
     }
-  }, [scrollToHour])
+  }, [scrollToHour, dayStart])
 
   const dayBuckets = useMemo(() => {
     const buckets: AppointmentResponse[][] = days.map(() => [])
@@ -63,7 +74,7 @@ export function EditorialWeekView({
       <DayHeaderRow days={days} />
       <div ref={scrollerRef} className="relative max-h-[68vh] overflow-y-auto">
         <div className="flex">
-          <HourRail />
+          <HourRail hours={hours} />
           <div
             className="ed-daycols ed-hourlines relative grid flex-1"
             style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
@@ -76,9 +87,11 @@ export function EditorialWeekView({
                 patientMap={patientMap}
                 onSelectSlot={onSelectSlot}
                 onSelectAppointment={onSelectAppointment}
+                dayStart={dayStart}
+                dayEnd={dayEnd}
               />
             ))}
-            <NowLine days={days} />
+            <NowLine days={days} dayStart={dayStart} dayEnd={dayEnd} />
           </div>
         </div>
       </div>
@@ -130,19 +143,19 @@ function DayHeaderRow({ days }: { days: Date[] }) {
   )
 }
 
-function HourRail() {
+function HourRail({ hours }: { hours: number[] }) {
   return (
     <div
       className="ed-halfhour relative w-16 shrink-0"
       style={{ backgroundColor: "var(--ed-rail)" }}
     >
-      {HOURS.map((h) => (
+      {hours.map((h, i) => (
         <div
           key={h}
           className="relative flex items-start justify-end pr-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em]"
           style={{ height: HOUR_ROW_PX, color: "var(--ed-ink-soft)" }}
         >
-          {h === 0 ? "" : format(new Date().setHours(h, 0, 0, 0), "h a")}
+          {i === 0 ? "" : format(new Date().setHours(h, 0, 0, 0), "h a")}
         </div>
       ))}
     </div>
@@ -155,21 +168,26 @@ function DayColumn({
   patientMap,
   onSelectSlot,
   onSelectAppointment,
+  dayStart,
+  dayEnd,
 }: {
   day: Date
   lanes: ReturnType<typeof assignLanes>
   patientMap: Map<string, string>
   onSelectSlot: (start: string) => void
   onSelectAppointment: (appointment: AppointmentResponse) => void
+  dayStart: number
+  dayEnd: number
 }) {
   const today = isToday(day)
-  const totalHeight = HOUR_ROW_PX * 24
+  const totalHeight = HOUR_ROW_PX * (dayEnd - dayStart)
+  const startOffsetMin = dayStart * 60
 
   const handleSlotClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("button")) return
     const rect = e.currentTarget.getBoundingClientRect()
     const y = e.clientY - rect.top
-    const minutesFromMidnight = Math.max(0, Math.floor((y / HOUR_ROW_PX) * 60))
+    const minutesFromMidnight = Math.max(0, Math.floor((y / HOUR_ROW_PX) * 60) + startOffsetMin)
     const snapped = Math.floor(minutesFromMidnight / 15) * 15
     const start = new Date(startOfDay(day).getTime() + snapped * 60_000)
     onSelectSlot(start.toISOString())
@@ -188,8 +206,12 @@ function DayColumn({
       {lanes.map(({ appointment, lane, laneCount }) => {
         const startMin = minutesSinceMidnight(appointment.start_at)
         const endMin = minutesSinceMidnight(appointment.end_at)
-        const top = (startMin / 60) * HOUR_ROW_PX
-        const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 22)
+        // Clamp into the visible window so appts that start before dayStart or
+        // end after dayEnd stay reachable (cropped, never hidden).
+        const rawTop = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
+        const top = Math.min(Math.max(rawTop, 0), totalHeight - 22)
+        const rawHeight = ((endMin - startMin) / 60) * HOUR_ROW_PX - 2
+        const height = Math.max(Math.min(rawHeight, totalHeight - top), 22)
         const widthPct = 100 / laneCount
         const left = lane * widthPct
         const micro = height < EVENT_MICRO_PX
@@ -219,11 +241,21 @@ function DayColumn({
   )
 }
 
-function NowLine({ days }: { days: Date[] }) {
+function NowLine({
+  days,
+  dayStart,
+  dayEnd,
+}: {
+  days: Date[]
+  dayStart: number
+  dayEnd: number
+}) {
   const todayIdx = days.findIndex((d) => isToday(d))
   if (todayIdx === -1) return null
   const now = new Date()
-  const top = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_ROW_PX
+  const nowMin = now.getHours() * 60 + now.getMinutes()
+  if (nowMin < dayStart * 60 || nowMin > dayEnd * 60) return null
+  const top = ((nowMin - dayStart * 60) / 60) * HOUR_ROW_PX
   return (
     <div
       aria-hidden

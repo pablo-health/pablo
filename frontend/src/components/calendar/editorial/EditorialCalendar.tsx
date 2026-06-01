@@ -124,28 +124,36 @@ export function EditorialCalendar({
         onToggleStatus={handleToggleStatus}
       />
 
-      <div className="relative flex flex-1 flex-col gap-6 px-6 py-6 sm:px-8 sm:py-8">
-        <EditorialDateHeader
-          view={view}
-          anchor={anchor}
-          onPrev={() => setAnchor((a) => shiftAnchor(view, a, -1))}
-          onNext={() => setAnchor((a) => shiftAnchor(view, a, 1))}
-          onToday={() => setAnchor(new Date())}
-          onPickerOpen={() => setPickerOpen((p) => !p)}
-        />
-
-        <div className="flex items-center justify-between gap-4">
-          <EditorialViewSwitcher view={view} onChange={handleViewChange} />
-          <button
-            type="button"
-            onClick={() => setPickerOpen((p) => !p)}
-            className="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium tracking-wide transition-colors hover:bg-[var(--ed-pill-hover)] lg:hidden"
-            style={{ color: "var(--ed-ink-muted)" }}
-            aria-label="Pick a date"
-          >
-            <CalendarDays className="h-4 w-4" />
-            Pick date
-          </button>
+      <div
+        className="relative flex flex-1 flex-col px-6 sm:px-8"
+        style={{
+          gap: "var(--ed-stack-gap)",
+          paddingTop: "var(--ed-stack-pad-y)",
+          paddingBottom: "var(--ed-stack-pad-y)",
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <EditorialDateHeader
+            view={view}
+            anchor={anchor}
+            onPrev={() => setAnchor((a) => shiftAnchor(view, a, -1))}
+            onNext={() => setAnchor((a) => shiftAnchor(view, a, 1))}
+            onToday={() => setAnchor(new Date())}
+            onPickerOpen={() => setPickerOpen((p) => !p)}
+          />
+          <div className="flex items-center gap-4">
+            <EditorialViewSwitcher view={view} onChange={handleViewChange} />
+            <button
+              type="button"
+              onClick={() => setPickerOpen((p) => !p)}
+              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium tracking-wide transition-colors hover:bg-[var(--ed-pill-hover)] lg:hidden"
+              style={{ color: "var(--ed-ink-muted)" }}
+              aria-label="Pick a date"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Pick date
+            </button>
+          </div>
         </div>
 
         {pickerOpen && (

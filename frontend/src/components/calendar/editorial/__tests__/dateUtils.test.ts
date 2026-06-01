@@ -2,6 +2,12 @@
 
 import { describe, it, expect } from "vitest"
 import {
+  DAY_END_HOUR,
+  DAY_START_HOUR,
+  FULL_DAY_END_HOUR,
+  FULL_DAY_START_HOUR,
+  HOUR_ROW_PX,
+  gridHours,
   monthGridDays,
   rangeLabel,
   shiftAnchor,
@@ -45,6 +51,29 @@ describe("dateUtils", () => {
     const { primary, secondary } = rangeLabel("month", may)
     expect(primary).toBe("May")
     expect(secondary).toBe("2026")
+  })
+
+  it("HOUR_ROW_PX is the compact 54px default (must match --ed-row-h)", () => {
+    expect(HOUR_ROW_PX).toBe(54)
+  })
+
+  it("working-hours window defaults to 7am–8pm", () => {
+    expect(DAY_START_HOUR).toBe(7)
+    expect(DAY_END_HOUR).toBe(20)
+  })
+
+  it("gridHours renders only the working-hours window", () => {
+    const hours = gridHours()
+    expect(hours[0]).toBe(7)
+    expect(hours[hours.length - 1]).toBe(19) // dayEnd - 1
+    expect(hours).toHaveLength(DAY_END_HOUR - DAY_START_HOUR)
+  })
+
+  it("gridHours supports a full-day fallback", () => {
+    const hours = gridHours(FULL_DAY_START_HOUR, FULL_DAY_END_HOUR)
+    expect(hours).toHaveLength(24)
+    expect(hours[0]).toBe(0)
+    expect(hours[23]).toBe(23)
   })
 
   it("shiftAnchor moves by one unit", () => {
