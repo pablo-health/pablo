@@ -66,9 +66,13 @@ class UploadSessionRequest(BaseModel):
 
 
 class FinalizeSessionRequest(BaseModel):
-    """Request to finalize a session after therapist review."""
+    """Request to finalize a session after therapist review.
 
-    quality_rating: int = Field(ge=1, le=5)
+    The quality rating is optional: a clinician can finalize a note
+    without rating it. When a rating is supplied it must be 1-5.
+    """
+
+    quality_rating: int | None = Field(default=None, ge=1, le=5)
     quality_rating_reason: str | None = None
     quality_rating_sections: list[SOAPSection] | None = None
     soap_note_edited: SOAPNoteModel | None = None

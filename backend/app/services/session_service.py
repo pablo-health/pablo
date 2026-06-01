@@ -369,8 +369,9 @@ class SessionService:
         session = self.session_repo.update(session)
 
         # Check if note should be queued for eval export (when the
-        # eval-export service is registered).
-        if self.eval_export_service:
+        # eval-export service is registered). Finalizing without a rating
+        # is allowed; in that case there is nothing to queue on.
+        if self.eval_export_service and request.quality_rating is not None:
             decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
             if decision.should_queue:
                 note = self.note_service.submit_note_for_export(note.id, user_id)

@@ -207,7 +207,7 @@ export interface UploadSessionRequest {
 }
 
 export interface FinalizeSessionRequest {
-  quality_rating: number
+  quality_rating?: number | null
   quality_rating_reason?: string
   quality_rating_sections?: string[]
   soap_note_edited?: SOAPNoteModel
