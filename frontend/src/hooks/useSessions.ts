@@ -169,7 +169,7 @@ export function useFinalizeSession(token?: string) {
         note: previous.note
           ? {
               ...previous.note,
-              quality_rating: data.quality_rating,
+              quality_rating: data.quality_rating ?? previous.note.quality_rating,
               quality_rating_reason:
                 data.quality_rating_reason ?? previous.note.quality_rating_reason,
               quality_rating_sections:

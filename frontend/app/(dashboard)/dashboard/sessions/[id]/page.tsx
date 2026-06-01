@@ -262,7 +262,8 @@ export default function SessionDetailPage({ params }: PageProps) {
                 <div>
                   <h3 className="text-lg font-semibold text-neutral-900 mb-2">Review Session</h3>
                   <p className="text-sm text-neutral-600">
-                    Rate the quality of this session and finalize to complete.
+                    Finalize to complete. Rating the quality of this session is
+                    optional.
                   </p>
                 </div>
                 <QualityRatingWithFeedback

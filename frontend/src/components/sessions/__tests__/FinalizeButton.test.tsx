@@ -97,13 +97,13 @@ describe("FinalizeButton", () => {
   })
 
   describe("Disabled States", () => {
-    it("is disabled when quality rating is null", () => {
+    it("is enabled when quality rating is null (rating is optional)", () => {
       render(<FinalizeButton {...defaultProps} qualityRating={null} />, {
         wrapper: createWrapper(),
       })
 
       const button = screen.getByRole("button", { name: /finalize session/i })
-      expect(button).toBeDisabled()
+      expect(button).not.toBeDisabled()
     })
 
     it("is disabled when status is queued", () => {
@@ -216,8 +216,9 @@ describe("FinalizeButton", () => {
       })
     })
 
-    it("does not call mutation when quality rating is null", async () => {
+    it("finalizes without a rating when quality rating is null", async () => {
       const user = userEvent.setup()
+      mockMutateAsync.mockResolvedValue({})
 
       render(<FinalizeButton {...defaultProps} qualityRating={null} />, {
         wrapper: createWrapper(),
@@ -226,7 +227,10 @@ describe("FinalizeButton", () => {
       const button = screen.getByRole("button", { name: /finalize session/i })
       await user.click(button)
 
-      expect(mockMutateAsync).not.toHaveBeenCalled()
+      expect(mockMutateAsync).toHaveBeenCalledWith({
+        sessionId: "session-123",
+        data: {},
+      })
     })
 
     it("does not call mutation when status is not pending_review", async () => {
