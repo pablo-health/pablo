@@ -47,6 +47,14 @@ logger = logging.getLogger(__name__)
 # always means a scanned / image-only PDF with no embedded text layer.
 _SCANNED_PDF_TEXT_THRESHOLD = 100
 
+# Cap the total *uncompressed* size of a .docx so a small "zip bomb" can't
+# expand to gigabytes in memory when python-docx reads the package.
+_MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+
+# Cap the extracted text fed to the parser. A single SOAP note is a few KB;
+# anything past this is either not one note or an attempt to run up LLM cost.
+_MAX_EXTRACTED_CHARS = 1_000_000
+
 # Keys we add to the SOAP response schema so the model also reports when the
 # session occurred. Kept distinct from the note ``content`` so they never
 # leak into the rendered note body.
@@ -160,6 +168,89 @@ def _looks_like_text(content_type: str | None, filename: str | None) -> bool:
     return bool(filename and filename.lower().endswith(".txt"))
 
 
+def _looks_like_docx(content_type: str | None, filename: str | None) -> bool:
+    if content_type and "wordprocessingml" in content_type.lower():
+        return True
+    return bool(filename and filename.lower().endswith(".docx"))
+
+
+def _docx_block_lines(document: Any) -> list[str]:
+    """Yield the document body's text in order — paragraphs and table cells.
+
+    python-docx exposes paragraphs and tables separately; iterating the body
+    element preserves their document order (so a leading metadata table reads
+    before the narrative).
+    """
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    lines: list[str] = []
+    for child in document.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            text = Paragraph(child, document).text
+            if text.strip():
+                lines.append(text)
+        elif isinstance(child, CT_Tbl):
+            for row in Table(child, document).rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        lines.append(cell.text)
+    return lines
+
+
+def _extract_docx_text(data: bytes) -> str:
+    """Extract a .docx's text with python-docx.
+
+    Reads page headers/footers (clinical templates often put the date there),
+    body paragraphs, and table cells in document order. python-docx's parser
+    does not resolve XML entities, so entity-expansion ("billion laughs") /
+    XXE don't apply; the uncompressed-size guard below covers zip bombs.
+    """
+    import io
+    import zipfile
+
+    import docx
+
+    # Zip-bomb guard: reject if the package's declared uncompressed size
+    # exceeds the cap before python-docx reads the whole thing into memory.
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            total_uncompressed = sum(info.file_size for info in archive.infolist())
+    except zipfile.BadZipFile as exc:
+        raise DocumentTextExtractionError(
+            "This doesn't look like a readable Word (.docx) document."
+        ) from exc
+    if "word/document.xml" not in names:
+        raise DocumentTextExtractionError(
+            "This doesn't look like a readable Word (.docx) document."
+        )
+    if total_uncompressed > _MAX_DOCX_UNCOMPRESSED_BYTES:
+        raise DocumentTextExtractionError("This Word document is too large to import.")
+
+    try:
+        document = docx.Document(io.BytesIO(data))
+    except Exception as exc:
+        raise DocumentTextExtractionError(
+            "This Word document's contents could not be read."
+        ) from exc
+
+    lines: list[str] = []
+    for section in document.sections:
+        for container in (section.header, section.footer):
+            lines.extend(p.text for p in container.paragraphs if p.text.strip())
+    lines.extend(_docx_block_lines(document))
+
+    body = "\n".join(lines).strip()
+    if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
+        raise DocumentTextExtractionError(
+            "This Word document has no extractable text. Upload a text-based export instead."
+        )
+    return body
+
+
 def _extract_pdf_text(data: bytes) -> str:
     """Pull the embedded text layer out of a PDF via PyMuPDF.
 
@@ -168,8 +259,15 @@ def _extract_pdf_text(data: bytes) -> str:
     """
     import fitz  # type: ignore[import-untyped]  # PyMuPDF, imported lazily
 
-    with fitz.open(stream=data, filetype="pdf") as doc:
-        body = "".join(page.get_text() for page in doc).strip()
+    try:
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            body = "".join(page.get_text() for page in doc).strip()
+    except Exception as exc:
+        # MuPDF raises a range of errors on corrupt / encrypted / non-PDF
+        # input; surface a clean 4xx rather than a 500 with a traceback.
+        raise DocumentTextExtractionError(
+            "Couldn't read this PDF — it may be corrupted, password-protected, or not a PDF."
+        ) from exc
     if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
         raise DocumentTextExtractionError(
             "This PDF has no extractable text — it looks like a scan or image. "
@@ -186,23 +284,28 @@ def extract_document_text(
 ) -> str:
     """Extract plain text from an uploaded clinical document.
 
-    Supports text-based PDFs (PyMuPDF) and plain-text files. Word (.docx)
-    support is tracked separately. Raises
-    :class:`UnsupportedDocumentTypeError` for anything else and
-    :class:`DocumentTextExtractionError` when a supported file yields no
-    usable text.
+    Supports text-based PDFs (PyMuPDF), Word .docx (standard-library zip/XML),
+    and plain-text files. Raises :class:`UnsupportedDocumentTypeError` for
+    anything else and :class:`DocumentTextExtractionError` when a supported
+    file yields no usable text.
     """
     if _looks_like_pdf(content_type, filename):
-        return _extract_pdf_text(data)
-    if _looks_like_text(content_type, filename):
-        body = data.decode("utf-8", errors="replace").strip()
-        if not body:
+        text = _extract_pdf_text(data)
+    elif _looks_like_docx(content_type, filename):
+        text = _extract_docx_text(data)
+    elif _looks_like_text(content_type, filename):
+        text = data.decode("utf-8", errors="replace").strip()
+        if not text:
             raise DocumentTextExtractionError("The uploaded file is empty.")
-        return body
-    raise UnsupportedDocumentTypeError(
-        f"Unsupported document type (content_type={content_type!r}, "
-        f"filename={filename!r}). Supported formats: PDF, TXT."
-    )
+    else:
+        raise UnsupportedDocumentTypeError(
+            f"Unsupported document type (content_type={content_type!r}, "
+            f"filename={filename!r}). Supported formats: PDF, Word (.docx), TXT."
+        )
+
+    if len(text) > _MAX_EXTRACTED_CHARS:
+        raise DocumentTextExtractionError("This document is too long to import as a single note.")
+    return text
 
 
 # ---------------------------------------------------------------------------

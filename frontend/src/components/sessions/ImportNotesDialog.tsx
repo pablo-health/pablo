@@ -4,7 +4,7 @@
  * ImportNotesDialog
  *
  * Bring an existing patient's documented history into Pablo. The clinician
- * drops one file or a whole chart's worth of prior SOAP notes (PDF or TXT);
+ * drops one file or a whole chart's worth of prior SOAP notes (PDF/Word/TXT);
  * each is read, parsed into a structured note dated from the document, and
  * filed as a session awaiting review. Files import a few at a time with a
  * per-file progress list, so one unreadable file never blocks the rest.
@@ -37,7 +37,7 @@ import {
 import { useImportNotes, type ImportItem } from "@/hooks/useImportNotes"
 import { formatFileSize, getFileExtension } from "@/lib/utils/fileValidation"
 
-const ACCEPTED_EXTENSIONS = [".pdf", ".txt"] as const
+const ACCEPTED_EXTENSIONS = [".pdf", ".docx", ".txt"] as const
 const MAX_BYTES = 15 * 1024 * 1024
 
 export interface ImportNotesDialogProps {
@@ -72,7 +72,7 @@ export function ImportNotesDialog({
     for (const file of Array.from(incoming)) {
       const ext = getFileExtension(file.name).toLowerCase()
       if (!ACCEPTED_EXTENSIONS.includes(ext as (typeof ACCEPTED_EXTENSIONS)[number])) {
-        refused.push(`${file.name} — only PDF or TXT`)
+        refused.push(`${file.name} — only PDF, Word, or TXT`)
       } else if (file.size > MAX_BYTES) {
         refused.push(`${file.name} — over 15 MB`)
       } else {
@@ -131,7 +131,7 @@ export function ImportNotesDialog({
         <DialogHeader>
           <DialogTitle>Import existing notes</DialogTitle>
           <DialogDescription>
-            Upload prior SOAP notes (PDF or TXT). Pablo reads each one, pulls out
+            Upload prior SOAP notes (PDF, Word, or TXT). Pablo reads each one, pulls out
             the date and the S/O/A/P sections, and files it against this patient
             for your review. Drop a whole chart&apos;s worth at once.
           </DialogDescription>
@@ -161,7 +161,7 @@ export function ImportNotesDialog({
               <input
                 ref={inputRef}
                 type="file"
-                accept=".pdf,.txt"
+                accept=".pdf,.docx,.txt"
                 multiple
                 onChange={(e) => {
                   if (e.target.files?.length) addFiles(e.target.files)
@@ -180,7 +180,7 @@ export function ImportNotesDialog({
                 {isDragging ? "Drop the files here" : "Drag & drop files, or click to browse"}
               </p>
               <p className="mt-1 text-xs text-neutral-500">
-                PDF or TXT, up to 15 MB each — select as many as you like
+                PDF, Word, or TXT, up to 15 MB each — select as many as you like
               </p>
             </div>
 
