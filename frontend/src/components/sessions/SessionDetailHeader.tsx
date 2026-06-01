@@ -10,8 +10,9 @@
  * - Status badge with auto-polling
  */
 
+import Link from "next/link"
 import { format } from "date-fns"
-import { Calendar } from "lucide-react"
+import { ArrowLeft, Calendar } from "lucide-react"
 import type { SessionStatus } from "@/types/sessions"
 import { SessionStatusBadge } from "./SessionStatusBadge"
 
@@ -33,7 +34,14 @@ export function SessionDetailHeader({
   const formattedDate = format(new Date(sessionDate), "MMMM d, yyyy")
 
   return (
-    <div className="border-b border-neutral-200 pb-6">
+    <div className="space-y-4 border-b border-neutral-200 pb-6">
+      <Link
+        href="/dashboard/sessions"
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        Back to Review
+      </Link>
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <h1 className="text-3xl font-display font-bold text-neutral-900">
