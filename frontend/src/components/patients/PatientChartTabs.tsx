@@ -3,13 +3,15 @@
 "use client"
 
 import Link from "next/link"
-import { FileText, Folder } from "lucide-react"
+import { Activity, FileText, Folder } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
 import { PatientDocuments } from "@/components/patients/PatientDocuments"
+import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasuresTab"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
+import { usePatientOutcomeMeasures } from "@/hooks/useOutcomeMeasures"
 import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
 
 const PREVIEW_LIMIT = 3
@@ -111,9 +113,11 @@ function NotesTab({ patientId }: { patientId: string }) {
 export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
   const { data: notes } = usePatientNotes(patientId)
   const { data: documents } = usePatientDocuments(patientId)
+  const { data: measures } = usePatientOutcomeMeasures(patientId)
 
   const noteCount = notes?.total ?? 0
   const documentCount = documents?.total ?? 0
+  const measureCount = measures?.total ?? 0
 
   return (
     <div className="card">
@@ -132,12 +136,20 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
             Documents
             <CountBadge count={documentCount} />
           </TabsTrigger>
+          <TabsTrigger value="measures">
+            <Activity className="h-4 w-4" />
+            Measures
+            <CountBadge count={measureCount} />
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="notes" className="pt-4">
           <NotesTab patientId={patientId} />
         </TabsContent>
         <TabsContent value="documents" className="pt-4">
           <PatientDocuments patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="measures" className="pt-4">
+          <OutcomeMeasuresTab patientId={patientId} />
         </TabsContent>
       </Tabs>
     </div>
