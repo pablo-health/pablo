@@ -24,6 +24,7 @@ token counts are safe to log; everything else stays on the
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 import uuid
 from dataclasses import dataclass
@@ -555,7 +556,7 @@ def _first_window_gap_sequence(messages: list[ChatMessage]) -> int | None:
     the head-side sequence at that boundary, or ``None`` when the window is
     contiguous (nothing was elided).
     """
-    for prev, cur in zip(messages, messages[1:], strict=False):
+    for prev, cur in itertools.pairwise(messages):
         if cur.sequence > prev.sequence + 1:
             return prev.sequence
     return None
