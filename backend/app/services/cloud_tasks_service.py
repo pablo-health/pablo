@@ -8,8 +8,15 @@ healthcare practice a request belongs to. Pass only opaque identifiers
 (user_id, session_id) and resolve tenant context server-side.
 """
 
+from __future__ import annotations
+
+import functools
 import json
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from google.cloud import tasks_v2
 
 from ..logging_config import request_id_var
 from ..middleware.outbound import build_traceparent
@@ -17,6 +24,14 @@ from ..middleware.request_context import REQUEST_ID_HEADER, W3C_TRACEPARENT_HEAD
 from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1)
+def _cloud_tasks_client() -> tasks_v2.CloudTasksClient:
+    """Return a cached CloudTasksClient (one gRPC channel for the process lifetime)."""
+    from google.cloud import tasks_v2 as _tasks_v2
+
+    return _tasks_v2.CloudTasksClient()
 
 
 def _trace_propagation_headers() -> dict[str, str]:
@@ -76,7 +91,7 @@ def enqueue_cloud_task(
 
     from google.cloud import tasks_v2
 
-    client = tasks_v2.CloudTasksClient()
+    client = _cloud_tasks_client()
     parent = client.queue_path(
         settings.gcp_project_id,
         settings.transcription_queue_location,
