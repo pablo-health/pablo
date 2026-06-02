@@ -121,7 +121,7 @@ function DayHeaderRow({ days }: { days: Date[] }) {
       className="flex border-b"
       style={{ borderColor: "var(--ed-hairline-strong)" }}
     >
-      <div className="w-16 shrink-0" aria-hidden />
+      <div className="w-[60px] shrink-0" aria-hidden />
       <div
         className="ed-daycols grid flex-1"
         style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
@@ -162,13 +162,13 @@ function DayHeaderRow({ days }: { days: Date[] }) {
 function HourRail({ hours }: { hours: number[] }) {
   return (
     <div
-      className="ed-halfhour relative w-16 shrink-0"
+      className="ed-halfhour relative w-[60px] shrink-0"
       style={{ backgroundColor: "var(--ed-rail)" }}
     >
       {hours.map((h, i) => (
         <div
           key={h}
-          className="relative flex items-start justify-end pr-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em]"
+          className="relative flex items-start justify-end pr-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
           style={{ height: HOUR_ROW_PX, color: "var(--ed-ink-soft)" }}
         >
           {i === 0 ? "" : format(new Date().setHours(h, 0, 0, 0), "h a")}
@@ -235,7 +235,7 @@ function DayColumn({
         // With a dynamic window the grid always contains every appointment,
         // so no clamping is needed — render at the true position.
         const top = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
-        const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 22)
+        const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 20)
         const widthPct = 100 / laneCount
         const left = lane * widthPct
         const micro = height < EVENT_MICRO_PX
