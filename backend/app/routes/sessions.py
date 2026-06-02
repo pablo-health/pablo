@@ -827,8 +827,14 @@ async def upload_audio(
                 endpoint_path="/api/internal/transcription-poll",
                 payload={"session_id": session_id, "user_id": user.id},
             )
-        except Exception:
-            _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
+        except Exception as _enqueue_exc:
+            from google.api_core.exceptions import AlreadyExists
+
+            if isinstance(_enqueue_exc, AlreadyExists):
+                # Named-task dedup: task already enqueued and running — no revert.
+                logger.info("Transcription task already enqueued (dedup); skipping revert")
+            else:
+                _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
 
         audit.log_session_action(
             AuditAction.SESSION_AUDIO_UPLOADED,
