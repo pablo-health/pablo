@@ -97,6 +97,15 @@ class EhrAction(StrEnum):
     NONE = "none"
 
 
+class OutcomeMeasureSource(StrEnum):
+    """Clinical provenance of a scored outcome measure."""
+
+    PATIENT_SELF_REPORT = "patient_self_report"
+    CLINICIAN_ADMINISTERED_VERBAL = "clinician_administered_verbal"
+    MANUAL = "manual"
+    INFERRED = "inferred"
+
+
 class ClinicianRole(StrEnum):
     """A clinician's relationship to a patient in `patient_clinicians`.
 
