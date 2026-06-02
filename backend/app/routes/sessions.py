@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..db import release_db_connection
 from ..models import (
     AuditAction,
     FinalizeSessionRequest,
@@ -301,6 +302,14 @@ async def import_session(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+
+    # Release the request-scoped DB connection before the multi-second LLM
+    # parse. The middleware opens a transaction (SET search_path) at request
+    # entry; holding that pooled connection idle across the Gemini call is
+    # what let Cloud SQL reap it mid-request, surfacing as a 500 on the first
+    # query inside import_session. Tenant scoping re-arms on the next
+    # checkout -- same seam pattern as upload_session (THERAPY-da7t).
+    release_db_connection()
 
     try:
         parsed = note_import_service.parse_soap_note(text)

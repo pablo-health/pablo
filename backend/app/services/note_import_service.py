@@ -433,7 +433,12 @@ class NoteImportService:
         self._model = model
 
     def _resolve_model(self) -> str:
-        return self._model or get_settings().ai_model
+        # Import is verbatim relocation, not generation: a flash-tier model
+        # with thinking disabled (see _complete_with_retry) is sufficient and
+        # far faster than the pro/thinking default. Falls back to ai_model
+        # when no flash model is configured.
+        settings = get_settings()
+        return self._model or settings.ai_model_flash or settings.ai_model
 
     def _complete_with_retry(
         self,
@@ -444,8 +449,12 @@ class NoteImportService:
     ) -> StructuredCompletion:
         """One structured call, retried once at 2x budget if truncated.
 
-        Mirrors ``note_generation_service`` — thinking models can spend the
-        output budget on reasoning and truncate the JSON tail on a long note.
+        Mirrors ``note_generation_service`` — but thinking is disabled here
+        (``thinking_budget=0``). Import relocates the document's text into the
+        SOAP shape verbatim; the model has nothing to reason about, so the
+        reasoning the pro/thinking default spends is pure latency (measured
+        ~90s vs ~10s on the same note). Generation keeps thinking on because
+        there the reasoning is doing the work.
         """
         base_budget = get_settings().note_max_output_tokens
         last_truncation: StructuredOutputTruncatedError | None = None
@@ -459,6 +468,7 @@ class NoteImportService:
                     max_output_tokens=budget,
                     # Verbatim relocation, not generation: keep it deterministic.
                     temperature=0.0,
+                    thinking_budget=0,
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc

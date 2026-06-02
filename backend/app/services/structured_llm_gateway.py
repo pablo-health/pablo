@@ -84,12 +84,21 @@ class StructuredLLMGateway(ABC):
         response_schema: dict[str, Any],
         max_output_tokens: int,
         temperature: float = 0.3,
+        thinking_budget: int | None = None,
     ) -> StructuredCompletion:
         """Issue one structured completion and return the parsed JSON.
 
         ``response_schema`` is a JSON-schema-style dict (``{"type":
         "object", "properties": {...}}``). The Gemini implementation
         translates it to ``types.Schema`` internally.
+
+        ``thinking_budget`` caps the model's reasoning tokens when set.
+        Pass ``0`` to disable thinking entirely -- correct for verbatim /
+        mechanical extraction (e.g. note import), where reasoning adds
+        latency and cost without improving a copy-the-text task. Leave
+        ``None`` to use the model's default thinking budget -- correct for
+        genuine generation (e.g. SOAP from a transcript), where the
+        reasoning is doing the work.
 
         Raises:
             ValueError: model returned invalid JSON or violated the schema.
@@ -131,6 +140,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         response_schema: dict[str, Any],
         max_output_tokens: int,
         temperature: float = 0.3,
+        thinking_budget: int | None = None,
     ) -> StructuredCompletion:
         try:
             from google.genai import types
@@ -148,6 +158,13 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             response_schema=schema,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            # Default thinking when None; an explicit budget (incl. 0 to
+            # disable) is forwarded for mechanical extraction callers.
+            thinking_config=(
+                types.ThinkingConfig(thinking_budget=thinking_budget)
+                if thinking_budget is not None
+                else None
+            ),
         )
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
@@ -274,6 +291,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
         response_schema: dict[str, Any],
         max_output_tokens: int,
         temperature: float = 0.3,
+        thinking_budget: int | None = None,
     ) -> StructuredCompletion:
         self.calls.append(
             {
@@ -283,6 +301,7 @@ class FakeStructuredLLMGateway(StructuredLLMGateway):
                 "response_schema": response_schema,
                 "max_output_tokens": max_output_tokens,
                 "temperature": temperature,
+                "thinking_budget": thinking_budget,
             }
         )
         if self.responses:

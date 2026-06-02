@@ -174,11 +174,9 @@ def _commit_intermediate(user_id: str) -> None:
     there's no transaction to commit there.
     """
     del user_id  # listener-driven re-arm; see app.db._rearm_rls_user_id_on_txn_begin
-    from ..db import _request_session
+    from ..db import release_db_connection
 
-    session = _request_session.get()
-    if session is not None:
-        session.commit()
+    release_db_connection()
 
 
 class SessionService:
