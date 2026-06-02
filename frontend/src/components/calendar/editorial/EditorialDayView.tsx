@@ -90,13 +90,13 @@ export function EditorialDayView({
       <div ref={scrollerRef} className="relative max-h-[68vh] overflow-y-auto">
         <div className="flex">
           <div
-            className="ed-halfhour relative w-20 shrink-0"
+            className="ed-halfhour relative w-[72px] shrink-0"
             style={{ backgroundColor: "var(--ed-rail)" }}
           >
             {hours.map((h, i) => (
               <div
                 key={h}
-                className="flex items-start justify-end pr-3 pt-1 text-[11px] font-semibold uppercase tracking-[0.14em]"
+                className="flex items-start justify-end pr-3 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
                 style={{ height: HOUR_ROW_PX, color: "var(--ed-ink-soft)" }}
               >
                 {i === 0 ? "" : format(new Date().setHours(h, 0, 0, 0), "h a")}
@@ -120,7 +120,7 @@ export function EditorialDayView({
               // With a dynamic window the grid always contains every appointment,
               // so no clamping is needed — render at the true position.
               const top = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
-              const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 26)
+              const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 20)
               const widthPct = 100 / laneCount
               const left = lane * widthPct
               const micro = height < EVENT_MICRO_PX
