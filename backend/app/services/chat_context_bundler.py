@@ -543,7 +543,7 @@ def _render_patient_documents_text(rows: list[PatientDocument]) -> str:
     return "## UPLOADED PATIENT DOCUMENTS\n\n" + "\n\n".join(rendered)
 
 
-def _load_patient_documents(  # noqa: PLR0912 — branchy selection validation
+def _load_patient_documents(
     raw: Any,
     *,
     patient_documents_repo: PatientDocumentRepository,
