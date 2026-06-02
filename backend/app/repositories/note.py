@@ -62,12 +62,20 @@ class NotesRepository(ABC):
         """
 
     @abstractmethod
-    def list_by_patient(self, patient_id: str, user_id: str) -> list[Note]:
+    def list_by_patient(
+        self, patient_id: str, user_id: str, *, limit: int | None = None
+    ) -> list[Note]:
         """List notes for a patient, newest first.
 
         Returns ``[]`` when the user has no access grant — matches the
         empty-result shape for "patient has no notes" so callers can't
         distinguish.
+
+        ``limit`` caps the result to the most-recent N notes (by
+        ``finalized_at`` then ``created_at``). The chat context bundler
+        passes a cap so the hot path doesn't load an entire chart's note
+        history on every turn; ``None`` (the default) preserves the
+        unbounded behavior for callers that genuinely need all notes.
         """
 
     @abstractmethod
@@ -144,7 +152,11 @@ class InMemoryNotesRepository(NotesRepository):
         return None
 
     def list_by_patient(
-        self, patient_id: str, user_id: str = _TEST_DEFAULT_USER
+        self,
+        patient_id: str,
+        user_id: str = _TEST_DEFAULT_USER,
+        *,
+        limit: int | None = None,
     ) -> list[Note]:
         if not self._can_access(patient_id, user_id):
             return []
@@ -153,6 +165,8 @@ class InMemoryNotesRepository(NotesRepository):
             key=lambda n: (n.finalized_at or n.created_at),
             reverse=True,
         )
+        if limit is not None:
+            notes = notes[:limit]
         return notes
 
     # --- write methods ---

@@ -82,6 +82,20 @@ class PatientDocumentRepository(ABC):
         """
 
     @abstractmethod
+    def get_many(
+        self, document_ids: list[str], user_id: str
+    ) -> list[PatientDocument]:
+        """Bulk-fetch documents by id under the combined access predicate.
+
+        Single query for a set of ids — replaces a per-id fetch loop on
+        the chat hot path. Same access semantics as :meth:`get` (chart
+        rows need a grant, restricted rows need uploader match), so ids
+        the caller cannot see or that are deleted are silently omitted —
+        no existence oracle. Order is unspecified; callers that need the
+        request order must re-sort.
+        """
+
+    @abstractmethod
     def list_for_patient(self, patient_id: str, user_id: str) -> list[PatientDocument]:
         """List documents for a patient the caller can see, newest first.
 
@@ -165,6 +179,16 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         if doc is None or not self._can_read(doc, user_id):
             return None
         return doc
+
+    def get_many(
+        self, document_ids: list[str], user_id: str
+    ) -> list[PatientDocument]:
+        wanted = set(document_ids)
+        return [
+            d
+            for d in self._by_id.values()
+            if d.id in wanted and self._can_read(d, user_id)
+        ]
 
     def list_for_patient(self, patient_id: str, user_id: str) -> list[PatientDocument]:
         rows = [
