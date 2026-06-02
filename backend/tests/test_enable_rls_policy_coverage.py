@@ -11,12 +11,30 @@ The end-to-end RLS behavior (rows actually filtered) is covered by the
 integration suite against a real database; this is the cheap unit-level
 regression that the three deny-all tables (compliance_documents,
 ehr_routes, users) would have tripped.
+
+Two additional guards (L3 — runs in ``make test``, no DB required):
+
+* ``test_every_real_tenant_table_is_classified`` — iterates every table
+  in the real ORM metadata and asserts ``enable_rls_on_schema`` does NOT
+  raise.  Catches a newly-added tenant table that has no policy branch
+  before it reaches the real-Postgres integration suite.
+
+* ``test_rls_forced_tables_are_covered_by_rls_invariants`` — asserts
+  that every table returned by ``rls_forced_tenant_tables()`` is
+  present in the effective coverage set used by
+  ``test_rls_invariants.py``.  Closes the gap where a new RLS-forced
+  table is auto-covered by RLS but silently skipped by the integration
+  suite.
 """
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import pytest
-from app.db import enable_rls_on_schema
+from app.db import enable_rls_on_schema, rls_forced_tenant_tables
+from app.db.models import Base
 
 
 class _FakeResult:
@@ -82,3 +100,109 @@ def test_user_id_table_still_gets_isolation_policy() -> None:
     ddl = " ".join(session.executed)
     assert "CREATE POLICY rls_user_isolation ON practice_test.appointments" in ddl
     assert "user_id = current_setting('app.current_user_id', true)" in ddl
+
+
+# ---------------------------------------------------------------------------
+# L3 unit guards — real ORM metadata, no DB
+# ---------------------------------------------------------------------------
+
+# Escape hatch for rls_forced_tenant_tables() entries that are not yet
+# covered by test_rls_invariants.py.  Add a table here ONLY with a written
+# reason and CODEOWNERS review; this set is empty by design today.
+# (Mirrors the route-guardrail exemption pattern.)
+EXEMPT_RLS_FORCED_TABLES: frozenset[str] = frozenset()
+# ^ Add entries here ONLY with a written justification, e.g.:
+#   frozenset({"some_table"})  # reason: <why coverage is deferred>
+
+
+def _columns_for_rls(table: object) -> set[str]:
+    """Return the subset of columns enable_rls_on_schema queries for."""
+    return {c.name for c in table.columns} & {"user_id", "patient_id", "id"}  # type: ignore[union-attr]
+
+
+def test_every_real_tenant_table_is_classified() -> None:
+    """Every ORM table must map to a policy branch, not the deny-all guard.
+
+    Drives ``enable_rls_on_schema`` via _FakeSession seeded with each
+    table's REAL columns (intersected to {user_id, patient_id, id} as the
+    function queries).  Asserts no RuntimeError is raised.
+
+    On failure: the error message names the offending table.  Fix by adding
+    a policy branch in ``enable_rls_on_schema`` OR listing it in
+    ``not_row_scoped`` / ``register_overlay_not_row_scoped`` if it is not
+    row-owned.
+    """
+    unclassified: list[str] = []
+    for table_name, table in Base.metadata.tables.items():
+        cols = _columns_for_rls(table)
+        if not cols:
+            # Table has none of {user_id, patient_id, id} — it won't reach
+            # the policy loop (e.g. ehr_prompts, alembic_version).  Skip.
+            continue
+        try:
+            session = _FakeSession({table_name: cols})
+            enable_rls_on_schema(session, "practice_test")  # type: ignore[arg-type]
+        except RuntimeError:
+            unclassified.append(table_name)
+
+    assert not unclassified, (
+        f"enable_rls_on_schema has no RLS policy defined for: {unclassified}. "
+        "These tables would be force-RLS'd with no policy — a silent deny-all. "
+        "Fix: add a policy branch in enable_rls_on_schema (backend/app/db/__init__.py) "
+        "OR call register_overlay_not_row_scoped() for tables whose isolation boundary "
+        "is the tenant schema, not a per-row predicate. "
+        "See CLAUDE.md guardrail #4."
+    )
+
+
+def test_rls_forced_tables_are_covered_by_rls_invariants() -> None:
+    """Every auto-derived RLS-forced table must be in the invariant suite.
+
+    Parses TENANT_SCOPED_TABLES from test_rls_invariants.py (AST, no import)
+    and checks that rls_forced_tenant_tables() minus EXEMPT_RLS_FORCED_TABLES
+    is a subset of the effective coverage.
+
+    On failure: the message names which tables to add to TENANT_SCOPED_TABLES in
+    backend/tests_integration/database/test_rls_invariants.py and
+    instructs the author to add a real-Postgres isolation test.
+    See CLAUDE.md guardrail #4.
+    """
+    invariants_path = (
+        Path(__file__).resolve().parents[1]
+        / "tests_integration"
+        / "database"
+        / "test_rls_invariants.py"
+    )
+    tree = ast.parse(invariants_path.read_text())
+
+    # Extract TENANT_SCOPED_TABLES from the AST (it's a module-level tuple literal).
+    curated: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "TENANT_SCOPED_TABLES":
+                    if isinstance(node.value, ast.Tuple):
+                        curated = {
+                            elt.value
+                            for elt in node.value.elts
+                            if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                        }
+                    break
+
+    # Effective coverage = curated + auto-derived (mirrors _EFFECTIVE_TABLES).
+    derived = rls_forced_tenant_tables()
+    effective = curated | derived
+
+    # Tables that are auto-derived but not yet in effective coverage.
+    uncovered = (derived - EXEMPT_RLS_FORCED_TABLES) - effective
+
+    assert not uncovered, (
+        f"The following RLS-forced tables are not covered by the RLS "
+        f"invariant suite: {sorted(uncovered)}. "
+        f"Add each one to TENANT_SCOPED_TABLES in "
+        f"backend/tests_integration/database/test_rls_invariants.py AND "
+        f"add a real-Postgres isolation test proving the security boundary. "
+        f"See CLAUDE.md guardrail #4. "
+        f"If coverage must be deferred, add the table name to "
+        f"EXEMPT_RLS_FORCED_TABLES in this file with a written reason."
+    )
