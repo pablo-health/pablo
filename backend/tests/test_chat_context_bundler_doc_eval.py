@@ -27,7 +27,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from app.models import PatientDocument
+from app.models import Note, PatientDocument
 from app.repositories import InMemoryNotesRepository, InMemoryPatientDocumentRepository
 from app.services.chat_context_bundler import (
     CHARS_PER_TOKEN,
@@ -42,7 +42,6 @@ from app.services.chat_context_bundler import (
     assemble_context_bundle,
     register_document_strategy,
 )
-from app.models import Note
 
 
 def _make_note(
@@ -573,7 +572,9 @@ class TestSafetyInvariant:
         notes_repo.add(
             _make_note(
                 note_type="safety_plan",
-                content={"warning_signs": ["Crisis line: 988. Safe person: spouse. Means restriction: firearms removed."]},
+                content={"warning_signs": [
+                    "Crisis line: 988. Safe person: spouse. Means restriction: firearms removed."
+                ]},
             )
         )
 
