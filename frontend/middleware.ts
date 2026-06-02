@@ -7,7 +7,10 @@ export default authProviderMiddleware
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.).*)",
+    // `__/` is reserved for the Firebase auth helper (/__/auth/*, /__/firebase/*),
+    // proxied to the Firebase auth domain in next.config.ts. It must bypass
+    // route protection or the OAuth handler 307s to /login and sign-in breaks.
+    "/((?!_next/static|_next/image|favicon.ico|__/|.*\\.).*)",
     "/api/login",
     "/api/logout",
   ],
