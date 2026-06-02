@@ -88,6 +88,27 @@ class ChatRepository(ABC):
         """
 
     @abstractmethod
+    def list_messages_windowed(
+        self, conversation_id: str, user_id: str, *, head: int = 2, tail: int = 30
+    ) -> list[ChatMessage]:
+        """Return a windowed slice of a conversation's messages.
+
+        Pins the first ``head`` messages (the opening turn, which sets
+        the conversation's frame) and the most-recent ``tail`` messages
+        (the live dialogue), dropping the middle when the conversation
+        is longer than ``head + tail``. This is the hot-path read for
+        the streaming turn service: an unbounded :meth:`list_messages`
+        grows linearly with conversation length on *every* turn.
+
+        Both ends are index-range scans on the
+        ``(conversation_id, sequence)`` unique index, merged + deduped
+        by sequence and returned in ascending sequence order. Same
+        access contract as :meth:`list_messages`: ``[]`` when the
+        conversation is absent or the caller has no grant — no existence
+        oracle.
+        """
+
+    @abstractmethod
     def add_conversation(
         self, conversation: ChatConversation, user_id: str
     ) -> ChatConversation:
@@ -255,6 +276,27 @@ class InMemoryChatRepository(ChatRepository):
         msgs = list(self._messages.get(conversation_id, []))
         msgs.sort(key=lambda m: m.sequence)
         return msgs
+
+    def list_messages_windowed(
+        self,
+        conversation_id: str,
+        user_id: str = _TEST_DEFAULT_USER,
+        *,
+        head: int = 2,
+        tail: int = 30,
+    ) -> list[ChatMessage]:
+        if head < 0 or tail < 0:
+            raise ValueError("head and tail must be non-negative")
+        conv = self._conversations.get(conversation_id)
+        if conv is None or not self._can_access(conv.patient_id, user_id):
+            return []
+        msgs = sorted(self._messages.get(conversation_id, []), key=lambda m: m.sequence)
+        head_rows = msgs[:head] if head else []
+        tail_rows = msgs[-tail:] if tail else []
+        by_seq: dict[int, ChatMessage] = {}
+        for m in (*head_rows, *tail_rows):
+            by_seq[m.sequence] = m
+        return [by_seq[s] for s in sorted(by_seq)]
 
     # --- writes ---
 

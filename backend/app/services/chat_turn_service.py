@@ -116,6 +116,19 @@ DEFAULT_MAX_OUTPUT_TOKENS = 2048
 # check constraint (``ck_chat_messages_content_len`` enforces 32k).
 MAX_CONTENT_CHARS = 32_000
 
+# Windowed prior-turn budget. The conversation history fed to the model
+# is the opening ``PRIOR_TURNS_HEAD`` messages (which frame the chat)
+# plus the trailing ``PRIOR_TURNS_TAIL`` messages (the live dialogue);
+# the middle is dropped. This keeps the per-turn read — and the prompt
+# input — bounded instead of growing linearly with conversation length.
+# ~15 recent exchanges (user + assistant) at the default tail.
+PRIOR_TURNS_HEAD = 2
+PRIOR_TURNS_TAIL = 30
+
+# Inserted in place of the dropped middle so the model is told history
+# was elided rather than silently contradicting an earlier decision.
+ELIDED_HISTORY_MARKER = "[earlier turns omitted]"
+
 
 # ---------------------------------------------------------------------------
 # Errors surfaced upstream
@@ -491,7 +504,18 @@ class ChatTurnService:
         user_id: str,
         exclude_message_ids: set[str],
     ) -> list[UserAssistantTurn]:
-        messages = self._chat_repo.list_messages(conversation_id, user_id)
+        # Windowed read: the opening turn + the most-recent turns, not the
+        # whole conversation. The two just-created rows for this turn (the
+        # user message and the empty assistant placeholder) sit at the tail
+        # and are filtered out via ``exclude_message_ids``.
+        messages = self._chat_repo.list_messages_windowed(
+            conversation_id, user_id, head=PRIOR_TURNS_HEAD, tail=PRIOR_TURNS_TAIL
+        )
+        # When the window stitched a head slice to a tail slice across a
+        # gap, mark the head-side sequence so we can splice in an elision
+        # marker once — telling the model history was dropped.
+        elide_after_seq = _first_window_gap_sequence(messages)
+        marker_inserted = False
         prior: list[UserAssistantTurn] = []
         for msg in messages:
             if msg.id in exclude_message_ids:
@@ -504,6 +528,15 @@ class ChatTurnService:
                 continue
             if not msg.content:
                 continue
+            if (
+                elide_after_seq is not None
+                and not marker_inserted
+                and msg.sequence > elide_after_seq
+            ):
+                prior.append(
+                    UserAssistantTurn(role="assistant", content=ELIDED_HISTORY_MARKER)
+                )
+                marker_inserted = True
             prior.append(UserAssistantTurn(role=role, content=msg.content))
         return prior
 
@@ -511,6 +544,21 @@ class ChatTurnService:
 # ---------------------------------------------------------------------------
 # Module-private helpers
 # ---------------------------------------------------------------------------
+
+
+def _first_window_gap_sequence(messages: list[ChatMessage]) -> int | None:
+    """Sequence after which the windowed history skips ≥1 turn.
+
+    :meth:`ChatRepository.list_messages_windowed` stitches a head slice to
+    a tail slice; sequences are otherwise contiguous, so a single
+    discontinuity marks the boundary where the middle was dropped. Returns
+    the head-side sequence at that boundary, or ``None`` when the window is
+    contiguous (nothing was elided).
+    """
+    for prev, cur in zip(messages, messages[1:], strict=False):
+        if cur.sequence > prev.sequence + 1:
+            return prev.sequence
+    return None
 
 
 def _error_event(*, code: str, message: str) -> TurnStreamEvent:

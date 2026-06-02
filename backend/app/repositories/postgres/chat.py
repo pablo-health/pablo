@@ -227,6 +227,62 @@ class PostgresChatRepository(ChatRepository):
         rows = self._session.execute(stmt).scalars().all()
         return [_row_to_message(r) for r in rows]
 
+    def list_messages_windowed(
+        self, conversation_id: str, user_id: str, *, head: int = 2, tail: int = 30
+    ) -> list[ChatMessage]:
+        # Two index-range scans on ux_chat_messages_conversation_sequence:
+        # the opening ``head`` turns and the trailing ``tail`` turns. Both
+        # carry the same grant-join as list_messages, so a caller without a
+        # grant gets an empty list regardless of whether the conversation
+        # exists — no existence oracle. The middle is dropped; the turn
+        # service inserts an elision marker so the model knows history was
+        # skipped.
+        if head < 0 or tail < 0:
+            raise ValueError("head and tail must be non-negative")
+
+        base = (
+            select(ChatMessageRow)
+            .join(
+                ChatConversationRow,
+                ChatConversationRow.id == ChatMessageRow.conversation_id,
+            )
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == ChatConversationRow.patient_id,
+            )
+            .where(
+                ChatMessageRow.conversation_id == conversation_id,
+                *_grant_filters(user_id),
+            )
+        )
+
+        head_rows: list[ChatMessageRow] = []
+        if head:
+            head_rows = list(
+                self._session.execute(
+                    base.order_by(ChatMessageRow.sequence.asc()).limit(head)
+                )
+                .scalars()
+                .all()
+            )
+        tail_rows: list[ChatMessageRow] = []
+        if tail:
+            tail_rows = list(
+                self._session.execute(
+                    base.order_by(ChatMessageRow.sequence.desc()).limit(tail)
+                )
+                .scalars()
+                .all()
+            )
+
+        # Merge: dedup by sequence (head and tail overlap when the
+        # conversation is shorter than head + tail), then sort ascending.
+        by_seq: dict[int, ChatMessageRow] = {}
+        for row in (*head_rows, *tail_rows):
+            by_seq[row.sequence] = row
+        ordered = [by_seq[seq] for seq in sorted(by_seq)]
+        return [_row_to_message(r) for r in ordered]
+
     # --- writes ---
 
     def add_conversation(

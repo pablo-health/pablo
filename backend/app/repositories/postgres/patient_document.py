@@ -159,6 +159,42 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         )
         return _row_to_document(row) if row else None
 
+    def get_many(
+        self, document_ids: list[str], user_id: str
+    ) -> list[PatientDocument]:
+        """Bulk variant of :meth:`get` — one query for a set of ids.
+
+        Carries the same combined access predicate (chart rows need a
+        live ``patient_clinicians`` grant; restricted rows need uploader
+        match), so a co-treater still sees shared chart docs. A naive
+        ``user_id = :uid`` filter would silently drop chart documents
+        the caller can legitimately read. Inaccessible, missing, and
+        deleted ids are simply absent from the result — no existence
+        oracle. Order is unspecified; the caller re-sorts.
+        """
+        if not document_ids:
+            return []
+        rows = (
+            self._session.query(PatientDocumentRow)
+            .outerjoin(
+                PatientClinicianRow,
+                (PatientClinicianRow.patient_id == PatientDocumentRow.patient_id)
+                & (PatientClinicianRow.user_id == user_id),
+            )
+            .filter(
+                PatientDocumentRow.id.in_(document_ids),
+                PatientDocumentRow.deleted_at.is_(None),
+                or_(
+                    (PatientDocumentRow.category == "chart")
+                    & (PatientClinicianRow.user_id == user_id),
+                    PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
+                    & (PatientDocumentRow.user_id == user_id),
+                ),
+            )
+            .all()
+        )
+        return [_row_to_document(row) for row in rows]
+
     def list_for_patient(self, patient_id: str, user_id: str) -> list[PatientDocument]:
         rows = (
             self._session.query(PatientDocumentRow)
