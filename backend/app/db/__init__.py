@@ -143,6 +143,28 @@ def get_db_session() -> Session:
     return session
 
 
+def release_db_connection() -> None:
+    """Commit the request-scoped transaction to release its pooled connection.
+
+    Call this at a seam right before a long external call (notably the
+    multi-second LLM request in the note import/generation paths) so we
+    don't hold a pooled connection -- and an open transaction with
+    whatever locks it took at request entry -- idle across the call. The
+    connection returns to the pool; the next query auto-begins a fresh
+    transaction and the ``checkout`` / ``after_begin`` listeners re-apply
+    ``search_path`` and the RLS ``app.current_user_id`` GUC, so tenant
+    scoping survives transparently. This is what makes "just release the
+    connection" safe despite per-connection tenant state.
+
+    No-ops when no request-scoped session is bound (``to_thread`` workers,
+    CLI scripts, unit tests with in-memory fakes) -- there's no
+    request-scoped transaction to release there.
+    """
+    session = _request_session.get()
+    if session is not None:
+        session.commit()
+
+
 def assert_tenant_schema_set() -> None:
     """Verify the session's search_path is NOT the default 'practice' schema.
 

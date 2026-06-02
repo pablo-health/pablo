@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..db import release_db_connection
 from ..models import (
     AuditAction,
     CreateStandaloneNoteRequest,
@@ -308,6 +309,12 @@ def create_standalone_note(
             format=request.dictation_transcript.format.value,
             content=request.dictation_transcript.content,
         )
+        # Release the request-scoped DB connection before the multi-second
+        # LLM generation so we don't hold a pooled connection (and the
+        # patient read's locks) idle across it -- the stale-connection 500
+        # window. Tenant scoping re-arms on the next checkout. Same seam as
+        # upload_session (THERAPY-da7t) and the import path.
+        release_db_connection()
         try:
             generated = note_generation_service.generate_note(
                 request.note_type,

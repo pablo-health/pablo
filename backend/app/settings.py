@@ -597,7 +597,7 @@ class Settings(BaseSettings):
     # downstream resolver overrides it. Downstream consumers may swap
     # this per ``caller_feature_key``.
     ai_model: str = Field(
-        default="gemini-2.5-pro",
+        default="gemini-3.1-pro-preview",
         description=(
             "Default Gemini model for chat (and any other generation "
             "surface that calls the default resolver). Per design doc "
@@ -606,7 +606,7 @@ class Settings(BaseSettings):
         ),
     )
     ai_model_flash: str = Field(
-        default="gemini-2.5-flash-lite",
+        default="gemini-3.5-flash",
         description=(
             "Flash-tier model used by chat callers by default. Cheaper "
             "than ``ai_model`` and sufficient for grounded chat. When "
