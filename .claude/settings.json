@@ -1,5 +1,23 @@
 {
   "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "cd \"$CLAUDE_PROJECT_DIR/backend\" && poetry run python \"$CLAUDE_PROJECT_DIR/.claude/skills/rls-coverage-check/check.py\" || true",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write",
+        "conditions": [
+          {
+            "field": "tool_input.file_path",
+            "operator": "contains",
+            "value": "backend/app/db/models.py"
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [
@@ -104,6 +122,7 @@
       "Bash(python .claude/skills/audit-coverage-check/check.py:*)",
       "Bash(python .claude/skills/migration-lint/check.py:*)",
       "Bash(python .claude/skills/phi-log-scan/check.py:*)",
+      "Bash(python .claude/skills/rls-coverage-check/check.py)",
       "Bash(python .claude/skills/slop-sweep/check.py:*)",
       "Bash(python scripts/check_audit_params.py)",
       "Bash(bash scripts/check-version-sync.sh)"

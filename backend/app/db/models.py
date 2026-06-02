@@ -29,7 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from ..models.enums import ClinicianRole
+from ..models.enums import ClinicianRole, OutcomeMeasureSource
 
 
 class Base(DeclarativeBase):
@@ -244,6 +244,83 @@ if _MODEL_ROLE_VALUES != _ENUM_ROLE_VALUES:
         f"ClinicianRole enum ({sorted(_ENUM_ROLE_VALUES)}) and the "
         f"patient_clinicians CHECK constraint "
         f"({sorted(_MODEL_ROLE_VALUES)}) have drifted. Update both."
+    )
+
+
+class OutcomeMeasureRow(Base):
+    """Scored clinical instrument result (PHQ-9, GAD-7, or any generic instrument).
+
+    One row per administration — a patient may have many rows for the same
+    instrument over time. The trend-query index on
+    ``(patient_id, instrument, administered_at)`` is the hot path for
+    displaying score-over-time charts in the patient chart view.
+
+    Access is governed by app-layer patient-access checks (the same
+    ``has_patient_access`` function used by the notes table) — no separate
+    row-level-security policy, matching how the notes table is protected.
+    See PABLO-o5k.
+    """
+
+    __tablename__ = "outcome_measures"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    # Short instrument code — 'phq9', 'gad7', etc. No CHECK constraint:
+    # generic shape allows new instruments to be data, not schema changes.
+    instrument: Mapped[str] = mapped_column(String(20), nullable=False)
+    # null until is_complete (all items present) or an explicit total_score
+    # is submitted without item_scores.
+    total_score: Mapped[int | None] = mapped_column(Integer)
+    # Per-item values e.g. {"1": 2, "2": 3, ...}.  Null when only a summary
+    # total is recorded.
+    item_scores: Mapped[dict | None] = mapped_column(JSONB)
+    is_complete: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        default=False,
+    )
+    # Clinical provenance — who/what produced the scores.
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Reserved for future verbal-administration provenance (transcript spans).
+    item_citations: Mapped[dict | None] = mapped_column(JSONB)
+    administered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Soft-delete marker.  NULL = live row; non-null hides the row from
+    # normal reads (list/get) but preserves the audit trail.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('patient_self_report','clinician_administered_verbal','manual','inferred')",
+            name="ck_outcome_measures_source",
+        ),
+        Index(
+            "ix_outcome_measures_patient_instrument_administered",
+            "patient_id",
+            "instrument",
+            "administered_at",
+        ),
+    )
+
+
+# Fail-fast guard: the CHECK constraint string above and OutcomeMeasureSource
+# must enumerate the same set.  If a contributor adds a value to one without
+# the other, this trips at import (and therefore in every test run) instead of
+# silently allowing inserts the enum doesn't know about.
+_MODEL_SOURCE_VALUES = frozenset(
+    {"patient_self_report", "clinician_administered_verbal", "manual", "inferred"}
+)
+_ENUM_SOURCE_VALUES = frozenset(s.value for s in OutcomeMeasureSource)
+if _MODEL_SOURCE_VALUES != _ENUM_SOURCE_VALUES:
+    raise RuntimeError(
+        f"OutcomeMeasureSource enum ({sorted(_ENUM_SOURCE_VALUES)}) and the "
+        f"outcome_measures CHECK constraint "
+        f"({sorted(_MODEL_SOURCE_VALUES)}) have drifted. Update both."
     )
 
 

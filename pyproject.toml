@@ -187,6 +187,11 @@ ignore = [
 "backend/app/models/**/*.py" = [
     "TC003",    # datetime import needed at runtime for Pydantic/dataclass field validation
 ]
+"backend/app/outcome_measures/**/*.py" = [
+    "TC001",    # enums imported from sibling modules used at runtime by Pydantic
+    "TC003",    # datetime import needed at runtime for Pydantic field validation
+    "PLR0913",  # Allow many arguments (FastAPI Depends injection)
+]
 "backend/app/db/models.py" = [
     "TC003",    # datetime import needed at runtime for SQLAlchemy Mapped[] resolution
 ]

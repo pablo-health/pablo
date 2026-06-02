@@ -836,6 +836,30 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     session.commit()
 
 
+def rls_forced_tenant_tables() -> set[str]:
+    '''Return every tenant table that enable_rls_on_schema force-enables RLS on.
+
+    Mirrors that function's selection: a table is RLS-forced if it carries any
+    of user_id / patient_id / id (the columns the provisioning query keys on),
+    excluding alembic_version and the not_row_scoped tables (ehr_routes / users
+    plus any overlay registrations) whose isolation boundary is the schema, not
+    a per-row policy. Derived from the ORM so a new RLS-bearing table — whether
+    patient-access, user-owned, or special-cased — is covered automatically,
+    with no hand-maintained list. MUST stay consistent with enable_rls_on_schema.
+    '''
+    from app.db.models import Base  # lazy import — avoid circular import
+
+    not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
+    scoping_cols = {"user_id", "patient_id", "id"}
+    result: set[str] = set()
+    for table_name, table in Base.metadata.tables.items():
+        if table_name == "alembic_version" or table_name in not_row_scoped:
+            continue
+        if scoping_cols & {c.name for c in table.columns}:
+            result.add(table_name)
+    return result
+
+
 def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
     """Apply RLS to every existing practice_* schema (excluding the template).
 
@@ -870,6 +894,7 @@ from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402
 
 __all__ = [
     "register_overlay_not_row_scoped",
+    "rls_forced_tenant_tables",
     "run_in_tenant",
     "tenant_db_session",
 ]

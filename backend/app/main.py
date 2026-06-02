@@ -25,6 +25,10 @@ from .middleware import (
     SecurityHeadersMiddleware,
 )
 from .notes import get_default_registry, register_builtin_note_types
+from .outcome_measures.router import (
+    outcome_measures_router,
+    patient_outcome_measures_router,
+)
 from .routes import (
     admin,
     admin_pentest,
@@ -153,6 +157,8 @@ app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
+app.include_router(outcome_measures_router)
+app.include_router(patient_outcome_measures_router)
 if settings.enable_patient_chat:
     app.include_router(chat.router)
 
