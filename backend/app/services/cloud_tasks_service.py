@@ -47,6 +47,7 @@ def enqueue_cloud_task(
     payload: dict,
     *,
     service_account_prefix: str = "cloud-tasks-invoker",
+    task_name: str | None = None,
 ) -> None:
     """Enqueue an authenticated Cloud Task targeting an internal API endpoint.
 
@@ -57,6 +58,10 @@ def enqueue_cloud_task(
         endpoint_path: URL path on the backend (e.g., "/api/internal/transcription-poll").
         payload: JSON-serializable dict. Must not contain schema_name or practice_name.
         service_account_prefix: Prefix for the OIDC service account email.
+        task_name: Optional task id. When set, becomes the Cloud Tasks task name so
+            the queue deduplicates against it within its retention window (~1 hour).
+            Cloud Tasks raises ``409 AlreadyExists`` on a duplicate; this function
+            does not swallow it (the caller decides). Must match ``[A-Za-z0-9_-]+``.
     """
     settings = get_settings()
     trace_headers = _trace_propagation_headers()
@@ -82,7 +87,19 @@ def enqueue_cloud_task(
     if not backend_url:
         backend_url = settings.app_url.replace(":3000", ":8000")
 
+    task_resource_name = (
+        client.task_path(
+            settings.gcp_project_id,
+            settings.transcription_queue_location,
+            queue_name,
+            task_name,
+        )
+        if task_name is not None
+        else None
+    )
+
     task = tasks_v2.Task(
+        name=task_resource_name,
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
             url=f"{backend_url}{endpoint_path}",
