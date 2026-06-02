@@ -31,12 +31,16 @@ from app.models import PatientDocument
 from app.repositories import InMemoryNotesRepository, InMemoryPatientDocumentRepository
 from app.services.chat_context_bundler import (
     CHARS_PER_TOKEN,
+    DEFAULT_DOCUMENT_STRATEGY,
     PATIENT_DOCUMENT_MAX_RENDER_CHARS,
     SOURCE_KEY_DOCUMENT_MANIFEST,
     SOURCE_KEY_PATIENT_DOCUMENTS,
     SOURCE_KEY_SAFETY_PLAN_ACTIVE,
+    InvalidSelectionError,
+    _DOCUMENT_RENDERERS,
     _score_doc_relevance,
     assemble_context_bundle,
+    register_document_strategy,
 )
 from app.models import Note
 
@@ -589,3 +593,135 @@ class TestSafetyInvariant:
         assert "ACTIVE SAFETY PLAN" in bundle.text or "Crisis line" in bundle.text
         sources_included = {s["source_key"] for s in bundle.manifest.get("sources_included", [])}
         assert SOURCE_KEY_SAFETY_PLAN_ACTIVE in sources_included
+
+
+# ── 5. Document-strategy extension seam ───────────────────────────────────────
+
+
+def _docs_entry(bundle) -> dict:
+    """The patient_documents entry from a bundle's manifest."""
+    return next(
+        s
+        for s in bundle.manifest["sources_included"]
+        if s["source_key"] == SOURCE_KEY_PATIENT_DOCUMENTS
+    )
+
+
+@pytest.fixture
+def register_strategy():
+    """Register document strategies for a test and unregister them after,
+    so global registry state never leaks between tests."""
+    registered: list[str] = []
+
+    def _register(name: str, renderer) -> None:
+        register_document_strategy(name, renderer)
+        registered.append(name)
+
+    yield _register
+
+    for name in registered:
+        _DOCUMENT_RENDERERS.pop(name, None)
+
+
+class TestDocumentStrategySeam:
+    """The pluggable rendering seam: raw_text default, registry dispatch,
+    unknown-strategy rejection, and strategy-consistent truncation."""
+
+    def test_default_strategy_is_raw_text(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        docs_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        docs_repo.add(_doc(filename="intake.pdf", extracted_text=_BRIEF_INTAKE))
+        bundle = assemble_context_bundle(
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            notes_repo=notes_repo,
+            patient_documents_repo=docs_repo,
+            selection={SOURCE_KEY_PATIENT_DOCUMENTS: True},
+        )
+        assert _docs_entry(bundle)["strategy"] == DEFAULT_DOCUMENT_STRATEGY
+        # raw_text renders the full body section.
+        assert "UPLOADED PATIENT DOCUMENTS" in bundle.text
+        assert _BRIEF_INTAKE in bundle.text
+
+    def test_unknown_strategy_rejected(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        docs_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        docs_repo.add(_doc(filename="intake.pdf", extracted_text=_BRIEF_INTAKE))
+        with pytest.raises(InvalidSelectionError):
+            assemble_context_bundle(
+                patient_id=PATIENT_ID,
+                user_id=USER_ID,
+                notes_repo=notes_repo,
+                patient_documents_repo=docs_repo,
+                selection={SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "not_registered"}},
+            )
+
+    def test_registered_strategy_is_dispatched(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        docs_repo: InMemoryPatientDocumentRepository,
+        register_strategy,
+    ) -> None:
+        register_strategy(
+            "filenames_only",
+            lambda docs: "## FILENAMES\n\n" + "\n".join(d.filename for d in docs),
+        )
+        docs_repo.add(_doc(filename="intake.pdf", extracted_text=_BRIEF_INTAKE))
+        bundle = assemble_context_bundle(
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            notes_repo=notes_repo,
+            patient_documents_repo=docs_repo,
+            selection={SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "filenames_only"}},
+        )
+        # Custom strategy rendered; the raw body did NOT.
+        assert "## FILENAMES" in bundle.text
+        assert "intake.pdf" in bundle.text
+        assert _BRIEF_INTAKE not in bundle.text
+        assert _docs_entry(bundle)["strategy"] == "filenames_only"
+
+    def test_custom_strategy_used_for_truncation_rerender(
+        self,
+        notes_repo: InMemoryNotesRepository,
+        docs_repo: InMemoryPatientDocumentRepository,
+        register_strategy,
+    ) -> None:
+        """Dropping a row under budget must re-render via the same strategy,
+        not fall back to raw_text."""
+        register_strategy(
+            "padded_marker",
+            lambda docs: "## MARKER\n\n"
+            + "\n\n".join(f"<<{d.filename}>>" + (" x" * 4000) for d in docs),
+        )
+        keep = _doc(
+            filename="keep.pdf",
+            extracted_text="keep",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        drop = _doc(
+            filename="drop.pdf",
+            extracted_text="drop",
+            created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        docs_repo.add(drop)
+        docs_repo.add(keep)
+
+        # Each rendered doc is ~8k chars (~2k tokens); budget fits one, not two.
+        bundle = assemble_context_bundle(
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            notes_repo=notes_repo,
+            patient_documents_repo=docs_repo,
+            token_budget=3000,
+            selection={SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "padded_marker"}},
+        )
+        # Re-rendered through the custom strategy (header present), newest kept,
+        # oldest dropped from the tail.
+        assert "## MARKER" in bundle.text
+        assert "<<keep.pdf>>" in bundle.text
+        assert "<<drop.pdf>>" not in bundle.text
+        assert drop.id in _docs_entry(bundle).get("dropped_document_ids", [])

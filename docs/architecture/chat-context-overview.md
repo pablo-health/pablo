@@ -130,81 +130,54 @@ there's evidence retrieval quality is actually hurting — not before.
 ## Status vs the spec (as of 2026-06)
 
 The spec ([`patient-context-chat-oss.md`](./patient-context-chat-oss.md)) is
-canonical but has drifted behind the code in a few places. Per its own
-header rule ("code that diverges is a bug in the code *or* a needed
-amendment to the doc"), these are amendments owed to the spec.
+canonical and current — the doc-context-quality work and the rendering-strategy
+seam are reconciled into it. State of the engine:
 
-**Built beyond the spec (spec amendment owed):**
+**Shipped:**
 
-- **`document_manifest` source** — a 5th-priority, non-truncatable index of
-  every uploaded doc (200-char previews). Not in §7.1's key list, §7.3's
-  priority table, §7.4's default, or §7.5's reason strings. It's a
-  selectable key (not auto-forced when `patient_documents` is on).
-- **Relevance ordering** of `patient_documents` via `_score_doc_relevance`
-  (overlap coefficient) — no mention in §7.
-- **Per-doc render cap + summary fallback** —
-  `PATIENT_DOCUMENT_MAX_RENDER_CHARS` (320k) clips a giant doc to its stored
-  summary or a marked head-clip. Not in §7.
-- **`ContextBundle.documents`** (`tuple[RetrievedDocument, …]`) — a per-item
-  breakdown carrying chart material for citation/provenance.
+- `document_manifest` source (§7.3, §7.9) — always-present, non-truncatable
+  index of every uploaded doc.
+- Relevance ordering of `patient_documents` (overlap coefficient).
+- Per-doc render cap + summary fallback (`PATIENT_DOCUMENT_MAX_RENDER_CHARS`).
+- `ContextBundle.documents` — per-item breakdown for citation/provenance.
+- Rendering-strategy seam (§7.8) — `register_document_strategy`, the
+  `strategy` selection field, and the `raw_text` default.
 
-**Deviation from the spec:**
+**Conforms to the spec:** selection shape + validation (§7.2), priority order
+and pasted-text `ContextOverflowError` (§7.3), `default_source_selection`
+(§7.4), the PHI-free manifest (§7.5), and the budget constants (§7.6).
 
-- §7.7 specifies `ContextBundle.tools: list[ToolSpec]`. The code has **no
-  `tools` field** — provenance arrived instead via the simpler `documents`
-  breakdown above. The agentic tool surface (§7.8/§7.9) never landed, so the
-  field it was designed around isn't there yet.
-
-**Conforms to the spec:** selection shape + validation (§7.2), priority
-order and pasted-text `ContextOverflowError` (§7.3), `default_source_selection`
-(§7.4, exact match — `patient_documents`/`document_manifest` deliberately
-out of the default), PHI-free manifest (§7.5), and the budget constants
-(§7.6 — `DEFAULT_TOKEN_BUDGET=600k`, `CHARS_PER_TOKEN=4`,
-`PASTED_TEXT_MAX_CHARS=32k`).
-
-**Specced but not built:**
-
-- **§7.8 strategy dispatch** — `summary_only` / `structured_fields`
-  (ak6m.2.4). Today there is only the implicit `raw_text` behavior; the
-  `strategy` selection field isn't parsed at all.
-- **§7.9 agent fetch loop** (ak6m.2.5) — `ToolSpec`/`ToolResult`,
-  `read_document_section` / `read_full_document` / `search_documents`, the
-  three agent budgets, the `tool_calls` manifest array, and Gemini
-  context-caching of the cheap preload. None built.
-- Spec-header phases **3b** (LlmUsageMeter), **4** (frontend ChatPanel),
-  **5** (retention sweep + invariant checks), **6** (ops docs).
+**Not built (engine phases):** §7.7's `tools` field (a tool-driven strategy
+needs a turn-service hook, not just the renderer seam — see §7.7), and the
+spec-header phases 3b (LlmUsageMeter), 4 (frontend ChatPanel), 5 (retention
+sweep + invariant checks), 6 (ops docs).
 
 ## Future changes
 
-A living list. When you change context handling, add a dated line to
-"Recent" and move roadmap items as they land. Keep roadmap framing honest
-about what problem each item solves so we don't optimize ahead of need.
+A living list. When you change context handling, add a dated line to "Recent"
+and move roadmap items as they land. Keep roadmap framing honest about what
+problem each item solves so we don't optimize ahead of need.
 
 ### Recent
 
+- **2026-06 — rendering-strategy seam.** `register_document_strategy` + the
+  `strategy` selection field; the engine ships `raw_text`. A deployment can
+  register richer rendering strategies (summarized, structured, or
+  retrieval-augmented) without modifying the engine.
 - **2026-06 — doc-context-quality.** Document manifest always present;
   relevance ordering of uploaded docs; per-doc summary fallback over
   head-clip; relevance scorer switched from Jaccard to the overlap
   coefficient (fixes the length bias above).
-- **2026-06 — windowed history.** `list_messages_windowed` (head K=2 +
-  tail N=30) bounds prior-turn cost.
+- **2026-06 — windowed history.** `list_messages_windowed` (head K=2 + tail
+  N=30) bounds prior-turn cost.
 
 ### Roadmap (deferred until there's a signal)
 
-Ordered cheapest-first. Each is intentionally **not** done yet:
-
-- **Stopword strip + TF weighting on the relevance proxy.** Cheap, keeps
-  the no-dependency property. Do this first if doc ranking starts missing
-  obvious matches.
-- **BM25-lite ranking.** Real term-frequency / length normalization.
-  More code and tuning; only worth it once stopword+TF proves
-  insufficient on real transcripts.
-- **Agent fetch loop** (spec §7.8–§7.9). Instead of preloading and
-  truncating, hand the model the manifest and let it fetch document bodies
-  on demand. Changes the budget problem from "what to drop" to "what to
-  request" and is the natural successor to relevance ranking.
-- **Embedding / vector retrieval.** Semantic ranking over lexical. The
-  heaviest option — new infrastructure and an embedding pipeline. Justify
-  it against the agent-fetch approach before reaching for it; lexical
-  ranking plus the manifest safety net covers a lot of ground first.
-```
+- **Better relevance ranking on the built-in proxy.** Stopword strip + term
+  weighting, then length-normalized ranking. Cheap, keeps the no-dependency
+  property; do it if `raw_text` doc ranking starts missing obvious matches.
+- **Richer rendering strategies via the seam (§7.8).** The seam is the
+  extension point — a deployment can plug in summarized, structured, or
+  retrieval-augmented document rendering. Strategies that need their own
+  tools or a multi-step fetch loop also need a turn-service hook (§7.7),
+  which isn't built yet.

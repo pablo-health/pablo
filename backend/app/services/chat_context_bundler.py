@@ -33,6 +33,7 @@ the meantime the manifest correctly reports ``row_count=0`` with
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -652,6 +653,58 @@ def _render_patient_documents_text(rows: list[PatientDocument]) -> str:
     return "## UPLOADED PATIENT DOCUMENTS\n\n" + "\n\n".join(rendered)
 
 
+# ---------------------------------------------------------------------------
+# Document rendering strategies (extension seam)
+# ---------------------------------------------------------------------------
+
+# A document strategy renders the access-checked, relevance-ordered documents
+# for a turn into the text block that goes into the prompt. The signature is
+# fixed — ``list[PatientDocument] -> str`` over the *final* (possibly
+# budget-truncated) row set — so the truncation, manifest, and budget code
+# stay strategy-agnostic: the budget walk drops a row and re-renders through
+# the same strategy without knowing which one it is.
+#
+# The engine ships exactly one strategy, ``raw_text`` (full extracted text
+# with the per-doc render cap + summary fallback from §7.9 of the design
+# doc). A deployment can register additional strategies at import time —
+# e.g. summary-only, structured-field, or retrieval-augmented rendering —
+# via :func:`register_document_strategy`; the per-source ``strategy`` field
+# then selects one. This is a deliberate seam, not a plugin framework: a
+# strategy that needs its own tools or a multi-step fetch loop requires an
+# additional turn-service hook, not just a renderer.
+DocumentRenderer = Callable[[list["PatientDocument"]], str]
+
+DEFAULT_DOCUMENT_STRATEGY = "raw_text"
+
+_DOCUMENT_RENDERERS: dict[str, DocumentRenderer] = {}
+
+
+def register_document_strategy(
+    name: str, renderer: DocumentRenderer, *, replace: bool = False
+) -> None:
+    """Register a patient-document rendering strategy under ``name``.
+
+    ``renderer`` takes the final ordered documents and returns the rendered
+    text block. Raises ``ValueError`` if ``name`` is already registered and
+    ``replace`` is not set, so an overlay can't silently shadow a strategy.
+    """
+    if name in _DOCUMENT_RENDERERS and not replace:
+        raise ValueError(f"document strategy {name!r} is already registered")
+    _DOCUMENT_RENDERERS[name] = renderer
+
+
+def _document_renderer(name: str) -> DocumentRenderer:
+    try:
+        return _DOCUMENT_RENDERERS[name]
+    except KeyError:
+        raise InvalidSelectionError(
+            f"{SOURCE_KEY_PATIENT_DOCUMENTS}.strategy {name!r} is not registered"
+        ) from None
+
+
+register_document_strategy(DEFAULT_DOCUMENT_STRATEGY, _render_patient_documents_text)
+
+
 def _load_patient_documents(
     raw: Any,
     *,
@@ -662,6 +715,7 @@ def _load_patient_documents(
 ) -> LoadedSource:
     limit: int | None = None
     explicit_ids: list[str] | None = None
+    strategy_name = DEFAULT_DOCUMENT_STRATEGY
 
     if isinstance(raw, dict):
         has_limit = "limit" in raw
@@ -670,6 +724,12 @@ def _load_patient_documents(
             raise InvalidSelectionError(
                 f"{SOURCE_KEY_PATIENT_DOCUMENTS}: 'limit' and 'document_ids' are mutually exclusive"
             )
+        if "strategy" in raw:
+            if not isinstance(raw["strategy"], str):
+                raise InvalidSelectionError(
+                    f"{SOURCE_KEY_PATIENT_DOCUMENTS}.strategy must be a string"
+                )
+            strategy_name = raw["strategy"]
         if has_limit:
             try:
                 limit = int(raw["limit"])
@@ -694,6 +754,10 @@ def _load_patient_documents(
             f"{SOURCE_KEY_PATIENT_DOCUMENTS} selection must be true, "
             "{'limit': int}, or {'document_ids': [str, ...]}"
         )
+
+    # Resolve the rendering strategy before the RLS fetch so an unknown
+    # strategy fails fast without a wasted query.
+    renderer = _document_renderer(strategy_name)
 
     if explicit_ids is not None:
         # Single bulk fetch rather than one query per id. Preserve
@@ -723,11 +787,12 @@ def _load_patient_documents(
             key=lambda d: _score_doc_relevance(d.extracted_text or "", query),
             reverse=True,
         )
-    text = _render_patient_documents_text(usable)
+    text = renderer(usable)
     extra: dict[str, Any] = {
         "document_ids": [d.id for d in usable],
         "row_count_initial": len(usable),
         "skipped_no_text": skipped_no_text,
+        "strategy": strategy_name,
     }
     return LoadedSource(
         key=SOURCE_KEY_PATIENT_DOCUMENTS,
@@ -943,7 +1008,10 @@ def _truncate_one_row(source: LoadedSource) -> bool:
         if hasattr(dropped, "id"):
             source.extra.setdefault("dropped_document_ids", []).append(dropped.id)
             source.extra["document_ids"] = [d.id for d in source.rows]
-        source.text = _render_patient_documents_text(source.rows)
+        # Re-render through the same strategy the source was loaded with so
+        # truncation stays strategy-agnostic.
+        renderer = _document_renderer(source.extra.get("strategy", DEFAULT_DOCUMENT_STRATEGY))
+        source.text = renderer(source.rows)
         source.tokens_est = estimate_tokens(source.text)
         return True
     if hasattr(dropped, "id"):
@@ -1034,6 +1102,7 @@ def _build_manifest(
             entry["document_ids"] = list(document_ids)
         if src.key == SOURCE_KEY_PATIENT_DOCUMENTS and src.is_present:
             entry["skipped_no_text"] = src.extra.get("skipped_no_text", 0)
+            entry["strategy"] = src.extra.get("strategy", DEFAULT_DOCUMENT_STRATEGY)
         latest_at = src.extra.get("latest_at")
         if latest_at:
             entry["latest_at"] = latest_at
@@ -1241,6 +1310,7 @@ def default_source_selection() -> dict[str, Any]:
 
 __all__ = [
     "CHARS_PER_TOKEN",
+    "DEFAULT_DOCUMENT_STRATEGY",
     "DEFAULT_TOKEN_BUDGET",
     "DOCUMENT_MANIFEST_PREVIEW_CHARS",
     "DOCUMENT_MANIFEST_PRIORITY",
@@ -1267,8 +1337,10 @@ __all__ = [
     "V1_SOURCE_KEYS",
     "ContextBundle",
     "ContextOverflowError",
+    "DocumentRenderer",
     "InvalidSelectionError",
     "assemble_context_bundle",
     "default_source_selection",
     "estimate_tokens",
+    "register_document_strategy",
 ]
