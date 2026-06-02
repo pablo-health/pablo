@@ -92,6 +92,35 @@ make format     # Auto-fix formatting
    committed template against a freshly-regenerated copy — until
    that check exists, regenerate manually and commit the resulting
    `tenant_template.sql` alongside the migration.
+
+   **RLS enforcement** — every per-tenant table that carries a
+   `user_id`, `patient_id`, or `id` column is force-RLS'd by
+   `enable_rls_on_schema`. A newly-added table MUST have a policy
+   branch in that function or be explicitly listed as not-row-scoped
+   via `register_overlay_not_row_scoped()`, otherwise it silently
+   ships as deny-all. That isolation contract is verified at
+   **three layers**:
+
+   - **L2 real-time hook** — `.claude/settings.json` PostToolUse hook runs
+     `poetry run python .claude/skills/rls-coverage-check/check.py`
+     automatically after any Edit/Write to `backend/app/db/models.py`.
+   - **L3 unit guard (CI)** — `backend/tests/test_enable_rls_policy_coverage.py`
+     contains `test_every_real_tenant_table_is_classified` (iterates real ORM
+     metadata to catch unclassified tables before integration) and
+     `test_rls_forced_tables_are_covered_by_rls_invariants` (asserts the
+     invariant suite covers every auto-derived RLS-forced table).
+   - **L3 agent skill** — run `python .claude/skills/rls-coverage-check/check.py`
+     before finishing any change that adds or alters a per-tenant table.
+   - **L4 self-healing** — `rls_forced_tenant_tables()` in
+     `backend/app/db/__init__.py` derives the set of every RLS-forced tenant table from the ORM,
+     and `test_rls_invariants.py` unions it into `_EFFECTIVE_TABLES` so
+     a new RLS-bearing table (patient-access, user-owned, or special-cased)
+     is automatically covered by the RLS-forced and fail-closed invariants
+     with zero manual edits.
+
+   Any new patient-scoped table needs an integration test that seeds two
+   clinicians and asserts one cannot read or write the other's patient's rows.
+
 5. **PHI never enters stdout.** No `logger.info("... {patient_name}
    ...")` or `print(patient.*)` in `backend/app/`. Use `AuditService`
    for intentional PHI-adjacent records; keep everything else PHI-free.

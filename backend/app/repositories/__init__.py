@@ -203,6 +203,13 @@ def get_llm_usage_repository() -> LlmUsageRepository:
     return PostgresLlmUsageRepository(_get_pg_session())
 
 
+def get_outcome_measure_repository():  # type: ignore[no-untyped-def]
+    """Get outcome measure repository instance."""
+    from .postgres.outcome_measure import PostgresOutcomeMeasureRepository
+
+    return PostgresOutcomeMeasureRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
     "ChatRepository",
@@ -244,6 +251,7 @@ __all__ = [
     "get_identity_repository",
     "get_llm_usage_repository",
     "get_notes_repository",
+    "get_outcome_measure_repository",
     "get_patient_document_repository",
     "get_patient_repository",
     "get_session_repository",

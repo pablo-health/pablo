@@ -32,6 +32,9 @@ from app.repositories.postgres import (
     note as note_mod,
 )
 from app.repositories.postgres import (
+    outcome_measure as outcome_measure_mod,
+)
+from app.repositories.postgres import (
     patient as patient_mod,
 )
 from app.repositories.postgres import (
@@ -44,6 +47,7 @@ from sqlalchemy.dialects import postgresql
 
 _REPO_MODULES = {
     "note": note_mod,
+    "outcome_measure": outcome_measure_mod,
     "patient": patient_mod,
     "patient_document": patient_document_mod,
     "session": session_mod,

@@ -68,18 +68,34 @@ pytestmark = pytest.mark.skipif(
 
 # Tables every tenant schema is expected to RLS-protect. Drives both
 # the relrowsecurity assertion and the fail-closed row-visibility probe.
-# Add new patient-scoped tables here as they ship — the test will fail
-# until they're covered, which is the point.
+#
+# Curated floor: tables that must be covered regardless of their column shape
+# (e.g. chat_messages has neither user_id nor patient_id directly; patients /
+# patient_clinicians / patient_documents are by-name special cases).
+# Add new non-derivable tenant tables here.
+#
+# The union below auto-covers every RLS-forced table (patient-access,
+# user-owned, or special-cased) derived from the ORM via
+# rls_forced_tenant_tables() — so a new table of any RLS-bearing column
+# shape is covered automatically with zero hand edits here.
 TENANT_SCOPED_TABLES = (
     "patients",
     "patient_clinicians",
     "chat_conversations",
     "chat_messages",
     "notes",
+    "outcome_measures",
     "therapy_sessions",
     "appointments",
     "patient_documents",
 )
+
+# Self-healing coverage: union the curated list with every RLS-forced table
+# derived automatically from the ORM.  Any new table with user_id, patient_id,
+# or id column (and not in not_row_scoped) is picked up here automatically.
+from app.db import rls_forced_tenant_tables  # noqa: E402
+
+_EFFECTIVE_TABLES: frozenset[str] = frozenset(TENANT_SCOPED_TABLES) | rls_forced_tenant_tables()
 
 
 @pytest.fixture(scope="module")
@@ -168,14 +184,14 @@ class TestTenantRlsEnabled:
                         "  AND c.relkind = 'r' "
                         "  AND c.relname = ANY(:tables)"
                     ),
-                    {"schema": tenant_schema, "tables": list(TENANT_SCOPED_TABLES)},
+                    {"schema": tenant_schema, "tables": list(_EFFECTIVE_TABLES)},
                 )
                 .mappings()
                 .all()
             )
 
         by_table = {r["relname"]: r for r in rows}
-        missing = [t for t in TENANT_SCOPED_TABLES if t not in by_table]
+        missing = [t for t in _EFFECTIVE_TABLES if t not in by_table]
         # Some tables (appointments, therapy_sessions) may not exist yet
         # in every schema variant. Don't fail on absence — fail only
         # when the table exists but RLS posture is wrong. Surface what
@@ -183,8 +199,7 @@ class TestTenantRlsEnabled:
         # expect.
         checked = sorted(by_table.keys())
         assert checked, (
-            f"None of {TENANT_SCOPED_TABLES} exist in {tenant_schema}; "
-            "schema provisioning is broken."
+            f"None of {_EFFECTIVE_TABLES} exist in {tenant_schema}; schema provisioning is broken."
         )
 
         bad = [
@@ -258,7 +273,7 @@ class TestRlsFailsClosedWithoutGuc:
             # cruft survived. This is the state we want to test.
             conn.execute(text("RESET app.current_user_id"))
             visible_counts: dict[str, int] = {}
-            for table in TENANT_SCOPED_TABLES:
+            for table in _EFFECTIVE_TABLES:
                 # Skip tables that don't exist in this schema — same
                 # accommodation as the relrowsecurity test.
                 exists = conn.execute(

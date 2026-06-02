@@ -289,6 +289,27 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.outcome_measures (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    session_id uuid,
+    appointment_id uuid,
+    instrument character varying(20) NOT NULL,
+    total_score integer,
+    item_scores jsonb,
+    is_complete boolean DEFAULT false NOT NULL,
+    source character varying(40) NOT NULL,
+    item_citations jsonb,
+    administered_at timestamp with time zone NOT NULL,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_outcome_measures_source CHECK (((source)::text = ANY ((ARRAY['patient_self_report'::character varying, 'clinician_administered_verbal'::character varying, 'manual'::character varying, 'inferred'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
     patient_id uuid NOT NULL,
     user_id character varying(128) NOT NULL,
@@ -486,6 +507,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.notes
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
+    ADD CONSTRAINT outcome_measures_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_pkey PRIMARY KEY (patient_id, user_id);
 
@@ -634,6 +660,22 @@ CREATE INDEX ix_notes_patient_id ON __TENANT_SCHEMA__.notes USING btree (patient
 
 
 CREATE INDEX ix_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (session_id);
+
+
+
+CREATE INDEX ix_outcome_measures_appointment_id ON __TENANT_SCHEMA__.outcome_measures USING btree (appointment_id);
+
+
+
+CREATE INDEX ix_outcome_measures_patient_id ON __TENANT_SCHEMA__.outcome_measures USING btree (patient_id);
+
+
+
+CREATE INDEX ix_outcome_measures_patient_instrument_administered ON __TENANT_SCHEMA__.outcome_measures USING btree (patient_id, instrument, administered_at);
+
+
+
+CREATE INDEX ix_outcome_measures_session_id ON __TENANT_SCHEMA__.outcome_measures USING btree (session_id);
 
 
 
