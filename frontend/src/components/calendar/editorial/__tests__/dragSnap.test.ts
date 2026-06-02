@@ -93,4 +93,47 @@ describe("rescheduledStart — preserves duration & clamps to the day", () => {
     expect(out.getHours()).toBe(0)
     expect(out.getMinutes()).toBe(0)
   })
+
+  // DST boundary test — 2026-03-08 is the US spring-forward (clocks jump from
+  // 2:00 to 3:00 so the day is only 23 h long). A naive +86_400_000 ms shift
+  // would land an hour late; calendar arithmetic via setDate must keep the
+  // wall-clock time identical.
+  it("preserves the wall-clock time across a DST spring-forward boundary (+1 day)", () => {
+    // 2026-03-07 09:00 local → +1 day should land at 2026-03-08 09:00 local,
+    // not 08:00 (which is what fixed-ms arithmetic would produce when clocks
+    // skip an hour overnight).
+    const start = new Date(2026, 2, 7, 9, 0, 0) // March 7 09:00 local
+    const out = new Date(rescheduledStart(start.toISOString(), 50, 0, 1))
+    expect(out.getMonth()).toBe(2) // March
+    expect(out.getDate()).toBe(8)
+    expect(out.getHours()).toBe(9)
+    expect(out.getMinutes()).toBe(0)
+  })
+})
+
+describe("snapDragDelta — day-index clamping", () => {
+  it("clamps a wide rightward drag to the last column (index 6)", () => {
+    // Source at index 5 (Saturday), dragging 4 columns right would be index 9,
+    // which is out of the visible 0–6 range — must clamp to 6.
+    const result = snapDragDelta(COL_PX * 4, 0, ROW_PX, COL_PX, "week", 5)
+    expect(result.dayShift).toBe(1) // 5 + 1 = 6, the rightmost column
+  })
+
+  it("clamps a wide leftward drag to the first column (index 0)", () => {
+    // Source at index 1 (Monday), dragging 4 columns left = index -3 → clamp to 0.
+    const result = snapDragDelta(-COL_PX * 4, 0, ROW_PX, COL_PX, "week", 1)
+    expect(result.dayShift).toBe(-1) // 1 + (-1) = 0, the leftmost column
+  })
+
+  it("does not clamp when target stays within [0, 6]", () => {
+    // Source at index 2, shift +2 = index 4 — no clamping needed.
+    const result = snapDragDelta(COL_PX * 2, 0, ROW_PX, COL_PX, "week", 2)
+    expect(result.dayShift).toBe(2)
+  })
+
+  it("skips clamping when sourceDayIndex is omitted", () => {
+    // No sourceDayIndex → shift is unclamped (legacy behaviour preserved).
+    const result = snapDragDelta(COL_PX * 10, 0, ROW_PX, COL_PX, "week")
+    expect(result.dayShift).toBe(10)
+  })
 })

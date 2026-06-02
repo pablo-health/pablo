@@ -9,11 +9,11 @@ import type {
   AppointmentStatus,
 } from "@/types/scheduling"
 import { editorialStatusMeta } from "./status"
+import { clampToViewport } from "./viewportClamp"
 
 /** Menu dimensions used for viewport clamping. */
 const MENU_WIDTH = 218
 const MENU_HEIGHT = 230
-const VIEWPORT_MARGIN = 12
 
 /** The four statuses a therapist can flag straight from the menu. */
 const STATUS_ORDER: AppointmentStatus[] = [
@@ -37,9 +37,7 @@ interface EditorialEventContextMenuProps {
 
 /** Clamp the fixed-position menu into the viewport. */
 function clampedPosition(x: number, y: number): { left: number; top: number } {
-  const left = Math.min(x, window.innerWidth - MENU_WIDTH - VIEWPORT_MARGIN)
-  const top = Math.min(y, window.innerHeight - MENU_HEIGHT - VIEWPORT_MARGIN)
-  return { left: Math.max(left, VIEWPORT_MARGIN), top: Math.max(top, VIEWPORT_MARGIN) }
+  return clampToViewport(x, y, MENU_WIDTH, MENU_HEIGHT)
 }
 
 /**

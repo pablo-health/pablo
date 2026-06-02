@@ -7,11 +7,11 @@ import { format } from "date-fns"
 import { CalendarDays, User, Users, Video, X } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { editorialStatusMeta } from "./status"
+import { clampToViewport } from "./viewportClamp"
 
 /** Popover dimensions used for viewport clamping. */
 const PEEK_WIDTH = 320
 const PEEK_MAX_HEIGHT = 260
-const VIEWPORT_MARGIN = 12
 const ANCHOR_GAP = 8
 
 const SESSION_TYPE_LABELS: Record<string, string> = {
@@ -32,20 +32,19 @@ interface EditorialEventPeekProps {
 
 /** Clamp the anchored peek into the viewport (position: fixed). */
 function clampedPosition(anchorRect: DOMRect): { left: number; top: number } {
-  const left = Math.min(
-    Math.max(anchorRect.right + ANCHOR_GAP, VIEWPORT_MARGIN),
-    window.innerWidth - PEEK_WIDTH - VIEWPORT_MARGIN,
+  return clampToViewport(
+    anchorRect.right + ANCHOR_GAP,
+    anchorRect.top,
+    PEEK_WIDTH,
+    PEEK_MAX_HEIGHT,
   )
-  const top = Math.min(
-    Math.max(anchorRect.top, VIEWPORT_MARGIN),
-    window.innerHeight - PEEK_MAX_HEIGHT - VIEWPORT_MARGIN,
-  )
-  return { left, top }
 }
 
 /**
  * Lightweight appointment detail popover shown on a single click. Closes on
  * outside pointerdown or Escape; the Edit button hands off to the edit flow.
+ * On mount, focus moves to the dialog; on unmount, focus returns to the
+ * element that was active when the peek opened.
  */
 export function EditorialEventPeek({
   appointment,
@@ -55,6 +54,9 @@ export function EditorialEventPeek({
   onEdit,
 }: EditorialEventPeekProps) {
   const ref = useRef<HTMLDivElement>(null)
+  // Capture the element that had focus before the peek opened so we can
+  // restore it on close/unmount.
+  const priorFocusRef = useRef<Element | null>(null)
   const meta = editorialStatusMeta(appointment.status)
   const start = new Date(appointment.start_at)
   const end = new Date(appointment.end_at)
@@ -65,7 +67,16 @@ export function EditorialEventPeek({
   const sessionLabel =
     SESSION_TYPE_LABELS[appointment.session_type] ?? appointment.session_type
 
+  // Only render video_link as an anchor when the scheme is http(s) — free-form
+  // stored values could contain javascript:/data: click-exec vectors.
+  const isWebLink = /^https?:\/\//i.test(appointment.video_link ?? "")
+
   useEffect(() => {
+    priorFocusRef.current = document.activeElement
+    // Move focus into the dialog on open so screen readers and keyboard users
+    // are dropped into the correct context.
+    ref.current?.focus()
+
     const handlePointerDown = (e: PointerEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
@@ -77,6 +88,13 @@ export function EditorialEventPeek({
     return () => {
       window.removeEventListener("pointerdown", handlePointerDown)
       window.removeEventListener("keydown", handleKeyDown)
+      // Restore focus to the triggering element on close.
+      if (
+        priorFocusRef.current &&
+        typeof (priorFocusRef.current as HTMLElement).focus === "function"
+      ) {
+        ;(priorFocusRef.current as HTMLElement).focus()
+      }
     }
   }, [onClose])
 
@@ -87,7 +105,9 @@ export function EditorialEventPeek({
       ref={ref}
       role="dialog"
       aria-label={`${patientName ?? appointment.title} appointment details`}
-      className="ed-dialog-in fixed z-[80] overflow-hidden rounded-2xl"
+      // tabIndex so the dialog itself is focusable for the focus-on-open.
+      tabIndex={-1}
+      className="ed-dialog-in fixed z-[80] overflow-hidden rounded-2xl outline-none"
       style={{
         left,
         top,
@@ -138,15 +158,19 @@ export function EditorialEventPeek({
           </PeekRow>
           {appointment.video_link && (
             <PeekRow icon={<Video className="h-[15px] w-[15px]" />}>
-              <a
-                href={appointment.video_link}
-                target="_blank"
-                rel="noreferrer"
-                className="break-all underline-offset-2 hover:underline"
-                style={{ color: "var(--ed-accent)" }}
-              >
-                {appointment.video_link}
-              </a>
+              {isWebLink ? (
+                <a
+                  href={appointment.video_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="break-all underline-offset-2 hover:underline"
+                  style={{ color: "var(--ed-accent)" }}
+                >
+                  {appointment.video_link}
+                </a>
+              ) : (
+                <span className="break-all">{appointment.video_link}</span>
+              )}
             </PeekRow>
           )}
         </div>

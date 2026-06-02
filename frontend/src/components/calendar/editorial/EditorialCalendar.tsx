@@ -20,7 +20,7 @@ import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { EditorialEventPeek } from "./EditorialEventPeek"
 import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
-import { shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
+import { dynamicDayWindow, shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
 
 const ALL_STATUSES: AppointmentStatus[] = [
   "confirmed",
@@ -96,6 +96,14 @@ export function EditorialCalendar({
       statusFilters.has(a.status as AppointmentStatus),
     )
   }, [data, statusFilters])
+
+  // Dynamic working-hours window expands to contain any out-of-default
+  // appointments so they render at their true position rather than being
+  // clamped to the 7–20 boundary.
+  const { dayStart, dayEnd } = useMemo(
+    () => dynamicDayWindow(filteredAppointments),
+    [filteredAppointments],
+  )
 
   const handleViewChange = useCallback(
     (next: EditorialView) => {
@@ -253,6 +261,8 @@ export function EditorialCalendar({
             onMove={handleMove}
             onContextMenu={handleContextMenu}
             scrollToHour={workingHoursStart}
+            dayStart={dayStart}
+            dayEnd={dayEnd}
           />
         )}
         {view === "day" && (
@@ -266,6 +276,8 @@ export function EditorialCalendar({
             onMove={handleMove}
             onContextMenu={handleContextMenu}
             scrollToHour={workingHoursStart}
+            dayStart={dayStart}
+            dayEnd={dayEnd}
           />
         )}
         {view === "month" && (

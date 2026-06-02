@@ -104,4 +104,32 @@ describe("EditorialEventWrapper", () => {
     expect(onPeek.mock.calls[0][1]).toBeDefined()
     expect(typeof onPeek.mock.calls[0][1].top).toBe("number")
   })
+
+  it("opens the peek on Enter keydown (keyboard accessibility)", () => {
+    const onPeek = vi.fn()
+    const appt = appointment()
+    render(
+      <EditorialEventWrapper appointment={appt} onPeek={onPeek} onEdit={vi.fn()}>
+        <div>Card</div>
+      </EditorialEventWrapper>,
+    )
+    // The wrapper should be a focusable role=button element.
+    const wrapper = screen.getByRole("button")
+    fireEvent.keyDown(wrapper, { key: "Enter" })
+    expect(onPeek).toHaveBeenCalledTimes(1)
+    expect(onPeek.mock.calls[0][0]).toBe(appt)
+  })
+
+  it("opens the peek on Space keydown (keyboard accessibility)", () => {
+    const onPeek = vi.fn()
+    const appt = appointment()
+    render(
+      <EditorialEventWrapper appointment={appt} onPeek={onPeek} onEdit={vi.fn()}>
+        <div>Card</div>
+      </EditorialEventWrapper>,
+    )
+    const wrapper = screen.getByRole("button")
+    fireEvent.keyDown(wrapper, { key: " " })
+    expect(onPeek).toHaveBeenCalledTimes(1)
+  })
 })

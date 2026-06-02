@@ -95,6 +95,7 @@ export function EditorialWeekView({
               <DayColumn
                 key={day.toISOString()}
                 day={day}
+                dayIndex={idx}
                 lanes={dayBuckets[idx]}
                 patientMap={patientMap}
                 onSelectSlot={onSelectSlot}
@@ -179,6 +180,7 @@ function HourRail({ hours }: { hours: number[] }) {
 
 function DayColumn({
   day,
+  dayIndex,
   lanes,
   patientMap,
   onSelectSlot,
@@ -190,6 +192,9 @@ function DayColumn({
   dayEnd,
 }: {
   day: Date
+  /** 0-based index of this column within the visible 7-day week (used for
+   * drag clamping so horizontal drags can't land outside the grid). */
+  dayIndex: number
   lanes: ReturnType<typeof assignLanes>
   patientMap: Map<string, string>
   onSelectSlot: (start: string) => void
@@ -227,12 +232,10 @@ function DayColumn({
       {lanes.map(({ appointment, lane, laneCount }) => {
         const startMin = minutesSinceMidnight(appointment.start_at)
         const endMin = minutesSinceMidnight(appointment.end_at)
-        // Clamp into the visible window so appts that start before dayStart or
-        // end after dayEnd stay reachable (cropped, never hidden).
-        const rawTop = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
-        const top = Math.min(Math.max(rawTop, 0), totalHeight - 22)
-        const rawHeight = ((endMin - startMin) / 60) * HOUR_ROW_PX - 2
-        const height = Math.max(Math.min(rawHeight, totalHeight - top), 22)
+        // With a dynamic window the grid always contains every appointment,
+        // so no clamping is needed — render at the true position.
+        const top = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
+        const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 22)
         const widthPct = 100 / laneCount
         const left = lane * widthPct
         const micro = height < EVENT_MICRO_PX
@@ -248,6 +251,7 @@ function DayColumn({
               mode: "week",
               rowHeightPx: HOUR_ROW_PX,
               gridSelector: "[data-weekgrid]",
+              sourceDayIndex: dayIndex,
               onMove,
             }}
             className="absolute z-10 px-0.5"

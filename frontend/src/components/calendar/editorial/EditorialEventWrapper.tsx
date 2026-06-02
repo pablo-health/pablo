@@ -10,10 +10,8 @@ import {
   rescheduledStart,
   snapDragDelta,
 } from "./dragSnap"
-
-/** Click/double-click disambiguation window (ms). A single click is deferred
- * this long so a double-click can cancel it before the peek opens. */
-const CLICK_DELAY_MS = 220
+import { useClickPeekEdit } from "./useClickPeekEdit"
+import { format } from "date-fns"
 
 /** How long the post-drop click-suppression flag lingers (ms). A real pointer
  * drop fires a trailing `click`; this window lets us swallow it so the drag
@@ -27,6 +25,8 @@ interface DragConfig {
   rowHeightPx: number
   /** CSS selector for the positioning grid; its width / 7 is the column width. */
   gridSelector: string
+  /** 0-based index (0–6) of the source day within the visible week (week mode only). */
+  sourceDayIndex?: number
   /** Reschedule mutation — original duration is preserved, start clamped to day. */
   onMove: (appointment: AppointmentResponse, newStartIso: string) => void
 }
@@ -53,10 +53,10 @@ interface EditorialEventWrapperProps {
 
 /**
  * Wraps a positioned event card and disambiguates single click (peek) from
- * double click (edit) with a {@link CLICK_DELAY_MS} timer, and — when {@link
- * DragConfig} is supplied — pointer-drag-to-reschedule. A press only becomes a
- * drag after the pointer travels past {@link DRAG_THRESHOLD_PX}, so clicks and
- * double-clicks still register.
+ * double click (edit) with the shared {@link useClickPeekEdit} hook, and —
+ * when {@link DragConfig} is supplied — pointer-drag-to-reschedule. A press
+ * only becomes a drag after the pointer travels past {@link DRAG_THRESHOLD_PX},
+ * so clicks and double-clicks still register.
  *
  * Shared by week/day columns (month chips disambiguate inline since they are
  * plain buttons without absolute positioning).
@@ -72,13 +72,35 @@ export function EditorialEventWrapper({
   style,
 }: EditorialEventWrapperProps) {
   const ref = useRef<HTMLDivElement>(null)
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Set immediately after a committed drop so the trailing click is ignored. */
   const justDragged = useRef(false)
 
+  // Refs to active drag listeners and the suppress timer so they can be cleaned
+  // up if the component unmounts mid-drag.
+  const activeMoveRef = useRef<((ev: PointerEvent) => void) | null>(null)
+  const activeUpRef = useRef<((ev: PointerEvent) => void) | null>(null)
+  const suppressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const { handleClick, handleDoubleClick, handleContextMenu } =
+    useClickPeekEdit({
+      appointment,
+      onPeek,
+      onEdit,
+      onContextMenu,
+      getRect: () => ref.current?.getBoundingClientRect(),
+      justDragged,
+    })
+
   useEffect(() => {
     return () => {
-      if (clickTimer.current) clearTimeout(clickTimer.current)
+      // Clean up any leaked listeners and timers if unmounted mid-drag.
+      if (activeMoveRef.current)
+        window.removeEventListener("pointermove", activeMoveRef.current)
+      if (activeUpRef.current) {
+        window.removeEventListener("pointerup", activeUpRef.current)
+        window.removeEventListener("pointercancel", activeUpRef.current)
+      }
+      if (suppressTimerRef.current) clearTimeout(suppressTimerRef.current)
     }
   }, [])
 
@@ -110,10 +132,6 @@ export function EditorialEventWrapper({
       const dy = ev.clientY - startY
       if (!moved && Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
         moved = true
-        if (clickTimer.current) {
-          clearTimeout(clickTimer.current)
-          clickTimer.current = null
-        }
         el.style.zIndex = "60"
         el.style.opacity = "0.92"
         el.style.cursor = "grabbing"
@@ -126,6 +144,7 @@ export function EditorialEventWrapper({
         drag.rowHeightPx,
         colWidthPx,
         drag.mode,
+        drag.sourceDayIndex,
       )
       minuteShift = snapped.minuteShift
       dayShift = snapped.dayShift
@@ -137,6 +156,9 @@ export function EditorialEventWrapper({
     const onUp = () => {
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+      activeMoveRef.current = null
+      activeUpRef.current = null
       el.style.transform = ""
       el.style.zIndex = ""
       el.style.opacity = ""
@@ -144,8 +166,9 @@ export function EditorialEventWrapper({
       el.style.boxShadow = ""
       if (moved && (minuteShift !== 0 || dayShift !== 0)) {
         justDragged.current = true
-        setTimeout(() => {
+        suppressTimerRef.current = setTimeout(() => {
           justDragged.current = false
+          suppressTimerRef.current = null
         }, DRAG_CLICK_SUPPRESS_MS)
         const newStart = rescheduledStart(
           appointment.start_at,
@@ -157,53 +180,34 @@ export function EditorialEventWrapper({
       }
     }
 
+    activeMoveRef.current = onMove
+    activeUpRef.current = onUp
     window.addEventListener("pointermove", onMove)
     window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
   }
 
-  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation()
-    // Swallow the click that trails a committed drag so it doesn't open peek.
-    if (justDragged.current) return
-    if (clickTimer.current) clearTimeout(clickTimer.current)
-    const rect = ref.current?.getBoundingClientRect()
-    if (!rect) return
-    clickTimer.current = setTimeout(() => {
-      clickTimer.current = null
-      onPeek(appointment, rect)
-    }, CLICK_DELAY_MS)
-  }
-
-  const handleDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation()
-    if (clickTimer.current) {
-      clearTimeout(clickTimer.current)
-      clickTimer.current = null
-    }
-    onEdit(appointment)
-  }
-
-  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!onContextMenu) return
-    // Suppress the native menu and a pending single-click peek; the custom
-    // status menu opens at the cursor instead.
-    e.preventDefault()
-    e.stopPropagation()
-    if (clickTimer.current) {
-      clearTimeout(clickTimer.current)
-      clickTimer.current = null
-    }
-    onContextMenu(appointment, e.clientX, e.clientY)
-  }
+  const patientLabel = appointment.title
+  const startLabel = format(new Date(appointment.start_at), "h:mm a")
 
   return (
     <div
       ref={ref}
+      role="button"
+      tabIndex={0}
+      aria-label={`${patientLabel} at ${startLabel}`}
       data-event="1"
       onPointerDown={handlePointerDown}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          const rect = ref.current?.getBoundingClientRect()
+          if (rect) onPeek(appointment, rect)
+        }
+      }}
       className={className}
       style={{ ...style, touchAction: drag ? "none" : undefined }}
     >

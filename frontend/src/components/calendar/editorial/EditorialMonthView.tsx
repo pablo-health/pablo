@@ -2,15 +2,12 @@
 
 "use client"
 
-import { useEffect, useMemo, useRef } from "react"
+import { useMemo, useRef } from "react"
 import { format, isSameMonth, isToday } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { monthGridDays } from "./dateUtils"
 import { editorialStatusMeta } from "./status"
-
-/** Click/double-click disambiguation window (ms) — mirrors the wrapper used
- * by week/day views so month chips behave identically. */
-const CLICK_DELAY_MS = 220
+import { useClickPeekEdit } from "./useClickPeekEdit"
 
 interface EditorialMonthViewProps {
   anchor: Date
@@ -174,67 +171,38 @@ interface MonthChipProps {
 }
 
 /** A single month-view event chip with click (peek) / dblclick (edit) /
- * right-click (status menu) disambiguation matching the week/day
- * {@link EditorialEventWrapper}. */
+ * right-click (status menu) disambiguation via the shared
+ * {@link useClickPeekEdit} hook, matching week/day behaviour exactly. */
 function MonthChip({ appointment, name, onPeek, onEdit, onContextMenu }: MonthChipProps) {
   const ref = useRef<HTMLSpanElement>(null)
-  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const start = new Date(appointment.start_at)
   const cancelled = appointment.status === "cancelled"
   const meta = editorialStatusMeta(appointment.status)
   const StatusIcon = meta.Icon
 
-  useEffect(() => {
-    return () => {
-      if (clickTimer.current) clearTimeout(clickTimer.current)
-    }
-  }, [])
-
-  const peek = () => {
-    if (clickTimer.current) clearTimeout(clickTimer.current)
-    const rect = ref.current?.getBoundingClientRect()
-    if (!rect) return
-    clickTimer.current = setTimeout(() => {
-      clickTimer.current = null
-      onPeek(appointment, rect)
-    }, CLICK_DELAY_MS)
-  }
-
-  const edit = () => {
-    if (clickTimer.current) {
-      clearTimeout(clickTimer.current)
-      clickTimer.current = null
-    }
-    onEdit(appointment)
-  }
+  const { handleClick, handleDoubleClick, handleContextMenu } =
+    useClickPeekEdit({
+      appointment,
+      onPeek,
+      onEdit,
+      onContextMenu,
+      getRect: () => ref.current?.getBoundingClientRect(),
+    })
 
   return (
     <span
       ref={ref}
       role="button"
       tabIndex={0}
-      onClick={(e) => {
-        e.stopPropagation()
-        peek()
-      }}
-      onDoubleClick={(e) => {
-        e.stopPropagation()
-        edit()
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        if (clickTimer.current) {
-          clearTimeout(clickTimer.current)
-          clickTimer.current = null
-        }
-        onContextMenu(appointment, e.clientX, e.clientY)
-      }}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      onContextMenu={handleContextMenu}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
           e.stopPropagation()
-          edit()
+          const rect = ref.current?.getBoundingClientRect()
+          if (rect) onPeek(appointment, rect)
         }
       }}
       aria-label={`${name} at ${format(start, "h:mm a")} — ${meta.label}`}

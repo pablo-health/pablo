@@ -117,11 +117,10 @@ export function EditorialDayView({
             {lanes.map(({ appointment, lane, laneCount }) => {
               const startMin = minutesSinceMidnight(appointment.start_at)
               const endMin = minutesSinceMidnight(appointment.end_at)
-              // Clamp into the visible window so out-of-hours appts stay reachable.
-              const rawTop = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
-              const top = Math.min(Math.max(rawTop, 0), totalHeight - 26)
-              const rawHeight = ((endMin - startMin) / 60) * HOUR_ROW_PX - 2
-              const height = Math.max(Math.min(rawHeight, totalHeight - top), 26)
+              // With a dynamic window the grid always contains every appointment,
+              // so no clamping is needed — render at the true position.
+              const top = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
+              const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 26)
               const widthPct = 100 / laneCount
               const left = lane * widthPct
               const micro = height < EVENT_MICRO_PX

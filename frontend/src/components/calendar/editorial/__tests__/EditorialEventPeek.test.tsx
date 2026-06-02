@@ -92,6 +92,21 @@ describe("EditorialEventPeek", () => {
     )
   })
 
+  it("renders a non-http video_link as plain text, not an anchor", () => {
+    // Stored javascript:/data: values must not become click-exec vectors.
+    render(
+      <EditorialEventPeek
+        appointment={appointment({ video_link: "javascript:alert(1)" })}
+        patientName="Jane Doe"
+        anchorRect={RECT}
+        onClose={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole("link")).not.toBeInTheDocument()
+    expect(screen.getByText("javascript:alert(1)")).toBeInTheDocument()
+  })
+
   it("calls onEdit with the appointment when Edit is clicked", () => {
     const onEdit = vi.fn()
     const appt = appointment()
