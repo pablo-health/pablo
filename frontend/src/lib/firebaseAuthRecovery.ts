@@ -35,7 +35,7 @@ export function isFirebaseStuckStateError(err: unknown): boolean {
   return /INTERNAL ASSERTION FAILED.*Pending promise was never set/i.test(msg)
 }
 
-async function clearFirebaseAuthStorage(): Promise<void> {
+export async function clearFirebaseAuthStorage(): Promise<void> {
   if (typeof indexedDB === "undefined") return
   await new Promise<void>((resolve) => {
     let settled = false

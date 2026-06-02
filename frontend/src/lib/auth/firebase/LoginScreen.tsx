@@ -29,6 +29,7 @@ import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
+  clearFirebaseAuthStorage,
   consumeRecoveryNotice,
   installAuthRecovery,
 } from "@/lib/firebaseAuthRecovery"
@@ -269,6 +270,11 @@ export function FirebaseLoginScreen() {
     }
   }
 
+  const handleAuthReset = async () => {
+    await clearFirebaseAuthStorage()
+    window.location.reload()
+  }
+
   const handleForgotPassword = async () => {
     if (!email) {
       setError("Enter your email address first, then click Forgot password")
@@ -436,6 +442,14 @@ export function FirebaseLoginScreen() {
               {isSignUp ? "Already have an account?" : "Create account"}
             </AuthLinkButton>
           </div>
+
+          {!isSignUp && (
+            <div className="text-center">
+              <AuthLinkButton size="sm" onClick={handleAuthReset}>
+                Having trouble signing in?
+              </AuthLinkButton>
+            </div>
+          )}
         </form>
 
         <p className="mt-6 text-center text-sm text-neutral-500">
