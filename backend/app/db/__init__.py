@@ -313,6 +313,19 @@ def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> N
     No-op when the ContextVar is unset (CLI scripts, alembic, standalone
     sessions created without a schema arg) — those callers manage their
     own ``search_path`` explicitly.
+
+    Uses ``autocommit = True`` for the duration of the ``SET`` (mirroring
+    the checkin handler) so the statement executes outside any transaction
+    block.  Without this, psycopg2's default ``autocommit=False`` mode
+    would start an implicit transaction the moment ``SET search_path`` runs
+    — which happens very early in the request lifecycle, before the route
+    handler does any real work.  If the handler then takes more than
+    ``idle_in_transaction_session_timeout`` milliseconds before its first
+    data query (e.g. waiting on a token verify, iCal probe, or LLM call),
+    Cloud SQL terminates the connection mid-request, causing latency spikes
+    or 500s as SQLAlchemy recovers.  Running the SET outside a transaction
+    defers the implicit ``BEGIN`` to the handler's first genuine DB
+    operation, shrinking the idle-in-transaction window to near zero.
     """
     schema = _current_tenant_schema.get()
     if schema is None:
@@ -323,11 +336,16 @@ def _reapply_search_path_on_checkout(dbapi_conn, _conn_record, _conn_proxy) -> N
         # that path and writes a bad value, refuse the SET rather than
         # interpolate untrusted input into raw SQL.
         return
-    cursor = dbapi_conn.cursor()
+    prior_autocommit = dbapi_conn.autocommit
     try:
-        cursor.execute(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public")
+        dbapi_conn.autocommit = True
+        cursor = dbapi_conn.cursor()
+        try:
+            cursor.execute(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public")
+        finally:
+            cursor.close()
     finally:
-        cursor.close()
+        dbapi_conn.autocommit = prior_autocommit
 
 
 @event.listens_for(Engine, "checkin")
