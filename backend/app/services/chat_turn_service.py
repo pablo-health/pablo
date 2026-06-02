@@ -258,6 +258,9 @@ class ChatTurnService:
                     patient_id=context.patient_id,
                     user_id=context.requesting_user_id,
                     selection=selection,
+                    # Relevance-order patient documents against the turn's
+                    # question so the most relevant docs survive truncation.
+                    query=user_text,
                 )
                 retrieval_rec.set_documents(
                     [

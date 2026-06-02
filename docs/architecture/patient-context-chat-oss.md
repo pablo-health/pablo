@@ -1,9 +1,13 @@
 # Patient-Context Chat — OSS Design Doc
 
-**Status:** Living. Reflects HEAD as of 2026-05-13.
+**Status:** Living. Reflects HEAD as of 2026-06-02.
 **Epic:** THERAPY-bhv (OSS patient-context chat primitive).
-**Phases shipped:** 1 (lifecycle), 2 (context bundler), 3 (streaming turn service).
+**Phases shipped:** 1 (lifecycle), 2 (context bundler), 3 (streaming turn service), doc-context-quality (document manifest, relevance ordering, per-doc render cap + summary fallback).
 **Phases planned:** 3b (LlmUsageMeter), 4 (frontend ChatPanel + companion beads), 5 (retention sweep + invariant checks), 6 (operations docs).
+
+> **New here?** Start with the runtime overview:
+> [`chat-context-overview.md`](./chat-context-overview.md). This file is the
+> detailed contract; that one is the map.
 
 This file is the canonical specification the chat code already references
 (`backend/app/services/chat_context_bundler.py:16`, `backend/app/models/chat.py:7`,
@@ -325,6 +329,7 @@ SOURCE_KEY_CURRENT_MEDICATIONS     = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE      = "most_recent_intake"
 SOURCE_KEY_PROGRESS_NOTES_RECENT   = "progress_notes_recent"
 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT = "progress_notes_explicit"
+SOURCE_KEY_DOCUMENT_MANIFEST       = "document_manifest"     # doc-context-quality: always-present index
 SOURCE_KEY_PATIENT_DOCUMENTS       = "patient_documents"
 SOURCE_KEY_TREATMENT_PLAN_ACTIVE   = "treatment_plan_active"
 SOURCE_KEY_SAFETY_PLAN_ACTIVE      = "safety_plan_active"
@@ -374,10 +379,19 @@ dropped.
 | 3        | `safety_plan_active`                | No           |
 | 4        | `most_recent_intake`                | No           |
 | 5        | `progress_notes_explicit`           | Yes (row-level) |
+| 5        | `document_manifest`                 | No           |
 | 6        | `patient_documents`                 | Yes (row-level) |
 | 7        | `progress_notes_recent`             | Yes (row-level) |
 | 8        | `treatment_plan_active`             | No           |
 | 9        | `lab_values_recent`, `vitals_recent`| No (stub)    |
+
+`document_manifest` (doc-context-quality) shares priority 5 with
+`progress_notes_explicit` but is **non-truncatable**: it's a compact index
+(filename + 200-char preview per uploaded doc), so it's kept whole or not
+at all. Sitting at priority 5 — above `patient_documents` (6) — means the
+*index* of every document survives even when the full document bodies are
+budget-dropped, so the model always knows a document exists. It is a
+separate selectable key, not auto-added when `patient_documents` is on.
 
 `patient_documents` (THERAPY-ak6m.2.2) sits between explicit progress notes
 and the recent-progress-notes window. The reasoning: uploaded chart artifacts
@@ -489,181 +503,125 @@ Per-source cap: `PASTED_TEXT_MAX_CHARS = 32_000` (the same as
 ```python
 @dataclass(frozen=True)
 class ContextBundle:
-    text: str                  # ready-to-splice context block
-    manifest: dict[str, Any]   # per §7.5; persisted on the user-turn row
-    total_tokens_est: int      # estimated tokens consumed by text
-    tools: list[ToolSpec]      # agent-callable tools (§7.9); empty for non-agent strategies
+    text: str                                  # ready-to-splice context block
+    manifest: dict[str, Any]                   # per §7.5; persisted on the user-turn row
+    total_tokens_est: int                      # estimated tokens consumed by text
+    documents: tuple[RetrievedDocument, ...]   # per-item breakdown (doc-context-quality)
+
+@dataclass(frozen=True)
+class RetrievedDocument:
+    source_key: str       # which selection source produced this item
+    document_id: str      # note id / patient-document id (or source key for synth blocks)
+    text: str             # the item's rendered content — chart material, treat as PHI
+    tokens_est: int
 ```
 
-`tools` is empty for every strategy except `agent_fetch_handle` (§7.8). Existing
-callers that ignore the field keep working unchanged.
+`documents` is the structured, per-item counterpart to the flattened `text`
+blob, reflecting the *final* (post-truncation) set the model received. It
+carries chart material, so it is **never** persisted on the (PHI-free)
+manifest — it exists so retrieval quality can be evaluated per document
+(relevance to the question) rather than only in aggregate.
 
-### §7.8 Source-strategy dispatch (planned — ak6m.2.4 / ak6m.2.5)
+> **Note:** earlier drafts of this section specced a `tools` field for a
+> tool-driven rendering strategy. That field was never built — per-document
+> provenance arrived instead via `documents` above. A strategy that needs
+> its own tools or a multi-step fetch loop would require an additional
+> turn-service hook (it cannot ride the renderer seam in §7.8 alone), and
+> would add `tools` alongside `documents`, not in place of it.
 
-A single source key can be loaded by different **strategies**. The strategy
-choice lives inside the per-source selection dict under a reserved
-`strategy` field. Each strategy returns a `LoadedSource` with the same shape
-(text + extra + tokens_est + truncatable) so the downstream truncation,
-manifest, and budget-enforcement code stays unchanged.
+### §7.8 Document rendering strategies (extension seam)
+
+How a `patient_documents` source is rendered into prompt text is pluggable.
+The per-source selection dict may carry a reserved `strategy` field; the
+bundler dispatches on it:
 
 ```python
-# Today (ak6m.2.2): default strategy = "raw_text"
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"limit": 5}}
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "raw_text", "limit": 5}}  # explicit
-
-# Planned (ak6m.2.4):
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "summary_only"}}
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "structured_fields"}}
-
-# Planned (ak6m.2.5):
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "agent_fetch_handle"}}
+{SOURCE_KEY_PATIENT_DOCUMENTS: True}                            # default strategy
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "raw_text"}}        # explicit
+{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "raw_text", "limit": 5}}
 ```
 
-Strategy matrix for `patient_documents`:
-
-| Strategy | Preloaded into `text` | Tools registered | Lands in |
-|----------|------------------------|------------------|----------|
-| `raw_text` | Full extracted text of N docs | none | ak6m.2.2 (shipped) |
-| `summary_only` | Per-doc LLM summary (~300 tok each) | none | ak6m.2.4 |
-| `structured_fields` | FHIR-aligned JSON blob (problems, meds, allergies, dx, key dates) | none | ak6m.2.4 |
-| `agent_fetch_handle` | Summaries + structured fields (cheap preload) | `read_document_section`, `read_full_document`, `search_documents` | ak6m.2.5 |
-
-Selection validation rejects unknown strategy values the same way it rejects
-unknown source keys (`InvalidSelectionError`). The default when `strategy` is
-omitted is `"raw_text"` — guarantees existing chat conversations don't shift
-behavior when later strategies ship.
-
-Strategies are caller-scoped via `defaultSourceSelection`, not bundler-global:
+A strategy is a renderer over the **final** (access-checked,
+relevance-ordered, possibly budget-truncated) document set:
 
 ```python
-# Chat (today + after ak6m.2.5 land)
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "agent_fetch_handle"}}
-# → cheap preload, model fetches what it needs
+DocumentRenderer = Callable[[list[PatientDocument]], str]
 
-# Pre-visit brief (ak6m.1)
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "summary_only"}}
-# → deterministic, bounded latency, no model wandering
-
-# Letter generator (ak6m.3)
-{SOURCE_KEY_PATIENT_DOCUMENTS: {"strategy": "structured_fields"}}
-# → JSON only, smallest hallucination surface, predictable for templating
+def register_document_strategy(
+    name: str, renderer: DocumentRenderer, *, replace: bool = False
+) -> None: ...
 ```
+
+- The engine ships exactly one strategy, **`raw_text`** — the full extracted
+  text of each doc, with the per-doc render cap and summary fallback from
+  §7.9. It is the default when `strategy` is omitted, so existing
+  conversations never shift behavior.
+- A deployment can register additional renderers at import time (e.g.
+  summary-only or structured-field rendering) and select them per source via
+  `strategy`. Unknown / unregistered strategy values are rejected with
+  `InvalidSelectionError`, the same as an unknown source key.
+- The renderer signature is fixed on purpose: the truncation, manifest, and
+  budget code never learn which strategy ran. When the budget walk drops a
+  row it re-renders through the *same* strategy (looked up by the `strategy`
+  name recorded on the source's manifest entry), so a custom strategy stays
+  consistent under truncation.
+- The manifest records the strategy name on the `patient_documents` entry (a
+  string — PHI-free).
+
+This is a renderer seam, not a general plugin framework. A strategy that
+needs to register tools or run a multi-step fetch loop within a turn needs an
+additional turn-service hook (see §7.7's note); the renderer registry alone
+only governs how the already-selected documents become text.
 
 **Where a per-caller policy check belongs:** the bundler trusts the selection
-shape. If a feature *must* use a specific strategy (e.g. letter-gen must never
-load raw text for compliance reasons), enforce that at the route layer — read
-`caller_feature_key`, validate the strategy against an allow-list, 422 on
-violation. Not the bundler's job.
+shape. If a feature must use a specific strategy, enforce that at the route
+layer — read `caller_feature_key`, validate the strategy against an
+allow-list, 422 on violation. Not the bundler's job.
 
-### §7.9 Agent fetch loop (planned — ak6m.2.5)
+### §7.9 Document context handling (shipped — doc-context-quality, 2026-06)
 
-`agent_fetch_handle` is the only strategy that registers tools. The turn
-service runs an agent loop instead of a single-shot stream.
+The `raw_text` document path (§7.8) gained three behaviors that close the
+gap between "load whole documents" and "fit the budget" without loading
+every document body on every turn. All three are in
+`chat_context_bundler.py` and pinned by
+`backend/tests/test_chat_context_bundler_doc_eval.py`.
 
-**`ToolSpec` shape:**
+**Document manifest.** `SOURCE_KEY_DOCUMENT_MANIFEST` (priority 5,
+non-truncatable; see §7.3) renders a compact index — filename + a
+`DOCUMENT_MANIFEST_PREVIEW_CHARS = 200` preview (the stored summary if
+present, else the head of the extracted text) — for every uploaded doc.
+Because it outranks `patient_documents` and is never truncated, the model
+always learns a document *exists* even when budget pressure drops the full
+bodies. Invariant: the manifest is present whenever selected, deduplicated,
+and empty-of-entries (not absent) when the patient has no docs.
 
-```python
-@dataclass(frozen=True)
-class ToolSpec:
-    name: str                                    # e.g. "read_document_section"
-    json_schema: dict[str, Any]                  # OpenAI/Gemini function-call schema
-    handler: Callable[..., ToolResult]           # bound to (repo, patient_id, user_id)
+**Relevance ordering.** When the turn carries a `query`,
+`_load_patient_documents` sorts usable docs most-relevant-first by
+`_score_doc_relevance`. The budget walk drops rows from the *tail*
+(§7.3), so ordering is the survival policy. The score is the **overlap
+coefficient** — `|doc ∩ query| / min(|doc|, |query|)` over lowercased
+whitespace tokens — chosen over Jaccard because Jaccard's union denominator
+grows with document length and would rank a long, on-topic note *below* a
+short, barely-relevant one. With no query, order falls back to
+newest-first (`sorted` is stable, all scores 0.0). It is a deliberately
+cheap, dependency-free proxy: no term weighting, stopword removal, or
+stemming (those are roadmap — see the strategy seam §7.8 and the overview's "Future changes").
 
-@dataclass(frozen=True)
-class ToolResult:
-    text: str                                    # what gets fed back into the model
-    tokens_added: int                            # estimated cost
-    truncated: bool                              # did the tool hit a per-call cap?
-    provenance: dict[str, str]                   # e.g. {"doc_id": "uuid", "pages": "4-5"}
-```
+**Per-doc render cap + summary fallback.** A single document over
+`PATIENT_DOCUMENT_MAX_RENDER_CHARS` (320k chars ≈ 80k tokens) is reduced
+*before* the budget walk so one giant PDF can't consume the whole budget or
+be dropped wholesale. If `extraction_metadata["summary"]` exists it renders
+the summary marked `[SUMMARY — full document loaded in brief]`; otherwise it
+head-clips with an explicit `[document truncated — N chars omitted]` marker.
+Either way the reduction is visible to the model and the therapist.
 
-Handlers close over the same `(patient_documents_repo, patient_id, user_id)`
-the loader saw, so RLS is inherited — there is no way for the model to call a
-tool against a different patient or as a different user.
+**Manifest forensics.** The `patient_documents` entry gains
+`document_ids` (survivors), `dropped_document_ids` + `rows_dropped` (tail
+docs shed for budget), and `skipped_no_text` (uploads with no extracted
+text). Still PHI-free — ids and counts only.
 
-**Tool surface (initial, ak6m.2.5):**
-
-| Tool | Args | Returns | Notes |
-|------|------|---------|-------|
-| `read_document_section` | `doc_id: str, query: str` | extracted text near `query` (~1k tokens), provenance | Lightweight chunk retrieval inside one doc. v1: keyword + sliding window. v2: pgvector over per-doc embeddings. |
-| `read_full_document` | `doc_id: str` | entire `extracted_text`, provenance | Capped at per-tool result budget; returns summary + "document exceeded N tokens" marker if oversized. |
-| `search_documents` | `query: str, limit: int = 5` | list of `(doc_id, filename, snippet, score)` | Cross-doc lookup. v1: BM25 over `extracted_text`. Same RLS predicate as `list_for_patient`. |
-
-**Agent loop (lives in `ChatTurnService`):**
-
-```
-loop:
-  chunk = next(gateway.stream_completion(..., tools=bundle.tools))
-  if chunk.is_text:
-    yield delta to client
-  elif chunk.is_tool_call:
-    tool = bundle.tools_by_name[chunk.name]
-    result = tool.handler(**chunk.args)
-    record_to_manifest(tool.name, chunk.args, result)
-    feed result back into model
-    enforce_agent_budgets_or_terminate()
-  elif chunk.is_done:
-    break
-```
-
-**Three new budgets the bundler doesn't have today:**
-
-| Budget | Default | What it caps |
-|--------|---------|--------------|
-| `agent_fetch_token_budget` | 50_000 | Total tokens tools can add across a turn. Separate from the bundler's `token_budget`, which only governs the initial preload. |
-| `agent_max_tool_calls` | 6 | Max tool invocations per turn. Prevents a confused model from looping. |
-| Per-tool result cap | 8_000 | Single `read_*` result. Tools fall back to summary+truncation marker when exceeded. |
-
-Exceeding any budget terminates the loop and the model finalizes with whatever
-it has — same shape as the existing `MAX_GATEWAY_ATTEMPTS` retry behavior.
-
-**Manifest grows by an array — still PHI-free:**
-
-```jsonc
-{
-  "sources_included": [
-    {"source_key": "patient_documents",
-     "strategy": "agent_fetch_handle",
-     "tokens_est": 1850,
-     "document_ids": ["uuid-1", "uuid-2"]}
-  ],
-  "tool_calls": [
-    {"tool": "read_document_section",
-     "doc_id": "uuid-1",
-     "query_hint_chars": 42,        // length, not the query text itself
-     "tokens_added": 1200,
-     "truncated": false},
-    {"tool": "read_full_document",
-     "doc_id": "uuid-2",
-     "tokens_added": 5400,
-     "truncated": false}
-  ],
-  "agent_fetch_tokens": 6600,
-  "agent_fetch_budget": 50000,
-  "agent_tool_calls_used": 2,
-  "agent_max_tool_calls": 6,
-  ...
-}
-```
-
-`query_hint_chars` (length, not text) is the deliberate compromise — the model's
-own query string is a synthesis of the user message + chart context, and could
-itself contain PHI if echoed verbatim. The length is enough for forensic
-analysis without leaking content. The actual fetched text appears in the
-prompt envelope and the LLM provider's logs (BAA-covered); it does not appear
-in our manifest.
-
-**Citation surface:** because every fetched chunk carries `provenance`, the
-model can be prompted to cite (`"according to prior_psychiatry_records.pdf
-page 4..."`). This is what makes the agentic path defensible for clinical use
-in a way that opaque dense-RAG retrieval isn't.
-
-**Caching interaction:** the preloaded part of the bundle (summaries +
-structured fields) is stable per `(patient_id, strategy, doc set version)` and
-is the right cache key for Gemini's context caching. Tool results vary
-per-turn and are not cacheable. This makes `agent_fetch_handle` substantially
-cheaper than `raw_text` on multi-turn conversations even before per-tool
-optimizations — the heavy preload pays once.
+See [`chat-context-overview.md`](./chat-context-overview.md) for the
+runtime map and the deferred-work rationale.
 
 ---
 
