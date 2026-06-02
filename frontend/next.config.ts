@@ -19,38 +19,33 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     // Serve the Firebase auth helper (/__/auth/handler, /__/auth/iframe,
-    // /__/firebase/init.json) from this app's own domain by proxying to the
-    // Firebase-hosted helper. This lets us set `authDomain` to our own domain
-    // so the Google OAuth consent reads "continue to <our domain>" instead of
-    // <project>.firebaseapp.com. Origin is taken from FIREBASE_AUTH_HELPER_ORIGIN,
-    // else derived from FIREBASE_PROJECT_ID; if neither is set the proxy is
-    // skipped (e.g. local dev with no Firebase project).
-    const projectId =
-      process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-    const helperOrigin =
-      process.env.FIREBASE_AUTH_HELPER_ORIGIN ||
-      (projectId ? `https://${projectId}.firebaseapp.com` : undefined);
-
+    // /__/firebase/init.json) from this app's own domain, so `authDomain`
+    // can be set to our own domain and the Google OAuth consent reads
+    // "continue to <our domain>" instead of <project>.firebaseapp.com.
+    //
+    // These rewrites only route the reserved paths to an internal route
+    // handler (app/fbauth-proxy) — they carry NO environment lookup. The
+    // proxy *target* (the Firebase-hosted helper) is resolved at REQUEST
+    // time inside that handler, because rewrites() is evaluated at build
+    // time, when FIREBASE_PROJECT_ID is unset, and because the same image
+    // is promoted dev->prod (so a build-time target would be wrong for one
+    // of them). Underscore-prefixed dirs are private in Next, so we can't
+    // serve /__/* directly; the handler lives under /fbauth-proxy/* instead.
     return [
       {
-        // Firebase auth action emails link to /__/auth/action
-        // but Next.js treats _-prefixed dirs as private, so rewrite to /auth/action.
-        // Must precede the proxy rule below — this one is handled locally.
+        // Firebase auth action emails link to /__/auth/action; that one is
+        // a real local page. Must precede the catch-all proxy rule below.
         source: "/__/auth/action",
         destination: "/auth/action",
       },
-      ...(helperOrigin
-        ? [
-            {
-              source: "/__/auth/:path*",
-              destination: `${helperOrigin}/__/auth/:path*`,
-            },
-            {
-              source: "/__/firebase/:path*",
-              destination: `${helperOrigin}/__/firebase/:path*`,
-            },
-          ]
-        : []),
+      {
+        source: "/__/auth/:path*",
+        destination: "/fbauth-proxy/auth/:path*",
+      },
+      {
+        source: "/__/firebase/:path*",
+        destination: "/fbauth-proxy/firebase/:path*",
+      },
     ];
   },
   async headers() {
