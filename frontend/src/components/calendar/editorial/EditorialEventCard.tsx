@@ -16,7 +16,9 @@ export const EVENT_COMPACT_PX = 44
 interface EditorialEventCardProps {
   appointment: AppointmentResponse
   patientName: string | undefined
-  onClick: (appointment: AppointmentResponse) => void
+  /** Optional direct click handler. In week/day views click/dblclick are
+   * disambiguated by the surrounding {@link EditorialEventWrapper} instead. */
+  onClick?: (appointment: AppointmentResponse) => void
   /** Shortest blocks (height < 30px): single line, no time subline, tight padding. */
   micro?: boolean
   /** Short blocks (height < 44px): full name, but no time subline or video icon. */
@@ -61,7 +63,7 @@ export function EditorialEventCard({
   return (
     <button
       type="button"
-      onClick={() => onClick(appointment)}
+      onClick={onClick ? () => onClick(appointment) : undefined}
       className="ed-event group relative flex h-full w-full flex-col items-start overflow-hidden text-left"
       style={{
         padding: micro ? "2px 7px 2px 9px" : "5px 9px 5px 11px",

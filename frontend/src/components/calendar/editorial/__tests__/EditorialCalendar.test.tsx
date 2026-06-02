@@ -1,15 +1,17 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { EditorialCalendar } from "../EditorialCalendar"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 const APPOINTMENTS: AppointmentResponse[] = []
+const updateMutate = vi.fn()
 
 vi.mock("@/hooks/useAppointments", () => ({
   useAppointmentList: () => ({ data: { data: APPOINTMENTS } }),
+  useUpdateAppointment: () => ({ mutate: updateMutate }),
 }))
 
 vi.mock("@/hooks/usePatients", () => ({
@@ -44,6 +46,11 @@ function defaults() {
     onCreateNew: vi.fn(),
   }
 }
+
+beforeEach(() => {
+  APPOINTMENTS.length = 0
+  updateMutate.mockClear()
+})
 
 describe("EditorialCalendar", () => {
   it("renders the editorial canvas with day/week/month tabs", () => {
@@ -87,5 +94,78 @@ describe("EditorialCalendar", () => {
       return /\b(20\d\d)\b/.test(label) && /[A-Za-z]+ \d{1,2}/.test(label)
     })
     expect(cells.length).toBeGreaterThanOrEqual(42)
+  })
+
+  it("right-click status menu marks a no-show via the update mutation", () => {
+    // Place a confirmed appointment at 10:00 today so it lands inside the
+    // day-view working-hours window.
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a1",
+      patient_id: "p1",
+      title: "Jane Doe — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    render(
+      <EditorialCalendar {...defaults()} defaultView="day" />,
+      { wrapper: wrap() },
+    )
+
+    const event = document.querySelector('[data-event="1"]') as HTMLElement
+    expect(event).not.toBeNull()
+    fireEvent.contextMenu(event)
+
+    // Menu opens with the current status checked and the four "Mark as" items.
+    const confirmedItem = screen.getByRole("menuitemradio", { name: /confirmed/i })
+    expect(confirmedItem).toHaveAttribute("aria-checked", "true")
+
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /no-show/i }))
+
+    expect(updateMutate).toHaveBeenCalledTimes(1)
+    expect(updateMutate).toHaveBeenCalledWith({
+      appointmentId: "a1",
+      data: { status: "no_show" },
+    })
+    // Menu closes after selecting a status.
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument()
+  })
+
+  it("re-selecting the current status does not call the mutation", () => {
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a1",
+      patient_id: "p1",
+      title: "Jane Doe — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    render(
+      <EditorialCalendar {...defaults()} defaultView="day" />,
+      { wrapper: wrap() },
+    )
+
+    const event = document.querySelector('[data-event="1"]') as HTMLElement
+    fireEvent.contextMenu(event)
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /confirmed/i }))
+
+    expect(updateMutate).not.toHaveBeenCalled()
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument()
   })
 })

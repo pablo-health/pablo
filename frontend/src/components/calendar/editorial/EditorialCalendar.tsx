@@ -3,7 +3,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
-import { useAppointmentList } from "@/hooks/useAppointments"
+import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
 import { usePatientList } from "@/hooks/usePatients"
 import type {
   AppointmentResponse,
@@ -18,7 +18,9 @@ import { EditorialDayView } from "./EditorialDayView"
 import { EditorialMonthView } from "./EditorialMonthView"
 import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
-import { shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
+import { EditorialEventPeek } from "./EditorialEventPeek"
+import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
+import { dynamicDayWindow, shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
 
 const ALL_STATUSES: AppointmentStatus[] = [
   "confirmed",
@@ -37,9 +39,21 @@ interface EditorialCalendarProps {
   workingHoursStart?: number
   theme: EditorialTheme
   onSelectSlot: (start: string) => void
+  /** Edit entrypoint — opens the edit sheet (double-click or peek's Edit). */
   onSelectAppointment: (appointment: AppointmentResponse) => void
   onCreateNew: () => void
   onViewChange?: (view: EditorialView) => void
+}
+
+interface PeekState {
+  appointment: AppointmentResponse
+  anchorRect: DOMRect
+}
+
+interface CtxMenuState {
+  appointment: AppointmentResponse
+  x: number
+  y: number
 }
 
 export function EditorialCalendar({
@@ -57,6 +71,8 @@ export function EditorialCalendar({
     DEFAULT_STATUS_FILTERS,
   )
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [peek, setPeek] = useState<PeekState | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<CtxMenuState | null>(null)
 
   const range = useMemo(() => visibleRange(view, anchor), [view, anchor])
   const { data } = useAppointmentList(
@@ -64,6 +80,7 @@ export function EditorialCalendar({
     range.end.toISOString(),
   )
   const { data: patientData } = usePatientList()
+  const updateAppointment = useUpdateAppointment()
 
   const patientMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -79,6 +96,14 @@ export function EditorialCalendar({
       statusFilters.has(a.status as AppointmentStatus),
     )
   }, [data, statusFilters])
+
+  // Dynamic working-hours window expands to contain any out-of-default
+  // appointments so they render at their true position rather than being
+  // clamped to the 7–20 boundary.
+  const { dayStart, dayEnd } = useMemo(
+    () => dynamicDayWindow(filteredAppointments),
+    [filteredAppointments],
+  )
 
   const handleViewChange = useCallback(
     (next: EditorialView) => {
@@ -110,6 +135,62 @@ export function EditorialCalendar({
     setPickerOpen(false)
   }, [])
 
+  const handlePeek = useCallback(
+    (appointment: AppointmentResponse, anchorRect: DOMRect) => {
+      setPeek({ appointment, anchorRect })
+    },
+    [],
+  )
+
+  const handleEdit = useCallback(
+    (appointment: AppointmentResponse) => {
+      setPeek(null)
+      onSelectAppointment(appointment)
+    },
+    [onSelectAppointment],
+  )
+
+  const handleContextMenu = useCallback(
+    (appointment: AppointmentResponse, x: number, y: number) => {
+      setPeek(null)
+      setCtxMenu({ appointment, x, y })
+    },
+    [],
+  )
+
+  const handleSetStatus = useCallback(
+    (appointment: AppointmentResponse, status: AppointmentStatus) => {
+      if (status !== appointment.status) {
+        updateAppointment.mutate({
+          appointmentId: appointment.id,
+          data: { status },
+        })
+      }
+      setCtxMenu(null)
+    },
+    [updateAppointment],
+  )
+
+  const handleMove = useCallback(
+    (appointment: AppointmentResponse, newStartIso: string) => {
+      // Preserve the original duration; the new start arrives already snapped
+      // and clamped within its day by the event wrapper.
+      const newEnd = new Date(
+        new Date(newStartIso).getTime() +
+          appointment.duration_minutes * 60_000,
+      ).toISOString()
+      updateAppointment.mutate({
+        appointmentId: appointment.id,
+        data: { start_at: newStartIso, end_at: newEnd },
+      })
+    },
+    [updateAppointment],
+  )
+
+  const peekPatientName = peek
+    ? patientMap.get(peek.appointment.patient_id)
+    : undefined
+
   return (
     <div
       data-editorial-theme={theme}
@@ -124,28 +205,36 @@ export function EditorialCalendar({
         onToggleStatus={handleToggleStatus}
       />
 
-      <div className="relative flex flex-1 flex-col gap-6 px-6 py-6 sm:px-8 sm:py-8">
-        <EditorialDateHeader
-          view={view}
-          anchor={anchor}
-          onPrev={() => setAnchor((a) => shiftAnchor(view, a, -1))}
-          onNext={() => setAnchor((a) => shiftAnchor(view, a, 1))}
-          onToday={() => setAnchor(new Date())}
-          onPickerOpen={() => setPickerOpen((p) => !p)}
-        />
-
-        <div className="flex items-center justify-between gap-4">
-          <EditorialViewSwitcher view={view} onChange={handleViewChange} />
-          <button
-            type="button"
-            onClick={() => setPickerOpen((p) => !p)}
-            className="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium tracking-wide transition-colors hover:bg-[var(--ed-pill-hover)] lg:hidden"
-            style={{ color: "var(--ed-ink-muted)" }}
-            aria-label="Pick a date"
-          >
-            <CalendarDays className="h-4 w-4" />
-            Pick date
-          </button>
+      <div
+        className="relative flex flex-1 flex-col px-6 sm:px-8"
+        style={{
+          gap: "var(--ed-stack-gap)",
+          paddingTop: "var(--ed-stack-pad-y)",
+          paddingBottom: "var(--ed-stack-pad-y)",
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <EditorialDateHeader
+            view={view}
+            anchor={anchor}
+            onPrev={() => setAnchor((a) => shiftAnchor(view, a, -1))}
+            onNext={() => setAnchor((a) => shiftAnchor(view, a, 1))}
+            onToday={() => setAnchor(new Date())}
+            onPickerOpen={() => setPickerOpen((p) => !p)}
+          />
+          <div className="flex items-center gap-4">
+            <EditorialViewSwitcher view={view} onChange={handleViewChange} />
+            <button
+              type="button"
+              onClick={() => setPickerOpen((p) => !p)}
+              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium tracking-wide transition-colors hover:bg-[var(--ed-pill-hover)] lg:hidden"
+              style={{ color: "var(--ed-ink-muted)" }}
+              aria-label="Pick a date"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Pick date
+            </button>
+          </div>
         </div>
 
         {pickerOpen && (
@@ -167,8 +256,13 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             onSelectSlot={onSelectSlot}
-            onSelectAppointment={onSelectAppointment}
+            onPeek={handlePeek}
+            onEdit={handleEdit}
+            onMove={handleMove}
+            onContextMenu={handleContextMenu}
             scrollToHour={workingHoursStart}
+            dayStart={dayStart}
+            dayEnd={dayEnd}
           />
         )}
         {view === "day" && (
@@ -177,8 +271,13 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             onSelectSlot={onSelectSlot}
-            onSelectAppointment={onSelectAppointment}
+            onPeek={handlePeek}
+            onEdit={handleEdit}
+            onMove={handleMove}
+            onContextMenu={handleContextMenu}
             scrollToHour={workingHoursStart}
+            dayStart={dayStart}
+            dayEnd={dayEnd}
           />
         )}
         {view === "month" && (
@@ -187,13 +286,36 @@ export function EditorialCalendar({
             appointments={filteredAppointments}
             patientMap={patientMap}
             onSelectDay={handleMonthDaySelect}
-            onSelectAppointment={onSelectAppointment}
+            onPeek={handlePeek}
+            onEdit={handleEdit}
+            onContextMenu={handleContextMenu}
           />
         )}
 
         <UnmatchedBanner appointments={filteredAppointments} />
         <StatusFooter statusFilters={statusFilters} />
       </div>
+
+      {peek && (
+        <EditorialEventPeek
+          appointment={peek.appointment}
+          patientName={peekPatientName}
+          anchorRect={peek.anchorRect}
+          onClose={() => setPeek(null)}
+          onEdit={handleEdit}
+        />
+      )}
+
+      {ctxMenu && (
+        <EditorialEventContextMenu
+          appointment={ctxMenu.appointment}
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onClose={() => setCtxMenu(null)}
+          onSetStatus={handleSetStatus}
+          onEdit={handleEdit}
+        />
+      )}
     </div>
   )
 }
