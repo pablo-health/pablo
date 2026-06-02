@@ -705,7 +705,7 @@ def _document_renderer(name: str) -> DocumentRenderer:
 register_document_strategy(DEFAULT_DOCUMENT_STRATEGY, _render_patient_documents_text)
 
 
-def _load_patient_documents(
+def _load_patient_documents(  # noqa: PLR0912 — branchy selection validation
     raw: Any,
     *,
     patient_documents_repo: PatientDocumentRepository,
