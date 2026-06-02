@@ -17,106 +17,99 @@
   --ed-stack-gap: 10px;
   --ed-stack-pad-y: 14px;
 
-  /* Corner radii follow the active global theme (--radius): warm-paper/dark
-   * keep their rounded feel, boring-ehr flattens to sharp 0, high-contrast
-   * uses the default. Bound here so all four themes adapt without per-theme
-   * editorial overrides. */
-  --ed-radius: var(--radius);
-  --ed-radius-sm: calc(var(--radius) * 0.6);
+  /* Pinned editorial radii (cards 9, chips 5) — the calendar keeps its
+   * editorial corner feel regardless of the active global --radius. */
+  --ed-radius: 9px;
+  --ed-radius-sm: 5px;
 
-  /* status accents — same hues as classic, shifted for editorial mood */
-  --ed-status-confirmed-bg: var(--color-primary-100);
-  --ed-status-confirmed-fg: var(--color-primary-800);
-  --ed-status-confirmed-rail: var(--color-primary-500);
+  /* Status accents — pinned to the editorial warm scale (honey / sage /
+   * warm-neutral / danger) from the design handoff, so the calendar reads
+   * the same regardless of which global Pablo theme is active. */
+  --ed-status-confirmed-bg: #FBEAC9;
+  --ed-status-confirmed-fg: #6E4D14;
+  --ed-status-confirmed-rail: #E8A849;
 
-  --ed-status-completed-bg: var(--color-secondary-100);
-  --ed-status-completed-fg: var(--color-secondary-700);
-  --ed-status-completed-rail: var(--color-secondary-500);
+  --ed-status-completed-bg: #E3EDE4;
+  --ed-status-completed-fg: #4F6B52;
+  --ed-status-completed-rail: #7A9E7E;
 
-  --ed-status-cancelled-bg: var(--color-neutral-100);
-  --ed-status-cancelled-fg: var(--color-neutral-600);
-  --ed-status-cancelled-rail: var(--color-neutral-400);
+  --ed-status-cancelled-bg: #F0EAE1;
+  --ed-status-cancelled-fg: #6B5344;
+  --ed-status-cancelled-rail: #B6A899;
 
-  --ed-status-noshow-bg: var(--color-danger-100);
-  --ed-status-noshow-fg: var(--color-danger-800);
-  --ed-status-noshow-rail: var(--color-danger-800);
+  --ed-status-noshow-bg: #F6DAD6;
+  --ed-status-noshow-fg: #8A241A;
+  --ed-status-noshow-rail: #8A241A;
 }
 
 [data-editorial-theme="light"] {
-  /* Derives from the global theme tokens so the calendar honors whichever
-   * light Pablo theme is active (Warm Paper / Cozy / Classic Cream / Boring
-   * EHR) without its own palette. Midnight uses the dark block below. */
-  --ed-canvas: var(--background);
-  --ed-canvas-elev: var(--card);
-  --ed-rail: var(--background);
-  --ed-ink: var(--color-neutral-900);
-  --ed-ink-muted: var(--color-neutral-600);
-  --ed-ink-soft: var(--color-neutral-500);
-  /* Hairlines derive from the global --border so they adapt per theme: warm
-   * and faint in Warm Paper (#ece0cf), the strong grey rule in High Contrast
-   * (#595959), and boring-ehr's cold #b9c2cc — instead of a fixed warm rgba
-   * that fought the cooler themes. */
-  --ed-hairline: var(--border);
-  --ed-hairline-strong: var(--border);
-  /* Booking-sheet form surfaces derive from the active theme. */
-  --ed-field-bg: var(--background);
-  --ed-field-border: var(--border);
-  --ed-accent: var(--color-primary-600);
-  --ed-shadow-modal: 0 8px 24px rgba(44, 24, 16, 0.12), 0 24px 64px rgba(44, 24, 16, 0.18);
-  --ed-today-tint: transparent; /* day-header pill carries the "today" signal */
-  --ed-pill-hover: color-mix(in srgb, var(--color-neutral-900) 5%, transparent);
-  --ed-cta-bg: var(--color-primary-600);
-  --ed-cta-fg: #ffffff;
-  --ed-cta-bg-hover: var(--color-primary-700);
-  --ed-now-line: var(--color-primary-600);
-  --ed-today-circle: var(--color-neutral-900);
-  --ed-today-circle-fg: var(--card);
-  --ed-mini-today-bg: var(--color-primary-600);
-  --ed-mini-today-fg: #ffffff;
+  /* Pinned warm "editorial" palette from the calendar design handoff (Warm
+   * Paper light). Pinned rather than derived so the calendar keeps its
+   * editorial identity (cream canvas, warm gutter, deep-brown CTA) regardless
+   * of which global Pablo theme is active. Midnight uses the dark block below. */
+  --ed-canvas: #FDF6EC;
+  --ed-canvas-elev: #FFFFFF;
+  --ed-rail: #FBF3E7;
+  --ed-ink: #2C1810;
+  --ed-ink-muted: #6B5344;
+  --ed-ink-soft: #9A8979;
+  --ed-hairline: rgba(44, 24, 16, 0.07);
+  --ed-hairline-strong: rgba(44, 24, 16, 0.13);
+  --ed-field-bg: #FFFFFF;
+  --ed-field-border: rgba(44, 24, 16, 0.14);
+  --ed-accent: #E8A849;
+  --ed-shadow-modal: 0 24px 60px rgba(44, 24, 16, 0.22);
+  --ed-today-tint: rgba(232, 168, 73, 0.06);
+  --ed-pill-hover: rgba(44, 24, 16, 0.05);
+  --ed-cta-bg: #3D2B1F;
+  --ed-cta-fg: #FDF6EC;
+  --ed-cta-bg-hover: #2C1810;
+  --ed-now-line: #D4952E;
+  --ed-today-circle: #2C1810;
+  --ed-today-circle-fg: #FFFFFF;
+  --ed-mini-today-bg: #E8A849;
+  --ed-mini-today-fg: #2C1810;
   --ed-shadow-card: 0 1px 2px rgba(44, 24, 16, 0.05), 0 4px 12px rgba(44, 24, 16, 0.07);
   --ed-shadow-card-hover: 0 2px 4px rgba(44, 24, 16, 0.07), 0 8px 24px rgba(44, 24, 16, 0.11);
   --ed-grain-opacity: 0;        /* paper grain reads as dirt on white */
 }
 
 [data-editorial-theme="dark"] {
-  /* Canvas/ink/accent derive from the global Dark theme tokens so the calendar
-   * matches the rest of the app; only dark-specific texture, hairlines, and
-   * status fills are bespoke below. */
-  --ed-canvas: var(--background);
-  --ed-canvas-elev: var(--card);
-  --ed-rail: var(--background);
-  --ed-ink: var(--color-neutral-900);
-  --ed-ink-muted: var(--color-neutral-600);
-  --ed-ink-soft: var(--color-neutral-500);
-  /* Dark's --border (#35302a) is a subtle warm rule — bind to it so hairlines
-   * stay consistent with the rest of the app chrome. */
-  --ed-hairline: var(--border);
-  --ed-hairline-strong: color-mix(in srgb, var(--border) 70%, var(--color-neutral-900));
-  --ed-today-tint: color-mix(in srgb, var(--color-secondary-500) 10%, transparent);
-  --ed-pill-hover: color-mix(in srgb, var(--color-primary-600) 14%, transparent);
-  /* Booking-sheet form surfaces derive from the active theme. */
-  --ed-field-bg: var(--card);
-  --ed-field-border: var(--border);
-  --ed-accent: var(--color-primary-600);
-  --ed-shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.60);
-  --ed-cta-bg: var(--color-primary-600);
-  --ed-cta-fg: #1b1815;
-  --ed-cta-bg-hover: var(--color-primary-700);
-  --ed-now-line: var(--color-primary-600);
-  --ed-today-circle: var(--color-primary-600);
-  --ed-today-circle-fg: #1b1815;
-  --ed-mini-today-bg: var(--color-primary-600);
-  --ed-mini-today-fg: #1b1815;
+  /* Pinned warm "Midnight" palette from the calendar design handoff — warm
+   * near-black canvas + honey accents, so dark mode reads warm rather than
+   * cold-gray and matches the handoff regardless of the global dark theme. */
+  --ed-canvas: #1B1815;
+  --ed-canvas-elev: #252019;
+  --ed-rail: #1B1815;
+  --ed-ink: #F5F1EA;
+  --ed-ink-muted: #BBB1A2;
+  --ed-ink-soft: #8A8073;
+  --ed-hairline: rgba(245, 241, 234, 0.08);
+  --ed-hairline-strong: rgba(245, 241, 234, 0.16);
+  --ed-today-tint: rgba(122, 158, 126, 0.10);
+  --ed-pill-hover: rgba(232, 168, 73, 0.14);
+  --ed-field-bg: #2E2820;
+  --ed-field-border: rgba(245, 241, 234, 0.16);
+  --ed-accent: #E8A849;
+  --ed-shadow-modal: 0 30px 70px rgba(0, 0, 0, 0.6);
+  --ed-cta-bg: #E8A849;
+  --ed-cta-fg: #1B1815;
+  --ed-cta-bg-hover: #F1C77E;
+  --ed-now-line: #E8A849;
+  --ed-today-circle: #E8A849;
+  --ed-today-circle-fg: #1B1815;
+  --ed-mini-today-bg: #E8A849;
+  --ed-mini-today-fg: #1B1815;
   --ed-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 6px 18px rgba(0, 0, 0, 0.40);
   --ed-shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.40), 0 12px 28px rgba(0, 0, 0, 0.55);
-  --ed-grain-opacity: 0.025;
+  --ed-grain-opacity: 0.04;
   /* darker mood needs slightly muted status fills */
   --ed-status-confirmed-bg: rgba(232, 168, 73, 0.16);
   --ed-status-confirmed-fg: #F5D49E;
   --ed-status-completed-bg: rgba(122, 158, 126, 0.18);
   --ed-status-completed-fg: #C2DBC6;
   --ed-status-cancelled-bg: rgba(184, 155, 109, 0.12);
-  --ed-status-cancelled-fg: #B89B6D;
+  --ed-status-cancelled-fg: #C7B49A;
   --ed-status-noshow-bg: rgba(220, 38, 38, 0.18);
   --ed-status-noshow-fg: #FECACA;
 }
@@ -173,7 +166,7 @@
 /* Animated underline for the view switcher. */
 .ed-tab {
   position: relative;
-  padding-bottom: 6px;
+  padding-bottom: 5px;
   color: var(--ed-ink-muted);
   transition: color 200ms ease;
 }

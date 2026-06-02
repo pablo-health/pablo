@@ -5,6 +5,7 @@
 import { Plus } from "lucide-react"
 import type { AppointmentStatus } from "@/types/scheduling"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
+import { editorialStatusMeta } from "./status"
 
 // "light" tracks any light Pablo theme (via global tokens); "dark" = Midnight.
 export type EditorialTheme = "light" | "dark"
@@ -40,8 +41,6 @@ export function EditorialSidebar({
         color: "var(--ed-ink)",
       }}
     >
-      <EditorialMiniMonth selected={selected} onSelect={onSelectDate} />
-
       <button
         type="button"
         onClick={onCreateNew}
@@ -56,12 +55,15 @@ export function EditorialSidebar({
         New appointment
       </button>
 
+      <EditorialMiniMonth selected={selected} onSelect={onSelectDate} />
+
       <Divider />
 
       <Section title="Show on calendar">
         <div className="flex flex-col gap-2.5">
           {STATUS_OPTIONS.map((opt) => {
             const checked = statusFilters.has(opt.value)
+            const rail = editorialStatusMeta(opt.value).rail
             return (
               <label
                 key={opt.value}
@@ -97,6 +99,11 @@ export function EditorialSidebar({
                   className="sr-only"
                   checked={checked}
                   onChange={() => onToggleStatus(opt.value)}
+                />
+                <span
+                  aria-hidden
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: rail }}
                 />
                 <span style={{ color: "var(--ed-ink)" }}>{opt.label}</span>
               </label>

@@ -26,49 +26,51 @@ export function EditorialDateHeader({
   const { primary, secondary } = rangeLabel(view, anchor)
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-[14px]">
       <button
         type="button"
         onClick={onPickerOpen}
-        className="group flex items-baseline gap-2 text-left"
+        className="group flex min-w-0 items-baseline gap-2 text-left"
         aria-label="Jump to a date"
       >
         <h2
-          className="font-display text-[25px] font-semibold leading-[1.1] tracking-[-0.01em]"
+          className="font-display text-[25px] font-semibold leading-[1.05] tracking-[-0.01em]"
           style={{ color: "var(--ed-ink)" }}
         >
           {primary}
         </h2>
-        <span
-          className="font-display text-[19px] font-light tracking-tight"
-          style={{ color: "var(--ed-ink-soft)" }}
-        >
-          {secondary}
-        </span>
+        {secondary && (
+          <span
+            className="font-display text-[19px] font-light tracking-[-0.01em]"
+            style={{ color: "var(--ed-ink-soft)" }}
+          >
+            {secondary}
+          </span>
+        )}
       </button>
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5">
         <button
           type="button"
           onClick={onPrev}
-          className="rounded-full p-2 transition-colors hover:bg-[var(--ed-pill-hover)]"
+          className="rounded-full p-[7px] transition-colors hover:bg-[var(--ed-pill-hover)]"
           style={{ color: "var(--ed-ink)" }}
           aria-label="Previous"
         >
-          <ChevronLeft className="h-5 w-5" />
+          <ChevronLeft className="h-[18px] w-[18px]" />
         </button>
         <button
           type="button"
           onClick={onNext}
-          className="rounded-full p-2 transition-colors hover:bg-[var(--ed-pill-hover)]"
+          className="rounded-full p-[7px] transition-colors hover:bg-[var(--ed-pill-hover)]"
           style={{ color: "var(--ed-ink)" }}
           aria-label="Next"
         >
-          <ChevronRight className="h-5 w-5" />
+          <ChevronRight className="h-[18px] w-[18px]" />
         </button>
         <button
           type="button"
           onClick={onToday}
-          className="ml-2 rounded-full px-4 py-1.5 text-sm font-medium transition-colors hover:bg-[var(--ed-pill-hover)]"
+          className="ml-1 rounded-full px-[15px] py-1.5 text-[13.5px] font-medium transition-colors hover:bg-[var(--ed-pill-hover)]"
           style={{ color: "var(--ed-ink)" }}
         >
           Today

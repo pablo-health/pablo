@@ -194,8 +194,12 @@ export function EditorialCalendar({
   return (
     <div
       data-editorial-theme={theme}
-      className="ed-canvas relative flex min-h-[720px] overflow-hidden rounded-2xl"
-      style={{ color: "var(--ed-ink)" }}
+      className="ed-canvas relative flex min-h-[720px] overflow-hidden rounded-[18px]"
+      style={{
+        color: "var(--ed-ink)",
+        border: "1px solid var(--ed-hairline)",
+        boxShadow: "var(--ed-shadow-card)",
+      }}
     >
       <EditorialSidebar
         selected={anchor}

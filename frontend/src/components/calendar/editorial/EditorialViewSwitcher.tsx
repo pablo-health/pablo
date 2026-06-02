@@ -17,7 +17,7 @@ const VIEWS: { value: EditorialView; label: string }[] = [
 
 export function EditorialViewSwitcher({ view, onChange }: EditorialViewSwitcherProps) {
   return (
-    <div role="tablist" aria-label="Calendar view" className="flex items-center gap-6 text-sm">
+    <div role="tablist" aria-label="Calendar view" className="flex items-center gap-[22px] text-sm">
       {VIEWS.map((v) => (
         <button
           key={v.value}
@@ -26,7 +26,7 @@ export function EditorialViewSwitcher({ view, onChange }: EditorialViewSwitcherP
           aria-selected={view === v.value}
           data-active={view === v.value}
           onClick={() => onChange(v.value)}
-          className="ed-tab font-medium tracking-wide outline-none focus-visible:opacity-80"
+          className="ed-tab font-medium tracking-[0.02em] outline-none focus-visible:opacity-80"
         >
           {v.label}
         </button>
