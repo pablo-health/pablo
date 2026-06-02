@@ -543,7 +543,7 @@ def _render_patient_documents_text(rows: list[PatientDocument]) -> str:
     return "## UPLOADED PATIENT DOCUMENTS\n\n" + "\n\n".join(rendered)
 
 
-def _load_patient_documents(  # noqa: PLR0912 — branchy selection validation
+def _load_patient_documents(
     raw: Any,
     *,
     patient_documents_repo: PatientDocumentRepository,
@@ -586,16 +586,14 @@ def _load_patient_documents(  # noqa: PLR0912 — branchy selection validation
         )
 
     if explicit_ids is not None:
-        # Preserve caller-supplied order and silently skip ids the caller
-        # cannot read or that belong to a different patient — matches the
+        # Single bulk fetch rather than one query per id. Preserve
+        # caller-supplied order and silently skip ids the caller cannot
+        # read or that belong to a different patient — matches the
         # ``progress_notes_explicit`` contract (no existence oracle on a
         # forbidden id).
-        fetched: list[PatientDocument] = []
-        for did in explicit_ids:
-            doc = patient_documents_repo.get(did, user_id)
-            if doc is not None and doc.patient_id == patient_id:
-                fetched.append(doc)
-        all_for_patient = fetched
+        fetched = patient_documents_repo.get_many(explicit_ids, user_id)
+        by_id = {d.id: d for d in fetched if d.patient_id == patient_id}
+        all_for_patient = [by_id[did] for did in explicit_ids if did in by_id]
     else:
         all_for_patient = patient_documents_repo.list_for_patient(patient_id, user_id)
         if limit is not None:
@@ -1014,7 +1012,16 @@ def assemble_context_bundle(
     if token_budget <= 0:
         raise ValueError("token_budget must be positive")
 
-    notes = notes_repo.list_by_patient(patient_id, user_id)
+    # Cap the chart-note fetch on the chat hot path. Every selected
+    # note-backed source (intake, treatment/safety plan, medications,
+    # progress notes) draws from this one list; the per-source loaders
+    # then filter by type and apply their own tighter limits. The cap
+    # keeps a patient with a very long note history from loading the
+    # entire chart on every turn — the budget walk and per-source limits
+    # already mean only the most-recent notes survive into the prompt.
+    notes = notes_repo.list_by_patient(
+        patient_id, user_id, limit=PROGRESS_NOTES_LIMIT_MAX
+    )
     loaded = _load_selected_sources(
         selection=selection,
         notes=notes,

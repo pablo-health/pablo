@@ -103,13 +103,15 @@ class PostgresNotesRepository(NotesRepository):
         )
         return _row_to_note(row) if row else None
 
-    def list_by_patient(self, patient_id: str, user_id: str) -> list[Note]:
+    def list_by_patient(
+        self, patient_id: str, user_id: str, *, limit: int | None = None
+    ) -> list[Note]:
         # Top-level access gate: if the user can't read this patient,
         # return [] without enumerating any rows. Avoids leaking a
         # has-notes-vs-no-notes signal via timing.
         if not self._has_access(patient_id, user_id):
             return []
-        rows = (
+        query = (
             self._session.query(NoteRow)
             .filter(
                 NoteRow.patient_id == patient_id,
@@ -119,8 +121,10 @@ class PostgresNotesRepository(NotesRepository):
                 NoteRow.finalized_at.desc().nullslast(),
                 NoteRow.created_at.desc(),
             )
-            .all()
         )
+        if limit is not None:
+            query = query.limit(limit)
+        rows = query.all()
         return [_row_to_note(r) for r in rows]
 
     # --- writes ---
