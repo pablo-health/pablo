@@ -85,6 +85,22 @@ export const queryKeys = {
       [...queryKeys.notes.all, "byPatient", patientId] as const,
   },
 
+  // Outcome measure (scored instrument) query keys (PABLO-cwj)
+  outcomeMeasures: {
+    all: ["outcome-measures"] as const,
+    detail: (measureId: string) =>
+      [...queryKeys.outcomeMeasures.all, "detail", measureId] as const,
+    // Patient-level prefix — invalidate this to clear every instrument
+    // variant for the patient (React Query matches keys by prefix).
+    byPatientAll: (patientId: string) =>
+      [...queryKeys.outcomeMeasures.all, "byPatient", patientId] as const,
+    byPatient: (patientId: string, instrument?: string) =>
+      [
+        ...queryKeys.outcomeMeasures.byPatientAll(patientId),
+        instrument ?? null,
+      ] as const,
+  },
+
   // Patient document query keys (THERAPY-ak6m.2)
   patientDocuments: {
     all: ["patient-documents"] as const,
