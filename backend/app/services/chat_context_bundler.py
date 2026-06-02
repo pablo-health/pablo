@@ -525,14 +525,20 @@ def _load_progress_notes_explicit(raw: Any, notes: list[Note]) -> LoadedSource:
 
 
 def _score_doc_relevance(doc_text: str, query: str) -> float:
-    """Jaccard similarity between a document's words and the query's words.
+    """Overlap coefficient between a document's words and the query's words.
 
-    Lowercased whitespace-token sets; ``len(a & b) / len(a | b)``. A
-    cheap, dependency-free relevance proxy used to order patient
+    Lowercased whitespace-token sets; ``len(a & b) / min(len(a), len(b))``.
+    A cheap, dependency-free relevance proxy used to order patient
     documents so the most query-relevant docs render first (and thus
     survive budget truncation, which drops from the tail). Returns
     ``0.0`` when the query is empty or either token set is empty so a
     missing query degrades gracefully to load-order (newest-first).
+
+    Overlap coefficient (not Jaccard) on purpose: Jaccard's union
+    denominator grows with document length, so a long, highly-relevant
+    note would score *lower* than a short tangentially-relevant one —
+    backwards for our goal of keeping the most relevant doc. Dividing by
+    the smaller set (in practice the query) removes that length bias.
     """
     if not query:
         return 0.0
@@ -541,10 +547,8 @@ def _score_doc_relevance(doc_text: str, query: str) -> float:
     if not a or not b:
         return 0.0
     intersection = len(a & b)
-    union = len(a | b)
-    if union == 0:
-        return 0.0
-    return intersection / union
+    smaller = min(len(a), len(b))
+    return intersection / smaller
 
 
 def _manifest_preview(doc: PatientDocument) -> str:
@@ -708,8 +712,8 @@ def _load_patient_documents(
     skipped_no_text = sum(1 for d in all_for_patient if d.extracted_text is None)
     usable = [d for d in all_for_patient if d.extracted_text is not None]
     # Relevance ordering: when the turn carries a query, sort usable docs
-    # by Jaccard overlap with it (DESC) so the most relevant docs render
-    # first. The budget walk drops rows from the *tail*, so the highest-
+    # by overlap-coefficient score against it (DESC) so the most relevant
+    # docs render first. The budget walk drops rows from the *tail*, so the highest-
     # scoring docs survive truncation longest. ``sorted`` is stable, so
     # ties (and the query-less case, where all scores are 0.0) preserve
     # the repo's newest-first order.

@@ -1,9 +1,13 @@
 # Patient-Context Chat — OSS Design Doc
 
-**Status:** Living. Reflects HEAD as of 2026-05-13.
+**Status:** Living. Reflects HEAD as of 2026-06-02.
 **Epic:** THERAPY-bhv (OSS patient-context chat primitive).
-**Phases shipped:** 1 (lifecycle), 2 (context bundler), 3 (streaming turn service).
+**Phases shipped:** 1 (lifecycle), 2 (context bundler), 3 (streaming turn service), doc-context-quality (document manifest, relevance ordering, per-doc render cap + summary fallback).
 **Phases planned:** 3b (LlmUsageMeter), 4 (frontend ChatPanel + companion beads), 5 (retention sweep + invariant checks), 6 (operations docs).
+
+> **New here?** Start with the runtime overview:
+> [`chat-context-overview.md`](./chat-context-overview.md). This file is the
+> detailed contract; that one is the map.
 
 This file is the canonical specification the chat code already references
 (`backend/app/services/chat_context_bundler.py:16`, `backend/app/models/chat.py:7`,
@@ -325,6 +329,7 @@ SOURCE_KEY_CURRENT_MEDICATIONS     = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE      = "most_recent_intake"
 SOURCE_KEY_PROGRESS_NOTES_RECENT   = "progress_notes_recent"
 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT = "progress_notes_explicit"
+SOURCE_KEY_DOCUMENT_MANIFEST       = "document_manifest"     # doc-context-quality: always-present index
 SOURCE_KEY_PATIENT_DOCUMENTS       = "patient_documents"
 SOURCE_KEY_TREATMENT_PLAN_ACTIVE   = "treatment_plan_active"
 SOURCE_KEY_SAFETY_PLAN_ACTIVE      = "safety_plan_active"
@@ -374,10 +379,19 @@ dropped.
 | 3        | `safety_plan_active`                | No           |
 | 4        | `most_recent_intake`                | No           |
 | 5        | `progress_notes_explicit`           | Yes (row-level) |
+| 5        | `document_manifest`                 | No           |
 | 6        | `patient_documents`                 | Yes (row-level) |
 | 7        | `progress_notes_recent`             | Yes (row-level) |
 | 8        | `treatment_plan_active`             | No           |
 | 9        | `lab_values_recent`, `vitals_recent`| No (stub)    |
+
+`document_manifest` (doc-context-quality) shares priority 5 with
+`progress_notes_explicit` but is **non-truncatable**: it's a compact index
+(filename + 200-char preview per uploaded doc), so it's kept whole or not
+at all. Sitting at priority 5 — above `patient_documents` (6) — means the
+*index* of every document survives even when the full document bodies are
+budget-dropped, so the model always knows a document exists. It is a
+separate selectable key, not auto-added when `patient_documents` is on.
 
 `patient_documents` (THERAPY-ak6m.2.2) sits between explicit progress notes
 and the recent-progress-notes window. The reasoning: uploaded chart artifacts
@@ -489,14 +503,31 @@ Per-source cap: `PASTED_TEXT_MAX_CHARS = 32_000` (the same as
 ```python
 @dataclass(frozen=True)
 class ContextBundle:
-    text: str                  # ready-to-splice context block
-    manifest: dict[str, Any]   # per §7.5; persisted on the user-turn row
-    total_tokens_est: int      # estimated tokens consumed by text
-    tools: list[ToolSpec]      # agent-callable tools (§7.9); empty for non-agent strategies
+    text: str                                  # ready-to-splice context block
+    manifest: dict[str, Any]                   # per §7.5; persisted on the user-turn row
+    total_tokens_est: int                      # estimated tokens consumed by text
+    documents: tuple[RetrievedDocument, ...]   # per-item breakdown (doc-context-quality)
+
+@dataclass(frozen=True)
+class RetrievedDocument:
+    source_key: str       # which selection source produced this item
+    document_id: str      # note id / patient-document id (or source key for synth blocks)
+    text: str             # the item's rendered content — chart material, treat as PHI
+    tokens_est: int
 ```
 
-`tools` is empty for every strategy except `agent_fetch_handle` (§7.8). Existing
-callers that ignore the field keep working unchanged.
+`documents` is the structured, per-item counterpart to the flattened `text`
+blob, reflecting the *final* (post-truncation) set the model received. It
+carries chart material, so it is **never** persisted on the (PHI-free)
+manifest — it exists so retrieval quality can be evaluated per document
+(relevance to the question) rather than only in aggregate.
+
+> **Deviation from the original design:** earlier drafts of this section
+> specced a `tools: list[ToolSpec]` field for the agentic strategy (§7.9).
+> That field was never built — the agent-fetch loop didn't land, and
+> per-document provenance arrived instead via `documents` above. If §7.9
+> is ever implemented, `tools` would be added alongside `documents`, not
+> in place of it.
 
 ### §7.8 Source-strategy dispatch (planned — ak6m.2.4 / ak6m.2.5)
 
@@ -664,6 +695,50 @@ is the right cache key for Gemini's context caching. Tool results vary
 per-turn and are not cacheable. This makes `agent_fetch_handle` substantially
 cheaper than `raw_text` on multi-turn conversations even before per-tool
 optimizations — the heavy preload pays once.
+
+### §7.10 Document context handling (shipped — doc-context-quality, 2026-06)
+
+The `raw_text` document path (§7.8) gained three behaviors that close the
+gap between "load whole documents" and "fit the budget" without needing the
+agentic loop. All three are in `chat_context_bundler.py` and pinned by
+`backend/tests/test_chat_context_bundler_doc_eval.py`.
+
+**Document manifest.** `SOURCE_KEY_DOCUMENT_MANIFEST` (priority 5,
+non-truncatable; see §7.3) renders a compact index — filename + a
+`DOCUMENT_MANIFEST_PREVIEW_CHARS = 200` preview (the stored summary if
+present, else the head of the extracted text) — for every uploaded doc.
+Because it outranks `patient_documents` and is never truncated, the model
+always learns a document *exists* even when budget pressure drops the full
+bodies. Invariant: the manifest is present whenever selected, deduplicated,
+and empty-of-entries (not absent) when the patient has no docs.
+
+**Relevance ordering.** When the turn carries a `query`,
+`_load_patient_documents` sorts usable docs most-relevant-first by
+`_score_doc_relevance`. The budget walk drops rows from the *tail*
+(§7.3), so ordering is the survival policy. The score is the **overlap
+coefficient** — `|doc ∩ query| / min(|doc|, |query|)` over lowercased
+whitespace tokens — chosen over Jaccard because Jaccard's union denominator
+grows with document length and would rank a long, on-topic note *below* a
+short, barely-relevant one. With no query, order falls back to
+newest-first (`sorted` is stable, all scores 0.0). It is a deliberately
+cheap, dependency-free proxy: no term weighting, stopword removal, or
+stemming (those are roadmap — §7.9 and the overview's "Future changes").
+
+**Per-doc render cap + summary fallback.** A single document over
+`PATIENT_DOCUMENT_MAX_RENDER_CHARS` (320k chars ≈ 80k tokens) is reduced
+*before* the budget walk so one giant PDF can't consume the whole budget or
+be dropped wholesale. If `extraction_metadata["summary"]` exists it renders
+the summary marked `[SUMMARY — full document loaded in brief]`; otherwise it
+head-clips with an explicit `[document truncated — N chars omitted]` marker.
+Either way the reduction is visible to the model and the therapist.
+
+**Manifest forensics.** The `patient_documents` entry gains
+`document_ids` (survivors), `dropped_document_ids` + `rows_dropped` (tail
+docs shed for budget), and `skipped_no_text` (uploads with no extracted
+text). Still PHI-free — ids and counts only.
+
+See [`chat-context-overview.md`](./chat-context-overview.md) for the
+runtime map and the deferred-work rationale.
 
 ---
 
