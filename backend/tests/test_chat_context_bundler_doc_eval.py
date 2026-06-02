@@ -30,6 +30,7 @@ import pytest
 from app.models import Note, PatientDocument
 from app.repositories import InMemoryNotesRepository, InMemoryPatientDocumentRepository
 from app.services.chat_context_bundler import (
+    _DOCUMENT_RENDERERS,
     CHARS_PER_TOKEN,
     DEFAULT_DOCUMENT_STRATEGY,
     PATIENT_DOCUMENT_MAX_RENDER_CHARS,
@@ -37,7 +38,6 @@ from app.services.chat_context_bundler import (
     SOURCE_KEY_PATIENT_DOCUMENTS,
     SOURCE_KEY_SAFETY_PLAN_ACTIVE,
     InvalidSelectionError,
-    _DOCUMENT_RENDERERS,
     _score_doc_relevance,
     assemble_context_bundle,
     register_document_strategy,
