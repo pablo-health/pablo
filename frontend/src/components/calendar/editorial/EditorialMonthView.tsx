@@ -61,7 +61,7 @@ export function EditorialMonthView({
       }}
     >
       <div
-        className="grid border-b text-[10px] font-semibold uppercase tracking-[0.18em]"
+        className="grid border-b text-[10.5px] font-semibold uppercase tracking-[0.16em]"
         style={{
           borderColor: "var(--ed-hairline-strong)",
           gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
@@ -69,7 +69,7 @@ export function EditorialMonthView({
         }}
       >
         {WEEKDAYS.map((d) => (
-          <div key={d} className="px-3 py-3 text-left">
+          <div key={d} className="px-3 py-3 text-center">
             {d}
           </div>
         ))}
@@ -101,20 +101,17 @@ export function EditorialMonthView({
                   onSelectDay(day)
                 }
               }}
-              className="flex cursor-pointer flex-col items-stretch gap-1 px-2 py-2 text-left outline-none transition-colors hover:bg-[var(--ed-pill-hover)] focus-visible:bg-[var(--ed-pill-hover)]"
+              className="flex cursor-pointer flex-col items-stretch gap-[3px] px-[7px] py-[6px] text-left outline-none transition-colors hover:bg-[var(--ed-pill-hover)] focus-visible:bg-[var(--ed-pill-hover)]"
               style={{
                 borderTop: idx >= 7 ? "1px solid var(--ed-hairline)" : undefined,
-                borderLeft:
-                  idx % 7 !== 0 ? "1px solid var(--ed-hairline)" : undefined,
                 backgroundColor: today ? "var(--ed-today-tint)" : undefined,
-                opacity: inMonth ? 1 : 0.5,
               }}
               aria-label={format(day, "PPPP")}
             >
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center justify-end">
                 {today ? (
                   <span
-                    className="flex h-6 w-6 items-center justify-center rounded-full font-display text-[12px] font-semibold"
+                    className="flex h-[22px] w-[22px] items-center justify-center rounded-full font-display text-[12px] font-semibold"
                     style={{
                       backgroundColor: "var(--ed-today-circle)",
                       color: "var(--ed-today-circle-fg)",
@@ -124,7 +121,7 @@ export function EditorialMonthView({
                   </span>
                 ) : (
                   <span
-                    className="font-display text-[14px] font-semibold"
+                    className="font-display text-[12px] font-medium"
                     style={{
                       color: inMonth ? "var(--ed-ink)" : "var(--ed-ink-soft)",
                     }}
@@ -147,7 +144,7 @@ export function EditorialMonthView({
                 ))}
                 {overflow > 0 && (
                   <span
-                    className="px-1.5 text-[10px] font-medium"
+                    className="px-1.5 text-[10.5px] font-semibold"
                     style={{ color: "var(--ed-ink-soft)" }}
                   >
                     +{overflow} more
@@ -178,7 +175,6 @@ function MonthChip({ appointment, name, onPeek, onEdit, onContextMenu }: MonthCh
   const start = new Date(appointment.start_at)
   const cancelled = appointment.status === "cancelled"
   const meta = editorialStatusMeta(appointment.status)
-  const StatusIcon = meta.Icon
 
   const { handleClick, handleDoubleClick, handleContextMenu } =
     useClickPeekEdit({
@@ -206,25 +202,23 @@ function MonthChip({ appointment, name, onPeek, onEdit, onContextMenu }: MonthCh
         }
       }}
       aria-label={`${name} at ${format(start, "h:mm a")} — ${meta.label}`}
-      className="ed-event group flex items-center gap-1.5 truncate rounded-md px-1.5 py-0.5 text-[11px]"
+      className="group flex items-center gap-1.5 truncate rounded-[5px] px-1.5 py-0.5 text-[11px]"
       style={{
-        color: "var(--ed-ink)",
+        backgroundColor: meta.bg,
+        color: meta.fg,
         textDecoration: cancelled ? "line-through" : undefined,
         opacity: cancelled ? 0.6 : 1,
       }}
     >
-      <StatusIcon
-        aria-hidden
-        className="h-3 w-3 shrink-0"
-        style={{ color: meta.rail }}
-      />
       <span
-        className="shrink-0 font-semibold tabular-nums"
-        style={{ color: "var(--ed-ink-muted)" }}
-      >
+        aria-hidden
+        className="h-[5px] w-[5px] shrink-0 rounded-full"
+        style={{ backgroundColor: meta.rail }}
+      />
+      <span className="shrink-0 tabular-nums" style={{ opacity: 0.85 }}>
         {format(start, "h:mm")}
       </span>
-      <span className="truncate">{name}</span>
+      <span className="truncate font-semibold">{name}</span>
     </span>
   )
 }

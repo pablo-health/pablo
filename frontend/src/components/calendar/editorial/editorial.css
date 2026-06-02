@@ -166,7 +166,7 @@
 /* Animated underline for the view switcher. */
 .ed-tab {
   position: relative;
-  padding-bottom: 6px;
+  padding-bottom: 5px;
   color: var(--ed-ink-muted);
   transition: color 200ms ease;
 }

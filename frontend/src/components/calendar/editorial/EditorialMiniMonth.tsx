@@ -20,9 +20,9 @@ export function EditorialMiniMonth({ selected, onSelect }: EditorialMiniMonthPro
 
   return (
     <div className="select-none">
-      <div className="mb-3 flex items-center justify-between">
+      <div className="mb-2.5 flex items-center justify-between">
         <h3
-          className="font-display text-base font-semibold tracking-tight"
+          className="font-display text-[15.5px] font-semibold tracking-[-0.01em]"
           style={{ color: "var(--ed-ink)" }}
         >
           {format(browse, "MMMM yyyy")}
@@ -50,7 +50,7 @@ export function EditorialMiniMonth({ selected, onSelect }: EditorialMiniMonthPro
       </div>
 
       <div
-        className="mb-1 grid grid-cols-7 gap-y-1 text-center text-[10px] font-semibold uppercase tracking-[0.18em]"
+        className="mb-1 grid grid-cols-7 gap-y-1 text-center text-[10px] font-semibold uppercase tracking-[0.14em]"
         style={{ color: "var(--ed-ink-soft)" }}
       >
         {WEEKDAYS.map((d, i) => (
@@ -69,7 +69,7 @@ export function EditorialMiniMonth({ selected, onSelect }: EditorialMiniMonthPro
               type="button"
               onClick={() => onSelect(day)}
               data-today={today}
-              className="ed-mini-day relative mx-auto flex h-8 w-8 items-center justify-center rounded-full text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
+              className="ed-mini-day relative mx-auto flex h-[30px] w-[30px] items-center justify-center rounded-full text-[12.5px] outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
               style={{
                 color: today
                   ? "var(--ed-mini-today-fg)"
@@ -86,7 +86,7 @@ export function EditorialMiniMonth({ selected, onSelect }: EditorialMiniMonthPro
               {!today && isSelected && (
                 <span
                   aria-hidden
-                  className="absolute -bottom-0.5 h-0.5 w-1.5 rounded-full"
+                  className="absolute bottom-[1px] h-0.5 w-1.5 rounded-full"
                   style={{ backgroundColor: "var(--ed-ink)" }}
                 />
               )}
