@@ -4,12 +4,14 @@
 
 import Image from "next/image"
 import Link from "next/link"
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppointmentList } from "@/hooks/useAppointments"
 import { usePatientList } from "@/hooks/usePatients"
 import { useUserTimeZone } from "@/hooks/usePreferences"
+import { isCompanionAvailable } from "@/lib/companion"
 import type { AppointmentResponse } from "@/types/scheduling"
+import { CompanionGetDialog } from "./CompanionGetDialog"
 
 const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
   confirmed: { label: "Scheduled", cls: "bg-secondary-50 text-secondary-700" },
@@ -29,6 +31,8 @@ export function TodayPanel() {
   const timeZone = useUserTimeZone()
   const { data, isLoading } = useAppointmentList(start, end)
   const { data: patientData } = usePatientList()
+  const [companionDialogOpen, setCompanionDialogOpen] = useState(false)
+  const companionAvailable = isCompanionAvailable()
 
   const lastVisitByPatient = useMemo(() => {
     const m = new Map<string, string | null>()
@@ -73,10 +77,15 @@ export function TodayPanel() {
                 appointment={a}
                 lastVisit={lastVisitByPatient.get(a.patient_id) ?? null}
                 timeZone={timeZone}
+                companionAvailable={companionAvailable}
               />
             ))}
           </ul>
-          <CompanionFooter />
+          <CompanionFooter onGetApp={() => setCompanionDialogOpen(true)} />
+          <CompanionGetDialog
+            open={companionDialogOpen}
+            onOpenChange={setCompanionDialogOpen}
+          />
         </>
       )}
     </div>
@@ -87,12 +96,14 @@ interface AppointmentRowProps {
   appointment: AppointmentResponse
   lastVisit: string | null
   timeZone: string
+  companionAvailable: boolean
 }
 
 function AppointmentRow({
   appointment,
   lastVisit,
   timeZone,
+  companionAvailable,
 }: AppointmentRowProps) {
   const start = new Date(appointment.start_at)
   const time = start.toLocaleTimeString("en-US", {
@@ -102,7 +113,9 @@ function AppointmentRow({
   })
   const badge = STATUS_BADGES[appointment.status]
   const startable =
-    appointment.status === "confirmed" && !appointment.session_id
+    companionAvailable &&
+    appointment.status === "confirmed" &&
+    !appointment.session_id
   const lastVisitLabel = formatLastVisit(lastVisit, appointment.start_at)
 
   return (
@@ -141,18 +154,17 @@ function AppointmentRow({
   )
 }
 
-function CompanionFooter() {
+function CompanionFooter({ onGetApp }: { onGetApp: () => void }) {
   return (
     <p className="text-xs text-neutral-500 mt-3 pt-3 border-t border-neutral-100 text-center">
       Recording happens in the Pablo desktop app.{" "}
-      <a
-        href="https://pablo.health"
-        target="_blank"
-        rel="noreferrer"
+      <button
+        type="button"
+        onClick={onGetApp}
         className="text-primary-700 hover:underline"
       >
         Don&apos;t have it yet?
-      </a>
+      </button>
     </p>
   )
 }

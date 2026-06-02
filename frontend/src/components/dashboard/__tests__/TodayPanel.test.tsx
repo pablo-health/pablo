@@ -22,6 +22,14 @@ vi.mock("@/hooks/usePreferences", () => ({
   useUserTimeZone: () => "America/New_York",
 }))
 
+// jsdom has no navigator.platform — mock companion as available so tests
+// that exercise the "Start session" deep link don't need to know about
+// platform detection internals.
+vi.mock("@/lib/companion", () => ({
+  isMacOS: () => true,
+  isCompanionAvailable: () => true,
+}))
+
 function makeAppointment(
   overrides: Partial<AppointmentResponse> = {},
 ): AppointmentResponse {
