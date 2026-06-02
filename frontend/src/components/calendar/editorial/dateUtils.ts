@@ -17,7 +17,18 @@ import {
 
 export type EditorialView = "day" | "week" | "month"
 
-export const HOUR_ROW_PX = 72
+/** Height of one hour row in week/day views, in px. Must stay in sync with
+ * `--ed-row-h` in editorial.css (JS positions events; CSS draws gridlines). */
+export const HOUR_ROW_PX = 54
+
+/** Default working-hours window for the cropped week/day grid (7am–8pm). */
+export const DAY_START_HOUR = 7
+export const DAY_END_HOUR = 20
+
+/** Hours rendered in the grid for a given window, e.g. [7, 8, …, 19]. */
+export function gridHours(dayStart = DAY_START_HOUR, dayEnd = DAY_END_HOUR): number[] {
+  return Array.from({ length: dayEnd - dayStart }, (_, i) => dayStart + i)
+}
 
 export function weekDays(anchor: Date): Date[] {
   const start = startOfWeek(anchor, { weekStartsOn: 0 })
@@ -77,6 +88,33 @@ export function rangeLabel(view: EditorialView, anchor: Date): { primary: string
 export function minutesSinceMidnight(iso: string): number {
   const d = new Date(iso)
   return d.getHours() * 60 + d.getMinutes()
+}
+
+/**
+ * Compute the dynamic working-hours window from a set of appointments.
+ *
+ * The window expands to include every appointment's start and end hour while
+ * keeping the default 7–20 range on normal days. Falls back to 7–20 when
+ * there are no appointments.
+ *
+ * @returns `{ dayStart, dayEnd }` — integer hour values (0–24).
+ */
+export function dynamicDayWindow(appointments: { start_at: string; end_at: string }[]): {
+  dayStart: number
+  dayEnd: number
+} {
+  if (appointments.length === 0) return { dayStart: DAY_START_HOUR, dayEnd: DAY_END_HOUR }
+  let earliest = DAY_START_HOUR
+  let latest = DAY_END_HOUR
+  for (const appt of appointments) {
+    const startH = new Date(appt.start_at).getHours()
+    const endH = Math.ceil(
+      (new Date(appt.end_at).getHours() * 60 + new Date(appt.end_at).getMinutes()) / 60,
+    )
+    if (startH < earliest) earliest = startH
+    if (endH > latest) latest = endH
+  }
+  return { dayStart: earliest, dayEnd: latest }
 }
 
 export { addDays, format, isSameDay, isSameMonth, isToday, startOfDay, startOfMonth, startOfWeek }
