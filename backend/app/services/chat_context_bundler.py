@@ -55,6 +55,7 @@ SOURCE_KEY_CURRENT_MEDICATIONS = "current_medications"
 SOURCE_KEY_MOST_RECENT_INTAKE = "most_recent_intake"
 SOURCE_KEY_PROGRESS_NOTES_RECENT = "progress_notes_recent"
 SOURCE_KEY_PROGRESS_NOTES_EXPLICIT = "progress_notes_explicit"
+SOURCE_KEY_DOCUMENT_MANIFEST = "document_manifest"
 SOURCE_KEY_PATIENT_DOCUMENTS = "patient_documents"
 SOURCE_KEY_TREATMENT_PLAN_ACTIVE = "treatment_plan_active"
 SOURCE_KEY_SAFETY_PLAN_ACTIVE = "safety_plan_active"
@@ -67,6 +68,7 @@ V1_SOURCE_KEYS: tuple[str, ...] = (
     SOURCE_KEY_MOST_RECENT_INTAKE,
     SOURCE_KEY_PROGRESS_NOTES_RECENT,
     SOURCE_KEY_PROGRESS_NOTES_EXPLICIT,
+    SOURCE_KEY_DOCUMENT_MANIFEST,
     SOURCE_KEY_PATIENT_DOCUMENTS,
     SOURCE_KEY_TREATMENT_PLAN_ACTIVE,
     SOURCE_KEY_SAFETY_PLAN_ACTIVE,
@@ -115,6 +117,22 @@ PATIENT_DOCUMENTS_LIMIT_MAX = 50
 # long doc contributes its first N pages instead of all-or-nothing. The
 # downstream budget walk still runs after this cap.
 PATIENT_DOCUMENT_MAX_RENDER_CHARS = 320_000
+
+# Priority for the document-manifest source. It sits just above
+# ``patient_documents`` (priority 6) so the compact index of every
+# uploaded doc renders before — and survives budget pressure longer
+# than — the full document bodies. It is a tiny, non-truncatable index,
+# so keeping it costs almost nothing while giving the model an
+# always-present catalogue of what is on file even when the full bodies
+# get truncated or dropped. (5 also keys ``progress_notes_explicit``;
+# equal priorities are permitted — see lab/vitals both at 9 — and the
+# manifest's near-zero token cost makes the tie harmless.)
+DOCUMENT_MANIFEST_PRIORITY = 5
+
+# Per-document preview length for the manifest index line. Short enough
+# that the whole catalogue stays a cheap, always-present index even for
+# a chart with many docs.
+DOCUMENT_MANIFEST_PREVIEW_CHARS = 200
 
 # Bytes-per-token heuristic. Gemini tokenizers run roughly 3.5-4 chars
 # per token on English clinical prose; we use 4 as a slight
@@ -506,6 +524,81 @@ def _load_progress_notes_explicit(raw: Any, notes: list[Note]) -> LoadedSource:
     )
 
 
+def _score_doc_relevance(doc_text: str, query: str) -> float:
+    """Jaccard similarity between a document's words and the query's words.
+
+    Lowercased whitespace-token sets; ``len(a & b) / len(a | b)``. A
+    cheap, dependency-free relevance proxy used to order patient
+    documents so the most query-relevant docs render first (and thus
+    survive budget truncation, which drops from the tail). Returns
+    ``0.0`` when the query is empty or either token set is empty so a
+    missing query degrades gracefully to load-order (newest-first).
+    """
+    if not query:
+        return 0.0
+    a = set(doc_text.lower().split())
+    b = set(query.lower().split())
+    if not a or not b:
+        return 0.0
+    intersection = len(a & b)
+    union = len(a | b)
+    if union == 0:
+        return 0.0
+    return intersection / union
+
+
+def _manifest_preview(doc: PatientDocument) -> str:
+    """One-line preview for a doc's manifest index entry.
+
+    Prefers a stored AI summary (``extraction_metadata['summary']``),
+    falls back to the head of the extracted text, then to a placeholder.
+    Never raises on a malformed ``extraction_metadata`` blob.
+    """
+    metadata = doc.extraction_metadata or {}
+    summary = metadata.get("summary") if isinstance(metadata, dict) else None
+    if isinstance(summary, str) and summary.strip():
+        return " ".join(summary.split())
+    body = (doc.extracted_text or "").strip()
+    if body:
+        excerpt = body[:DOCUMENT_MANIFEST_PREVIEW_CHARS]
+        return " ".join(excerpt.split())
+    return "(no preview)"
+
+
+def _load_document_manifest(docs: list[PatientDocument]) -> LoadedSource:
+    """Build a compact index of every patient document on file.
+
+    One line per document — title/filename, date, and a short
+    summary/excerpt — so the model always knows the full set of uploaded
+    documents even when their full bodies are truncated or evicted under
+    budget pressure. Non-truncatable: the whole index is kept or nothing.
+
+    ``docs`` is the same list :func:`_load_patient_documents` renders in
+    full; the manifest indexes all of them, including docs without
+    extracted text (those show ``(no preview)``) so the model can still
+    surface that a scanned/image doc exists.
+    """
+    lines: list[str] = []
+    for doc in docs:
+        title = getattr(doc, "title", None) or doc.filename
+        upload_date = getattr(doc, "upload_date", None) or doc.created_at.date()
+        preview = _manifest_preview(doc)
+        lines.append(f"- {title} · {upload_date} · {preview}")
+    text = "## PATIENT DOCUMENTS ON FILE\n" + "\n".join(lines) if lines else ""
+    return LoadedSource(
+        key=SOURCE_KEY_DOCUMENT_MANIFEST,
+        priority=DOCUMENT_MANIFEST_PRIORITY,
+        rows=list(docs),
+        extra={
+            "document_ids": [d.id for d in docs],
+            "row_count_initial": len(docs),
+        },
+        text=text,
+        tokens_est=estimate_tokens(text),
+        truncatable=False,
+    )
+
+
 def _format_patient_document_section(doc: PatientDocument) -> str:
     """Render one uploaded document as a subsection block.
 
@@ -518,7 +611,11 @@ def _format_patient_document_section(doc: PatientDocument) -> str:
     Bodies over ``PATIENT_DOCUMENT_MAX_RENDER_CHARS`` are clipped with an
     explicit ``[document truncated — ...]`` marker so the model can tell
     the difference between a doc that genuinely says nothing further and
-    one whose tail got cut for budget reasons.
+    one whose tail got cut for budget reasons. When the doc carries a
+    stored AI summary (``extraction_metadata['summary']``) we render that
+    summary instead of a blind head-clip, so an over-cap document
+    contributes a faithful whole-document gist rather than just its first
+    pages.
     """
     uploaded = doc.created_at.date()
     body = (doc.extracted_text or "").strip()
@@ -526,12 +623,20 @@ def _format_patient_document_section(doc: PatientDocument) -> str:
         return ""
     original_chars = len(body)
     if original_chars > PATIENT_DOCUMENT_MAX_RENDER_CHARS:
-        omitted = original_chars - PATIENT_DOCUMENT_MAX_RENDER_CHARS
-        body = (
-            body[:PATIENT_DOCUMENT_MAX_RENDER_CHARS]
-            + f"\n\n[document truncated — {omitted} chars omitted; "
-            f"original was {original_chars} chars]"
-        )
+        metadata = doc.extraction_metadata or {}
+        summary = metadata.get("summary") if isinstance(metadata, dict) else None
+        if isinstance(summary, str) and summary.strip():
+            body = (
+                f"[SUMMARY — full document loaded in brief; original was "
+                f"{original_chars} chars]\n{summary.strip()}"
+            )
+        else:
+            omitted = original_chars - PATIENT_DOCUMENT_MAX_RENDER_CHARS
+            body = (
+                body[:PATIENT_DOCUMENT_MAX_RENDER_CHARS]
+                + f"\n\n[document truncated — {omitted} chars omitted; "
+                f"original was {original_chars} chars]"
+            )
     return f"### {doc.filename} (uploaded {uploaded})\n{body}"
 
 
@@ -549,6 +654,7 @@ def _load_patient_documents(
     patient_documents_repo: PatientDocumentRepository,
     patient_id: str,
     user_id: str,
+    query: str | None = None,
 ) -> LoadedSource:
     limit: int | None = None
     explicit_ids: list[str] | None = None
@@ -601,6 +707,18 @@ def _load_patient_documents(
 
     skipped_no_text = sum(1 for d in all_for_patient if d.extracted_text is None)
     usable = [d for d in all_for_patient if d.extracted_text is not None]
+    # Relevance ordering: when the turn carries a query, sort usable docs
+    # by Jaccard overlap with it (DESC) so the most relevant docs render
+    # first. The budget walk drops rows from the *tail*, so the highest-
+    # scoring docs survive truncation longest. ``sorted`` is stable, so
+    # ties (and the query-less case, where all scores are 0.0) preserve
+    # the repo's newest-first order.
+    if query:
+        usable = sorted(
+            usable,
+            key=lambda d: _score_doc_relevance(d.extracted_text or "", query),
+            reverse=True,
+        )
     text = _render_patient_documents_text(usable)
     extra: dict[str, Any] = {
         "document_ids": [d.id for d in usable],
@@ -753,6 +871,7 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
     patient_documents_repo: PatientDocumentRepository | None,
     patient_id: str,
     user_id: str,
+    query: str | None = None,
 ) -> list[LoadedSource]:
     loaded: list[LoadedSource] = []
     for key, raw in selection.items():
@@ -770,6 +889,14 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
             loaded.append(_load_progress_notes_recent(raw, notes))
         elif key == SOURCE_KEY_PROGRESS_NOTES_EXPLICIT:
             loaded.append(_load_progress_notes_explicit(raw, notes))
+        elif key == SOURCE_KEY_DOCUMENT_MANIFEST:
+            if patient_documents_repo is None:
+                raise InvalidSelectionError(
+                    f"{SOURCE_KEY_DOCUMENT_MANIFEST} was selected but the "
+                    "bundler was not given a patient_documents_repo"
+                )
+            docs = patient_documents_repo.list_for_patient(patient_id, user_id)
+            loaded.append(_load_document_manifest(docs))
         elif key == SOURCE_KEY_PATIENT_DOCUMENTS:
             if patient_documents_repo is None:
                 raise InvalidSelectionError(
@@ -782,6 +909,7 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
                     patient_documents_repo=patient_documents_repo,
                     patient_id=patient_id,
                     user_id=user_id,
+                    query=query,
                 )
             )
         elif key == SOURCE_KEY_TREATMENT_PLAN_ACTIVE:
@@ -895,7 +1023,10 @@ def _build_manifest(
         if note_ids:
             entry["note_ids"] = list(note_ids)
         document_ids = src.extra.get("document_ids")
-        if document_ids is not None and src.key == SOURCE_KEY_PATIENT_DOCUMENTS:
+        if document_ids is not None and src.key in (
+            SOURCE_KEY_PATIENT_DOCUMENTS,
+            SOURCE_KEY_DOCUMENT_MANIFEST,
+        ):
             entry["document_ids"] = list(document_ids)
         if src.key == SOURCE_KEY_PATIENT_DOCUMENTS and src.is_present:
             entry["skipped_no_text"] = src.extra.get("skipped_no_text", 0)
@@ -959,10 +1090,28 @@ def _documents_from_loaded(loaded: list[LoadedSource]) -> tuple[RetrievedDocumen
     Read-only: walks each present source's surviving rows (post-budget)
     in the same priority order as ``_build_text`` and renders each item.
     Rows that render empty are skipped, matching the section build.
+
+    The ``document_manifest`` source is a synthesized index over the same
+    docs ``patient_documents`` already breaks out per item, so it is
+    emitted as a single synthetic block (keyed by its source key) rather
+    than re-listing each doc — its rows are :class:`PatientDocument`
+    objects that the per-row note renderer can't handle.
     """
     documents: list[RetrievedDocument] = []
     for src in sorted(loaded, key=lambda s: s.priority):
         if not src.is_present:
+            continue
+        if src.key == SOURCE_KEY_DOCUMENT_MANIFEST:
+            text = src.text.strip()
+            if text:
+                documents.append(
+                    RetrievedDocument(
+                        source_key=src.key,
+                        document_id=src.key,
+                        text=text,
+                        tokens_est=estimate_tokens(text),
+                    )
+                )
             continue
         for row in src.rows:
             document_id, text = _document_text_for_row(src.key, row)
@@ -988,6 +1137,7 @@ def assemble_context_bundle(
     selection: dict[str, Any],
     token_budget: int = DEFAULT_TOKEN_BUDGET,
     patient_documents_repo: PatientDocumentRepository | None = None,
+    query: str | None = None,
 ) -> ContextBundle:
     """Assemble a context bundle for one chat turn.
 
@@ -1008,6 +1158,14 @@ def assemble_context_bundle(
     source alone exceeds ``token_budget``. All other budget pressure is
     resolved silently via the truncation policy and surfaced in the
     manifest.
+
+    ``query`` is the caller's current turn text, when available. It is
+    used only to relevance-order the ``patient_documents`` source (most
+    query-relevant docs first, so they survive budget truncation
+    longest); it does not select or filter sources, and it is never
+    persisted on the PHI-free manifest. ``None`` (e.g. the briefing-card
+    preview, which has no user turn yet) leaves docs in newest-first
+    order.
     """
     if token_budget <= 0:
         raise ValueError("token_budget must be positive")
@@ -1028,6 +1186,7 @@ def assemble_context_bundle(
         patient_documents_repo=patient_documents_repo,
         patient_id=patient_id,
         user_id=user_id,
+        query=query,
     )
 
     pasted = next((s for s in loaded if s.key == SOURCE_KEY_PASTED_TEXT), None)
@@ -1079,6 +1238,8 @@ def default_source_selection() -> dict[str, Any]:
 __all__ = [
     "CHARS_PER_TOKEN",
     "DEFAULT_TOKEN_BUDGET",
+    "DOCUMENT_MANIFEST_PREVIEW_CHARS",
+    "DOCUMENT_MANIFEST_PRIORITY",
     "INTAKE_NOTE_TYPES",
     "MEDICATIONS_NOTE_TYPES",
     "PASTED_TEXT_MAX_CHARS",
@@ -1088,6 +1249,7 @@ __all__ = [
     "SAFETY_PLAN_NOTE_TYPES",
     "SESSION_NOTE_TYPES",
     "SOURCE_KEY_CURRENT_MEDICATIONS",
+    "SOURCE_KEY_DOCUMENT_MANIFEST",
     "SOURCE_KEY_LAB_VALUES_RECENT",
     "SOURCE_KEY_MOST_RECENT_INTAKE",
     "SOURCE_KEY_PASTED_TEXT",

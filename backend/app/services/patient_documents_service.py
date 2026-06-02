@@ -60,6 +60,24 @@ ALLOWED_MIME_TYPES: frozenset[str] = frozenset(
 # pages.
 _SCANNED_PDF_TEXT_THRESHOLD = 100
 
+# Documents shorter than this don't get a stored summary — the full body
+# already fits comfortably in the chat bundle, so a summary would be
+# redundant. The chat bundler only falls back to the summary when a doc
+# body exceeds its render cap, which a sub-2k-char doc never will.
+_SUMMARY_MIN_TEXT_CHARS = 2_000
+
+# Length of the deterministic head-excerpt summary. We deliberately use a
+# cheap, dependency-free first-N-chars excerpt rather than an inline LLM
+# call: the finalize path is synchronous and idempotent (an early return
+# on re-finalize means a failed inline LLM summary would leave the doc
+# finalized-without-summary and no retry path), and an LLM call would add
+# per-document cost + 1-5s of blocking latency to every upload. The
+# excerpt is stored under ``extraction_metadata['summary']`` so the chat
+# bundler's render-cap fallback has a faithful head of the document to
+# show; a higher-fidelity summarizer can replace this producer later
+# without changing the consumer contract.
+_SUMMARY_EXCERPT_CHARS = 400
+
 
 class PatientDocumentError(Exception):
     """Base class for patient-document service errors."""
@@ -293,13 +311,16 @@ class PatientDocumentsService:
                     extraction_metadata = {
                         "page_count": ocr_result.page_count,
                         "avg_confidence": ocr_result.avg_confidence,
-                        "low_confidence_pages": list(
-                            ocr_result.low_confidence_pages
-                        ),
+                        "low_confidence_pages": list(ocr_result.low_confidence_pages),
                         "latency_ms": ocr_result.latency_ms,
                     }
                 else:
                     extracted_via = "unavailable"
+
+        # Best-effort document summary for the chat bundler's render-cap
+        # fallback. Soft: never blocks finalize (which is idempotent and
+        # would otherwise strand the doc finalized-without-summary).
+        extraction_metadata = _with_summary(extraction_metadata, extracted_text)
 
         updated = self._repo.mark_finalized(
             document_id=document_id,
@@ -388,6 +409,42 @@ def _extract_pdf_text(data: bytes) -> str | None:
     if len(body) < _SCANNED_PDF_TEXT_THRESHOLD:
         return None
     return body
+
+
+def _with_summary(
+    metadata: dict[str, object] | None,
+    extracted_text: str | None,
+) -> dict[str, object] | None:
+    """Return ``metadata`` augmented with a ``summary`` key when warranted.
+
+    Returns the input unchanged (possibly ``None``) when there is nothing
+    to summarize, so the caller's metadata handling stays a single line.
+    """
+    summary = _summarize_extracted_text(extracted_text)
+    if summary is None:
+        return metadata
+    merged = dict(metadata) if metadata is not None else {}
+    merged["summary"] = summary
+    return merged
+
+
+def _summarize_extracted_text(extracted_text: str | None) -> str | None:
+    """Produce a short, stored summary of an extracted document body.
+
+    Returns ``None`` when there is nothing worth summarizing (no text,
+    or a body short enough that the bundler will render it whole). The
+    summary is a deterministic head-excerpt — cheap, never fails, never
+    blocks finalize. It is PHI (derived from chart content): callers
+    persist it to the DB alongside ``extracted_text``; it must never be
+    logged. See ``_SUMMARY_EXCERPT_CHARS`` for the producer rationale.
+    """
+    if extracted_text is None:
+        return None
+    body = extracted_text.strip()
+    if len(body) <= _SUMMARY_MIN_TEXT_CHARS:
+        return None
+    excerpt = " ".join(body[:_SUMMARY_EXCERPT_CHARS].split())
+    return f"{excerpt} […]"
 
 
 def _sanitize_filename(name: str) -> str:
