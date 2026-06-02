@@ -56,8 +56,16 @@ export function CompliancePanel() {
     return c
   }, [enriched])
 
+  // Must match HorizonStrip's urgentCount (overdue + week + month), not isUrgent.
   const urgent = useMemo(
-    () => enriched.filter((e) => e.isUrgent).sort(sortByDueDate),
+    () =>
+      enriched
+        .filter((e) =>
+          e.horizon === "overdue" ||
+          e.horizon === "week" ||
+          e.horizon === "month",
+        )
+        .sort(sortByDueDate),
     [enriched],
   )
 
