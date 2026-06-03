@@ -18,15 +18,20 @@ FROM cgr.dev/chainguard/python:latest-dev@sha256:24fe6b9d7a18c27ffecd56bb69212bd
 
 WORKDIR /build
 
+# The builder needs root to install into the system Python. This stage is
+# discarded — only its site-packages are copied into the nonroot runtime
+# stage below — so DL3002 ("last USER should not be root") doesn't apply.
+# hadolint ignore=DL3002
 USER root
 
 # pip-install Poetry into the system python (no virtualenv); Chainguard
 # :latest-dev already ships Python + pip. Upgrade pip first: the bundled
 # line predates 26.1, which fixed the archive-interpretation and
 # deferred-import-during-self-check issues. The upgraded pip lands in the
-# site-packages copied into the runtime stage below.
+# site-packages copied into the runtime stage below. Poetry is pinned so
+# the build is reproducible (DL3013).
 RUN pip install --no-cache-dir --upgrade "pip>=26.1.1" \
-    && pip install --no-cache-dir poetry
+    && pip install --no-cache-dir "poetry==2.4.1"
 
 COPY pyproject.toml poetry.lock ./
 
