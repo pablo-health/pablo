@@ -48,6 +48,11 @@ class AuditAction(StrEnum):
     # iCal sync / EHR client import operations
     CLIENT_RESOLVED = "client_resolved"
     CLIENTS_IMPORTED = "clients_imported"
+    # A sync run that surfaces unmatched external calendar events — each
+    # carries a client_identifier (an external client name), so the read is
+    # PHI-adjacent. The `changes` payload stays PHI-free (counts only); the
+    # identifiers themselves are never recorded.
+    ICAL_CALENDAR_SYNCED = "ical_calendar_synced"
 
     # Appointment operations
     APPOINTMENT_CREATED = "appointment_created"
@@ -121,10 +126,16 @@ class AuditAction(StrEnum):
     CHAT_CONVERSATION_CREATED = "chat_conversation_created"
     # Read-access event for the conversation-detail endpoint, which returns
     # full message bodies. Mirrors PATIENT_VIEWED / SESSION_VIEWED so chat
-    # reads are audited like every other PHI-read surface. No list-level
-    # equivalent: a conversation list is access-filtered and surfaces no
-    # content, so it carries no forensic value.
+    # reads are audited like every other PHI-read content surface — record-level
+    # ("which conversation").
     CHAT_CONVERSATION_VIEWED = "chat_conversation_viewed"
+    # Read-access event for the conversation-LIST endpoint. The list surfaces no
+    # message bodies, but each item carries a title that defaults to
+    # "Chat about {patient_display_name}" — an identifier disclosure. So the list
+    # is audited patient-scoped ("that the patient's chat index was viewed",
+    # resource_id = patient_id), one row per patient per window, NOT one per
+    # conversation: granularity matches what was disclosed (titles), not bodies.
+    CHAT_CONVERSATION_LIST_VIEWED = "chat_conversation_list_viewed"
     CHAT_CONVERSATION_ARCHIVED = "chat_conversation_archived"
     CHAT_CONVERSATION_PURGED = "chat_conversation_purged"
     CHAT_CHART_PROMOTION = "chat_chart_promotion"

@@ -31,12 +31,17 @@ surfaces so they can't drift:
 
 The engine auto-detects route roots (`backend/app/routes/` in the OSS engine,
 `backend/saas/**/` in the SaaS overlay), resolves each handler's full mounted
-path (router prefix + decorator path), and flags any route whose URL matches a
-PHI marker but is missing the `AuditService` injection or the `audit.*` call.
-It also flags the `_audit` / `_http_request` underscore bypass.
+path (router prefix + decorator path), and is **fail-closed**: EVERY handler
+must either inject+call the tenant `AuditService` OR be explicitly classified.
+A route at an unrecognized path is a violation, not a silent pass. It also flags
+the `_audit` / `_http_request` underscore bypass. Note the tenant `AuditService`
+is required — `PlatformAuditService` (the PHI-free ops stream) does not satisfy
+the check.
 
-PHI markers: `/patients`, `/sessions`, `/appointments`, `/notes`,
-`/transcript`, `/audio`, `/soap`, `/resolve-client`, `/import-clients`.
+PHI markers (a path matching one of these may ONLY be exempted via the reviewed
+`AUDIT_EXEMPT_PHI_ROUTES` list, never the non-PHI one): `/patients`, `/sessions`,
+`/appointments`, `/notes`, `/transcript`, `/audio`, `/soap`, `/resolve-client`,
+`/import-clients`.
 
 ## Output
 
@@ -46,7 +51,8 @@ Markdown list of violations plus a fix hint. Exits 0 when the tree is clean,
 ## What it ignores
 
 - `__init__.py` and `__pycache__`
-- Routes whose mounted path matches no PHI marker
 - Functions not decorated with `@<router>.<http_method>(...)`
-- Routes explicitly classified non-PHI in `AUDIT_EXEMPT_PHI_ROUTES`
-  (in `backend/scripts/check_route_audit.py`, each with a reason)
+- Routes that inject+call the tenant `AuditService`
+- Routes explicitly classified non-PHI in `AUDIT_EXEMPT_NON_PHI_ROUTES`, and the
+  reviewed metadata-only PHI-marker routes in `AUDIT_EXEMPT_PHI_ROUTES`
+  (both in `backend/scripts/check_route_audit.py`, each with a reason)

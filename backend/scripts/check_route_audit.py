@@ -8,18 +8,33 @@ deterministically anywhere: CI (via ``test_route_audit_guardrails.py``, which
 delegates here), a git pre-commit hook, or a Claude Code PostToolUse hook fired
 when a route file is edited.
 
-Three rules, all enforced against the *mounted* path (router prefix + decorator
+Four rules, all enforced against the *mounted* path (router prefix + decorator
 arg) so prefixed routers (``APIRouter(prefix="/api/patients")``) are not blind
 spots:
 
   1. No route handler may use an underscore-prefixed ``_audit`` /
      ``_http_request`` parameter — that silences every linter and is a silent
      audit bypass.
-  2. A handler that injects ``audit: AuditService`` must actually call
-     ``audit.*`` — otherwise the injection is dead weight and the access is
-     unaudited.
-  3. A handler whose mounted path matches a PHI marker must inject
-     ``AuditService`` — unless it is explicitly allowlisted below.
+  2. A handler that injects the tenant ``audit: AuditService`` must actually
+     call ``audit.*`` — otherwise the injection is dead weight and the access
+     is unaudited.
+  3. **Fail-closed.** EVERY ``@router`` handler must either inject+call the
+     tenant ``AuditService`` OR be explicitly classified non-PHI in
+     ``AUDIT_EXEMPT_NON_PHI_ROUTES`` with a one-line reason. A route at an
+     unrecognized path is NOT assumed safe — silence is a violation, not a
+     pass. (Marker matching is kept as rule 4's backstop, not the gate.)
+  4. A handler whose mounted path matches a PHI marker must inject the tenant
+     ``AuditService`` and may NEVER be lazily exempted: it can only appear in
+     the small, heavily-reviewed ``AUDIT_EXEMPT_PHI_ROUTES`` list, never in
+     ``AUDIT_EXEMPT_NON_PHI_ROUTES``. The engine treats a marker-matching entry
+     in the non-PHI list as a hard config error, so a lazy exemption cannot be
+     used to dodge a PHI surface.
+
+Note on the two ``*AuditService`` types: only the *tenant* ``AuditService``
+(writes per-tenant ``audit_logs``, the HIPAA § 164.312(b) record) satisfies
+this check. ``PlatformAuditService`` (the PHI-free cross-tenant ops stream) is
+deliberately NOT accepted — a PHI route that wired the platform sink instead of
+the tenant sink would otherwise pass while writing to the wrong, PHI-free log.
 
 Run: ``python backend/scripts/check_route_audit.py`` (exits 1 with the list of
 violations, 0 if clean). Optional args are file paths; any that are not under
@@ -78,6 +93,84 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         ("get", "/api/sessions/today"),  # get_today_sessions — schedule dashboard
         ("get", "/api/appointments"),  # list_appointments — calendar metadata
+    }
+)
+
+# Fail-closed classification of every handler whose mounted path carries NO PHI
+# marker but which still does not audit. Each entry is a deliberate "this route
+# touches no patient PHI" decision with a one-line reason. A handler that is
+# neither audited nor listed here is a violation — that is what makes the check
+# fail-closed (an unrecognized route is never silently assumed safe).
+#
+# HARD RULE: nothing in here may match a PHI_PATH_MARKER. A marker-matching path
+# that genuinely returns only metadata belongs in the reviewed
+# AUDIT_EXEMPT_PHI_ROUTES above, never here. ``_exempt_config_violations``
+# enforces this at runtime so the list can't be used to dodge a PHI surface.
+#
+# Keyed by (method, mounted-path) — i.e. router prefix + decorator arg.
+AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        # admin.py — operates on therapist accounts / invitees, never patient data
+        ("get", "/api/admin/users"),  # admin lists therapist accounts
+        ("patch", "/api/admin/users/{user_id}/disable"),  # disables a therapist account
+        ("patch", "/api/admin/users/{user_id}/enable"),  # re-enables a therapist account
+        ("get", "/api/admin/allowlist"),  # lists prospective-therapist invite emails
+        ("post", "/api/admin/allowlist"),  # adds a therapist invite email
+        ("delete", "/api/admin/allowlist/{email}"),  # removes a therapist invite email
+        # admin_pentest.py — synthetic pentest tenants / platform-audit only, no real PHI
+        ("post", "/api/admin/pentest/tenant"),  # provisions a synthetic pentest tenant
+        ("delete", "/api/admin/pentest/tenant/{tenant_id}"),  # tears down a pentest tenant
+        ("post", "/api/admin/pentest/audit"),  # emits a PlatformAudit pentest-run row, PHI-free
+        # auth.py / ext_auth.py — auth tokens and boolean checks only
+        ("post", "/api/auth/native/code"),  # mints a short-lived native auth code
+        ("post", "/api/auth/native/exchange"),  # exchanges code for auth tokens
+        ("post", "/api/ext/auth/check-allowlist"),  # allowlist membership check
+        ("post", "/api/ext/auth/check-status"),  # account disabled-status check
+        # chat.py — context-preview manifest is ids/dates/counts only, PHI-free by design
+        ("post", "/api/chat/conversations/preview"),  # context-preview manifest, no PHI
+        # compliance.py — therapist's own compliance checklist (license/insurance/training)
+        ("get", "/api/compliance"),  # therapist's own compliance items
+        ("get", "/api/compliance/templates"),  # compliance template catalog
+        ("post", "/api/compliance"),  # creates a therapist compliance task
+        ("post", "/api/compliance/{item_id}/complete"),  # marks therapist task complete
+        ("put", "/api/compliance/{item_id}"),  # updates therapist compliance task
+        ("delete", "/api/compliance/{item_id}"),  # deletes therapist compliance task
+        # ehr_routes.py — EHR UI-navigation config (selectors/steps), no patient data
+        ("get", "/api/ehr-routes/{ehr_system}"),  # navigation route config
+        ("patch", "/api/ehr-routes/{ehr_system}/steps/{step_index}"),  # updates a nav step
+        # ical_sync.py — feed connection metadata only (the sync READ itself is audited)
+        ("get", "/api/ical-sync/status"),  # feed connection metadata
+        ("post", "/api/ical-sync/configure"),  # validates feed URL + event count
+        ("delete", "/api/ical-sync/{ehr_system}"),  # disconnects a feed
+        # note_types.py — note-type catalog/config
+        ("get", "/api/note-types"),  # note-type catalog
+        ("get", "/api/note-types/{key}"),  # single note-type definition
+        # scheduling.py — therapist's own availability/OAuth, no client attached
+        ("get", "/api/availability/rules"),  # therapist availability rules
+        ("post", "/api/availability/rules"),  # creates an availability rule
+        ("patch", "/api/availability/rules/{rule_id}"),  # updates an availability rule
+        ("delete", "/api/availability/rules/{rule_id}"),  # deletes an availability rule
+        ("get", "/api/availability/slots"),  # open free-slot times, no client
+        ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/google-calendar/authorize"),  # OAuth start, returns auth URL
+        ("get", "/api/google-calendar/callback"),  # OAuth token exchange, no events
+        ("get", "/api/google-calendar/status"),  # calendar connection status
+        ("delete", "/api/google-calendar/disconnect"),  # removes calendar tokens
+        # users.py — caller's OWN account/profile, not patient data
+        ("get", "/api/users/baa"),  # current BAA document text
+        ("get", "/api/users/baa/{version}"),  # versioned BAA document text
+        ("get", "/api/users/me"),  # caller's own profile
+        ("get", "/api/users/me/baa-status"),  # caller's own BAA status
+        ("get", "/api/users/me/preferences"),  # caller's own UI preferences
+        ("get", "/api/users/me/security-guide-status"),  # caller's own security-guide status
+        ("get", "/api/users/me/status"),  # caller's own account/onboarding status
+        ("patch", "/api/users/me"),  # updates caller's own profile
+        ("patch", "/api/users/me/professional-info"),  # updates caller's own license info
+        ("post", "/api/users/me/accept-baa"),  # records caller's own BAA acceptance
+        ("post", "/api/users/me/acknowledge-security-guide"),  # records caller's own ack
+        ("post", "/api/users/me/mfa-enrolled"),  # records caller's own MFA enrollment
+        ("put", "/api/users/me/preferences"),  # saves caller's own preferences
+        ("put", "/api/users/me/preferences/theme"),  # saves caller's own theme
     }
 )
 
@@ -163,6 +256,21 @@ def _param_annotations(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str
     }
 
 
+def _injects_tenant_audit(annotations: dict[str, str]) -> bool:
+    """True if any parameter is annotated with the *tenant* ``AuditService``.
+
+    The platform sink (``PlatformAuditService``) contains ``AuditService`` as a
+    substring but writes the PHI-free cross-tenant ops log, not the per-tenant
+    HIPAA ``audit_logs`` — so it must NOT satisfy the PHI check. Match each
+    annotation individually so a handler that injects both services still
+    counts on its tenant-``AuditService`` parameter.
+    """
+    return any(
+        "AuditService" in ann and "PlatformAuditService" not in ann
+        for ann in annotations.values()
+    )
+
+
 def _calls_audit(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """True if the function body contains any ``audit.<attr>(...)`` call."""
     for node in ast.walk(func):
@@ -216,7 +324,7 @@ def injected_but_uncalled_violations(files: list[Path]) -> list[str]:
     out: list[str] = []
     for path, method, func, py_file in _iter_route_handlers(files):
         annotations = _param_annotations(func)
-        if not any("AuditService" in ann for ann in annotations.values()):
+        if not _injects_tenant_audit(annotations):
             continue
         if not _calls_audit(func):
             out.append(
@@ -226,18 +334,47 @@ def injected_but_uncalled_violations(files: list[Path]) -> list[str]:
     return out
 
 
-def phi_route_missing_audit_violations(files: list[Path]) -> list[str]:
+def fail_closed_audit_violations(files: list[Path]) -> list[str]:
+    """Every handler must audit, be a reviewed PHI-marker exemption, or be an
+    explicit non-PHI classification. Anything else is a fail-closed violation."""
     out: list[str] = []
     for path, method, func, py_file in _iter_route_handlers(files):
-        if not any(marker in path for marker in PHI_PATH_MARKERS):
-            continue
-        if (method, path) in AUDIT_EXEMPT_PHI_ROUTES:
-            continue
-        annotations = _param_annotations(func)
-        if not any("AuditService" in ann for ann in annotations.values()):
+        if _injects_tenant_audit(_param_annotations(func)):
+            continue  # audits (injected-but-uncalled rule covers dead injection)
+        marker = next((m for m in PHI_PATH_MARKERS if m in path), None)
+        if marker is not None:
+            # PHI-marker path: the reviewed marker list is the only escape.
+            if (method, path) in AUDIT_EXEMPT_PHI_ROUTES:
+                continue
             out.append(
                 f"{py_file.name}::{func.name} ({method.upper()} {path}) "
-                f"matches a PHI path marker but does not inject AuditService"
+                f"matches PHI marker '{marker}' but does not inject AuditService"
+            )
+            continue
+        # No marker: fail-closed — must be explicitly classified non-PHI.
+        if (method, path) in AUDIT_EXEMPT_NON_PHI_ROUTES:
+            continue
+        out.append(
+            f"{py_file.name}::{func.name} ({method.upper()} {path}) "
+            f"is unaudited and unclassified — inject the tenant AuditService, or "
+            f"if it touches no patient PHI add (method, mounted_path) to "
+            f"AUDIT_EXEMPT_NON_PHI_ROUTES with a reason"
+        )
+    return out
+
+
+def _exempt_config_violations() -> list[str]:
+    """Backstop: a PHI-marker path may never be lazily exempted. Any entry in
+    AUDIT_EXEMPT_NON_PHI_ROUTES that matches a marker is a hard config error."""
+    out: list[str] = []
+    for method, path in sorted(AUDIT_EXEMPT_NON_PHI_ROUTES):
+        marker = next((m for m in PHI_PATH_MARKERS if m in path), None)
+        if marker is not None:
+            out.append(
+                f"AUDIT_EXEMPT_NON_PHI_ROUTES contains ({method!r}, {path!r}) which "
+                f"matches PHI marker '{marker}' — a PHI-marker path may not be lazily "
+                f"exempted. Audit it, or if it is genuinely metadata-only move it to "
+                f"the reviewed AUDIT_EXEMPT_PHI_ROUTES list."
             )
     return out
 
@@ -245,19 +382,26 @@ def phi_route_missing_audit_violations(files: list[Path]) -> list[str]:
 def find_violations(paths: list[Path] | None = None) -> list[str]:
     files = _route_files(paths)
     if not files:
+        # Non-route edit (e.g. a hook firing on an unrelated file) → no-op. The
+        # static config check still runs on any real scan, since a full scan or
+        # a route-file edit always yields files.
         return []
     return [
+        *_exempt_config_violations(),
         *underscore_param_violations(files),
         *injected_but_uncalled_violations(files),
-        *phi_route_missing_audit_violations(files),
+        *fail_closed_audit_violations(files),
     ]
 
 
 _FIX_HINT = (
-    "Fix: inject `audit: AuditService = Depends(get_audit_service)` and log the "
-    "access (e.g. audit.log_*_action(...)). If the route is genuinely non-PHI "
-    "despite its path, add (method, mounted_path) to AUDIT_EXEMPT_PHI_ROUTES in "
-    "backend/scripts/check_route_audit.py with a comment explaining why. "
+    "Fix: if the route touches patient PHI, inject `audit: AuditService = "
+    "Depends(get_audit_service)` and log the access (e.g. audit.log_*_action(...)). "
+    "If it touches NO patient PHI, add (method, mounted_path) to "
+    "AUDIT_EXEMPT_NON_PHI_ROUTES in backend/scripts/check_route_audit.py with a "
+    "one-line reason. A PHI-marker path (e.g. /sessions, /patients) may only go in "
+    "the reviewed AUDIT_EXEMPT_PHI_ROUTES list, never the non-PHI one. The platform "
+    "PlatformAuditService does NOT satisfy this — PHI must hit the tenant AuditService. "
     "(CLAUDE.md guardrail #1 — PHI access without an audit entry is a HIPAA gap.)"
 )
 
