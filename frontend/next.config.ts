@@ -51,7 +51,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/(.*)",
+        // Apply COOP to every page EXCEPT the Firebase auth helper paths
+        // (/__/auth/*, /__/firebase/*, and their /fbauth-proxy/* targets).
+        // signInWithPopup needs the *opener* (our app pages) to send
+        // same-origin-allow-popups so it can retain the popup handle, but the
+        // helper page that loads inside the popup must be served bare — exactly
+        // as it is from <project>.firebaseapp.com. Stamping COOP on the
+        // returning handler document forces a browsing-context-group swap that
+        // severs the opener's handle, so the SDK delivers the credential but
+        // can never close the popup (it hangs blank).
+        source: "/((?!__/|fbauth-proxy/).*)",
         headers: [
           {
             key: "Cross-Origin-Opener-Policy",
