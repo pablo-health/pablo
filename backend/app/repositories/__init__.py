@@ -210,6 +210,20 @@ def get_outcome_measure_repository():  # type: ignore[no-untyped-def]
     return PostgresOutcomeMeasureRepository(_get_pg_session())
 
 
+def get_diagnostic_assessment_repository():  # type: ignore[no-untyped-def]
+    """Get diagnostic assessment repository instance."""
+    from .postgres.diagnostic_assessment import PostgresDiagnosticAssessmentRepository
+
+    return PostgresDiagnosticAssessmentRepository(_get_pg_session())
+
+
+def get_diagnostic_definition_provider():  # type: ignore[no-untyped-def]
+    """Get a DB-backed diagnostic definition provider (platform schema)."""
+    from ..diagnostics.definition_provider import DbDefinitionProvider
+
+    return DbDefinitionProvider(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
     "ChatRepository",
@@ -243,6 +257,8 @@ __all__ = [
     "get_clinician_profile_repository",
     "get_compliance_document_repository",
     "get_compliance_item_repository",
+    "get_diagnostic_assessment_repository",
+    "get_diagnostic_definition_provider",
     "get_ehr_prompt_repository",
     "get_ehr_route_repository",
     "get_google_calendar_token_repository",
