@@ -24,7 +24,7 @@
 "use client"
 
 import { useState } from "react"
-import { Check, ChevronDown, Plus, Stethoscope } from "lucide-react"
+import { Check, ChevronDown, Info, Plus, Stethoscope } from "lucide-react"
 import { ApiError } from "@/lib/api/client"
 import { Button } from "@/components/ui/button"
 import {
@@ -218,6 +218,17 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
       </DialogHeader>
 
       <div className="space-y-5 pt-1">
+        {/* The bundled criterion wording is a draft pending clinical review —
+            surface that so it isn't mistaken for validated content. */}
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Draft criteria — the bundled wording is for clinical review before
+            clinical use and isn&apos;t a substitute for clinical judgment.
+            Confirm against the source criteria before recording.
+          </span>
+        </div>
+
         {/* Diagnosis picker */}
         <div className="space-y-1.5">
           <Label>Diagnosis</Label>

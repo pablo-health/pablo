@@ -94,6 +94,14 @@ describe("RecordDiagnosisButton", () => {
     } as Awaited<ReturnType<typeof api.createDiagnosticAssessment>>)
   })
 
+  it("shows the draft-criteria notice so wording isn't taken as vetted", async () => {
+    await openDialog()
+    expect(screen.getByText(/draft criteria/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/substitute for clinical judgment/i),
+    ).toBeInTheDocument()
+  })
+
   it("renders the definitions and starts with criteria collapsed (lite)", async () => {
     await openDialog()
     expect(
