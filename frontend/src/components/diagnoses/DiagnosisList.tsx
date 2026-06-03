@@ -63,15 +63,20 @@ export function DiagnosisList({
             ) : (
               <span className="text-xs text-neutral-400">no code</span>
             )}
-            <span
-              className={
-                a.meets_criteria
-                  ? "rounded px-2 py-0.5 text-xs font-medium text-emerald-700"
-                  : "rounded px-2 py-0.5 text-xs font-medium text-neutral-500"
-              }
-            >
-              {a.meets_criteria ? "Criteria met" : "Impression"}
-            </span>
+            {/* Checklist assessments (meets_criteria === null) make no
+                algorithmic determination, so they carry no verdict badge —
+                null and false are distinct states, not both "Impression". */}
+            {a.meets_criteria !== null && (
+              <span
+                className={
+                  a.meets_criteria
+                    ? "rounded px-2 py-0.5 text-xs font-medium text-emerald-700"
+                    : "rounded px-2 py-0.5 text-xs font-medium text-neutral-500"
+                }
+              >
+                {a.meets_criteria ? "Criteria met" : "Impression"}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => onDelete(a)}

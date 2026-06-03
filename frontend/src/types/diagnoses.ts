@@ -75,7 +75,8 @@ export interface DiagnosticAssessment {
   definition_version: number
   criterion_responses: Record<string, boolean>
   gate_responses: Record<string, boolean>
-  meets_criteria: boolean
+  /** `null` for checklist definitions, which make no algorithmic determination. */
+  meets_criteria: boolean | null
   determined_icd10: string | null
   diagnosis_label: string | null
   source: string

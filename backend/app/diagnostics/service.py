@@ -184,7 +184,7 @@ class DiagnosticService:
             definition_version=version,
             criterion_responses=criterion_responses,
             gate_responses=gate_responses,
-            meets_criteria=bool(row.get("meets_criteria", False)),
+            meets_criteria=(None if (mc := row.get("meets_criteria")) is None else bool(mc)),
             determined_icd10=determined,
             diagnosis_label=label,
             source=str(row["source"]),
@@ -211,8 +211,7 @@ def _definition_response(defn: DiagnosticDefinition) -> DiagnosticDefinitionResp
                 min_met=g.min_met,
                 require_cardinal=g.require_cardinal,
                 criteria=[
-                    CriterionView(key=c.key, label=c.label, cardinal=c.cardinal)
-                    for c in g.criteria
+                    CriterionView(key=c.key, label=c.label, cardinal=c.cardinal) for c in g.criteria
                 ],
             )
             for g in defn.criterion_groups

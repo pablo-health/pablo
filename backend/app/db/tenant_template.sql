@@ -195,7 +195,7 @@ CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     definition_version integer NOT NULL,
     criterion_responses jsonb NOT NULL,
     gate_responses jsonb NOT NULL,
-    meets_criteria boolean NOT NULL,
+    meets_criteria boolean,
     determined_icd10 character varying(10),
     diagnosis_label character varying(120),
     criterion_citations jsonb,

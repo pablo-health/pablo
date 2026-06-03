@@ -125,3 +125,27 @@ describe("evaluateDefinition", () => {
     expect(out.unmetReasons).toContain("Core symptoms: needs at least 5, 4 met")
   })
 })
+
+describe("evaluateDefinition — checklist evaluator_type", () => {
+  it("makes no determination and suggests no code", () => {
+    const checklist: DiagnosticDefinition = { ...MDD, evaluator_type: "checklist" }
+    // Even with every response satisfied, a checklist returns no verdict and no
+    // suggested code — the clinician selects the specifier from the options.
+    const out = evaluateDefinition(
+      checklist,
+      allTrue(["A1", "A2", "A3", "A4", "A5", "A6"]),
+      allTrue(["duration", "impairment"]),
+    )
+    expect(out.meetsCriteria).toBeNull()
+    expect(out.unmetReasons).toEqual([])
+    expect(out.suggestedIcd10).toBeNull()
+  })
+
+  it("suggests no code with no responses recorded either", () => {
+    const checklist: DiagnosticDefinition = { ...MDD, evaluator_type: "checklist" }
+    const out = evaluateDefinition(checklist, {}, {})
+    expect(out.meetsCriteria).toBeNull()
+    expect(out.unmetReasons).toEqual([])
+    expect(out.suggestedIcd10).toBeNull()
+  })
+})

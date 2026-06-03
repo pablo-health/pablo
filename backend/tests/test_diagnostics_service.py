@@ -84,6 +84,24 @@ def test_below_threshold_records_not_met():
     assert any("at least 2" in r for r in resp.unmet_reasons)
 
 
+def test_checklist_persists_no_verdict_and_suggests_no_code():
+    service, _ = _service()
+    resp = service.create(
+        _PATIENT,
+        _met_request(instrument="synthetic_checklist"),
+        _USER,
+    )
+    # No algorithmic verdict: must persist and read back as None, not False.
+    assert resp.meets_criteria is None
+    # No code is suggested for a checklist; the clinician confirmed it explicitly
+    # (determined_icd10 came from the request, not from any engine suggestion).
+    assert resp.suggested_icd10 is None
+    assert resp.determined_icd10 == "T00.1"
+    assert resp.unmet_reasons == []
+    # The None round-trips through the repository read path.
+    assert service.get(resp.id, _USER).meets_criteria is None
+
+
 def test_unknown_instrument_raises():
     service, _ = _service()
     with pytest.raises(UnknownDefinitionError):

@@ -174,7 +174,8 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
     chosenIcd10 === undefined ? outcome.suggestedIcd10 : chosenIcd10
 
   const canSubmit =
-    !createDiagnosis.isPending && (effectiveIcd10 != null || outcome.meetsCriteria)
+    !createDiagnosis.isPending &&
+    (effectiveIcd10 != null || outcome.meetsCriteria === true)
 
   function toggleCriterion(key: string) {
     setCriterionResponses((prev) => ({ ...prev, [key]: !prev[key] }))
@@ -369,8 +370,10 @@ function DiagnosisForm({ patientId, prominence, onClose }: DiagnosisFormProps) {
                 </div>
               )}
 
-              {/* Live determination */}
-              <DeterminationPanel outcome={outcome} />
+              {/* Live determination — hidden for checklist (no verdict). */}
+              {outcome.meetsCriteria !== null && (
+                <DeterminationPanel outcome={outcome} />
+              )}
             </div>
           )}
         </div>
@@ -442,7 +445,7 @@ function DeterminationPanel({
 }: {
   outcome: ReturnType<typeof evaluateDefinition>
 }) {
-  if (outcome.meetsCriteria) {
+  if (outcome.meetsCriteria === true) {
     return (
       <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 p-3">
         <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />

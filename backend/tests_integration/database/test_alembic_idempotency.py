@@ -108,6 +108,59 @@ def test_upgrade_head_succeeds_on_fresh_db(fresh_db: str) -> None:
     _alembic_upgrade_head(fresh_db)
 
 
+def _alembic(database_url: str, *args: str) -> None:
+    """Run an arbitrary ``alembic`` command in a subprocess (see note above)."""
+    env = {**os.environ, "DATABASE_URL": database_url, "DATABASE_BACKEND": "postgres"}
+    result = subprocess.run(  # noqa: S603 (trusted: hardcoded poetry/alembic, test-controlled args)
+        ["poetry", "run", "alembic", *args],  # noqa: S607
+        cwd=_BACKEND_DIR,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            f"alembic {' '.join(args)} failed.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+
+def _meets_criteria_is_nullable(database_url: str) -> bool:
+    eng = create_engine(database_url)
+    try:
+        with eng.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT is_nullable FROM information_schema.columns"
+                    " WHERE table_schema = 'practice'"
+                    " AND table_name = 'diagnostic_assessments'"
+                    " AND column_name = 'meets_criteria'"
+                )
+            ).fetchone()
+    finally:
+        eng.dispose()
+    assert row is not None, "practice.diagnostic_assessments.meets_criteria not found"
+    return row[0] == "YES"
+
+
+def test_meets_criteria_nullable_round_trip(fresh_db: str) -> None:
+    """up/down/up for c4e8d1f6a2b9 (PABLO-6xj.8).
+
+    Head makes ``diagnostic_assessments.meets_criteria`` nullable (checklist
+    rows have no verdict); the downgrade backfills any NULLs to false and
+    restores NOT NULL; the re-upgrade drops it again. Exercises the downgrade
+    path, which the plain upgrade-head tests never touch.
+    """
+    _alembic(fresh_db, "upgrade", "head")
+    assert _meets_criteria_is_nullable(fresh_db) is True
+
+    _alembic(fresh_db, "downgrade", "b7e2f4a1c9d3")
+    assert _meets_criteria_is_nullable(fresh_db) is False
+
+    _alembic(fresh_db, "upgrade", "head")
+    assert _meets_criteria_is_nullable(fresh_db) is True
+
+
 def test_upgrade_idempotent_after_simulated_drift(fresh_db: str) -> None:
     """Pre-create the conflicting platform objects exactly as a partial
     prior run would have left them, then upgrade head."""
