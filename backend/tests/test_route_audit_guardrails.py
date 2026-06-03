@@ -46,12 +46,32 @@ def test_routes_injecting_audit_service_must_call_it() -> None:
     )
 
 
-def test_phi_routes_inject_audit_service() -> None:
-    violations = guardrail.phi_route_missing_audit_violations(_ALL_ROUTE_FILES)
+def test_every_route_audits_or_is_classified() -> None:
+    """Fail-closed: every handler must inject+call the tenant AuditService, OR be
+    a reviewed PHI-marker exemption, OR be an explicit non-PHI classification.
+    An unrecognized route is a violation, not a silent pass."""
+    violations = guardrail.fail_closed_audit_violations(_ALL_ROUTE_FILES)
     assert not violations, (
-        "Routes whose mounted path contains a PHI marker "
-        f"({', '.join(guardrail.PHI_PATH_MARKERS)}) must inject `audit: AuditService` "
-        "and log the access. If the route is genuinely non-PHI despite the path, add "
-        "(method, mounted_path) to AUDIT_EXEMPT_PHI_ROUTES in "
-        "backend/scripts/check_route_audit.py with a comment.\n\n" + "\n".join(violations)
+        "Every route handler must audit PHI access or be explicitly classified "
+        "non-PHI. Inject `audit: AuditService` and log the access, or add "
+        "(method, mounted_path) to AUDIT_EXEMPT_NON_PHI_ROUTES with a reason. A "
+        "PHI-marker path may only go in the reviewed AUDIT_EXEMPT_PHI_ROUTES list. "
+        "The platform PlatformAuditService does NOT satisfy this — PHI must hit the "
+        "tenant AuditService.\n\n" + "\n".join(violations)
     )
+
+
+def test_no_phi_marker_path_is_lazily_exempted() -> None:
+    """Backstop: a PHI-marker path may never appear in AUDIT_EXEMPT_NON_PHI_ROUTES.
+    Such a path must be audited, or — if genuinely metadata-only — go in the
+    heavily-reviewed AUDIT_EXEMPT_PHI_ROUTES list instead."""
+    violations = guardrail._exempt_config_violations()
+    assert not violations, (
+        "A PHI-marker path was lazily exempted in AUDIT_EXEMPT_NON_PHI_ROUTES.\n\n"
+        + "\n".join(violations)
+    )
+
+
+def test_full_scan_is_clean() -> None:
+    """End-to-end: the whole route surface passes every rule today."""
+    assert not guardrail.find_violations(None)

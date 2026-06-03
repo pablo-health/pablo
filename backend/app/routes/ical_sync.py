@@ -91,12 +91,32 @@ def configure_ical_feed(
 
 @router.post("/sync", response_model=list[ICalSyncResponse])
 def sync_ical_calendar(
+    http_request: Request,
     ehr_system: str | None = None,
     ctx: TenantContext = Depends(get_tenant_context),
     service: ICalSyncService = Depends(_get_service),
+    user: User = Depends(require_baa_acceptance),
+    audit: AuditService = Depends(get_audit_service),
 ) -> list[ICalSyncResponse]:
     """Trigger iCal feed sync for one or all configured sources."""
     results = service.sync(ctx.user_id, ehr_system)
+    # The unmatched_events below expose external client identifiers (client
+    # names from the calendar feed), so this read is PHI-adjacent — audit it.
+    # The changes payload is counts only; the identifiers are never recorded.
+    audit.log(
+        AuditAction.ICAL_CALENDAR_SYNCED,
+        user,
+        http_request,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id=ehr_system or "all",
+        changes={
+            "sources": len(results),
+            "created": sum(r.created for r in results),
+            "updated": sum(r.updated for r in results),
+            "deleted": sum(r.deleted for r in results),
+            "unmatched": sum(len(r.unmatched_events) for r in results),
+        },
+    )
     return [
         ICalSyncResponse(
             created=r.created,

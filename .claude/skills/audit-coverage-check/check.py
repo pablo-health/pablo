@@ -43,10 +43,13 @@ def main() -> int:
         print(f"- {v}")
     print(
         "\n## Fix\n\n"
-        "Inject `audit: AuditService = Depends(get_audit_service)` and log the access "
-        "(e.g. `audit.log_<action>(...)`). If the route is genuinely non-PHI despite "
-        "its path, add `(method, mounted_path)` to `AUDIT_EXEMPT_PHI_ROUTES` in "
-        "`backend/scripts/check_route_audit.py` with a comment. See CLAUDE.md guardrail #1."
+        "If the route touches patient PHI, inject `audit: AuditService = "
+        "Depends(get_audit_service)` and log the access (e.g. `audit.log_<action>(...)`). "
+        "If it touches no patient PHI, add `(method, mounted_path)` to "
+        "`AUDIT_EXEMPT_NON_PHI_ROUTES` in `backend/scripts/check_route_audit.py` with a "
+        "reason. A PHI-marker path may only go in the reviewed `AUDIT_EXEMPT_PHI_ROUTES` "
+        "list. `PlatformAuditService` does not satisfy the check — PHI must hit the tenant "
+        "`AuditService`. See CLAUDE.md guardrail #1."
     )
     return 1
 

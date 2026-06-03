@@ -11,7 +11,7 @@ HIPAA: No PHI in any request or response — navigation metadata only.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from ..api_errors import NotFoundError, UnprocessableEntityError
 from ..auth.service import (
@@ -21,6 +21,7 @@ from ..auth.service import (
     require_active_subscription,
 )
 from ..models import User
+from ..models.audit import AuditAction, ResourceType
 from ..models.ehr_route import (
     EhrRouteResponse,
     GoalNavigationRequest,
@@ -37,6 +38,7 @@ from ..repositories import (
 )
 from ..repositories.ehr_prompt import EhrPromptRepository
 from ..repositories.ehr_route import EhrRouteRepository
+from ..services import AuditService, get_audit_service
 from ..services.ehr_navigation_service import (
     EhrNavigationService,
     GeminiEhrNavigationService,
@@ -142,8 +144,10 @@ def update_ehr_route_step(
 @navigate_router.post("/api/ehr-navigate")
 async def ehr_navigate(
     request: GoalNavigationRequest,
+    http_request: Request,
     user: User = Depends(get_current_user),
     service: EhrNavigationService = Depends(get_ehr_navigation_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> GoalNavigationResponse:
     """Goal-based LLM navigation for EHR systems.
 
@@ -152,6 +156,19 @@ async def ehr_navigate(
     is_on_target_page is true. Rate limited to 50 calls/user/day.
     """
     get_ehr_navigate_limiter().check(user.id)
+
+    # The companion strips PHI from the DOM client-side, but we cannot verify
+    # that, and an EHR chart page is inherently clinical context. Audit the
+    # navigation event (who / when / which EHR system) as defense-in-depth —
+    # the access record stands even if the LLM call later fails. The goal and
+    # DOM are PHI-adjacent and are NOT recorded; only the ehr_system code is.
+    audit.log(
+        AuditAction.EHR_NAVIGATE,
+        user,
+        http_request,
+        resource_type=ResourceType.EHR_ROUTE,
+        resource_id=request.ehr_system.value,
+    )
 
     try:
         return await service.navigate(request)

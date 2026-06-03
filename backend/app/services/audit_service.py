@@ -31,6 +31,7 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         AuditAction.PATIENT_VIEWED,
         AuditAction.SESSION_VIEWED,
         AuditAction.CHAT_CONVERSATION_VIEWED,
+        AuditAction.CHAT_CONVERSATION_LIST_VIEWED,
         AuditAction.PATIENT_DOCUMENT_VIEWED,
     }
 )
