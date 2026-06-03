@@ -9,6 +9,14 @@
 import type { AcceptBAARequest, BAAStatusResponse } from "@/types/baa"
 import type { ThemeId } from "@/lib/theme"
 import { get, patch, post, put } from "./client"
+import type {
+  UpdateUserRequestExtensions,
+  UserStatusExtensions,
+} from "./users-extensions"
+
+// Surface any extra user-API types / functions a downstream build registers in
+// the extension slot, so consumers keep importing from `@/lib/api/users`.
+export * from "./users-extensions"
 
 export type ProviderType = "therapist" | "prescriber" | "both"
 
@@ -24,7 +32,7 @@ export interface UserProfile {
   phone: string | null
 }
 
-export interface UserStatus {
+export interface UserStatusBase {
   status: string
   mfa_enrolled_at: string | null
   is_platform_admin: boolean
@@ -43,7 +51,14 @@ export interface UserStatus {
   provider_type: ProviderType | null
 }
 
-export interface UpdateUserRequest {
+/**
+ * The user-status shape. A downstream build may widen it with extra fields via
+ * `UserStatusExtensions` in the extension slot; here that is `unknown`, so this
+ * is exactly `UserStatusBase`.
+ */
+export type UserStatus = UserStatusBase & UserStatusExtensions
+
+export interface UpdateUserRequestBase {
   name?: string
   title?: string
   credentials?: string
@@ -51,6 +66,8 @@ export interface UpdateUserRequest {
   /** Optional contact number. May be used for account recovery or support. */
   phone?: string
 }
+
+export type UpdateUserRequest = UpdateUserRequestBase & UpdateUserRequestExtensions
 
 /**
  * Get the current user's status without requiring MFA.
