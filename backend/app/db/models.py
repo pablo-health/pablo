@@ -339,8 +339,9 @@ class DiagnosticAssessmentRow(Base):
     ``outcome_measures`` — no separate RLS policy.
 
     ``criterion_citations`` and ``confirmed_at`` are unused at launch; they are
-    the seam for AI-assisted drafting (an ``inferred`` draft a clinician later
-    confirms), shipped now so that capability needs no migration.
+    reserved for future provenance-tracked capture (which source supports each
+    criterion, plus a clinician confirmation step), shipped now so that
+    capability needs no migration.
     """
 
     __tablename__ = "diagnostic_assessments"
@@ -361,10 +362,11 @@ class DiagnosticAssessmentRow(Base):
     # icd10_codes catalog at write time. Null until confirmed.
     determined_icd10: Mapped[str | None] = mapped_column(String(10))
     diagnosis_label: Mapped[str | None] = mapped_column(String(120))
-    # Per-criterion provenance for AI-assisted drafting (unused at launch).
+    # Per-criterion provenance (which source supports each criterion).
+    # Unused at launch.
     criterion_citations: Mapped[dict | None] = mapped_column(JSONB)
     source: Mapped[str] = mapped_column(String(40), nullable=False)
-    # Null = unconfirmed draft (AI); set when a clinician confirms.
+    # Null = unconfirmed; set when a clinician confirms.
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)

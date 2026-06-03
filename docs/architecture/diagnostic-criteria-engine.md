@@ -97,19 +97,9 @@ later edited. The chart lists current determinations without re-evaluating.
 The **engine + a baseline of common diagnoses** (MDD, GAD) ships as usable,
 configurable-per-deployment infrastructure: definitions are data, so a
 deployment may add, version, or override them. `criterion_citations` +
-`confirmed_at` ship now but are unused — they are the seam for AI-assisted
-drafting (see below), so that capability needs no migration.
-
-## AI-assisted criterion drafting (future)
-
-The same capability that turns a transcript into a SOAP note can **draft** a
-diagnostic assessment: given a note/transcript, propose criterion responses
-with a **citation** to the supporting source span for each (`source=inferred`).
-Guardrails: the AI drafts, the clinician determines (a diagnosis is a licensed
-act); every proposed "met" carries a citation or is not shown as met; PHI flows
-through the existing LLM-gateway + audit/redaction seam. An `inferred` draft is
-authoritative only once a clinician confirms it (`confirmed_at` set). The
-managed drafting implementation is provided by the deployment.
+`confirmed_at` ship now but are unused — reserved for future
+provenance-tracked capture (recording which source supports each criterion,
+and a clinician confirmation step) so that capability needs no migration.
 
 ## Phasing
 
