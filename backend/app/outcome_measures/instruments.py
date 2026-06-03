@@ -10,6 +10,14 @@ Supported instruments
 ---------------------
 - ``phq9``  — Patient Health Questionnaire, 9-item depression screen
 - ``gad7``  — Generalized Anxiety Disorder, 7-item anxiety screen
+- ``dire``  — Diagnosis, Intractability, Risk, Efficacy; 7-factor clinician
+  rating of suitability for long-term opioid therapy (Belgrade 2006)
+
+Scoring shapes that don't fit the uniform per-item scale used here — e.g. an
+instrument whose items carry distinct weights, or weights that depend on a
+respondent attribute — are intentionally *not* shoehorned in; they need a
+weighted-scoring extension (``compute_total`` is a plain sum today). ``dire``
+fits the uniform shape (7 factors, each 1-3) and is added as data only.
 """
 
 from __future__ import annotations
@@ -102,10 +110,29 @@ _GAD7 = InstrumentDefinition(
     ),
 )
 
+# DIRE — Diagnosis, Intractability, Risk, Efficacy (Belgrade 2006). Seven
+# clinician-rated factors (Diagnosis, Intractability, the four Risk subscales —
+# psychological, chemical health, reliability, social support — and Efficacy),
+# each scored 1-3. Higher totals indicate a *more* suitable candidate for
+# long-term opioid therapy (opposite valence to the symptom screeners): 7-13
+# "not a suitable candidate", 14-21 "suitable candidate".
+_DIRE = InstrumentDefinition(
+    code="dire",
+    display_name="DIRE",
+    item_count=7,
+    item_min=1,
+    item_max=3,
+    severity_bands=(
+        SeverityBand(low=7, high=13, label="not a suitable candidate"),
+        SeverityBand(low=14, high=21, label="suitable candidate"),
+    ),
+)
+
 # Registry keyed by instrument code.  Extend by adding entries here.
 INSTRUMENT_REGISTRY: dict[str, InstrumentDefinition] = {
     _PHQ9.code: _PHQ9,
     _GAD7.code: _GAD7,
+    _DIRE.code: _DIRE,
 }
 
 

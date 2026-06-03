@@ -230,3 +230,82 @@ class TestIsComplete:
         defn = get_instrument("phq9")
         assert defn is not None
         assert is_complete(defn, {}) is False
+
+
+class TestDire:
+    """DIRE — 7 clinician-rated factors, each 1-3 (min total 7, max 21).
+
+    Bands: 7-13 "not a suitable candidate", 14-21 "suitable candidate".
+    Note the inclusive [1, 3] item range — 0 is below range, unlike the 0-3
+    symptom screeners.
+    """
+
+    def test_registered(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert defn.code == "dire"
+        assert defn.item_count == 7
+        assert defn.item_min == 1
+        assert defn.item_max == 3
+        assert defn.min_total == 7
+        assert defn.max_total == 21
+
+    def test_valid_item_scores(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        validate_item_scores(defn, {str(i): 2 for i in range(1, 8)})  # should not raise
+
+    def test_zero_is_below_range(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        with pytest.raises(InstrumentValidationError, match="out of range"):
+            validate_item_scores(defn, {"1": 0})
+
+    def test_above_range_raises(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        with pytest.raises(InstrumentValidationError, match="out of range"):
+            validate_item_scores(defn, {"1": 4})
+
+    def test_min_total(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert compute_total(defn, {str(i): 1 for i in range(1, 8)}) == 7
+
+    def test_max_total(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert compute_total(defn, {str(i): 3 for i in range(1, 8)}) == 21
+
+    def test_band_not_suitable_low(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert severity_label(defn, 7) == "not a suitable candidate"
+
+    def test_band_not_suitable_high(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert severity_label(defn, 13) == "not a suitable candidate"
+
+    def test_band_suitable_low(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert severity_label(defn, 14) == "suitable candidate"
+
+    def test_band_suitable_high(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert severity_label(defn, 21) == "suitable candidate"
+
+    def test_below_min_total_out_of_band(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        # A total below the 7-item floor has no band (defensive — service
+        # validates items first, but severity_label must not mislabel).
+        assert severity_label(defn, 6) is None
+
+    def test_complete_and_incomplete(self) -> None:
+        defn = get_instrument("dire")
+        assert defn is not None
+        assert is_complete(defn, {str(i): 2 for i in range(1, 8)}) is True
+        assert is_complete(defn, {str(i): 2 for i in range(1, 7)}) is False
