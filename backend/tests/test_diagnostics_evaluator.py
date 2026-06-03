@@ -82,6 +82,34 @@ def test_missing_response_counts_as_not_met():
     assert outcome.meets_criteria is False
 
 
+def test_checklist_makes_no_determination_and_suggests_no_code():
+    # Same params as the criteria fixture, but a checklist evaluator_type: the
+    # engine records responses and renders no verdict — and suggests no code,
+    # since the responses don't determine the ICD-10-CM specifier.
+    defn = definition_from_row(
+        {
+            "code": "checklist",
+            "version": 1,
+            "display_name": "Checklist Screen",
+            "evaluator_type": "checklist",
+            "suggested_icd10": "T00.1",
+            "params": SYNTHETIC_DEFINITION["params"],
+        }
+    )
+
+    # Fully satisfied responses still produce no verdict and no suggested code.
+    met = evaluate(defn, {"A1": True, "A2": True, "B1": True}, _all_gates_true(defn))
+    assert met.meets_criteria is None
+    assert met.unmet_reasons == ()
+    assert met.suggested_icd10 is None
+
+    # No responses at all: same — no verdict, no suggestion. The clinician picks.
+    empty = evaluate(defn, {}, {})
+    assert empty.meets_criteria is None
+    assert empty.unmet_reasons == ()
+    assert empty.suggested_icd10 is None
+
+
 def test_unknown_evaluator_type_raises():
     defn = definition_from_row(
         {

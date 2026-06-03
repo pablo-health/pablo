@@ -25,6 +25,9 @@ from typing import Any
 # set on purpose — new *shapes* extend this vocabulary in reviewed code, they
 # are not authored as free-form rules in the database.
 EVALUATOR_CRITERIA = "criteria"
+EVALUATOR_CHECKLIST = "checklist"
+"""No-verdict strategy: responses are recorded but no pass/fail is computed —
+the clinician reviews the list and decides (see ``evaluator._evaluate_checklist``)."""
 
 
 @dataclass(frozen=True)

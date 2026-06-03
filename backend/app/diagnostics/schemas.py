@@ -91,7 +91,7 @@ class DiagnosticAssessmentResponse(BaseModel):
     definition_version: int
     criterion_responses: dict[str, bool]
     gate_responses: dict[str, bool]
-    meets_criteria: bool
+    meets_criteria: bool | None
     determined_icd10: str | None
     diagnosis_label: str | None
     source: str

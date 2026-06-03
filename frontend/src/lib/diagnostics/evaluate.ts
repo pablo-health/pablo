@@ -14,11 +14,22 @@
 
 import type { DiagnosticDefinition } from "@/types/diagnoses"
 
+/** The count-threshold evaluator strategy (mirrors backend EVALUATOR_CRITERIA). */
+export const EVALUATOR_TYPE_CRITERIA = "criteria"
+
 export interface DiagnosticOutcome {
-  meetsCriteria: boolean
+  /**
+   * Whether the rubric is met. `null` when the definition's evaluator makes no
+   * algorithmic determination (e.g. `checklist`) — the clinician decides.
+   */
+  meetsCriteria: boolean | null
   /** Human-readable reasons the criteria are not met (empty when met). */
   unmetReasons: string[]
-  /** The definition's suggested code when criteria are met, else null. */
+  /**
+   * The definition's suggested code. For `criteria` it is emitted only when the
+   * criteria are met; for `checklist` it is null (no code is suggested — the
+   * clinician selects the specifier from the options). When set, only a suggestion.
+   */
   suggestedIcd10: string | null
 }
 
@@ -27,6 +38,18 @@ export function evaluateDefinition(
   criterionResponses: Record<string, boolean>,
   gateResponses: Record<string, boolean>,
 ): DiagnosticOutcome {
+  // Only the count-threshold strategy produces a pass/fail verdict. Any other
+  // strategy (checklist, or a type this client doesn't know) records no
+  // determination — meetsCriteria is null — and suggests no code: the checklist
+  // responses don't determine the ICD-10-CM specifier, so the clinician picks it.
+  if (definition.evaluator_type !== EVALUATOR_TYPE_CRITERIA) {
+    return {
+      meetsCriteria: null,
+      unmetReasons: [],
+      suggestedIcd10: null,
+    }
+  }
+
   const reasons: string[] = []
 
   for (const group of definition.criterion_groups) {

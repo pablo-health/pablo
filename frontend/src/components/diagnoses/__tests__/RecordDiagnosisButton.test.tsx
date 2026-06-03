@@ -158,3 +158,61 @@ describe("RecordDiagnosisButton", () => {
     expect(body.gate_responses).toMatchObject({ duration: true })
   })
 })
+
+const CHECKLIST: DiagnosticDefinition = {
+  ...MDD,
+  code: "mdd-checklist",
+  display_name: "Depression symptom checklist",
+  evaluator_type: "checklist",
+}
+
+describe("RecordDiagnosisButton — checklist evaluator_type", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listDiagnosticDefinitions).mockResolvedValue({
+      data: [CHECKLIST],
+      total: 1,
+    })
+    vi.mocked(api.createDiagnosticAssessment).mockResolvedValue({
+      id: "d2",
+    } as Awaited<ReturnType<typeof api.createDiagnosticAssessment>>)
+  })
+
+  it("shows no determination and no suggested code, even after documenting criteria", async () => {
+    const user = userEvent.setup()
+    render(<RecordDiagnosisButton patientId="p1" />, { wrapper: createWrapper() })
+    await user.click(screen.getByRole("button", { name: /record diagnosis/i }))
+    await screen.findByRole("button", { name: /depression symptom checklist/i })
+
+    await user.click(screen.getByText(/document criteria \(optional\)/i))
+    for (const name of [/depressed mood/i, /loss of interest/i]) {
+      await user.click(screen.getByRole("button", { name }))
+    }
+
+    // The determination panel (both variants) must never appear for a checklist.
+    expect(screen.queryByText(/criteria met/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/criteria not yet met/i)).not.toBeInTheDocument()
+    // And no code is suggested — the clinician picks the specifier.
+    expect(screen.queryByText(/suggested:/i)).not.toBeInTheDocument()
+  })
+
+  it("requires the clinician to pick a code before saving", async () => {
+    const user = userEvent.setup()
+    render(<RecordDiagnosisButton patientId="p1" />, { wrapper: createWrapper() })
+    await user.click(screen.getByRole("button", { name: /record diagnosis/i }))
+    await screen.findByRole("button", { name: /depression symptom checklist/i })
+
+    // No verdict and no suggested code, so Save stays disabled until a code is chosen.
+    expect(screen.getByRole("button", { name: /save diagnosis/i })).toBeDisabled()
+    await user.click(screen.getByRole("button", { name: /^F32\.9$/ }))
+    expect(screen.getByRole("button", { name: /save diagnosis/i })).toBeEnabled()
+
+    await user.click(screen.getByRole("button", { name: /save diagnosis/i }))
+    await waitFor(() =>
+      expect(api.createDiagnosticAssessment).toHaveBeenCalled(),
+    )
+    const [, body] = vi.mocked(api.createDiagnosticAssessment).mock.calls[0]
+    expect(body.instrument).toBe("mdd-checklist")
+    expect(body.determined_icd10).toBe("F32.9")
+  })
+})
