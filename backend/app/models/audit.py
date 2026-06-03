@@ -119,6 +119,12 @@ class AuditAction(StrEnum):
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
     # land in the audit log; per-turn detail lives on chat_messages rows.
     CHAT_CONVERSATION_CREATED = "chat_conversation_created"
+    # Read-access event for the conversation-detail endpoint, which returns
+    # full message bodies. Mirrors PATIENT_VIEWED / SESSION_VIEWED so chat
+    # reads are audited like every other PHI-read surface. No list-level
+    # equivalent: a conversation list is access-filtered and surfaces no
+    # content, so it carries no forensic value.
+    CHAT_CONVERSATION_VIEWED = "chat_conversation_viewed"
     CHAT_CONVERSATION_ARCHIVED = "chat_conversation_archived"
     CHAT_CONVERSATION_PURGED = "chat_conversation_purged"
     CHAT_CHART_PROMOTION = "chat_chart_promotion"

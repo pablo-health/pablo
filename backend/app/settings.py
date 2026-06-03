@@ -137,6 +137,19 @@ class Settings(BaseSettings):
             "(local dev, CI) via AUDIT_DUAL_WRITE_ENABLED=false."
         ),
     )
+    audit_read_coalesce_seconds: int = Field(
+        default=0,
+        description=(
+            "Coalesce duplicate read-access audit events (patient/session/"
+            "chat-conversation/document views) for the same (user, record) "
+            "within this many seconds. Continuous work on one chart otherwise "
+            "writes one row per HTTP GET, including frontend refetches. "
+            "0 (default) disables coalescing, so deployments without Redis "
+            "keep one-row-per-read behavior unchanged. Requires USE_REDIS=true "
+            "to take effect; restricted-category document views are never "
+            "coalesced and always recorded at full fidelity."
+        ),
+    )
 
     @property
     def e2e_test_emails(self) -> set[str]:
