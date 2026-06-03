@@ -195,8 +195,9 @@ def list_patients(
             )
             for p, stamp in deleted_pairs
         ]
+        for p, _stamp in deleted_pairs:
+            audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
         total = len(responses)
-        audit.log_patient_list(user, request, total)
         return PatientListResponse(
             data=responses,
             total=total,
@@ -209,8 +210,14 @@ def list_patients(
     )
 
     responses = [PatientResponse.from_patient(p) for p in patients]
+    # The list payload carries clinical PHI (diagnosis) plus identifiers
+    # (DOB, email, phone) for every patient returned, so reading it is a
+    # per-record content read on par with the GET /api/patients/{id} detail
+    # view — audit one patient_viewed per patient. The read-coalescing gate
+    # collapses repeats of the same patient within the window.
+    for p in patients:
+        audit.log_patient_action(AuditAction.PATIENT_VIEWED, user, request, p)
 
-    audit.log_patient_list(user, request, total)
     return PatientListResponse(
         data=responses,
         total=total,

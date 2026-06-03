@@ -242,7 +242,20 @@ def list_patient_notes(
         key=lambda n: n.finalized_at or n.created_at,
         reverse=True,
     )
-    audit.log_session_list(user, http_request, len(notes))
+    # This endpoint returns the full SOAP body of every note for the patient,
+    # so it is a bulk per-record content read. Emit one note-scoped viewed
+    # event per note (resource_type=session, the clinical-artifact family) so
+    # the audit-of-record is consistent with how single notes are surfaced via
+    # the session detail view. The read-coalescing gate keeps repeats cheap.
+    for n in notes:
+        audit.log_note_action(
+            action=AuditAction.SESSION_VIEWED,
+            user=user,
+            request=http_request,
+            note_id=n.id,
+            patient_id=patient.id,
+            session_id=n.session_id,
+        )
     return PatientNotesListResponse(
         data=[NoteResponse.from_note(n) for n in notes],
         total=len(notes),

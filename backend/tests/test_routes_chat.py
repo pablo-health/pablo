@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from app.auth.service import require_baa_acceptance
 from app.main import app
 from app.models import ChatConversation, ChatMessage, Note, Patient, User
+from app.models.audit import AuditAction
 from app.repositories import InMemoryChatRepository
 from app.routes.chat import get_chat_repository_dep
 from app.utcnow import utc_now
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
         InMemoryNotesRepository,
         InMemoryPatientRepository,
     )
+    from app.services import AuditService
     from fastapi.testclient import TestClient
 
 _SYSTEM_PROMPT = "You are a clinical assistant for chart QA."
@@ -155,6 +157,29 @@ class TestGetConversation:
     def test_returns_404_for_unknown_conversation(self, client: TestClient) -> None:
         response = client.get("/api/chat/conversations/does-not-exist")
         assert response.status_code == 404
+
+    def test_detail_read_audits_conversation_viewed(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+        mock_audit_service: AuditService,
+    ) -> None:
+        """The detail read returns full message bodies, so it must audit a
+        chat_conversation_viewed event — matching get_session / get_patient.
+        """
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        create = client.post("/api/chat/conversations", json=_create_payload(patient.id))
+        conv_id = create.json()["id"]
+
+        response = client.get(f"/api/chat/conversations/{conv_id}")
+        assert response.status_code == 200
+
+        actions = [
+            call.args[0].action
+            for call in mock_audit_service._repo.append.call_args_list
+        ]
+        assert AuditAction.CHAT_CONVERSATION_VIEWED.value in actions
 
 
 class TestListConversations:

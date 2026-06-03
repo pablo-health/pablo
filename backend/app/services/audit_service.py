@@ -22,6 +22,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Read-access actions eligible for coalescing. Repeated reads of the SAME
+# record by the SAME user within the configured window collapse to a single
+# audit row. The *_RESTRICTED document variants are deliberately excluded —
+# psychotherapy-notes / therapist-private access keeps full per-read fidelity.
+_COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
+    {
+        AuditAction.PATIENT_VIEWED,
+        AuditAction.SESSION_VIEWED,
+        AuditAction.CHAT_CONVERSATION_VIEWED,
+        AuditAction.PATIENT_DOCUMENT_VIEWED,
+    }
+)
+_COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(
+    a.value for a in _COALESCED_READ_ACTIONS
+)
+
+
 class AuditService:
     """Service for logging PHI access and modifications.
 
@@ -33,7 +50,48 @@ class AuditService:
     def __init__(self, repo: AuditRepository) -> None:
         self._repo = repo
 
+    def _should_skip_duplicate(self, entry: AuditLogEntry) -> bool:
+        """True if this exact read was already recorded in the active window.
+
+        Uses Redis (the instance backing rate-limit / idle-session) as a
+        cross-instance dedup gate: ``SET key 1 NX EX ttl`` is atomic and
+        self-expiring, so the first read in a window sets the key and writes
+        the row, and repeats within ``ttl`` collapse. The window is FIXED
+        (the key expires ``ttl`` after the first access, not extended on
+        hits), guaranteeing at least one durable access record per work
+        window rather than suppressing for hours of continuous work.
+
+        Fails OPEN: a disabled/absent client or any Redis error falls through
+        to writing the row. For audit the safe failure is a duplicate row,
+        never a dropped access — the inverse of idle_session's fail-closed
+        posture. Redis only decides WHETHER to write; Postgres remains the
+        synchronous system-of-record and never stores the event itself.
+        """
+        from ..settings import get_settings
+
+        ttl = get_settings().audit_read_coalesce_seconds
+        if ttl <= 0 or entry.action not in _COALESCED_READ_ACTION_VALUES:
+            return False
+        try:
+            from ..redis_client import get_redis_client
+
+            redis = get_redis_client()
+            if redis is None:
+                return False
+            key = f"audit:seen:{entry.user_id}:{entry.action}:{entry.resource_id}"
+            # True when the key was set (first access), None when it already
+            # existed (already logged this window) -> skip the duplicate.
+            first_time = redis.set(key, "1", nx=True, ex=ttl)
+            return first_time is None
+        except Exception:
+            logger.warning(
+                "Audit coalesce check failed; writing row (fail-open)", exc_info=True
+            )
+            return False
+
     def _persist(self, entry: AuditLogEntry) -> None:
+        if self._should_skip_duplicate(entry):
+            return
         if entry.changes is not None:
             _assert_changes_phi_free(entry.changes)
         try:
@@ -164,44 +222,6 @@ class AuditService:
             ip_address=ip_address,
             user_agent=user_agent,
             changes=changes,
-        )
-        self._persist(entry)
-        return entry
-
-    def log_patient_list(
-        self,
-        user: User,
-        request: Request,
-        patient_count: int,
-    ) -> AuditLogEntry:
-        ip_address, user_agent = extract_request_context(request)
-        entry = AuditLogEntry(
-            user_id=user.id,
-            action=AuditAction.PATIENT_LISTED.value,
-            resource_type=ResourceType.PATIENT.value,
-            resource_id="list",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            changes={"patient_count": patient_count},
-        )
-        self._persist(entry)
-        return entry
-
-    def log_session_list(
-        self,
-        user: User,
-        request: Request,
-        session_count: int,
-    ) -> AuditLogEntry:
-        ip_address, user_agent = extract_request_context(request)
-        entry = AuditLogEntry(
-            user_id=user.id,
-            action=AuditAction.SESSION_LISTED.value,
-            resource_type=ResourceType.SESSION.value,
-            resource_id="list",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            changes={"session_count": session_count},
         )
         self._persist(entry)
         return entry
@@ -337,25 +357,6 @@ class AuditService:
             ip_address=ip_address,
             user_agent=user_agent,
             changes=changes,
-        )
-        self._persist(entry)
-        return entry
-
-    def log_appointment_list(
-        self,
-        user: User,
-        request: Request,
-        appointment_count: int,
-    ) -> AuditLogEntry:
-        ip_address, user_agent = extract_request_context(request)
-        entry = AuditLogEntry(
-            user_id=user.id,
-            action=AuditAction.APPOINTMENT_LISTED.value,
-            resource_type=ResourceType.APPOINTMENT.value,
-            resource_id="list",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            changes={"appointment_count": appointment_count},
         )
         self._persist(entry)
         return entry

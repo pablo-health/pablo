@@ -9,7 +9,9 @@ from typing import Any
 from app.auth.service import get_current_user_id, require_baa_acceptance
 from app.main import app
 from app.models import TherapySession, User
+from app.models.audit import AuditAction
 from app.models.transcript import Transcript
+from app.services import AuditService
 from app.utcnow import utc_now
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -63,6 +65,32 @@ def test_list_patients_with_data(client: TestClient, sample_patient_data: dict[s
     assert data["total"] == 2
     assert data["data"][0]["first_name"] == "John"
     assert data["data"][1]["first_name"] == "Jane"
+
+
+def test_list_patients_audits_view_per_returned_patient(
+    client: TestClient,
+    sample_patient_data: dict[str, Any],
+    mock_audit_service: AuditService,
+) -> None:
+    """The list payload carries clinical PHI (diagnosis) plus identifiers for
+    every patient, so each returned patient is audited as patient_viewed —
+    the same audit-of-record as the detail view, kept affordable by
+    read-coalescing.
+    """
+    first = client.post("/api/patients", json=sample_patient_data).json()["id"]
+    second = client.post(
+        "/api/patients", json={"first_name": "Jane", "last_name": "Smith"}
+    ).json()["id"]
+
+    response = client.get("/api/patients")
+    assert response.status_code == status.HTTP_200_OK
+
+    viewed = {
+        call.args[0].resource_id
+        for call in mock_audit_service._repo.append.call_args_list
+        if call.args[0].action == AuditAction.PATIENT_VIEWED.value
+    }
+    assert viewed == {first, second}
 
 
 def test_get_patient_by_id_success(client: TestClient, sample_patient_data: dict[str, Any]) -> None:
