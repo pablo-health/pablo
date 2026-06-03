@@ -14,7 +14,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -261,3 +271,55 @@ class PlatformAuditLogRow(PlatformBase):
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class Icd10CodeRow(PlatformBase):
+    """Public-domain ICD-10-CM code catalog (US gov work, NCHS/CMS).
+
+    Reference data shared across all practices: the diagnostic engine offers
+    and validates determined codes against this catalog. Seeded from
+    ``app.diagnostics.baseline`` (a curated subset for the bundled diagnoses);
+    a managed deployment may seed the full catalog. See PABLO-6xj.
+    """
+
+    __tablename__ = "icd10_codes"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    code: Mapped[str] = mapped_column(String(10), primary_key=True)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    billable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    category: Mapped[str | None] = mapped_column(String(80))
+
+
+class DiagnosticDefinitionRow(PlatformBase):
+    """A versioned diagnostic-criteria definition (the rubric as data).
+
+    Global reference data: one copy in the platform schema, not per-tenant.
+    ``params`` holds the criterion groups, gates, and ICD-10 options the single
+    metadata-driven evaluator interprets (see ``app.diagnostics``). Definitions
+    are data — adding a disorder or a new version is a row, not code. Seeded
+    from ``app.diagnostics.baseline``. See PABLO-6xj.
+    """
+
+    __tablename__ = "diagnostic_definitions"
+    # SQLAlchemy allows __table_args__ to be either a dict or a tuple-of-
+    # constraints-plus-dict; PlatformBase annotates the dict-only shape, so the
+    # tuple form (needed for the UniqueConstraint + Index) trips mypy here.
+    __table_args__ = (  # type: ignore[assignment]
+        UniqueConstraint("code", "version", name="uq_diagnostic_definitions_code_version"),
+        Index("ix_diagnostic_definitions_code_active", "code", "active"),
+        {"schema": PLATFORM_SCHEMA},
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Selects the evaluator strategy (e.g. "criteria"). A closed vocabulary
+    # implemented in code — not a stored expression language.
+    evaluator_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    # {criterion_groups:[...], gates:[...], icd10_options:[...]}
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    suggested_icd10: Mapped[str | None] = mapped_column(String(10))
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
