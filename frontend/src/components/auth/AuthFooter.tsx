@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
+import { authFooterConfig as cfg } from "./AuthFooterConfig"
+
 interface AuthFooterProps {
   spacing?: "default" | "compact"
 }
@@ -12,14 +14,14 @@ export function AuthFooter({ spacing = "default" }: AuthFooterProps) {
   return (
     <div className={wrapper}>
       <p className="text-xs text-neutral-500 text-center leading-relaxed">
-        Pablo · AGPL-3.0 ·{" "}
+        {cfg.label}{" "}
         <a
-          href="https://github.com/pablo-health/pablo"
+          href={cfg.href}
           target="_blank"
           rel="noopener noreferrer"
           className="underline hover:text-neutral-700"
         >
-          github.com/pablo-health/pablo
+          {cfg.linkText}
         </a>
       </p>
     </div>
