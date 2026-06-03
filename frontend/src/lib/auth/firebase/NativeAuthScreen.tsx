@@ -117,7 +117,7 @@ export function FirebaseNativeAuthScreen() {
         setRedirecting(false)
       }
     },
-    [redirectUri, config.apiUrl]
+    [redirectUri, state, config.apiUrl]
   )
 
   // If redirect_uri is invalid, show error immediately
