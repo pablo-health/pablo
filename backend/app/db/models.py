@@ -324,6 +324,70 @@ if _MODEL_SOURCE_VALUES != _ENUM_SOURCE_VALUES:
     )
 
 
+class DiagnosticAssessmentRow(Base):
+    """A structured diagnostic determination for a patient (PABLO-6xj).
+
+    One row per assessment: the clinician's per-criterion responses + gate
+    attestations against a versioned definition (snapshotted by
+    ``definition_code`` + ``definition_version``), the computed
+    ``meets_criteria``, and the clinician-confirmed ICD-10-CM code. Distinct
+    from ``outcome_measures`` (continuous symptom scores) — this is a
+    point-in-time categorical determination.
+
+    Per-tenant (lives in each ``practice_{id}`` schema), access governed by the
+    app-layer ``has_patient_access`` function, same as ``notes`` /
+    ``outcome_measures`` — no separate RLS policy.
+
+    ``criterion_citations`` and ``confirmed_at`` are unused at launch; they are
+    reserved for future provenance-tracked capture (which source supports each
+    criterion, plus a clinician confirmation step), shipped now so that
+    capability needs no migration.
+    """
+
+    __tablename__ = "diagnostic_assessments"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    # Definition code + version snapshotted so the record reflects the rubric
+    # as it was when the determination was made.
+    instrument: Mapped[str] = mapped_column(String(40), nullable=False)
+    definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # {criterion_key: bool} and {gate_key: bool}
+    criterion_responses: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    gate_responses: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    meets_criteria: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # Clinician-confirmed ICD-10-CM code, validated against the platform
+    # icd10_codes catalog at write time. Null until confirmed.
+    determined_icd10: Mapped[str | None] = mapped_column(String(10))
+    diagnosis_label: Mapped[str | None] = mapped_column(String(120))
+    # Per-criterion provenance (which source supports each criterion).
+    # Unused at launch.
+    criterion_citations: Mapped[dict | None] = mapped_column(JSONB)
+    source: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Null = unconfirmed; set when a clinician confirms.
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('patient_self_report','clinician_administered_verbal','manual','inferred')",
+            name="ck_diagnostic_assessments_source",
+        ),
+        Index(
+            "ix_diagnostic_assessments_patient_instrument_assessed",
+            "patient_id",
+            "instrument",
+            "assessed_at",
+        ),
+    )
+
+
 class EhrPromptRow(Base):
     __tablename__ = "ehr_prompts"
 

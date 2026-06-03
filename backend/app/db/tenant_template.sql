@@ -186,6 +186,31 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_items (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    session_id uuid,
+    appointment_id uuid,
+    instrument character varying(40) NOT NULL,
+    definition_version integer NOT NULL,
+    criterion_responses jsonb NOT NULL,
+    gate_responses jsonb NOT NULL,
+    meets_criteria boolean NOT NULL,
+    determined_icd10 character varying(10),
+    diagnosis_label character varying(120),
+    criterion_citations jsonb,
+    source character varying(40) NOT NULL,
+    confirmed_at timestamp with time zone,
+    assessed_at timestamp with time zone NOT NULL,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_diagnostic_assessments_source CHECK (((source)::text = ANY ((ARRAY['patient_self_report'::character varying, 'clinician_administered_verbal'::character varying, 'manual'::character varying, 'inferred'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.ehr_prompts (
     ehr_system character varying(50) NOT NULL,
     system_prompt text NOT NULL,
@@ -477,6 +502,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_items
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
+    ADD CONSTRAINT diagnostic_assessments_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.ehr_prompts
     ADD CONSTRAINT ehr_prompts_pkey PRIMARY KEY (ehr_system);
 
@@ -624,6 +654,22 @@ CREATE INDEX ix_compliance_documents_uploaded_by_user_id ON __TENANT_SCHEMA__.co
 
 
 CREATE INDEX ix_compliance_items_user_id ON __TENANT_SCHEMA__.compliance_items USING btree (user_id);
+
+
+
+CREATE INDEX ix_diagnostic_assessments_appointment_id ON __TENANT_SCHEMA__.diagnostic_assessments USING btree (appointment_id);
+
+
+
+CREATE INDEX ix_diagnostic_assessments_patient_id ON __TENANT_SCHEMA__.diagnostic_assessments USING btree (patient_id);
+
+
+
+CREATE INDEX ix_diagnostic_assessments_patient_instrument_assessed ON __TENANT_SCHEMA__.diagnostic_assessments USING btree (patient_id, instrument, assessed_at);
+
+
+
+CREATE INDEX ix_diagnostic_assessments_session_id ON __TENANT_SCHEMA__.diagnostic_assessments USING btree (session_id);
 
 
 

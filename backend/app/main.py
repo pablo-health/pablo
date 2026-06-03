@@ -18,6 +18,11 @@ from sqlalchemy import text
 from .api_errors import register_exception_handlers
 from .auth.route_security import truly_public
 from .db import get_engine
+from .diagnostics.router import (
+    diagnostic_assessments_router,
+    diagnostic_definitions_router,
+    patient_diagnostic_assessments_router,
+)
 from .logging_config import configure_logging
 from .middleware import (
     HTTPSEnforcementMiddleware,
@@ -159,6 +164,9 @@ app.include_router(note_types.router)
 app.include_router(compliance.router)
 app.include_router(outcome_measures_router)
 app.include_router(patient_outcome_measures_router)
+app.include_router(diagnostic_definitions_router)
+app.include_router(diagnostic_assessments_router)
+app.include_router(patient_diagnostic_assessments_router)
 if settings.enable_patient_chat:
     app.include_router(chat.router)
 

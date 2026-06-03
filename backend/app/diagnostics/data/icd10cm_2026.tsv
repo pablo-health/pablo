@@ -1,0 +1,1261 @@
+# ICD-10-CM FY2026 reference data (public domain, NCHS/CMS).
+# Bundled subset: F01-F99 (mental/behavioral) + Z55-Z65 (psychosocial circumstances).
+# Generated data — do not hand-edit. Columns: code, billable (1/0), category, description.
+code	billable	category	description
+F01	0	Vascular dementia	Vascular dementia
+F01.5	0	Vascular dementia	Vascular dementia, unspecified severity
+F01.50	1	Vascular dementia	Vascular dementia, unspecified severity, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F01.51	0	Vascular dementia	Vascular dementia, unspecified severity, with behavioral disturbance
+F01.511	1	Vascular dementia	Vascular dementia, unspecified severity, with agitation
+F01.518	1	Vascular dementia	Vascular dementia, unspecified severity, with other behavioral disturbance
+F01.52	1	Vascular dementia	Vascular dementia, unspecified severity, with psychotic disturbance
+F01.53	1	Vascular dementia	Vascular dementia, unspecified severity, with mood disturbance
+F01.54	1	Vascular dementia	Vascular dementia, unspecified severity, with anxiety
+F01.A	0	Vascular dementia	Vascular dementia, mild
+F01.A0	1	Vascular dementia	Vascular dementia, mild, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F01.A1	0	Vascular dementia	Vascular dementia, mild, with behavioral disturbance
+F01.A11	1	Vascular dementia	Vascular dementia, mild, with agitation
+F01.A18	1	Vascular dementia	Vascular dementia, mild, with other behavioral disturbance
+F01.A2	1	Vascular dementia	Vascular dementia, mild, with psychotic disturbance
+F01.A3	1	Vascular dementia	Vascular dementia, mild, with mood disturbance
+F01.A4	1	Vascular dementia	Vascular dementia, mild, with anxiety
+F01.B	0	Vascular dementia	Vascular dementia, moderate
+F01.B0	1	Vascular dementia	Vascular dementia, moderate, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F01.B1	0	Vascular dementia	Vascular dementia, moderate, with behavioral disturbance
+F01.B11	1	Vascular dementia	Vascular dementia, moderate, with agitation
+F01.B18	1	Vascular dementia	Vascular dementia, moderate, with other behavioral disturbance
+F01.B2	1	Vascular dementia	Vascular dementia, moderate, with psychotic disturbance
+F01.B3	1	Vascular dementia	Vascular dementia, moderate, with mood disturbance
+F01.B4	1	Vascular dementia	Vascular dementia, moderate, with anxiety
+F01.C	0	Vascular dementia	Vascular dementia, severe
+F01.C0	1	Vascular dementia	Vascular dementia, severe, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F01.C1	0	Vascular dementia	Vascular dementia, severe, with behavioral disturbance
+F01.C11	1	Vascular dementia	Vascular dementia, severe, with agitation
+F01.C18	1	Vascular dementia	Vascular dementia, severe, with other behavioral disturbance
+F01.C2	1	Vascular dementia	Vascular dementia, severe, with psychotic disturbance
+F01.C3	1	Vascular dementia	Vascular dementia, severe, with mood disturbance
+F01.C4	1	Vascular dementia	Vascular dementia, severe, with anxiety
+F02	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere
+F02.8	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity
+F02.80	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F02.81	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, with behavioral disturbance
+F02.811	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, with agitation
+F02.818	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, with other behavioral disturbance
+F02.82	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, with psychotic disturbance
+F02.83	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, with mood disturbance
+F02.84	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, unspecified severity, with anxiety
+F02.A	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild
+F02.A0	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F02.A1	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, with behavioral disturbance
+F02.A11	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, with agitation
+F02.A18	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, with other behavioral disturbance
+F02.A2	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, with psychotic disturbance
+F02.A3	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, with mood disturbance
+F02.A4	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, mild, with anxiety
+F02.B	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate
+F02.B0	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F02.B1	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, with behavioral disturbance
+F02.B11	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, with agitation
+F02.B18	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, with other behavioral disturbance
+F02.B2	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, with psychotic disturbance
+F02.B3	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, with mood disturbance
+F02.B4	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, moderate, with anxiety
+F02.C	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe
+F02.C0	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F02.C1	0	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, with behavioral disturbance
+F02.C11	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, with agitation
+F02.C18	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, with other behavioral disturbance
+F02.C2	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, with psychotic disturbance
+F02.C3	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, with mood disturbance
+F02.C4	1	Dementia in other diseases classified elsewhere	Dementia in other diseases classified elsewhere, severe, with anxiety
+F03	0	Unspecified dementia	Unspecified dementia
+F03.9	0	Unspecified dementia	Unspecified dementia, unspecified severity
+F03.90	1	Unspecified dementia	Unspecified dementia, unspecified severity, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F03.91	0	Unspecified dementia	Unspecified dementia, unspecified severity, with behavioral disturbance
+F03.911	1	Unspecified dementia	Unspecified dementia, unspecified severity, with agitation
+F03.918	1	Unspecified dementia	Unspecified dementia, unspecified severity, with other behavioral disturbance
+F03.92	1	Unspecified dementia	Unspecified dementia, unspecified severity, with psychotic disturbance
+F03.93	1	Unspecified dementia	Unspecified dementia, unspecified severity, with mood disturbance
+F03.94	1	Unspecified dementia	Unspecified dementia, unspecified severity, with anxiety
+F03.A	0	Unspecified dementia	Unspecified dementia, mild
+F03.A0	1	Unspecified dementia	Unspecified dementia, mild, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F03.A1	0	Unspecified dementia	Unspecified dementia, mild, with behavioral disturbance
+F03.A11	1	Unspecified dementia	Unspecified dementia, mild, with agitation
+F03.A18	1	Unspecified dementia	Unspecified dementia, mild, with other behavioral disturbance
+F03.A2	1	Unspecified dementia	Unspecified dementia, mild, with psychotic disturbance
+F03.A3	1	Unspecified dementia	Unspecified dementia, mild, with mood disturbance
+F03.A4	1	Unspecified dementia	Unspecified dementia, mild, with anxiety
+F03.B	0	Unspecified dementia	Unspecified dementia, moderate
+F03.B0	1	Unspecified dementia	Unspecified dementia, moderate, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F03.B1	0	Unspecified dementia	Unspecified dementia, moderate, with behavioral disturbance
+F03.B11	1	Unspecified dementia	Unspecified dementia, moderate, with agitation
+F03.B18	1	Unspecified dementia	Unspecified dementia, moderate, with other behavioral disturbance
+F03.B2	1	Unspecified dementia	Unspecified dementia, moderate, with psychotic disturbance
+F03.B3	1	Unspecified dementia	Unspecified dementia, moderate, with mood disturbance
+F03.B4	1	Unspecified dementia	Unspecified dementia, moderate, with anxiety
+F03.C	0	Unspecified dementia	Unspecified dementia, severe
+F03.C0	1	Unspecified dementia	Unspecified dementia, severe, without behavioral disturbance, psychotic disturbance, mood disturbance, and anxiety
+F03.C1	0	Unspecified dementia	Unspecified dementia, severe, with behavioral disturbance
+F03.C11	1	Unspecified dementia	Unspecified dementia, severe, with agitation
+F03.C18	1	Unspecified dementia	Unspecified dementia, severe, with other behavioral disturbance
+F03.C2	1	Unspecified dementia	Unspecified dementia, severe, with psychotic disturbance
+F03.C3	1	Unspecified dementia	Unspecified dementia, severe, with mood disturbance
+F03.C4	1	Unspecified dementia	Unspecified dementia, severe, with anxiety
+F04	1	Amnestic disorder due to known physiological condition	Amnestic disorder due to known physiological condition
+F05	1	Delirium due to known physiological condition	Delirium due to known physiological condition
+F06	0	Other mental disorders due to known physiological condition	Other mental disorders due to known physiological condition
+F06.0	1	Other mental disorders due to known physiological condition	Psychotic disorder with hallucinations due to known physiological condition
+F06.1	1	Other mental disorders due to known physiological condition	Catatonic disorder due to known physiological condition
+F06.2	1	Other mental disorders due to known physiological condition	Psychotic disorder with delusions due to known physiological condition
+F06.3	0	Other mental disorders due to known physiological condition	Mood disorder due to known physiological condition
+F06.30	1	Other mental disorders due to known physiological condition	Mood disorder due to known physiological condition, unspecified
+F06.31	1	Other mental disorders due to known physiological condition	Mood disorder due to known physiological condition with depressive features
+F06.32	1	Other mental disorders due to known physiological condition	Mood disorder due to known physiological condition with major depressive-like episode
+F06.33	1	Other mental disorders due to known physiological condition	Mood disorder due to known physiological condition with manic features
+F06.34	1	Other mental disorders due to known physiological condition	Mood disorder due to known physiological condition with mixed features
+F06.4	1	Other mental disorders due to known physiological condition	Anxiety disorder due to known physiological condition
+F06.7	0	Other mental disorders due to known physiological condition	Mild neurocognitive disorder due to known physiological condition
+F06.70	1	Other mental disorders due to known physiological condition	Mild neurocognitive disorder due to known physiological condition without behavioral disturbance
+F06.71	1	Other mental disorders due to known physiological condition	Mild neurocognitive disorder due to known physiological condition with behavioral disturbance
+F06.8	1	Other mental disorders due to known physiological condition	Other specified mental disorders due to known physiological condition
+F07	0	Personality and behavioral disorders due to known physiological condition	Personality and behavioral disorders due to known physiological condition
+F07.0	1	Personality and behavioral disorders due to known physiological condition	Personality change due to known physiological condition
+F07.8	0	Personality and behavioral disorders due to known physiological condition	Other personality and behavioral disorders due to known physiological condition
+F07.81	1	Personality and behavioral disorders due to known physiological condition	Postconcussional syndrome
+F07.89	1	Personality and behavioral disorders due to known physiological condition	Other personality and behavioral disorders due to known physiological condition
+F07.9	1	Personality and behavioral disorders due to known physiological condition	Unspecified personality and behavioral disorder due to known physiological condition
+F09	1	Unspecified mental disorder due to known physiological condition	Unspecified mental disorder due to known physiological condition
+F10	0	Alcohol related disorders	Alcohol related disorders
+F10.1	0	Alcohol related disorders	Alcohol abuse
+F10.10	1	Alcohol related disorders	Alcohol abuse, uncomplicated
+F10.11	1	Alcohol related disorders	Alcohol abuse, in remission
+F10.12	0	Alcohol related disorders	Alcohol abuse with intoxication
+F10.120	1	Alcohol related disorders	Alcohol abuse with intoxication, uncomplicated
+F10.121	1	Alcohol related disorders	Alcohol abuse with intoxication delirium
+F10.129	1	Alcohol related disorders	Alcohol abuse with intoxication, unspecified
+F10.13	0	Alcohol related disorders	Alcohol abuse, with withdrawal
+F10.130	1	Alcohol related disorders	Alcohol abuse with withdrawal, uncomplicated
+F10.131	1	Alcohol related disorders	Alcohol abuse with withdrawal delirium
+F10.132	1	Alcohol related disorders	Alcohol abuse with withdrawal with perceptual disturbance
+F10.139	1	Alcohol related disorders	Alcohol abuse with withdrawal, unspecified
+F10.14	1	Alcohol related disorders	Alcohol abuse with alcohol-induced mood disorder
+F10.15	0	Alcohol related disorders	Alcohol abuse with alcohol-induced psychotic disorder
+F10.150	1	Alcohol related disorders	Alcohol abuse with alcohol-induced psychotic disorder with delusions
+F10.151	1	Alcohol related disorders	Alcohol abuse with alcohol-induced psychotic disorder with hallucinations
+F10.159	1	Alcohol related disorders	Alcohol abuse with alcohol-induced psychotic disorder, unspecified
+F10.18	0	Alcohol related disorders	Alcohol abuse with other alcohol-induced disorders
+F10.180	1	Alcohol related disorders	Alcohol abuse with alcohol-induced anxiety disorder
+F10.181	1	Alcohol related disorders	Alcohol abuse with alcohol-induced sexual dysfunction
+F10.182	1	Alcohol related disorders	Alcohol abuse with alcohol-induced sleep disorder
+F10.188	1	Alcohol related disorders	Alcohol abuse with other alcohol-induced disorder
+F10.19	1	Alcohol related disorders	Alcohol abuse with unspecified alcohol-induced disorder
+F10.2	0	Alcohol related disorders	Alcohol dependence
+F10.20	1	Alcohol related disorders	Alcohol dependence, uncomplicated
+F10.21	1	Alcohol related disorders	Alcohol dependence, in remission
+F10.22	0	Alcohol related disorders	Alcohol dependence with intoxication
+F10.220	1	Alcohol related disorders	Alcohol dependence with intoxication, uncomplicated
+F10.221	1	Alcohol related disorders	Alcohol dependence with intoxication delirium
+F10.229	1	Alcohol related disorders	Alcohol dependence with intoxication, unspecified
+F10.23	0	Alcohol related disorders	Alcohol dependence with withdrawal
+F10.230	1	Alcohol related disorders	Alcohol dependence with withdrawal, uncomplicated
+F10.231	1	Alcohol related disorders	Alcohol dependence with withdrawal delirium
+F10.232	1	Alcohol related disorders	Alcohol dependence with withdrawal with perceptual disturbance
+F10.239	1	Alcohol related disorders	Alcohol dependence with withdrawal, unspecified
+F10.24	1	Alcohol related disorders	Alcohol dependence with alcohol-induced mood disorder
+F10.25	0	Alcohol related disorders	Alcohol dependence with alcohol-induced psychotic disorder
+F10.250	1	Alcohol related disorders	Alcohol dependence with alcohol-induced psychotic disorder with delusions
+F10.251	1	Alcohol related disorders	Alcohol dependence with alcohol-induced psychotic disorder with hallucinations
+F10.259	1	Alcohol related disorders	Alcohol dependence with alcohol-induced psychotic disorder, unspecified
+F10.26	1	Alcohol related disorders	Alcohol dependence with alcohol-induced persisting amnestic disorder
+F10.27	1	Alcohol related disorders	Alcohol dependence with alcohol-induced persisting dementia
+F10.28	0	Alcohol related disorders	Alcohol dependence with other alcohol-induced disorders
+F10.280	1	Alcohol related disorders	Alcohol dependence with alcohol-induced anxiety disorder
+F10.281	1	Alcohol related disorders	Alcohol dependence with alcohol-induced sexual dysfunction
+F10.282	1	Alcohol related disorders	Alcohol dependence with alcohol-induced sleep disorder
+F10.288	1	Alcohol related disorders	Alcohol dependence with other alcohol-induced disorder
+F10.29	1	Alcohol related disorders	Alcohol dependence with unspecified alcohol-induced disorder
+F10.9	0	Alcohol related disorders	Alcohol use, unspecified
+F10.90	1	Alcohol related disorders	Alcohol use, unspecified, uncomplicated
+F10.91	1	Alcohol related disorders	Alcohol use, unspecified, in remission
+F10.92	0	Alcohol related disorders	Alcohol use, unspecified with intoxication
+F10.920	1	Alcohol related disorders	Alcohol use, unspecified with intoxication, uncomplicated
+F10.921	1	Alcohol related disorders	Alcohol use, unspecified with intoxication delirium
+F10.929	1	Alcohol related disorders	Alcohol use, unspecified with intoxication, unspecified
+F10.93	0	Alcohol related disorders	Alcohol use, unspecified with withdrawal
+F10.930	1	Alcohol related disorders	Alcohol use, unspecified with withdrawal, uncomplicated
+F10.931	1	Alcohol related disorders	Alcohol use, unspecified with withdrawal delirium
+F10.932	1	Alcohol related disorders	Alcohol use, unspecified with withdrawal with perceptual disturbance
+F10.939	1	Alcohol related disorders	Alcohol use, unspecified with withdrawal, unspecified
+F10.94	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced mood disorder
+F10.95	0	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced psychotic disorder
+F10.950	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced psychotic disorder with delusions
+F10.951	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced psychotic disorder with hallucinations
+F10.959	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced psychotic disorder, unspecified
+F10.96	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced persisting amnestic disorder
+F10.97	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced persisting dementia
+F10.98	0	Alcohol related disorders	Alcohol use, unspecified with other alcohol-induced disorders
+F10.980	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced anxiety disorder
+F10.981	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced sexual dysfunction
+F10.982	1	Alcohol related disorders	Alcohol use, unspecified with alcohol-induced sleep disorder
+F10.988	1	Alcohol related disorders	Alcohol use, unspecified with other alcohol-induced disorder
+F10.99	1	Alcohol related disorders	Alcohol use, unspecified with unspecified alcohol-induced disorder
+F11	0	Opioid related disorders	Opioid related disorders
+F11.1	0	Opioid related disorders	Opioid abuse
+F11.10	1	Opioid related disorders	Opioid abuse, uncomplicated
+F11.11	1	Opioid related disorders	Opioid abuse, in remission
+F11.12	0	Opioid related disorders	Opioid abuse with intoxication
+F11.120	1	Opioid related disorders	Opioid abuse with intoxication, uncomplicated
+F11.121	1	Opioid related disorders	Opioid abuse with intoxication delirium
+F11.122	1	Opioid related disorders	Opioid abuse with intoxication with perceptual disturbance
+F11.129	1	Opioid related disorders	Opioid abuse with intoxication, unspecified
+F11.13	1	Opioid related disorders	Opioid abuse with withdrawal
+F11.14	1	Opioid related disorders	Opioid abuse with opioid-induced mood disorder
+F11.15	0	Opioid related disorders	Opioid abuse with opioid-induced psychotic disorder
+F11.150	1	Opioid related disorders	Opioid abuse with opioid-induced psychotic disorder with delusions
+F11.151	1	Opioid related disorders	Opioid abuse with opioid-induced psychotic disorder with hallucinations
+F11.159	1	Opioid related disorders	Opioid abuse with opioid-induced psychotic disorder, unspecified
+F11.18	0	Opioid related disorders	Opioid abuse with other opioid-induced disorder
+F11.181	1	Opioid related disorders	Opioid abuse with opioid-induced sexual dysfunction
+F11.182	1	Opioid related disorders	Opioid abuse with opioid-induced sleep disorder
+F11.188	1	Opioid related disorders	Opioid abuse with other opioid-induced disorder
+F11.19	1	Opioid related disorders	Opioid abuse with unspecified opioid-induced disorder
+F11.2	0	Opioid related disorders	Opioid dependence
+F11.20	1	Opioid related disorders	Opioid dependence, uncomplicated
+F11.21	1	Opioid related disorders	Opioid dependence, in remission
+F11.22	0	Opioid related disorders	Opioid dependence with intoxication
+F11.220	1	Opioid related disorders	Opioid dependence with intoxication, uncomplicated
+F11.221	1	Opioid related disorders	Opioid dependence with intoxication delirium
+F11.222	1	Opioid related disorders	Opioid dependence with intoxication with perceptual disturbance
+F11.229	1	Opioid related disorders	Opioid dependence with intoxication, unspecified
+F11.23	1	Opioid related disorders	Opioid dependence with withdrawal
+F11.24	1	Opioid related disorders	Opioid dependence with opioid-induced mood disorder
+F11.25	0	Opioid related disorders	Opioid dependence with opioid-induced psychotic disorder
+F11.250	1	Opioid related disorders	Opioid dependence with opioid-induced psychotic disorder with delusions
+F11.251	1	Opioid related disorders	Opioid dependence with opioid-induced psychotic disorder with hallucinations
+F11.259	1	Opioid related disorders	Opioid dependence with opioid-induced psychotic disorder, unspecified
+F11.28	0	Opioid related disorders	Opioid dependence with other opioid-induced disorder
+F11.281	1	Opioid related disorders	Opioid dependence with opioid-induced sexual dysfunction
+F11.282	1	Opioid related disorders	Opioid dependence with opioid-induced sleep disorder
+F11.288	1	Opioid related disorders	Opioid dependence with other opioid-induced disorder
+F11.29	1	Opioid related disorders	Opioid dependence with unspecified opioid-induced disorder
+F11.9	0	Opioid related disorders	Opioid use, unspecified
+F11.90	1	Opioid related disorders	Opioid use, unspecified, uncomplicated
+F11.91	1	Opioid related disorders	Opioid use, unspecified, in remission
+F11.92	0	Opioid related disorders	Opioid use, unspecified with intoxication
+F11.920	1	Opioid related disorders	Opioid use, unspecified with intoxication, uncomplicated
+F11.921	1	Opioid related disorders	Opioid use, unspecified with intoxication delirium
+F11.922	1	Opioid related disorders	Opioid use, unspecified with intoxication with perceptual disturbance
+F11.929	1	Opioid related disorders	Opioid use, unspecified with intoxication, unspecified
+F11.93	1	Opioid related disorders	Opioid use, unspecified with withdrawal
+F11.94	1	Opioid related disorders	Opioid use, unspecified with opioid-induced mood disorder
+F11.95	0	Opioid related disorders	Opioid use, unspecified with opioid-induced psychotic disorder
+F11.950	1	Opioid related disorders	Opioid use, unspecified with opioid-induced psychotic disorder with delusions
+F11.951	1	Opioid related disorders	Opioid use, unspecified with opioid-induced psychotic disorder with hallucinations
+F11.959	1	Opioid related disorders	Opioid use, unspecified with opioid-induced psychotic disorder, unspecified
+F11.98	0	Opioid related disorders	Opioid use, unspecified with other specified opioid-induced disorder
+F11.981	1	Opioid related disorders	Opioid use, unspecified with opioid-induced sexual dysfunction
+F11.982	1	Opioid related disorders	Opioid use, unspecified with opioid-induced sleep disorder
+F11.988	1	Opioid related disorders	Opioid use, unspecified with other opioid-induced disorder
+F11.99	1	Opioid related disorders	Opioid use, unspecified with unspecified opioid-induced disorder
+F12	0	Cannabis related disorders	Cannabis related disorders
+F12.1	0	Cannabis related disorders	Cannabis abuse
+F12.10	1	Cannabis related disorders	Cannabis abuse, uncomplicated
+F12.11	1	Cannabis related disorders	Cannabis abuse, in remission
+F12.12	0	Cannabis related disorders	Cannabis abuse with intoxication
+F12.120	1	Cannabis related disorders	Cannabis abuse with intoxication, uncomplicated
+F12.121	1	Cannabis related disorders	Cannabis abuse with intoxication delirium
+F12.122	1	Cannabis related disorders	Cannabis abuse with intoxication with perceptual disturbance
+F12.129	1	Cannabis related disorders	Cannabis abuse with intoxication, unspecified
+F12.13	1	Cannabis related disorders	Cannabis abuse with withdrawal
+F12.15	0	Cannabis related disorders	Cannabis abuse with psychotic disorder
+F12.150	1	Cannabis related disorders	Cannabis abuse with psychotic disorder with delusions
+F12.151	1	Cannabis related disorders	Cannabis abuse with psychotic disorder with hallucinations
+F12.159	1	Cannabis related disorders	Cannabis abuse with psychotic disorder, unspecified
+F12.18	0	Cannabis related disorders	Cannabis abuse with other cannabis-induced disorder
+F12.180	1	Cannabis related disorders	Cannabis abuse with cannabis-induced anxiety disorder
+F12.188	1	Cannabis related disorders	Cannabis abuse with other cannabis-induced disorder
+F12.19	1	Cannabis related disorders	Cannabis abuse with unspecified cannabis-induced disorder
+F12.2	0	Cannabis related disorders	Cannabis dependence
+F12.20	1	Cannabis related disorders	Cannabis dependence, uncomplicated
+F12.21	1	Cannabis related disorders	Cannabis dependence, in remission
+F12.22	0	Cannabis related disorders	Cannabis dependence with intoxication
+F12.220	1	Cannabis related disorders	Cannabis dependence with intoxication, uncomplicated
+F12.221	1	Cannabis related disorders	Cannabis dependence with intoxication delirium
+F12.222	1	Cannabis related disorders	Cannabis dependence with intoxication with perceptual disturbance
+F12.229	1	Cannabis related disorders	Cannabis dependence with intoxication, unspecified
+F12.23	1	Cannabis related disorders	Cannabis dependence with withdrawal
+F12.25	0	Cannabis related disorders	Cannabis dependence with psychotic disorder
+F12.250	1	Cannabis related disorders	Cannabis dependence with psychotic disorder with delusions
+F12.251	1	Cannabis related disorders	Cannabis dependence with psychotic disorder with hallucinations
+F12.259	1	Cannabis related disorders	Cannabis dependence with psychotic disorder, unspecified
+F12.28	0	Cannabis related disorders	Cannabis dependence with other cannabis-induced disorder
+F12.280	1	Cannabis related disorders	Cannabis dependence with cannabis-induced anxiety disorder
+F12.288	1	Cannabis related disorders	Cannabis dependence with other cannabis-induced disorder
+F12.29	1	Cannabis related disorders	Cannabis dependence with unspecified cannabis-induced disorder
+F12.9	0	Cannabis related disorders	Cannabis use, unspecified
+F12.90	1	Cannabis related disorders	Cannabis use, unspecified, uncomplicated
+F12.91	1	Cannabis related disorders	Cannabis use, unspecified, in remission
+F12.92	0	Cannabis related disorders	Cannabis use, unspecified with intoxication
+F12.920	1	Cannabis related disorders	Cannabis use, unspecified with intoxication, uncomplicated
+F12.921	1	Cannabis related disorders	Cannabis use, unspecified with intoxication delirium
+F12.922	1	Cannabis related disorders	Cannabis use, unspecified with intoxication with perceptual disturbance
+F12.929	1	Cannabis related disorders	Cannabis use, unspecified with intoxication, unspecified
+F12.93	1	Cannabis related disorders	Cannabis use, unspecified with withdrawal
+F12.95	0	Cannabis related disorders	Cannabis use, unspecified with psychotic disorder
+F12.950	1	Cannabis related disorders	Cannabis use, unspecified with psychotic disorder with delusions
+F12.951	1	Cannabis related disorders	Cannabis use, unspecified with psychotic disorder with hallucinations
+F12.959	1	Cannabis related disorders	Cannabis use, unspecified with psychotic disorder, unspecified
+F12.98	0	Cannabis related disorders	Cannabis use, unspecified with other cannabis-induced disorder
+F12.980	1	Cannabis related disorders	Cannabis use, unspecified with anxiety disorder
+F12.988	1	Cannabis related disorders	Cannabis use, unspecified with other cannabis-induced disorder
+F12.99	1	Cannabis related disorders	Cannabis use, unspecified with unspecified cannabis-induced disorder
+F13	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic, or anxiolytic related disorders
+F13.1	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic-related abuse
+F13.10	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse, uncomplicated
+F13.11	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse, in remission
+F13.12	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with intoxication
+F13.120	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with intoxication, uncomplicated
+F13.121	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with intoxication delirium
+F13.129	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with intoxication, unspecified
+F13.13	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with withdrawal
+F13.130	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with withdrawal, uncomplicated
+F13.131	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with withdrawal delirium
+F13.132	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with withdrawal with perceptual disturbance
+F13.139	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with withdrawal, unspecified
+F13.14	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced mood disorder
+F13.15	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced psychotic disorder
+F13.150	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced psychotic disorder with delusions
+F13.151	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced psychotic disorder with hallucinations
+F13.159	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced psychotic disorder, unspecified
+F13.18	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with other sedative, hypnotic or anxiolytic-induced disorders
+F13.180	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced anxiety disorder
+F13.181	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced sexual dysfunction
+F13.182	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with sedative, hypnotic or anxiolytic-induced sleep disorder
+F13.188	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with other sedative, hypnotic or anxiolytic-induced disorder
+F13.19	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic abuse with unspecified sedative, hypnotic or anxiolytic-induced disorder
+F13.2	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic-related dependence
+F13.20	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence, uncomplicated
+F13.21	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence, in remission
+F13.22	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with intoxication
+F13.220	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with intoxication, uncomplicated
+F13.221	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with intoxication delirium
+F13.229	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with intoxication, unspecified
+F13.23	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with withdrawal
+F13.230	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with withdrawal, uncomplicated
+F13.231	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with withdrawal delirium
+F13.232	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with withdrawal with perceptual disturbance
+F13.239	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with withdrawal, unspecified
+F13.24	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced mood disorder
+F13.25	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced psychotic disorder
+F13.250	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced psychotic disorder with delusions
+F13.251	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced psychotic disorder with hallucinations
+F13.259	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced psychotic disorder, unspecified
+F13.26	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced persisting amnestic disorder
+F13.27	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced persisting dementia
+F13.28	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with other sedative, hypnotic or anxiolytic-induced disorders
+F13.280	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced anxiety disorder
+F13.281	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced sexual dysfunction
+F13.282	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with sedative, hypnotic or anxiolytic-induced sleep disorder
+F13.288	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with other sedative, hypnotic or anxiolytic-induced disorder
+F13.29	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic dependence with unspecified sedative, hypnotic or anxiolytic-induced disorder
+F13.9	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic-related use, unspecified
+F13.90	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic, or anxiolytic use, unspecified, uncomplicated
+F13.91	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified, in remission
+F13.92	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with intoxication
+F13.920	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with intoxication, uncomplicated
+F13.921	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with intoxication delirium
+F13.929	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with intoxication, unspecified
+F13.93	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with withdrawal
+F13.930	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with withdrawal, uncomplicated
+F13.931	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with withdrawal delirium
+F13.932	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with withdrawal with perceptual disturbances
+F13.939	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with withdrawal, unspecified
+F13.94	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced mood disorder
+F13.95	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced psychotic disorder
+F13.950	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced psychotic disorder with delusions
+F13.951	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced psychotic disorder with hallucinations
+F13.959	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced psychotic disorder, unspecified
+F13.96	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced persisting amnestic disorder
+F13.97	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced persisting dementia
+F13.98	0	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with other sedative, hypnotic or anxiolytic-induced disorders
+F13.980	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced anxiety disorder
+F13.981	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced sexual dysfunction
+F13.982	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with sedative, hypnotic or anxiolytic-induced sleep disorder
+F13.988	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with other sedative, hypnotic or anxiolytic-induced disorder
+F13.99	1	Sedative, hypnotic, or anxiolytic related disorders	Sedative, hypnotic or anxiolytic use, unspecified with unspecified sedative, hypnotic or anxiolytic-induced disorder
+F14	0	Cocaine related disorders	Cocaine related disorders
+F14.1	0	Cocaine related disorders	Cocaine abuse
+F14.10	1	Cocaine related disorders	Cocaine abuse, uncomplicated
+F14.11	1	Cocaine related disorders	Cocaine abuse, in remission
+F14.12	0	Cocaine related disorders	Cocaine abuse with intoxication
+F14.120	1	Cocaine related disorders	Cocaine abuse with intoxication, uncomplicated
+F14.121	1	Cocaine related disorders	Cocaine abuse with intoxication with delirium
+F14.122	1	Cocaine related disorders	Cocaine abuse with intoxication with perceptual disturbance
+F14.129	1	Cocaine related disorders	Cocaine abuse with intoxication, unspecified
+F14.13	1	Cocaine related disorders	Cocaine abuse, unspecified with withdrawal
+F14.14	1	Cocaine related disorders	Cocaine abuse with cocaine-induced mood disorder
+F14.15	0	Cocaine related disorders	Cocaine abuse with cocaine-induced psychotic disorder
+F14.150	1	Cocaine related disorders	Cocaine abuse with cocaine-induced psychotic disorder with delusions
+F14.151	1	Cocaine related disorders	Cocaine abuse with cocaine-induced psychotic disorder with hallucinations
+F14.159	1	Cocaine related disorders	Cocaine abuse with cocaine-induced psychotic disorder, unspecified
+F14.18	0	Cocaine related disorders	Cocaine abuse with other cocaine-induced disorder
+F14.180	1	Cocaine related disorders	Cocaine abuse with cocaine-induced anxiety disorder
+F14.181	1	Cocaine related disorders	Cocaine abuse with cocaine-induced sexual dysfunction
+F14.182	1	Cocaine related disorders	Cocaine abuse with cocaine-induced sleep disorder
+F14.188	1	Cocaine related disorders	Cocaine abuse with other cocaine-induced disorder
+F14.19	1	Cocaine related disorders	Cocaine abuse with unspecified cocaine-induced disorder
+F14.2	0	Cocaine related disorders	Cocaine dependence
+F14.20	1	Cocaine related disorders	Cocaine dependence, uncomplicated
+F14.21	1	Cocaine related disorders	Cocaine dependence, in remission
+F14.22	0	Cocaine related disorders	Cocaine dependence with intoxication
+F14.220	1	Cocaine related disorders	Cocaine dependence with intoxication, uncomplicated
+F14.221	1	Cocaine related disorders	Cocaine dependence with intoxication delirium
+F14.222	1	Cocaine related disorders	Cocaine dependence with intoxication with perceptual disturbance
+F14.229	1	Cocaine related disorders	Cocaine dependence with intoxication, unspecified
+F14.23	1	Cocaine related disorders	Cocaine dependence with withdrawal
+F14.24	1	Cocaine related disorders	Cocaine dependence with cocaine-induced mood disorder
+F14.25	0	Cocaine related disorders	Cocaine dependence with cocaine-induced psychotic disorder
+F14.250	1	Cocaine related disorders	Cocaine dependence with cocaine-induced psychotic disorder with delusions
+F14.251	1	Cocaine related disorders	Cocaine dependence with cocaine-induced psychotic disorder with hallucinations
+F14.259	1	Cocaine related disorders	Cocaine dependence with cocaine-induced psychotic disorder, unspecified
+F14.28	0	Cocaine related disorders	Cocaine dependence with other cocaine-induced disorder
+F14.280	1	Cocaine related disorders	Cocaine dependence with cocaine-induced anxiety disorder
+F14.281	1	Cocaine related disorders	Cocaine dependence with cocaine-induced sexual dysfunction
+F14.282	1	Cocaine related disorders	Cocaine dependence with cocaine-induced sleep disorder
+F14.288	1	Cocaine related disorders	Cocaine dependence with other cocaine-induced disorder
+F14.29	1	Cocaine related disorders	Cocaine dependence with unspecified cocaine-induced disorder
+F14.9	0	Cocaine related disorders	Cocaine use, unspecified
+F14.90	1	Cocaine related disorders	Cocaine use, unspecified, uncomplicated
+F14.91	1	Cocaine related disorders	Cocaine use, unspecified, in remission
+F14.92	0	Cocaine related disorders	Cocaine use, unspecified with intoxication
+F14.920	1	Cocaine related disorders	Cocaine use, unspecified with intoxication, uncomplicated
+F14.921	1	Cocaine related disorders	Cocaine use, unspecified with intoxication delirium
+F14.922	1	Cocaine related disorders	Cocaine use, unspecified with intoxication with perceptual disturbance
+F14.929	1	Cocaine related disorders	Cocaine use, unspecified with intoxication, unspecified
+F14.93	1	Cocaine related disorders	Cocaine use, unspecified with withdrawal
+F14.94	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced mood disorder
+F14.95	0	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced psychotic disorder
+F14.950	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced psychotic disorder with delusions
+F14.951	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced psychotic disorder with hallucinations
+F14.959	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced psychotic disorder, unspecified
+F14.98	0	Cocaine related disorders	Cocaine use, unspecified with other specified cocaine-induced disorder
+F14.980	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced anxiety disorder
+F14.981	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced sexual dysfunction
+F14.982	1	Cocaine related disorders	Cocaine use, unspecified with cocaine-induced sleep disorder
+F14.988	1	Cocaine related disorders	Cocaine use, unspecified with other cocaine-induced disorder
+F14.99	1	Cocaine related disorders	Cocaine use, unspecified with unspecified cocaine-induced disorder
+F15	0	Other stimulant related disorders	Other stimulant related disorders
+F15.1	0	Other stimulant related disorders	Other stimulant abuse
+F15.10	1	Other stimulant related disorders	Other stimulant abuse, uncomplicated
+F15.11	1	Other stimulant related disorders	Other stimulant abuse, in remission
+F15.12	0	Other stimulant related disorders	Other stimulant abuse with intoxication
+F15.120	1	Other stimulant related disorders	Other stimulant abuse with intoxication, uncomplicated
+F15.121	1	Other stimulant related disorders	Other stimulant abuse with intoxication delirium
+F15.122	1	Other stimulant related disorders	Other stimulant abuse with intoxication with perceptual disturbance
+F15.129	1	Other stimulant related disorders	Other stimulant abuse with intoxication, unspecified
+F15.13	1	Other stimulant related disorders	Other stimulant abuse with withdrawal
+F15.14	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced mood disorder
+F15.15	0	Other stimulant related disorders	Other stimulant abuse with stimulant-induced psychotic disorder
+F15.150	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced psychotic disorder with delusions
+F15.151	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced psychotic disorder with hallucinations
+F15.159	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced psychotic disorder, unspecified
+F15.18	0	Other stimulant related disorders	Other stimulant abuse with other stimulant-induced disorder
+F15.180	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced anxiety disorder
+F15.181	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced sexual dysfunction
+F15.182	1	Other stimulant related disorders	Other stimulant abuse with stimulant-induced sleep disorder
+F15.188	1	Other stimulant related disorders	Other stimulant abuse with other stimulant-induced disorder
+F15.19	1	Other stimulant related disorders	Other stimulant abuse with unspecified stimulant-induced disorder
+F15.2	0	Other stimulant related disorders	Other stimulant dependence
+F15.20	1	Other stimulant related disorders	Other stimulant dependence, uncomplicated
+F15.21	1	Other stimulant related disorders	Other stimulant dependence, in remission
+F15.22	0	Other stimulant related disorders	Other stimulant dependence with intoxication
+F15.220	1	Other stimulant related disorders	Other stimulant dependence with intoxication, uncomplicated
+F15.221	1	Other stimulant related disorders	Other stimulant dependence with intoxication delirium
+F15.222	1	Other stimulant related disorders	Other stimulant dependence with intoxication with perceptual disturbance
+F15.229	1	Other stimulant related disorders	Other stimulant dependence with intoxication, unspecified
+F15.23	1	Other stimulant related disorders	Other stimulant dependence with withdrawal
+F15.24	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced mood disorder
+F15.25	0	Other stimulant related disorders	Other stimulant dependence with stimulant-induced psychotic disorder
+F15.250	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced psychotic disorder with delusions
+F15.251	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced psychotic disorder with hallucinations
+F15.259	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced psychotic disorder, unspecified
+F15.28	0	Other stimulant related disorders	Other stimulant dependence with other stimulant-induced disorder
+F15.280	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced anxiety disorder
+F15.281	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced sexual dysfunction
+F15.282	1	Other stimulant related disorders	Other stimulant dependence with stimulant-induced sleep disorder
+F15.288	1	Other stimulant related disorders	Other stimulant dependence with other stimulant-induced disorder
+F15.29	1	Other stimulant related disorders	Other stimulant dependence with unspecified stimulant-induced disorder
+F15.9	0	Other stimulant related disorders	Other stimulant use, unspecified
+F15.90	1	Other stimulant related disorders	Other stimulant use, unspecified, uncomplicated
+F15.91	1	Other stimulant related disorders	Other stimulant use, unspecified, in remission
+F15.92	0	Other stimulant related disorders	Other stimulant use, unspecified with intoxication
+F15.920	1	Other stimulant related disorders	Other stimulant use, unspecified with intoxication, uncomplicated
+F15.921	1	Other stimulant related disorders	Other stimulant use, unspecified with intoxication delirium
+F15.922	1	Other stimulant related disorders	Other stimulant use, unspecified with intoxication with perceptual disturbance
+F15.929	1	Other stimulant related disorders	Other stimulant use, unspecified with intoxication, unspecified
+F15.93	1	Other stimulant related disorders	Other stimulant use, unspecified with withdrawal
+F15.94	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced mood disorder
+F15.95	0	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced psychotic disorder
+F15.950	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced psychotic disorder with delusions
+F15.951	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced psychotic disorder with hallucinations
+F15.959	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced psychotic disorder, unspecified
+F15.98	0	Other stimulant related disorders	Other stimulant use, unspecified with other stimulant-induced disorder
+F15.980	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced anxiety disorder
+F15.981	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced sexual dysfunction
+F15.982	1	Other stimulant related disorders	Other stimulant use, unspecified with stimulant-induced sleep disorder
+F15.988	1	Other stimulant related disorders	Other stimulant use, unspecified with other stimulant-induced disorder
+F15.99	1	Other stimulant related disorders	Other stimulant use, unspecified with unspecified stimulant-induced disorder
+F16	0	Hallucinogen related disorders	Hallucinogen related disorders
+F16.1	0	Hallucinogen related disorders	Hallucinogen abuse
+F16.10	1	Hallucinogen related disorders	Hallucinogen abuse, uncomplicated
+F16.11	1	Hallucinogen related disorders	Hallucinogen abuse, in remission
+F16.12	0	Hallucinogen related disorders	Hallucinogen abuse with intoxication
+F16.120	1	Hallucinogen related disorders	Hallucinogen abuse with intoxication, uncomplicated
+F16.121	1	Hallucinogen related disorders	Hallucinogen abuse with intoxication with delirium
+F16.122	1	Hallucinogen related disorders	Hallucinogen abuse with intoxication with perceptual disturbance
+F16.129	1	Hallucinogen related disorders	Hallucinogen abuse with intoxication, unspecified
+F16.14	1	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen-induced mood disorder
+F16.15	0	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen-induced psychotic disorder
+F16.150	1	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen-induced psychotic disorder with delusions
+F16.151	1	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen-induced psychotic disorder with hallucinations
+F16.159	1	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen-induced psychotic disorder, unspecified
+F16.18	0	Hallucinogen related disorders	Hallucinogen abuse with other hallucinogen-induced disorder
+F16.180	1	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen-induced anxiety disorder
+F16.183	1	Hallucinogen related disorders	Hallucinogen abuse with hallucinogen persisting perception disorder (flashbacks)
+F16.188	1	Hallucinogen related disorders	Hallucinogen abuse with other hallucinogen-induced disorder
+F16.19	1	Hallucinogen related disorders	Hallucinogen abuse with unspecified hallucinogen-induced disorder
+F16.2	0	Hallucinogen related disorders	Hallucinogen dependence
+F16.20	1	Hallucinogen related disorders	Hallucinogen dependence, uncomplicated
+F16.21	1	Hallucinogen related disorders	Hallucinogen dependence, in remission
+F16.22	0	Hallucinogen related disorders	Hallucinogen dependence with intoxication
+F16.220	1	Hallucinogen related disorders	Hallucinogen dependence with intoxication, uncomplicated
+F16.221	1	Hallucinogen related disorders	Hallucinogen dependence with intoxication with delirium
+F16.229	1	Hallucinogen related disorders	Hallucinogen dependence with intoxication, unspecified
+F16.24	1	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen-induced mood disorder
+F16.25	0	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen-induced psychotic disorder
+F16.250	1	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen-induced psychotic disorder with delusions
+F16.251	1	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen-induced psychotic disorder with hallucinations
+F16.259	1	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen-induced psychotic disorder, unspecified
+F16.28	0	Hallucinogen related disorders	Hallucinogen dependence with other hallucinogen-induced disorder
+F16.280	1	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen-induced anxiety disorder
+F16.283	1	Hallucinogen related disorders	Hallucinogen dependence with hallucinogen persisting perception disorder (flashbacks)
+F16.288	1	Hallucinogen related disorders	Hallucinogen dependence with other hallucinogen-induced disorder
+F16.29	1	Hallucinogen related disorders	Hallucinogen dependence with unspecified hallucinogen-induced disorder
+F16.9	0	Hallucinogen related disorders	Hallucinogen use, unspecified
+F16.90	1	Hallucinogen related disorders	Hallucinogen use, unspecified, uncomplicated
+F16.91	1	Hallucinogen related disorders	Hallucinogen use, unspecified, in remission
+F16.92	0	Hallucinogen related disorders	Hallucinogen use, unspecified with intoxication
+F16.920	1	Hallucinogen related disorders	Hallucinogen use, unspecified with intoxication, uncomplicated
+F16.921	1	Hallucinogen related disorders	Hallucinogen use, unspecified with intoxication with delirium
+F16.929	1	Hallucinogen related disorders	Hallucinogen use, unspecified with intoxication, unspecified
+F16.94	1	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen-induced mood disorder
+F16.95	0	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen-induced psychotic disorder
+F16.950	1	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen-induced psychotic disorder with delusions
+F16.951	1	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen-induced psychotic disorder with hallucinations
+F16.959	1	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen-induced psychotic disorder, unspecified
+F16.98	0	Hallucinogen related disorders	Hallucinogen use, unspecified with other specified hallucinogen-induced disorder
+F16.980	1	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen-induced anxiety disorder
+F16.983	1	Hallucinogen related disorders	Hallucinogen use, unspecified with hallucinogen persisting perception disorder (flashbacks)
+F16.988	1	Hallucinogen related disorders	Hallucinogen use, unspecified with other hallucinogen-induced disorder
+F16.99	1	Hallucinogen related disorders	Hallucinogen use, unspecified with unspecified hallucinogen-induced disorder
+F17	0	Nicotine dependence	Nicotine dependence
+F17.2	0	Nicotine dependence	Nicotine dependence
+F17.20	0	Nicotine dependence	Nicotine dependence, unspecified
+F17.200	1	Nicotine dependence	Nicotine dependence, unspecified, uncomplicated
+F17.201	1	Nicotine dependence	Nicotine dependence, unspecified, in remission
+F17.203	1	Nicotine dependence	Nicotine dependence unspecified, with withdrawal
+F17.208	1	Nicotine dependence	Nicotine dependence, unspecified, with other nicotine-induced disorders
+F17.209	1	Nicotine dependence	Nicotine dependence, unspecified, with unspecified nicotine-induced disorders
+F17.21	0	Nicotine dependence	Nicotine dependence, cigarettes
+F17.210	1	Nicotine dependence	Nicotine dependence, cigarettes, uncomplicated
+F17.211	1	Nicotine dependence	Nicotine dependence, cigarettes, in remission
+F17.213	1	Nicotine dependence	Nicotine dependence, cigarettes, with withdrawal
+F17.218	1	Nicotine dependence	Nicotine dependence, cigarettes, with other nicotine-induced disorders
+F17.219	1	Nicotine dependence	Nicotine dependence, cigarettes, with unspecified nicotine-induced disorders
+F17.22	0	Nicotine dependence	Nicotine dependence, chewing tobacco
+F17.220	1	Nicotine dependence	Nicotine dependence, chewing tobacco, uncomplicated
+F17.221	1	Nicotine dependence	Nicotine dependence, chewing tobacco, in remission
+F17.223	1	Nicotine dependence	Nicotine dependence, chewing tobacco, with withdrawal
+F17.228	1	Nicotine dependence	Nicotine dependence, chewing tobacco, with other nicotine-induced disorders
+F17.229	1	Nicotine dependence	Nicotine dependence, chewing tobacco, with unspecified nicotine-induced disorders
+F17.29	0	Nicotine dependence	Nicotine dependence, other tobacco product
+F17.290	1	Nicotine dependence	Nicotine dependence, other tobacco product, uncomplicated
+F17.291	1	Nicotine dependence	Nicotine dependence, other tobacco product, in remission
+F17.293	1	Nicotine dependence	Nicotine dependence, other tobacco product, with withdrawal
+F17.298	1	Nicotine dependence	Nicotine dependence, other tobacco product, with other nicotine-induced disorders
+F17.299	1	Nicotine dependence	Nicotine dependence, other tobacco product, with unspecified nicotine-induced disorders
+F18	0	Inhalant related disorders	Inhalant related disorders
+F18.1	0	Inhalant related disorders	Inhalant abuse
+F18.10	1	Inhalant related disorders	Inhalant abuse, uncomplicated
+F18.11	1	Inhalant related disorders	Inhalant abuse, in remission
+F18.12	0	Inhalant related disorders	Inhalant abuse with intoxication
+F18.120	1	Inhalant related disorders	Inhalant abuse with intoxication, uncomplicated
+F18.121	1	Inhalant related disorders	Inhalant abuse with intoxication delirium
+F18.129	1	Inhalant related disorders	Inhalant abuse with intoxication, unspecified
+F18.14	1	Inhalant related disorders	Inhalant abuse with inhalant-induced mood disorder
+F18.15	0	Inhalant related disorders	Inhalant abuse with inhalant-induced psychotic disorder
+F18.150	1	Inhalant related disorders	Inhalant abuse with inhalant-induced psychotic disorder with delusions
+F18.151	1	Inhalant related disorders	Inhalant abuse with inhalant-induced psychotic disorder with hallucinations
+F18.159	1	Inhalant related disorders	Inhalant abuse with inhalant-induced psychotic disorder, unspecified
+F18.17	1	Inhalant related disorders	Inhalant abuse with inhalant-induced dementia
+F18.18	0	Inhalant related disorders	Inhalant abuse with other inhalant-induced disorders
+F18.180	1	Inhalant related disorders	Inhalant abuse with inhalant-induced anxiety disorder
+F18.188	1	Inhalant related disorders	Inhalant abuse with other inhalant-induced disorder
+F18.19	1	Inhalant related disorders	Inhalant abuse with unspecified inhalant-induced disorder
+F18.2	0	Inhalant related disorders	Inhalant dependence
+F18.20	1	Inhalant related disorders	Inhalant dependence, uncomplicated
+F18.21	1	Inhalant related disorders	Inhalant dependence, in remission
+F18.22	0	Inhalant related disorders	Inhalant dependence with intoxication
+F18.220	1	Inhalant related disorders	Inhalant dependence with intoxication, uncomplicated
+F18.221	1	Inhalant related disorders	Inhalant dependence with intoxication delirium
+F18.229	1	Inhalant related disorders	Inhalant dependence with intoxication, unspecified
+F18.24	1	Inhalant related disorders	Inhalant dependence with inhalant-induced mood disorder
+F18.25	0	Inhalant related disorders	Inhalant dependence with inhalant-induced psychotic disorder
+F18.250	1	Inhalant related disorders	Inhalant dependence with inhalant-induced psychotic disorder with delusions
+F18.251	1	Inhalant related disorders	Inhalant dependence with inhalant-induced psychotic disorder with hallucinations
+F18.259	1	Inhalant related disorders	Inhalant dependence with inhalant-induced psychotic disorder, unspecified
+F18.27	1	Inhalant related disorders	Inhalant dependence with inhalant-induced dementia
+F18.28	0	Inhalant related disorders	Inhalant dependence with other inhalant-induced disorders
+F18.280	1	Inhalant related disorders	Inhalant dependence with inhalant-induced anxiety disorder
+F18.288	1	Inhalant related disorders	Inhalant dependence with other inhalant-induced disorder
+F18.29	1	Inhalant related disorders	Inhalant dependence with unspecified inhalant-induced disorder
+F18.9	0	Inhalant related disorders	Inhalant use, unspecified
+F18.90	1	Inhalant related disorders	Inhalant use, unspecified, uncomplicated
+F18.91	1	Inhalant related disorders	Inhalant use, unspecified, in remission
+F18.92	0	Inhalant related disorders	Inhalant use, unspecified with intoxication
+F18.920	1	Inhalant related disorders	Inhalant use, unspecified with intoxication, uncomplicated
+F18.921	1	Inhalant related disorders	Inhalant use, unspecified with intoxication with delirium
+F18.929	1	Inhalant related disorders	Inhalant use, unspecified with intoxication, unspecified
+F18.94	1	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced mood disorder
+F18.95	0	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced psychotic disorder
+F18.950	1	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced psychotic disorder with delusions
+F18.951	1	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced psychotic disorder with hallucinations
+F18.959	1	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced psychotic disorder, unspecified
+F18.97	1	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced persisting dementia
+F18.98	0	Inhalant related disorders	Inhalant use, unspecified with other inhalant-induced disorders
+F18.980	1	Inhalant related disorders	Inhalant use, unspecified with inhalant-induced anxiety disorder
+F18.988	1	Inhalant related disorders	Inhalant use, unspecified with other inhalant-induced disorder
+F18.99	1	Inhalant related disorders	Inhalant use, unspecified with unspecified inhalant-induced disorder
+F19	0	Other psychoactive substance related disorders	Other psychoactive substance related disorders
+F19.1	0	Other psychoactive substance related disorders	Other psychoactive substance abuse
+F19.10	1	Other psychoactive substance related disorders	Other psychoactive substance abuse, uncomplicated
+F19.11	1	Other psychoactive substance related disorders	Other psychoactive substance abuse, in remission
+F19.12	0	Other psychoactive substance related disorders	Other psychoactive substance abuse with intoxication
+F19.120	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with intoxication, uncomplicated
+F19.121	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with intoxication delirium
+F19.122	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with intoxication with perceptual disturbances
+F19.129	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with intoxication, unspecified
+F19.13	0	Other psychoactive substance related disorders	Other psychoactive substance abuse with withdrawal
+F19.130	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with withdrawal, uncomplicated
+F19.131	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with withdrawal delirium
+F19.132	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with withdrawal with perceptual disturbance
+F19.139	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with withdrawal, unspecified
+F19.14	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced mood disorder
+F19.15	0	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced psychotic disorder
+F19.150	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced psychotic disorder with delusions
+F19.151	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced psychotic disorder with hallucinations
+F19.159	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced psychotic disorder, unspecified
+F19.16	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced persisting amnestic disorder
+F19.17	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced persisting dementia
+F19.18	0	Other psychoactive substance related disorders	Other psychoactive substance abuse with other psychoactive substance-induced disorders
+F19.180	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced anxiety disorder
+F19.181	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced sexual dysfunction
+F19.182	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with psychoactive substance-induced sleep disorder
+F19.188	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with other psychoactive substance-induced disorder
+F19.19	1	Other psychoactive substance related disorders	Other psychoactive substance abuse with unspecified psychoactive substance-induced disorder
+F19.2	0	Other psychoactive substance related disorders	Other psychoactive substance dependence
+F19.20	1	Other psychoactive substance related disorders	Other psychoactive substance dependence, uncomplicated
+F19.21	1	Other psychoactive substance related disorders	Other psychoactive substance dependence, in remission
+F19.22	0	Other psychoactive substance related disorders	Other psychoactive substance dependence with intoxication
+F19.220	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with intoxication, uncomplicated
+F19.221	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with intoxication delirium
+F19.222	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with intoxication with perceptual disturbance
+F19.229	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with intoxication, unspecified
+F19.23	0	Other psychoactive substance related disorders	Other psychoactive substance dependence with withdrawal
+F19.230	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with withdrawal, uncomplicated
+F19.231	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with withdrawal delirium
+F19.232	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with withdrawal with perceptual disturbance
+F19.239	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with withdrawal, unspecified
+F19.24	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced mood disorder
+F19.25	0	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced psychotic disorder
+F19.250	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced psychotic disorder with delusions
+F19.251	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced psychotic disorder with hallucinations
+F19.259	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced psychotic disorder, unspecified
+F19.26	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced persisting amnestic disorder
+F19.27	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced persisting dementia
+F19.28	0	Other psychoactive substance related disorders	Other psychoactive substance dependence with other psychoactive substance-induced disorders
+F19.280	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced anxiety disorder
+F19.281	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced sexual dysfunction
+F19.282	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with psychoactive substance-induced sleep disorder
+F19.288	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with other psychoactive substance-induced disorder
+F19.29	1	Other psychoactive substance related disorders	Other psychoactive substance dependence with unspecified psychoactive substance-induced disorder
+F19.9	0	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified
+F19.90	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified, uncomplicated
+F19.91	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified, in remission
+F19.92	0	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with intoxication
+F19.920	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with intoxication, uncomplicated
+F19.921	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with intoxication with delirium
+F19.922	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with intoxication with perceptual disturbance
+F19.929	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with intoxication, unspecified
+F19.93	0	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with withdrawal
+F19.930	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with withdrawal, uncomplicated
+F19.931	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with withdrawal delirium
+F19.932	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with withdrawal with perceptual disturbance
+F19.939	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with withdrawal, unspecified
+F19.94	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced mood disorder
+F19.95	0	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced psychotic disorder
+F19.950	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced psychotic disorder with delusions
+F19.951	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced psychotic disorder with hallucinations
+F19.959	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced psychotic disorder, unspecified
+F19.96	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced persisting amnestic disorder
+F19.97	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced persisting dementia
+F19.98	0	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with other psychoactive substance-induced disorders
+F19.980	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced anxiety disorder
+F19.981	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced sexual dysfunction
+F19.982	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with psychoactive substance-induced sleep disorder
+F19.988	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with other psychoactive substance-induced disorder
+F19.99	1	Other psychoactive substance related disorders	Other psychoactive substance use, unspecified with unspecified psychoactive substance-induced disorder
+F20	0	Schizophrenia	Schizophrenia
+F20.0	1	Schizophrenia	Paranoid schizophrenia
+F20.1	1	Schizophrenia	Disorganized schizophrenia
+F20.2	1	Schizophrenia	Catatonic schizophrenia
+F20.3	1	Schizophrenia	Undifferentiated schizophrenia
+F20.5	1	Schizophrenia	Residual schizophrenia
+F20.8	0	Schizophrenia	Other schizophrenia
+F20.81	1	Schizophrenia	Schizophreniform disorder
+F20.89	1	Schizophrenia	Other schizophrenia
+F20.9	1	Schizophrenia	Schizophrenia, unspecified
+F21	1	Schizotypal disorder	Schizotypal disorder
+F22	1	Delusional disorders	Delusional disorders
+F23	1	Brief psychotic disorder	Brief psychotic disorder
+F24	1	Shared psychotic disorder	Shared psychotic disorder
+F25	0	Schizoaffective disorders	Schizoaffective disorders
+F25.0	1	Schizoaffective disorders	Schizoaffective disorder, bipolar type
+F25.1	1	Schizoaffective disorders	Schizoaffective disorder, depressive type
+F25.8	1	Schizoaffective disorders	Other schizoaffective disorders
+F25.9	1	Schizoaffective disorders	Schizoaffective disorder, unspecified
+F28	1	Other psychotic disorder not due to a substance or known physiological condition	Other psychotic disorder not due to a substance or known physiological condition
+F29	1	Unspecified psychosis not due to a substance or known physiological condition	Unspecified psychosis not due to a substance or known physiological condition
+F30	0	Manic episode	Manic episode
+F30.1	0	Manic episode	Manic episode without psychotic symptoms
+F30.10	1	Manic episode	Manic episode without psychotic symptoms, unspecified
+F30.11	1	Manic episode	Manic episode without psychotic symptoms, mild
+F30.12	1	Manic episode	Manic episode without psychotic symptoms, moderate
+F30.13	1	Manic episode	Manic episode, severe, without psychotic symptoms
+F30.2	1	Manic episode	Manic episode, severe with psychotic symptoms
+F30.3	1	Manic episode	Manic episode in partial remission
+F30.4	1	Manic episode	Manic episode in full remission
+F30.8	1	Manic episode	Other manic episodes
+F30.9	1	Manic episode	Manic episode, unspecified
+F31	0	Bipolar disorder	Bipolar disorder
+F31.0	1	Bipolar disorder	Bipolar disorder, current episode hypomanic
+F31.1	0	Bipolar disorder	Bipolar disorder, current episode manic without psychotic features
+F31.10	1	Bipolar disorder	Bipolar disorder, current episode manic without psychotic features, unspecified
+F31.11	1	Bipolar disorder	Bipolar disorder, current episode manic without psychotic features, mild
+F31.12	1	Bipolar disorder	Bipolar disorder, current episode manic without psychotic features, moderate
+F31.13	1	Bipolar disorder	Bipolar disorder, current episode manic without psychotic features, severe
+F31.2	1	Bipolar disorder	Bipolar disorder, current episode manic severe with psychotic features
+F31.3	0	Bipolar disorder	Bipolar disorder, current episode depressed, mild or moderate severity
+F31.30	1	Bipolar disorder	Bipolar disorder, current episode depressed, mild or moderate severity, unspecified
+F31.31	1	Bipolar disorder	Bipolar disorder, current episode depressed, mild
+F31.32	1	Bipolar disorder	Bipolar disorder, current episode depressed, moderate
+F31.4	1	Bipolar disorder	Bipolar disorder, current episode depressed, severe, without psychotic features
+F31.5	1	Bipolar disorder	Bipolar disorder, current episode depressed, severe, with psychotic features
+F31.6	0	Bipolar disorder	Bipolar disorder, current episode mixed
+F31.60	1	Bipolar disorder	Bipolar disorder, current episode mixed, unspecified
+F31.61	1	Bipolar disorder	Bipolar disorder, current episode mixed, mild
+F31.62	1	Bipolar disorder	Bipolar disorder, current episode mixed, moderate
+F31.63	1	Bipolar disorder	Bipolar disorder, current episode mixed, severe, without psychotic features
+F31.64	1	Bipolar disorder	Bipolar disorder, current episode mixed, severe, with psychotic features
+F31.7	0	Bipolar disorder	Bipolar disorder, currently in remission
+F31.70	1	Bipolar disorder	Bipolar disorder, currently in remission, most recent episode unspecified
+F31.71	1	Bipolar disorder	Bipolar disorder, in partial remission, most recent episode hypomanic
+F31.72	1	Bipolar disorder	Bipolar disorder, in full remission, most recent episode hypomanic
+F31.73	1	Bipolar disorder	Bipolar disorder, in partial remission, most recent episode manic
+F31.74	1	Bipolar disorder	Bipolar disorder, in full remission, most recent episode manic
+F31.75	1	Bipolar disorder	Bipolar disorder, in partial remission, most recent episode depressed
+F31.76	1	Bipolar disorder	Bipolar disorder, in full remission, most recent episode depressed
+F31.77	1	Bipolar disorder	Bipolar disorder, in partial remission, most recent episode mixed
+F31.78	1	Bipolar disorder	Bipolar disorder, in full remission, most recent episode mixed
+F31.8	0	Bipolar disorder	Other bipolar disorders
+F31.81	1	Bipolar disorder	Bipolar II disorder
+F31.89	1	Bipolar disorder	Other bipolar disorder
+F31.9	1	Bipolar disorder	Bipolar disorder, unspecified
+F32	0	Depressive episode	Depressive episode
+F32.0	1	Depressive episode	Major depressive disorder, single episode, mild
+F32.1	1	Depressive episode	Major depressive disorder, single episode, moderate
+F32.2	1	Depressive episode	Major depressive disorder, single episode, severe without psychotic features
+F32.3	1	Depressive episode	Major depressive disorder, single episode, severe with psychotic features
+F32.4	1	Depressive episode	Major depressive disorder, single episode, in partial remission
+F32.5	1	Depressive episode	Major depressive disorder, single episode, in full remission
+F32.8	0	Depressive episode	Other depressive episodes
+F32.81	1	Depressive episode	Premenstrual dysphoric disorder
+F32.89	1	Depressive episode	Other specified depressive episodes
+F32.9	1	Depressive episode	Major depressive disorder, single episode, unspecified
+F32.A	1	Depressive episode	Depression, unspecified
+F33	0	Major depressive disorder, recurrent	Major depressive disorder, recurrent
+F33.0	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, mild
+F33.1	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, moderate
+F33.2	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent severe without psychotic features
+F33.3	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, severe with psychotic symptoms
+F33.4	0	Major depressive disorder, recurrent	Major depressive disorder, recurrent, in remission
+F33.40	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, in remission, unspecified
+F33.41	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, in partial remission
+F33.42	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, in full remission
+F33.8	1	Major depressive disorder, recurrent	Other recurrent depressive disorders
+F33.9	1	Major depressive disorder, recurrent	Major depressive disorder, recurrent, unspecified
+F34	0	Persistent mood [affective] disorders	Persistent mood [affective] disorders
+F34.0	1	Persistent mood [affective] disorders	Cyclothymic disorder
+F34.1	1	Persistent mood [affective] disorders	Dysthymic disorder
+F34.8	0	Persistent mood [affective] disorders	Other persistent mood [affective] disorders
+F34.81	1	Persistent mood [affective] disorders	Disruptive mood dysregulation disorder
+F34.89	1	Persistent mood [affective] disorders	Other specified persistent mood disorders
+F34.9	1	Persistent mood [affective] disorders	Persistent mood [affective] disorder, unspecified
+F39	1	Unspecified mood [affective] disorder	Unspecified mood [affective] disorder
+F40	0	Phobic anxiety disorders	Phobic anxiety disorders
+F40.0	0	Phobic anxiety disorders	Agoraphobia
+F40.00	1	Phobic anxiety disorders	Agoraphobia, unspecified
+F40.01	1	Phobic anxiety disorders	Agoraphobia with panic disorder
+F40.02	1	Phobic anxiety disorders	Agoraphobia without panic disorder
+F40.1	0	Phobic anxiety disorders	Social phobias
+F40.10	1	Phobic anxiety disorders	Social phobia, unspecified
+F40.11	1	Phobic anxiety disorders	Social phobia, generalized
+F40.2	0	Phobic anxiety disorders	Specific (isolated) phobias
+F40.21	0	Phobic anxiety disorders	Animal type phobia
+F40.210	1	Phobic anxiety disorders	Arachnophobia
+F40.218	1	Phobic anxiety disorders	Other animal type phobia
+F40.22	0	Phobic anxiety disorders	Natural environment type phobia
+F40.220	1	Phobic anxiety disorders	Fear of thunderstorms
+F40.228	1	Phobic anxiety disorders	Other natural environment type phobia
+F40.23	0	Phobic anxiety disorders	Blood, injection, injury type phobia
+F40.230	1	Phobic anxiety disorders	Fear of blood
+F40.231	1	Phobic anxiety disorders	Fear of injections and transfusions
+F40.232	1	Phobic anxiety disorders	Fear of other medical care
+F40.233	1	Phobic anxiety disorders	Fear of injury
+F40.24	0	Phobic anxiety disorders	Situational type phobia
+F40.240	1	Phobic anxiety disorders	Claustrophobia
+F40.241	1	Phobic anxiety disorders	Acrophobia
+F40.242	1	Phobic anxiety disorders	Fear of bridges
+F40.243	1	Phobic anxiety disorders	Fear of flying
+F40.248	1	Phobic anxiety disorders	Other situational type phobia
+F40.29	0	Phobic anxiety disorders	Other specified phobia
+F40.290	1	Phobic anxiety disorders	Androphobia
+F40.291	1	Phobic anxiety disorders	Gynephobia
+F40.298	1	Phobic anxiety disorders	Other specified phobia
+F40.8	1	Phobic anxiety disorders	Other phobic anxiety disorders
+F40.9	1	Phobic anxiety disorders	Phobic anxiety disorder, unspecified
+F41	0	Other anxiety disorders	Other anxiety disorders
+F41.0	1	Other anxiety disorders	Panic disorder [episodic paroxysmal anxiety]
+F41.1	1	Other anxiety disorders	Generalized anxiety disorder
+F41.3	1	Other anxiety disorders	Other mixed anxiety disorders
+F41.8	1	Other anxiety disorders	Other specified anxiety disorders
+F41.9	1	Other anxiety disorders	Anxiety disorder, unspecified
+F42	0	Obsessive-compulsive disorder	Obsessive-compulsive disorder
+F42.2	1	Obsessive-compulsive disorder	Mixed obsessional thoughts and acts
+F42.3	1	Obsessive-compulsive disorder	Hoarding disorder
+F42.4	1	Obsessive-compulsive disorder	Excoriation (skin-picking) disorder
+F42.8	1	Obsessive-compulsive disorder	Other obsessive-compulsive disorder
+F42.9	1	Obsessive-compulsive disorder	Obsessive-compulsive disorder, unspecified
+F43	0	Reaction to severe stress, and adjustment disorders	Reaction to severe stress, and adjustment disorders
+F43.0	1	Reaction to severe stress, and adjustment disorders	Acute stress reaction
+F43.1	0	Reaction to severe stress, and adjustment disorders	Post-traumatic stress disorder (PTSD)
+F43.10	1	Reaction to severe stress, and adjustment disorders	Post-traumatic stress disorder, unspecified
+F43.11	1	Reaction to severe stress, and adjustment disorders	Post-traumatic stress disorder, acute
+F43.12	1	Reaction to severe stress, and adjustment disorders	Post-traumatic stress disorder, chronic
+F43.2	0	Reaction to severe stress, and adjustment disorders	Adjustment disorders
+F43.20	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder, unspecified
+F43.21	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder with depressed mood
+F43.22	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder with anxiety
+F43.23	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder with mixed anxiety and depressed mood
+F43.24	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder with disturbance of conduct
+F43.25	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder with mixed disturbance of emotions and conduct
+F43.29	1	Reaction to severe stress, and adjustment disorders	Adjustment disorder with other symptoms
+F43.8	0	Reaction to severe stress, and adjustment disorders	Other reactions to severe stress
+F43.81	1	Reaction to severe stress, and adjustment disorders	Prolonged grief disorder
+F43.89	1	Reaction to severe stress, and adjustment disorders	Other reactions to severe stress
+F43.9	1	Reaction to severe stress, and adjustment disorders	Reaction to severe stress, unspecified
+F44	0	Dissociative and conversion disorders	Dissociative and conversion disorders
+F44.0	1	Dissociative and conversion disorders	Dissociative amnesia
+F44.1	1	Dissociative and conversion disorders	Dissociative fugue
+F44.2	1	Dissociative and conversion disorders	Dissociative stupor
+F44.4	1	Dissociative and conversion disorders	Conversion disorder with motor symptom or deficit
+F44.5	1	Dissociative and conversion disorders	Conversion disorder with seizures or convulsions
+F44.6	1	Dissociative and conversion disorders	Conversion disorder with sensory symptom or deficit
+F44.7	1	Dissociative and conversion disorders	Conversion disorder with mixed symptom presentation
+F44.8	0	Dissociative and conversion disorders	Other dissociative and conversion disorders
+F44.81	1	Dissociative and conversion disorders	Dissociative identity disorder
+F44.89	1	Dissociative and conversion disorders	Other dissociative and conversion disorders
+F44.9	1	Dissociative and conversion disorders	Dissociative and conversion disorder, unspecified
+F45	0	Somatoform disorders	Somatoform disorders
+F45.0	1	Somatoform disorders	Somatization disorder
+F45.1	1	Somatoform disorders	Undifferentiated somatoform disorder
+F45.2	0	Somatoform disorders	Hypochondriacal disorders
+F45.20	1	Somatoform disorders	Hypochondriacal disorder, unspecified
+F45.21	1	Somatoform disorders	Hypochondriasis
+F45.22	1	Somatoform disorders	Body dysmorphic disorder
+F45.29	1	Somatoform disorders	Other hypochondriacal disorders
+F45.4	0	Somatoform disorders	Pain disorders related to psychological factors
+F45.41	1	Somatoform disorders	Pain disorder exclusively related to psychological factors
+F45.42	1	Somatoform disorders	Pain disorder with related psychological factors
+F45.8	1	Somatoform disorders	Other somatoform disorders
+F45.9	1	Somatoform disorders	Somatoform disorder, unspecified
+F48	0	Other nonpsychotic mental disorders	Other nonpsychotic mental disorders
+F48.1	1	Other nonpsychotic mental disorders	Depersonalization-derealization syndrome
+F48.2	1	Other nonpsychotic mental disorders	Pseudobulbar affect
+F48.8	1	Other nonpsychotic mental disorders	Other specified nonpsychotic mental disorders
+F48.9	1	Other nonpsychotic mental disorders	Nonpsychotic mental disorder, unspecified
+F50	0	Eating disorders	Eating disorders
+F50.0	0	Eating disorders	Anorexia nervosa
+F50.00	1	Eating disorders	Anorexia nervosa, unspecified
+F50.01	0	Eating disorders	Anorexia nervosa, restricting type
+F50.010	1	Eating disorders	Anorexia nervosa, restricting type, mild
+F50.011	1	Eating disorders	Anorexia nervosa, restricting type, moderate
+F50.012	1	Eating disorders	Anorexia nervosa, restricting type, severe
+F50.013	1	Eating disorders	Anorexia nervosa, restricting type, extreme
+F50.014	1	Eating disorders	Anorexia nervosa, restricting type, in remission
+F50.019	1	Eating disorders	Anorexia nervosa, restricting type, unspecified
+F50.02	0	Eating disorders	Anorexia nervosa, binge eating/purging type
+F50.020	1	Eating disorders	Anorexia nervosa, binge eating/purging type, mild
+F50.021	1	Eating disorders	Anorexia nervosa, binge eating/purging type, moderate
+F50.022	1	Eating disorders	Anorexia nervosa, binge eating/purging type, severe
+F50.023	1	Eating disorders	Anorexia nervosa, binge eating/purging type, extreme
+F50.024	1	Eating disorders	Anorexia nervosa, binge eating/purging type, in remission
+F50.029	1	Eating disorders	Anorexia nervosa, binge eating/purging type, unspecified
+F50.2	0	Eating disorders	Bulimia nervosa
+F50.20	1	Eating disorders	Bulimia nervosa, unspecified
+F50.21	1	Eating disorders	Bulimia nervosa, mild
+F50.22	1	Eating disorders	Bulimia nervosa, moderate
+F50.23	1	Eating disorders	Bulimia nervosa, severe
+F50.24	1	Eating disorders	Bulimia nervosa, extreme
+F50.25	1	Eating disorders	Bulimia nervosa, in remission
+F50.8	0	Eating disorders	Other eating disorders
+F50.81	0	Eating disorders	Binge eating disorder
+F50.810	1	Eating disorders	Binge eating disorder, mild
+F50.811	1	Eating disorders	Binge eating disorder, moderate
+F50.812	1	Eating disorders	Binge eating disorder, severe
+F50.813	1	Eating disorders	Binge eating disorder, extreme
+F50.814	1	Eating disorders	Binge eating disorder, in remission
+F50.819	1	Eating disorders	Binge eating disorder, unspecified
+F50.82	1	Eating disorders	Avoidant/restrictive food intake disorder
+F50.83	1	Eating disorders	Pica in adults
+F50.84	1	Eating disorders	Rumination disorder in adults
+F50.89	1	Eating disorders	Other specified eating disorder
+F50.9	1	Eating disorders	Eating disorder, unspecified
+F51	0	Sleep disorders not due to a substance or known physiological condition	Sleep disorders not due to a substance or known physiological condition
+F51.0	0	Sleep disorders not due to a substance or known physiological condition	Insomnia not due to a substance or known physiological condition
+F51.01	1	Sleep disorders not due to a substance or known physiological condition	Primary insomnia
+F51.02	1	Sleep disorders not due to a substance or known physiological condition	Adjustment insomnia
+F51.03	1	Sleep disorders not due to a substance or known physiological condition	Paradoxical insomnia
+F51.04	1	Sleep disorders not due to a substance or known physiological condition	Psychophysiologic insomnia
+F51.05	1	Sleep disorders not due to a substance or known physiological condition	Insomnia due to other mental disorder
+F51.09	1	Sleep disorders not due to a substance or known physiological condition	Other insomnia not due to a substance or known physiological condition
+F51.1	0	Sleep disorders not due to a substance or known physiological condition	Hypersomnia not due to a substance or known physiological condition
+F51.11	1	Sleep disorders not due to a substance or known physiological condition	Primary hypersomnia
+F51.12	1	Sleep disorders not due to a substance or known physiological condition	Insufficient sleep syndrome
+F51.13	1	Sleep disorders not due to a substance or known physiological condition	Hypersomnia due to other mental disorder
+F51.19	1	Sleep disorders not due to a substance or known physiological condition	Other hypersomnia not due to a substance or known physiological condition
+F51.3	1	Sleep disorders not due to a substance or known physiological condition	Sleepwalking [somnambulism]
+F51.4	1	Sleep disorders not due to a substance or known physiological condition	Sleep terrors [night terrors]
+F51.5	1	Sleep disorders not due to a substance or known physiological condition	Nightmare disorder
+F51.8	1	Sleep disorders not due to a substance or known physiological condition	Other sleep disorders not due to a substance or known physiological condition
+F51.9	1	Sleep disorders not due to a substance or known physiological condition	Sleep disorder not due to a substance or known physiological condition, unspecified
+F52	0	Sexual dysfunction not due to a substance or known physiological condition	Sexual dysfunction not due to a substance or known physiological condition
+F52.0	1	Sexual dysfunction not due to a substance or known physiological condition	Hypoactive sexual desire disorder
+F52.1	1	Sexual dysfunction not due to a substance or known physiological condition	Sexual aversion disorder
+F52.2	0	Sexual dysfunction not due to a substance or known physiological condition	Sexual arousal disorders
+F52.21	1	Sexual dysfunction not due to a substance or known physiological condition	Male erectile disorder
+F52.22	1	Sexual dysfunction not due to a substance or known physiological condition	Female sexual arousal disorder
+F52.3	0	Sexual dysfunction not due to a substance or known physiological condition	Orgasmic disorder
+F52.31	1	Sexual dysfunction not due to a substance or known physiological condition	Female orgasmic disorder
+F52.32	1	Sexual dysfunction not due to a substance or known physiological condition	Male orgasmic disorder
+F52.4	1	Sexual dysfunction not due to a substance or known physiological condition	Premature ejaculation
+F52.5	1	Sexual dysfunction not due to a substance or known physiological condition	Vaginismus not due to a substance or known physiological condition
+F52.6	1	Sexual dysfunction not due to a substance or known physiological condition	Dyspareunia not due to a substance or known physiological condition
+F52.8	1	Sexual dysfunction not due to a substance or known physiological condition	Other sexual dysfunction not due to a substance or known physiological condition
+F52.9	1	Sexual dysfunction not due to a substance or known physiological condition	Unspecified sexual dysfunction not due to a substance or known physiological condition
+F53	0	Mental and behavioral disorders associated with the puerperium, not elsewhere	Mental and behavioral disorders associated with the puerperium, not elsewhere classified
+F53.0	1	Mental and behavioral disorders associated with the puerperium, not elsewhere	Postpartum depression
+F53.1	1	Mental and behavioral disorders associated with the puerperium, not elsewhere	Puerperal psychosis
+F54	1	Psychological and behavioral factors associated with disorders or diseases	Psychological and behavioral factors associated with disorders or diseases classified elsewhere
+F55	0	Abuse of non-psychoactive substances	Abuse of non-psychoactive substances
+F55.0	1	Abuse of non-psychoactive substances	Abuse of antacids
+F55.1	1	Abuse of non-psychoactive substances	Abuse of herbal or folk remedies
+F55.2	1	Abuse of non-psychoactive substances	Abuse of laxatives
+F55.3	1	Abuse of non-psychoactive substances	Abuse of steroids or hormones
+F55.4	1	Abuse of non-psychoactive substances	Abuse of vitamins
+F55.8	1	Abuse of non-psychoactive substances	Abuse of other non-psychoactive substances
+F59	1	Unspecified behavioral syndromes associated with physiological disturbances and	Unspecified behavioral syndromes associated with physiological disturbances and physical factors
+F60	0	Specific personality disorders	Specific personality disorders
+F60.0	1	Specific personality disorders	Paranoid personality disorder
+F60.1	1	Specific personality disorders	Schizoid personality disorder
+F60.2	1	Specific personality disorders	Antisocial personality disorder
+F60.3	1	Specific personality disorders	Borderline personality disorder
+F60.4	1	Specific personality disorders	Histrionic personality disorder
+F60.5	1	Specific personality disorders	Obsessive-compulsive personality disorder
+F60.6	1	Specific personality disorders	Avoidant personality disorder
+F60.7	1	Specific personality disorders	Dependent personality disorder
+F60.8	0	Specific personality disorders	Other specific personality disorders
+F60.81	1	Specific personality disorders	Narcissistic personality disorder
+F60.89	1	Specific personality disorders	Other specific personality disorders
+F60.9	1	Specific personality disorders	Personality disorder, unspecified
+F63	0	Impulse disorders	Impulse disorders
+F63.0	1	Impulse disorders	Pathological gambling
+F63.1	1	Impulse disorders	Pyromania
+F63.2	1	Impulse disorders	Kleptomania
+F63.3	1	Impulse disorders	Trichotillomania
+F63.8	0	Impulse disorders	Other impulse disorders
+F63.81	1	Impulse disorders	Intermittent explosive disorder
+F63.89	1	Impulse disorders	Other impulse disorders
+F63.9	1	Impulse disorders	Impulse disorder, unspecified
+F64	0	Gender identity disorders	Gender identity disorders
+F64.0	1	Gender identity disorders	Transsexualism
+F64.1	1	Gender identity disorders	Dual role transvestism
+F64.2	1	Gender identity disorders	Gender identity disorder of childhood
+F64.8	1	Gender identity disorders	Other gender identity disorders
+F64.9	1	Gender identity disorders	Gender identity disorder, unspecified
+F65	0	Paraphilias	Paraphilias
+F65.0	1	Paraphilias	Fetishism
+F65.1	1	Paraphilias	Transvestic fetishism
+F65.2	1	Paraphilias	Exhibitionism
+F65.3	1	Paraphilias	Voyeurism
+F65.4	1	Paraphilias	Pedophilia
+F65.5	0	Paraphilias	Sadomasochism
+F65.50	1	Paraphilias	Sadomasochism, unspecified
+F65.51	1	Paraphilias	Sexual masochism
+F65.52	1	Paraphilias	Sexual sadism
+F65.8	0	Paraphilias	Other paraphilias
+F65.81	1	Paraphilias	Frotteurism
+F65.89	1	Paraphilias	Other paraphilias
+F65.9	1	Paraphilias	Paraphilia, unspecified
+F66	1	Other sexual disorders	Other sexual disorders
+F68	0	Other disorders of adult personality and behavior	Other disorders of adult personality and behavior
+F68.1	0	Other disorders of adult personality and behavior	Factitious disorder imposed on self
+F68.10	1	Other disorders of adult personality and behavior	Factitious disorder imposed on self, unspecified
+F68.11	1	Other disorders of adult personality and behavior	Factitious disorder imposed on self, with predominantly psychological signs and symptoms
+F68.12	1	Other disorders of adult personality and behavior	Factitious disorder imposed on self, with predominantly physical signs and symptoms
+F68.13	1	Other disorders of adult personality and behavior	Factitious disorder imposed on self, with combined psychological and physical signs and symptoms
+F68.8	1	Other disorders of adult personality and behavior	Other specified disorders of adult personality and behavior
+F68.A	1	Other disorders of adult personality and behavior	Factitious disorder imposed on another
+F69	1	Unspecified disorder of adult personality and behavior	Unspecified disorder of adult personality and behavior
+F70	1	Mild intellectual disabilities	Mild intellectual disabilities
+F71	1	Moderate intellectual disabilities	Moderate intellectual disabilities
+F72	1	Severe intellectual disabilities	Severe intellectual disabilities
+F73	1	Profound intellectual disabilities	Profound intellectual disabilities
+F78	0	Other intellectual disabilities	Other intellectual disabilities
+F78.A	0	Other intellectual disabilities	Other genetic related intellectual disabilities
+F78.A1	1	Other intellectual disabilities	SYNGAP1-related intellectual disability
+F78.A9	1	Other intellectual disabilities	Other genetic related intellectual disability
+F79	1	Unspecified intellectual disabilities	Unspecified intellectual disabilities
+F80	0	Specific developmental disorders of speech and language	Specific developmental disorders of speech and language
+F80.0	1	Specific developmental disorders of speech and language	Phonological disorder
+F80.1	1	Specific developmental disorders of speech and language	Expressive language disorder
+F80.2	1	Specific developmental disorders of speech and language	Mixed receptive-expressive language disorder
+F80.4	1	Specific developmental disorders of speech and language	Speech and language development delay due to hearing loss
+F80.8	0	Specific developmental disorders of speech and language	Other developmental disorders of speech and language
+F80.81	1	Specific developmental disorders of speech and language	Childhood onset fluency disorder
+F80.82	1	Specific developmental disorders of speech and language	Social pragmatic communication disorder
+F80.89	1	Specific developmental disorders of speech and language	Other developmental disorders of speech and language
+F80.9	1	Specific developmental disorders of speech and language	Developmental disorder of speech and language, unspecified
+F81	0	Specific developmental disorders of scholastic skills	Specific developmental disorders of scholastic skills
+F81.0	1	Specific developmental disorders of scholastic skills	Specific reading disorder
+F81.2	1	Specific developmental disorders of scholastic skills	Mathematics disorder
+F81.8	0	Specific developmental disorders of scholastic skills	Other developmental disorders of scholastic skills
+F81.81	1	Specific developmental disorders of scholastic skills	Disorder of written expression
+F81.89	1	Specific developmental disorders of scholastic skills	Other developmental disorders of scholastic skills
+F81.9	1	Specific developmental disorders of scholastic skills	Developmental disorder of scholastic skills, unspecified
+F82	1	Specific developmental disorder of motor function	Specific developmental disorder of motor function
+F84	0	Pervasive developmental disorders	Pervasive developmental disorders
+F84.0	1	Pervasive developmental disorders	Autistic disorder
+F84.2	1	Pervasive developmental disorders	Rett's syndrome
+F84.3	1	Pervasive developmental disorders	Other childhood disintegrative disorder
+F84.5	1	Pervasive developmental disorders	Asperger's syndrome
+F84.8	1	Pervasive developmental disorders	Other pervasive developmental disorders
+F84.9	1	Pervasive developmental disorders	Pervasive developmental disorder, unspecified
+F88	1	Other disorders of psychological development	Other disorders of psychological development
+F89	1	Unspecified disorder of psychological development	Unspecified disorder of psychological development
+F90	0	Attention-deficit hyperactivity disorders	Attention-deficit hyperactivity disorders
+F90.0	1	Attention-deficit hyperactivity disorders	Attention-deficit hyperactivity disorder, predominantly inattentive type
+F90.1	1	Attention-deficit hyperactivity disorders	Attention-deficit hyperactivity disorder, predominantly hyperactive type
+F90.2	1	Attention-deficit hyperactivity disorders	Attention-deficit hyperactivity disorder, combined type
+F90.8	1	Attention-deficit hyperactivity disorders	Attention-deficit hyperactivity disorder, other type
+F90.9	1	Attention-deficit hyperactivity disorders	Attention-deficit hyperactivity disorder, unspecified type
+F91	0	Conduct disorders	Conduct disorders
+F91.0	1	Conduct disorders	Conduct disorder confined to family context
+F91.1	1	Conduct disorders	Conduct disorder, childhood-onset type
+F91.2	1	Conduct disorders	Conduct disorder, adolescent-onset type
+F91.3	1	Conduct disorders	Oppositional defiant disorder
+F91.8	1	Conduct disorders	Other conduct disorders
+F91.9	1	Conduct disorders	Conduct disorder, unspecified
+F93	0	Emotional disorders with onset specific to childhood	Emotional disorders with onset specific to childhood
+F93.0	1	Emotional disorders with onset specific to childhood	Separation anxiety disorder of childhood
+F93.8	1	Emotional disorders with onset specific to childhood	Other childhood emotional disorders
+F93.9	1	Emotional disorders with onset specific to childhood	Childhood emotional disorder, unspecified
+F94	0	Disorders of social functioning with onset specific to childhood and adolescence	Disorders of social functioning with onset specific to childhood and adolescence
+F94.0	1	Disorders of social functioning with onset specific to childhood and adolescence	Selective mutism
+F94.1	1	Disorders of social functioning with onset specific to childhood and adolescence	Reactive attachment disorder of childhood
+F94.2	1	Disorders of social functioning with onset specific to childhood and adolescence	Disinhibited attachment disorder of childhood
+F94.8	1	Disorders of social functioning with onset specific to childhood and adolescence	Other childhood disorders of social functioning
+F94.9	1	Disorders of social functioning with onset specific to childhood and adolescence	Childhood disorder of social functioning, unspecified
+F95	0	Tic disorder	Tic disorder
+F95.0	1	Tic disorder	Transient tic disorder
+F95.1	1	Tic disorder	Chronic motor or vocal tic disorder
+F95.2	1	Tic disorder	Tourette's disorder
+F95.8	1	Tic disorder	Other tic disorders
+F95.9	1	Tic disorder	Tic disorder, unspecified
+F98	0	Other behavioral and emotional disorders with onset usually occurring in	Other behavioral and emotional disorders with onset usually occurring in childhood and adolescence
+F98.0	1	Other behavioral and emotional disorders with onset usually occurring in	Enuresis not due to a substance or known physiological condition
+F98.1	1	Other behavioral and emotional disorders with onset usually occurring in	Encopresis not due to a substance or known physiological condition
+F98.2	0	Other behavioral and emotional disorders with onset usually occurring in	Other feeding disorders of infancy and childhood
+F98.21	1	Other behavioral and emotional disorders with onset usually occurring in	Rumination disorder of infancy and childhood
+F98.29	1	Other behavioral and emotional disorders with onset usually occurring in	Other feeding disorders of infancy and early childhood
+F98.3	1	Other behavioral and emotional disorders with onset usually occurring in	Pica of infancy and childhood
+F98.4	1	Other behavioral and emotional disorders with onset usually occurring in	Stereotyped movement disorders
+F98.5	1	Other behavioral and emotional disorders with onset usually occurring in	Adult onset fluency disorder
+F98.8	1	Other behavioral and emotional disorders with onset usually occurring in	Other specified behavioral and emotional disorders with onset usually occurring in childhood and adolescence
+F98.9	1	Other behavioral and emotional disorders with onset usually occurring in	Unspecified behavioral and emotional disorders with onset usually occurring in childhood and adolescence
+F99	1	Mental disorder, not otherwise specified	Mental disorder, not otherwise specified
+Z55	0	Problems related to education and literacy	Problems related to education and literacy
+Z55.0	1	Problems related to education and literacy	Illiteracy and low-level literacy
+Z55.1	1	Problems related to education and literacy	Schooling unavailable and unattainable
+Z55.2	1	Problems related to education and literacy	Failed school examinations
+Z55.3	1	Problems related to education and literacy	Underachievement in school
+Z55.4	1	Problems related to education and literacy	Educational maladjustment and discord with teachers and classmates
+Z55.5	1	Problems related to education and literacy	Less than a high school diploma
+Z55.6	1	Problems related to education and literacy	Problems related to health literacy
+Z55.8	1	Problems related to education and literacy	Other problems related to education and literacy
+Z55.9	1	Problems related to education and literacy	Problems related to education and literacy, unspecified
+Z56	0	Problems related to employment and unemployment	Problems related to employment and unemployment
+Z56.0	1	Problems related to employment and unemployment	Unemployment, unspecified
+Z56.1	1	Problems related to employment and unemployment	Change of job
+Z56.2	1	Problems related to employment and unemployment	Threat of job loss
+Z56.3	1	Problems related to employment and unemployment	Stressful work schedule
+Z56.4	1	Problems related to employment and unemployment	Discord with boss and workmates
+Z56.5	1	Problems related to employment and unemployment	Uncongenial work environment
+Z56.6	1	Problems related to employment and unemployment	Other physical and mental strain related to work
+Z56.8	0	Problems related to employment and unemployment	Other problems related to employment
+Z56.81	1	Problems related to employment and unemployment	Sexual harassment on the job
+Z56.82	1	Problems related to employment and unemployment	Military deployment status
+Z56.89	1	Problems related to employment and unemployment	Other problems related to employment
+Z56.9	1	Problems related to employment and unemployment	Unspecified problems related to employment
+Z57	0	Occupational exposure to risk factors	Occupational exposure to risk factors
+Z57.0	1	Occupational exposure to risk factors	Occupational exposure to noise
+Z57.1	1	Occupational exposure to risk factors	Occupational exposure to radiation
+Z57.2	1	Occupational exposure to risk factors	Occupational exposure to dust
+Z57.3	0	Occupational exposure to risk factors	Occupational exposure to other air contaminants
+Z57.31	1	Occupational exposure to risk factors	Occupational exposure to environmental tobacco smoke
+Z57.39	1	Occupational exposure to risk factors	Occupational exposure to other air contaminants
+Z57.4	1	Occupational exposure to risk factors	Occupational exposure to toxic agents in agriculture
+Z57.5	1	Occupational exposure to risk factors	Occupational exposure to toxic agents in other industries
+Z57.6	1	Occupational exposure to risk factors	Occupational exposure to extreme temperature
+Z57.7	1	Occupational exposure to risk factors	Occupational exposure to vibration
+Z57.8	1	Occupational exposure to risk factors	Occupational exposure to other risk factors
+Z57.9	1	Occupational exposure to risk factors	Occupational exposure to unspecified risk factor
+Z58	0	Problems related to physical environment	Problems related to physical environment
+Z58.6	1	Problems related to physical environment	Inadequate drinking-water supply
+Z58.8	0	Problems related to physical environment	Other problems related to physical environment
+Z58.81	1	Problems related to physical environment	Basic services unavailable in physical environment
+Z58.89	1	Problems related to physical environment	Other problems related to physical environment
+Z59	0	Problems related to housing and economic circumstances	Problems related to housing and economic circumstances
+Z59.0	0	Problems related to housing and economic circumstances	Homelessness
+Z59.00	1	Problems related to housing and economic circumstances	Homelessness unspecified
+Z59.01	1	Problems related to housing and economic circumstances	Sheltered homelessness
+Z59.02	1	Problems related to housing and economic circumstances	Unsheltered homelessness
+Z59.1	0	Problems related to housing and economic circumstances	Inadequate housing
+Z59.10	1	Problems related to housing and economic circumstances	Inadequate housing, unspecified
+Z59.11	1	Problems related to housing and economic circumstances	Inadequate housing environmental temperature
+Z59.12	1	Problems related to housing and economic circumstances	Inadequate housing utilities
+Z59.19	1	Problems related to housing and economic circumstances	Other inadequate housing
+Z59.2	1	Problems related to housing and economic circumstances	Discord with neighbors, lodgers and landlord
+Z59.3	1	Problems related to housing and economic circumstances	Problems related to living in residential institution
+Z59.4	0	Problems related to housing and economic circumstances	Lack of adequate food
+Z59.41	1	Problems related to housing and economic circumstances	Food insecurity
+Z59.48	1	Problems related to housing and economic circumstances	Other specified lack of adequate food
+Z59.5	1	Problems related to housing and economic circumstances	Extreme poverty
+Z59.6	1	Problems related to housing and economic circumstances	Low income
+Z59.7	0	Problems related to housing and economic circumstances	Insufficient social insurance and welfare support
+Z59.71	1	Problems related to housing and economic circumstances	Insufficient health insurance coverage
+Z59.72	1	Problems related to housing and economic circumstances	Insufficient welfare support
+Z59.8	0	Problems related to housing and economic circumstances	Other problems related to housing and economic circumstances
+Z59.81	0	Problems related to housing and economic circumstances	Housing instability, housed
+Z59.811	1	Problems related to housing and economic circumstances	Housing instability, housed, with risk of homelessness
+Z59.812	1	Problems related to housing and economic circumstances	Housing instability, housed, homelessness in past 12 months
+Z59.819	1	Problems related to housing and economic circumstances	Housing instability, housed unspecified
+Z59.82	1	Problems related to housing and economic circumstances	Transportation insecurity
+Z59.86	0	Problems related to housing and economic circumstances	Financial insecurity
+Z59.861	1	Problems related to housing and economic circumstances	Financial insecurity, difficulty paying for utilities
+Z59.868	1	Problems related to housing and economic circumstances	Other specified financial insecurity
+Z59.869	1	Problems related to housing and economic circumstances	Financial insecurity, unspecified
+Z59.87	1	Problems related to housing and economic circumstances	Material hardship due to limited financial resources, not elsewhere classified
+Z59.89	1	Problems related to housing and economic circumstances	Other problems related to housing and economic circumstances
+Z59.9	1	Problems related to housing and economic circumstances	Problem related to housing and economic circumstances, unspecified
+Z60	0	Problems related to social environment	Problems related to social environment
+Z60.0	1	Problems related to social environment	Problems of adjustment to life-cycle transitions
+Z60.2	1	Problems related to social environment	Problems related to living alone
+Z60.3	1	Problems related to social environment	Acculturation difficulty
+Z60.4	1	Problems related to social environment	Social exclusion and rejection
+Z60.5	1	Problems related to social environment	Target of (perceived) adverse discrimination and persecution
+Z60.8	1	Problems related to social environment	Other problems related to social environment
+Z60.9	1	Problems related to social environment	Problem related to social environment, unspecified
+Z62	0	Problems related to upbringing	Problems related to upbringing
+Z62.0	1	Problems related to upbringing	Inadequate parental supervision and control
+Z62.1	1	Problems related to upbringing	Parental overprotection
+Z62.2	0	Problems related to upbringing	Upbringing away from parents
+Z62.21	1	Problems related to upbringing	Child in welfare custody
+Z62.22	1	Problems related to upbringing	Institutional upbringing
+Z62.23	1	Problems related to upbringing	Child in custody of non-parental relative
+Z62.24	1	Problems related to upbringing	Child in custody of non-relative guardian
+Z62.29	1	Problems related to upbringing	Other upbringing away from parents
+Z62.3	1	Problems related to upbringing	Hostility towards and scapegoating of child
+Z62.6	1	Problems related to upbringing	Inappropriate (excessive) parental pressure
+Z62.8	0	Problems related to upbringing	Other specified problems related to upbringing
+Z62.81	0	Problems related to upbringing	Personal history of abuse in childhood
+Z62.810	1	Problems related to upbringing	Personal history of physical and sexual abuse in childhood
+Z62.811	1	Problems related to upbringing	Personal history of psychological abuse in childhood
+Z62.812	1	Problems related to upbringing	Personal history of neglect in childhood
+Z62.813	1	Problems related to upbringing	Personal history of forced labor or sexual exploitation in childhood
+Z62.814	1	Problems related to upbringing	Personal history of child financial abuse
+Z62.815	1	Problems related to upbringing	Personal history of intimate partner abuse in childhood
+Z62.819	1	Problems related to upbringing	Personal history of unspecified abuse in childhood
+Z62.82	0	Problems related to upbringing	Parent-child conflict
+Z62.820	1	Problems related to upbringing	Parent-biological child conflict
+Z62.821	1	Problems related to upbringing	Parent-adopted child conflict
+Z62.822	1	Problems related to upbringing	Parent-foster child conflict
+Z62.823	1	Problems related to upbringing	Parent-step child conflict
+Z62.83	0	Problems related to upbringing	Non-parental relative or guardian-child conflict
+Z62.831	1	Problems related to upbringing	Non-parental relative-child conflict
+Z62.832	1	Problems related to upbringing	Non-relative guardian-child conflict
+Z62.833	1	Problems related to upbringing	Group home staff-child conflict
+Z62.89	0	Problems related to upbringing	Other specified problems related to upbringing
+Z62.890	1	Problems related to upbringing	Parent-child estrangement NEC
+Z62.891	1	Problems related to upbringing	Sibling rivalry
+Z62.892	1	Problems related to upbringing	Runaway [from current living environment]
+Z62.898	1	Problems related to upbringing	Other specified problems related to upbringing
+Z62.9	1	Problems related to upbringing	Problem related to upbringing, unspecified
+Z63	0	Other problems related to primary support group, including family circumstances	Other problems related to primary support group, including family circumstances
+Z63.0	1	Other problems related to primary support group, including family circumstances	Problems in relationship with spouse or partner
+Z63.1	1	Other problems related to primary support group, including family circumstances	Problems in relationship with in-laws
+Z63.3	0	Other problems related to primary support group, including family circumstances	Absence of family member
+Z63.31	1	Other problems related to primary support group, including family circumstances	Absence of family member due to military deployment
+Z63.32	1	Other problems related to primary support group, including family circumstances	Other absence of family member
+Z63.4	1	Other problems related to primary support group, including family circumstances	Disappearance and death of family member
+Z63.5	1	Other problems related to primary support group, including family circumstances	Disruption of family by separation and divorce
+Z63.6	1	Other problems related to primary support group, including family circumstances	Dependent relative needing care at home
+Z63.7	0	Other problems related to primary support group, including family circumstances	Other stressful life events affecting family and household
+Z63.71	1	Other problems related to primary support group, including family circumstances	Stress on family due to return of family member from military deployment
+Z63.72	1	Other problems related to primary support group, including family circumstances	Alcoholism and drug addiction in family
+Z63.79	1	Other problems related to primary support group, including family circumstances	Other stressful life events affecting family and household
+Z63.8	1	Other problems related to primary support group, including family circumstances	Other specified problems related to primary support group
+Z63.9	1	Other problems related to primary support group, including family circumstances	Problem related to primary support group, unspecified
+Z64	0	Problems related to certain psychosocial circumstances	Problems related to certain psychosocial circumstances
+Z64.0	1	Problems related to certain psychosocial circumstances	Problems related to unwanted pregnancy
+Z64.1	1	Problems related to certain psychosocial circumstances	Problems related to multiparity
+Z64.4	1	Problems related to certain psychosocial circumstances	Discord with counselors
+Z65	0	Problems related to other psychosocial circumstances	Problems related to other psychosocial circumstances
+Z65.0	1	Problems related to other psychosocial circumstances	Conviction in civil and criminal proceedings without imprisonment
+Z65.1	1	Problems related to other psychosocial circumstances	Imprisonment and other incarceration
+Z65.2	1	Problems related to other psychosocial circumstances	Problems related to release from prison
+Z65.3	1	Problems related to other psychosocial circumstances	Problems related to other legal circumstances
+Z65.4	1	Problems related to other psychosocial circumstances	Victim of crime and terrorism
+Z65.5	1	Problems related to other psychosocial circumstances	Exposure to disaster, war and other hostilities
+Z65.8	1	Problems related to other psychosocial circumstances	Other specified problems related to psychosocial circumstances
+Z65.9	1	Problems related to other psychosocial circumstances	Problem related to unspecified psychosocial circumstances

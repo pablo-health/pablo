@@ -10,6 +10,7 @@ from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy.orm import Session
 
 # Add backend to sys.path so we can import app modules
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
 from app.db.models import Base
 from app.db.platform_models import PlatformBase
+from app.diagnostics.seed import seed_diagnostic_reference_data
 from app.settings import get_settings
 
 config = context.config
@@ -89,6 +91,12 @@ def run_migrations_online() -> None:
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {PLATFORM_SCHEMA}"))
         connection.execute(text(f"CREATE SCHEMA IF NOT EXISTS {DEFAULT_PRACTICE_SCHEMA}"))
         platform_metadata.create_all(connection)
+        # Seed bundled diagnostic reference data into the platform tables
+        # (idempotent). Runs only on the deploy-time bootstrap path, not the
+        # per-tenant fan-out (which returns early above).
+        with Session(bind=connection) as seed_session:
+            seed_diagnostic_reference_data(seed_session)
+            seed_session.flush()
 
     with connectable.connect() as connection:
         connection.execute(
