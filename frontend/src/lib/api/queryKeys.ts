@@ -30,73 +30,133 @@
  * queryClient.invalidateQueries({
  *   queryKey: queryKeys.patients.list({ search: "Smith", search_by: "last_name" })
  * })
+ *
+ * Extending: a downstream build adds keys via `queryKeys.extensions.ts`
+ * (the merge slot) — never by re-declaring this object. See that file.
  */
 
+import { queryKeyExtensions } from "./queryKeys.extensions"
 import type { PatientListParams } from "@/types/patients"
 
-export const queryKeys = {
+// --- Extension seam ---------------------------------------------------------
+// A query-key value is a "leaf": a readonly tuple (a concrete key) or a
+// key-factory function. Namespaces are plain objects we recurse into; leaves
+// are replaced wholesale by an extension, objects deep-merge.
+type QueryKeyLeaf = readonly unknown[] | ((...args: never[]) => unknown)
+
+type Mergeable<T> = T extends QueryKeyLeaf
+  ? false
+  : T extends object
+    ? true
+    : false
+
+type DeepMerge<A, B> = Mergeable<A> extends true
+  ? Mergeable<B> extends true
+    ? {
+        [K in keyof A | keyof B]: K extends keyof A
+          ? K extends keyof B
+            ? DeepMerge<A[K], B[K]>
+            : A[K]
+          : K extends keyof B
+            ? B[K]
+            : never
+      }
+    : B
+  : B
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof value !== "function"
+  )
+}
+
+/**
+ * Deep-merge the extension slot into the base factory, per namespace. Plain
+ * objects merge recursively; leaves (tuples / functions) from the extension
+ * replace the base. With an empty extension this is the identity, so the OSS
+ * build is byte-for-byte the base factory.
+ */
+function mergeQueryKeys<A, B>(base: A, ext: B): DeepMerge<A, B> {
+  const out: Record<string, unknown> = { ...(base as Record<string, unknown>) }
+  for (const [key, extValue] of Object.entries(ext as Record<string, unknown>)) {
+    const baseValue = out[key]
+    out[key] =
+      isPlainObject(baseValue) && isPlainObject(extValue)
+        ? mergeQueryKeys(baseValue, extValue)
+        : extValue
+  }
+  return out as DeepMerge<A, B>
+}
+
+// --- Base factory -----------------------------------------------------------
+// Internal references use `baseQueryKeys` (not the merged `queryKeys` export)
+// so the base stays self-contained; the merged export is assembled below.
+const baseQueryKeys = {
   // Patient query keys
   patients: {
     all: ["patients"] as const,
-    lists: () => [...queryKeys.patients.all, "list"] as const,
+    lists: () => [...baseQueryKeys.patients.all, "list"] as const,
     list: (params?: PatientListParams) =>
-      [...queryKeys.patients.lists(), params] as const,
-    details: () => [...queryKeys.patients.all, "detail"] as const,
+      [...baseQueryKeys.patients.lists(), params] as const,
+    details: () => [...baseQueryKeys.patients.all, "detail"] as const,
     detail: (patientId: string) =>
-      [...queryKeys.patients.details(), patientId] as const,
+      [...baseQueryKeys.patients.details(), patientId] as const,
   },
 
   // Session query keys
   sessions: {
     all: ["sessions"] as const,
-    lists: () => [...queryKeys.sessions.all, "list"] as const,
-    list: () => [...queryKeys.sessions.lists()] as const,
-    details: () => [...queryKeys.sessions.all, "detail"] as const,
+    lists: () => [...baseQueryKeys.sessions.all, "list"] as const,
+    list: () => [...baseQueryKeys.sessions.lists()] as const,
+    details: () => [...baseQueryKeys.sessions.all, "detail"] as const,
     detail: (sessionId: string) =>
-      [...queryKeys.sessions.details(), sessionId] as const,
+      [...baseQueryKeys.sessions.details(), sessionId] as const,
     // Patient-specific sessions (for future use)
     byPatient: (patientId: string) =>
-      [...queryKeys.sessions.all, "byPatient", patientId] as const,
+      [...baseQueryKeys.sessions.all, "byPatient", patientId] as const,
   },
 
   // Appointment query keys
   appointments: {
     all: ["appointments"] as const,
-    lists: () => [...queryKeys.appointments.all, "list"] as const,
+    lists: () => [...baseQueryKeys.appointments.all, "list"] as const,
     list: (params: { start: string; end: string }) =>
-      [...queryKeys.appointments.lists(), params] as const,
-    details: () => [...queryKeys.appointments.all, "detail"] as const,
+      [...baseQueryKeys.appointments.lists(), params] as const,
+    details: () => [...baseQueryKeys.appointments.all, "detail"] as const,
     detail: (appointmentId: string) =>
-      [...queryKeys.appointments.details(), appointmentId] as const,
+      [...baseQueryKeys.appointments.details(), appointmentId] as const,
   },
 
   // User query keys
   user: {
     all: ["user"] as const,
-    preferences: () => [...queryKeys.user.all, "preferences"] as const,
+    preferences: () => [...baseQueryKeys.user.all, "preferences"] as const,
   },
 
   // Note (clinical artifact) query keys
   notes: {
     all: ["notes"] as const,
     detail: (noteId: string) =>
-      [...queryKeys.notes.all, "detail", noteId] as const,
+      [...baseQueryKeys.notes.all, "detail", noteId] as const,
     byPatient: (patientId: string) =>
-      [...queryKeys.notes.all, "byPatient", patientId] as const,
+      [...baseQueryKeys.notes.all, "byPatient", patientId] as const,
   },
 
   // Outcome measure (scored instrument) query keys (PABLO-cwj)
   outcomeMeasures: {
     all: ["outcome-measures"] as const,
     detail: (measureId: string) =>
-      [...queryKeys.outcomeMeasures.all, "detail", measureId] as const,
+      [...baseQueryKeys.outcomeMeasures.all, "detail", measureId] as const,
     // Patient-level prefix — invalidate this to clear every instrument
     // variant for the patient (React Query matches keys by prefix).
     byPatientAll: (patientId: string) =>
-      [...queryKeys.outcomeMeasures.all, "byPatient", patientId] as const,
+      [...baseQueryKeys.outcomeMeasures.all, "byPatient", patientId] as const,
     byPatient: (patientId: string, instrument?: string) =>
       [
-        ...queryKeys.outcomeMeasures.byPatientAll(patientId),
+        ...baseQueryKeys.outcomeMeasures.byPatientAll(patientId),
         instrument ?? null,
       ] as const,
   },
@@ -107,14 +167,14 @@ export const queryKeys = {
     // Global definition catalog (the rubric set), not patient-scoped.
     definitions: ["diagnoses", "definitions"] as const,
     detail: (assessmentId: string) =>
-      [...queryKeys.diagnoses.all, "detail", assessmentId] as const,
+      [...baseQueryKeys.diagnoses.all, "detail", assessmentId] as const,
     // Patient-level prefix — invalidate this to clear every instrument
     // variant for the patient (React Query matches keys by prefix).
     byPatientAll: (patientId: string) =>
-      [...queryKeys.diagnoses.all, "byPatient", patientId] as const,
+      [...baseQueryKeys.diagnoses.all, "byPatient", patientId] as const,
     byPatient: (patientId: string, instrument?: string) =>
       [
-        ...queryKeys.diagnoses.byPatientAll(patientId),
+        ...baseQueryKeys.diagnoses.byPatientAll(patientId),
         instrument ?? null,
       ] as const,
   },
@@ -123,32 +183,34 @@ export const queryKeys = {
   patientDocuments: {
     all: ["patient-documents"] as const,
     byPatient: (patientId: string) =>
-      [...queryKeys.patientDocuments.all, "byPatient", patientId] as const,
+      [...baseQueryKeys.patientDocuments.all, "byPatient", patientId] as const,
     detail: (documentId: string) =>
-      [...queryKeys.patientDocuments.all, "detail", documentId] as const,
+      [...baseQueryKeys.patientDocuments.all, "detail", documentId] as const,
   },
 
   // Note-type catalog query keys
   noteTypes: {
     all: ["note-types"] as const,
-    list: () => [...queryKeys.noteTypes.all, "list"] as const,
+    list: () => [...baseQueryKeys.noteTypes.all, "list"] as const,
     detail: (key: string) =>
-      [...queryKeys.noteTypes.all, "detail", key] as const,
+      [...baseQueryKeys.noteTypes.all, "detail", key] as const,
   },
 
   // Compliance query keys (therapist-owned reminders)
   compliance: {
     all: ["compliance"] as const,
-    templates: () => [...queryKeys.compliance.all, "templates"] as const,
-    items: () => [...queryKeys.compliance.all, "items"] as const,
+    templates: () => [...baseQueryKeys.compliance.all, "templates"] as const,
+    items: () => [...baseQueryKeys.compliance.all, "items"] as const,
   },
 
   // Admin query keys
   admin: {
     all: ["admin"] as const,
-    exportQueue: () => [...queryKeys.admin.all, "export-queue"] as const,
-    users: () => [...queryKeys.admin.all, "users"] as const,
-    allowlist: () => [...queryKeys.admin.all, "allowlist"] as const,
-    tenants: () => [...queryKeys.admin.all, "tenants"] as const,
+    exportQueue: () => [...baseQueryKeys.admin.all, "export-queue"] as const,
+    users: () => [...baseQueryKeys.admin.all, "users"] as const,
+    allowlist: () => [...baseQueryKeys.admin.all, "allowlist"] as const,
+    tenants: () => [...baseQueryKeys.admin.all, "tenants"] as const,
   },
 } as const
+
+export const queryKeys = mergeQueryKeys(baseQueryKeys, queryKeyExtensions)
