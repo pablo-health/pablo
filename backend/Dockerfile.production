@@ -21,8 +21,12 @@ WORKDIR /build
 USER root
 
 # pip-install Poetry into the system python (no virtualenv); Chainguard
-# :latest-dev already ships Python + pip.
-RUN pip install --no-cache-dir poetry
+# :latest-dev already ships Python + pip. Upgrade pip first: the bundled
+# line predates 26.1, which fixed the archive-interpretation and
+# deferred-import-during-self-check issues. The upgraded pip lands in the
+# site-packages copied into the runtime stage below.
+RUN pip install --no-cache-dir --upgrade "pip>=26.1.1" \
+    && pip install --no-cache-dir poetry
 
 COPY pyproject.toml poetry.lock ./
 
