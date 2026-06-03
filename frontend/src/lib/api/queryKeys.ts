@@ -101,6 +101,24 @@ export const queryKeys = {
       ] as const,
   },
 
+  // Diagnostic-criteria engine query keys (PABLO-6xj)
+  diagnoses: {
+    all: ["diagnoses"] as const,
+    // Global definition catalog (the rubric set), not patient-scoped.
+    definitions: ["diagnoses", "definitions"] as const,
+    detail: (assessmentId: string) =>
+      [...queryKeys.diagnoses.all, "detail", assessmentId] as const,
+    // Patient-level prefix — invalidate this to clear every instrument
+    // variant for the patient (React Query matches keys by prefix).
+    byPatientAll: (patientId: string) =>
+      [...queryKeys.diagnoses.all, "byPatient", patientId] as const,
+    byPatient: (patientId: string, instrument?: string) =>
+      [
+        ...queryKeys.diagnoses.byPatientAll(patientId),
+        instrument ?? null,
+      ] as const,
+  },
+
   // Patient document query keys (THERAPY-ak6m.2)
   patientDocuments: {
     all: ["patient-documents"] as const,
