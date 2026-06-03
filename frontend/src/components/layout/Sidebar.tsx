@@ -4,31 +4,27 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import {
-  Calendar,
-  Home,
-  Users,
-  ClipboardCheck,
-  Settings,
-} from "lucide-react"
 import { AdminNav } from "./AdminNav"
 import { PabloNote } from "./PabloNote"
 import { SidebarFooter } from "./SidebarFooter"
-
-const navigation = [
-  { name: "Dashboard", href: "/dashboard", icon: Home },
-  { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
-  { name: "Patients", href: "/dashboard/patients", icon: Users },
-  { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
-  { name: "Settings", href: "/dashboard/settings", icon: Settings },
-]
+import { clinicianNavigation, settingsItem } from "./sidebarExtensions"
 
 interface SidebarProps {
   isAdmin?: boolean
+  /**
+   * Hide the clinician nav items, leaving only Settings. For deployments where
+   * an admin without a practice can't use the tenant-scoped clinician routes.
+   * Honoured here; consumed by the SaaS overlay via `sidebarExtensions.ts`.
+   */
+  hideClinicianMenus?: boolean
 }
 
-export function Sidebar({ isAdmin = false }: SidebarProps) {
+export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: SidebarProps) {
   const pathname = usePathname()
+
+  const items = hideClinicianMenus
+    ? [settingsItem]
+    : [...clinicianNavigation, settingsItem]
 
   return (
     <div className="flex h-full w-64 flex-col bg-card border-r border-neutral-200">
@@ -39,7 +35,7 @@ export function Sidebar({ isAdmin = false }: SidebarProps) {
       </div>
 
       <nav aria-label="Main navigation" className="flex-1 space-y-1 px-3 py-4">
-        {navigation.map((item) => {
+        {items.map((item) => {
           const isActive = pathname === item.href
           return (
             <Link
