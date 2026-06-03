@@ -48,17 +48,19 @@ HTTP_METHODS: frozenset[str] = frozenset({"get", "post", "patch", "put", "delete
 
 # List endpoints that match a PHI path marker but deliberately do NOT audit.
 # These return only scheduling metadata (times, status, patient association,
-# free-text annotation) — not clinical note bodies — and each has a detail
-# endpoint that audits the per-record content read. A list-level row recording
-# only a count carries no forensic value, so it is dropped here.
+# free-text annotation) — not clinical content or patient identifiers — and
+# each has a detail endpoint that audits the per-record content read. A
+# list-level row recording only a count carries no forensic value, so it is
+# dropped here.
 #
-# NOTE: the two list endpoints that embed full SOAP content — GET /api/sessions
-# (list_sessions, embeds NoteResponse via _embed_note) and the patient-notes
-# list (list_patient_notes, returns every note body) — are NOT exempt: they
-# emit a per-record session_viewed event for each record whose content they
-# return, kept affordable by the read-coalescing gate.
+# NOTE: list endpoints that return content — GET /api/sessions (embeds the
+# SOAP note via _embed_note), the patient-notes list (every note body), and
+# GET /api/patients (diagnosis + DOB/email/phone per patient) — are NOT exempt.
+# Each emits a per-record *_viewed event for every record it returns, kept
+# affordable by the read-coalescing gate. The axis is "does this return
+# clinical content / identifiers", not "is it a list".
 #
-# Keyed by (method, decorator-path) exactly as it appears on the handler.
+# Keyed by (method, mounted-path) — i.e. router prefix + decorator arg.
 AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         ("get", "/api/sessions/today"),  # get_today_sessions — schedule dashboard
@@ -67,13 +69,49 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
 )
 
 
+def _router_prefixes(tree: ast.Module) -> dict[str, str]:
+    """Map each ``X = APIRouter(prefix="...")`` variable to its prefix.
+
+    Route files use two styles: some put the full path in the decorator
+    (``@router.get("/api/sessions")``), others use a router prefix plus a
+    relative path (``APIRouter(prefix="/api/patients")`` +
+    ``@router.get("")``). Resolving the prefix lets PHI-marker matching see
+    the *mounted* path in both styles — without it, every prefixed router
+    (patients, patient-notes, patient-documents) is invisible to the marker
+    check, which is exactly how an unaudited PHI list can slip through.
+    """
+    prefixes: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not isinstance(node.value, ast.Call):
+            continue
+        func = node.value.func
+        is_router_ctor = (isinstance(func, ast.Name) and func.id == "APIRouter") or (
+            isinstance(func, ast.Attribute) and func.attr == "APIRouter"
+        )
+        if not is_router_ctor:
+            continue
+        prefix = ""
+        for kw in node.value.keywords:
+            if kw.arg == "prefix" and isinstance(kw.value, ast.Constant):
+                prefix = kw.value.value if isinstance(kw.value.value, str) else ""
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                prefixes[target.id] = prefix
+    return prefixes
+
+
 def _iter_route_handlers() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef, Path]]:
-    """Return (path, method, function_node, file) for every ``@router.<method>`` handler."""
+    """Return (path, method, function_node, file) for every ``@router.<method>``
+    handler. ``path`` is the full mounted path (router prefix + decorator arg).
+    """
     handlers: list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef, Path]] = []
     for py_file in sorted(ROUTES_DIR.glob("*.py")):
         if py_file.name == "__init__.py":
             continue
         tree = ast.parse(py_file.read_text())
+        prefixes = _router_prefixes(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
@@ -94,7 +132,8 @@ def _iter_route_handlers() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFu
                 path = dec.args[0].value
                 if not isinstance(path, str):
                     continue
-                handlers.append((path, dec.func.attr, node, py_file))
+                full_path = prefixes.get(router_name, "") + path
+                handlers.append((full_path, dec.func.attr, node, py_file))
     return handlers
 
 
