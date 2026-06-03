@@ -295,34 +295,41 @@ class TestSeedIdempotency:
     """Running the reference-data seed twice must not create duplicate rows."""
 
     def test_seed_is_idempotent(self, engine: Engine) -> None:
-        from app.diagnostics.baseline import (  # noqa: PLC0415
-            BASELINE_DEFINITIONS,
-            BASELINE_ICD10_CODES,
-        )
+        from app.diagnostics.baseline import BASELINE_DEFINITIONS  # noqa: PLC0415
         from app.diagnostics.seed import seed_diagnostic_reference_data  # noqa: PLC0415
         from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
 
         def _counts(conn) -> tuple[int, int]:  # type: ignore[no-untyped-def]
-            codes = {e["code"] for e in BASELINE_ICD10_CODES}
-            defs = {e["code"] for e in BASELINE_DEFINITIONS}
             n_codes = conn.execute(
-                text("SELECT count(*) FROM platform.icd10_codes WHERE code = ANY(:c)"),
-                {"c": list(codes)},
+                text("SELECT count(*) FROM platform.icd10_codes")
             ).scalar()
             n_defs = conn.execute(
-                text("SELECT count(*) FROM platform.diagnostic_definitions WHERE code = ANY(:c)"),
-                {"c": list(defs)},
+                text("SELECT count(*) FROM platform.diagnostic_definitions")
             ).scalar()
             return n_codes, n_defs
 
+        with engine.connect() as conn:
+            before_codes, before_defs = _counts(conn)
+
         # env.py already seeded once during `command.upgrade(head)`. Seed again
-        # and assert counts are unchanged.
+        # and assert counts are unchanged (upsert, not insert).
         with OrmSession(bind=engine) as session:
             seed_diagnostic_reference_data(session)
             session.commit()
 
         with engine.connect() as conn:
-            n_codes, n_defs = _counts(conn)
+            after_codes, after_defs = _counts(conn)
+            # The bundled catalog (F01-F99 + Z55-Z65) is seeded, and the codes
+            # the baseline definitions point at are present.
+            present = conn.execute(
+                text(
+                    "SELECT count(*) FROM platform.icd10_codes "
+                    "WHERE code IN ('F32.9', 'F41.1', 'Z63.0')"
+                )
+            ).scalar()
 
-        assert n_codes == len(BASELINE_ICD10_CODES)
-        assert n_defs == len(BASELINE_DEFINITIONS)
+        assert after_codes == before_codes
+        assert after_defs == before_defs
+        assert after_codes > 1000  # full bundled catalog, not just the baseline
+        assert after_defs == len(BASELINE_DEFINITIONS)
+        assert present == 3

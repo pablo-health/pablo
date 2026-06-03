@@ -2,10 +2,10 @@
 
 """Idempotent seed of the bundled diagnostic reference data.
 
-Upserts the baseline ICD-10-CM codes and diagnostic definitions
-(:mod:`app.diagnostics.baseline`) into the platform-schema tables. Runs at
-deploy-time bootstrap (alembic ``env.py``, alongside the platform
-``create_all``). Safe to run repeatedly.
+Upserts the bundled ICD-10-CM catalog (:mod:`app.diagnostics.catalog`) and the
+diagnostic definitions (:mod:`app.diagnostics.baseline`) into the platform-
+schema tables. Runs at deploy-time bootstrap (alembic ``env.py``, alongside the
+platform ``create_all``). Safe to run repeatedly.
 """
 
 from __future__ import annotations
@@ -13,30 +13,18 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from ..db.platform_models import DiagnosticDefinitionRow, Icd10CodeRow
+from ..db.platform_models import DiagnosticDefinitionRow
 from ..utcnow import utc_now
-from .baseline import BASELINE_DEFINITIONS, BASELINE_ICD10_CODES
+from .baseline import BASELINE_DEFINITIONS
+from .catalog import load_icd10_catalog
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
 def seed_diagnostic_reference_data(session: Session) -> None:
-    """Upsert baseline ICD-10-CM codes and definitions. Idempotent."""
-    for code_entry in BASELINE_ICD10_CODES:
-        code_row = session.get(Icd10CodeRow, code_entry["code"])
-        if code_row is None:
-            session.add(
-                Icd10CodeRow(
-                    code=code_entry["code"],
-                    description=code_entry["description"],
-                    billable=True,
-                    category=code_entry.get("category"),
-                )
-            )
-        else:
-            code_row.description = code_entry["description"]
-            code_row.category = code_entry.get("category")
+    """Upsert the ICD-10-CM catalog and diagnostic definitions. Idempotent."""
+    load_icd10_catalog(session)
 
     for def_entry in BASELINE_DEFINITIONS:
         def_row = (

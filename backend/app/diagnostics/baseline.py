@@ -1,12 +1,12 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Baseline diagnostic definitions and ICD-10-CM codes (bundled content).
+"""Baseline diagnostic definitions (bundled content).
 
 A small, self-authored set of common diagnoses so the engine is usable out of
 the box. The criterion wording is original (expressed from the well-established
 clinical facts, not copied from any copyrighted source) and is intended for
-clinical review per deployment before clinical use. ICD-10-CM codes and
-descriptions are public domain (US gov, NCHS/CMS).
+clinical review per deployment before clinical use. The ICD-10-CM codes these
+definitions reference live in the bundled catalog (:mod:`app.diagnostics.catalog`).
 
 This data is the *source* the seed (:mod:`app.diagnostics.seed`) upserts into
 the platform tables; at runtime the engine reads definitions from the database,
@@ -16,25 +16,6 @@ so a deployment may add, version, or override them as data.
 from __future__ import annotations
 
 from typing import Any
-
-# Public-domain ICD-10-CM codes referenced by the bundled definitions.
-BASELINE_ICD10_CODES: list[dict[str, str]] = [
-    {
-        "code": "F32.9",
-        "description": "Major depressive disorder, single episode, unspecified",
-        "category": "Depressive disorders",
-    },
-    {
-        "code": "F33.9",
-        "description": "Major depressive disorder, recurrent episode, unspecified",
-        "category": "Depressive disorders",
-    },
-    {
-        "code": "F41.1",
-        "description": "Generalized anxiety disorder",
-        "category": "Anxiety disorders",
-    },
-]
 
 _MDD: dict[str, Any] = {
     "code": "mdd",
