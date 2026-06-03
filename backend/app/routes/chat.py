@@ -48,6 +48,7 @@ from ..models import (
     UpdateChatConversationRequest,
     User,
 )
+from ..models.audit import ResourceType
 from ..repositories import (
     ChatRepository,
     LlmUsageRepository,
@@ -366,7 +367,8 @@ def get_conversation(
     messages = chat_service.list_messages(conv.id, user.id)
     # The detail read returns full message bodies, so it is a PHI-read on par
     # with get_session / get_patient / document downloads — audit it. The
-    # conversation-list endpoint stays unaudited (access-filtered, no content).
+    # conversation-list endpoint audits too (see list_conversations): its items
+    # carry the title, which can name the patient.
     audit.log_chat_action(
         action=AuditAction.CHAT_CONVERSATION_VIEWED,
         user=user,
@@ -382,6 +384,7 @@ def get_conversation(
     response_model=ChatConversationListResponse,
 )
 def list_conversations(
+    http_request: Request,
     patient_id: str = Query(...),
     caller_feature_key: str | None = Query(default=None),
     include_archived: bool = Query(default=False),
@@ -390,6 +393,7 @@ def list_conversations(
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
     patient_repo: PatientRepository = Depends(get_patient_repository_dep),
+    audit: AuditService = Depends(get_audit_service),
 ) -> ChatConversationListResponse:
     """List conversations for a patient the caller has access to.
 
@@ -411,6 +415,21 @@ def list_conversations(
         include_archived=include_archived,
         page=page,
         page_size=page_size,
+    )
+    # Each list item carries a title that defaults to "Chat about
+    # {patient_display_name}" — an identifier disclosure — but NO message
+    # bodies. So this is a patient-scoped index disclosure, not a per-record
+    # content read (that is the conversation-detail endpoint). Audit it once,
+    # scoped to the patient (resource_id = patient.id); read-coalescing collapses
+    # repeated list views to one row per patient per window. Granularity matches
+    # what was disclosed (titles), not bodies — see CHAT_CONVERSATION_LIST_VIEWED.
+    audit.log(
+        AuditAction.CHAT_CONVERSATION_LIST_VIEWED,
+        user,
+        http_request,
+        resource_type=ResourceType.PATIENT,
+        resource_id=patient.id,
+        patient=patient,
     )
     return ChatConversationListResponse(
         data=[ChatConversationResponse.from_conversation(c) for c in rows],
