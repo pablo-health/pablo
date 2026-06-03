@@ -33,7 +33,15 @@ import ast
 import sys
 from pathlib import Path
 
-ROUTES_DIR = Path(__file__).resolve().parent.parent / "app" / "routes"
+_BACKEND = Path(__file__).resolve().parent.parent
+
+# Route modules live under app/routes/ in the OSS engine and are scattered
+# across saas/**/ in the SaaS overlay. Auto-detect whichever roots exist so
+# the identical engine is portable to both repos; the per-repo copy only tunes
+# PHI_PATH_MARKERS and AUDIT_EXEMPT_PHI_ROUTES below.
+ROUTE_ROOTS: tuple[Path, ...] = tuple(
+    d for d in (_BACKEND / "app" / "routes", _BACKEND / "saas") if d.is_dir()
+)
 
 # Path substrings that signal a route touches PHI or PHI-adjacent data.
 # Extend this list whenever a new PHI surface is added.
@@ -121,7 +129,15 @@ def _iter_route_handlers(
                 if not isinstance(dec.func.value, ast.Name):
                     continue
                 router_name = dec.func.value.id
-                if router_name != "router" and not router_name.endswith("_router"):
+                # A decorator receiver counts as a router if it was assigned an
+                # APIRouter in this file (robust to any variable name across the
+                # SaaS overlay's many routers), with a name-convention fallback
+                # for routers imported from elsewhere.
+                if (
+                    router_name not in prefixes
+                    and router_name != "router"
+                    and not router_name.endswith("_router")
+                ):
                     continue
                 if dec.func.attr not in HTTP_METHODS:
                     continue
@@ -160,18 +176,28 @@ def _calls_audit(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     return False
 
 
+def _is_route_file(p: Path) -> bool:
+    rp = p.resolve()
+    if rp.suffix != ".py" or rp.name == "__init__.py" or "__pycache__" in rp.parts:
+        return False
+    return any(root in rp.parents for root in ROUTE_ROOTS)
+
+
 def _route_files(paths: list[Path] | None) -> list[Path]:
-    """Resolve which route files to scan. ``None`` → the whole routes dir.
-    Otherwise keep only inputs that live under ``app/routes/`` (so a hook can
-    pass an arbitrary edited file and we no-op on non-route edits)."""
+    """Resolve which route files to scan. ``None`` → every ``*.py`` under the
+    detected route roots. Otherwise keep only inputs that live under a route
+    root (so a hook can pass an arbitrary edited file and we no-op on non-route
+    edits)."""
     if paths is None:
-        return sorted(p for p in ROUTES_DIR.glob("*.py") if p.name != "__init__.py")
-    kept: list[Path] = []
-    for p in paths:
-        rp = p.resolve()
-        if rp.parent == ROUTES_DIR and rp.suffix == ".py" and rp.name != "__init__.py":
-            kept.append(rp)
-    return kept
+        found: set[Path] = set()
+        for root in ROUTE_ROOTS:
+            found.update(
+                p
+                for p in root.rglob("*.py")
+                if p.name != "__init__.py" and "__pycache__" not in p.parts
+            )
+        return sorted(found)
+    return [p.resolve() for p in paths if _is_route_file(p)]
 
 
 def underscore_param_violations(files: list[Path]) -> list[str]:
@@ -227,6 +253,15 @@ def find_violations(paths: list[Path] | None = None) -> list[str]:
     ]
 
 
+_FIX_HINT = (
+    "Fix: inject `audit: AuditService = Depends(get_audit_service)` and log the "
+    "access (e.g. audit.log_*_action(...)). If the route is genuinely non-PHI "
+    "despite its path, add (method, mounted_path) to AUDIT_EXEMPT_PHI_ROUTES in "
+    "backend/scripts/check_route_audit.py with a comment explaining why. "
+    "(CLAUDE.md guardrail #1 — PHI access without an audit entry is a HIPAA gap.)"
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     paths = [Path(a) for a in argv] if argv else None
     violations = find_violations(paths)
@@ -235,15 +270,39 @@ def main(argv: list[str] | None = None) -> int:
     print("Route-audit guardrail failed:", file=sys.stderr)
     for v in violations:
         print(f"  - {v}", file=sys.stderr)
-    print(
-        "\nFix: inject `audit: AuditService = Depends(get_audit_service)` and log the "
-        "access (e.g. audit.log_*_action(...)). If the route is genuinely non-PHI "
-        "despite its path, add (method, mounted_path) to AUDIT_EXEMPT_PHI_ROUTES in "
-        "this file with a comment explaining why.",
-        file=sys.stderr,
-    )
+    print(f"\n{_FIX_HINT}", file=sys.stderr)
     return 1
 
 
+def run_hook() -> int:
+    """Claude Code PostToolUse entry point.
+
+    Reads the hook payload from stdin, acts only when the edited file is a
+    route module, and exits 2 (the code that feeds stderr back to the agent)
+    if that file introduces a guardrail violation. Any malformed payload or
+    non-route edit is a silent exit 0 — the hook must never get in the way of
+    unrelated edits.
+    """
+    import json
+
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0
+    file_path = (payload.get("tool_input") or {}).get("file_path")
+    if not file_path:
+        return 0
+    violations = find_violations([Path(file_path)])
+    if not violations:
+        return 0
+    print("Route-audit guardrail (edit-time):", file=sys.stderr)
+    for v in violations:
+        print(f"  - {v}", file=sys.stderr)
+    print(f"\n{_FIX_HINT}", file=sys.stderr)
+    return 2
+
+
 if __name__ == "__main__":
+    if "--hook" in sys.argv[1:]:
+        raise SystemExit(run_hook())
     raise SystemExit(main(sys.argv[1:]))

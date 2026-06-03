@@ -16,6 +16,15 @@
             "value": "backend/app/db/models.py"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/backend/scripts/check_route_audit.py\" --hook",
+            "type": "command"
+          }
+        ],
+        "matcher": "Edit|Write|MultiEdit"
       }
     ],
     "PreCompact": [

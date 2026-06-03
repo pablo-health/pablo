@@ -1,14 +1,14 @@
 ---
 name: audit-coverage-check
-description: Scan backend/app/routes/ for PHI-touching routes that don't inject or call AuditService. Use when the user asks to audit the HIPAA audit-logging guardrail, says "run /audit-coverage-check", or adds new routes under /patients, /sessions, /appointments, /transcript, /audio, /soap, /client.
+description: Scan route handlers for PHI-touching routes that don't inject or call AuditService. Use when the user asks to audit the HIPAA audit-logging guardrail, says "run /audit-coverage-check", or adds new routes under /patients, /sessions, /appointments, /notes, /transcript, /audio, /soap, /resolve-client, /import-clients.
 tools: [Read, Bash, Glob]
 ---
 
 # Audit Coverage Check
 
-Enforces CLAUDE.md guardrail #1: every PHI-touching route handler in
-`backend/app/routes/` must inject `audit: AuditService = Depends(get_audit_service)`
-AND call `audit.<helper>(...)` in its body.
+Enforces CLAUDE.md guardrail #1: every PHI-touching route handler must inject
+`audit: AuditService = Depends(get_audit_service)` AND call `audit.<helper>(...)`
+in its body.
 
 ## How to run
 
@@ -16,30 +16,37 @@ AND call `audit.<helper>(...)` in its body.
 python .claude/skills/audit-coverage-check/check.py
 ```
 
-The script walks every route file under `backend/app/routes/`, resolves the
-full path (router prefix + decorator path), and flags any route whose URL
-touches a PHI marker but is missing either the `AuditService` injection or
-an `audit.*` call.
+## Single source of truth
 
-PHI markers: `/patients`, `/sessions`, `/appointments`, `/transcript`,
-`/audio`, `/soap`, `/client`.
+This skill is a thin wrapper. The actual check lives in
+`backend/scripts/check_route_audit.py` — a pure-stdlib AST script with no
+app/DB/network dependency — and the **same** implementation backs four
+surfaces so they can't drift:
+
+- this on-demand skill (report-shaped, run mid-edit);
+- the CI gate `backend/tests/test_route_audit_guardrails.py` (delegates to it);
+- the pre-commit gate `scripts/check_audit_params.py` (delegates to it);
+- the `PostToolUse` hook in `.claude/settings.json`, which runs it on every
+  edit to a route file and feeds violations straight back to the agent.
+
+The engine auto-detects route roots (`backend/app/routes/` in the OSS engine,
+`backend/saas/**/` in the SaaS overlay), resolves each handler's full mounted
+path (router prefix + decorator path), and flags any route whose URL matches a
+PHI marker but is missing the `AuditService` injection or the `audit.*` call.
+It also flags the `_audit` / `_http_request` underscore bypass.
+
+PHI markers: `/patients`, `/sessions`, `/appointments`, `/notes`,
+`/transcript`, `/audio`, `/soap`, `/resolve-client`, `/import-clients`.
 
 ## Output
 
-Markdown table of `file:line | method | path | violation | quick fix`,
-followed by ready-to-paste parameter / body snippets for each finding.
-Exits 0 with a ✅ line when the tree is clean; exits 1 when anything is
-flagged — suitable for pre-commit / CI.
+Markdown list of violations plus a fix hint. Exits 0 when the tree is clean,
+1 when anything is flagged.
 
 ## What it ignores
 
-- `__init__.py`
-- Routes whose decorator path does not match any PHI marker after
-  resolving the router prefix
-- Functions that are not decorated with `@router.<http_method>(...)`
-
-## Relationship to existing guardrails
-
-`backend/tests/test_route_audit_guardrails.py` enforces the same rule in
-CI. This skill is the fast, report-shaped version you run mid-edit to
-see what needs fixing before you push.
+- `__init__.py` and `__pycache__`
+- Routes whose mounted path matches no PHI marker
+- Functions not decorated with `@<router>.<http_method>(...)`
+- Routes explicitly classified non-PHI in `AUDIT_EXEMPT_PHI_ROUTES`
+  (in `backend/scripts/check_route_audit.py`, each with a reason)
