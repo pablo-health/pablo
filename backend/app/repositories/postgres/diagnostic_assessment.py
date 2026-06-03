@@ -114,7 +114,9 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
             definition_version=row["definition_version"],  # type: ignore[arg-type]
             criterion_responses=row.get("criterion_responses"),  # type: ignore[arg-type]
             gate_responses=row.get("gate_responses"),  # type: ignore[arg-type]
-            meets_criteria=bool(row["meets_criteria"]),
+            # Preserve None: checklist rows have no verdict and must persist as
+            # NULL, not be coerced to False (the column is nullable).
+            meets_criteria=row.get("meets_criteria"),  # type: ignore[arg-type]
             determined_icd10=row.get("determined_icd10"),  # type: ignore[arg-type]
             diagnosis_label=row.get("diagnosis_label"),  # type: ignore[arg-type]
             criterion_citations=row.get("criterion_citations"),  # type: ignore[arg-type]

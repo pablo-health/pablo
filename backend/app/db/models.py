@@ -330,7 +330,8 @@ class DiagnosticAssessmentRow(Base):
     One row per assessment: the clinician's per-criterion responses + gate
     attestations against a versioned definition (snapshotted by
     ``definition_code`` + ``definition_version``), the computed
-    ``meets_criteria``, and the clinician-confirmed ICD-10-CM code. Distinct
+    ``meets_criteria`` (NULL for ``checklist`` definitions, which make no
+    algorithmic determination), and the clinician-confirmed ICD-10-CM code. Distinct
     from ``outcome_measures`` (continuous symptom scores) — this is a
     point-in-time categorical determination.
 
@@ -357,7 +358,9 @@ class DiagnosticAssessmentRow(Base):
     # {criterion_key: bool} and {gate_key: bool}
     criterion_responses: Mapped[dict] = mapped_column(JSONB, nullable=False)
     gate_responses: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    meets_criteria: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # Nullable: ``checklist`` definitions record responses but make no
+    # algorithmic determination, so meets_criteria is NULL for those rows.
+    meets_criteria: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Clinician-confirmed ICD-10-CM code, validated against the platform
     # icd10_codes catalog at write time. Null until confirmed.
     determined_icd10: Mapped[str | None] = mapped_column(String(10))

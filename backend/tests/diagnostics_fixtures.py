@@ -82,7 +82,22 @@ SYNTHETIC_DEFINITION_2: dict[str, Any] = {
     },
 }
 
-SYNTHETIC_DEFINITIONS: list[dict[str, Any]] = [SYNTHETIC_DEFINITION, SYNTHETIC_DEFINITION_2]
+# A checklist-strategy definition (same shape as SYNTHETIC_DEFINITION) — the
+# engine records responses and offers a code, but renders no pass/fail verdict.
+SYNTHETIC_CHECKLIST: dict[str, Any] = {
+    "code": "synthetic_checklist",
+    "version": 1,
+    "display_name": "Synthetic Checklist",
+    "evaluator_type": "checklist",
+    "suggested_icd10": "T00.1",
+    "params": SYNTHETIC_DEFINITION["params"],
+}
+
+SYNTHETIC_DEFINITIONS: list[dict[str, Any]] = [
+    SYNTHETIC_DEFINITION,
+    SYNTHETIC_DEFINITION_2,
+    SYNTHETIC_CHECKLIST,
+]
 
 # Responses that satisfy SYNTHETIC_DEFINITION: Group A (A1 cardinal + A2),
 # Group B (B1), and both gates.

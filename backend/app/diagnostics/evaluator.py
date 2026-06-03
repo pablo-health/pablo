@@ -9,30 +9,41 @@ strategy here, in reviewed code. This is intentionally not a stored expression
 engine: the parameters live in the database, the small set of strategies does
 not.
 
-For the diagnostic engine (PABLO-6xj) the only strategy is ``"criteria"``:
+For the diagnostic engine (PABLO-6xj) there are two strategies. ``"criteria"``:
 every criterion group must reach its ``min_met`` (and satisfy any cardinal
-requirement), and every gate must be attested true.
+requirement), and every gate must be attested true. ``"checklist"``: the
+engine records the clinician's responses but makes *no* pass/fail
+determination — the clinician reviews the list and decides.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .definitions import EVALUATOR_CRITERIA, DiagnosticDefinition
+from .definitions import (
+    EVALUATOR_CHECKLIST,
+    EVALUATOR_CRITERIA,
+    DiagnosticDefinition,
+)
 
 
 @dataclass(frozen=True)
 class DiagnosticOutcome:
     """Result of evaluating responses against a definition."""
 
-    meets_criteria: bool
+    meets_criteria: bool | None
+    """Whether the rubric is met. ``None`` for strategies that make no
+    algorithmic determination (e.g. ``"checklist"``) — the clinician decides."""
+
     unmet_reasons: tuple[str, ...]
     """Human-readable reasons the criteria are not met (empty when met)."""
 
     suggested_icd10: str | None
-    """The definition's suggested code when criteria are met, else ``None``.
+    """The definition's suggested code. For ``"criteria"`` it is emitted only
+    when the criteria are met; for ``"checklist"`` it is ``None`` (no code is
+    suggested — the clinician selects the specifier from the options).
 
-    Only a *suggestion* — the clinician confirms or picks a specifier."""
+    When set, only a *suggestion* — the clinician confirms or picks a specifier."""
 
 
 class UnknownEvaluatorTypeError(ValueError):
@@ -47,6 +58,8 @@ def evaluate(
     """Evaluate *criterion_responses* / *gate_responses* against *definition*."""
     if definition.evaluator_type == EVALUATOR_CRITERIA:
         return _evaluate_criteria(definition, criterion_responses, gate_responses)
+    if definition.evaluator_type == EVALUATOR_CHECKLIST:
+        return _evaluate_checklist()
     raise UnknownEvaluatorTypeError(
         f"Unsupported evaluator_type {definition.evaluator_type!r} "
         f"for definition {definition.code!r}"
@@ -82,4 +95,26 @@ def _evaluate_criteria(
         meets_criteria=meets,
         unmet_reasons=tuple(reasons),
         suggested_icd10=definition.suggested_icd10 if meets else None,
+    )
+
+
+def _evaluate_checklist() -> DiagnosticOutcome:
+    """No-verdict strategy: record responses, make no determination.
+
+    The clinician reviews the criterion list and makes the diagnostic call
+    themselves; ``meets_criteria`` is always ``None`` (not computed). The
+    dimensional/network literature (HiTOP, RDoC) is the rationale — a
+    categorical X-of-Y verdict is the wrong operationalization here.
+
+    No code is suggested either: the checklist responses carry no information
+    about which ICD-10-CM specifier applies (e.g. single-episode vs recurrent,
+    severity), so the clinician selects the code from the definition's options.
+    Suggesting one would be an unwarranted determination (CR-2).
+
+    Responses are not inspected: there is nothing to threshold against.
+    """
+    return DiagnosticOutcome(
+        meets_criteria=None,
+        unmet_reasons=(),
+        suggested_icd10=None,
     )
