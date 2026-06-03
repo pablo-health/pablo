@@ -370,8 +370,12 @@ def list_sessions(
                 _embed_note(notes_repo.get_by_session_id(s.id, user.id)),
             )
         )
-
-    audit.log_session_list(user, request, total)
+        # This list embeds the full SOAP note in each item (see _embed_note),
+        # so reading it is a per-record content read on par with the
+        # GET /api/sessions/{id} detail view — audit one session_viewed per
+        # session. The read-coalescing gate collapses repeats of the same
+        # session within the window, so refetches don't flood the audit sink.
+        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
 
     return SessionListResponse(
         data=session_responses,
@@ -383,12 +387,10 @@ def list_sessions(
 
 @router.get("/api/sessions/today")
 def get_today_sessions(
-    request: Request,
     timezone: str = Query("UTC", description="IANA timezone (e.g. America/New_York)"),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
-    audit: AuditService = Depends(get_audit_service),
 ) -> TodaySessionListResponse:
     """Fetch today's sessions for the authenticated therapist."""
     try:
@@ -427,8 +429,6 @@ def get_today_sessions(
                 updated_at=s.updated_at,
             )
         )
-
-    audit.log_session_list(user, request, len(data))
 
     return TodaySessionListResponse(data=data, total=len(data))
 

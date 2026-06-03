@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from app.main import app
 from app.models import Note, Patient, Transcript
+from app.models.audit import AuditAction
 from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
 from app.repositories import (
     InMemoryNotesRepository,
@@ -27,6 +28,9 @@ from app.routes.sessions import (
 )
 from app.services import GeneratedNote, NoteGenerationService
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
+
+if TYPE_CHECKING:
+    from app.services import AuditService
 
 _SOAP: dict[str, Any] = {
     "subjective": "S",
@@ -450,6 +454,37 @@ class TestIDOR:
             assert stored.export_status != "queued"
         finally:
             self._cleanup_overrides()
+
+
+class TestListPatientNotesAudit:
+    """The patient-notes list returns every note's full SOAP body, so it must
+    audit a per-note view (resource_type=session, the clinical-artifact family)
+    for each note returned — the same audit-of-record as the single-note read,
+    kept affordable by read-coalescing.
+    """
+
+    def test_list_emits_per_note_view_audit(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_audit_service: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        first = _seed_note(mock_notes_repo)
+        second = _seed_note(mock_notes_repo)
+
+        response = client.get(f"/api/patients/{patient.id}/notes")
+        assert response.status_code == 200
+        assert response.json()["total"] == 2
+
+        viewed = {
+            call.args[0].resource_id
+            for call in mock_audit_service._repo.append.call_args_list
+            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+        }
+        assert viewed == {first.id, second.id}
 
 
 # Avoid unused-fixture warnings.

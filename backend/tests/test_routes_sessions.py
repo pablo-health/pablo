@@ -16,7 +16,9 @@ import uuid
 from datetime import UTC, datetime
 
 from app.models import SessionSource, SessionStatus, TherapySession, Transcript
+from app.models.audit import AuditAction
 from app.repositories import InMemoryTherapySessionRepository  # noqa: TC002 — runtime fixture type
+from app.services import AuditService  # noqa: TC002 — runtime fixture type
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
 # A clinician who is NOT the test's authenticated user (conftest's mock_user).
@@ -100,3 +102,30 @@ class TestSessionRouteAccessControl:
         ids = {s["id"] for s in resp.json()["data"]}
         assert mine.id in ids
         assert other.id not in ids
+
+
+class TestSessionListAudit:
+    """The session list embeds full SOAP content per item, so it must audit a
+    per-record ``session_viewed`` for each session it returns — the same
+    audit-of-record as the detail view, kept affordable by read-coalescing.
+    """
+
+    def test_list_emits_session_viewed_per_returned_session(
+        self,
+        client: TestClient,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_audit_service: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        first = _seed_session(mock_session_repo, owner=mock_user_id)
+        second = _seed_session(mock_session_repo, owner=mock_user_id)
+
+        resp = client.get("/api/sessions")
+        assert resp.status_code == 200
+
+        viewed = {
+            call.args[0].resource_id
+            for call in mock_audit_service._repo.append.call_args_list
+            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+        }
+        assert viewed == {first.id, second.id}

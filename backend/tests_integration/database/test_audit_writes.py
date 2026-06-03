@@ -330,33 +330,6 @@ class TestLogSessionAction:
         assert str(row["patient_id"]) == patient.id
 
 
-# ─── list-endpoint audit helpers ─────────────────────────────────────────
-
-
-class TestListLogs:
-    def test_log_patient_list(self, pg_session: Session) -> None:
-        service = _build_service(pg_session)
-        service.log_patient_list(user=_build_user(), request=_build_request(), patient_count=7)
-        pg_session.commit()
-        row = _fetch_only_row(pg_session)
-        assert row["action"] == "patient_listed"
-        assert row["resource_type"] == "patient"
-        assert row["resource_id"] == "list"
-        assert row["patient_id"] is None
-        assert row["changes"] == {"patient_count": 7}
-
-    def test_log_session_list(self, pg_session: Session) -> None:
-        service = _build_service(pg_session)
-        service.log_session_list(user=_build_user(), request=_build_request(), session_count=42)
-        pg_session.commit()
-        row = _fetch_only_row(pg_session)
-        assert row["action"] == "session_listed"
-        assert row["resource_type"] == "session"
-        assert row["resource_id"] == "list"
-        assert row["session_id"] is None
-        assert row["changes"] == {"session_count": 42}
-
-
 # ─── log_admin_action() ──────────────────────────────────────────────────
 
 

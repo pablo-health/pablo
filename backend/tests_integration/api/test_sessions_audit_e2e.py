@@ -1,12 +1,15 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""End-to-end audit smoke: ``GET /api/sessions`` writes to ``audit_logs``.
+"""End-to-end audit smoke: ``GET /api/sessions`` against a real Postgres
+audit path.
 
-Regression test for the dev 500 we shipped on 2026-04-17 — the
-``practice.audit_logs`` table was missing, so every list endpoint
-raised at ``audit.log_session_list()``. A TestClient-level test with a
-mocked ``AuditService`` (like the unit suite) cannot catch this — the
-bug lived in the gap between alembic, the ORM model, and the repo.
+The list endpoint no longer emits a count-only ``session_listed`` event.
+Because it embeds the full SOAP note in each item, it now writes a
+per-record ``session_viewed`` event for each session it returns — the
+same audit-of-record as the detail view. These tests pin that behavior
+against a real Postgres-backed ``AuditService`` (empty list → no rows;
+populated list → one persisted ``session_viewed`` per session), guarding
+the alembic/ORM/repo wiring that a mocked-service unit test cannot.
 
 Requires:
   - ``DATABASE_URL`` + ``DATABASE_BACKEND=postgres``
@@ -18,6 +21,7 @@ Run: ``make test-integration``.
 from __future__ import annotations
 
 import os
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -38,7 +42,7 @@ from app.auth.service import (
     get_tenant_context,
     require_baa_acceptance,
 )
-from app.models import User
+from app.models import Patient, SessionStatus, TherapySession, Transcript, User
 from app.repositories import (
     InMemoryNotesRepository,
     InMemoryPatientRepository,
@@ -121,15 +125,31 @@ def e2e_user() -> User:
 
 
 @pytest.fixture
-def e2e_client(fastapi_app: FastAPI, pg_session: Session, e2e_user: User) -> Iterator[TestClient]:
+def session_repo() -> InMemoryTherapySessionRepository:
+    return InMemoryTherapySessionRepository()
+
+
+@pytest.fixture
+def patient_repo(
+    session_repo: InMemoryTherapySessionRepository,
+) -> InMemoryPatientRepository:
+    return InMemoryPatientRepository(session_repo=session_repo)
+
+
+@pytest.fixture
+def e2e_client(
+    fastapi_app: FastAPI,
+    pg_session: Session,
+    e2e_user: User,
+    session_repo: InMemoryTherapySessionRepository,
+    patient_repo: InMemoryPatientRepository,
+) -> Iterator[TestClient]:
     """TestClient with auth + repos mocked, audit service real (Postgres-backed).
 
     Binds ``get_audit_service`` to ``pg_session`` — the same session
     the test queries for assertions — so the test reads the pending
     row via ``expire_all()`` without fighting transaction visibility.
     """
-    session_repo = InMemoryTherapySessionRepository()
-    patient_repo = InMemoryPatientRepository(session_repo=session_repo)
 
     def _audit_service() -> AuditService:
         return AuditService(PostgresAuditRepository(pg_session))
@@ -163,15 +183,15 @@ def e2e_client(fastapi_app: FastAPI, pg_session: Session, e2e_user: User) -> Ite
         fastapi_app.dependency_overrides.clear()
 
 
-class TestSessionsListWritesAudit:
-    def test_empty_list_still_writes_audit_row(
-        self, e2e_client: TestClient, pg_session: Session, e2e_user: User
+class TestSessionsListAuditBehavior:
+    def test_empty_list_resolves_against_real_postgres_audit_path(
+        self, e2e_client: TestClient, pg_session: Session
     ) -> None:
-        """Regression for the 2026-04-17 dev outage.
+        """An empty list returns 200 and writes no rows — there are no
+        records to view.
 
-        Before the fix, this call 500'd because ``audit_logs`` didn't
-        exist. After the fix, it returns 200 AND writes exactly one
-        ``session_listed`` row.
+        Guards the list path from 500'ing against a real Postgres-backed
+        ``AuditService`` (the 2026-04-17 dev outage class).
         """
         response = e2e_client.get("/api/sessions")
         assert response.status_code == 200, response.text
@@ -179,23 +199,64 @@ class TestSessionsListWritesAudit:
         assert body["data"] == []
         assert body["total"] == 0
 
-        # The repo flushed but didn't commit. Expire our snapshot so
-        # the SELECT sees the pending row in the same session.
+        pg_session.expire_all()
+        rows = (
+            pg_session.execute(text("SELECT action FROM practice.audit_logs"))
+            .mappings()
+            .all()
+        )
+        assert rows == []
+
+    def test_list_writes_session_viewed_row_per_returned_session(
+        self,
+        e2e_client: TestClient,
+        pg_session: Session,
+        session_repo: InMemoryTherapySessionRepository,
+        patient_repo: InMemoryPatientRepository,
+        e2e_user: User,
+    ) -> None:
+        """The list embeds full SOAP content per item, so each returned
+        session writes a ``session_viewed`` row that actually persists to
+        ``practice.audit_logs`` — exercising the alembic/ORM/repo write path
+        a mocked-service unit test cannot.
+        """
+        patient = patient_repo.create(
+            Patient(
+                id=str(uuid.uuid4()),
+                first_name="List",
+                last_name="Audit",
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
+                updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+            ),
+            e2e_user.id,
+        )
+        session = session_repo.create(
+            TherapySession(
+                id=str(uuid.uuid4()),
+                user_id=e2e_user.id,
+                patient_id=patient.id,
+                session_date=datetime(2024, 6, 15, tzinfo=UTC),
+                session_number=1,
+                status=SessionStatus.PENDING_REVIEW,
+                transcript=Transcript(format="txt", content="t"),
+                created_at=datetime(2024, 6, 15, tzinfo=UTC),
+            )
+        )
+
+        response = e2e_client.get("/api/sessions")
+        assert response.status_code == 200, response.text
+        assert response.json()["total"] == 1
+
         pg_session.expire_all()
         rows = (
             pg_session.execute(
-                text(
-                    "SELECT user_id, action, resource_type, resource_id, changes "
-                    "FROM practice.audit_logs"
-                )
+                text("SELECT action, resource_type, resource_id FROM practice.audit_logs")
             )
             .mappings()
             .all()
         )
         assert len(rows) == 1
         row = dict(rows[0])
-        assert row["user_id"] == e2e_user.id
-        assert row["action"] == "session_listed"
+        assert row["action"] == "session_viewed"
         assert row["resource_type"] == "session"
-        assert row["resource_id"] == "list"
-        assert row["changes"] == {"session_count": 0}
+        assert row["resource_id"] == session.id

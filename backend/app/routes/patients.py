@@ -148,7 +148,6 @@ def create_patient(
 
 @router.get("")
 def list_patients(
-    request: Request,
     search: str | None = Query(
         None,
         description="Case-insensitive substring matched against first and last name",
@@ -164,7 +163,6 @@ def list_patients(
     ),
     user: User = Depends(require_baa_acceptance),
     repo: PatientRepository = Depends(get_patient_repository),
-    audit: AuditService = Depends(get_audit_service),
 ) -> PatientListResponse:
     """
     List patients for the current user with pagination.
@@ -196,7 +194,6 @@ def list_patients(
             for p, stamp in deleted_pairs
         ]
         total = len(responses)
-        audit.log_patient_list(user, request, total)
         return PatientListResponse(
             data=responses,
             total=total,
@@ -210,7 +207,6 @@ def list_patients(
 
     responses = [PatientResponse.from_patient(p) for p in patients]
 
-    audit.log_patient_list(user, request, total)
     return PatientListResponse(
         data=responses,
         total=total,

@@ -206,26 +206,180 @@ class TestAuditService:
         assert entry.session_id == test_session.id
         assert entry.patient_id == test_patient.id
 
-    def test_log_patient_list_writes_count(
-        self,
-        audit_service: AuditService,
-        test_user: User,
-        mock_request: MagicMock,
-    ) -> None:
-        entry = audit_service.log_patient_list(test_user, mock_request, 5)
-        assert entry.action == AuditAction.PATIENT_LISTED.value
-        assert entry.resource_id == "list"
-        assert entry.changes == {"patient_count": 5}
+class _FakeRedis:
+    """Minimal Redis stand-in implementing ``SET key val NX EX ttl``.
 
-    def test_log_session_list_writes_count(
+    ``.set`` returns ``True`` the first time a key is written and ``None``
+    on a subsequent NX write while the key still exists — exactly the
+    contract ``_should_skip_duplicate`` relies on.
+    """
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+        self.set_keys: list[str] = []
+
+    def set(
+        self,
+        key: str,
+        value: str,
+        nx: bool = False,
+        ex: int | None = None,
+    ) -> bool | None:
+        self.set_keys.append(key)
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        return True
+
+
+class _BoomRedis:
+    """A Redis whose every command raises, to exercise the fail-open path."""
+
+    def set(self, *args: object, **kwargs: object) -> bool | None:
+        raise RuntimeError("simulated Redis outage")
+
+
+class TestReadAuditCoalescing:
+    """Read-access audit coalescing gate in ``_persist``.
+
+    When ``audit_read_coalesce_seconds`` is set, repeated reads of the same
+    record by the same user within the window collapse to one row. The gate
+    must fail OPEN — any Redis problem writes the row — and must never
+    coalesce restricted-category document views.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_settings_cache(self) -> Iterator[None]:
+        # audit_read_coalesce_seconds is read via the @lru_cache'd
+        # get_settings(); clear before and after so per-test env vars apply
+        # and don't leak into later files.
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    def _make_patient(self, patient_id: str) -> Patient:
+        return Patient(
+            id=patient_id,
+            first_name="Test",
+            last_name="Patient",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        )
+
+    def test_repeat_same_record_collapses_to_one_row(
         self,
         audit_service: AuditService,
+        repo: InMemoryAuditRepository,
+        test_user: User,
+        test_patient: Patient,
+        mock_request: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fake = _FakeRedis()
+        monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "900")
+        monkeypatch.setattr("app.redis_client.get_redis_client", lambda: fake)
+
+        for _ in range(3):
+            audit_service.log_patient_action(
+                AuditAction.PATIENT_VIEWED, test_user, mock_request, test_patient
+            )
+
+        assert len(repo.all()) == 1
+
+    def test_distinct_records_each_logged(
+        self,
+        audit_service: AuditService,
+        repo: InMemoryAuditRepository,
         test_user: User,
         mock_request: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        entry = audit_service.log_session_list(test_user, mock_request, 3)
-        assert entry.action == AuditAction.SESSION_LISTED.value
-        assert entry.changes == {"session_count": 3}
+        fake = _FakeRedis()
+        monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "900")
+        monkeypatch.setattr("app.redis_client.get_redis_client", lambda: fake)
+
+        for pid in ("patient-a", "patient-b", "patient-c"):
+            audit_service.log_patient_action(
+                AuditAction.PATIENT_VIEWED, test_user, mock_request, self._make_patient(pid)
+            )
+
+        assert len(repo.all()) == 3
+
+    def test_redis_failure_writes_every_row_fail_open(
+        self,
+        audit_service: AuditService,
+        repo: InMemoryAuditRepository,
+        test_user: User,
+        test_patient: Patient,
+        mock_request: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A Redis outage must never drop an access record (fail-open)."""
+        boom = _BoomRedis()
+        monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "900")
+        monkeypatch.setattr("app.redis_client.get_redis_client", lambda: boom)
+
+        for _ in range(3):
+            audit_service.log_patient_action(
+                AuditAction.PATIENT_VIEWED, test_user, mock_request, test_patient
+            )
+
+        assert len(repo.all()) == 3
+
+    def test_restricted_document_view_never_coalesced(
+        self,
+        audit_service: AuditService,
+        repo: InMemoryAuditRepository,
+        test_user: User,
+        mock_request: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Psychotherapy-notes / therapist-private views keep full fidelity."""
+        fake = _FakeRedis()
+        monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "900")
+        monkeypatch.setattr("app.redis_client.get_redis_client", lambda: fake)
+
+        for _ in range(3):
+            audit_service.log_patient_document_action(
+                AuditAction.PATIENT_DOCUMENT_VIEWED_RESTRICTED,
+                test_user,
+                mock_request,
+                document_id="doc-1",
+                patient_id="patient-1",
+                category="psychotherapy_notes",
+            )
+
+        assert len(repo.all()) == 3
+        # The restricted action is never even consulted against Redis.
+        assert fake.set_keys == []
+
+    def test_disabled_makes_no_redis_calls(
+        self,
+        audit_service: AuditService,
+        repo: InMemoryAuditRepository,
+        test_user: User,
+        test_patient: Patient,
+        mock_request: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With the window at 0 (default), behave exactly as before — and never
+        reach for Redis at all.
+        """
+        monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "0")
+
+        calls: list[int] = []
+        monkeypatch.setattr(
+            "app.redis_client.get_redis_client",
+            lambda: calls.append(1) or _FakeRedis(),
+        )
+
+        for _ in range(3):
+            audit_service.log_patient_action(
+                AuditAction.PATIENT_VIEWED, test_user, mock_request, test_patient
+            )
+
+        assert len(repo.all()) == 3
+        assert calls == []
 
 
 class TestCloudLoggingDualWrite:

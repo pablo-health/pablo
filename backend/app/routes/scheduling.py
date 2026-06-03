@@ -217,17 +217,14 @@ def create_appointment(
 
 @router.get("/api/appointments", response_model=AppointmentListResponse)
 def list_appointments(
-    http_request: Request,
     start: str = Query(..., description="Range start (ISO 8601)"),
     end: str = Query(..., description="Range end (ISO 8601)"),
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
-    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentListResponse:
     """List appointments in a date range."""
     appointments = service.list_appointments(user.id, start, end)
-    audit.log_appointment_list(user, http_request, len(appointments))
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),

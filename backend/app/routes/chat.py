@@ -356,12 +356,24 @@ def preview_context(
 )
 def get_conversation(
     conversation_id: str,
+    http_request: Request,
     user: User = Depends(require_baa_acceptance),
     chat_service: ChatService = Depends(get_chat_service),
+    audit: AuditService = Depends(get_audit_service),
 ) -> ChatConversationDetailResponse:
     """Return a conversation with its messages in ``sequence`` order."""
     conv = _authorize_conversation(conversation_id, user, chat_service)
     messages = chat_service.list_messages(conv.id, user.id)
+    # The detail read returns full message bodies, so it is a PHI-read on par
+    # with get_session / get_patient / document downloads — audit it. The
+    # conversation-list endpoint stays unaudited (access-filtered, no content).
+    audit.log_chat_action(
+        action=AuditAction.CHAT_CONVERSATION_VIEWED,
+        user=user,
+        request=http_request,
+        conversation_id=conv.id,
+        patient_id=conv.patient_id,
+    )
     return ChatConversationDetailResponse.from_conversation_with_messages(conv, messages)
 
 

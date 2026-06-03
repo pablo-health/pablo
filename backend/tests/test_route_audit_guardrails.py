@@ -46,6 +46,26 @@ FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_reques
 
 HTTP_METHODS: frozenset[str] = frozenset({"get", "post", "patch", "put", "delete"})
 
+# List endpoints that match a PHI path marker but deliberately do NOT audit.
+# These return only scheduling metadata (times, status, patient association,
+# free-text annotation) — not clinical note bodies — and each has a detail
+# endpoint that audits the per-record content read. A list-level row recording
+# only a count carries no forensic value, so it is dropped here.
+#
+# NOTE: the two list endpoints that embed full SOAP content — GET /api/sessions
+# (list_sessions, embeds NoteResponse via _embed_note) and the patient-notes
+# list (list_patient_notes, returns every note body) — are NOT exempt: they
+# emit a per-record session_viewed event for each record whose content they
+# return, kept affordable by the read-coalescing gate.
+#
+# Keyed by (method, decorator-path) exactly as it appears on the handler.
+AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", "/api/sessions/today"),  # get_today_sessions — schedule dashboard
+        ("get", "/api/appointments"),  # list_appointments — calendar metadata
+    }
+)
+
 
 def _iter_route_handlers() -> list[tuple[str, str, ast.FunctionDef | ast.AsyncFunctionDef, Path]]:
     """Return (path, method, function_node, file) for every ``@router.<method>`` handler."""
@@ -140,6 +160,8 @@ def test_phi_routes_inject_audit_service() -> None:
     violations: list[str] = []
     for path, method, func, py_file in _iter_route_handlers():
         if not any(marker in path for marker in PHI_PATH_MARKERS):
+            continue
+        if (method, path) in AUDIT_EXEMPT_PHI_ROUTES:
             continue
         annotations = _param_annotations(func)
         if not any("AuditService" in ann for ann in annotations.values()):
