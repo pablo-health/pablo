@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from app.medications.repository import InMemoryMedicationRepository
 from app.models import Note
 from app.repositories import InMemoryNotesRepository
 from app.services.chat_context_bundler import (
@@ -448,6 +449,176 @@ class TestPatientDocumentSources:
                 user_id=USER_ID,
                 selection={SOURCE_KEY_SAFETY_PLAN_ACTIVE: {"limit": 1}},
             )
+
+
+# ---------------------------------------------------------------------------
+# current_medications — structured medication table path
+# ---------------------------------------------------------------------------
+
+
+class TestCurrentMedicationsTableSource:
+    """Tests for the medication-table primary path and note-type fallback."""
+
+    def _make_med_row(
+        self,
+        *,
+        drug_name: str,
+        dose: str,
+        started_at: datetime | None = None,
+        med_id: str | None = None,
+    ) -> dict:
+        return {
+            "id": med_id or str(uuid.uuid4()),
+            "patient_id": PATIENT_ID,
+            "drug_name": drug_name,
+            "dose": dose,
+            "status": "active",
+            "started_at": started_at,
+            "stopped_at": None,
+            "notes": None,
+            "created_by": USER_ID,
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+            "deleted_at": None,
+        }
+
+    def test_active_rows_formatted_with_drug_and_dose(
+        self, notes_repo: InMemoryNotesRepository
+    ) -> None:
+        """Active medication rows produce a bullet list with drug_name and dose."""
+        med_repo = InMemoryMedicationRepository()
+        med_repo.grant_all_access()
+        med_repo.create(self._make_med_row(drug_name="Sertraline", dose="50mg daily"), USER_ID)
+        med_repo.create(
+            self._make_med_row(drug_name="Aripiprazole", dose="5mg nightly"), USER_ID
+        )
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            medication_repo=med_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_CURRENT_MEDICATIONS: True},
+        )
+
+        assert "CURRENT MEDICATIONS" in bundle.text
+        assert "Sertraline" in bundle.text
+        assert "50mg daily" in bundle.text
+        assert "Aripiprazole" in bundle.text
+        assert "5mg nightly" in bundle.text
+
+    def test_started_at_appended_when_present(
+        self, notes_repo: InMemoryNotesRepository
+    ) -> None:
+        """started_at date appears in the formatted bullet."""
+        med_repo = InMemoryMedicationRepository()
+        med_repo.grant_all_access()
+        started = datetime(2026, 1, 15, tzinfo=UTC)
+        med_repo.create(
+            self._make_med_row(drug_name="Sertraline", dose="50mg daily", started_at=started),
+            USER_ID,
+        )
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            medication_repo=med_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_CURRENT_MEDICATIONS: True},
+        )
+
+        assert "2026-01-15" in bundle.text
+
+    def test_empty_medication_list_falls_back_to_note_scan(
+        self, notes_repo: InMemoryNotesRepository
+    ) -> None:
+        """No active medication rows -> fallback to medication note types."""
+        # Add a legacy medication note so the fallback produces content.
+        notes_repo.add(
+            _make_note(
+                note_type="medications",
+                content={"active": ["Lithium 300mg TID"]},
+                created_at=datetime.now(UTC),
+            )
+        )
+        # Repo with no rows but access granted.
+        med_repo = InMemoryMedicationRepository()
+        med_repo.grant_all_access()
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            medication_repo=med_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_CURRENT_MEDICATIONS: True},
+        )
+
+        assert "CURRENT MEDICATIONS" in bundle.text
+        assert "Lithium" in bundle.text
+
+    def test_no_medication_repo_falls_back_to_note_scan(
+        self, notes_repo: InMemoryNotesRepository
+    ) -> None:
+        """medication_repo=None -> existing note-type fallback (legacy path)."""
+        notes_repo.add(
+            _make_note(
+                note_type="medication_list",
+                content={"meds": ["Buspirone 10mg BID"]},
+                created_at=datetime.now(UTC),
+            )
+        )
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            medication_repo=None,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_CURRENT_MEDICATIONS: True},
+        )
+
+        assert "CURRENT MEDICATIONS" in bundle.text
+        assert "Buspirone" in bundle.text
+
+    def test_not_selected_is_skipped(self, notes_repo: InMemoryNotesRepository) -> None:
+        """current_medications not in selection -> source absent from manifest."""
+        med_repo = InMemoryMedicationRepository()
+        med_repo.grant_all_access()
+        med_repo.create(self._make_med_row(drug_name="Sertraline", dose="50mg"), USER_ID)
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            medication_repo=med_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_PROGRESS_NOTES_RECENT: True},
+        )
+
+        included_keys = {s["source_key"] for s in bundle.manifest["sources_included"]}
+        assert SOURCE_KEY_CURRENT_MEDICATIONS not in included_keys
+        assert "Sertraline" not in bundle.text
+
+    def test_manifest_records_medication_table_source(
+        self, notes_repo: InMemoryNotesRepository
+    ) -> None:
+        """Manifest extra records source=medication_table when rows were used."""
+        med_repo = InMemoryMedicationRepository()
+        med_repo.grant_all_access()
+        med_repo.create(self._make_med_row(drug_name="Sertraline", dose="50mg"), USER_ID)
+
+        bundle = assemble_context_bundle(
+            notes_repo=notes_repo,
+            medication_repo=med_repo,
+            patient_id=PATIENT_ID,
+            user_id=USER_ID,
+            selection={SOURCE_KEY_CURRENT_MEDICATIONS: True},
+        )
+
+        entry = next(
+            s
+            for s in bundle.manifest["sources_included"]
+            if s["source_key"] == SOURCE_KEY_CURRENT_MEDICATIONS
+        )
+        assert entry["row_count"] == 1
 
 
 # ---------------------------------------------------------------------------
