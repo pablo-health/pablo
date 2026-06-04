@@ -211,6 +211,18 @@ const baseQueryKeys = {
     allowlist: () => [...baseQueryKeys.admin.all, "allowlist"] as const,
     tenants: () => [...baseQueryKeys.admin.all, "tenants"] as const,
   },
+
+  // Medication list query keys
+  medications: {
+    all: ["medications"] as const,
+    byPatientAll: (patientId: string) =>
+      [...baseQueryKeys.medications.all, "byPatient", patientId] as const,
+    byPatient: (patientId: string, status?: string) =>
+      [
+        ...baseQueryKeys.medications.byPatientAll(patientId),
+        status ?? null,
+      ] as const,
+  },
 } as const
 
 export const queryKeys = mergeQueryKeys(baseQueryKeys, queryKeyExtensions)
