@@ -34,6 +34,7 @@ from .schemas import (
     DiagnosticAssessmentListResponse,
     DiagnosticAssessmentResponse,
     DiagnosticDefinitionListResponse,
+    PrescribingSupportResponse,
 )
 from .service import (
     DiagnosticAssessmentNotFoundError,
@@ -78,6 +79,28 @@ def list_definitions(
     """
     defs = service.list_definitions()
     return DiagnosticDefinitionListResponse(data=defs, total=len(defs))
+
+
+@diagnostic_definitions_router.get(
+    "/{code}/prescribing-support", response_model=PrescribingSupportResponse
+)
+def get_prescribing_support(
+    code: str,
+    _user: User = Depends(require_baa_acceptance),
+    service: DiagnosticService = Depends(get_diagnostic_service),
+) -> PrescribingSupportResponse:
+    """Return a definition's optional prescribing-support reference data.
+
+    Decision-support reference material a prescriber may consult — differentials
+    to weigh, the medication rationale, and jurisdiction-configurable
+    safeguards. Empty when the definition carries none (the default). The auth
+    dependency gates access; its value is unused (definitions are not
+    patient-scoped).
+    """
+    try:
+        return service.get_prescribing_support(code)
+    except UnknownDefinitionError as exc:
+        raise NotFoundError("Diagnostic definition not found", {"code": code}) from exc
 
 
 @diagnostic_assessments_router.get("/{assessment_id}", response_model=DiagnosticAssessmentResponse)
