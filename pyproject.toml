@@ -34,7 +34,7 @@ alembic = "^1.14.0"
 psycopg2-binary = "^2.9.12"
 
 # Caching
-redis = "^5.0.0"
+redis = "^8.0.0"
 
 # PDF Generation
 reportlab = "^4.5.1"
