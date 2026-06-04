@@ -38,6 +38,7 @@ from ..models import (
     User,
     UserPreferences,
 )
+from ..models.audit import AuditAction
 from ..repositories import (
     ClinicianProfile,
     ClinicianProfileRepository,
@@ -192,9 +193,11 @@ def get_user_status(
 
 @router.post("/me/mfa-enrolled")
 def record_mfa_enrollment(
+    http_request: Request,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
     identity_repo: IdentityRepository = Depends(get_identity_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """
     Record that the user has completed MFA enrollment.
@@ -240,6 +243,9 @@ def record_mfa_enrollment(
 
     user.mfa_enrolled_at = utc_now()
     user_repo.update(user)
+    audit.log_onboarding_milestone(
+        AuditAction.ONBOARDING_MFA_ENROLLED, user, http_request
+    )
     return {"mfa_enrolled_at": utc_now_iso()}
 
 
@@ -257,10 +263,12 @@ def get_current_user_profile(
 
 @router.patch("/me")
 def update_current_user_profile(
+    http_request: Request,
     request: UpdateUserRequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
     profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> User:
     """Partial update of the current user's profile.
 
@@ -288,12 +296,25 @@ def update_current_user_profile(
     if request.provider_type is not None:
         user.provider_type = request.provider_type
     if request.onboarding_state is not None:
+        prev_state = user.onboarding_state
         user.onboarding_state = request.onboarding_state
     if request.phone is not None:
         # Validator already stripped/normalized; blanks arrive as None and
         # leave the existing value untouched (PATCH semantics).
         user.phone = request.phone
     user_repo.update(user)
+
+    if request.onboarding_state is not None:
+        state_to_action = {
+            "in_progress": AuditAction.ONBOARDING_STARTED,
+            "completed": AuditAction.ONBOARDING_COMPLETED,
+        }
+        action = state_to_action.get(request.onboarding_state)
+        if action is not None and prev_state != request.onboarding_state:
+            audit.log_onboarding_milestone(
+                action, user, http_request,
+                changes={"previous": prev_state, "new": request.onboarding_state},
+            )
 
     if request.title is not None or request.credentials is not None:
         _upsert_clinician_profile(
@@ -469,10 +490,12 @@ def get_baa_status(
 
 @router.post("/me/accept-baa")
 def accept_baa(
+    http_request: Request,
     request: AcceptBAARequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
     profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> BAAStatusResponse:
     """
     Accept the Business Associate Agreement.
@@ -534,6 +557,12 @@ def accept_baa(
     user.baa_accepted_at = now
     user.baa_version = request.version
     user_repo.update(user)
+    audit.log_onboarding_milestone(
+        AuditAction.ONBOARDING_BAA_ACCEPTED,
+        user,
+        http_request,
+        changes={"version": request.version},
+    )
 
     return BAAStatusResponse(
         accepted=True,
@@ -563,21 +592,27 @@ def get_security_guide_status(
 
 @router.post("/me/acknowledge-security-guide")
 def acknowledge_security_guide(
+    http_request: Request,
     request: AcknowledgeSecurityGuideRequest,
     user: User = Depends(get_current_user_no_mfa),
     user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> SecurityGuideStatusResponse:
     """Record acknowledgment of the security & privacy guide.
 
-    The user's row stores the acknowledgment timestamp + version
-    pair; that pair *is* the audit trail (mirrors the BAA + MFA
-    patterns, which also record on the user row without a separate
-    audit event). Idempotent — calling again with the same or a
-    different version overwrites both fields.
+    Idempotent — calling again with the same or a different version
+    overwrites both fields and re-emits the audit event so the
+    acknowledgment history is complete.
     """
     user.security_guide_acknowledged_at = utc_now()
     user.security_guide_version = request.version
     user_repo.update(user)
+    audit.log_onboarding_milestone(
+        AuditAction.ONBOARDING_SECURITY_GUIDE_ACKNOWLEDGED,
+        user,
+        http_request,
+        changes={"version": request.version},
+    )
     return SecurityGuideStatusResponse(
         acknowledged=True,
         acknowledged_at=user.security_guide_acknowledged_at,

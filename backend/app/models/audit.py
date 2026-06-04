@@ -120,6 +120,17 @@ class AuditAction(StrEnum):
     SESSION_NOTES_QUALITY_REVIEW_OPT_OUT = "session_notes_quality_review_opt_out"
     SESSION_NOTES_QUALITY_REVIEW_PURGE_REQUESTED = "session_notes_quality_review_purge_requested"
 
+    # Onboarding milestones. Recorded regardless of whether PHI has been
+    # touched — these are compliance events (BAA is a legal agreement, MFA
+    # is a security control, security guide is a HIPAA § 164.308(a)(5)
+    # training acknowledgment). Useful for detecting onboarding abandonment
+    # (any user with onboarding_started but no baa_accepted row is stalled).
+    ONBOARDING_STARTED = "onboarding_started"
+    ONBOARDING_BAA_ACCEPTED = "onboarding_baa_accepted"
+    ONBOARDING_MFA_ENROLLED = "onboarding_mfa_enrolled"
+    ONBOARDING_SECURITY_GUIDE_ACKNOWLEDGED = "onboarding_security_guide_acknowledged"
+    ONBOARDING_COMPLETED = "onboarding_completed"
+
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
     # land in the audit log; per-turn detail lives on chat_messages rows.
