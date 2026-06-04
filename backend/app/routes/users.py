@@ -169,6 +169,7 @@ def get_user_status(
         # consent step during onboarding. Lets the wizard avoid re-prompting
         # once answered, independent of the opt-in flags themselves.
         "quality_review_consent_prompted_at": user.quality_review_consent_prompted_at,
+        "profile_basics_completed_at": user.profile_basics_completed_at,
     }
 
     settings = get_settings()
@@ -302,6 +303,8 @@ def update_current_user_profile(
         # Validator already stripped/normalized; blanks arrive as None and
         # leave the existing value untouched (PATCH semantics).
         user.phone = request.phone
+    if request.profile_basics_completed:
+        user.profile_basics_completed_at = utc_now()
     user_repo.update(user)
 
     if request.onboarding_state is not None:

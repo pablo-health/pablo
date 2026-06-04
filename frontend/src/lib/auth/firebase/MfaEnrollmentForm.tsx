@@ -218,19 +218,8 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
         {needsEmailVerification ? (
           <div className="py-8 space-y-4">
             <div className="text-center">
-              <svg
-                className="w-12 h-12 text-amber-500 mx-auto mb-3"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                />
-              </svg>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/pablo-verify-email.webp" alt="" className="w-24 h-24 rounded-full object-cover mx-auto mb-3 border-2 border-amber-300" />
               <h3 className="text-lg font-semibold text-neutral-900 mb-2">
                 Verify Your Email First
               </h3>
@@ -283,9 +272,13 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
           </div>
         ) : needsReauth ? (
           <div className="py-8 space-y-4">
-            <p className="text-sm text-neutral-700 text-center">
-              For security, please verify your identity before setting up MFA.
-            </p>
+            <div className="text-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/pablo-reauth.webp" alt="" className="w-24 h-24 rounded-full object-cover mx-auto mb-3 border-2 border-amber-300" />
+              <p className="text-sm text-neutral-700">
+                For security, please verify your identity before setting up MFA.
+              </p>
+            </div>
             {error && (
               <AuthFeedback variant="error" padding="4">
                 {error}

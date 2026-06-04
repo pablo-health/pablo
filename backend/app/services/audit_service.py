@@ -416,6 +416,7 @@ class AuditService:
         self._persist(entry)
         return entry
 
+
     def log_admin_action(
         self,
         action: AuditAction,
