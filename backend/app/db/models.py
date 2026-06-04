@@ -11,12 +11,13 @@ stored as JSONB — they're always read/written as a whole and rarely queried.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -304,6 +305,42 @@ class OutcomeMeasureRow(Base):
             "patient_id",
             "instrument",
             "administered_at",
+        ),
+    )
+
+
+class PatientMedicationRow(Base):
+    """Per-patient medication record.
+
+    Access governed by app-layer patient-access checks (same
+    has_patient_access function as notes and outcome_measures) — no
+    separate RLS policy needed.
+    """
+
+    __tablename__ = "patient_medications"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    drug_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    dose: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    started_at: Mapped[date | None] = mapped_column(Date)
+    stopped_at: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active','discontinued','on_hold')",
+            name="ck_patient_medications_status",
+        ),
+        Index(
+            "ix_patient_medications_patient_status",
+            "patient_id",
+            "status",
         ),
     )
 
