@@ -368,6 +368,24 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_medications (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    drug_name character varying(200) NOT NULL,
+    dose character varying(100) NOT NULL,
+    status character varying(20) NOT NULL,
+    started_at date,
+    stopped_at date,
+    notes text,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patients (
     id uuid NOT NULL,
     first_name character varying(255) NOT NULL,
@@ -549,6 +567,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
+    ADD CONSTRAINT patient_medications_pkey PRIMARY KEY (id);
 
 
 
@@ -734,6 +757,14 @@ CREATE INDEX ix_patient_documents_patient_deleted ON __TENANT_SCHEMA__.patient_d
 
 
 CREATE INDEX ix_patient_documents_user_id ON __TENANT_SCHEMA__.patient_documents USING btree (user_id);
+
+
+
+CREATE INDEX ix_patient_medications_patient_id ON __TENANT_SCHEMA__.patient_medications USING btree (patient_id);
+
+
+
+CREATE INDEX ix_patient_medications_patient_status ON __TENANT_SCHEMA__.patient_medications USING btree (patient_id, status);
 
 
 
