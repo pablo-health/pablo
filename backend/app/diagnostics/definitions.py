@@ -75,6 +75,65 @@ class ICD10Option:
     label: str
 
 
+# --------------------------------------------------------------------------
+# Optional prescribing-support data
+#
+# A definition may *optionally* carry reference material a prescriber can
+# consult while documenting their reasoning: differentials to weigh, the
+# medication rationale, and jurisdiction-configurable safeguards. This is
+# decision-support reference data only — like the criteria above, it is
+# authored as data on the definition, and the engine never asserts that a
+# differential is present or that a particular agent should be chosen. The
+# clinician decides. Definitions ship with none of this by default.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class DifferentialCue:
+    """A phrase a prescriber might hear/read that points toward a differential."""
+
+    cue_text: str
+    citation: str | None = None
+
+
+@dataclass(frozen=True)
+class Differential:
+    """A condition to consider or rule out before treating the primary code."""
+
+    icd_code: str
+    mimics_how: str | None = None
+    """How this condition can look like the primary diagnosis."""
+
+    distinguish_how: str | None = None
+    """What distinguishes it from the primary diagnosis."""
+
+    transcript_cues: tuple[DifferentialCue, ...] = ()
+    """Cues that may prompt the prescriber to consider it — never a verdict."""
+
+
+@dataclass(frozen=True)
+class PrescribingSafeguard:
+    """A configurable-per-jurisdiction attestation (e.g. a registry check)."""
+
+    key: str
+    label: str
+    applies_when: str | None = None
+    """Human-readable scope (e.g. "Schedule III+ in states with a PDMP mandate")."""
+
+    citation: str | None = None
+
+
+@dataclass(frozen=True)
+class MedicationRationale:
+    """Reference treatment pathway: first-line, alternatives, and the rationale."""
+
+    first_line: tuple[str, ...] = ()
+    alternatives: tuple[str, ...] = ()
+    stepped_care: str | None = None
+    this_agent_now: str | None = None
+    citations: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True)
 class DiagnosticDefinition:
     """Runtime representation of a ``diagnostic_definitions`` row."""
@@ -87,6 +146,9 @@ class DiagnosticDefinition:
     gates: tuple[Gate, ...]
     icd10_options: tuple[ICD10Option, ...]
     suggested_icd10: str | None = None
+    differentials: tuple[Differential, ...] = ()
+    prescribing_safeguards: tuple[PrescribingSafeguard, ...] = ()
+    medication_rationale: MedicationRationale | None = None
 
     @property
     def criterion_keys(self) -> frozenset[str]:
@@ -117,6 +179,10 @@ def definition_from_row(row: Mapping[str, Any]) -> DiagnosticDefinition:
           "icd10_options": [{"code": "...", "label": "..."}, ...]
         }
 
+    ``params`` may also carry optional prescribing-support keys
+    (``differentials``, ``prescribing_safeguards``, ``medication_rationale``);
+    they default to empty when absent.
+
     The bundled baseline entries and the ORM-row dict both match this shape.
     """
     params = row["params"]
@@ -141,6 +207,39 @@ def definition_from_row(row: Mapping[str, Any]) -> DiagnosticDefinition:
     options = tuple(
         ICD10Option(code=o["code"], label=o["label"]) for o in params.get("icd10_options", [])
     )
+    differentials = tuple(
+        Differential(
+            icd_code=d["icd_code"],
+            mimics_how=d.get("mimics_how"),
+            distinguish_how=d.get("distinguish_how"),
+            transcript_cues=tuple(
+                DifferentialCue(cue_text=c["cue_text"], citation=c.get("citation"))
+                for c in d.get("transcript_cues", [])
+            ),
+        )
+        for d in params.get("differentials", [])
+    )
+    safeguards = tuple(
+        PrescribingSafeguard(
+            key=s["key"],
+            label=s["label"],
+            applies_when=s.get("applies_when"),
+            citation=s.get("citation"),
+        )
+        for s in params.get("prescribing_safeguards", [])
+    )
+    rationale_raw = params.get("medication_rationale")
+    medication_rationale = (
+        MedicationRationale(
+            first_line=tuple(rationale_raw.get("first_line", [])),
+            alternatives=tuple(rationale_raw.get("alternatives", [])),
+            stepped_care=rationale_raw.get("stepped_care"),
+            this_agent_now=rationale_raw.get("this_agent_now"),
+            citations=tuple(rationale_raw.get("citations", [])),
+        )
+        if rationale_raw
+        else None
+    )
     return DiagnosticDefinition(
         code=row["code"],
         version=int(row["version"]),
@@ -150,4 +249,7 @@ def definition_from_row(row: Mapping[str, Any]) -> DiagnosticDefinition:
         gates=gates,
         icd10_options=options,
         suggested_icd10=row.get("suggested_icd10"),
+        differentials=differentials,
+        prescribing_safeguards=safeguards,
+        medication_rationale=medication_rationale,
     )

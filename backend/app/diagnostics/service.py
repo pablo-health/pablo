@@ -23,8 +23,13 @@ from .schemas import (
     CriterionView,
     DiagnosticAssessmentResponse,
     DiagnosticDefinitionResponse,
+    DifferentialCueView,
+    DifferentialView,
     GateView,
     ICD10OptionView,
+    MedicationRationaleView,
+    PrescribingSafeguardView,
+    PrescribingSupportResponse,
 )
 
 if TYPE_CHECKING:
@@ -64,6 +69,16 @@ class DiagnosticService:
 
     def list_definitions(self) -> list[DiagnosticDefinitionResponse]:
         return [_definition_response(d) for d in self._definitions.list_active()]
+
+    def get_prescribing_support(self, code: str) -> PrescribingSupportResponse:
+        """Return a definition's optional prescribing-support reference data.
+
+        Empty lists / ``None`` when the definition carries none (the default).
+        """
+        defn = self._definitions.get(code)
+        if defn is None:
+            raise UnknownDefinitionError(f"Unknown definition {code!r}.")
+        return _prescribing_support_response(defn)
 
     # ------------------------------------------------------------------
     # Write
@@ -219,4 +234,45 @@ def _definition_response(defn: DiagnosticDefinition) -> DiagnosticDefinitionResp
         gates=[GateView(key=g.key, label=g.label) for g in defn.gates],
         icd10_options=[ICD10OptionView(code=o.code, label=o.label) for o in defn.icd10_options],
         suggested_icd10=defn.suggested_icd10,
+    )
+
+
+def _prescribing_support_response(defn: DiagnosticDefinition) -> PrescribingSupportResponse:
+    rationale = defn.medication_rationale
+    return PrescribingSupportResponse(
+        code=defn.code,
+        version=defn.version,
+        display_name=defn.display_name,
+        differentials=[
+            DifferentialView(
+                icd_code=d.icd_code,
+                mimics_how=d.mimics_how,
+                distinguish_how=d.distinguish_how,
+                transcript_cues=[
+                    DifferentialCueView(cue_text=c.cue_text, citation=c.citation)
+                    for c in d.transcript_cues
+                ],
+            )
+            for d in defn.differentials
+        ],
+        prescribing_safeguards=[
+            PrescribingSafeguardView(
+                key=s.key,
+                label=s.label,
+                applies_when=s.applies_when,
+                citation=s.citation,
+            )
+            for s in defn.prescribing_safeguards
+        ],
+        medication_rationale=(
+            MedicationRationaleView(
+                first_line=list(rationale.first_line),
+                alternatives=list(rationale.alternatives),
+                stepped_care=rationale.stepped_care,
+                this_agent_now=rationale.this_agent_now,
+                citations=list(rationale.citations),
+            )
+            if rationale is not None
+            else None
+        ),
     )
