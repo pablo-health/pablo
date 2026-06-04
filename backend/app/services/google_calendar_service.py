@@ -69,7 +69,7 @@ def _build_flow(
 
 def _build_calendar_service(credentials: Any) -> Any:
     """Lazily import and build a Google Calendar API service."""
-    from googleapiclient.discovery import build  # type: ignore[import-untyped]
+    from googleapiclient.discovery import build  # type: ignore[import-untyped,import-not-found]
 
     return build("calendar", "v3", credentials=credentials)
 
