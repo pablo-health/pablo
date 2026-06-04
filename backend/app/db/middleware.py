@@ -49,7 +49,19 @@ def _resolve_schema_from_request(request: Request) -> str | None:
 
     token = auth_header[7:]
     try:
-        from ..auth.service import _resolve_practice_from_email, verify_token
+        from ..auth.service import (
+            _resolve_practice_from_email,
+            _unverified_issuer,
+            verify_token,
+        )
+
+        # GCP service-account OIDC tokens (Cloud Tasks, Cloud Run invoker)
+        # carry iss=accounts.google.com. They can't resolve a tenant schema,
+        # and routing them to Firebase produces a noisy WARNING about a wrong
+        # aud claim. Skip early — the route handler's _verify_service_token
+        # handles auth for internal endpoints.
+        if _unverified_issuer(token) == "https://accounts.google.com":
+            return None
 
         identity = verify_token(token)
 
