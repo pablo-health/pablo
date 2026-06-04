@@ -27,6 +27,7 @@ class UpdateUserRequest(BaseModel):
     provider_type: ProviderType | None = None
     onboarding_state: OnboardingState | None = None
     phone: str | None = Field(None, max_length=50)
+    profile_basics_completed: bool | None = None
 
     @field_validator("phone")
     @classmethod
@@ -137,6 +138,7 @@ class User:
     security_guide_acknowledged_at: datetime | None = None
     security_guide_version: str | None = None
     onboarding_state: str | None = None
+    profile_basics_completed_at: datetime | None = None
     chat_quality_review_opt_in: bool = False
     chat_quality_review_opt_in_at: datetime | None = None
     chat_quality_review_opt_out_at: datetime | None = None
