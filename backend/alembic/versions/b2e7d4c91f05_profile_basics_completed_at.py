@@ -27,14 +27,13 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "users",
-        sa.Column(
-            "profile_basics_completed_at",
-            sa.DateTime(timezone=True),
-            nullable=True,
-        ),
-        schema="platform",
+    # IF NOT EXISTS guards against the create_all bootstrap path that runs in
+    # CI (regen_tenant_template.py) and test suites: PlatformBase.metadata
+    # .create_all() creates platform.users with all ORM columns before
+    # migrations run, so the column may already exist on a fresh schema.
+    op.execute(
+        "ALTER TABLE platform.users "
+        "ADD COLUMN IF NOT EXISTS profile_basics_completed_at TIMESTAMPTZ NULL"
     )
 
 
