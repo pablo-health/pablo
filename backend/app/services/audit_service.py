@@ -368,6 +368,32 @@ class AuditService:
     ) -> list[AuditLogEntry]:
         return self._repo.list_for_user(user_id=user_id, since=since, limit=limit)
 
+    def log_onboarding_milestone(
+        self,
+        action: AuditAction,
+        user: User,
+        request: Request,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record an onboarding milestone (BAA, MFA, security guide, etc.).
+
+        These are compliance events that must be persisted regardless of
+        whether the user has accessed any PHI yet. ``changes`` carries
+        non-PHI metadata only — version strings, boolean flags.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user.id,
+            action=action.value,
+            resource_type=ResourceType.SELF.value,
+            resource_id=user.id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_self_audit_view(
         self,
         user: User,
