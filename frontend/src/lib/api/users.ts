@@ -49,6 +49,13 @@ export interface UserStatusBase {
    * as the "needs onboarding" signal.
    */
   provider_type: ProviderType | null
+  /**
+   * Set when the user explicitly completes the profile-basics onboarding step.
+   * Null for users who have never gone through the step (e.g. Google auth users
+   * whose name was pre-filled). The wizard gates on this rather than name
+   * presence so every user sees the step and can set title/credentials/phone.
+   */
+  profile_basics_completed_at: string | null
 }
 
 /**
@@ -65,6 +72,8 @@ export interface UpdateUserRequestBase {
   provider_type?: ProviderType
   /** Optional contact number. May be used for account recovery or support. */
   phone?: string
+  /** Set to true when the user explicitly submits the profile-basics step. */
+  profile_basics_completed?: boolean
 }
 
 export type UpdateUserRequest = UpdateUserRequestBase & UpdateUserRequestExtensions
