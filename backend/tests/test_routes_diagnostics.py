@@ -213,6 +213,43 @@ class TestDefinitions:
         assert {"synthetic", "synthetic2"} <= codes
 
 
+class TestPrescribingSupport:
+    def test_empty_by_default(self, client_with_repo: TestClient) -> None:
+        # A definition without prescribing-support data returns empty/None.
+        resp = client_with_repo.get("/api/diagnostic-definitions/synthetic/prescribing-support")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == "synthetic"
+        assert body["differentials"] == []
+        assert body["prescribing_safeguards"] == []
+        assert body["medication_rationale"] is None
+
+    def test_returns_populated_support_data(self, client_with_repo: TestClient) -> None:
+        resp = client_with_repo.get("/api/diagnostic-definitions/synthetic_rx/prescribing-support")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["code"] == "synthetic_rx"
+
+        assert len(body["differentials"]) == 1
+        diff = body["differentials"][0]
+        assert diff["icd_code"] == "T99.0"
+        assert len(diff["transcript_cues"]) == 2
+        assert diff["transcript_cues"][0]["citation"] == "Placeholder 2026"
+        assert diff["transcript_cues"][1]["citation"] is None
+
+        assert body["prescribing_safeguards"][0]["key"] == "registry_check"
+
+        rationale = body["medication_rationale"]
+        assert rationale["first_line"] == ["agent-a", "agent-b"]
+        assert rationale["alternatives"] == ["agent-c"]
+        assert rationale["this_agent_now"].startswith("agent-a")
+        assert rationale["citations"] == ["Placeholder guideline 2026"]
+
+    def test_unknown_code_returns_404(self, client_with_repo: TestClient) -> None:
+        resp = client_with_repo.get("/api/diagnostic-definitions/nope/prescribing-support")
+        assert resp.status_code == 404
+
+
 class TestPatientAccessEnforcement:
     def test_create_returns_404_for_inaccessible_patient(
         self, restricted_client: TestClient

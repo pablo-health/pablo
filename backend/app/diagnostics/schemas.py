@@ -78,6 +78,52 @@ class DiagnosticDefinitionListResponse(BaseModel):
     total: int
 
 
+# --- Prescribing-support views (optional reference data on a definition) ---
+
+
+class DifferentialCueView(BaseModel):
+    cue_text: str
+    citation: str | None
+
+
+class DifferentialView(BaseModel):
+    icd_code: str
+    mimics_how: str | None
+    distinguish_how: str | None
+    transcript_cues: list[DifferentialCueView]
+
+
+class PrescribingSafeguardView(BaseModel):
+    key: str
+    label: str
+    applies_when: str | None
+    citation: str | None
+
+
+class MedicationRationaleView(BaseModel):
+    first_line: list[str]
+    alternatives: list[str]
+    stepped_care: str | None
+    this_agent_now: str | None
+    citations: list[str]
+
+
+class PrescribingSupportResponse(BaseModel):
+    """A definition's optional prescribing-support reference data.
+
+    Decision-support reference material only — never a verdict on whether a
+    differential is present or which agent to choose. Empty lists / ``None``
+    when a definition carries no such data (the default).
+    """
+
+    code: str
+    version: int
+    display_name: str
+    differentials: list[DifferentialView]
+    prescribing_safeguards: list[PrescribingSafeguardView]
+    medication_rationale: MedicationRationaleView | None
+
+
 class DiagnosticAssessmentResponse(BaseModel):
     """A recorded diagnostic determination."""
 

@@ -93,10 +93,52 @@ SYNTHETIC_CHECKLIST: dict[str, Any] = {
     "params": SYNTHETIC_DEFINITION["params"],
 }
 
+# A checklist definition that also carries the optional prescribing-support
+# data (differentials / safeguards / medication rationale). Synthetic,
+# non-clinical placeholder content — stands in for the reference data a
+# deployment would supply on a definition.
+SYNTHETIC_RX: dict[str, Any] = {
+    "code": "synthetic_rx",
+    "version": 1,
+    "display_name": "Synthetic Rx Screen",
+    "evaluator_type": "checklist",
+    "suggested_icd10": "T00.1",
+    "params": {
+        **SYNTHETIC_DEFINITION["params"],
+        "differentials": [
+            {
+                "icd_code": "T99.0",
+                "mimics_how": "Looks alike because reasons.",
+                "distinguish_how": "Tell apart via the other thing.",
+                "transcript_cues": [
+                    {"cue_text": "mentions the other thing", "citation": "Placeholder 2026"},
+                    {"cue_text": "no citation cue"},
+                ],
+            }
+        ],
+        "prescribing_safeguards": [
+            {
+                "key": "registry_check",
+                "label": "Registry check captured",
+                "applies_when": "Synthetic scope",
+                "citation": "Placeholder rule",
+            }
+        ],
+        "medication_rationale": {
+            "first_line": ["agent-a", "agent-b"],
+            "alternatives": ["agent-c"],
+            "stepped_care": "Start low, go slow.",
+            "this_agent_now": "agent-a chosen for the placeholder reason.",
+            "citations": ["Placeholder guideline 2026"],
+        },
+    },
+}
+
 SYNTHETIC_DEFINITIONS: list[dict[str, Any]] = [
     SYNTHETIC_DEFINITION,
     SYNTHETIC_DEFINITION_2,
     SYNTHETIC_CHECKLIST,
+    SYNTHETIC_RX,
 ]
 
 # Responses that satisfy SYNTHETIC_DEFINITION: Group A (A1 cardinal + A2),
