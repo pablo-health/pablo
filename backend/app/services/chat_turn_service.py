@@ -45,6 +45,7 @@ from .llm_telemetry import RetrievedDocumentRef, retrieval_span
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from ..medications.repository import MedicationRepository
     from ..repositories import ChatRepository, NotesRepository, PatientDocumentRepository
     from .chat_llm_gateway import ChatLLMGateway
     from .llm_usage_meter import LlmUsageMeter
@@ -172,6 +173,7 @@ class ChatTurnService:
         gateway: ChatLLMGateway,
         usage_meter: LlmUsageMeter | None = None,
         patient_documents_repo: PatientDocumentRepository | None = None,
+        medication_repo: MedicationRepository | None = None,
     ) -> None:
         self._chat_repo = chat_repo
         self._notes_repo = notes_repo
@@ -185,6 +187,10 @@ class ChatTurnService:
         # repo; selecting the source without one raises
         # :class:`InvalidSelectionError` inside the bundler.
         self._patient_documents_repo = patient_documents_repo
+        # Optional for legacy tests. When supplied, active medication
+        # rows are sourced from the structured medication table rather
+        # than falling back to note-type scanning.
+        self._medication_repo = medication_repo
 
     # ------------------------------------------------------------------
     # Entry point
@@ -255,6 +261,7 @@ class ChatTurnService:
                 bundle: ContextBundle = assemble_context_bundle(
                     notes_repo=self._notes_repo,
                     patient_documents_repo=self._patient_documents_repo,
+                    medication_repo=self._medication_repo,
                     patient_id=context.patient_id,
                     user_id=context.requesting_user_id,
                     selection=selection,
