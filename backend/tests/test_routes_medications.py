@@ -234,6 +234,17 @@ class TestUpdateMedication:
         assert resp.status_code == 200, resp.text
         assert resp.json()["stopped_at"] == explicit_date
 
+    def test_update_started_at(self, client_with_repo: TestClient) -> None:
+        """A medication's start date can be edited after creation."""
+        created = _create_med(client_with_repo)
+        new_date = "2026-02-20"
+        resp = client_with_repo.patch(
+            f"/api/patients/{_PATIENT_ID}/medications/{created['id']}",
+            json={"started_at": new_date},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["started_at"] == new_date
+
     def test_update_unknown_id_returns_404(self, client_with_repo: TestClient) -> None:
         resp = client_with_repo.patch(
             f"/api/patients/{_PATIENT_ID}/medications/{uuid.uuid4()}",

@@ -125,6 +125,8 @@ class MedicationService:
             if req.status == "discontinued" and old_status != "discontinued":
                 auto = req.stopped_at if req.stopped_at is not None else date.today()
                 existing["stopped_at"] = auto
+        if req.started_at is not None:
+            existing["started_at"] = req.started_at
         if req.stopped_at is not None:
             existing["stopped_at"] = req.stopped_at
         if req.notes is not None:
