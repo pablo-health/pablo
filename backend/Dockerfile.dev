@@ -1,41 +1,58 @@
-FROM python:3.13-slim
+# Backend Dockerfile for local development (built by docker-compose.yml).
+#
+# Chainguard Python (Wolfi-based) to match the production base in
+# backend/Dockerfile.production — same glibc + low-CVE posture as what
+# ships, so local behaviour tracks prod. This is the ``-dev`` variant: it
+# ships a shell, pip, git and build tooling, which local hot-reload dev
+# needs. Production uses the distroless ``:latest`` runtime variant.
+#
+# Unpinned ``:latest-dev`` on purpose — local dev should float to the
+# newest patched base. Production pins digests (bumped weekly by
+# .github/workflows/base-image-bump.yml); dev does not need that.
+
+FROM cgr.dev/chainguard/python:latest-dev
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# Installs need root; the container drops back to the built-in nonroot
+# user before CMD. The base already ships pip, git and build-base.
+USER root
 
-# Install Poetry
-ENV POETRY_HOME="/opt/poetry"
-ENV PATH="$POETRY_HOME/bin:$PATH"
-RUN curl -sSL https://install.python-poetry.org | python3 -
+# Poetry into the system python (no virtualenv), pinned to match the
+# production builder so dev and prod resolve dependencies identically.
+RUN pip install --no-cache-dir "poetry==2.4.1"
 
-# Copy dependency files from project root
+# Dependency manifests from the project root.
 COPY pyproject.toml poetry.lock ./
 
-# Install dependencies (no virtualenv in container, no root package)
+# Install all dependencies (including the dev group) into the system
+# python. --no-root: the app is bind-mounted at runtime, not installed.
 RUN poetry config virtualenvs.create false \
     && poetry install --no-interaction --no-ansi --no-root
 
-# Download spaCy language model for PII detection
-RUN python -m spacy download en_core_web_lg
-
-# Copy application code
+# Application code (shadowed by the docker-compose bind mount at runtime,
+# but present for non-compose runs).
 COPY backend/ ./backend/
+RUN chown -R nonroot:nonroot /app
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
+# Chainguard ships a nonroot user (uid 65532, home /home/nonroot); use it
+# rather than creating one (the image has no useradd). docker-compose
+# mounts gcloud creds under /home/nonroot to match.
+USER nonroot
 
-# Expose port
+ENV PYTHONUNBUFFERED=1
+# The bind-mounted source is host-owned; skip .pyc writes so a uid
+# mismatch on Linux hosts doesn't spam permission errors under reload.
+ENV PYTHONDONTWRITEBYTECODE=1
+
 EXPOSE 8000
 
+# curl isn't in the Chainguard base — health-check with the stdlib instead.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD ["python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').getcode() == 200 else 1)"]
 
-# Run development server with hot reload
+# Reset the base ENTRYPOINT (``python``) so CMD is the literal argv.
+ENTRYPOINT []
+
+# Hot reload for development.
 CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
