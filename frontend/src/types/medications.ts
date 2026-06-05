@@ -41,6 +41,7 @@ export interface UpdateMedicationRequest {
   drug_name?: string
   dose?: string
   status?: MedicationStatus
+  started_at?: string | null
   stopped_at?: string | null
   notes?: string | null
 }

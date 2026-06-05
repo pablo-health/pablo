@@ -32,6 +32,7 @@ class UpdateMedicationRequest(BaseModel):
     drug_name: str | None = None
     dose: str | None = None
     status: str | None = None
+    started_at: date | None = None
     stopped_at: date | None = None
     notes: str | None = None
 

@@ -97,6 +97,7 @@ export function MedicationModal({
             drug_name: drugName.trim(),
             dose: dose.trim(),
             status,
+            started_at: startedAt || null,
             notes: notes.trim() || null,
           },
         })
@@ -168,17 +169,15 @@ export function MedicationModal({
             </Select>
           </div>
 
-          {!isEdit && (
-            <div className="space-y-1.5">
-              <Label htmlFor="med-started-at">Start date</Label>
-              <Input
-                id="med-started-at"
-                type="date"
-                value={startedAt}
-                onChange={(e) => setStartedAt(e.target.value)}
-              />
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="med-started-at">Start date</Label>
+            <Input
+              id="med-started-at"
+              type="date"
+              value={startedAt}
+              onChange={(e) => setStartedAt(e.target.value)}
+            />
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="med-notes">Notes</Label>

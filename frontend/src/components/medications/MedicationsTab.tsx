@@ -108,11 +108,20 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
   }
 
   const all = data?.data ?? []
-  // Active first, then on_hold, then discontinued
+  // Active first, then on_hold, then discontinued; within each group, most
+  // recently started first, with undated medications last.
   const statusOrder: MedicationStatus[] = ["active", "on_hold", "discontinued"]
-  const sorted = [...all].sort(
-    (a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status),
-  )
+  const sorted = [...all].sort((a, b) => {
+    const byStatus = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status)
+    if (byStatus !== 0) return byStatus
+    if (a.started_at && b.started_at) {
+      return b.started_at.localeCompare(a.started_at)
+    }
+    // Dated medications sort ahead of undated ones.
+    if (a.started_at) return -1
+    if (b.started_at) return 1
+    return 0
+  })
 
   if (sorted.length === 0) {
     return (
@@ -167,11 +176,11 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
                       {med.dose}
                     </span>
                   </span>
-                  {med.started_at && (
-                    <span className="text-xs text-neutral-400">
-                      Started {formatDate(med.started_at)}
-                    </span>
-                  )}
+                  <span className="text-xs text-neutral-400">
+                    {med.started_at
+                      ? `Started ${formatDate(med.started_at)}`
+                      : "No start date"}
+                  </span>
                 </span>
 
                 <span className="flex shrink-0 items-center gap-2">
