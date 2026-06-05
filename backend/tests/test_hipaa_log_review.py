@@ -226,7 +226,7 @@ class TestMultiTenantRun:
             patch.object(
                 hipaa_log_review, "_load_review_payload", return_value=empty_payload
             ),
-            patch.object(hipaa_log_review, "_ask_claude") as mock_ask,
+            patch.object(hipaa_log_review, "_ask_model") as mock_ask,
             patch.object(hipaa_log_review, "_write_report", return_value="stdout://x"),
             patch.object(hipaa_log_review, "_notify_high_finding") as mock_notify,
         ):
