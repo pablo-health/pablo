@@ -229,7 +229,7 @@ def get_diagnostic_definition_provider():  # type: ignore[no-untyped-def]
 
 
 def get_medication_repository() -> MedicationRepository:
-    from .postgres.medication import PostgresMedicationRepository  # noqa: PLC0415
+    from .postgres.medication import PostgresMedicationRepository
 
     return PostgresMedicationRepository(_get_pg_session())
 
