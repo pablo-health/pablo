@@ -4,11 +4,11 @@ import Image from "next/image"
 
 // A warm/funny/helpful line from Pablo. Mix of tips and morale.
 const NOTES = [
-  "Tip: ⌘ + ↵ finalizes a note.",
+  "Tip: double-click an appointment to edit it.",
   "Psst — drag an appointment to reschedule it.",
   "Water break? Water break.",
   "One note at a time. You’ve got this.",
-  "More looks live in Settings → Appearance.",
+  "Set your go-to session type in Settings → Session defaults.",
   "Remember to breathe between sessions.",
   "Today’s a good day to leave on time.",
 ]
