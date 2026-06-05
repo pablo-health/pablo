@@ -187,6 +187,12 @@ ignore = [
 "backend/app/models/**/*.py" = [
     "TC003",    # datetime import needed at runtime for Pydantic/dataclass field validation
 ]
+"backend/app/medications/**/*.py" = [
+    "TC003",    # datetime import needed at runtime for Pydantic field validation
+    "PLR0913",  # Allow many arguments (FastAPI Depends injection)
+    "ARG001",   # patient_id path param kept for REST URL routing even when unused in handler body
+    "PLC0415",  # lazy imports in postgres repo and router dep factories
+]
 "backend/app/outcome_measures/**/*.py" = [
     "TC001",    # enums imported from sibling modules used at runtime by Pydantic
     "TC003",    # datetime import needed at runtime for Pydantic field validation

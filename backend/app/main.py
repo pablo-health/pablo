@@ -24,6 +24,7 @@ from .diagnostics.router import (
     patient_diagnostic_assessments_router,
 )
 from .logging_config import configure_logging
+from .medications.router import medications_router
 from .middleware import (
     HTTPSEnforcementMiddleware,
     RequestContextMiddleware,
@@ -164,6 +165,7 @@ app.include_router(note_types.router)
 app.include_router(compliance.router)
 app.include_router(outcome_measures_router)
 app.include_router(patient_outcome_measures_router)
+app.include_router(medications_router)
 app.include_router(diagnostic_definitions_router)
 app.include_router(diagnostic_assessments_router)
 app.include_router(patient_diagnostic_assessments_router)
