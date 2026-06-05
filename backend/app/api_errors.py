@@ -24,6 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .request_context import extract_request_context
 
 _auth_logger = logging.getLogger("pablo.auth")
+_logger = logging.getLogger("pablo.unhandled")
 
 # Codes that look like "auth failed" but are part of the expected
 # first-login flow rather than a brute-force / bad-token signal.
@@ -174,3 +175,38 @@ def register_exception_handlers(app: FastAPI) -> None:
         # mypy is happy with the type because both inherit from Response.
         response = await http_exception_handler(request, exc)
         return response  # type: ignore[return-value]
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        """Last-resort handler for anything not raised as an APIError/HTTPException.
+
+        Without this, an unexpected exception escapes to Starlette's
+        ``ServerErrorMiddleware``, which prints a multi-line traceback to
+        stderr — each line lands as a separate Cloud Logging entry, and none
+        carry the request context. Logging here instead routes through the
+        configured ``JSONFormatter`` (see ``logging_config``): the whole
+        traceback rides one record's ``exc_info`` field, alongside
+        ``error_class`` and the request-scoped ``request_id`` /
+        ``route_template`` / ``user_id`` from contextvars — one structured
+        entry per 500. The response body stays a generic envelope so internals
+        never leak to the client. ``route_template`` (the matched path
+        pattern, not the concrete URL) is what gets logged, so no
+        patient-level id from the path reaches the log.
+        """
+        _logger.error(
+            "unhandled_exception",
+            exc_info=exc,
+            extra={"http_method": request.method},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "error": {
+                    "code": "INTERNAL_ERROR",
+                    "message": "An internal error occurred",
+                    "details": {},
+                }
+            },
+        )
