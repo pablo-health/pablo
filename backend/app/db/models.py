@@ -326,6 +326,9 @@ class PatientMedicationRow(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     started_at: Mapped[date | None] = mapped_column(Date)
     stopped_at: Mapped[date | None] = mapped_column(Date)
+    # Free-text reason the medication was stopped (e.g. ineffective, side
+    # effects, remission). Only meaningful for discontinued rows; nullable.
+    stop_reason: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

@@ -37,6 +37,7 @@ def _row_to_dict(row: PatientMedicationRow) -> dict[str, object]:
         "status": row.status,
         "started_at": row.started_at,
         "stopped_at": row.stopped_at,
+        "stop_reason": row.stop_reason,
         "notes": row.notes,
         "created_by": row.created_by,
         "created_at": row.created_at,
@@ -116,6 +117,7 @@ class PostgresMedicationRepository(MedicationRepository):
             status=str(row["status"]),
             started_at=row.get("started_at"),  # type: ignore[arg-type]
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
+            stop_reason=row.get("stop_reason"),  # type: ignore[arg-type]
             notes=row.get("notes"),  # type: ignore[arg-type]
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]
@@ -138,6 +140,7 @@ class PostgresMedicationRepository(MedicationRepository):
         orm_row.status = str(row["status"])
         orm_row.started_at = row.get("started_at")  # type: ignore[assignment]
         orm_row.stopped_at = row.get("stopped_at")  # type: ignore[assignment]
+        orm_row.stop_reason = row.get("stop_reason")  # type: ignore[assignment]
         orm_row.notes = row.get("notes")  # type: ignore[assignment]
         orm_row.updated_at = row["updated_at"]  # type: ignore[assignment]
         orm_row.deleted_at = row.get("deleted_at")  # type: ignore[assignment]
