@@ -18,6 +18,7 @@ class CreateMedicationRequest(BaseModel):
     dose: str
     status: str = "active"
     started_at: date | None = None
+    stop_reason: str | None = None
     notes: str | None = None
 
 
@@ -34,6 +35,7 @@ class UpdateMedicationRequest(BaseModel):
     status: str | None = None
     started_at: date | None = None
     stopped_at: date | None = None
+    stop_reason: str | None = None
     notes: str | None = None
 
 
@@ -49,6 +51,7 @@ class MedicationResponse(BaseModel):
     status: str
     started_at: date | None
     stopped_at: date | None
+    stop_reason: str | None
     notes: str | None
     created_by: str
     created_at: datetime

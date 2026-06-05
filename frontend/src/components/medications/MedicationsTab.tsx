@@ -181,6 +181,11 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
                       ? `Started ${formatDate(med.started_at)}`
                       : "No start date"}
                   </span>
+                  {med.status === "discontinued" && med.stop_reason && (
+                    <span className="text-xs text-neutral-400 truncate">
+                      Stopped: {med.stop_reason}
+                    </span>
+                  )}
                 </span>
 
                 <span className="flex shrink-0 items-center gap-2">
