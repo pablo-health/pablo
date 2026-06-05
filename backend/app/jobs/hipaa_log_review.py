@@ -3,7 +3,7 @@
 """HIPAA § 164.308(a)(1)(ii)(D) — scheduled audit log review.
 
 Runs daily (Cloud Scheduler cron) inside a Cloud Run Job. Queries the
-last N hours of `audit_logs`, asks Claude (via Vertex AI — GCP BAA
+last N hours of `audit_logs`, asks Gemini (via Vertex AI — GCP BAA
 covers it) to narrate anomalies, writes the timestamped report to a
 retention-locked GCS bucket.
 
@@ -11,7 +11,7 @@ On a HIGH-severity finding the job emits a structured ``ERROR``-level
 log entry that an operator-configured Cloud Monitoring log-based alert
 policy can use to send email (see ``scripts/monitoring/setup.sh``).
 
-The payload sent to Claude is PHI-free by contract (enforced by
+The payload sent to the model is PHI-free by contract (enforced by
 AuditRepository.metadata_for_review()). Don't loosen that without
 re-evaluating the BAA posture.
 """
@@ -103,9 +103,7 @@ def run(
 
     invariant_violations = _assert_schema_flag_consistency()
     if invariant_violations:
-        logger.error(
-            "Schema/flag invariant violations detected: %s", invariant_violations
-        )
+        logger.error("Schema/flag invariant violations detected: %s", invariant_violations)
         _notify_invariant_violations(invariant_violations, gcs_bucket=gcs_bucket)
 
     schemas = _list_practice_schemas(include_pentest=False)
@@ -176,9 +174,7 @@ def _assert_schema_flag_consistency() -> list[str]:
             )
         ).fetchall()
         for (schema,) in mismatched_schemas:
-            violations.append(
-                f"schema={schema} matches pentest pattern but is_pentest is not TRUE"
-            )
+            violations.append(f"schema={schema} matches pentest pattern but is_pentest is not TRUE")
 
         mismatched_flags = conn.execute(
             text(
@@ -195,9 +191,7 @@ def _assert_schema_flag_consistency() -> list[str]:
     return violations
 
 
-def _notify_invariant_violations(
-    violations: list[str], gcs_bucket: str | None
-) -> None:
+def _notify_invariant_violations(violations: list[str], gcs_bucket: str | None) -> None:
     body = "# HIPAA Log Review — Platform Invariant Violations\n\n"
     body += "**Severity: HIGH**\n\n"
     body += (
@@ -209,9 +203,7 @@ def _notify_invariant_violations(
     body += "## Violations\n\n"
     for v in violations:
         body += f"- {v}\n"
-    report_path = _write_report(
-        body, gcs_bucket, review_mode="invariants", tenant_schema=None
-    )
+    report_path = _write_report(body, gcs_bucket, review_mode="invariants", tenant_schema=None)
     _notify_high_finding(report_path, tenant_schema=None)
 
 
@@ -233,15 +225,13 @@ def _review_tenant(
         report = "# HIPAA Log Review\n\nNo audit activity in the review window.\n"
         severity = "NONE"
     else:
-        report = _ask_claude(payload, review_mode=review_mode)
+        report = _ask_model(payload, review_mode=review_mode)
         severity = _parse_severity(report)
 
     report_path = _write_report(
         report, gcs_bucket, review_mode=review_mode, tenant_schema=practice_schema
     )
-    logger.info(
-        "schema=%s report=%s severity=%s", practice_schema, report_path, severity
-    )
+    logger.info("schema=%s report=%s severity=%s", practice_schema, report_path, severity)
 
     if severity == "HIGH":
         _notify_high_finding(report_path, tenant_schema=practice_schema)
@@ -275,12 +265,12 @@ def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, A
         session.close()
 
 
-def _ask_claude(payload: dict[str, Any], review_mode: str = "daily") -> str:
-    """Send payload to Claude on Vertex AI and return the markdown report.
+def _ask_model(payload: dict[str, Any], review_mode: str = "daily") -> str:
+    """Send payload to Gemini on Vertex AI and return the markdown report.
 
-    Uses the Anthropic SDK's Vertex adapter — inference runs inside GCP,
-    so PHI (if it ever leaks into the payload despite the repo guard)
-    stays under the GCP BAA.
+    Uses the same ``google.genai`` Vertex client as the rest of the
+    platform — inference runs inside GCP, so PHI (if it ever leaks into
+    the payload despite the repo guard) stays under the GCP BAA.
     """
     system_prompt = SYSTEM_PROMPT
     if review_mode == "monthly":
@@ -292,31 +282,39 @@ def _ask_claude(payload: dict[str, Any], review_mode: str = "daily") -> str:
             "flags still matter but lean heavier on trends."
         )
     try:
-        from anthropic import AnthropicVertex  # type: ignore[import-not-found]  # noqa: PLC0415
-        from anthropic.types import TextBlock  # type: ignore[import-not-found]  # noqa: PLC0415
+        from google import genai  # noqa: PLC0415
+        from google.genai import types  # noqa: PLC0415
     except ImportError:
-        logger.exception(
-            "anthropic package not installed; add `anthropic[vertex]` to pyproject."
-        )
+        logger.exception("google-genai is required for the HIPAA log review.")
         raise
 
-    region = os.environ.get("VERTEX_REGION", "us-east5")
-    project = os.environ.get("GCP_PROJECT_ID") or os.environ["GOOGLE_CLOUD_PROJECT"]
-    model = os.environ.get("HIPAA_REVIEW_MODEL", "claude-sonnet-4-6")
+    from ..settings import get_settings  # noqa: PLC0415
 
-    client = AnthropicVertex(region=region, project_id=project)
+    project = os.environ.get("GCP_PROJECT_ID") or os.environ["GOOGLE_CLOUD_PROJECT"]
+    # Gemini 3.x is served from the ``global`` Vertex location, not a single
+    # region; the cron env may not carry the backend service's
+    # GOOGLE_CLOUD_LOCATION, so default it here.
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION", "global")
+    model = os.environ.get("HIPAA_REVIEW_MODEL") or get_settings().ai_model
+    # Thinking models spend part of the output budget on reasoning before
+    # emitting the report; size generously so the narrative isn't truncated.
+    max_output_tokens = int(os.environ.get("HIPAA_REVIEW_MAX_OUTPUT_TOKENS", "8192"))
+
+    client = genai.Client(vertexai=True, project=project, location=location)
     user_content = (
-        "Review the following audit log entries:\n\n"
-        f"```json\n{json.dumps(payload, indent=2)}\n```"
+        f"Review the following audit log entries:\n\n```json\n{json.dumps(payload, indent=2)}\n```"
     )
-    resp = client.messages.create(
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=0.3,
+        max_output_tokens=max_output_tokens,
+    )
+    resp = client.models.generate_content(
         model=model,
-        max_tokens=4096,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_content}],
+        contents=user_content,
+        config=config,
     )
-    parts = [b.text for b in resp.content if isinstance(b, TextBlock)]
-    return "\n".join(parts) or "# HIPAA Log Review\n\n(empty model response)\n"
+    return (resp.text or "").strip() or "# HIPAA Log Review\n\n(empty model response)\n"
 
 
 def _parse_severity(report: str) -> str:
@@ -348,9 +346,7 @@ def _write_report(
     try:
         from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
     except ImportError:
-        logger.exception(
-            "google-cloud-storage not installed; add to pyproject main deps."
-        )
+        logger.exception("google-cloud-storage not installed; add to pyproject main deps.")
         raise
 
     client = storage.Client()
@@ -365,8 +361,7 @@ def _notify_high_finding(report_path: str, tenant_schema: str | None = None) -> 
     payload: dict[str, str] = {
         "severity": "ERROR",
         "message": (
-            f"alert_type=hipaa_review_high{schema_fragment} "
-            f"report={report_path} — review findings"
+            f"alert_type=hipaa_review_high{schema_fragment} report={report_path} — review findings"
         ),
         "alert_type": "hipaa_review_high",
         "report": report_path,
@@ -400,9 +395,7 @@ def _post_webhook(
     body_dict: dict[str, str] = {
         "source": alert_source,
         "severity": "HIGH",
-        "text": (
-            f"{alert_source}: HIGH severity finding{schema_fragment} — {report_path}"
-        ),
+        "text": (f"{alert_source}: HIGH severity finding{schema_fragment} — {report_path}"),
         "report": report_path,
     }
     if tenant_schema:
