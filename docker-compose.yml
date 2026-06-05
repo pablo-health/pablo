@@ -8,7 +8,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - /app/.venv  # Prevent overwriting venv
-      - ~/.config/gcloud:/home/appuser/.config/gcloud:ro  # Mount gcloud credentials (read-only)
+      - ~/.config/gcloud:/home/nonroot/.config/gcloud:ro  # Mount gcloud credentials (read-only; Chainguard nonroot home)
     environment:
       - DEBUG=true
       - LOG_LEVEL=DEBUG
