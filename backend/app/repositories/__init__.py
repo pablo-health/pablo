@@ -224,6 +224,13 @@ def get_diagnostic_definition_provider():  # type: ignore[no-untyped-def]
     return DbDefinitionProvider(_get_pg_session())
 
 
+def get_medication_repository():  # type: ignore[no-untyped-def]
+    """Get medication repository instance."""
+    from .postgres.medication import PostgresMedicationRepository
+
+    return PostgresMedicationRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
     "ChatRepository",
@@ -266,6 +273,7 @@ __all__ = [
     "get_ical_sync_config_repository",
     "get_identity_repository",
     "get_llm_usage_repository",
+    "get_medication_repository",
     "get_notes_repository",
     "get_outcome_measure_repository",
     "get_patient_document_repository",
