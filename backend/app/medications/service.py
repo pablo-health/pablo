@@ -54,6 +54,7 @@ class MedicationService:
             status=str(row["status"]),
             started_at=row.get("started_at"),  # type: ignore[arg-type]
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
+            stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
             notes=str(row["notes"]) if row.get("notes") is not None else None,
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]
@@ -86,6 +87,7 @@ class MedicationService:
             "status": req.status,
             "started_at": req.started_at,
             "stopped_at": None,
+            "stop_reason": req.stop_reason,
             "notes": req.notes,
             "created_by": user_id,
             "created_at": now,
@@ -129,6 +131,8 @@ class MedicationService:
             existing["started_at"] = req.started_at
         if req.stopped_at is not None:
             existing["stopped_at"] = req.stopped_at
+        if req.stop_reason is not None:
+            existing["stop_reason"] = req.stop_reason
         if req.notes is not None:
             existing["notes"] = req.notes
 

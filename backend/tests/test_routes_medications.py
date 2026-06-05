@@ -234,6 +234,25 @@ class TestUpdateMedication:
         assert resp.status_code == 200, resp.text
         assert resp.json()["stopped_at"] == explicit_date
 
+    def test_update_discontinued_with_stop_reason(
+        self, client_with_repo: TestClient
+    ) -> None:
+        """A free-text reason can be recorded when a medication is stopped."""
+        created = _create_med(client_with_repo)
+        resp = client_with_repo.patch(
+            f"/api/patients/{_PATIENT_ID}/medications/{created['id']}",
+            json={"status": "discontinued", "stop_reason": "side effects"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "discontinued"
+        assert body["stop_reason"] == "side effects"
+
+    def test_create_stop_reason_defaults_to_none(
+        self, client_with_repo: TestClient
+    ) -> None:
+        assert _create_med(client_with_repo)["stop_reason"] is None
+
     def test_update_started_at(self, client_with_repo: TestClient) -> None:
         """A medication's start date can be edited after creation."""
         created = _create_med(client_with_repo)

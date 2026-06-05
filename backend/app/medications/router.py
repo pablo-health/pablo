@@ -92,6 +92,7 @@ def create_medication(
             status=str(row["status"]),
             started_at=row.get("started_at"),  # type: ignore[arg-type]
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
+            stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
             notes=str(row["notes"]) if row.get("notes") is not None else None,
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]
@@ -131,6 +132,7 @@ def list_medications(
             status=str(r["status"]),
             started_at=r.get("started_at"),  # type: ignore[arg-type]
             stopped_at=r.get("stopped_at"),  # type: ignore[arg-type]
+            stop_reason=str(r["stop_reason"]) if r.get("stop_reason") is not None else None,
             notes=str(r["notes"]) if r.get("notes") is not None else None,
             created_by=str(r["created_by"]),
             created_at=r["created_at"],  # type: ignore[arg-type]
@@ -167,6 +169,7 @@ def update_medication(
             status=str(row["status"]),
             started_at=row.get("started_at"),  # type: ignore[arg-type]
             stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
+            stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
             notes=str(row["notes"]) if row.get("notes") is not None else None,
             created_by=str(row["created_by"]),
             created_at=row["created_at"],  # type: ignore[arg-type]

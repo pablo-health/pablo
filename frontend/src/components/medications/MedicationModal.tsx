@@ -53,6 +53,7 @@ export function MedicationModal({
   const [startedAt, setStartedAt] = useState(
     initialData?.started_at?.slice(0, 10) ?? "",
   )
+  const [stopReason, setStopReason] = useState(initialData?.stop_reason ?? "")
   const [notes, setNotes] = useState(initialData?.notes ?? "")
   const [error, setError] = useState<string | null>(null)
 
@@ -66,6 +67,7 @@ export function MedicationModal({
     setDose(initialData?.dose ?? "")
     setStatus(initialData?.status ?? "active")
     setStartedAt(initialData?.started_at?.slice(0, 10) ?? "")
+    setStopReason(initialData?.stop_reason ?? "")
     setNotes(initialData?.notes ?? "")
     setError(null)
   }
@@ -98,6 +100,8 @@ export function MedicationModal({
             dose: dose.trim(),
             status,
             started_at: startedAt || null,
+            stop_reason:
+              status === "discontinued" ? stopReason.trim() || null : null,
             notes: notes.trim() || null,
           },
         })
@@ -109,6 +113,8 @@ export function MedicationModal({
             dose: dose.trim(),
             status,
             started_at: startedAt || null,
+            stop_reason:
+              status === "discontinued" ? stopReason.trim() || null : null,
             notes: notes.trim() || null,
           },
         })
@@ -168,6 +174,18 @@ export function MedicationModal({
               </SelectContent>
             </Select>
           </div>
+
+          {status === "discontinued" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="med-stop-reason">Reason stopped</Label>
+              <Input
+                id="med-stop-reason"
+                value={stopReason}
+                onChange={(e) => setStopReason(e.target.value)}
+                placeholder="e.g. ineffective, side effects, remission"
+              />
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="med-started-at">Start date</Label>

@@ -18,6 +18,7 @@ export interface Medication {
   status: MedicationStatus
   started_at: string | null
   stopped_at: string | null
+  stop_reason: string | null
   notes: string | null
   created_by: string
   created_at: string
@@ -34,6 +35,7 @@ export interface CreateMedicationRequest {
   dose: string
   status?: MedicationStatus
   started_at?: string | null
+  stop_reason?: string | null
   notes?: string | null
 }
 
@@ -43,5 +45,6 @@ export interface UpdateMedicationRequest {
   status?: MedicationStatus
   started_at?: string | null
   stopped_at?: string | null
+  stop_reason?: string | null
   notes?: string | null
 }
