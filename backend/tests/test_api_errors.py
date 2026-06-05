@@ -101,7 +101,61 @@ def _build_app() -> FastAPI:
         # still emit, with reason=UNKNOWN.
         raise HTTPException(status_code=401, detail="who?")
 
+    @app.get("/boom")
+    def boom() -> None:
+        # An unexpected, non-API exception (e.g. a DB driver error). It
+        # must be caught by the catch-all handler, logged as one record,
+        # and rendered as a generic 500 envelope.
+        raise RuntimeError("kaboom")
+
     return app
+
+
+@pytest.fixture
+def unhandled_logs() -> Generator[io.StringIO]:
+    """Capture JSON log lines from the ``pablo.unhandled`` logger."""
+    buf = io.StringIO()
+    handler = logging.StreamHandler(buf)
+    handler.setFormatter(JSONFormatter())
+    handler.addFilter(RedactPHIFilter())
+
+    lg = logging.getLogger("pablo.unhandled")
+    saved_handlers = lg.handlers
+    saved_level = lg.level
+    saved_propagate = lg.propagate
+    lg.handlers = [handler]
+    lg.setLevel(logging.ERROR)
+    lg.propagate = False
+    try:
+        yield buf
+    finally:
+        lg.handlers = saved_handlers
+        lg.setLevel(saved_level)
+        lg.propagate = saved_propagate
+
+
+def test_unhandled_exception_returns_500_envelope(unhandled_logs: io.StringIO) -> None:
+    # raise_server_exceptions=False so the TestClient lets the app's
+    # exception handler run instead of re-raising into the test.
+    client = TestClient(_build_app(), raise_server_exceptions=False)
+    response = client.get("/boom")
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {"code": "INTERNAL_ERROR", "message": "An internal error occurred", "details": {}}
+    }
+    # The internal message must never leak to the client.
+    assert "kaboom" not in response.text
+
+    # Exactly one structured record, with the class and full traceback in
+    # a single entry (the whole point — no fragmented stderr dump).
+    lines = _lines(unhandled_logs)
+    assert len(lines) == 1
+    record = lines[0]
+    assert record["message"] == "unhandled_exception"
+    assert record["error_class"] == "RuntimeError"
+    assert "Traceback (most recent call last)" in record["exc_info"]
+    assert record["http_method"] == "GET"
 
 
 def _lines(buf: io.StringIO) -> list[dict[str, object]]:
