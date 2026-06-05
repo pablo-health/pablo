@@ -37,6 +37,10 @@ from .llm_usage import (
     InMemoryLlmUsageRepository,
     LlmUsageRepository,
 )
+from .medication import (
+    InMemoryMedicationRepository,
+    MedicationRepository,
+)
 from .note import (
     InMemoryNotesRepository,
     NotesRepository,
@@ -224,8 +228,7 @@ def get_diagnostic_definition_provider():  # type: ignore[no-untyped-def]
     return DbDefinitionProvider(_get_pg_session())
 
 
-def get_medication_repository():  # type: ignore[no-untyped-def]
-    """Get medication repository instance."""
+def get_medication_repository() -> MedicationRepository:
     from .postgres.medication import PostgresMedicationRepository
 
     return PostgresMedicationRepository(_get_pg_session())
@@ -246,12 +249,14 @@ __all__ = [
     "InMemoryEhrRouteRepository",
     "InMemoryIdentityRepository",
     "InMemoryLlmUsageRepository",
+    "InMemoryMedicationRepository",
     "InMemoryNotesRepository",
     "InMemoryPatientDocumentRepository",
     "InMemoryPatientRepository",
     "InMemoryTherapySessionRepository",
     "InMemoryUserRepository",
     "LlmUsageRepository",
+    "MedicationRepository",
     "NotesRepository",
     "PatientDocumentRepository",
     "PatientRepository",

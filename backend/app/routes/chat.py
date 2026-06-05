@@ -63,6 +63,9 @@ from ..repositories import (
     get_llm_usage_repository as _llm_usage_repo_factory,
 )
 from ..repositories import (
+    get_medication_repository as _medication_repo_factory,
+)
+from ..repositories import (
     get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
@@ -100,6 +103,7 @@ from ..settings import Settings, get_settings
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from ..medications.repository import MedicationRepository
     from ..models import ChatConversation
 
 logger = logging.getLogger(__name__)
@@ -139,6 +143,10 @@ def get_notes_repository_dep() -> NotesRepository:
 
 def get_patient_document_repository_dep() -> PatientDocumentRepository:
     return _patient_document_repo_factory()
+
+
+def get_medication_repository_dep() -> MedicationRepository:
+    return _medication_repo_factory()
 
 
 def get_chat_service(
@@ -188,6 +196,7 @@ def get_chat_turn_service(
     patient_documents_repo: PatientDocumentRepository = Depends(
         get_patient_document_repository_dep
     ),
+    medication_repo: MedicationRepository = Depends(get_medication_repository_dep),
     gateway: ChatLLMGateway = Depends(get_chat_llm_gateway),
     usage_meter: LlmUsageMeter = Depends(get_llm_usage_meter),
 ) -> ChatTurnService:
@@ -195,6 +204,7 @@ def get_chat_turn_service(
         chat_repo=chat_repo,
         notes_repo=notes_repo,
         patient_documents_repo=patient_documents_repo,
+        medication_repo=medication_repo,
         gateway=gateway,
         usage_meter=usage_meter,
     )
@@ -308,6 +318,7 @@ def preview_context(
     patient_documents_repo: PatientDocumentRepository = Depends(
         get_patient_document_repository_dep
     ),
+    medication_repo: MedicationRepository = Depends(get_medication_repository_dep),
 ) -> PreviewChatContextResponse:
     """Return a PHI-free context manifest for a hypothetical first turn.
 
@@ -333,6 +344,7 @@ def preview_context(
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
             patient_documents_repo=patient_documents_repo,
+            medication_repo=medication_repo,
             patient_id=patient.id,
             user_id=user.id,
             selection=selection,

@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 from ..utcnow import utc_now_iso
 
 if TYPE_CHECKING:
+    from ..medications.repository import MedicationRepository
     from ..models import Note, PatientDocument
     from ..repositories import NotesRepository, PatientDocumentRepository
 
@@ -856,11 +857,70 @@ def _load_safety_plan_active(raw: Any, notes: list[Note]) -> LoadedSource:
     )
 
 
-def _load_current_medications(raw: Any, notes: list[Note]) -> LoadedSource:
+def _format_medication_row(row: dict[str, Any]) -> str:
+    """Format one medication row as a human-readable bullet.
+
+    Renders ``drug_name`` + ``dose`` (required fields), then appends
+    ``started_at`` when present so the clinician can see when the
+    medication was initiated.
+    """
+    drug_name = str(row.get("drug_name", "")).strip()
+    dose = str(row.get("dose", "")).strip()
+    line = f"{drug_name} {dose}" if dose else drug_name
+    started = row.get("started_at")
+    if started is not None:
+        # Accepts date or datetime; isoformat() gives "YYYY-MM-DD[…]"
+        date_str = started.isoformat()[:10] if hasattr(started, "isoformat") else str(started)
+        line = f"{line} (since {date_str})"
+    return line
+
+
+def _load_current_medications(
+    raw: Any,
+    notes: list[Note],
+    *,
+    medication_rows: list[dict[str, Any]] | None = None,
+) -> LoadedSource:
+    """Load the current-medications source.
+
+    When ``medication_rows`` are provided (active rows from the
+    ``patient_medications`` table), they are formatted and returned
+    directly — this is the primary path for charts that have been
+    entered into the structured medication list.
+
+    When ``medication_rows`` is ``None`` or empty, the loader falls
+    back to scanning notes of type ``medications`` / ``medication_list``
+    (the legacy path for patients whose meds are still recorded in
+    intake notes or free-text medication notes). This preserves
+    continuity during the migration period: charts that haven't been
+    updated yet still surface medication context rather than showing
+    an empty section.
+    """
     if raw is not True:
         raise InvalidSelectionError(
             f"{SOURCE_KEY_CURRENT_MEDICATIONS} selection must be the boolean true"
         )
+
+    if medication_rows:
+        lines = [_format_medication_row(r) for r in medication_rows]
+        lines = [ln for ln in lines if ln.strip()]
+        text = "## CURRENT MEDICATIONS\n\n" + "\n".join(f"- {ln}" for ln in lines) if lines else ""
+        extra: dict[str, Any] = {
+            "medication_ids": [str(r.get("id", "")) for r in medication_rows],
+            "row_count_initial": len(medication_rows),
+            "source": "medication_table",
+        }
+        return LoadedSource(
+            key=SOURCE_KEY_CURRENT_MEDICATIONS,
+            priority=2,
+            rows=list(medication_rows),
+            extra=extra,
+            text=text,
+            tokens_est=estimate_tokens(text),
+            truncatable=False,
+        )
+
+    # Fallback: note-type scan (legacy path).
     return _load_notes_source(
         notes=notes,
         note_types=MEDICATIONS_NOTE_TYPES,
@@ -938,11 +998,19 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
     selection: dict[str, Any],
     notes: list[Note],
     patient_documents_repo: PatientDocumentRepository | None,
+    medication_repo: MedicationRepository | None,
     patient_id: str,
     user_id: str,
     query: str | None = None,
 ) -> list[LoadedSource]:
     loaded: list[LoadedSource] = []
+    # Pre-fetch active medication rows once for the whole bundle so the
+    # per-source loader doesn't make a DB call inside the dispatch loop.
+    medication_rows: list[dict[str, Any]] | None = None
+    if medication_repo is not None:
+        medication_rows = medication_repo.list_by_patient(
+            patient_id, user_id, status="active"
+        )
     for key, raw in selection.items():
         if key not in V1_SOURCE_KEYS:
             raise InvalidSelectionError(f"unknown source key {key!r}")
@@ -951,7 +1019,9 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
         if key == SOURCE_KEY_PASTED_TEXT:
             loaded.append(_load_pasted_text(raw))
         elif key == SOURCE_KEY_CURRENT_MEDICATIONS:
-            loaded.append(_load_current_medications(raw, notes))
+            loaded.append(
+                _load_current_medications(raw, notes, medication_rows=medication_rows)
+            )
         elif key == SOURCE_KEY_MOST_RECENT_INTAKE:
             loaded.append(_load_most_recent_intake(raw, notes))
         elif key == SOURCE_KEY_PROGRESS_NOTES_RECENT:
@@ -1147,13 +1217,16 @@ def _document_text_for_row(source_key: str, row: Any) -> tuple[str, str]:
     Renders the row with the same single-item renderer the section build
     uses, so the per-document text reflects exactly what survived
     truncation. Dispatches on source: pasted text is a raw string row,
-    patient documents are :class:`PatientDocument`, everything else is a
+    patient documents are :class:`PatientDocument`, medication rows are
+    plain dicts from the medication repository, everything else is a
     note-backed :class:`Note`.
     """
     if source_key == SOURCE_KEY_PASTED_TEXT:
         return SOURCE_KEY_PASTED_TEXT, row if isinstance(row, str) else str(row)
     if source_key == SOURCE_KEY_PATIENT_DOCUMENTS:
         return row.id, _format_patient_document_section(row)
+    if source_key == SOURCE_KEY_CURRENT_MEDICATIONS and isinstance(row, dict):
+        return str(row.get("id", "")), _format_medication_row(row)
     return row.id, _note_display_text(row)
 
 
@@ -1210,6 +1283,7 @@ def assemble_context_bundle(
     selection: dict[str, Any],
     token_budget: int = DEFAULT_TOKEN_BUDGET,
     patient_documents_repo: PatientDocumentRepository | None = None,
+    medication_repo: MedicationRepository | None = None,
     query: str | None = None,
 ) -> ContextBundle:
     """Assemble a context bundle for one chat turn.
@@ -1226,6 +1300,12 @@ def assemble_context_bundle(
     their dependency injection chain. Selecting the source without
     supplying a repo raises :class:`InvalidSelectionError` — the same
     surface a misconfigured selection produces.
+
+    Pass ``medication_repo`` to source the ``current_medications`` section
+    from the structured ``patient_medications`` table. When omitted the
+    loader falls back to scanning notes of type ``medications`` /
+    ``medication_list`` so that charts not yet migrated to the structured
+    list continue to surface medication context (graceful migration).
 
     Raises :class:`ContextOverflowError` only when the pasted-text
     source alone exceeds ``token_budget``. All other budget pressure is
@@ -1257,6 +1337,7 @@ def assemble_context_bundle(
         selection=selection,
         notes=notes,
         patient_documents_repo=patient_documents_repo,
+        medication_repo=medication_repo,
         patient_id=patient_id,
         user_id=user_id,
         query=query,
