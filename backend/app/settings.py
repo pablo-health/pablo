@@ -411,6 +411,42 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Cloud SQL Python Connector (optional; off by default)
+    db_use_cloud_sql_connector: bool = Field(
+        default=False,
+        description=(
+            "When true, connect to PostgreSQL via the Cloud SQL Python connector instead of "
+            "a plain TCP/Unix-socket DSN. Requires the ``cloud-sql-python-connector`` package "
+            "(install the ``cloudsql`` extras group). Off by default; existing "
+            "``DATABASE_URL``-based deployments are completely unaffected."
+        ),
+    )
+    cloud_sql_instance_connection_name: str | None = Field(
+        default=None,
+        description=(
+            "Cloud SQL instance connection name in the form ``PROJECT:REGION:INSTANCE``. "
+            "Required when ``db_use_cloud_sql_connector=true``."
+        ),
+    )
+    cloud_sql_ip_type: str = Field(
+        default="PRIVATE",
+        description=(
+            "IP address type used by the Cloud SQL connector. One of ``PRIVATE``, ``PUBLIC``, "
+            "or ``PSC``. Defaults to ``PRIVATE`` (VPC-internal, no Cloud SQL proxy needed). "
+            "Only used when ``db_use_cloud_sql_connector=true``."
+        ),
+    )
+    db_iam_auth: bool = Field(
+        default=False,
+        description=(
+            "When true, use IAM database authentication instead of a password when connecting "
+            "via the Cloud SQL Python connector. The connecting service account must have the "
+            "``roles/cloudsql.instanceUser`` role and the database user must be created with "
+            "``CREATE USER ... WITH TYPE 'CLOUD_IAM_SERVICE_ACCOUNT'``. Only used when "
+            "``db_use_cloud_sql_connector=true``."
+        ),
+    )
+
     # Google Cloud
     gcp_project_id: str = Field(
         default="",
