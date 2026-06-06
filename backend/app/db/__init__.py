@@ -24,6 +24,7 @@ Off-request tenant context (background tasks, workers):
 """
 
 import re
+import urllib.parse
 from contextvars import ContextVar
 from functools import lru_cache
 
@@ -31,7 +32,7 @@ from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from ..settings import get_settings
+from ..settings import Settings, get_settings
 
 _VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
@@ -93,11 +94,16 @@ def get_engine() -> Engine:
     Pool budget rule of thumb: ``(pool_size + max_overflow) * max
     instance count`` must stay under the database's ``max_connections``
     minus ~10 reserved for migrations / admin / monitoring.
+
+    When ``db_use_cloud_sql_connector=true`` the engine is built with a
+    ``creator`` callable that opens connections via the Cloud SQL Python
+    connector (``google-cloud-sql-connector[pg8000]`` or
+    ``cloud-sql-python-connector`` package).  The connector handles IAM
+    auth, certificate rotation, and private-IP routing transparently. The
+    library is imported lazily so deployments that don't set the flag are
+    completely unaffected — the package need not be installed.
     """
     settings = get_settings()
-    if not settings.database_url:
-        msg = "DATABASE_URL is required when database_backend=postgres"
-        raise ValueError(msg)
 
     option_parts: list[str] = []
     if settings.database_lock_timeout_ms > 0:
@@ -109,8 +115,15 @@ def get_engine() -> Engine:
         )
     if settings.database_statement_timeout_ms > 0:
         option_parts.append(f"-c statement_timeout={settings.database_statement_timeout_ms}")
-    connect_args = {"options": " ".join(option_parts)} if option_parts else {}
 
+    if settings.db_use_cloud_sql_connector:
+        return _build_cloud_sql_engine(settings, option_parts)
+
+    # Default path: plain DSN via DATABASE_URL.
+    if not settings.database_url:
+        msg = "DATABASE_URL is required when database_backend=postgres"
+        raise ValueError(msg)
+    connect_args = {"options": " ".join(option_parts)} if option_parts else {}
     return create_engine(
         settings.database_url,
         pool_size=settings.database_pool_size,
@@ -118,6 +131,92 @@ def get_engine() -> Engine:
         pool_pre_ping=True,
         echo=settings.debug,
         connect_args=connect_args,
+    )
+
+
+def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engine:
+    """Build a SQLAlchemy engine that connects via the Cloud SQL Python connector.
+
+    Imported lazily (called only when ``db_use_cloud_sql_connector=true``) so
+    the ``cloud-sql-python-connector`` package is not required for plain-Postgres
+    deployments.
+
+    The connector manages the mTLS handshake and certificate rotation. We use
+    psycopg2 as the driver to match the existing default path.  IAM database
+    auth is supported via ``enable_iam_auth=True``; in that mode the connector
+    obtains a short-lived OAuth2 token and no password is needed.
+
+    The per-connection Postgres GUC options (lock_timeout, statement_timeout,
+    idle_in_transaction_session_timeout) are passed through ``options`` in the
+    same way as the plain-DSN path.
+    """
+    try:
+        from google.cloud.sql.connector import Connector, IPTypes  # type: ignore[import-untyped]
+    except ImportError as exc:
+        msg = (
+            "db_use_cloud_sql_connector=true but the 'cloud-sql-python-connector' package "
+            "is not installed. Install it with: pip install cloud-sql-python-connector "
+            "or poetry install --with cloudsql"
+        )
+        raise ImportError(msg) from exc
+
+    if not settings.cloud_sql_instance_connection_name:
+        msg = (
+            "cloud_sql_instance_connection_name is required when "
+            "db_use_cloud_sql_connector=true (format: PROJECT:REGION:INSTANCE)"
+        )
+        raise ValueError(msg)
+
+    try:
+        ip_type = IPTypes[settings.cloud_sql_ip_type.upper()]
+    except KeyError:
+        msg = (
+            f"Invalid cloud_sql_ip_type '{settings.cloud_sql_ip_type}'. "
+            f"Valid values: PRIVATE, PUBLIC, PSC"
+        )
+        raise ValueError(msg)  # noqa: B904
+
+    # Parse DB name, user, and password from DATABASE_URL so we have a single
+    # source of truth.  The DSN is still required (for the database name and
+    # user); the connector replaces only the transport layer.
+    if not settings.database_url:
+        msg = (
+            "DATABASE_URL is required even when db_use_cloud_sql_connector=true "
+            "(it provides the database name, user, and — unless db_iam_auth=true — password). "
+            "Format: postgresql://user:pass@localhost/dbname"
+        )
+        raise ValueError(msg)
+
+    parsed = urllib.parse.urlparse(settings.database_url)
+    db_name = (parsed.path or "/").lstrip("/")
+    db_user = parsed.username or ""
+    db_pass = urllib.parse.unquote(parsed.password or "")
+
+    connector = Connector(ip_type=ip_type)
+    instance_name = settings.cloud_sql_instance_connection_name
+    use_iam_auth = settings.db_iam_auth
+    connect_options = " ".join(option_parts)
+
+    def _creator() -> object:
+        kwargs: dict[str, object] = {
+            "dbname": db_name,
+            "user": db_user,
+        }
+        if use_iam_auth:
+            kwargs["enable_iam_auth"] = True
+        else:
+            kwargs["password"] = db_pass
+        if connect_options:
+            kwargs["options"] = connect_options
+        return connector.connect(instance_name, "psycopg2", **kwargs)
+
+    return create_engine(
+        "postgresql+psycopg2://",
+        creator=_creator,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_pre_ping=True,
+        echo=settings.debug,
     )
 
 
