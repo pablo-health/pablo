@@ -203,6 +203,14 @@ const baseQueryKeys = {
     items: () => [...baseQueryKeys.compliance.all, "items"] as const,
   },
 
+  // Supervision / delegation query keys
+  supervision: {
+    all: ["supervision"] as const,
+    list: () => [...baseQueryKeys.supervision.all, "list"] as const,
+    hours: (id: string) =>
+      [...baseQueryKeys.supervision.all, "hours", id] as const,
+  },
+
   // Admin query keys
   admin: {
     all: ["admin"] as const,

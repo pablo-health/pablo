@@ -21,6 +21,7 @@ import {
   sortByDueDate,
 } from "./horizons"
 import { formatDueLabel } from "./urgency"
+import { SupervisionHeroCard } from "./SupervisionHeroCard"
 
 type Selection = HorizonId | "urgent" | "all"
 
@@ -106,6 +107,7 @@ export function CompliancePanel() {
     return (
       <div className="card">
         <PanelHeader onAdd={openComposerForAdd} hasAny={false} />
+        <SupervisionHeroCard />
         <EmptyState onStart={openComposerForAdd} />
         <ReminderComposer
           open={composerOpen}
@@ -124,6 +126,7 @@ export function CompliancePanel() {
   return (
     <div className="card">
       <PanelHeader onAdd={openComposerForAdd} hasAny />
+      <SupervisionHeroCard />
       <HorizonStrip counts={counts} selected={selection} onSelect={setSelection} />
 
       {showAllClear ? (

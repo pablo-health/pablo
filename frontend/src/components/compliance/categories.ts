@@ -52,6 +52,11 @@ const TYPE_TO_CATEGORY: Record<string, CategoryId> = {
   ceu_credits: "credentials",
   telehealth_licensure: "credentials",
   mandated_reporter_training: "credentials",
+  // Prescriber credentials
+  dea_registration: "credentials",
+  board_certification: "credentials",
+  dea_mate_training: "credentials",
+  supervision_review: "credentials",
 
   liability_insurance: "payer",
   caqh_attestation: "payer",
