@@ -147,6 +147,29 @@ jobs:
       # documented pre-existing breakage are skipped at the module
       # level (THERAPY-o1zh soft-delete uuid drift, THERAPY-n0ac
       # tenant-fan-out semantics); re-enable them as those issues close.
+      - name: Cache Postgres test image
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/tc-images
+          key: tc-image-postgres-16-alpine
+
+      - name: Load or pull Postgres test image
+        # testcontainers pulls postgres:16-alpine from Docker Hub at test
+        # time; on shared runners that pull can hit anonymous rate limits
+        # and fail the create with a 404 ("no such image"). Restore from
+        # cache when present, otherwise pull once (with retries) and save
+        # for the next run so the suite never depends on a live pull.
+        run: |
+          img=postgres:16-alpine
+          tar="$HOME/.cache/tc-images/postgres-16-alpine.tar"
+          if [ -f "$tar" ]; then
+            docker load -i "$tar"
+          else
+            mkdir -p "$(dirname "$tar")"
+            for i in 1 2 3; do docker pull "$img" && break || sleep 5; done
+            docker save "$img" -o "$tar"
+          fi
+
       - name: Run integration tests
         run: make test-integration
 
@@ -181,6 +204,27 @@ jobs:
 
       - name: Install dependencies
         run: poetry install --no-interaction --no-ansi
+
+      - name: Cache Postgres test image
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/tc-images
+          key: tc-image-postgres-16-alpine
+
+      - name: Load or pull Postgres test image
+        # Shares the cache key with the integration job above — whichever
+        # runs first populates the tarball; both restore it and skip the
+        # Docker Hub pull on a cache hit.
+        run: |
+          img=postgres:16-alpine
+          tar="$HOME/.cache/tc-images/postgres-16-alpine.tar"
+          if [ -f "$tar" ]; then
+            docker load -i "$tar"
+          else
+            mkdir -p "$(dirname "$tar")"
+            for i in 1 2 3; do docker pull "$img" && break || sleep 5; done
+            docker save "$img" -o "$tar"
+          fi
 
       - name: Regenerate template (testcontainers Postgres)
         run: poetry run python backend/scripts/regen_tenant_template.py
