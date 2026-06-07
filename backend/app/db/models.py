@@ -1004,6 +1004,9 @@ class PrescribingEncounterRow(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     encountered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Tamper-evident content digest of the finalized encounter snapshot — the
+    # genesis link of the addendum hash chain. Null until finalization.
+    integrity_digest: Mapped[str | None] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1082,3 +1085,46 @@ class PrescriptionRow(Base):
             name="ck_prescriptions_drug_class",
         ),
     )
+
+
+class PrescribingEncounterAddendumRow(Base):
+    """A dated, labelled correction appended to a finalized encounter.
+
+    Finalized encounters are immutable; the only lawful change is an
+    addendum. Addenda are append-only — no ``updated_at`` / ``deleted_at`` —
+    and form a tamper-evident hash chain: ``digest`` is the content digest of
+    this addendum and ``prev_digest`` links to the previous chain link (the
+    encounter's ``integrity_digest`` for the first addendum, the prior
+    addendum's chain link thereafter), so removing or reordering any addendum
+    breaks every digest after it. Per-tenant, patient-scoped (RLS via
+    ``has_patient_access``), same as the encounter.
+
+    ``label`` is the kind of correction (clinician-supplied); ``text`` is the
+    correction itself, in the clinician's own words. ``created_at`` is the
+    server clock at the time of writing — backdating is not representable.
+    """
+
+    __tablename__ = "prescribing_encounter_addenda"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    encounter_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("prescribing_encounters.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    label: Mapped[str] = mapped_column(String(120), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Tamper-evident chain: digest of this addendum's content; prev_digest
+    # links to the prior link (encounter.integrity_digest, then each prior
+    # addendum's chain digest).
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    prev_digest: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
