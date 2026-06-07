@@ -386,6 +386,17 @@ class Settings(BaseSettings):
             "``max_connections`` budget as ``pool_size``."
         ),
     )
+    database_pool_recycle_seconds: int = Field(
+        default=1800,
+        description=(
+            "SQLAlchemy QueuePool ``pool_recycle`` -- proactively close and reopen a "
+            "pooled connection after this many seconds, so the pool self-heals before "
+            "the server (or a network path) drops an idle connection. Guards against "
+            "``SSL connection has been closed unexpectedly`` on long-lived pools. "
+            "``pool_pre_ping`` still catches connections that died earlier than this; "
+            "set to ``-1`` to disable recycling."
+        ),
+    )
     database_lock_timeout_ms: int = Field(
         default=5000,
         description=(
