@@ -88,6 +88,8 @@ TENANT_SCOPED_TABLES = (
     "therapy_sessions",
     "appointments",
     "patient_documents",
+    "supervision_relationships",
+    "supervision_hours",
 )
 
 # Self-healing coverage: union the curated list with every RLS-forced table
