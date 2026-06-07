@@ -323,6 +323,100 @@ class TestUpdateItem:
         assert response.status_code == 404
 
 
+class TestProviderTypeGate:
+    """POST /api/compliance and PUT /api/compliance/{id} enforce provider_type on create/update."""
+
+    def test_therapist_cannot_create_prescriber_only_item(
+        self, client: TestClient, mock_user_id: str
+    ) -> None:
+        """A therapist must be rejected when creating a prescriber-only item (dea_registration)."""
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, "therapist")
+        try:
+            response = client.post(
+                "/api/compliance",
+                json={
+                    "item_type": "dea_registration",
+                    "label": "DEA",
+                    "due_date": None,
+                    "notes": None,
+                },
+            )
+            assert response.status_code == 400
+            body = response.json()
+            assert body.get("error", {}).get("code") == "PROVIDER_TYPE_GATED"
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    def test_prescriber_can_create_prescriber_only_item(
+        self,
+        client: TestClient,
+        compliance_repo: InMemoryComplianceItemRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A prescriber must succeed when creating a prescriber-only item (dea_registration)."""
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, "prescriber")
+        try:
+            response = client.post(
+                "/api/compliance",
+                json={
+                    "item_type": "dea_registration",
+                    "label": "DEA",
+                    "due_date": "2027-01-01",
+                    "notes": None,
+                },
+            )
+            assert response.status_code == 201, response.text
+            assert response.json()["item_type"] == "dea_registration"
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    def test_none_provider_type_can_create_any_item(
+        self,
+        client: TestClient,
+        compliance_repo: InMemoryComplianceItemRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A user with no provider_type set must not be blocked (backward-compat)."""
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, None)
+        try:
+            response = client.post(
+                "/api/compliance",
+                json={
+                    "item_type": "dea_registration",
+                    "label": "DEA",
+                    "due_date": None,
+                    "notes": None,
+                },
+            )
+            assert response.status_code == 201, response.text
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    def test_therapist_cannot_update_item_to_prescriber_only_type(
+        self,
+        client: TestClient,
+        compliance_repo: InMemoryComplianceItemRepository,
+        mock_user_id: str,
+    ) -> None:
+        """PUT must also enforce the provider_type gate, not just POST."""
+        item = _seed(compliance_repo, mock_user_id, item_type="license", label="License")
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, "therapist")
+        try:
+            response = client.put(
+                f"/api/compliance/{item.id}",
+                json={
+                    "item_type": "dea_registration",
+                    "label": "DEA",
+                    "due_date": None,
+                    "notes": None,
+                },
+            )
+            assert response.status_code == 400
+            assert response.json().get("error", {}).get("code") == "PROVIDER_TYPE_GATED"
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+
 class TestCompleteItem:
     def test_sets_completed_at(
         self,
