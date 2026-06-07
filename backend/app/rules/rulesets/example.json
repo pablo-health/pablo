@@ -1,0 +1,43 @@
+{
+  "id": "EXAMPLE-2026.06",
+  "version": "2026.06",
+  "effective_date": "2026-06-01",
+  "items": [
+    {
+      "id": "example-national-credential",
+      "applies_when": {
+        "provider_type": ["prescriber", "both"]
+      },
+      "authority_ref": "Example National Authority Ref",
+      "metadata": {
+        "label": "Illustrative national credential renewal",
+        "cadence_days": 1095,
+        "reminder_lead_days": [90, 30, 7]
+      }
+    },
+    {
+      "id": "example-state-license",
+      "applies_when": {
+        "provider_type": ["prescriber", "both"],
+        "state": ["XX"]
+      },
+      "authority_ref": "Example State Authority Ref",
+      "metadata": {
+        "label": "Illustrative state license renewal (example jurisdiction XX)",
+        "cadence_days": 730,
+        "reminder_lead_days": [60, 14]
+      }
+    },
+    {
+      "id": "example-therapist-training",
+      "applies_when": {
+        "provider_type": ["therapist", "both"]
+      },
+      "authority_ref": null,
+      "metadata": {
+        "label": "Illustrative continuing-education requirement",
+        "cadence_days": 730
+      }
+    }
+  ]
+}
