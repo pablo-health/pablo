@@ -892,3 +892,193 @@ class AuditLogRow(Base):
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(Text)
     changes: Mapped[dict | None] = mapped_column(JSONB)
+
+
+# ---------------------------------------------------------------------------
+# Prescribing encounter context (prescribing rules-engine input)
+# ---------------------------------------------------------------------------
+# The encounter + prescription record the prescribing rules engine evaluates:
+# the facts a reviewer (state board peer expert, DEA, malpractice expert)
+# checks a controlled-substance prescribing decision against. One encounter
+# has zero or more prescriptions; the engine evaluates each prescription
+# against the encounter context (state, modality, prior in-person, ...).
+#
+# ``schedule`` and ``drug_class`` are the engine's vocabulary — they mirror
+# the rules-engine ``RuleContext`` dimensions, and rulesets gate items on
+# exactly these tokens. Exposed as module constants so downstream callers
+# (the enforcement evaluator, request schemas) share one source of truth; the
+# CHECK constraints below are built from them so a token can't drift between
+# the constant and the database.
+
+PRESCRIPTION_SCHEDULES: tuple[str, ...] = ("II", "III", "IV", "V", "none")
+PRESCRIPTION_DRUG_CLASSES: tuple[str, ...] = (
+    "opioid",
+    "stimulant",
+    "benzodiazepine",
+    "buprenorphine",
+    "other",
+)
+ENCOUNTER_MODALITIES: tuple[str, ...] = (
+    "in_person",
+    "audio_video",
+    "audio_only",
+    "async",
+)
+ENCOUNTER_STATUSES: tuple[str, ...] = ("open", "finalized", "voided")
+
+
+def _sql_in_list(values: tuple[str, ...]) -> str:
+    """Render a tuple of tokens as a SQL ``IN (...)`` list literal."""
+
+    return ", ".join(f"'{value}'" for value in values)
+
+
+class PrescribingEncounterRow(Base):
+    """A controlled-substance prescribing encounter — the rules-engine input.
+
+    One row per prescribing visit, sibling of ``notes`` / ``diagnostic_assessments``
+    inside each ``practice_{id}`` schema. Access is enforced at the application
+    layer via ``has_patient_access`` (keyed on ``patient_id``), same as the
+    rest of the per-patient chart — no separate RLS policy.
+
+    Prescriber credentials and the delegating physician are **snapshotted**
+    here (not only referenced) so the record reflects what was true at
+    prescribing time — contemporaneous capture, no divergence if the standing
+    ``clinician_profiles`` / ``supervision_relationships`` rows later change.
+    ``delegation_ref`` points at the delegation agreement in force (e.g. a
+    ``supervision_relationships`` row).
+
+    Stamped with ``ruleset_version`` (the ruleset in force, e.g.
+    ``"MI-RX-2026.06"``) so the rules applied to the encounter can be
+    reconstructed later. ``status`` / ``finalized_at`` back the finalization
+    gating added by the enforcement evaluator (layer 3); they are shipped now
+    so that capability needs no later migration.
+
+    The enforcement evaluator (layer 3) assembles a flat evaluation context
+    from these columns; the curated ruleset ``trigger`` / ``satisfied_when``
+    field paths resolve as:
+
+    * ``prescription.{schedule,drug_class,days_supply,refills,quantity,strength}``
+      -> :class:`PrescriptionRow`
+    * ``context.{state,modality,prior_in_person,patient_in_sud_program}`` -> here
+    * ``context.indication`` -> ``PrescriptionRow.indication``
+    * ``context.first_in_course`` -> ``PrescriptionRow.first_in_course``
+    * ``prescriber.{type,dea,license,npi}`` -> here
+    * ``prescriber.delegation_status`` = ``"delegated"`` when
+      ``delegation_ref`` is set
+    """
+
+    __tablename__ = "prescribing_encounters"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    prescriber_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # Prescriber credentials, snapshotted at prescribing time. The standing
+    # values live on clinician_profiles; the record must reflect what was true
+    # when the script was written.
+    prescriber_type: Mapped[str | None] = mapped_column(String(40))
+    prescriber_npi: Mapped[str | None] = mapped_column(String(20))
+    prescriber_dea: Mapped[str | None] = mapped_column(String(50))
+    prescriber_license: Mapped[str | None] = mapped_column(String(100))
+    # Pointer to the delegation agreement in force (e.g. a
+    # supervision_relationships row); the delegating physician's name + DEA are
+    # snapshotted alongside so the dual-DEA record is contemporaneous.
+    delegation_ref: Mapped[str | None] = mapped_column(String(128))
+    delegating_physician_name: Mapped[str | None] = mapped_column(String(255))
+    delegating_physician_dea: Mapped[str | None] = mapped_column(String(50))
+    # Encounter context — rules-engine RuleContext dimensions + triggers.
+    state: Mapped[str | None] = mapped_column(String(2))
+    modality: Mapped[str | None] = mapped_column(String(20))
+    prior_in_person: Mapped[bool | None] = mapped_column(Boolean)
+    patient_in_sud_program: Mapped[bool | None] = mapped_column(Boolean)
+    # The ruleset version in force, stamped when the encounter is evaluated /
+    # finalized (e.g. "MI-RX-2026.06"). Null until then.
+    ruleset_version: Mapped[str | None] = mapped_column(String(40))
+    # open -> finalized | voided. Finalization gating is layer 3; the column
+    # ships now so that flow needs no later migration.
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    encountered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_in_list(ENCOUNTER_STATUSES)})",
+            name="ck_prescribing_encounters_status",
+        ),
+        CheckConstraint(
+            f"modality IS NULL OR modality IN ({_sql_in_list(ENCOUNTER_MODALITIES)})",
+            name="ck_prescribing_encounters_modality",
+        ),
+        Index(
+            "ix_prescribing_encounters_patient_encountered",
+            "patient_id",
+            "encountered_at",
+        ),
+    )
+
+
+class PrescriptionRow(Base):
+    """A single prescription within a :class:`PrescribingEncounterRow`.
+
+    The unit the rules engine evaluates: ``schedule`` + ``drug_class`` select
+    which ruleset items apply (a Schedule II stimulant triggers the
+    delegation / dual-DEA / MAPS items; a non-controlled drug, ``schedule
+    "none"``, triggers nothing), and the quantitative fields
+    (``days_supply``, ``refills``) drive the conditional triggers and
+    ``satisfied_when`` checks. ``patient_id`` is denormalized from the
+    encounter so per-tenant patient-access checks and chart queries key on it
+    directly, same as ``notes`` / ``patient_medications``.
+    """
+
+    __tablename__ = "prescriptions"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    encounter_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("prescribing_encounters.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    rxnorm_id: Mapped[str | None] = mapped_column(String(20))
+    drug_name: Mapped[str | None] = mapped_column(String(200))
+    schedule: Mapped[str] = mapped_column(String(4), nullable=False)
+    drug_class: Mapped[str] = mapped_column(String(20), nullable=False)
+    strength: Mapped[str | None] = mapped_column(String(100))
+    quantity: Mapped[int | None] = mapped_column(Integer)
+    days_supply: Mapped[int | None] = mapped_column(Integer)
+    refills: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Conditional-rule triggers: indication (e.g. "acute_pain" -> the 7-day
+    # acute-opioid limit) and whether this is the first prescription in a
+    # course (-> Start Talking consent). Null = not asserted.
+    indication: Mapped[str | None] = mapped_column(String(40))
+    first_in_course: Mapped[bool | None] = mapped_column(Boolean)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            f"schedule IN ({_sql_in_list(PRESCRIPTION_SCHEDULES)})",
+            name="ck_prescriptions_schedule",
+        ),
+        CheckConstraint(
+            f"drug_class IN ({_sql_in_list(PRESCRIPTION_DRUG_CLASSES)})",
+            name="ck_prescriptions_drug_class",
+        ),
+    )
