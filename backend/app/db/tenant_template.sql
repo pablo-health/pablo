@@ -410,6 +410,20 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.prescribing_encounter_addenda (
+    id uuid NOT NULL,
+    encounter_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    label character varying(120) NOT NULL,
+    text text NOT NULL,
+    digest character varying(64) NOT NULL,
+    prev_digest character varying(64),
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -433,6 +447,7 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
+    integrity_digest character varying(64),
     CONSTRAINT ck_prescribing_encounters_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'audio_video'::character varying, 'audio_only'::character varying, 'async'::character varying])::text[])))),
     CONSTRAINT ck_prescribing_encounters_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'finalized'::character varying, 'voided'::character varying])::text[])))
 );
@@ -676,6 +691,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounter_addenda
+    ADD CONSTRAINT prescribing_encounter_addenda_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounters
     ADD CONSTRAINT prescribing_encounters_pkey PRIMARY KEY (id);
 
@@ -891,6 +911,14 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
+CREATE INDEX ix_prescribing_encounter_addenda_encounter_id ON __TENANT_SCHEMA__.prescribing_encounter_addenda USING btree (encounter_id);
+
+
+
+CREATE INDEX ix_prescribing_encounter_addenda_patient_id ON __TENANT_SCHEMA__.prescribing_encounter_addenda USING btree (patient_id);
+
+
+
 CREATE INDEX ix_prescribing_encounters_patient_encountered ON __TENANT_SCHEMA__.prescribing_encounters USING btree (patient_id, encountered_at);
 
 
@@ -976,6 +1004,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounter_addenda
+    ADD CONSTRAINT prescribing_encounter_addenda_encounter_id_fkey FOREIGN KEY (encounter_id) REFERENCES __TENANT_SCHEMA__.prescribing_encounters(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounter_addenda
+    ADD CONSTRAINT prescribing_encounter_addenda_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 
