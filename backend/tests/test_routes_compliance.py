@@ -18,7 +18,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from app.auth.service import get_current_user
 from app.main import app
+from app.models import User
 from app.repositories import get_compliance_item_repository
 from app.repositories.postgres.compliance_item import ComplianceItem
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
@@ -101,10 +103,21 @@ def _seed(
     return item
 
 
+def _make_user(user_id: str, provider_type: str | None) -> User:
+    """Build a minimal User with the given provider_type for dependency overrides."""
+    return User(
+        id=user_id,
+        email="test@example.com",
+        name="Test User",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_accepted_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        baa_version="2024-01-01",
+        provider_type=provider_type,
+    )
+
+
 class TestListTemplates:
-    def test_returns_catalog_for_current_edition(
-        self, client: TestClient
-    ) -> None:
+    def test_returns_catalog_for_current_edition(self, client: TestClient) -> None:
         response = client.get("/api/compliance/templates")
         assert response.status_code == 200
         body = response.json()
@@ -113,6 +126,65 @@ class TestListTemplates:
         types = {t["item_type"] for t in body}
         assert "license" in types
         assert "liability_insurance" in types
+
+    def test_therapist_does_not_see_dea_registration(
+        self, client: TestClient, mock_user_id: str
+    ) -> None:
+        """A therapist provider_type must not receive prescriber-only templates."""
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, "therapist")
+        try:
+            response = client.get("/api/compliance/templates")
+            assert response.status_code == 200
+            types = {t["item_type"] for t in response.json()}
+            assert "dea_registration" not in types
+            assert "dea_mate_training" not in types
+            assert "board_certification" not in types
+            # Universal templates still appear.
+            assert "license" in types
+            assert "npi" in types
+        finally:
+            # Restore the default override so other tests aren't affected.
+            app.dependency_overrides.pop(get_current_user, None)
+
+    def test_prescriber_sees_dea_registration(self, client: TestClient, mock_user_id: str) -> None:
+        """A prescriber provider_type must receive prescriber-specific templates."""
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, "prescriber")
+        try:
+            response = client.get("/api/compliance/templates")
+            assert response.status_code == 200
+            types = {t["item_type"] for t in response.json()}
+            assert "dea_registration" in types
+            assert "dea_mate_training" in types
+            assert "board_certification" in types
+            # Universal templates still appear.
+            assert "license" in types
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    def test_none_provider_type_sees_all_templates(
+        self, client: TestClient, mock_user_id: str
+    ) -> None:
+        """A user whose provider_type is None receives the full catalog (backward compat)."""
+        app.dependency_overrides[get_current_user] = lambda: _make_user(mock_user_id, None)
+        try:
+            response = client.get("/api/compliance/templates")
+            assert response.status_code == 200
+            types = {t["item_type"] for t in response.json()}
+            assert "dea_registration" in types
+            assert "license" in types
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+
+    def test_response_includes_provider_types_field(self, client: TestClient) -> None:
+        """Every template in the response carries a provider_types list."""
+        response = client.get("/api/compliance/templates")
+        assert response.status_code == 200
+        for tmpl in response.json():
+            assert "provider_types" in tmpl, (
+                f"Template {tmpl['item_type']!r} missing provider_types"
+            )
+            assert isinstance(tmpl["provider_types"], list)
+            assert len(tmpl["provider_types"]) > 0
 
 
 class TestListItems:
