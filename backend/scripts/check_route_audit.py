@@ -182,6 +182,13 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/users/me/mfa-enrolled"),  # records caller's own MFA enrollment
         ("put", "/api/users/me/preferences"),  # saves caller's own preferences
         ("put", "/api/users/me/preferences/theme"),  # saves caller's own theme
+        # supervision.py — clinician's own oversight relationships + accrued hours (no patient PHI)
+        ("get", "/api/supervision"),  # lists clinician's own supervision relationships
+        ("post", "/api/supervision"),  # creates a clinician supervision relationship
+        ("put", "/api/supervision/{relationship_id}"),  # updates a supervision relationship
+        ("delete", "/api/supervision/{relationship_id}"),  # deletes a supervision relationship
+        ("get", "/api/supervision/{relationship_id}/hours"),  # lists accrued hours (own records)
+        ("post", "/api/supervision/{relationship_id}/hours"),  # logs an accrued-hours entry
     }
 )
 

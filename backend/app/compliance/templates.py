@@ -431,6 +431,28 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         sort_order=190,
         severity="routine",
     ),
+    # Review deadline for a supervision / oversight relationship (physician
+    # delegation, collaborative practice, pre-licensure supervision). Items of
+    # this type are created automatically alongside a supervision relationship
+    # so the relationship's review date flows through the reminder cron; the
+    # cadence is None because the review date is set per relationship, not on a
+    # fixed cycle. Visible to every role — supervision applies to prescribers
+    # (delegation) and pre-licensure clinicians alike.
+    ComplianceTemplate(
+        item_type="supervision_review",
+        label="Supervision agreement review",
+        description=(
+            "Review date for a supervision or oversight relationship "
+            "(delegation, collaborative practice, or clinical supervision). "
+            "Lapsing one can suspend the authority it grants."
+        ),
+        cadence_days=None,
+        reminder_windows=(90, 60, 30, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=200,
+        severity="critical",
+    ),
     # --- Escape hatch ---------------------------------------------------
     # Free-form custom reminder. The user supplies their own per-instance
     # label (multi_instance=True); we only enforce a sensible default
