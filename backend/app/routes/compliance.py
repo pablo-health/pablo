@@ -58,6 +58,7 @@ class ComplianceTemplateResponse(BaseModel):
     multi_instance: bool
     min_edition: str
     sort_order: int
+    provider_types: list[str]
 
 
 def _template_to_response(t: ComplianceTemplate) -> ComplianceTemplateResponse:
@@ -70,6 +71,7 @@ def _template_to_response(t: ComplianceTemplate) -> ComplianceTemplateResponse:
         multi_instance=t.multi_instance,
         min_edition=t.min_edition,
         sort_order=t.sort_order,
+        provider_types=list(t.provider_types),
     )
 
 
@@ -134,19 +136,27 @@ def _to_response(item: ComplianceItem) -> ComplianceItemResponse:
     )
 
 
-RepoDep = Annotated[
-    PostgresComplianceItemRepository, Depends(get_compliance_item_repository)
-]
+RepoDep = Annotated[PostgresComplianceItemRepository, Depends(get_compliance_item_repository)]
 UserDep = Annotated[User, Depends(get_current_user)]
 
 
 @router.get("/templates", response_model=list[ComplianceTemplateResponse])
 def list_compliance_templates(
-    _user: UserDep,
+    user: UserDep,
 ) -> list[ComplianceTemplateResponse]:
-    """Return the catalog of trackable items visible to this edition."""
+    """Return the catalog of trackable items visible to this edition.
+
+    Templates are filtered by both edition and the caller's provider type
+    so that, e.g., prescriber-specific items (DEA registration) do not
+    appear in a therapist's compliance wizard. A ``None`` provider type
+    (not yet set on the profile) returns the full edition-filtered catalog
+    for backward compatibility.
+    """
     edition = _current_edition()
-    return [_template_to_response(t) for t in list_templates_for_edition(edition)]
+    return [
+        _template_to_response(t)
+        for t in list_templates_for_edition(edition, provider_type=user.provider_type)
+    ]
 
 
 @router.get("", response_model=list[ComplianceItemResponse])
@@ -194,9 +204,7 @@ def update_compliance_item(
 
 
 @router.post("/{item_id}/complete", response_model=ComplianceItemResponse)
-def complete_compliance_item(
-    item_id: str, user: UserDep, repo: RepoDep
-) -> ComplianceItemResponse:
+def complete_compliance_item(item_id: str, user: UserDep, repo: RepoDep) -> ComplianceItemResponse:
     """Mark an item as completed (e.g. attestation done, training renewed)."""
     existing = repo.get(item_id, user.id)
     if existing is None:
