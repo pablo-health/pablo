@@ -410,6 +410,59 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    prescriber_user_id character varying(128) NOT NULL,
+    prescriber_type character varying(40),
+    prescriber_npi character varying(20),
+    prescriber_dea character varying(50),
+    prescriber_license character varying(100),
+    delegation_ref character varying(128),
+    delegating_physician_name character varying(255),
+    delegating_physician_dea character varying(50),
+    state character varying(2),
+    modality character varying(20),
+    prior_in_person boolean,
+    patient_in_sud_program boolean,
+    ruleset_version character varying(40),
+    status character varying(20) NOT NULL,
+    encountered_at timestamp with time zone,
+    finalized_at timestamp with time zone,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_prescribing_encounters_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'audio_video'::character varying, 'audio_only'::character varying, 'async'::character varying])::text[])))),
+    CONSTRAINT ck_prescribing_encounters_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'finalized'::character varying, 'voided'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.prescriptions (
+    id uuid NOT NULL,
+    encounter_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    rxnorm_id character varying(20),
+    drug_name character varying(200),
+    schedule character varying(4) NOT NULL,
+    drug_class character varying(20) NOT NULL,
+    strength character varying(100),
+    quantity integer,
+    days_supply integer,
+    refills integer NOT NULL,
+    indication character varying(40),
+    first_in_course boolean,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_prescriptions_drug_class CHECK (((drug_class)::text = ANY ((ARRAY['opioid'::character varying, 'stimulant'::character varying, 'benzodiazepine'::character varying, 'buprenorphine'::character varying, 'other'::character varying])::text[]))),
+    CONSTRAINT ck_prescriptions_schedule CHECK (((schedule)::text = ANY ((ARRAY['II'::character varying, 'III'::character varying, 'IV'::character varying, 'V'::character varying, 'none'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
     id uuid NOT NULL,
     supervision_relationship_id uuid NOT NULL,
@@ -623,6 +676,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounters
+    ADD CONSTRAINT prescribing_encounters_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
+    ADD CONSTRAINT prescriptions_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
     ADD CONSTRAINT supervision_hours_pkey PRIMARY KEY (id);
 
@@ -828,6 +891,26 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
+CREATE INDEX ix_prescribing_encounters_patient_encountered ON __TENANT_SCHEMA__.prescribing_encounters USING btree (patient_id, encountered_at);
+
+
+
+CREATE INDEX ix_prescribing_encounters_patient_id ON __TENANT_SCHEMA__.prescribing_encounters USING btree (patient_id);
+
+
+
+CREATE INDEX ix_prescribing_encounters_prescriber_user_id ON __TENANT_SCHEMA__.prescribing_encounters USING btree (prescriber_user_id);
+
+
+
+CREATE INDEX ix_prescriptions_encounter_id ON __TENANT_SCHEMA__.prescriptions USING btree (encounter_id);
+
+
+
+CREATE INDEX ix_prescriptions_patient_id ON __TENANT_SCHEMA__.prescriptions USING btree (patient_id);
+
+
+
 CREATE INDEX ix_supervision_hours_supervision_relationship_id ON __TENANT_SCHEMA__.supervision_hours USING btree (supervision_relationship_id);
 
 
@@ -893,6 +976,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounters
+    ADD CONSTRAINT prescribing_encounters_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
+    ADD CONSTRAINT prescriptions_encounter_id_fkey FOREIGN KEY (encounter_id) REFERENCES __TENANT_SCHEMA__.prescribing_encounters(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
+    ADD CONSTRAINT prescriptions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 
