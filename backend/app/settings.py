@@ -560,6 +560,26 @@ class Settings(BaseSettings):
         default="pablo-audio",
         description="GCS bucket for encrypted audio uploads",
     )
+    # Compliance document storage (license copies, insurance declarations,
+    # etc.). Accepts either a ``gs://<bucket>[/prefix]`` value (GCS) or an
+    # absolute local directory path (self-hosted deployments without a cloud
+    # bucket). When unset, the /api/compliance/{id}/documents surface returns
+    # 503 with a clear configuration message.
+    compliance_documents_storage_root: str | None = Field(
+        default=None,
+        description=(
+            "Storage root for clinician-uploaded compliance evidence documents. "
+            "Use ``gs://<bucket>[/prefix]`` for GCS or an absolute local "
+            "directory path for self-hosted deployments. Leave unset to disable "
+            "the compliance-document upload surface."
+        ),
+    )
+    # Maximum size for a single compliance document upload.
+    compliance_documents_max_bytes: int = Field(
+        default=25 * 1024 * 1024,
+        description="Maximum compliance document upload size (bytes).",
+    )
+
     # Patient document upload (THERAPY-ak6m.2). When unset, the
     # /api/patients/{id}/documents surface returns 503 with a clear
     # configuration message — keeps self-hosters who haven't provisioned

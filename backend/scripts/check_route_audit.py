@@ -135,6 +135,17 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/compliance/{item_id}/complete"),  # marks therapist task complete
         ("put", "/api/compliance/{item_id}"),  # updates therapist compliance task
         ("delete", "/api/compliance/{item_id}"),  # deletes therapist compliance task
+        # compliance.py — evidence documents attached to compliance items (own credentials, no PHI)
+        (
+            "post",
+            "/api/compliance/{item_id}/documents",
+        ),  # uploads evidence doc for therapist's own item
+        (
+            "get",
+            "/api/compliance/{item_id}/documents",
+        ),  # lists evidence docs for therapist's own item
+        ("get", "/api/compliance/documents/{document_id}/file"),  # streams evidence doc bytes
+        ("delete", "/api/compliance/documents/{document_id}"),  # removes evidence doc
         # ehr_routes.py — EHR UI-navigation config (selectors/steps), no patient data
         ("get", "/api/ehr-routes/{ehr_system}"),  # navigation route config
         ("patch", "/api/ehr-routes/{ehr_system}/steps/{step_index}"),  # updates a nav step
@@ -266,8 +277,7 @@ def _injects_tenant_audit(annotations: dict[str, str]) -> bool:
     counts on its tenant-``AuditService`` parameter.
     """
     return any(
-        "AuditService" in ann and "PlatformAuditService" not in ann
-        for ann in annotations.values()
+        "AuditService" in ann and "PlatformAuditService" not in ann for ann in annotations.values()
     )
 
 
