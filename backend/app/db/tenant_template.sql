@@ -410,6 +410,30 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.prescribing_checklist_items (
+    id uuid NOT NULL,
+    encounter_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    item_id character varying(120) NOT NULL,
+    requirement_level character varying(20) NOT NULL,
+    flag_behavior character varying(20) NOT NULL,
+    status character varying(20) NOT NULL,
+    evidence_link character varying(512),
+    captured_by character varying(128),
+    captured_at timestamp with time zone,
+    authority_ref character varying(255),
+    ruleset_version character varying(40) NOT NULL,
+    created_by character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    deleted_at timestamp with time zone,
+    CONSTRAINT ck_prescribing_checklist_items_flag_behavior CHECK (((flag_behavior)::text = ANY ((ARRAY['hard_stop'::character varying, 'soft_warn'::character varying, 'info'::character varying])::text[]))),
+    CONSTRAINT ck_prescribing_checklist_items_requirement_level CHECK (((requirement_level)::text = ANY ((ARRAY['required'::character varying, 'conditional'::character varying, 'recommended'::character varying])::text[]))),
+    CONSTRAINT ck_prescribing_checklist_items_status CHECK (((status)::text = ANY ((ARRAY['satisfied'::character varying, 'missing'::character varying, 'na'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.prescribing_encounter_addenda (
     id uuid NOT NULL,
     encounter_id uuid NOT NULL,
@@ -691,6 +715,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
+    ADD CONSTRAINT prescribing_checklist_items_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounter_addenda
     ADD CONSTRAINT prescribing_encounter_addenda_pkey PRIMARY KEY (id);
 
@@ -718,6 +747,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
     ADD CONSTRAINT therapy_sessions_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
+    ADD CONSTRAINT uq_prescribing_checklist_items_encounter_item UNIQUE (encounter_id, item_id);
 
 
 
@@ -911,6 +945,14 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
+CREATE INDEX ix_prescribing_checklist_items_encounter_id ON __TENANT_SCHEMA__.prescribing_checklist_items USING btree (encounter_id);
+
+
+
+CREATE INDEX ix_prescribing_checklist_items_patient_id ON __TENANT_SCHEMA__.prescribing_checklist_items USING btree (patient_id);
+
+
+
 CREATE INDEX ix_prescribing_encounter_addenda_encounter_id ON __TENANT_SCHEMA__.prescribing_encounter_addenda USING btree (encounter_id);
 
 
@@ -1004,6 +1046,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
+    ADD CONSTRAINT prescribing_checklist_items_encounter_id_fkey FOREIGN KEY (encounter_id) REFERENCES __TENANT_SCHEMA__.prescribing_encounters(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
+    ADD CONSTRAINT prescribing_checklist_items_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 
