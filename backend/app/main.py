@@ -50,6 +50,7 @@ from .routes import (
     patients,
     scheduling,
     sessions,
+    supervision,
     users,
 )
 from .settings import get_settings
@@ -163,6 +164,7 @@ app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
+app.include_router(supervision.router)
 app.include_router(outcome_measures_router)
 app.include_router(patient_outcome_measures_router)
 app.include_router(medications_router)

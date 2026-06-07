@@ -49,6 +49,8 @@ def test_critical_items_are_livelihood_or_legal() -> None:
         "dea_registration",
         "dea_mate_training",
         "board_certification",
+        # Supervision/oversight review — a lapse suspends practice/prescribing authority
+        "supervision_review",
     }
     actual_critical = {t.item_type for t in _TEMPLATES if t.severity == "critical"}
     assert actual_critical == expected_critical
