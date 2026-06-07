@@ -47,6 +47,21 @@ def edition_at_least(have: Edition, need: Edition) -> bool:
     return _EDITION_RANK[have] >= _EDITION_RANK[need]
 
 
+ProviderTypeFilter = tuple[str, ...]
+"""Which provider types can see a template.
+
+The canonical values are ``"therapist"``, ``"prescriber"``, and
+``"both"``.  The default (``("therapist", "prescriber", "both")``) means
+every user type sees the template, preserving backward-compatibility for
+all existing entries.  Templates aimed specifically at prescribers set
+``provider_types=("prescriber", "both")``.
+
+Filtering is done at display/listing time (``list_templates_for_edition``).
+A ``None`` caller provider_type is treated as "show everything," so
+deployments that don't use the provider-type field keep the full catalog.
+"""
+
+
 @dataclass(frozen=True)
 class ComplianceTemplate:
     """One trackable compliance category.
@@ -94,6 +109,20 @@ class ComplianceTemplate:
 
     severity: Severity
     """Tone tier for downstream reminders. See ``Severity`` docstring."""
+
+    provider_types: ProviderTypeFilter = ("therapist", "prescriber", "both")
+    """Provider types that see this template.
+
+    Defaults to all provider types so every existing entry remains
+    universally visible without code changes. Prescriber-specific
+    templates (DEA registration, board certification, etc.) narrow this
+    to ``("prescriber", "both")``.
+
+    Evaluated by ``list_templates_for_edition``: a caller whose
+    ``provider_type`` is ``None`` receives all templates regardless of
+    this field (backward-compatible with deployments that don't collect
+    provider type).
+    """
 
 
 _TEMPLATES: tuple[ComplianceTemplate, ...] = (
@@ -154,6 +183,54 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         min_edition="core",
         sort_order=50,
         severity="critical",
+    ),
+    # --- Prescriber-specific (core, all editions) ----------------------
+    ComplianceTemplate(
+        item_type="dea_registration",
+        label="DEA registration renewal",
+        description=(
+            "Federal controlled-substance registration. Renewed every "
+            "3 years; practicing without a valid registration is a federal "
+            "violation."
+        ),
+        cadence_days=1095,
+        reminder_windows=(90, 60, 30, 0),
+        multi_instance=False,
+        min_edition="core",
+        sort_order=55,
+        severity="critical",
+        provider_types=("prescriber", "both"),
+    ),
+    ComplianceTemplate(
+        item_type="dea_mate_training",
+        label="DEA MATE training",
+        description=(
+            "One-time 8-hour training on substance use disorder treatment "
+            "required of DEA registrants who prescribe controlled substances. "
+            "Stored for reference; no recurring reminder."
+        ),
+        cadence_days=None,
+        reminder_windows=(),
+        multi_instance=False,
+        min_edition="core",
+        sort_order=57,
+        severity="critical",
+        provider_types=("prescriber", "both"),
+    ),
+    ComplianceTemplate(
+        item_type="board_certification",
+        label="Board certification / recertification",
+        description=(
+            "Specialty board certification renewal. Cycle length varies by "
+            "board (commonly every 5 years); check your board's requirements."
+        ),
+        cadence_days=1825,
+        reminder_windows=(180, 90, 30),
+        multi_instance=False,
+        min_edition="core",
+        sort_order=58,
+        severity="critical",
+        provider_types=("prescriber", "both"),
     ),
     # --- Solo (hosted) tier additions ----------------------------------
     ComplianceTemplate(
@@ -376,10 +453,31 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
 )
 
 
-def list_templates_for_edition(edition: Edition) -> list[ComplianceTemplate]:
-    """Return templates visible to the given edition, sorted for display."""
+def list_templates_for_edition(
+    edition: Edition,
+    provider_type: str | None = None,
+) -> list[ComplianceTemplate]:
+    """Return templates visible to the given edition, sorted for display.
+
+    Args:
+        edition: The current deployment edition (``core``, ``solo``, or
+            ``practice``).  A template is included only when the edition
+            meets its ``min_edition`` requirement.
+        provider_type: The caller's provider type (``"therapist"``,
+            ``"prescriber"``, ``"both"``, or ``None``).  When ``None``
+            every template passes the provider-type check, preserving
+            backward-compatibility for deployments that do not collect
+            provider type.  Otherwise a template is included only when
+            ``provider_type`` appears in its ``provider_types`` tuple.
+    """
+
+    def _visible(t: ComplianceTemplate) -> bool:
+        return edition_at_least(edition, t.min_edition) and (
+            provider_type is None or provider_type in t.provider_types
+        )
+
     return sorted(
-        (t for t in _TEMPLATES if edition_at_least(edition, t.min_edition)),
+        (t for t in _TEMPLATES if _visible(t)),
         key=lambda t: t.sort_order,
     )
 
