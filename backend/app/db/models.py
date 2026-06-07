@@ -12,6 +12,7 @@ stored as JSONB — they're always read/written as a whole and rarely queried.
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     Uuid,
@@ -596,6 +598,83 @@ class ComplianceDocumentRow(Base):
     description: Mapped[str | None] = mapped_column(Text)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     uploaded_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+
+
+class SupervisionRelationshipRow(Base):
+    """Per-user supervision / oversight relationship — PHI-free.
+
+    Models the regulatory relationships a clinician must keep current:
+    physician delegation, NP collaborative agreements, PA supervision,
+    and pre-licensure clinical supervision. These describe the
+    clinician's own professional standing (and that of their named
+    supervisor), not any patient, so the table lives in the practice
+    schema alongside ``compliance_items`` and is gated by ``user_id``
+    like the rest of the user-owned data.
+
+    The relationship's review deadline rides an existing
+    ``compliance_items`` row (``compliance_item_id``) so it reuses the
+    reminder/dispatch machinery — ``next_review_date`` mirrors that
+    item's ``due_date``. The link is nullable so a relationship can be
+    recorded before its review item exists. ``relationship_type`` and
+    ``status`` are free-form strings (validated at the service layer)
+    to keep the schema flexible across professions and jurisdictions.
+    """
+
+    __tablename__ = "supervision_relationships"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    compliance_item_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("compliance_items.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    relationship_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    supervisor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    supervisor_credential: Mapped[str | None] = mapped_column(String(100))
+    supervisor_dea: Mapped[str | None] = mapped_column(String(50))
+    supervisor_license: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(2))
+    effective_date: Mapped[str | None] = mapped_column(String(10))
+    review_cadence_days: Mapped[int | None] = mapped_column(Integer)
+    next_review_date: Mapped[str | None] = mapped_column(String(10))
+    authority_ref: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SupervisionHoursRow(Base):
+    """Accrued-hour log entry against a supervision relationship — PHI-free.
+
+    Backs pre-licensure supervision (associate/intern hour requirements),
+    where the clinician logs direct/indirect hours toward a board total.
+    Each entry belongs to a ``SupervisionRelationshipRow`` (cascade
+    delete) and carries ``user_id`` directly so it follows the same
+    user-isolation policy as the rest of the user-owned tables. ``hours``
+    is stored as an exact decimal so fractional logging (0.25, 1.5)
+    sums cleanly. ``kind`` is a free-form string (direct | indirect).
+    """
+
+    __tablename__ = "supervision_hours"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    supervision_relationship_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("supervision_relationships.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    logged_date: Mapped[str] = mapped_column(String(10), nullable=False)
+    hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    supervisor: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ChatConversationRow(Base):

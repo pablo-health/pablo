@@ -410,6 +410,43 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
+    id uuid NOT NULL,
+    supervision_relationship_id uuid NOT NULL,
+    user_id character varying(128) NOT NULL,
+    logged_date character varying(10) NOT NULL,
+    hours numeric(6,2) NOT NULL,
+    kind character varying(20) NOT NULL,
+    supervisor character varying(255),
+    notes text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.supervision_relationships (
+    id uuid NOT NULL,
+    user_id character varying(128) NOT NULL,
+    compliance_item_id uuid,
+    relationship_type character varying(50) NOT NULL,
+    supervisor_name character varying(255) NOT NULL,
+    supervisor_credential character varying(100),
+    supervisor_dea character varying(50),
+    supervisor_license character varying(100),
+    state character varying(2),
+    effective_date character varying(10),
+    review_cadence_days integer,
+    next_review_date character varying(10),
+    authority_ref character varying(255),
+    status character varying(20) NOT NULL,
+    notes text,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     id uuid NOT NULL,
     user_id character varying(128) NOT NULL,
@@ -583,6 +620,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patients
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
     ADD CONSTRAINT pk_llm_usage PRIMARY KEY (user_id, feature_key, period_yyyymm, model);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
+    ADD CONSTRAINT supervision_hours_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
+    ADD CONSTRAINT supervision_relationships_pkey PRIMARY KEY (id);
 
 
 
@@ -781,6 +828,22 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
+CREATE INDEX ix_supervision_hours_supervision_relationship_id ON __TENANT_SCHEMA__.supervision_hours USING btree (supervision_relationship_id);
+
+
+
+CREATE INDEX ix_supervision_hours_user_id ON __TENANT_SCHEMA__.supervision_hours USING btree (user_id);
+
+
+
+CREATE INDEX ix_supervision_relationships_compliance_item_id ON __TENANT_SCHEMA__.supervision_relationships USING btree (compliance_item_id);
+
+
+
+CREATE INDEX ix_supervision_relationships_user_id ON __TENANT_SCHEMA__.supervision_relationships USING btree (user_id);
+
+
+
 CREATE INDEX ix_therapy_sessions_deleted_at_partial ON __TENANT_SCHEMA__.therapy_sessions USING btree (deleted_at) WHERE (deleted_at IS NOT NULL);
 
 
@@ -830,6 +893,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
+    ADD CONSTRAINT supervision_hours_supervision_relationship_id_fkey FOREIGN KEY (supervision_relationship_id) REFERENCES __TENANT_SCHEMA__.supervision_relationships(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
+    ADD CONSTRAINT supervision_relationships_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.compliance_items(id) ON DELETE CASCADE;
 
 
 
