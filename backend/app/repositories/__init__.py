@@ -234,6 +234,13 @@ def get_medication_repository() -> MedicationRepository:
     return PostgresMedicationRepository(_get_pg_session())
 
 
+def get_supervision_repository():  # type: ignore[no-untyped-def]
+    """Get supervision-relationship repository instance (postgres only)."""
+    from .postgres.supervision import PostgresSupervisionRepository
+
+    return PostgresSupervisionRepository(_get_pg_session())
+
+
 __all__ = [
     "AllowlistRepository",
     "ChatRepository",
@@ -284,5 +291,6 @@ __all__ = [
     "get_patient_document_repository",
     "get_patient_repository",
     "get_session_repository",
+    "get_supervision_repository",
     "get_user_repository",
 ]
