@@ -114,7 +114,7 @@ def _current_edition() -> Edition:
     return get_settings().pablo_edition
 
 
-def _validate(payload: ComplianceItemPayload) -> None:
+def _validate(payload: ComplianceItemPayload, user: User) -> None:
     template = get_template(payload.item_type)
     edition = _current_edition()
     if template is None:
@@ -131,6 +131,17 @@ def _validate(payload: ComplianceItemPayload) -> None:
             f"item_type '{payload.item_type}' is not available on this edition",
             {"edition": edition, "required": template.min_edition},
             code="EDITION_GATED",
+        )
+    # Refuse to create instances of templates the caller's provider_type
+    # cannot see — mirrors the listing filter so the create/update gate is
+    # consistent with what the wizard surfaces.  A None provider_type means
+    # no restriction (backward-compatible with deployments that don't
+    # collect provider type).
+    if user.provider_type is not None and user.provider_type not in template.provider_types:
+        raise BadRequestError(
+            f"item_type '{payload.item_type}' is not available for your provider type",
+            {"provider_type": user.provider_type, "required": list(template.provider_types)},
+            code="PROVIDER_TYPE_GATED",
         )
     if payload.due_date is not None and not ISO_DATE_PATTERN.match(payload.due_date):
         raise BadRequestError(
@@ -230,7 +241,7 @@ def create_compliance_item(
     payload: ComplianceItemPayload, user: UserDep, repo: RepoDep
 ) -> ComplianceItemResponse:
     """Create a new compliance item for the caller."""
-    _validate(payload)
+    _validate(payload, user)
     now = utc_now()
     item = ComplianceItem(
         id=str(uuid.uuid4()),
@@ -251,7 +262,7 @@ def update_compliance_item(
     item_id: str, payload: ComplianceItemPayload, user: UserDep, repo: RepoDep
 ) -> ComplianceItemResponse:
     """Update an existing compliance item (full replace of editable fields)."""
-    _validate(payload)
+    _validate(payload, user)
     existing = repo.get(item_id, user.id)
     if existing is None:
         raise NotFoundError("Compliance item not found")
