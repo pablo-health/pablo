@@ -129,6 +129,7 @@ def get_engine() -> Engine:
         pool_size=settings.database_pool_size,
         max_overflow=settings.database_max_overflow,
         pool_pre_ping=True,
+        pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
         connect_args=connect_args,
     )
@@ -216,6 +217,7 @@ def _build_cloud_sql_engine(settings: Settings, option_parts: list[str]) -> Engi
         pool_size=settings.database_pool_size,
         max_overflow=settings.database_max_overflow,
         pool_pre_ping=True,
+        pool_recycle=settings.database_pool_recycle_seconds,
         echo=settings.debug,
     )
 
