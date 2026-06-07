@@ -397,6 +397,26 @@ class Settings(BaseSettings):
             "set to ``-1`` to disable recycling."
         ),
     )
+    database_connect_timeout_seconds: int = Field(
+        default=5,
+        description=(
+            "libpq ``connect_timeout`` -- abort a connection attempt after this many "
+            "seconds instead of hanging on an unreachable/slow server. Bounds the "
+            "worst case when the pool has to open a NEW connection (cold start, or "
+            "replacing a dropped one); without it a hung connect can stall a request "
+            "for minutes. Keep it short since a healthy connect is sub-second."
+        ),
+    )
+    database_tcp_keepalives_idle_seconds: int = Field(
+        default=30,
+        description=(
+            "libpq TCP keepalive idle interval, in seconds. Sends keepalive probes on "
+            "otherwise-idle connections so the network path (NAT/LB/firewall) does not "
+            "silently drop them -- the usual cause of "
+            "``SSL connection has been closed unexpectedly``. Set to ``0`` to disable "
+            "keepalives entirely."
+        ),
+    )
     database_lock_timeout_ms: int = Field(
         default=5000,
         description=(
