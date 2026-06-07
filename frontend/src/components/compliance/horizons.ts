@@ -80,6 +80,11 @@ const CATEGORY_PALETTE: Record<string, string> = {
   caqh: "bg-amber-400",
   npi: "bg-amber-400",
   insurance: "bg-rose-400",
+  // Prescriber credentials
+  dea_registration: "bg-amber-500",
+  board_certification: "bg-amber-400",
+  dea_mate_training: "bg-emerald-400",
+  supervision_review: "bg-amber-500",
   hipaa_training: "bg-emerald-400",
   training: "bg-emerald-400",
   attestation: "bg-emerald-400",
