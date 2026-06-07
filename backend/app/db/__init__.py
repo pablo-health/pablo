@@ -123,7 +123,22 @@ def get_engine() -> Engine:
     if not settings.database_url:
         msg = "DATABASE_URL is required when database_backend=postgres"
         raise ValueError(msg)
-    connect_args = {"options": " ".join(option_parts)} if option_parts else {}
+    connect_args: dict[str, object] = {
+        # Abort a hung connect (cold start, or replacing a dropped connection)
+        # instead of stalling a request for minutes on an unreachable server.
+        "connect_timeout": settings.database_connect_timeout_seconds,
+    }
+    if settings.database_tcp_keepalives_idle_seconds > 0:
+        # Keep otherwise-idle connections alive so the network path
+        # (NAT/LB/firewall) doesn't silently drop them -- the usual cause of
+        # "SSL connection has been closed unexpectedly". pool_pre_ping and
+        # pool_recycle handle whatever still slips through.
+        connect_args["keepalives"] = 1
+        connect_args["keepalives_idle"] = settings.database_tcp_keepalives_idle_seconds
+        connect_args["keepalives_interval"] = 10
+        connect_args["keepalives_count"] = 5
+    if option_parts:
+        connect_args["options"] = " ".join(option_parts)
     return create_engine(
         settings.database_url,
         pool_size=settings.database_pool_size,
