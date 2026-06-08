@@ -14,7 +14,7 @@ compliance-item link) runs in CI via the testcontainers suite.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -126,7 +126,7 @@ def _seed_relationship(
     *,
     relationship_type: str = "physician_delegation",
     supervisor_name: str = "Dr. Smith",
-    next_review_date: str | None = None,
+    next_review_date: date | None = None,
     status: str = "active",
 ) -> SupervisionRelationship:
     now = datetime.now(UTC)
@@ -140,7 +140,7 @@ def _seed_relationship(
         supervisor_dea=None,
         supervisor_license="MI-12345",
         state="MI",
-        effective_date="2026-01-01",
+        effective_date=date(2026, 1, 1),
         review_cadence_days=365,
         next_review_date=next_review_date,
         authority_ref=None,
@@ -159,7 +159,7 @@ def _seed_hours(
     user_id: str,
     *,
     hours: Decimal | None = None,
-    logged_date: str = "2026-06-01",
+    logged_date: date = date(2026, 6, 1),
 ) -> SupervisionHours:
     now = datetime.now(UTC)
     entry = SupervisionHours(
@@ -447,10 +447,18 @@ class TestListHours:
     ) -> None:
         rel = _seed_relationship(supervision_repo, mock_user_id)
         _seed_hours(
-            supervision_repo, rel.id, mock_user_id, hours=Decimal("2.50"), logged_date="2026-06-01"
+            supervision_repo,
+            rel.id,
+            mock_user_id,
+            hours=Decimal("2.50"),
+            logged_date=date(2026, 6, 1),
         )
         _seed_hours(
-            supervision_repo, rel.id, mock_user_id, hours=Decimal("1.00"), logged_date="2026-06-02"
+            supervision_repo,
+            rel.id,
+            mock_user_id,
+            hours=Decimal("1.00"),
+            logged_date=date(2026, 6, 2),
         )
 
         response = client.get(f"/api/supervision/{rel.id}/hours")

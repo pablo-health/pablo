@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -43,9 +43,9 @@ class SupervisionRelationship:
     supervisor_dea: str | None
     supervisor_license: str | None
     state: str | None
-    effective_date: str | None
+    effective_date: date | None
     review_cadence_days: int | None
-    next_review_date: str | None
+    next_review_date: date | None
     authority_ref: str | None
     status: str
     notes: str | None
@@ -58,7 +58,7 @@ class SupervisionHours:
     id: str
     supervision_relationship_id: str
     user_id: str
-    logged_date: str
+    logged_date: date
     hours: Decimal
     kind: str
     supervisor: str | None

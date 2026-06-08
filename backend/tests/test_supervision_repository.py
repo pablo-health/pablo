@@ -11,7 +11,7 @@ integration suite against a real Postgres.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -34,7 +34,7 @@ def _make_relationship(
     compliance_item_id: str | None = None,
     relationship_type: str = "physician_delegation",
     supervisor_name: str = "Dr. Pat Lee",
-    next_review_date: str | None = "2027-01-01",
+    next_review_date: date | None = date(2027, 1, 1),
     status: str = "active",
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
@@ -50,7 +50,7 @@ def _make_relationship(
         supervisor_dea="XL1234563",
         supervisor_license="MI-12345",
         state="MI",
-        effective_date="2026-01-01",
+        effective_date=date(2026, 1, 1),
         review_cadence_days=365,
         next_review_date=next_review_date,
         authority_ref="REF-1",
@@ -66,7 +66,7 @@ def _make_hours(
     hours_id: str | None = None,
     relationship_id: str = "rel-1",
     user_id: str = "user-1",
-    logged_date: str = "2026-06-01",
+    logged_date: date = date(2026, 6, 1),
     hours: Decimal | None = None,
     kind: str = "direct",
 ) -> SupervisionHours:
@@ -116,7 +116,7 @@ class TestCreateRelationship:
     def test_creates_and_links_review_item_when_label_given(self) -> None:
         session = MagicMock()
         repo = PostgresSupervisionRepository(session)
-        rel = _make_relationship(relationship_id="rel-1", next_review_date="2027-03-01")
+        rel = _make_relationship(relationship_id="rel-1", next_review_date=date(2027, 3, 1))
 
         repo.create_relationship(rel, review_item_label="Delegation annual review")
 
@@ -132,7 +132,7 @@ class TestCreateRelationship:
         )
         assert item.id == rel.compliance_item_id
         assert item.user_id == rel.user_id
-        assert item.due_date == "2027-03-01"
+        assert item.due_date == date(2027, 3, 1)
         assert item.item_type == "supervision_review"
         assert item.label == "Delegation annual review"
 
