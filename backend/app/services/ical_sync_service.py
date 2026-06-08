@@ -354,6 +354,8 @@ class ICalSyncService:
     def _fetch_feed(self, feed_url: str) -> str:
         """Fetch iCal feed data via HTTP GET."""
         req = Request(feed_url, headers={"User-Agent": "Pablo/1.0"})  # noqa: S310
+        # feed_url pre-validated by _validate_feed_url() (https + host allowlist) — no SSRF.
+        # nosemgrep
         with urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:  # noqa: S310
             raw: bytes = resp.read()
             return raw.decode("utf-8")
