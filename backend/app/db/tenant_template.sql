@@ -472,6 +472,9 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     integrity_digest character varying(64),
+    finalized_by character varying(128),
+    attestation_statement text,
+    clinical_reasoning text,
     CONSTRAINT ck_prescribing_encounters_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'audio_video'::character varying, 'audio_only'::character varying, 'async'::character varying])::text[])))),
     CONSTRAINT ck_prescribing_encounters_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'finalized'::character varying, 'voided'::character varying])::text[])))
 );
