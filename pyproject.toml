@@ -231,6 +231,7 @@ ignore = [
 "backend/app/routes/**/*.py" = [
     "PLR0913",  # Allow many arguments (FastAPI Depends injection)
     "PLC0415",  # Lazy imports for conditional SaaS features and circular import avoidance
+    "TC003",    # datetime import needed at runtime for Pydantic field validation
 ]
 "backend/app/main.py" = [
     "PLC0415",  # Lazy import of background_sync (conditional, behind calendar_auto_sync guard)

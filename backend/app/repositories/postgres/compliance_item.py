@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from ...db.models import ComplianceItemRow
@@ -20,7 +20,7 @@ class ComplianceItem:
     user_id: str
     item_type: str
     label: str
-    due_date: str | None
+    due_date: date | None
     notes: str | None
     completed_at: datetime | None
     created_at: datetime

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -126,7 +126,7 @@ def _make_relationship(
     *,
     user_id: str,
     supervisor_name: str = "Dr. Pat Lee",
-    next_review_date: str | None = "2027-01-01",
+    next_review_date: date | None = date(2027, 1, 1),
     status: str = "active",
     created_at: datetime | None = None,
 ) -> SupervisionRelationship:
@@ -141,7 +141,7 @@ def _make_relationship(
         supervisor_dea="XL1234563",
         supervisor_license="MI-12345",
         state="MI",
-        effective_date="2026-01-01",
+        effective_date=date(2026, 1, 1),
         review_cadence_days=365,
         next_review_date=next_review_date,
         authority_ref="REF-1",
@@ -156,7 +156,7 @@ def _make_hours(
     *,
     relationship_id: str,
     user_id: str,
-    logged_date: str,
+    logged_date: date,
     hours: str = "1.50",
     kind: str = "direct",
 ) -> SupervisionHours:
@@ -180,7 +180,7 @@ def test_create_relationship_persists_and_links_review_item(session: Session) ->
     user_id = _user()
     _arm(session, user_id)
 
-    rel = _make_relationship(user_id=user_id, next_review_date="2027-03-15")
+    rel = _make_relationship(user_id=user_id, next_review_date=date(2027, 3, 15))
     returned = repo.create_relationship(rel, review_item_label="Annual delegation review")
     session.commit()
 
@@ -197,7 +197,7 @@ def test_create_relationship_persists_and_links_review_item(session: Session) ->
     assert item["user_id"] == user_id
     assert item["item_type"] == "supervision_review"
     assert item["label"] == "Annual delegation review"
-    assert item["due_date"] == "2027-03-15"  # mirrors next_review_date
+    assert item["due_date"] == date(2027, 3, 15)  # mirrors next_review_date
 
     # The relationship round-trips through the real ORM with the FK persisted.
     fetched = repo.list_by_user(user_id)
@@ -215,7 +215,7 @@ def test_create_relationship_without_label_creates_no_review_item(
     _arm(session, user_id)
 
     # next_review_date is set, but no review_item_label → no item is created.
-    rel = _make_relationship(user_id=user_id, next_review_date="2027-03-15")
+    rel = _make_relationship(user_id=user_id, next_review_date=date(2027, 3, 15))
     returned = repo.create_relationship(rel)
     session.commit()
 
@@ -307,17 +307,23 @@ def test_add_and_list_hours_orders_by_logged_date_and_isolates(
     rel_a = _make_relationship(user_id=user_a)
     repo.create_relationship(rel_a)
     # Insert out of date order to prove the ORDER BY logged_date.
-    repo.add_hours(_make_hours(relationship_id=rel_a.id, user_id=user_a, logged_date="2026-06-10"))
-    repo.add_hours(_make_hours(relationship_id=rel_a.id, user_id=user_a, logged_date="2026-06-01"))
+    repo.add_hours(
+        _make_hours(relationship_id=rel_a.id, user_id=user_a, logged_date=date(2026, 6, 10))
+    )
+    repo.add_hours(
+        _make_hours(relationship_id=rel_a.id, user_id=user_a, logged_date=date(2026, 6, 1))
+    )
     _arm(session, user_b)
     rel_b = _make_relationship(user_id=user_b)
     repo.create_relationship(rel_b)
-    repo.add_hours(_make_hours(relationship_id=rel_b.id, user_id=user_b, logged_date="2026-06-05"))
+    repo.add_hours(
+        _make_hours(relationship_id=rel_b.id, user_id=user_b, logged_date=date(2026, 6, 5))
+    )
     session.commit()
 
     _arm(session, user_a)
     rows = repo.list_hours(rel_a.id, user_a)
-    assert [r.logged_date for r in rows] == ["2026-06-01", "2026-06-10"]
+    assert [r.logged_date for r in rows] == [date(2026, 6, 1), date(2026, 6, 10)]
     assert all(r.user_id == user_a for r in rows)
     # The (relationship_id, user_id) scoping rejects a cross-user read.
     assert repo.list_hours(rel_a.id, user_b) == []
