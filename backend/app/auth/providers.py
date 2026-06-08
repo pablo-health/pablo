@@ -175,7 +175,7 @@ class OidcVerifier:
             )
         except jwt.PyJWTError as err:
             # No PHI / token material in logs — failure reason only.
-            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak
+            # nosemgrep
             logger.warning("OIDC ID token rejected: %s", err)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -239,26 +239,35 @@ def _extract_email_claim(decoded: dict[str, Any]) -> str:
 
 
 class VerifierRegistry:
-    """Routes a token to a verifier by its ``iss`` claim.
+    """Verifies a token by trying each backend in order.
 
-    Firebase is always the default: any issuer not explicitly registered
-    as an OIDC backend falls through to Firebase, which preserves the
-    single-issuer behavior exactly when no OIDC issuer is configured.
+    Firebase is always tried first; the OIDC backend is appended only
+    when configured. With no OIDC backend the registry behaves exactly
+    like calling Firebase directly.
     """
 
     def __init__(self, firebase: FirebaseVerifier, oidc: OidcVerifier | None) -> None:
-        self._firebase = firebase
-        self._by_issuer: dict[str, TokenVerifier] = {}
+        self._verifiers: list[TokenVerifier] = [firebase]
         if oidc is not None:
-            self._by_issuer[oidc.issuer] = oidc
+            self._verifiers.append(oidc)
 
-    def get_verifier(self, issuer: str | None) -> TokenVerifier:
-        """Return the verifier for ``issuer``, defaulting to Firebase.
+    def verify(self, token: str) -> VerifiedIdentity:
+        """Return the identity from the first verifier that accepts the token.
 
-        An explicitly-registered OIDC issuer routes to its verifier; any
-        other issuer (including Firebase's own, and ``None``) routes to
-        Firebase, whose verifier re-checks the issuer itself.
+        Each verifier fully checks the signature and issuer; a 401 means
+        "not my token" and falls through to the next backend, while any
+        other error propagates immediately. The first 401 is re-raised
+        when no verifier accepts the token, so the dominant Firebase
+        backend's specific error codes (TOKEN_EXPIRED, TOKEN_REVOKED)
+        reach the client rather than a later backend's generic 401.
         """
-        if issuer is not None and issuer in self._by_issuer:
-            return self._by_issuer[issuer]
-        return self._firebase
+        first_exc: HTTPException | None = None
+        for verifier in self._verifiers:
+            try:
+                return verifier.verify(token)
+            except HTTPException as exc:
+                if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+                    raise
+                if first_exc is None:
+                    first_exc = exc
+        raise first_exc or HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
