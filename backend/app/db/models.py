@@ -1001,11 +1001,22 @@ class PrescribingEncounterRow(Base):
     # The ruleset version in force, stamped when the encounter is evaluated /
     # finalized (e.g. "MI-RX-2026.06"). Null until then.
     ruleset_version: Mapped[str | None] = mapped_column(String(40))
+    # The prescriber's clinical reasoning for the decision — free text in the
+    # clinician's own words, written while the encounter is open. The system
+    # may scaffold/prompt it but never machine-populates it. Part of what the
+    # integrity digest commits to, so it is frozen with the rest at signing.
+    clinical_reasoning: Mapped[str | None] = mapped_column(Text)
     # open -> finalized | voided. Finalization gating is layer 3; the column
     # ships now so that flow needs no later migration.
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     encountered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The prescriber who finalized (signed) the encounter, and their attestation
+    # statement — the human signature of the decision record. Both null until
+    # finalization; the statement is the clinician's own words, never machine-
+    # generated, and is part of what the integrity digest commits to.
+    finalized_by: Mapped[str | None] = mapped_column(String(128))
+    attestation_statement: Mapped[str | None] = mapped_column(Text)
     # Tamper-evident content digest of the finalized encounter snapshot — the
     # genesis link of the addendum hash chain. Null until finalization.
     integrity_digest: Mapped[str | None] = mapped_column(String(64))
