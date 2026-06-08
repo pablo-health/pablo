@@ -26,6 +26,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     text,
 )
@@ -33,6 +34,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..models.enums import ClinicianRole, OutcomeMeasureSource
+from ..rules.enforcement import FlagBehavior, ItemStatus, RequirementLevel
 
 
 class Base(DeclarativeBase):
@@ -1128,3 +1130,97 @@ class PrescribingEncounterAddendumRow(Base):
     prev_digest: Mapped[str | None] = mapped_column(String(64))
     created_by: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+# The checklist-ledger value vocabularies mirror the rules-engine enforcement
+# enums (``app.rules.enforcement``) so a token can't drift between the engine
+# that computes a status and the column that stores it; the CHECK constraints
+# below are built from these tuples.
+CHECKLIST_ITEM_STATUSES: tuple[str, ...] = tuple(s.value for s in ItemStatus)
+CHECKLIST_FLAG_BEHAVIORS: tuple[str, ...] = tuple(f.value for f in FlagBehavior)
+CHECKLIST_REQUIREMENT_LEVELS: tuple[str, ...] = tuple(r.value for r in RequirementLevel)
+
+
+class PrescribingChecklistItemRow(Base):
+    """The attestation ledger — one row per applicable rule item on an encounter.
+
+    The verification record behind "no checkbox without evidence": when the
+    enforcement evaluator (``app.rules.enforcement.evaluate_enforcement``) runs
+    a curated ruleset against an open encounter + prescription, the
+    attestation service (``app.prescribing.attestation``) persists one row here
+    for each *applicable* item — its computed ``status``, its ``flag_behavior``
+    / ``requirement_level``, and (once bound) the ``evidence_link`` that
+    satisfies it. An item is ``satisfied`` only when its evidence resolves (or
+    a computed ``satisfied_when`` check holds); a bare row with no evidence
+    stays ``missing``. Items that stop applying (the drug changed) are
+    soft-deleted, never silently flipped.
+
+    ``ruleset_version`` records the ruleset in force when the row was computed,
+    so the rules applied to the encounter can be reconstructed later — the same
+    contemporaneous-capture guarantee the encounter itself carries. The ledger
+    is mutable only while the encounter is ``open``; once finalized the
+    encounter (and its ledger) are frozen and corrections become dated addenda.
+
+    Per-tenant (each ``practice_{id}`` schema), patient-scoped: the
+    ``patient_id`` column gives it the auto-applied ``has_patient_access`` RLS
+    policy, same as the encounter and the rest of the per-patient chart.
+    """
+
+    __tablename__ = "prescribing_checklist_items"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    encounter_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("prescribing_encounters.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Denormalized from the encounter so per-tenant patient-access (RLS) and
+    # chart queries key on it directly, same as prescriptions / addenda.
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patients.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # The ruleset item id this row tracks (e.g. "mi_maps_review"). Unique per
+    # encounter so re-running the evaluator upserts rather than duplicates.
+    item_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    requirement_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    flag_behavior: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # The evidence that satisfies the item — a pointer to a real record (or a
+    # signed clinician statement). Null = not yet bound; the item stays missing.
+    evidence_link: Mapped[str | None] = mapped_column(String(512))
+    # Who bound the evidence / attested, and when (server clock — no backdating).
+    captured_by: Mapped[str | None] = mapped_column(String(128))
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Free-form citation snapshotted from the rule item (statute / regulation).
+    authority_ref: Mapped[str | None] = mapped_column(String(255))
+    # The ruleset version in force when this row was computed (e.g.
+    # "MI-RX-2026.06"), stamped so the rules applied can be reconstructed.
+    ruleset_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "encounter_id",
+            "item_id",
+            name="uq_prescribing_checklist_items_encounter_item",
+        ),
+        CheckConstraint(
+            f"status IN ({_sql_in_list(CHECKLIST_ITEM_STATUSES)})",
+            name="ck_prescribing_checklist_items_status",
+        ),
+        CheckConstraint(
+            f"flag_behavior IN ({_sql_in_list(CHECKLIST_FLAG_BEHAVIORS)})",
+            name="ck_prescribing_checklist_items_flag_behavior",
+        ),
+        CheckConstraint(
+            f"requirement_level IN ({_sql_in_list(CHECKLIST_REQUIREMENT_LEVELS)})",
+            name="ck_prescribing_checklist_items_requirement_level",
+        ),
+    )
