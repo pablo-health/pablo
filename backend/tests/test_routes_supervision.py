@@ -295,7 +295,7 @@ class TestCreateRelationship:
                 "effective_date": "01/01/2026",  # not ISO
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 422  # Pydantic date parsing
 
     def test_rejects_malformed_next_review_date(
         self,
@@ -308,10 +308,10 @@ class TestCreateRelationship:
                 "relationship_type": "physician_delegation",
                 "supervisor_name": "Dr. X",
                 "status": "active",
-                "next_review_date": "06/01/2027",  # not ISO (passes Pydantic length, fails regex)
+                "next_review_date": "06/01/2027",  # not ISO
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 422  # Pydantic date parsing
 
     def test_cross_user_isolation_on_list_after_create(
         self,
@@ -585,7 +585,7 @@ class TestAddHours:
             f"/api/supervision/{rel.id}/hours",
             json={"logged_date": "15-06-2026", "hours": "1.00", "kind": "direct"},
         )
-        assert response.status_code == 400
+        assert response.status_code == 422  # Pydantic date parsing
 
     def test_rejects_zero_hours(
         self,

@@ -254,7 +254,7 @@ class TestCreateItem:
                 "notes": None,
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 422  # Pydantic date parsing
 
     def test_multi_instance_allows_multiple_of_same_type(
         self,
