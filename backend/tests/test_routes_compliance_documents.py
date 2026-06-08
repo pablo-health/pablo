@@ -11,7 +11,7 @@ unsupported MIME type. Uses the same in-memory repository pattern as
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -176,7 +176,7 @@ def _seed_item(
         user_id=user_id,
         item_type=item_type,
         label=label,
-        due_date="2027-06-30",
+        due_date=date(2027, 6, 30),
         notes=None,
         completed_at=None,
         created_at=now,

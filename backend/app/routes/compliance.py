@@ -15,8 +15,8 @@ backend (GCS or local filesystem) through :mod:`app.services.compliance_storage`
 from __future__ import annotations
 
 import contextlib
-import re
 import uuid
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, UploadFile
@@ -60,8 +60,6 @@ router = APIRouter(
     dependencies=[Depends(get_tenant_context)],
 )
 
-ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
 # Maximum length of the free-form document_type field (matches the DB column).
 _DOCUMENT_TYPE_MAX_LEN = 50
 
@@ -95,7 +93,7 @@ def _template_to_response(t: ComplianceTemplate) -> ComplianceTemplateResponse:
 class ComplianceItemPayload(BaseModel):
     item_type: str = Field(min_length=1, max_length=50)
     label: str = Field(min_length=1, max_length=255)
-    due_date: str | None = Field(default=None, max_length=10)
+    due_date: date | None = None
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -103,7 +101,7 @@ class ComplianceItemResponse(BaseModel):
     id: str
     item_type: str
     label: str
-    due_date: str | None
+    due_date: date | None
     notes: str | None
     completed_at: str | None
     created_at: str
@@ -142,12 +140,6 @@ def _validate(payload: ComplianceItemPayload, user: User) -> None:
             f"item_type '{payload.item_type}' is not available for your provider type",
             {"provider_type": user.provider_type, "required": list(template.provider_types)},
             code="PROVIDER_TYPE_GATED",
-        )
-    if payload.due_date is not None and not ISO_DATE_PATTERN.match(payload.due_date):
-        raise BadRequestError(
-            "due_date must be ISO date YYYY-MM-DD",
-            {"due_date": payload.due_date},
-            code="INVALID_DATE",
         )
 
 

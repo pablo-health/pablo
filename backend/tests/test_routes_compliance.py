@@ -14,7 +14,7 @@ repository so they stay fast and DB-free.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -85,7 +85,7 @@ def _seed(
     *,
     item_type: str = "license",
     label: str = "Professional license",
-    due_date: str | None = "2027-01-01",
+    due_date: date | None = date(2027, 1, 1),
 ) -> ComplianceItem:
     now = datetime.utcnow()
     item = ComplianceItem(
@@ -254,7 +254,7 @@ class TestCreateItem:
                 "notes": None,
             },
         )
-        assert response.status_code == 400
+        assert response.status_code == 422  # Pydantic date parsing
 
     def test_multi_instance_allows_multiple_of_same_type(
         self,

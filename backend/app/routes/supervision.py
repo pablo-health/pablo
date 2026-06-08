@@ -14,15 +14,15 @@ supervision relationships and hour entries.
 
 from __future__ import annotations
 
-import re
 import uuid
+from datetime import date
 from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from ..api_errors import BadRequestError, NotFoundError
+from ..api_errors import NotFoundError
 from ..auth.service import get_current_user, get_tenant_context
 from ..models import User
 from ..repositories import get_supervision_repository
@@ -43,8 +43,6 @@ router = APIRouter(
     dependencies=[Depends(get_tenant_context)],
 )
 
-ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
 RepoDep = Annotated[PostgresSupervisionRepository, Depends(get_supervision_repository)]
 UserDep = Annotated[User, Depends(get_current_user)]
 
@@ -63,9 +61,9 @@ class SupervisionRelationshipPayload(BaseModel):
     supervisor_dea: str | None = Field(default=None, max_length=20)
     supervisor_license: str | None = Field(default=None, max_length=50)
     state: str | None = Field(default=None, max_length=2)
-    effective_date: str | None = Field(default=None, max_length=10)
+    effective_date: date | None = None
     review_cadence_days: int | None = Field(default=None, ge=1, le=3650)
-    next_review_date: str | None = Field(default=None, max_length=10)
+    next_review_date: date | None = None
     authority_ref: str | None = Field(default=None, max_length=500)
     status: str = Field(default="active", min_length=1, max_length=20)
     notes: str | None = Field(default=None, max_length=2000)
@@ -79,9 +77,9 @@ class SupervisionRelationshipResponse(BaseModel):
     supervisor_dea: str | None
     supervisor_license: str | None
     state: str | None
-    effective_date: str | None
+    effective_date: date | None
     review_cadence_days: int | None
-    next_review_date: str | None
+    next_review_date: date | None
     authority_ref: str | None
     status: str
     notes: str | None
@@ -98,7 +96,7 @@ class SupervisionRelationshipResponse(BaseModel):
 class SupervisionHoursPayload(BaseModel):
     """Fields accepted when logging supervision hours."""
 
-    logged_date: str = Field(max_length=10)
+    logged_date: date
     hours: Decimal = Field(gt=Decimal("0"), le=Decimal("24"))
     kind: str = Field(min_length=1, max_length=50)
     supervisor: str | None = Field(default=None, max_length=255)
@@ -108,7 +106,7 @@ class SupervisionHoursPayload(BaseModel):
 class SupervisionHoursResponse(BaseModel):
     id: str
     supervision_relationship_id: str
-    logged_date: str
+    logged_date: date
     hours: Decimal
     kind: str
     supervisor: str | None
@@ -135,15 +133,6 @@ class AccrualResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _validate_date(value: str | None, field: str) -> None:
-    if value is not None and not ISO_DATE_PATTERN.match(value):
-        raise BadRequestError(
-            f"{field} must be ISO date YYYY-MM-DD",
-            {field: value},
-            code="INVALID_DATE",
-        )
 
 
 def _relationship_to_response(rel: SupervisionRelationship) -> SupervisionRelationshipResponse:
@@ -209,9 +198,6 @@ def create_supervision_relationship(
     ``"<supervisor_name> supervision review"`` and the item type is
     ``"supervision_review"``.
     """
-    _validate_date(payload.effective_date, "effective_date")
-    _validate_date(payload.next_review_date, "next_review_date")
-
     now = utc_now()
     rel = SupervisionRelationship(
         id=str(uuid.uuid4()),
@@ -251,9 +237,6 @@ def update_supervision_relationship(
     repo: RepoDep,
 ) -> SupervisionRelationshipResponse:
     """Update an existing supervision relationship (full replace of editable fields)."""
-    _validate_date(payload.effective_date, "effective_date")
-    _validate_date(payload.next_review_date, "next_review_date")
-
     existing = repo.get(relationship_id, user.id)
     if existing is None:
         raise NotFoundError("Supervision relationship not found")
@@ -330,8 +313,6 @@ def add_supervision_hours(
 
     Returns 404 when the relationship does not exist or belongs to another user.
     """
-    _validate_date(payload.logged_date, "logged_date")
-
     # Ownership check before writing.
     rel = repo.get(relationship_id, user.id)
     if rel is None:
