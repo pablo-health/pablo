@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -338,8 +338,13 @@ class TestAddenda:
             enc, rx = _load(session, enc_id, rx_id)
             _satisfy_and_finalize(session, enc, rx, clinician_a)
 
+            # Distinct, increasing timestamps — as two real corrections have.
+            # ``live_addenda`` orders by ``(created_at, id)``; identical
+            # ``created_at`` values (``_now()`` truncates to the second) would
+            # fall back to the random ``id`` UUID and order non-deterministically.
+            t0 = _now()
             a1 = append_addendum(
-                session, enc, label="typo", text="dose was 10mg", author=clinician_a, now=_now()
+                session, enc, label="typo", text="dose was 10mg", author=clinician_a, now=t0
             )
             a2 = append_addendum(
                 session,
@@ -347,7 +352,7 @@ class TestAddenda:
                 label="clarify",
                 text="indication ADHD",
                 author=clinician_a,
-                now=_now(),
+                now=t0 + timedelta(seconds=1),
             )
             session.commit()
 
