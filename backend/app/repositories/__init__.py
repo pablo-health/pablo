@@ -6,8 +6,25 @@ Factory functions return the PostgreSQL implementation. Business logic never
 imports a concrete repository class directly -- always use these factories.
 """
 
-from ..scheduling_engine.repositories.appointment import AppointmentRepository
-from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from ..diagnostics.definition_provider import DbDefinitionProvider
+    from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
+    from .diagnostic_assessment import DiagnosticAssessmentRepository
+    from .google_calendar_token import GoogleCalendarTokenRepository
+    from .ical_client_mapping import ICalClientMappingRepository
+    from .ical_sync_config import ICalSyncConfigRepository
+    from .outcome_measure import OutcomeMeasureRepository
+    from .postgres.compliance_document import PostgresComplianceDocumentRepository
+    from .postgres.compliance_item import PostgresComplianceItemRepository
+    from .postgres.supervision import PostgresSupervisionRepository
+
 from .allowlist import (
     AllowlistRepository,
     InMemoryAllowlistRepository,
@@ -63,7 +80,7 @@ from .user import (
 )
 
 
-def _get_pg_session():  # type: ignore[no-untyped-def]
+def _get_pg_session() -> Session:
     """Get the request-scoped PostgreSQL session."""
     from ..db import get_db_session
 
@@ -147,7 +164,7 @@ def get_availability_rule_repository() -> AvailabilityRuleRepository:
     return PostgresAvailabilityRuleRepository(_get_pg_session())
 
 
-def get_google_calendar_token_repository():  # type: ignore[no-untyped-def]
+def get_google_calendar_token_repository() -> GoogleCalendarTokenRepository:
     """Get Google Calendar token repository instance."""
     from .postgres.google_calendar_token import (
         PostgresGoogleCalendarTokenRepository,
@@ -156,7 +173,7 @@ def get_google_calendar_token_repository():  # type: ignore[no-untyped-def]
     return PostgresGoogleCalendarTokenRepository(_get_pg_session())
 
 
-def get_ical_client_mapping_repository():  # type: ignore[no-untyped-def]
+def get_ical_client_mapping_repository() -> ICalClientMappingRepository:
     """Get iCal client mapping repository instance."""
     from .postgres.ical_client_mapping import (
         PostgresICalClientMappingRepository,
@@ -165,7 +182,7 @@ def get_ical_client_mapping_repository():  # type: ignore[no-untyped-def]
     return PostgresICalClientMappingRepository(_get_pg_session())
 
 
-def get_ical_sync_config_repository():  # type: ignore[no-untyped-def]
+def get_ical_sync_config_repository() -> ICalSyncConfigRepository:
     """Get iCal sync config repository instance."""
     from .postgres.ical_sync_config import PostgresICalSyncConfigRepository
 
@@ -179,14 +196,14 @@ def get_clinician_profile_repository() -> ClinicianProfileRepository:
     return PostgresClinicianProfileRepository(_get_pg_session())
 
 
-def get_compliance_item_repository():  # type: ignore[no-untyped-def]
+def get_compliance_item_repository() -> PostgresComplianceItemRepository:
     """Get compliance-item repository instance (postgres only)."""
     from .postgres.compliance_item import PostgresComplianceItemRepository
 
     return PostgresComplianceItemRepository(_get_pg_session())
 
 
-def get_compliance_document_repository():  # type: ignore[no-untyped-def]
+def get_compliance_document_repository() -> PostgresComplianceDocumentRepository:
     """Get compliance-document repository instance (postgres only)."""
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
 
@@ -207,21 +224,21 @@ def get_llm_usage_repository() -> LlmUsageRepository:
     return PostgresLlmUsageRepository(_get_pg_session())
 
 
-def get_outcome_measure_repository():  # type: ignore[no-untyped-def]
+def get_outcome_measure_repository() -> OutcomeMeasureRepository:
     """Get outcome measure repository instance."""
     from .postgres.outcome_measure import PostgresOutcomeMeasureRepository
 
     return PostgresOutcomeMeasureRepository(_get_pg_session())
 
 
-def get_diagnostic_assessment_repository():  # type: ignore[no-untyped-def]
+def get_diagnostic_assessment_repository() -> DiagnosticAssessmentRepository:
     """Get diagnostic assessment repository instance."""
     from .postgres.diagnostic_assessment import PostgresDiagnosticAssessmentRepository
 
     return PostgresDiagnosticAssessmentRepository(_get_pg_session())
 
 
-def get_diagnostic_definition_provider():  # type: ignore[no-untyped-def]
+def get_diagnostic_definition_provider() -> DbDefinitionProvider:
     """Get a DB-backed diagnostic definition provider (platform schema)."""
     from ..diagnostics.definition_provider import DbDefinitionProvider
 
@@ -234,7 +251,7 @@ def get_medication_repository() -> MedicationRepository:
     return PostgresMedicationRepository(_get_pg_session())
 
 
-def get_supervision_repository():  # type: ignore[no-untyped-def]
+def get_supervision_repository() -> PostgresSupervisionRepository:
     """Get supervision-relationship repository instance (postgres only)."""
     from .postgres.supervision import PostgresSupervisionRepository
 
