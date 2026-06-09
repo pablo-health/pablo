@@ -573,36 +573,6 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
 
 
 
-CREATE TABLE __TENANT_SCHEMA__.user_preferences (
-    user_id character varying(128) NOT NULL,
-    preferences jsonb NOT NULL
-);
-
-
-
-CREATE TABLE __TENANT_SCHEMA__.users (
-    id character varying(128) NOT NULL,
-    email character varying(255) NOT NULL,
-    name character varying(255) NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    title character varying(50),
-    credentials character varying(100),
-    picture text,
-    baa_accepted_at timestamp with time zone,
-    baa_version character varying(10),
-    baa_legal_name character varying(255),
-    baa_license_number character varying(100),
-    baa_license_state character varying(2),
-    baa_practice_name character varying(255),
-    baa_business_address character varying(500),
-    baa_full_text text,
-    is_admin boolean NOT NULL,
-    status character varying(20) NOT NULL,
-    mfa_enrolled_at timestamp with time zone
-);
-
-
-
 ALTER TABLE ONLY __TENANT_SCHEMA__.alembic_version
     ADD CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num);
 
@@ -755,16 +725,6 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
     ADD CONSTRAINT uq_prescribing_checklist_items_encounter_item UNIQUE (encounter_id, item_id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.user_preferences
-    ADD CONSTRAINT user_preferences_pkey PRIMARY KEY (user_id);
-
-
-
-ALTER TABLE ONLY __TENANT_SCHEMA__.users
-    ADD CONSTRAINT users_pkey PRIMARY KEY (id);
 
 
 
@@ -1017,10 +977,6 @@ CREATE INDEX ix_therapy_sessions_session_date ON __TENANT_SCHEMA__.therapy_sessi
 
 
 CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions USING btree (user_id);
-
-
-
-CREATE INDEX ix_users_email ON __TENANT_SCHEMA__.users USING btree (email);
 
 
 
