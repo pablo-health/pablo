@@ -136,7 +136,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 def patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str]:
     """Provision patient P with a grant for clinician A. Returns (patient_id, clinician_a)."""
     patient_id = str(uuid.uuid4())
-    clinician_a = "rx-attest-clinician-a"
+    clinician_a = "af9b06b4-415f-5e9d-b1f9-a0ef2a88d539"
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
         conn.execute(
@@ -412,7 +412,7 @@ class TestLedgerRlsIsolation:
 
         _patient_id, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
-        clinician_b = "rx-attest-clinician-b"
+        clinician_b = "acdb3b89-9b53-5748-92cd-dadcf5aeb029"
 
         # A computes the ledger; control assertion that A sees it.
         sess_a, s_a, u_a = _session(engine, tenant_schema, clinician_a)
@@ -442,7 +442,7 @@ class TestLedgerRlsIsolation:
 
         patient_id, _ = patient_and_grant
         enc_id, _rx = encounter
-        clinician_b = "rx-attest-clinician-b"
+        clinician_b = "acdb3b89-9b53-5748-92cd-dadcf5aeb029"
 
         with engine.connect() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))

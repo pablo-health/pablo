@@ -84,7 +84,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 def seed_patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str]:
     """Provision patient P with a grant for clinician A. Returns (patient_id, clinician_a)."""
     patient_id = str(uuid.uuid4())
-    clinician_a = "dx-rls-clinician-a"
+    clinician_a = "b7bfbadb-c5da-505c-82d9-7609faf00be1"
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
@@ -193,7 +193,7 @@ class TestClinicianBIsIsolated:
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
         patient_id, clinician_a = seed_patient_and_grant
-        clinician_b = "dx-rls-clinician-b"
+        clinician_b = "73738015-ff11-5dc3-81d1-28314d804335"
 
         repo_a, sess_a, s_a, u_a = _make_repo(engine, tenant_schema, clinician_a)
         try:
@@ -219,7 +219,7 @@ class TestClinicianBIsIsolated:
         )
 
         patient_id, _ = seed_patient_and_grant
-        clinician_b = "dx-rls-clinician-b"
+        clinician_b = "73738015-ff11-5dc3-81d1-28314d804335"
         repo_b, sess_b, s_b, u_b = _make_repo(engine, tenant_schema, clinician_b)
         try:
             with pytest.raises(PatientDiagnosticAccessDeniedError):
@@ -234,7 +234,7 @@ class TestClinicianBIsIsolated:
         from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
 
         patient_id, _ = seed_patient_and_grant
-        clinician_b = "dx-rls-clinician-b"
+        clinician_b = "73738015-ff11-5dc3-81d1-28314d804335"
 
         with engine.connect() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))

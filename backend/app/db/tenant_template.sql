@@ -20,13 +20,13 @@
 CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_id character varying) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
-            SELECT EXISTS (
-                SELECT 1 FROM patient_clinicians
-                WHERE patient_id = p_patient_id
-                  AND user_id    = p_user_id
-                  AND (expires_at IS NULL OR expires_at > now())
-            );
-        $$;
+        SELECT EXISTS (
+            SELECT 1 FROM patient_clinicians
+            WHERE patient_id = p_patient_id
+              AND user_id::text = p_user_id
+              AND (expires_at IS NULL OR expires_at > now())
+        );
+    $$;
 
 
 
@@ -47,7 +47,7 @@ CREATE TABLE __TENANT_SCHEMA__.allowed_emails (
 
 CREATE TABLE __TENANT_SCHEMA__.appointments (
     id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     patient_id uuid NOT NULL,
     title character varying(255) NOT NULL,
     start_at timestamp with time zone NOT NULL,
@@ -97,7 +97,7 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
 
 CREATE TABLE __TENANT_SCHEMA__.availability_rules (
     id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     rule_type character varying(30) NOT NULL,
     enforcement character varying(10) NOT NULL,
     params jsonb NOT NULL,
@@ -110,7 +110,7 @@ CREATE TABLE __TENANT_SCHEMA__.availability_rules (
 CREATE TABLE __TENANT_SCHEMA__.chat_conversations (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
-    owner_user_id character varying(128) NOT NULL,
+    owner_user_id uuid NOT NULL,
     title character varying(200) NOT NULL,
     caller_system_prompt text NOT NULL,
     caller_feature_key character varying(64) NOT NULL,
@@ -145,7 +145,7 @@ CREATE TABLE __TENANT_SCHEMA__.chat_messages (
 
 
 CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     practice_id character varying(128) NOT NULL,
     title character varying(50),
     credentials character varying(100),
@@ -167,14 +167,14 @@ CREATE TABLE __TENANT_SCHEMA__.compliance_documents (
     document_type character varying(50) NOT NULL,
     description text,
     uploaded_at timestamp with time zone NOT NULL,
-    uploaded_by_user_id character varying(128) NOT NULL
+    uploaded_by_user_id uuid NOT NULL
 );
 
 
 
 CREATE TABLE __TENANT_SCHEMA__.compliance_items (
     id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     item_type character varying(50) NOT NULL,
     label character varying(255) NOT NULL,
     due_date date,
@@ -202,7 +202,7 @@ CREATE TABLE __TENANT_SCHEMA__.diagnostic_assessments (
     source character varying(40) NOT NULL,
     confirmed_at timestamp with time zone,
     assessed_at timestamp with time zone NOT NULL,
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
@@ -236,7 +236,7 @@ CREATE TABLE __TENANT_SCHEMA__.ehr_routes (
 
 
 CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     encrypted_tokens text NOT NULL,
     calendar_id character varying(255),
     sync_token text,
@@ -250,7 +250,7 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
 
 CREATE TABLE __TENANT_SCHEMA__.ical_client_mappings (
     doc_id character varying(500) NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     ehr_system character varying(50) NOT NULL,
     client_identifier character varying(255) NOT NULL,
     patient_id uuid NOT NULL,
@@ -261,7 +261,7 @@ CREATE TABLE __TENANT_SCHEMA__.ical_client_mappings (
 
 CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
     doc_id character varying(300) NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     ehr_system character varying(50) NOT NULL,
     encrypted_feed_url text NOT NULL,
     last_synced_at timestamp with time zone,
@@ -273,7 +273,7 @@ CREATE TABLE __TENANT_SCHEMA__.ical_sync_configs (
 
 
 CREATE TABLE __TENANT_SCHEMA__.llm_usage (
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     feature_key character varying(64) NOT NULL,
     period_yyyymm character varying(6) NOT NULL,
     model character varying(128) NOT NULL,
@@ -302,7 +302,7 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     export_status character varying(20) DEFAULT 'not_queued'::character varying NOT NULL,
     export_queued_at timestamp with time zone,
     export_reviewed_at timestamp with time zone,
-    export_reviewed_by character varying(128),
+    export_reviewed_by uuid,
     exported_at timestamp with time zone,
     redacted_content jsonb,
     naturalized_content jsonb,
@@ -326,7 +326,7 @@ CREATE TABLE __TENANT_SCHEMA__.outcome_measures (
     source character varying(40) NOT NULL,
     item_citations jsonb,
     administered_at timestamp with time zone NOT NULL,
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
@@ -337,10 +337,10 @@ CREATE TABLE __TENANT_SCHEMA__.outcome_measures (
 
 CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
     patient_id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     role character varying(20) DEFAULT 'primary'::character varying NOT NULL,
     granted_at timestamp with time zone DEFAULT now() NOT NULL,
-    granted_by character varying(128) NOT NULL,
+    granted_by uuid NOT NULL,
     expires_at timestamp with time zone,
     CONSTRAINT patient_clinicians_role_check CHECK (((role)::text = ANY ((ARRAY['primary'::character varying, 'co_treating'::character varying, 'supervisor'::character varying, 'covering'::character varying])::text[])))
 );
@@ -350,7 +350,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
 CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     filename text NOT NULL,
     mime_type character varying(100) NOT NULL,
     gcs_path text NOT NULL,
@@ -377,7 +377,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     started_at date,
     stopped_at date,
     notes text,
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
@@ -419,11 +419,11 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_checklist_items (
     flag_behavior character varying(20) NOT NULL,
     status character varying(20) NOT NULL,
     evidence_link character varying(512),
-    captured_by character varying(128),
+    captured_by uuid,
     captured_at timestamp with time zone,
     authority_ref character varying(255),
     ruleset_version character varying(40) NOT NULL,
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
@@ -442,7 +442,7 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_encounter_addenda (
     text text NOT NULL,
     digest character varying(64) NOT NULL,
     prev_digest character varying(64),
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL
 );
 
@@ -451,7 +451,7 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_encounter_addenda (
 CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
-    prescriber_user_id character varying(128) NOT NULL,
+    prescriber_user_id uuid NOT NULL,
     prescriber_type character varying(40),
     prescriber_npi character varying(20),
     prescriber_dea character varying(50),
@@ -467,12 +467,12 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
     status character varying(20) NOT NULL,
     encountered_at timestamp with time zone,
     finalized_at timestamp with time zone,
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     integrity_digest character varying(64),
-    finalized_by character varying(128),
+    finalized_by uuid,
     attestation_statement text,
     clinical_reasoning text,
     CONSTRAINT ck_prescribing_encounters_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'audio_video'::character varying, 'audio_only'::character varying, 'async'::character varying])::text[])))),
@@ -495,7 +495,7 @@ CREATE TABLE __TENANT_SCHEMA__.prescriptions (
     refills integer NOT NULL,
     indication character varying(40),
     first_in_course boolean,
-    created_by character varying(128) NOT NULL,
+    created_by uuid NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
@@ -508,7 +508,7 @@ CREATE TABLE __TENANT_SCHEMA__.prescriptions (
 CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
     id uuid NOT NULL,
     supervision_relationship_id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     logged_date date NOT NULL,
     hours numeric(6,2) NOT NULL,
     kind character varying(20) NOT NULL,
@@ -522,7 +522,7 @@ CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
 
 CREATE TABLE __TENANT_SCHEMA__.supervision_relationships (
     id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     compliance_item_id uuid,
     relationship_type character varying(50) NOT NULL,
     supervisor_name character varying(255) NOT NULL,
@@ -544,7 +544,7 @@ CREATE TABLE __TENANT_SCHEMA__.supervision_relationships (
 
 CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     id uuid NOT NULL,
-    user_id character varying(128) NOT NULL,
+    user_id uuid NOT NULL,
     patient_id uuid NOT NULL,
     session_date timestamp with time zone NOT NULL,
     session_number integer NOT NULL,
@@ -1097,4 +1097,4 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
 
 
 
-CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text = 'chart'::text) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));
+CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text = 'chart'::text) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY (ARRAY[('therapist_private'::character varying)::text, ('psychotherapy_notes'::character varying)::text])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));

@@ -127,7 +127,7 @@ def fastapi_app() -> FastAPI:
 
 @pytest.fixture
 def e2e_user_id() -> str:
-    return "e2e-chat-user"
+    return "267106ae-bb9e-5584-8725-fc0e77e2d53e"
 
 
 @pytest.fixture
@@ -330,7 +330,7 @@ class TestEmptyAssistantOutputRealDB:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
-                {"uid": "e2e-chat-user"},
+                {"uid": "267106ae-bb9e-5584-8725-fc0e77e2d53e"},
             )
             rows = (
                 conn.execute(
@@ -398,7 +398,7 @@ class TestEmptyChartFirstTurnRealDB:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
-                {"uid": "e2e-chat-user"},
+                {"uid": "267106ae-bb9e-5584-8725-fc0e77e2d53e"},
             )
             row = (
                 conn.execute(
@@ -476,7 +476,7 @@ class TestMultiTurnRealDB:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
-                {"uid": "e2e-chat-user"},
+                {"uid": "267106ae-bb9e-5584-8725-fc0e77e2d53e"},
             )
             rows = (
                 conn.execute(

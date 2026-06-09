@@ -108,7 +108,7 @@ def _insert_session_recording_only(
         ),
         {
             "id": session_id,
-            "uid": "user-mig",
+            "uid": "5476a92a-6c0f-57a3-8e43-42ea3b053116",
             "pid": patient_id,
             "sd": now,
             "tr": '{"format": "text", "content": "x"}',
