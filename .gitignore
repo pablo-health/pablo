@@ -59,3 +59,7 @@ local/
 .dolt/
 *.db
 .beads-credential-key
+
+# Per-run pentest reports detail the live attack surface — on-request only, never committed.
+# (Methodology guide, README, and VULNERABILITY_EXCEPTIONS.md stay tracked.)
+docs/pentest/*_pentest_report.md
