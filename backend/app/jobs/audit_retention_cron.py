@@ -84,6 +84,11 @@ def _delete_expired(engine: Engine, schema: str, as_of: datetime) -> int:
         # Operator job: schema validated by _validate_schema_name(); not web-reachable.
         # nosemgrep
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        # The audit_logs_append_only trigger blocks every DELETE except when
+        # this transaction-scoped GUC is armed. The retention cron is the only
+        # legitimate deleter; SET LOCAL keeps the exemption scoped to this
+        # single DELETE (it resets on commit/rollback).
+        conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
         result = conn.execute(
             text("DELETE FROM audit_logs WHERE expires_at < :as_of"),
             {"as_of": as_of},

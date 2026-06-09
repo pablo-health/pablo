@@ -17,6 +17,21 @@
 
 
 
+CREATE FUNCTION __TENANT_SCHEMA__.audit_logs_append_only() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+        BEGIN
+            IF current_setting('app.allow_audit_purge', true) = 'on' THEN
+                RETURN COALESCE(OLD, NEW);
+            END IF;
+            RAISE EXCEPTION USING
+                MESSAGE = 'audit_logs is append-only (' || TG_OP || ' blocked)',
+                ERRCODE = 'check_violation';
+        END;
+        $$;
+
+
+
 CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_id character varying) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
@@ -985,6 +1000,10 @@ CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.
 
 
 CREATE UNIQUE INDEX ux_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (session_id) WHERE (session_id IS NOT NULL);
+
+
+
+CREATE TRIGGER audit_logs_append_only BEFORE DELETE OR UPDATE ON __TENANT_SCHEMA__.audit_logs FOR EACH ROW EXECUTE FUNCTION __TENANT_SCHEMA__.audit_logs_append_only();
 
 
 
