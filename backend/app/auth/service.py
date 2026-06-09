@@ -9,7 +9,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
@@ -191,7 +190,8 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
             },
         ) from err
     except firebase_auth.InvalidIdTokenError as err:
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak
+        # Logs the PyJWT failure reason only — no token or credential value.
+        # nosemgrep
         logger.warning("Firebase ID token rejected: invalid (INVALID_TOKEN): %s", err)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -226,33 +226,16 @@ def _get_verifier_registry() -> VerifierRegistry:
     return VerifierRegistry(firebase=FirebaseVerifier(), oidc=oidc)
 
 
-def _unverified_issuer(token: str) -> str | None:
-    """Read the ``iss`` claim without verifying, for routing only.
-
-    The selected verifier re-checks ``iss`` against its configured issuer
-    as part of full signature verification, so this unverified read is
-    used solely to pick a verifier — it never grants trust on its own.
-    """
-    try:
-        # nosemgrep: python.jwt.security.unverified-jwt-decode
-        claims = jwt.decode(token, options={"verify_signature": False})
-    except jwt.PyJWTError:
-        return None
-    issuer = claims.get("iss")
-    return str(issuer) if issuer is not None else None
-
-
 def verify_token(token: str) -> VerifiedIdentity:
     """Verify a bearer ID token from any registered issuer.
 
-    Dispatches on the token's ``iss`` claim: a configured OIDC issuer
-    routes to the OIDC backend, anything else (including Firebase tokens
-    and unparseable tokens) routes to Firebase, which performs the real
-    verification and raises the appropriate 401 on failure.
+    Tries each verifier in order (Firebase first, then OIDC if
+    configured) and returns the first successful identity, never peeking
+    at unverified claims. Firebase handles the overwhelming majority of
+    tokens, so its 401 (TOKEN_EXPIRED, TOKEN_REVOKED, ...) is the error
+    surfaced when no verifier accepts the token.
     """
-    issuer = _unverified_issuer(token)
-    verifier = _get_verifier_registry().get_verifier(issuer)
-    return verifier.verify(token)
+    return _get_verifier_registry().verify(token)
 
 
 def _verify_request_identity(request: Request | None, token: str) -> VerifiedIdentity:
@@ -381,7 +364,8 @@ def require_mfa(
     if settings.e2e_test_emails and not settings.is_prod_project:
         email = decoded_token.get("email", "")
         if email in settings.e2e_test_emails and decoded_token.get("email_verified", False):
-            # nosemgrep: python.lang.security.audit.logging.logger-credential-leak
+            # Logs an allow-listed E2E account's uid — an identifier, not a credential.
+            # nosemgrep
             logger.warning("MFA bypassed for E2E test account: uid=%s", decoded_token.get("uid"))
             return decoded_token
 

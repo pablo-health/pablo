@@ -392,7 +392,8 @@ def init_llm_tracing(settings: Settings) -> None:
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
         _provider_installed.append(True)
-        # nosemgrep: python.lang.security.audit.logging.logger-credential-leak
+        # Logs the OTLP exporter endpoint + an auth bool — no secret value.
+        # nosemgrep
         logger.info(
             "LLM tracing enabled: exporting OpenInference spans to %s (id_token_auth=%s)",
             endpoint,

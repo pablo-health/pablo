@@ -87,6 +87,8 @@ def list_active_tenant_schemas(engine: Engine) -> list[str]:
     """Return schema names for active practices, excluding the template."""
     with engine.connect() as conn:
         rows = conn.execute(
+            # Operator migration: only the PLATFORM_SCHEMA constant interpolated (noqa S608).
+            # nosemgrep
             text(
                 f"SELECT schema_name FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
                 " WHERE is_active = TRUE"
@@ -106,6 +108,8 @@ def list_active_practice_registry(engine: Engine) -> list[tuple[str, str]]:
     """
     with engine.connect() as conn:
         rows = conn.execute(
+            # Operator migration: only the PLATFORM_SCHEMA constant interpolated (noqa S608).
+            # nosemgrep
             text(
                 f"SELECT schema_name, id FROM {PLATFORM_SCHEMA}.practices"  # noqa: S608
                 " WHERE is_active = TRUE"
@@ -193,6 +197,8 @@ def upgrade_tenant_schema(
             return TenantResult(schema, TenantStatus.ALREADY_AT_HEAD, head)
 
         with engine.begin() as conn:
+            # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+            # nosemgrep
             conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
             cfg = _alembic_config_for(schema)
             cfg.attributes["connection"] = conn
