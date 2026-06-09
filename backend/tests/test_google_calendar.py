@@ -386,7 +386,11 @@ class TestReminderService:
             created_at=now,
         )
 
-    def test_sends_24h_reminder(self, appointment_repo: MagicMock) -> None:
+    def test_does_not_mark_24h_reminder_while_delivery_unimplemented(
+        self, appointment_repo: MagicMock
+    ) -> None:
+        # Delivery is not yet wired up; the pass must be a no-op so appointments
+        # are not permanently marked sent before any notification reaches the patient.
         appt = self._make_appointment("appt-1", 24)
         appointment_repo.list_by_range.side_effect = [
             [appt],  # 24h window
@@ -396,12 +400,14 @@ class TestReminderService:
         service = ReminderService(appointment_repo)
         result = service.check_and_send_reminders("user-001")
 
-        assert result["24h_sent"] == 1
+        assert result["24h_sent"] == 0
         assert result["1h_sent"] == 0
-        appointment_repo.update.assert_called_once()
-        assert appt.reminder_24h_sent is True
+        appointment_repo.update.assert_not_called()
+        assert appt.reminder_24h_sent is False
 
-    def test_sends_1h_reminder(self, appointment_repo: MagicMock) -> None:
+    def test_does_not_mark_1h_reminder_while_delivery_unimplemented(
+        self, appointment_repo: MagicMock
+    ) -> None:
         appt = self._make_appointment("appt-1", 1)
         appointment_repo.list_by_range.side_effect = [
             [],  # 24h window
@@ -412,8 +418,9 @@ class TestReminderService:
         result = service.check_and_send_reminders("user-001")
 
         assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 1
-        assert appt.reminder_1h_sent is True
+        assert result["1h_sent"] == 0
+        appointment_repo.update.assert_not_called()
+        assert appt.reminder_1h_sent is False
 
     def test_skips_already_sent_reminders(self, appointment_repo: MagicMock) -> None:
         appt = self._make_appointment("appt-1", 24, reminder_24h_sent=True)
@@ -441,7 +448,7 @@ class TestReminderService:
         assert result["24h_sent"] == 0
         appointment_repo.update.assert_not_called()
 
-    def test_sends_both_reminders_for_different_appointments(
+    def test_returns_zero_counts_while_delivery_unimplemented(
         self,
         appointment_repo: MagicMock,
     ) -> None:
@@ -455,5 +462,6 @@ class TestReminderService:
         service = ReminderService(appointment_repo)
         result = service.check_and_send_reminders("user-001")
 
-        assert result["24h_sent"] == 1
-        assert result["1h_sent"] == 1
+        assert result["24h_sent"] == 0
+        assert result["1h_sent"] == 0
+        appointment_repo.update.assert_not_called()
