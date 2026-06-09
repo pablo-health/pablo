@@ -37,7 +37,7 @@ def test_fan_out_invokes_runner_per_schema_in_order() -> None:
     plan = {
         "practice_a": TenantStatus.SUCCESS,
         "practice_b": TenantStatus.ALREADY_AT_HEAD,
-        "practice_c": TenantStatus.RECONCILED,
+        "practice_c": TenantStatus.FAILED,
     }
     results = fan_out(
         engine=cast("Engine", None),
@@ -110,7 +110,6 @@ def test_aggregate_exit_code_zero_when_all_ok() -> None:
     results = [
         TenantResult("a", TenantStatus.SUCCESS),
         TenantResult("b", TenantStatus.ALREADY_AT_HEAD),
-        TenantResult("c", TenantStatus.RECONCILED),
     ]
     assert aggregate_exit_code(results) == 0
 
