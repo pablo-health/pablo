@@ -361,7 +361,7 @@ def _parse_iso_date(raw: Any) -> date | None:
     try:
         return date.fromisoformat(raw.strip())
     except ValueError:
-        logger.warning("Imported note had an unparseable session_date: %r", raw)
+        logger.warning("Imported note had an unparseable session_date")
         return None
 
 
@@ -372,7 +372,7 @@ def _parse_iso_time(raw: Any) -> time | None:
         # Accept "HH:MM" and "HH:MM:SS".
         return time.fromisoformat(raw.strip())
     except ValueError:
-        logger.warning("Imported note had an unparseable session_time: %r", raw)
+        logger.warning("Imported note had an unparseable session_time")
         return None
 
 

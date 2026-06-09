@@ -98,7 +98,7 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         # This prevents race conditions where repo factories query the DB
         # before get_tenant_context sets the schema.
         schema = DEFAULT_PRACTICE_SCHEMA
-        if settings.database_backend == "postgres" and settings.multi_tenancy_enabled:
+        if settings.multi_tenancy_enabled:
             resolved = _resolve_schema_from_request(request)
             if resolved:
                 schema = resolved

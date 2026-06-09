@@ -359,11 +359,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Database Backend
-    database_backend: Literal["postgres"] = Field(
-        default="postgres",
-        description="Primary database backend (PostgreSQL with schema-per-practice multi-tenancy).",
-    )
     database_url: str = Field(
         default="",
         description=("PostgreSQL connection URL. Format: postgresql://user:pass@host:port/dbname"),
