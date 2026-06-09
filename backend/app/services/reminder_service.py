@@ -35,7 +35,14 @@ class ReminderService:
         """Check for upcoming appointments and send reminders.
 
         Returns a summary dict with counts of reminders sent.
+
+        Note: reminder delivery is not yet implemented. This method is a no-op
+        until an actual notification integration exists. The send-and-mark
+        machinery below is preserved so it can be wired up without a rewrite;
+        remove this early return once delivery is in place.
         """
+        return {"24h_sent": 0, "1h_sent": 0}
+
         now = datetime.now(UTC)
         sent_24h = 0
         sent_1h = 0
