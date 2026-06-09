@@ -520,19 +520,6 @@ class Settings(BaseSettings):
         description="Default cache TTL in seconds",
     )
 
-    high_rating_threshold: int = Field(
-        default=4,
-        ge=1,
-        le=5,
-        description="Sessions with rating ≥ this are sampled for eval export",
-    )
-    high_rating_sample_rate: float = Field(
-        default=0.10,
-        ge=0.0,
-        le=1.0,
-        description="Probability (0.0-1.0) of queueing high-rated sessions",
-    )
-
     # Google Cloud Secret Manager (optional, for production)
     use_secret_manager: bool = Field(
         default=False,

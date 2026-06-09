@@ -8,13 +8,9 @@ Thin HTTP handlers that delegate business logic to SessionService.
 
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel
-
-if TYPE_CHECKING:
-    from ..services.eval_export_service import EvalExportService  # type: ignore[import-not-found]
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
 from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
@@ -169,21 +165,6 @@ def get_note_service(
     return NoteService(notes_repo)
 
 
-def _build_eval_export_service() -> "EvalExportService | None":
-    """Build eval export service when the optional module is available."""
-    settings = get_settings()
-    if not settings.is_saas:
-        return None
-    try:
-        from ..services.eval_export_service import EvalExportService
-        from ..services.pii_redaction_service import PIIRedactionService
-    except ImportError:
-        logger.warning("presidio_analyzer not installed — eval export disabled")
-        return None
-
-    return EvalExportService(PIIRedactionService(), settings)
-
-
 def get_session_service(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
@@ -196,7 +177,6 @@ def get_session_service(
         patient_repo,
         note_generation_service,
         note_service,
-        _build_eval_export_service(),
     )
 
 

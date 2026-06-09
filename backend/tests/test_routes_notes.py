@@ -136,25 +136,6 @@ class TestFinalizeNote:
         assert body["finalized_at"] is not None
 
 
-class TestSubmitForExport:
-    def test_queues_finalized_note(
-        self, client: TestClient, mock_notes_repo: InMemoryNotesRepository
-    ) -> None:
-        note = _seed_note(mock_notes_repo, finalized=True)
-        response = client.post(f"/api/notes/{note.id}/submit-export")
-        assert response.status_code == 200
-        body = response.json()
-        assert body["export_status"] == "queued"
-        assert body["export_queued_at"] is not None
-
-    def test_rejects_unfinalized(
-        self, client: TestClient, mock_notes_repo: InMemoryNotesRepository
-    ) -> None:
-        note = _seed_note(mock_notes_repo)
-        response = client.post(f"/api/notes/{note.id}/submit-export")
-        assert response.status_code == 400
-
-
 def _seed_patient(
     patient_repo: InMemoryPatientRepository,
     *,
@@ -442,19 +423,6 @@ class TestIDOR:
             assert stored.quality_rating is None
         finally:
             self._cleanup_overrides()
-
-    def test_submit_export_other_clinicians_note_returns_404(self, client: TestClient) -> None:
-        repo = InMemoryNotesRepository()
-        self._override_notes_repo(repo)
-        try:
-            note = self._seed_foreign_note(repo, finalized=True)
-            response = client.post(f"/api/notes/{note.id}/submit-export")
-            assert response.status_code == 404
-            stored = repo._notes[note.id]  # type: ignore[attr-defined]
-            assert stored.export_status != "queued"
-        finally:
-            self._cleanup_overrides()
-
 
 class TestListPatientNotesAudit:
     """The patient-notes list returns every note's full SOAP body, so it must
