@@ -44,7 +44,7 @@ class Base(DeclarativeBase):
 class ClinicianProfileRow(Base):
     __tablename__ = "clinician_profiles"
 
-    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str | None] = mapped_column(String(50))
     credentials: Mapped[str | None] = mapped_column(String(100))
@@ -75,7 +75,9 @@ class PatientRow(Base):
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="active")
-    date_of_birth: Mapped[str | None] = mapped_column(String(10))
+    # Civil date (no time/tz). DB type is native DATE; the API speaks ISO
+    # date strings, so the repository converts at the row boundary.
+    date_of_birth: Mapped[date | None] = mapped_column(Date)
     diagnosis: Mapped[str | None] = mapped_column(Text)
     session_count: Mapped[int] = mapped_column(Integer, default=0)
     last_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -102,7 +104,7 @@ class TherapySessionRow(Base):
     __tablename__ = "therapy_sessions"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     session_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -168,7 +170,7 @@ class NoteRow(Base):
     export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
     export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     export_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    export_reviewed_by: Mapped[str | None] = mapped_column(String(128))
+    export_reviewed_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # PII-redacted variants (extension-tier).
     redacted_content: Mapped[dict | None] = mapped_column(JSONB)
@@ -215,7 +217,7 @@ class PatientClinicianRow(Base):
         ForeignKey("patients.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    user_id: Mapped[str] = mapped_column(String(128), primary_key=True, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True, index=True)
     role: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -227,7 +229,7 @@ class PatientClinicianRow(Base):
         nullable=False,
         server_default=text("now()"),
     )
-    granted_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    granted_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -292,7 +294,7 @@ class OutcomeMeasureRow(Base):
     # Reserved for future verbal-administration provenance (transcript spans).
     item_citations: Mapped[dict | None] = mapped_column(JSONB)
     administered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Soft-delete marker.  NULL = live row; non-null hides the row from
@@ -334,7 +336,7 @@ class PatientMedicationRow(Base):
     # effects, remission). Only meaningful for discontinued rows; nullable.
     stop_reason: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -416,7 +418,7 @@ class DiagnosticAssessmentRow(Base):
     # Null = unconfirmed; set when a clinician confirms.
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     assessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -463,7 +465,7 @@ class AppointmentRow(Base):
     __tablename__ = "appointments"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
@@ -501,7 +503,7 @@ class AvailabilityRuleRow(Base):
     __tablename__ = "availability_rules"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     rule_type: Mapped[str] = mapped_column(String(30), nullable=False)
     enforcement: Mapped[str] = mapped_column(String(10), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -512,7 +514,7 @@ class AvailabilityRuleRow(Base):
 class GoogleCalendarTokenRow(Base):
     __tablename__ = "google_calendar_tokens"
 
-    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     encrypted_tokens: Mapped[str] = mapped_column(Text, nullable=False)
     calendar_id: Mapped[str | None] = mapped_column(String(255))
     sync_token: Mapped[str | None] = mapped_column(Text)
@@ -526,7 +528,7 @@ class ICalClientMappingRow(Base):
     __tablename__ = "ical_client_mappings"
 
     doc_id: Mapped[str] = mapped_column(String(500), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
     client_identifier: Mapped[str] = mapped_column(String(255), nullable=False)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
@@ -537,7 +539,7 @@ class ICalSyncConfigRow(Base):
     __tablename__ = "ical_sync_configs"
 
     doc_id: Mapped[str] = mapped_column(String(300), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     ehr_system: Mapped[str] = mapped_column(String(50), nullable=False)
     encrypted_feed_url: Mapped[str] = mapped_column(Text, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -559,7 +561,7 @@ class ComplianceItemRow(Base):
     __tablename__ = "compliance_items"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     item_type: Mapped[str] = mapped_column(String(50), nullable=False)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date)
@@ -599,7 +601,9 @@ class ComplianceDocumentRow(Base):
     document_type: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    uploaded_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    uploaded_by_user_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), nullable=False, index=True
+    )
 
 
 class SupervisionRelationshipRow(Base):
@@ -625,7 +629,7 @@ class SupervisionRelationshipRow(Base):
     __tablename__ = "supervision_relationships"
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     compliance_item_id: Mapped[str | None] = mapped_column(
         Uuid(as_uuid=False),
         ForeignKey("compliance_items.id", ondelete="CASCADE"),
@@ -669,7 +673,7 @@ class SupervisionHoursRow(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     logged_date: Mapped[date] = mapped_column(Date, nullable=False)
     hours: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -697,7 +701,7 @@ class ChatConversationRow(Base):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
-    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    owner_user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     caller_system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     caller_feature_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -771,7 +775,7 @@ class LlmUsageRow(Base):
 
     __tablename__ = "llm_usage"
 
-    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     feature_key: Mapped[str] = mapped_column(String(64), primary_key=True)
     period_yyyymm: Mapped[str] = mapped_column(String(6), primary_key=True)
     model: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -827,7 +831,7 @@ class PatientDocumentRow(Base):
         ForeignKey("patients.id", ondelete="CASCADE"),
         nullable=False,
     )
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(Text, nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
@@ -883,6 +887,11 @@ class AuditLogRow(Base):
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Actor identifier as recorded — kept VARCHAR, not native uuid. An audit
+    # row must capture the event even when the actor isn't a clean uuid4
+    # (system/service actions, legacy ids, a probe logged precisely because it
+    # was unauthenticated); a uuid column would reject those at INSERT and lose
+    # the record. Same "identifier as recorded" rationale as resource_id below.
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -979,7 +988,7 @@ class PrescribingEncounterRow(Base):
         nullable=False,
         index=True,
     )
-    prescriber_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    prescriber_user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     # Prescriber credentials, snapshotted at prescribing time. The standing
     # values live on clinician_profiles; the record must reflect what was true
     # when the script was written.
@@ -1015,12 +1024,12 @@ class PrescribingEncounterRow(Base):
     # statement — the human signature of the decision record. Both null until
     # finalization; the statement is the clinician's own words, never machine-
     # generated, and is part of what the integrity digest commits to.
-    finalized_by: Mapped[str | None] = mapped_column(String(128))
+    finalized_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     attestation_statement: Mapped[str | None] = mapped_column(Text)
     # Tamper-evident content digest of the finalized encounter snapshot — the
     # genesis link of the addendum hash chain. Null until finalization.
     integrity_digest: Mapped[str | None] = mapped_column(String(64))
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1083,7 +1092,7 @@ class PrescriptionRow(Base):
     # course (-> Start Talking consent). Null = not asserted.
     indication: Mapped[str | None] = mapped_column(String(40))
     first_in_course: Mapped[bool | None] = mapped_column(Boolean)
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1139,7 +1148,7 @@ class PrescribingEncounterAddendumRow(Base):
     # addendum's chain digest).
     digest: Mapped[str] = mapped_column(String(64), nullable=False)
     prev_digest: Mapped[str | None] = mapped_column(String(64))
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -1204,14 +1213,14 @@ class PrescribingChecklistItemRow(Base):
     # signed clinician statement). Null = not yet bound; the item stays missing.
     evidence_link: Mapped[str | None] = mapped_column(String(512))
     # Who bound the evidence / attested, and when (server clock — no backdating).
-    captured_by: Mapped[str | None] = mapped_column(String(128))
+    captured_by: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Free-form citation snapshotted from the rule item (statute / regulation).
     authority_ref: Mapped[str | None] = mapped_column(String(255))
     # The ruleset version in force when this row was computed (e.g.
     # "MI-RX-2026.06"), stamped so the rules applied can be reconstructed.
     ruleset_version: Mapped[str] = mapped_column(String(40), nullable=False)
-    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

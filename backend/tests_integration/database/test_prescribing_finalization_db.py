@@ -105,7 +105,7 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
 @pytest.fixture(scope="module")
 def patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str]:
     patient_id = str(uuid.uuid4())
-    clinician_a = "rx-final-clinician-a"
+    clinician_a = "b5bbc510-f180-5dd8-898c-6717acf72f49"
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
         conn.execute(
@@ -405,7 +405,7 @@ class TestAddenda:
 
         _, clinician_a = patient_and_grant
         enc_id, rx_id = encounter
-        clinician_b = "rx-final-clinician-b"
+        clinician_b = "3e584cac-33bd-55e0-95ee-8b653a6cc768"
 
         sess_a, s_a, u_a = _session(engine, tenant_schema, clinician_a)
         try:

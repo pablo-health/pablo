@@ -46,7 +46,7 @@ class PracticeRow(PlatformBase):
     schema_name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     tenant_id: Mapped[str | None] = mapped_column(String(128), unique=True)
     owner_email: Mapped[str] = mapped_column(String(255), nullable=False)
-    owner_user_id: Mapped[str] = mapped_column(String(128), default="")
+    owner_user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
     product: Mapped[str] = mapped_column(String(20), default="pablo")
     status: Mapped[str] = mapped_column(String(20), default="active")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -135,7 +135,7 @@ class PlatformUserRow(PlatformBase):
     __tablename__ = "users"
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -195,7 +195,7 @@ class UserIdentityRow(PlatformBase):
 
     provider: Mapped[str] = mapped_column(String(32), primary_key=True)
     subject_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -203,7 +203,7 @@ class PlatformUserPreferencesRow(PlatformBase):
     __tablename__ = "user_preferences"
     __table_args__ = {"schema": PLATFORM_SCHEMA}
 
-    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
 
@@ -241,7 +241,7 @@ class CompanionDeviceRow(PlatformBase):
 
     install_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     user_id: Mapped[str] = mapped_column(
-        String(128),
+        Uuid(as_uuid=False),
         ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -264,6 +264,10 @@ class PlatformAuditLogRow(PlatformBase):
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Actor identifier as recorded — kept VARCHAR, not native uuid (same
+    # capture-over-correctness rationale as audit_logs.user_id / resource_id):
+    # platform/system actions may not carry a uuid4 actor, and the audit row
+    # must still be writable.
     actor_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(30), nullable=False)

@@ -103,7 +103,7 @@ def seed_patient_and_grant(engine: Engine, tenant_schema: str) -> tuple[str, str
     Returns ``(patient_id, clinician_a_id)``.
     """
     patient_id = str(uuid.uuid4())
-    clinician_a = "om-rls-clinician-a"
+    clinician_a = "077d6448-9108-582d-8e00-2bf83d021736"
 
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
@@ -244,7 +244,7 @@ class TestClinicianBIsIsolated:
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
         patient_id, clinician_a = seed_patient_and_grant
-        clinician_b = "om-rls-clinician-b"
+        clinician_b = "c2343404-a742-5c53-a0a4-58b5834ffd56"
 
         # Control: prove A can see at least one row before asserting B cannot.
         repo_a, session_a, s_tok_a, u_tok_a = _make_repo(engine, tenant_schema, clinician_a)
@@ -268,7 +268,7 @@ class TestClinicianBIsIsolated:
         self, engine: Engine, tenant_schema: str, seed_patient_and_grant: tuple[str, str]
     ) -> None:
         patient_id, clinician_a = seed_patient_and_grant
-        clinician_b = "om-rls-clinician-b"
+        clinician_b = "c2343404-a742-5c53-a0a4-58b5834ffd56"
 
         # Seed a measure as A, then prove B can't fetch it.
         payload = _measure_payload(patient_id, clinician_a)
@@ -306,7 +306,7 @@ class TestClinicianBIsIsolated:
         )
 
         patient_id, _ = seed_patient_and_grant
-        clinician_b = "om-rls-clinician-b"
+        clinician_b = "c2343404-a742-5c53-a0a4-58b5834ffd56"
         payload = _measure_payload(patient_id, clinician_b)
 
         repo_b, session_b, s_tok_b, u_tok_b = _make_repo(engine, tenant_schema, clinician_b)
@@ -324,7 +324,7 @@ class TestClinicianBIsIsolated:
         from sqlalchemy.exc import ProgrammingError  # noqa: PLC0415
 
         patient_id, _ = seed_patient_and_grant
-        clinician_b = "om-rls-clinician-b"
+        clinician_b = "c2343404-a742-5c53-a0a4-58b5834ffd56"
 
         with engine.connect() as conn:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))

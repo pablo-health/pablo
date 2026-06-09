@@ -115,7 +115,7 @@ def fastapi_app() -> FastAPI:
 @pytest.fixture
 def e2e_user() -> User:
     return User(
-        id="e2e-audit-user",
+        id="90f4936f-8aa2-5988-b6ca-906781bc08c7",
         email="e2e@example.com",
         name="E2E Test User",
         created_at=datetime(2024, 1, 1, tzinfo=UTC),
