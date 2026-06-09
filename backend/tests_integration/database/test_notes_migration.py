@@ -45,10 +45,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 # Stable UUIDs the seeders use as ``patient_id``. The column is ``uuid``
-# (post-c8a31f6e2d54_has_patient_access_uuid_overload). These tests don't
-# need a real ``patients`` row — no FK from therapy_sessions/notes to
-# patients in the schema variants exercised here — so any well-formed
-# UUID is fine.
+# (post-c8a31f6e2d54_has_patient_access_uuid_overload), and since the
+# intra-tenant FK migration ``e7c4b9a25f18`` therapy_sessions/notes
+# reference ``patients(id)`` — so the fixture seeds these patient rows.
 _PATIENT_ID_MIG = "11111111-1111-1111-1111-111111111111"
 _PATIENT_ID_P1 = "22222222-2222-2222-2222-222222222222"
 
@@ -70,8 +69,26 @@ def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
     session.execute(text("SET search_path = practice, platform, public"))
-    session.execute(text("TRUNCATE TABLE practice.notes"))
-    session.execute(text("TRUNCATE TABLE practice.therapy_sessions"))
+    # ``patients`` is the FK root; TRUNCATE ... CASCADE clears every child
+    # (notes, therapy_sessions, ...) in one statement. Re-seed the patient
+    # rows the note/session inserts reference so the intra-tenant FKs
+    # (added in e7c4b9a25f18) are satisfied.
+    session.execute(text("TRUNCATE TABLE practice.patients CASCADE"))
+    now = datetime.now(UTC)
+    for pid in (_PATIENT_ID_MIG, _PATIENT_ID_P1):
+        session.execute(
+            text(
+                """
+                INSERT INTO practice.patients (
+                    id, first_name, last_name, first_name_lower,
+                    last_name_lower, status, session_count, created_at, updated_at
+                )
+                VALUES (:id, 'Test', 'Patient', 'test', 'patient',
+                        'active', 0, :now, :now)
+                """
+            ),
+            {"id": pid, "now": now},
+        )
     session.commit()
     try:
         yield session

@@ -988,6 +988,26 @@ CREATE UNIQUE INDEX ux_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT appointments_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT appointments_recurring_appointment_id_fkey FOREIGN KEY (recurring_appointment_id) REFERENCES __TENANT_SCHEMA__.appointments(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT appointments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.chat_conversations
+    ADD CONSTRAINT chat_conversations_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.chat_messages
     ADD CONSTRAINT chat_messages_conversation_id_fkey FOREIGN KEY (conversation_id) REFERENCES __TENANT_SCHEMA__.chat_conversations(id) ON DELETE CASCADE;
 
@@ -998,6 +1018,51 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.compliance_documents
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
+    ADD CONSTRAINT diagnostic_assessments_appointment_id_fkey FOREIGN KEY (appointment_id) REFERENCES __TENANT_SCHEMA__.appointments(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
+    ADD CONSTRAINT diagnostic_assessments_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
+    ADD CONSTRAINT diagnostic_assessments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.ical_client_mappings
+    ADD CONSTRAINT ical_client_mappings_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.notes
+    ADD CONSTRAINT notes_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.notes
+    ADD CONSTRAINT notes_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
+    ADD CONSTRAINT outcome_measures_appointment_id_fkey FOREIGN KEY (appointment_id) REFERENCES __TENANT_SCHEMA__.appointments(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
+    ADD CONSTRAINT outcome_measures_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
+    ADD CONSTRAINT outcome_measures_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
@@ -1005,6 +1070,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
+    ADD CONSTRAINT patient_medications_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 
@@ -1050,6 +1120,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_relationships
     ADD CONSTRAINT supervision_relationships_compliance_item_id_fkey FOREIGN KEY (compliance_item_id) REFERENCES __TENANT_SCHEMA__.compliance_items(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
+    ADD CONSTRAINT therapy_sessions_patient_id_fkey FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

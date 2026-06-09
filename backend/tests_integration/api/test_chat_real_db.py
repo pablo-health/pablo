@@ -550,7 +550,9 @@ class TestCrossPatientAccessRealDB:
         # tenant context still resolves the same schema — the access
         # check is at the grant level, not the schema level.
         foreigner = User(
-            id="e2e-chat-foreigner",
+            # A real uuid (user_id columns are native uuid now); this
+            # clinician simply has no grant on the patient.
+            id="00000000-0000-4000-8000-00000000f0e1",
             email="foreigner@example.com",
             name="Foreign Clinician",
             created_at=datetime(2024, 1, 1, tzinfo=UTC),
