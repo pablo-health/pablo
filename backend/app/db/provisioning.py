@@ -23,7 +23,6 @@ from sqlalchemy import text
 
 from ..utcnow import utc_now
 from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
-from .models import Base
 from .platform_models import PlatformBase, PracticeRow
 
 if TYPE_CHECKING:
@@ -239,7 +238,7 @@ def _stamp_alembic_at_head(engine: Engine, schema_name: str) -> None:
     Without this row, the per-tenant fan-out tool (pa-5in.1) has no version to
     upgrade FROM — every future migration would either no-op or error against
     the new schema. We stamp at head because the schema was just built from
-    current SQLAlchemy models via ``Base.metadata.create_all`` and is
+    ``tenant_template.sql`` (the canonical DDL at alembic-HEAD) and is
     definitionally at HEAD.
 
     Idempotent: ``MigrationContext.stamp`` deletes existing rows before
@@ -271,26 +270,24 @@ _TENANT_SCHEMA_PLACEHOLDER = "__TENANT_SCHEMA__"
 def create_practice_schema(engine: Engine, schema_name: str) -> None:
     """Create or reconcile a practice schema.
 
-    Two paths now, picked by whether the target schema already has
-    tables:
+    ``tenant_template.sql`` is the single source of truth for tenant DDL.
+    Behavior is picked by whether the target schema already has tables:
 
     1. **Empty schema → apply tenant_template.sql + stamp HEAD.** Same
        path for the default ``practice`` template AND for any new
        per-tenant schema (``PentestTenantService.provision`` or
-       future per-customer provisioning). Eliminates today's drift
-       class: the ``practice`` template used to be built via
-       ``Base.metadata.create_all`` while tenants were built from
-       SQL — two paths, two slightly different end states. The
-       2026-05-21 prod-promote hit that drift (``chat_messages`` in
-       prod's ``practice`` was missing every CHECK constraint while
-       per-tenant copies had them). Now both paths produce byte-
-       identical state because they apply the same SQL.
+       future per-customer provisioning). The template is the canonical
+       DDL at alembic-HEAD, so every schema starts byte-identical.
 
-    2. **Already-populated schema → legacy reconcile via create_all.**
-       Only ``migrate_tenants.upgrade_tenant_schema`` should hit this
-       branch — when a pre-template-era tenant is being brought up to
-       the current ORM shape. The caller stamps alembic afterwards
-       and column shape evolution carries forward through the chain.
+    2. **Already-populated schema.** If it carries an ``alembic_version``
+       row it was provisioned from the template and the alembic chain
+       owns it from here — no-op. If it has tables but *no*
+       ``alembic_version`` (a pre-template tenant), raise: the old
+       ``Base.metadata.create_all`` reconcile was the drift vector behind
+       the 2026-05-21 prod incident (``chat_messages`` in prod's
+       ``practice`` lost every CHECK constraint), so such a schema must be
+       re-provisioned from the template or reconciled by hand, never
+       silently rebuilt from the ORM.
 
     RLS policies still live outside the template (column introspection
     in Python). Skipped for the default template — single-tenancy OSS
@@ -326,10 +323,25 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
 def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
     """Body of :func:`create_practice_schema` once the advisory lock is held."""
     is_default_template = schema_name == DEFAULT_PRACTICE_SCHEMA
-    schema_already_populated = _schema_has_tables(engine, schema_name)
 
-    if schema_already_populated:
-        _create_practice_schema_legacy(engine, schema_name)
+    if _schema_has_tables(engine, schema_name):
+        # Already provisioned. ``tenant_template.sql`` is the only way a
+        # tenant schema is built, and that path stamps ``alembic_version``,
+        # so a populated, stamped schema is at a known revision and the
+        # alembic chain carries it forward — nothing to do here. A populated
+        # schema *without* an ``alembic_version`` row is a pre-template
+        # tenant; the old ``Base.metadata.create_all`` reconcile (the drift
+        # vector behind the 2026-05-21 prod incident — ``chat_messages`` in
+        # prod's ``practice`` lost every CHECK constraint) is gone, so
+        # surface it loudly rather than silently mutating it from the ORM.
+        if not _has_alembic_version(engine, schema_name):
+            raise RuntimeError(
+                f"Schema '{schema_name}' has tables but no alembic_version row "
+                "(pre-template tenant). The create_all reconcile path has been "
+                "removed — re-provision the schema from tenant_template.sql, or "
+                "stamp it at the matching revision and migrate it manually."
+            )
+        logger.info("Practice schema '%s' already provisioned; nothing to do", schema_name)
     else:
         _apply_tenant_template(engine, schema_name)
         _stamp_alembic_at_head(engine, schema_name)
@@ -337,8 +349,7 @@ def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
         # hook (registered in ``saas.bootstrap``) lays down the SaaS-
         # tenant addendum + stamps ``alembic_version_saas_tenant`` so
         # the schema is at HEAD on both chains before any caller starts
-        # using it. Legacy reconcile path is handled separately by
-        # ``saas.bin.migrate``'s deploy-time fan-out.
+        # using it.
         _run_post_provision_hooks(engine, schema_name)
 
     if not is_default_template:
@@ -353,31 +364,24 @@ def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
     logger.info("Practice schema '%s' ready", schema_name)
 
 
-def _create_practice_schema_legacy(engine: Engine, schema_name: str) -> None:
-    """Pre-template provisioning path — ``create_all`` only.
+def _has_alembic_version(engine: Engine, schema_name: str) -> bool:
+    """Return True if ``schema_name`` carries an ``alembic_version`` table.
 
-    Used for the default ``practice`` template schema (alembic owns
-    its DDL end-to-end; we just need ``create_all`` on first-boot DBs
-    where alembic hasn't run yet) and for reconciling per-tenant
-    schemas that already have tables from a pre-template provisioning.
-
-    Column shape evolution lives entirely in the alembic chain after
-    revision ``b7de65c29385`` — for the default template, alembic
-    runs at deploy time; for legacy tenant reconcile, the caller
-    (``migrate_tenants.upgrade_tenant_schema``) stamps the schema and
-    subsequent ``alembic upgrade head`` invocations carry it forward.
+    A schema built from ``tenant_template.sql`` is stamped at HEAD, so the
+    presence of this table distinguishes a properly-provisioned tenant from
+    a pre-template one. (Local copy rather than importing from
+    ``migrate_tenants`` to avoid the import cycle — that module imports
+    :func:`create_practice_schema` from here.)
     """
     with engine.connect() as conn:
-        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
-        conn.commit()
-
-    for table in Base.metadata.sorted_tables:
-        table.schema = schema_name
-
-    Base.metadata.create_all(engine)
-
-    for table in Base.metadata.sorted_tables:
-        table.schema = None
+        count = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = :s AND table_name = 'alembic_version'"
+            ),
+            {"s": schema_name},
+        ).scalar()
+    return bool(count and count > 0)
 
 
 def _apply_tenant_template(engine: Engine, schema_name: str) -> None:

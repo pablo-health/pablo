@@ -7,12 +7,12 @@ Iterates ``platform.practices.schema_name`` for active practices and runs
 ``version_table_schema=<schema>``. The ``practice`` template is owned by the
 deploy-time ``alembic upgrade head`` job and is skipped here.
 
-Tenants without an ``alembic_version`` row (provisioned before pa-5in.2
-landed) are reconciled by re-running the idempotent provisioning path
-(``create_practice_schema``): ``Base.metadata.create_all`` adds any missing
-tables, and the stamp lands once the schema actually matches HEAD. Column
-shape evolution that used to live in the boot-time runtime patch is now
-part of the alembic chain (revision ``b7de65c29385``).
+A tenant without an ``alembic_version`` row (a pre-template schema) is
+reported as ``FAILED`` rather than reconciled: the old ORM-driven
+``create_all`` reconcile was removed (it was the drift vector behind the
+2026-05-21 prod incident), so such a schema must be re-provisioned from
+``tenant_template.sql`` or stamped + migrated by hand. Column shape
+evolution lives in the alembic chain (revision ``b7de65c29385``).
 
 Earlier behavior blind-stamped every legacy schema at HEAD without first
 reconciling tables — for tenants provisioned before a new model table
@@ -37,7 +37,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
-from .provisioning import _ALEMBIC_INI_PATH, create_practice_schema
+from .provisioning import _ALEMBIC_INI_PATH
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,7 +60,6 @@ DEFAULT_FAN_OUT_WORKERS = int(os.environ.get("PABLO_MIGRATE_MAX_WORKERS", "1"))
 class TenantStatus(StrEnum):
     SUCCESS = "success"
     ALREADY_AT_HEAD = "already-at-head"
-    RECONCILED = "reconciled"
     FAILED = "failed"
 
 
@@ -159,12 +158,11 @@ def upgrade_tenant_schema(
 ) -> TenantResult:
     """Run ``alembic upgrade head`` against a single tenant schema.
 
-    Reconciles legacy tenants missing ``alembic_version`` by re-running
-    ``create_practice_schema`` (idempotent: ``create_all`` adds missing
-    tables; the provisioning path stamps at HEAD only after the schema
-    has been brought into shape, and the alembic chain carries column
-    shape evolution from there). Returns a structured result rather
-    than raising so a single bad tenant doesn't abort the fan-out.
+    A tenant missing ``alembic_version`` (a pre-template schema) is
+    reported ``FAILED`` — the ORM-driven ``create_all`` reconcile was
+    removed, so it must be re-provisioned from ``tenant_template.sql`` or
+    stamped + migrated by hand. Returns a structured result rather than
+    raising so a single bad tenant doesn't abort the fan-out.
 
     ``head`` can be pre-computed by the caller (``fan_out`` does this) so
     a no-op fan-out across N tenants doesn't pay N
@@ -178,13 +176,17 @@ def upgrade_tenant_schema(
 
     try:
         if not _has_alembic_version(engine, schema):
-            logger.info(
-                "tenant %s missing alembic_version — reconciling against head %s",
+            # Pre-template tenant: tables but no alembic_version. The
+            # create_all reconcile path has been removed (it was the drift
+            # vector behind the 2026-05-21 prod incident), so flag it for
+            # manual handling rather than silently rebuilding from the ORM.
+            logger.error("tenant %s has tables but no alembic_version row", schema)
+            return TenantResult(
                 schema,
-                head,
+                TenantStatus.FAILED,
+                "pre-template tenant (no alembic_version); re-provision from "
+                "tenant_template.sql or stamp + migrate it manually",
             )
-            create_practice_schema(engine, schema)
-            return TenantResult(schema, TenantStatus.RECONCILED, head)
 
         current = _current_revision(engine, schema)
         if current == head:

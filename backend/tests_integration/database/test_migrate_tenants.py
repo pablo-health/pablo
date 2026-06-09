@@ -124,38 +124,29 @@ def test_upgrade_tenant_at_head_reports_already_at_head(engine, tenant_factory) 
     assert _version_in(engine, schema) == _alembic_head()
 
 
-def test_upgrade_tenant_missing_version_reconciles(engine, tenant_factory) -> None:
-    """Tenants without alembic_version are reconciled by re-running the
-    idempotent provisioning path: missing tables/columns are filled in, then
-    the stamp lands at HEAD. After reconciliation the row is at HEAD and
-    re-running is a no-op.
+def test_upgrade_tenant_missing_version_fails_loud(engine, tenant_factory) -> None:
+    """A tenant with tables but no alembic_version (a pre-template schema)
+    is now reported FAILED, not silently reconciled. The ORM-driven
+    create_all reconcile was removed (it was the drift vector behind the
+    2026-05-21 prod incident), so such a schema must be re-provisioned from
+    the template or stamped by hand.
     """
     schema = tenant_factory("legacy", stamp=False)
 
-    # Simulate a legacy schema missing a table introduced after provisioning.
-    # audit_logs is the canonical example: created by a tenant migration
-    # added after the original create_all, and the source of the original
-    # auto-stamp regression. Drop it to exercise the reconcile path.
-    with engine.begin() as conn:
-        conn.execute(text(f"DROP TABLE IF EXISTS {schema}.audit_logs"))
-
     result = upgrade_tenant_schema(engine, schema)
 
-    assert result.status is TenantStatus.RECONCILED
-    assert _version_in(engine, schema) == _alembic_head()
-
+    assert result.status is TenantStatus.FAILED
+    assert "alembic_version" in result.detail
+    # The schema is left untouched — no silent ORM rebuild stamps it.
     with engine.connect() as conn:
-        has_audit = conn.execute(
+        stamped = conn.execute(
             text(
                 "SELECT 1 FROM information_schema.tables"
-                " WHERE table_schema = :s AND table_name = 'audit_logs'"
+                " WHERE table_schema = :s AND table_name = 'alembic_version'"
             ),
             {"s": schema},
         ).fetchone()
-    assert has_audit is not None, "reconcile must recreate missing tables"
-
-    again = upgrade_tenant_schema(engine, schema)
-    assert again.status is TenantStatus.ALREADY_AT_HEAD
+    assert stamped is None
 
 
 def test_fan_out_continues_past_one_failure(engine, tenant_factory) -> None:
