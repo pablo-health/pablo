@@ -123,7 +123,11 @@ class SqlComplianceRetentionStubWriter:
         }
         if stub.dob:
             sql = base_cols + " :pid, :name, CAST(:dob AS date)," + tail
+            # Operator job: SQL from fixed fragments, all values bound params.
+            # nosemgrep
             conn.execute(text(sql), {**params_base, "dob": stub.dob})
         else:
             sql = base_cols + " :pid, :name, NULL::date," + tail
+            # Operator job: SQL from fixed fragments, all values bound params.
+            # nosemgrep
             conn.execute(text(sql), params_base)

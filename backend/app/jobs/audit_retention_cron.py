@@ -67,6 +67,8 @@ def _count_expired(engine: Engine, schema: str, as_of: datetime) -> int:
     """Count audit_logs rows that *would* be deleted at ``as_of``."""
     _validate_schema_name(schema)
     with engine.connect() as conn:
+        # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+        # nosemgrep
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
         result = conn.execute(
             text("SELECT COUNT(*) FROM audit_logs WHERE expires_at < :as_of"),
@@ -79,6 +81,8 @@ def _delete_expired(engine: Engine, schema: str, as_of: datetime) -> int:
     """Delete expired audit_logs rows in ``schema``; returns rows deleted."""
     _validate_schema_name(schema)
     with engine.begin() as conn:
+        # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+        # nosemgrep
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
         result = conn.execute(
             text("DELETE FROM audit_logs WHERE expires_at < :as_of"),

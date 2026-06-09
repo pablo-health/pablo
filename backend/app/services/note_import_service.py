@@ -472,6 +472,8 @@ class NoteImportService:
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc
+                # Logs an integer max_output_tokens budget — not a credential.
+                # nosemgrep
                 logger.warning(
                     "Imported-note parse truncated at max_output_tokens=%d (%s)",
                     budget,

@@ -77,6 +77,8 @@ def _purge_before_timestamp(purge_before: datetime) -> str:
 def _fetch_purgeable_patient_ids(engine: Any, schema: str, purge_before: datetime) -> list[str]:
     _validate_schema_name(schema)
     with engine.connect() as conn:
+        # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+        # nosemgrep
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
         rows = conn.execute(
             text(
@@ -93,6 +95,8 @@ def _patient_row_for_stub(
     conn: Any, schema: str, patient_id: str, purge_before: datetime
 ) -> dict[str, Any] | None:
     _validate_schema_name(schema)
+    # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+    # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
     row = (
         conn.execute(
@@ -111,6 +115,8 @@ def _patient_row_for_stub(
 
 def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
     _validate_schema_name(schema)
+    # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+    # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
     entry_id = str(uuid.uuid4())
     now = datetime.now(UTC)
@@ -140,6 +146,8 @@ def _append_purge_audit(conn: Any, schema: str, patient_id: str) -> None:
 
 def _delete_clinical_rows(conn: Any, schema: str, patient_id: str) -> None:
     _validate_schema_name(schema)
+    # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+    # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
     conn.execute(text("DELETE FROM appointments WHERE patient_id = :pid"), {"pid": patient_id})
     conn.execute(text("DELETE FROM notes WHERE patient_id = :pid"), {"pid": patient_id})
@@ -176,6 +184,8 @@ def _audio_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[
     ``app.routes.sessions``). Empty parts are dropped.
     """
     _validate_schema_name(schema)
+    # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+    # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
     rows = conn.execute(
         text(
@@ -231,6 +241,8 @@ def _document_objects_for_patient(conn: Any, schema: str, patient_id: str) -> li
     the blob names so the objects can be deleted too.
     """
     _validate_schema_name(schema)
+    # Operator job: schema validated by _validate_schema_name(); not web-reachable.
+    # nosemgrep
     conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
     rows = conn.execute(
         text(
