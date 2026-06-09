@@ -396,7 +396,7 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     email character varying(255),
     phone character varying(50),
     status character varying(20) NOT NULL,
-    date_of_birth character varying(10),
+    date_of_birth date,
     diagnosis text,
     session_count integer NOT NULL,
     last_session_date timestamp with time zone,

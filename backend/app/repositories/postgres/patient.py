@@ -11,7 +11,7 @@ on a column of the patient row — see migration ``9dea1edf7fe0``.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import String, Uuid, bindparam, or_, text
@@ -339,7 +339,8 @@ def _row_to_patient(row: PatientRow) -> Patient:
         email=row.email,
         phone=row.phone,
         status=row.status,
-        date_of_birth=row.date_of_birth,
+        # DB column is native DATE; the API model carries an ISO string.
+        date_of_birth=row.date_of_birth.isoformat() if row.date_of_birth else None,
         diagnosis=row.diagnosis,
         last_session_date=row.last_session_date,
         next_session_date=row.next_session_date,
@@ -357,7 +358,10 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.email = patient.email
     row.phone = patient.phone
     row.status = patient.status
-    row.date_of_birth = patient.date_of_birth
+    # ISO string (or "" / None) from the API -> native DATE (or NULL).
+    row.date_of_birth = (
+        date.fromisoformat(patient.date_of_birth) if patient.date_of_birth else None
+    )
     row.diagnosis = patient.diagnosis
     row.session_count = patient.session_count
     row.last_session_date = patient.last_session_date

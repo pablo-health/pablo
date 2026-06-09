@@ -75,7 +75,9 @@ class PatientRow(Base):
     email: Mapped[str | None] = mapped_column(String(255))
     phone: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), default="active")
-    date_of_birth: Mapped[str | None] = mapped_column(String(10))
+    # Civil date (no time/tz). DB type is native DATE; the API speaks ISO
+    # date strings, so the repository converts at the row boundary.
+    date_of_birth: Mapped[date | None] = mapped_column(Date)
     diagnosis: Mapped[str | None] = mapped_column(Text)
     session_count: Mapped[int] = mapped_column(Integer, default=0)
     last_session_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
