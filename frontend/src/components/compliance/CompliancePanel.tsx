@@ -2,6 +2,7 @@
 
 "use client"
 
+import { FileText } from "lucide-react"
 import Image from "next/image"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,7 @@ import {
   useCompleteComplianceItem,
 } from "@/hooks/useCompliance"
 import type { ComplianceItem, ComplianceTemplate } from "@/types/compliance"
+import { DocumentsDialog } from "./DocumentsDialog"
 import { HorizonStrip } from "./HorizonStrip"
 import { ReminderComposer } from "./ReminderComposer"
 import {
@@ -31,6 +33,7 @@ export function CompliancePanel() {
   const completeItem = useCompleteComplianceItem()
   const [composerOpen, setComposerOpen] = useState(false)
   const [editingItem, setEditingItem] = useState<ComplianceItem | null>(null)
+  const [docsItem, setDocsItem] = useState<ComplianceItem | null>(null)
   const [selection, setSelection] = useState<Selection>("urgent")
 
   const templateByType = useMemo(() => {
@@ -140,6 +143,7 @@ export function CompliancePanel() {
               key={entry.item.id}
               entry={entry}
               onEdit={() => openComposerForEdit(entry.item)}
+              onOpenDocs={() => setDocsItem(entry.item)}
               onComplete={() => completeItem.mutate(entry.item.id)}
               completing={completeItem.isPending}
             />
@@ -154,6 +158,14 @@ export function CompliancePanel() {
         items={items}
         initialItem={editingItem}
       />
+
+      {docsItem && (
+        <DocumentsDialog
+          open={docsItem !== null}
+          onOpenChange={(open) => !open && setDocsItem(null)}
+          item={docsItem}
+        />
+      )}
     </div>
   )
 }
@@ -187,11 +199,13 @@ function PanelHeader({
 function ItemRow({
   entry,
   onEdit,
+  onOpenDocs,
   onComplete,
   completing,
 }: {
   entry: EnrichedItem
   onEdit: () => void
+  onOpenDocs: () => void
   onComplete: () => void
   completing: boolean
 }) {
@@ -225,6 +239,18 @@ function ItemRow({
       >
         {formatDueLabel(days)}
       </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={(e) => {
+          e.stopPropagation()
+          onOpenDocs()
+        }}
+        className="opacity-70 group-hover:opacity-100 transition-opacity"
+        aria-label={`Documents for ${item.label}`}
+      >
+        <FileText className="h-4 w-4" aria-hidden />
+      </Button>
       <Button
         variant="ghost"
         size="sm"
