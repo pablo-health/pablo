@@ -48,6 +48,11 @@ pytestmark = pytest.mark.skipif(
 os.environ.setdefault("MULTI_TENANCY_ENABLED", "false")
 
 _SUFFIX = uuid.uuid4().hex[:8]
+# Caller user_ids are native uuid columns; readable names below.
+_USER_A = "bb8e799c-a57b-533d-a8c4-6648b68eed2d"
+_USER_1 = "4bd6452f-45bf-53d0-9680-693205fde295"
+_USER_42 = "bbf9973e-6f8a-5325-9f9d-210ce500493a"
+_USER_THREAD = "829636a5-8c15-58e3-b807-f34780edf78d"
 _SCHEMA_A = f"practice_ts_integ_a_{_SUFFIX}"
 _SCHEMA_B = f"practice_ts_integ_b_{_SUFFIX}"
 
@@ -99,20 +104,20 @@ def _schemas(_engine):  # type: ignore[return]
 class TestTenantDbSessionIntegration:
     def test_search_path_is_set_to_practice_schema(self) -> None:
         """The session must report the correct search_path."""
-        with tenant_db_session(_SCHEMA_A, "user-integ-1") as session:
+        with tenant_db_session(_SCHEMA_A, _USER_1) as session:
             path = session.execute(text("SHOW search_path")).scalar() or ""
         assert _SCHEMA_A in path
 
     def test_rls_guc_is_armed_inside_context(self) -> None:
-        with tenant_db_session(_SCHEMA_A, "user-integ-42") as session:
+        with tenant_db_session(_SCHEMA_A, _USER_42) as session:
             uid = session.execute(
                 text("SELECT current_setting('app.current_user_id', true)")
             ).scalar()
-        assert uid == "user-integ-42"
+        assert uid == _USER_42
 
     def test_write_and_commit(self) -> None:
         row_id = f"write-{uuid.uuid4().hex[:8]}"
-        with tenant_db_session(_SCHEMA_A, "user-integ-1") as session:
+        with tenant_db_session(_SCHEMA_A, _USER_1) as session:
             session.execute(
                 text(f"INSERT INTO {_SCHEMA_A}.canary (id, label) VALUES (:id, :label)"),  # noqa: S608
                 {"id": row_id, "label": "test-write"},
@@ -130,7 +135,7 @@ class TestTenantDbSessionIntegration:
         row_id = f"rollback-{uuid.uuid4().hex[:8]}"
 
         def _body() -> None:
-            with tenant_db_session(_SCHEMA_A, "user-integ-1") as session:
+            with tenant_db_session(_SCHEMA_A, _USER_1) as session:
                 session.execute(
                     text(
                         f"INSERT INTO {_SCHEMA_A}.canary (id, label) VALUES (:id, :label)"  # noqa: S608
@@ -169,7 +174,7 @@ class TestRunInTenantIntegration:
             )
             return row_id
 
-        result = asyncio.run(run_in_tenant(_SCHEMA_A, "user-integ-thread", _insert))
+        result = asyncio.run(run_in_tenant(_SCHEMA_A, _USER_THREAD, _insert))
         assert result == row_id
 
         with create_engine(_DB_URL).connect() as raw:
@@ -191,7 +196,7 @@ class TestRunInTenantIntegration:
                 {"id": row_id, "label": "schema-a-only"},
             )
 
-        asyncio.run(run_in_tenant(_SCHEMA_A, "user-a", _insert_a))
+        asyncio.run(run_in_tenant(_SCHEMA_A, _USER_A, _insert_a))
 
         with create_engine(_DB_URL).connect() as raw:
             count_a = raw.execute(

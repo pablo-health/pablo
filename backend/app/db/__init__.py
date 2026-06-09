@@ -623,9 +623,14 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
 
     * **user_id column** (clinician owns the row directly — patients,
       therapy_sessions, appointments, etc.): policy matches rows where
-      ``user_id = current_setting('app.current_user_id', true)``. This
-      is the original direct-ownership shape; preserves prior behavior
-      so multi-clinician sharing on these tables remains a follow-up.
+      ``user_id::text = current_setting('app.current_user_id', true)``.
+      This is the original direct-ownership shape; preserves prior
+      behavior so multi-clinician sharing on these tables remains a
+      follow-up. The ``::text`` cast compares the native-``uuid``
+      ``user_id`` column against the always-text GUC: an unset/empty
+      GUC yields NULL/'' and matches nothing (fail-closed), with no
+      ``invalid input syntax for uuid`` risk that casting the GUC the
+      other way would carry.
     * **patient_id column with no user_id** (row is owned indirectly
       via the patient — currently just ``notes``): policy matches rows
       where ``has_patient_access(patient_id, current_setting(...))``
@@ -775,7 +780,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                     f"  )) "
                     f"  OR "
                     f"  (category IN ('therapist_private', 'psychotherapy_notes') "
-                    f"   AND user_id = current_setting('app.current_user_id', true))"
+                    f"   AND user_id::text = current_setting('app.current_user_id', true))"
                     f")"
                 )
             )
@@ -801,8 +806,8 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             session.execute(
                 text(
                     f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id = current_setting('app.current_user_id', true)) "
-                    f"WITH CHECK (user_id = current_setting('app.current_user_id', true))"
+                    f"USING (user_id::text = current_setting('app.current_user_id', true)) "
+                    f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
                 )
             )
             logger.info("RLS (user_id) enabled on %s", qualified)
@@ -875,8 +880,8 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             session.execute(
                 text(
                     f"CREATE POLICY rls_user_isolation ON {qualified} "
-                    f"USING (user_id = current_setting('app.current_user_id', true)) "
-                    f"WITH CHECK (user_id = current_setting('app.current_user_id', true))"
+                    f"USING (user_id::text = current_setting('app.current_user_id', true)) "
+                    f"WITH CHECK (user_id::text = current_setting('app.current_user_id', true))"
                 )
             )
             logger.info("RLS (user_id) enabled on %s", qualified)
@@ -927,7 +932,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             # ``compliance_item_id`` (which is nullable, so a parent-based
             # policy would hide item-less documents); uploaded_by_user_id
             # is NOT NULL, so every row is attributable.
-            owner = "uploaded_by_user_id = current_setting('app.current_user_id', true)"
+            owner = "uploaded_by_user_id::text = current_setting('app.current_user_id', true)"
             session.execute(
                 text(
                     f"CREATE POLICY rls_user_isolation ON {qualified} "

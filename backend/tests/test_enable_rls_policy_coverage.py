@@ -74,7 +74,7 @@ def test_compliance_documents_gets_uploaded_by_user_id_policy() -> None:
     session = _run({"compliance_documents": {"id"}})
     ddl = " ".join(session.executed)
     assert "CREATE POLICY rls_user_isolation ON practice_test.compliance_documents" in ddl
-    assert "uploaded_by_user_id = current_setting('app.current_user_id', true)" in ddl
+    assert "uploaded_by_user_id::text = current_setting('app.current_user_id', true)" in ddl
     assert "ENABLE ROW LEVEL SECURITY" in ddl
 
 
@@ -99,7 +99,7 @@ def test_user_id_table_still_gets_isolation_policy() -> None:
     session = _run({"appointments": {"id", "user_id"}})
     ddl = " ".join(session.executed)
     assert "CREATE POLICY rls_user_isolation ON practice_test.appointments" in ddl
-    assert "user_id = current_setting('app.current_user_id', true)" in ddl
+    assert "user_id::text = current_setting('app.current_user_id', true)" in ddl
 
 
 # ---------------------------------------------------------------------------

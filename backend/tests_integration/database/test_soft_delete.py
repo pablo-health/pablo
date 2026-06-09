@@ -631,7 +631,7 @@ class TestChartClosure:
         pg_session.commit()
         repo = PostgresPatientRepository(pg_session)
 
-        result = repo.close_chart(patient.id, "different-user", None)
+        result = repo.close_chart(patient.id, "ef98b3d0-8ec7-5752-ab84-de3027222762", None)
         assert result is None
         # Untouched.
         row = pg_session.get(PatientRow, patient.id)

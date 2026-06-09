@@ -194,7 +194,7 @@ def test_create_relationship_persists_and_links_review_item(session: Session) ->
         .mappings()
         .one()
     )
-    assert item["user_id"] == user_id
+    assert str(item["user_id"]) == user_id
     assert item["item_type"] == "supervision_review"
     assert item["label"] == "Annual delegation review"
     assert item["due_date"] == date(2027, 3, 15)  # mirrors next_review_date

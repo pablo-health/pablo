@@ -38,6 +38,11 @@ pytestmark = pytest.mark.skipif(
 
 # Test schema names (using UUID suffix to avoid conflicts)
 _SUFFIX = uuid.uuid4().hex[:8]
+# Clinician user_ids are native uuid columns; give them readable names.
+_USER_ALPHA = "faeffa77-ef9c-57ae-93d7-315f0c784e84"
+_USER_BETA = "e61641ea-7365-56e5-a57f-2f583ce232de"
+_USER_A = "bb8e799c-a57b-533d-a8c4-6648b68eed2d"
+_USER_B = "53fb3142-0849-5c70-9145-a9030a5d8c6c"
 SCHEMA_ALPHA = f"practice_test_alpha_{_SUFFIX}"
 SCHEMA_BETA = f"practice_test_beta_{_SUFFIX}"
 PLATFORM_SCHEMA = "platform"
@@ -186,7 +191,7 @@ class TestPatientIsolation:
 
     def test_alpha_patient_invisible_to_beta(self, db_alpha, db_beta):
         patient_id = f"patient-alpha-{uuid.uuid4().hex[:8]}"
-        _insert_patient(db_alpha, patient_id, "user-alpha", "AlphaPatient")
+        _insert_patient(db_alpha, patient_id, _USER_ALPHA, "AlphaPatient")
 
         # Alpha can see the patient
         alpha_result = db_alpha.execute(
@@ -203,7 +208,7 @@ class TestPatientIsolation:
 
     def test_beta_patient_invisible_to_alpha(self, db_alpha, db_beta):
         patient_id = f"patient-beta-{uuid.uuid4().hex[:8]}"
-        _insert_patient(db_beta, patient_id, "user-beta", "BetaPatient")
+        _insert_patient(db_beta, patient_id, _USER_BETA, "BetaPatient")
 
         # Beta can see it
         beta_result = db_beta.execute(
@@ -219,9 +224,9 @@ class TestPatientIsolation:
 
     def test_list_patients_isolated(self, db_alpha, db_beta):
         """Each tenant only sees their own patients in list queries."""
-        _insert_patient(db_alpha, f"pa-{uuid.uuid4().hex[:8]}", "user-a", "AliceAlpha")
-        _insert_patient(db_alpha, f"pa-{uuid.uuid4().hex[:8]}", "user-a", "BobAlpha")
-        _insert_patient(db_beta, f"pb-{uuid.uuid4().hex[:8]}", "user-b", "CharlieBeta")
+        _insert_patient(db_alpha, f"pa-{uuid.uuid4().hex[:8]}", _USER_A, "AliceAlpha")
+        _insert_patient(db_alpha, f"pa-{uuid.uuid4().hex[:8]}", _USER_A, "BobAlpha")
+        _insert_patient(db_beta, f"pb-{uuid.uuid4().hex[:8]}", _USER_B, "CharlieBeta")
 
         alpha_patients = db_alpha.execute(text("SELECT first_name FROM patients")).fetchall()
         beta_patients = db_beta.execute(text("SELECT first_name FROM patients")).fetchall()
@@ -243,8 +248,8 @@ class TestSessionIsolation:
     def test_session_in_alpha_invisible_to_beta(self, db_alpha, db_beta):
         patient_id = f"pt-{uuid.uuid4().hex[:8]}"
         session_id = f"ses-{uuid.uuid4().hex[:8]}"
-        _insert_patient(db_alpha, patient_id, "user-a", "Pat")
-        _insert_session(db_alpha, session_id, "user-a", patient_id)
+        _insert_patient(db_alpha, patient_id, _USER_A, "Pat")
+        _insert_session(db_alpha, session_id, _USER_A, patient_id)
 
         # Alpha can see it
         alpha_result = db_alpha.execute(
@@ -275,7 +280,7 @@ class TestSearchPathIsolation:
     def test_write_to_wrong_schema_impossible(self, db_alpha, db_beta):
         """Writing via Alpha session goes to Alpha schema, not Beta."""
         patient_id = f"cross-{uuid.uuid4().hex[:8]}"
-        _insert_patient(db_alpha, patient_id, "user-alpha", "ShouldBeInAlpha")
+        _insert_patient(db_alpha, patient_id, _USER_ALPHA, "ShouldBeInAlpha")
 
         # Verify it's in Alpha
         alpha_result = db_alpha.execute(
@@ -301,8 +306,8 @@ class TestConcurrentSchemaAccess:
         for i in range(3):
             a_id = f"interleave-a-{i}-{uuid.uuid4().hex[:6]}"
             b_id = f"interleave-b-{i}-{uuid.uuid4().hex[:6]}"
-            _insert_patient(db_alpha, a_id, "user-a", f"Alpha{i}")
-            _insert_patient(db_beta, b_id, "user-b", f"Beta{i}")
+            _insert_patient(db_alpha, a_id, _USER_A, f"Alpha{i}")
+            _insert_patient(db_beta, b_id, _USER_B, f"Beta{i}")
             ids.append((a_id, b_id))
 
         # Alpha has only Alpha patients

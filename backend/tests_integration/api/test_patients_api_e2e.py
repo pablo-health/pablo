@@ -147,7 +147,7 @@ def fastapi_app() -> FastAPI:
 def e2e_user_id() -> str:
     # Stable across the module so the audit service and patient grant
     # use the same id.
-    return "e2e-patients-user"
+    return "7b0f2f61-a44d-56fc-a4e2-5aa536f6dfc9"
 
 
 @pytest.fixture
@@ -281,7 +281,7 @@ class TestPostPatientsEndToEnd:
             conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
-                {"uid": "e2e-patients-user"},
+                {"uid": "7b0f2f61-a44d-56fc-a4e2-5aa536f6dfc9"},
             )
             patient_row = (
                 conn.execute(
@@ -309,7 +309,7 @@ class TestPostPatientsEndToEnd:
         assert patient_row is not None, "Patient row not visible to tenant session"
         assert patient_row["first_name"] == "Ada"
         assert grant_row is not None, "patient_clinicians grant not written"
-        assert grant_row["user_id"] == "e2e-patients-user"
+        assert str(grant_row["user_id"]) == "7b0f2f61-a44d-56fc-a4e2-5aa536f6dfc9"
         assert grant_row["role"] == "primary"
 
     def test_second_patient_creation_also_succeeds(

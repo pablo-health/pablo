@@ -235,7 +235,7 @@ class TestRlsFailsClosedWithoutGuc:
     def test_unset_guc_returns_zero_rows_on_every_tenant_table(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        seed_user = "rls-test-user"
+        seed_user = "30e13250-a1bb-5d5e-991d-c74ac69e26e3"
         patient_id = str(uuid.uuid4())
 
         # Seed: insert a patient + grant. We do this with the GUC SET
@@ -320,7 +320,7 @@ class TestRlsGucRearmedAcrossCommit:
     def test_guc_survives_mid_session_commit(self, engine: Engine, tenant_schema: str) -> None:
         from app.db import _current_tenant_schema, _current_user_id  # noqa: PLC0415
 
-        seed_user = "rearm-test-user"
+        seed_user = "a2bb584b-9a12-5fa0-ab07-6b8edf1aef38"
         patient_id = str(uuid.uuid4())
 
         # Seed a patient + grant with the GUC set so the policy USING/CHECK
@@ -437,7 +437,7 @@ class TestRlsGucRearmedAcrossCommitOnSyncRoute:
             arm_current_user_id,
         )
 
-        seed_user = "sync-route-rearm-user"
+        seed_user = "2c98d066-9e2a-5e08-af2f-35aa21088b4a"
         patient_id = str(uuid.uuid4())
 
         with engine.begin() as conn:
@@ -571,7 +571,7 @@ class TestArmCurrentUserIdEnablesProfileWrite:
                         "(user_id, practice_id, role, joined_at) "
                         "VALUES (:u, :p, 'clinician', now())"
                     ),
-                    {"u": "unarmed-user", "p": "practice-x"},
+                    {"u": "982676a4-6fbb-5618-b331-8765ebd04146", "p": "practice-x"},
                 )
             conn.rollback()
         assert "row-level security" in str(exc.value).lower(), (
@@ -588,7 +588,7 @@ class TestArmCurrentUserIdEnablesProfileWrite:
             arm_current_user_id,
         )
 
-        clinician = "armed-clinician"
+        clinician = "469f0156-becc-56ef-802b-182c74cab9e6"
         schema_token = _current_tenant_schema.set(tenant_schema)
         user_token = _current_user_id.set(None)
         session = OrmSession(bind=engine)
