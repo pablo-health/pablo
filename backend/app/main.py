@@ -18,6 +18,8 @@ from sqlalchemy import text
 from .api_errors import register_exception_handlers
 from .auth.route_security import truly_public
 from .db import get_engine
+from .db.middleware import DatabaseSessionMiddleware
+from .db.provisioning import ensure_schemas
 from .diagnostics.router import (
     diagnostic_assessments_router,
     diagnostic_definitions_router,
@@ -109,15 +111,10 @@ register_exception_handlers(app)
 # formats against the same default registry.
 register_builtin_note_types(get_default_registry())
 
-# PostgreSQL session middleware (must be added before security middleware
+# Database session middleware (must be added before security middleware
 # so it wraps the request lifecycle inside the security layer)
-if settings.database_backend == "postgres":
-    from .db import get_engine
-    from .db.middleware import DatabaseSessionMiddleware
-    from .db.provisioning import ensure_schemas
-
-    ensure_schemas(get_engine())
-    app.add_middleware(DatabaseSessionMiddleware)
+ensure_schemas(get_engine())
+app.add_middleware(DatabaseSessionMiddleware)
 
 # Security middleware - HIPAA TLS enforcement (order matters: security first)
 app.add_middleware(SecurityHeadersMiddleware, settings=settings)
@@ -130,7 +127,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=settings.cors_allow_credentials,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
         "Authorization",
         "Content-Type",
