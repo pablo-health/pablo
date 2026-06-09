@@ -3,7 +3,7 @@
 """Notes API routes (pa-0nx.2 + pa-0nx.3).
 
 Notes are first-class clinical artifacts. These endpoints expose the
-note lifecycle (read / edit / finalize / submit-for-export) directly,
+note lifecycle (read / edit / finalize) directly,
 rather than going through the session route. The session route still
 embeds the note for backward compatibility — see ``routes/sessions.py``.
 
@@ -48,7 +48,6 @@ from ..services import (
     AuditService,
     NoteAlreadyFinalizedError,
     NoteGenerationService,
-    NoteNotFinalizedError,
     NoteNotFoundError,
     NoteService,
     RegistryNoteGenerationService,
@@ -184,38 +183,6 @@ def finalize_note(
         patient_id=note.patient_id,
         session_id=note.session_id,
         changes={"quality_rating": request.quality_rating},
-    )
-    return NoteResponse.from_note(note)
-
-
-@router.post("/{note_id}/submit-export", status_code=status.HTTP_200_OK)
-def submit_note_for_export(
-    note_id: str,
-    http_request: Request,
-    user: User = Depends(require_baa_acceptance),
-    note_service: NoteService = Depends(get_note_service),
-    audit: AuditService = Depends(get_audit_service),
-) -> NoteResponse:
-    """Queue a finalized note for export."""
-    try:
-        note = note_service.submit_note_for_export(note_id, user.id)
-    except NoteNotFoundError as exc:
-        raise NotFoundError("Note not found", {"note_id": note_id}) from exc
-    except NoteNotFinalizedError as exc:
-        raise BadRequestError(
-            "Note must be finalized before submitting for export",
-            {"note_id": note_id},
-            code="NOTE_NOT_FINALIZED",
-        ) from exc
-
-    audit.log_note_action(
-        action=AuditAction.EXPORT_ACTION_TAKEN,
-        user=user,
-        request=http_request,
-        note_id=note.id,
-        patient_id=note.patient_id,
-        session_id=note.session_id,
-        changes={"export_status": note.export_status},
     )
     return NoteResponse.from_note(note)
 
