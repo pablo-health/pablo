@@ -84,20 +84,7 @@ def create_medication(
     """
     try:
         row = service.create(patient_id, user.id, request)
-        return MedicationResponse(
-            id=str(row["id"]),
-            patient_id=str(row["patient_id"]),
-            drug_name=str(row["drug_name"]),
-            dose=str(row["dose"]),
-            status=str(row["status"]),
-            started_at=row.get("started_at"),  # type: ignore[arg-type]
-            stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
-            stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
-            notes=str(row["notes"]) if row.get("notes") is not None else None,
-            created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
-        )
+        return MedicationService._build_response(row)
     except PatientMedicationAccessError as exc:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from exc
 
@@ -123,23 +110,7 @@ def list_medications(
     no access grant for the patient.
     """
     rows = service.list_by_patient(patient_id, user.id, status=status)
-    meds = [
-        MedicationResponse(
-            id=str(r["id"]),
-            patient_id=str(r["patient_id"]),
-            drug_name=str(r["drug_name"]),
-            dose=str(r["dose"]),
-            status=str(r["status"]),
-            started_at=r.get("started_at"),  # type: ignore[arg-type]
-            stopped_at=r.get("stopped_at"),  # type: ignore[arg-type]
-            stop_reason=str(r["stop_reason"]) if r.get("stop_reason") is not None else None,
-            notes=str(r["notes"]) if r.get("notes") is not None else None,
-            created_by=str(r["created_by"]),
-            created_at=r["created_at"],  # type: ignore[arg-type]
-            updated_at=r["updated_at"],  # type: ignore[arg-type]
-        )
-        for r in rows
-    ]
+    meds = [MedicationService._build_response(r) for r in rows]
     return MedicationListResponse(data=meds, total=len(meds))
 
 
@@ -161,20 +132,7 @@ def update_medication(
     """
     try:
         row = service.update(medication_id, user.id, request)
-        return MedicationResponse(
-            id=str(row["id"]),
-            patient_id=str(row["patient_id"]),
-            drug_name=str(row["drug_name"]),
-            dose=str(row["dose"]),
-            status=str(row["status"]),
-            started_at=row.get("started_at"),  # type: ignore[arg-type]
-            stopped_at=row.get("stopped_at"),  # type: ignore[arg-type]
-            stop_reason=str(row["stop_reason"]) if row.get("stop_reason") is not None else None,
-            notes=str(row["notes"]) if row.get("notes") is not None else None,
-            created_by=str(row["created_by"]),
-            created_at=row["created_at"],  # type: ignore[arg-type]
-            updated_at=row["updated_at"],  # type: ignore[arg-type]
-        )
+        return MedicationService._build_response(row)
     except MedicationNotFoundError as exc:
         raise NotFoundError("Medication not found", {"medication_id": medication_id}) from exc
 
