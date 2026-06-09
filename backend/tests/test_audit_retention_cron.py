@@ -103,11 +103,16 @@ def test_expires_at_filter_passes_as_of_to_query() -> None:
         rc = audit_retention_cron.run(["--as-of", "2026-02-01T00:00:00Z"])
 
     assert rc == 0
-    # First execute: SET search_path; second execute: DELETE with :as_of bind.
+    # Executes in order: SET search_path, SET LOCAL allow_audit_purge, then
+    # the DELETE with the :as_of bind (the last execute call).
     delete_call = mock_conn.execute.call_args_list[-1]
     bind = delete_call.args[1]
     assert bind == {"as_of": datetime(2026, 2, 1, 0, 0, 0, tzinfo=UTC)}
     assert "DELETE FROM audit_logs WHERE expires_at < :as_of" in str(delete_call.args[0])
+    # The append-only trigger only yields to the retention purge when this
+    # transaction-scoped GUC is armed in the same transaction as the DELETE.
+    executed_sql = [str(call.args[0]) for call in mock_conn.execute.call_args_list]
+    assert any("SET LOCAL app.allow_audit_purge = 'on'" in sql for sql in executed_sql)
 
 
 def test_returns_one_on_db_error() -> None:
