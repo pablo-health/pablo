@@ -279,3 +279,46 @@ export async function del<T>(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   })
 }
+
+/**
+ * POST a multipart/form-data body. apiClient() already omits the
+ * Content-Type header for FormData bodies so the browser sets the
+ * multipart boundary itself.
+ */
+export async function postForm<T>(
+  endpoint: string,
+  formData: FormData,
+  token?: string,
+): Promise<T> {
+  return apiClient<T>(endpoint, { method: "POST", body: formData, token })
+}
+
+/**
+ * GET binary content (a file download) as a Blob. apiClient() coerces
+ * non-JSON responses to text, which corrupts binary payloads, so file
+ * downloads need their own path. Error shapes mirror apiClient().
+ */
+export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
+  const response = await fetch(buildApiUrl(endpoint), {
+    method: "GET",
+    headers: await getAuthHeader(token),
+  })
+  if (!response.ok) {
+    let errorData: ApiErrorResponse | null = null
+    if (response.headers.get("content-type")?.includes("application/json")) {
+      try {
+        errorData = (await response.json()) as ApiErrorResponse
+      } catch {
+        // Non-JSON error body — fall through to the generic message.
+      }
+    }
+    throw new ApiError(
+      errorData?.error?.code || "UNKNOWN_ERROR",
+      errorData?.error?.message ||
+        `API request failed with status ${response.status}`,
+      errorData?.error?.details,
+      response.status,
+    )
+  }
+  return response.blob()
+}
