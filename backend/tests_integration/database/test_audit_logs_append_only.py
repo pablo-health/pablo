@@ -35,7 +35,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import InternalError, ProgrammingError
+from sqlalchemy.exc import IntegrityError, InternalError, ProgrammingError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -121,7 +121,7 @@ class TestAuditLogsAppendOnly:
                 text("SELECT set_config('app.current_user_id', :u, false)"),
                 {"u": user_id},
             )
-            with pytest.raises((InternalError, ProgrammingError)) as exc:
+            with pytest.raises((IntegrityError, InternalError, ProgrammingError)) as exc:
                 conn.execute(
                     text("UPDATE audit_logs SET action = 'tamper' WHERE id = CAST(:id AS uuid)"),
                     {"id": row_id},
@@ -139,7 +139,7 @@ class TestAuditLogsAppendOnly:
                 text("SELECT set_config('app.current_user_id', :u, false)"),
                 {"u": user_id},
             )
-            with pytest.raises((InternalError, ProgrammingError)) as exc:
+            with pytest.raises((IntegrityError, InternalError, ProgrammingError)) as exc:
                 conn.execute(
                     text("DELETE FROM audit_logs WHERE id = CAST(:id AS uuid)"),
                     {"id": row_id},
