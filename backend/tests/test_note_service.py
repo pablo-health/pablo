@@ -201,25 +201,3 @@ class TestUpdateQualityRating:
         )
         with pytest.raises(NoteNotFinalizedError):
             service.update_quality_rating(note.id, quality_rating=2, user_id=_USER)
-
-
-class TestSubmitForExport:
-    def test_queues_finalized_note(self, service: NoteService) -> None:
-        sid = _new_session_id()
-        note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
-            user_id=_USER,
-        )
-        service.finalize_note(note.id, quality_rating=4, user_id=_USER)
-        queued = service.submit_note_for_export(note.id, _USER)
-        assert queued.export_status == "queued"
-        assert queued.export_queued_at is not None
-
-    def test_rejects_unfinalized(self, service: NoteService) -> None:
-        sid = _new_session_id()
-        note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
-            user_id=_USER,
-        )
-        with pytest.raises(NoteNotFinalizedError):
-            service.submit_note_for_export(note.id, _USER)

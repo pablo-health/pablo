@@ -4,7 +4,7 @@
 
 Encapsulates multi-step session operations: upload with note generation,
 finalization, scheduling, and status transitions. Note-flavored business
-logic (edit, finalize-with-quality-rating, submit-for-export) lives on
+logic (edit, finalize-with-quality-rating) lives on
 :class:`app.services.note_service.NoteService`; this service delegates
 through to it for session-scoped endpoints.
 """
@@ -12,10 +12,7 @@ through to it for session-scoped endpoints.
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .eval_export_service import EvalExportService  # type: ignore[import-not-found]
+from typing import Any
 
 from ..api_errors import APIError, BadRequestError, ConflictError, NotFoundError, ServerError
 from ..models import (
@@ -39,7 +36,6 @@ from ..repositories import PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
 from .note_generation_service import NoteGenerationService
 from .note_service import (
-    NoteAlreadyFinalizedError,
     NoteNotFinalizedError,
     NoteNotFoundError,
     NoteService,
@@ -188,13 +184,11 @@ class SessionService:
         patient_repo: PatientRepository,
         note_generation_service: NoteGenerationService,
         note_service: NoteService,
-        eval_export_service: "EvalExportService | None" = None,
     ) -> None:
         self.session_repo = session_repo
         self.patient_repo = patient_repo
         self.note_generation_service = note_generation_service
         self.note_service = note_service
-        self.eval_export_service = eval_export_service
 
     def _get_patient_or_raise(self, patient_id: str, user_id: str) -> Patient:
         patient = self.patient_repo.get(patient_id, user_id)
@@ -380,9 +374,8 @@ class SessionService:
         """Finalize a session after therapist review.
 
         Validates session status, applies note edits, finalizes the note
-        with quality rating, transitions session to FINALIZED, and queues
-        for eval export if configured. Returns the finalized session,
-        patient, and updated note.
+        with quality rating, and transitions session to FINALIZED. Returns
+        the finalized session, patient, and updated note.
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
@@ -428,14 +421,6 @@ class SessionService:
 
         session.status = SessionStatus.FINALIZED
         session = self.session_repo.update(session)
-
-        # Check if note should be queued for eval export (when the
-        # eval-export service is registered). Finalizing without a rating
-        # is allowed; in that case there is nothing to queue on.
-        if self.eval_export_service and request.quality_rating is not None:
-            decision = self.eval_export_service.should_queue_for_export(request.quality_rating)
-            if decision.should_queue:
-                note = self.note_service.submit_note_for_export(note.id, user_id)
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
         return session, patient, note
@@ -505,24 +490,6 @@ class SessionService:
         if note is None:
             raise NoteNotFoundError(f"Session {session_id} has no note")
         return self.note_service.update_note_edits(note.id, content_edited, user_id)
-
-    def submit_for_export(
-        self,
-        session_id: str,
-        user_id: str,
-    ) -> Note:
-        """Queue a session's note for export via the session-scoped path."""
-        session = self.session_repo.get(session_id, user_id)
-        if not session:
-            raise SessionNotFoundError(f"Session {session_id} not found")
-
-        note = self.note_service.get_note_by_session_id(session_id, user_id)
-        if note is None:
-            raise NoteNotFoundError(f"Session {session_id} has no note")
-        try:
-            return self.note_service.submit_note_for_export(note.id, user_id)
-        except NoteAlreadyFinalizedError:
-            raise
 
     def schedule_session(
         self,

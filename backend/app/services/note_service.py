@@ -3,7 +3,7 @@
 """Note business logic service.
 
 Owns the lifecycle of clinical notes (create-from-generation, edit,
-finalize, export submission). Notes are first-class and patient-owned;
+finalize). Notes are first-class and patient-owned;
 :class:`SessionService` delegates note-flavored operations here so the
 session row stays focused on recording metadata. See pa-0nx.
 
@@ -28,9 +28,6 @@ from ..utcnow import utc_now
 
 if TYPE_CHECKING:
     from datetime import datetime
-
-EXPORT_STATUS_NOT_QUEUED = "not_queued"
-EXPORT_STATUS_QUEUED = "queued"
 
 
 class NoteServiceError(APIError):
@@ -215,18 +212,3 @@ class NoteService:
         note.quality_rating_sections = quality_rating_sections
         note.updated_at = utc_now()
         return self._notes.update(note, user_id), old_rating
-
-    # --- Export ---
-
-    def submit_note_for_export(self, note_id: str, user_id: str) -> Note:
-        """Queue a finalized note for clinician/eval export."""
-        note = self.get_note(note_id, user_id)
-        if note.finalized_at is None:
-            raise NoteNotFinalizedError(
-                f"Note {note_id} must be finalized before submitting for export",
-                {"note_id": note_id},
-            )
-        note.export_status = EXPORT_STATUS_QUEUED
-        note.export_queued_at = utc_now()
-        note.updated_at = utc_now()
-        return self._notes.update(note, user_id)
