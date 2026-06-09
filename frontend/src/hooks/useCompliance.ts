@@ -5,10 +5,13 @@
 import {
   completeComplianceItem,
   createComplianceItem,
+  deleteComplianceDocument,
   deleteComplianceItem,
+  listComplianceDocuments,
   listComplianceItems,
   listComplianceTemplates,
   updateComplianceItem,
+  uploadComplianceDocument,
 } from "@/lib/api/compliance"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type { ComplianceItemPayload } from "@/types/compliance"
@@ -62,5 +65,43 @@ export function useDeleteComplianceItem(token?: string) {
   return useAuthMutation({
     mutationFn: (id: string) => deleteComplianceItem(id, token),
     invalidateKeys: [queryKeys.compliance.items()],
+  })
+}
+
+// --- Evidence documents (the credential vault) ---------------------------
+
+export function useComplianceDocuments(
+  itemId: string,
+  enabled = true,
+  token?: string,
+) {
+  return useAuthQuery({
+    queryKey: queryKeys.compliance.documents(itemId),
+    queryFn: () => listComplianceDocuments(itemId, token),
+    enabled: enabled && Boolean(itemId),
+  })
+}
+
+export function useUploadComplianceDocument(itemId: string, token?: string) {
+  return useAuthMutation({
+    mutationFn: ({
+      file,
+      documentType,
+      description,
+    }: {
+      file: File
+      documentType: string
+      description?: string
+    }) =>
+      uploadComplianceDocument(itemId, file, documentType, description, token),
+    invalidateKeys: [queryKeys.compliance.documents(itemId)],
+  })
+}
+
+export function useDeleteComplianceDocument(itemId: string, token?: string) {
+  return useAuthMutation({
+    mutationFn: (documentId: string) =>
+      deleteComplianceDocument(documentId, token),
+    invalidateKeys: [queryKeys.compliance.documents(itemId)],
   })
 }

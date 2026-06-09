@@ -201,6 +201,8 @@ const baseQueryKeys = {
     all: ["compliance"] as const,
     templates: () => [...baseQueryKeys.compliance.all, "templates"] as const,
     items: () => [...baseQueryKeys.compliance.all, "items"] as const,
+    documents: (itemId: string) =>
+      [...baseQueryKeys.compliance.all, "documents", itemId] as const,
   },
 
   // Supervision / delegation query keys
