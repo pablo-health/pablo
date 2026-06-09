@@ -24,8 +24,9 @@ CREATE FUNCTION __TENANT_SCHEMA__.audit_logs_append_only() RETURNS trigger
             IF current_setting('app.allow_audit_purge', true) = 'on' THEN
                 RETURN COALESCE(OLD, NEW);
             END IF;
-            RAISE EXCEPTION 'audit_logs is append-only (% blocked)', TG_OP
-                USING ERRCODE = 'check_violation';
+            RAISE EXCEPTION USING
+                MESSAGE = 'audit_logs is append-only (' || TG_OP || ' blocked)',
+                ERRCODE = 'check_violation';
         END;
         $$;
 
