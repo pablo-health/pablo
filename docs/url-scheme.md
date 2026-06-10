@@ -21,12 +21,19 @@ The companion always re-fetches the underlying record from the
 backend after activation, so URLs are intentionally minimal — they
 say "what to do" and "to which row," not "with what content."
 
+`session/start` carries a single-use **launch intent** id, not a raw
+appointment id. The web issues the intent server-side, scoped to the
+signed-in user, and the companion redeems it once over the
+authenticated API to learn which appointment to record. A leaked or
+guessed link is therefore inert — it isn't a standing pointer at a
+patient's appointment.
+
 ## Registered URIs
 
 | URI | Purpose | Status |
 |---|---|---|
 | `pablohealth://callback?code=...&state=...` | OAuth code-exchange callback (RFC 8252 §7.1). | **Live** — web → companion auth, Google Calendar OAuth. |
-| `pablohealth://session/start?appointment=<id>` | Start recording for the given appointment. Companion launches if not running. | **Live (web)** — emitted by `frontend/src/components/dashboard/TodayPanel.tsx`. Companion handler TBD. |
+| `pablohealth://session/start?intent=<id>` | Start recording for the given appointment, identified by a single-use launch intent the companion redeems server-side (180s TTL). Companion launches if not running. | **Live (web)** — emitted by `frontend/src/components/dashboard/StartSessionButton.tsx` and the `/launch/<id>` fallback page, as the fallback to the domain-verified `https://<host>/launch/<id>` link. Companion handler TBD. |
 | `pablohealth://session/start?patient=<id>` | Quick-start: open the companion's "Start session for X" sheet. | **Reserved** — for future "+ Quick Start" buttons in patient pages. |
 | `pablohealth://session/open?session=<id>` | Open an existing session record in the companion. | **Reserved**. |
 | `pablohealth://patient/<id>` | Open a patient view in the companion. | **Reserved**. |
@@ -59,7 +66,7 @@ say "what to do" and "to which row," not "with what content."
 
 | Surface | File |
 |---|---|
-| Web emitter | `frontend/src/components/dashboard/TodayPanel.tsx` |
+| Web emitter | `frontend/src/components/dashboard/StartSessionButton.tsx`, `frontend/app/launch/[intentId]/page.tsx` |
 | Backend allowlist (OAuth only) | `backend/app/routes/auth.py`, `backend/app/routes/scheduling.py` |
 | Windows protocol registration | `pablo-companion/windows/PabloCompanion/Package.appxmanifest` |
 | Windows activation handler | `pablo-companion/windows/PabloCompanion/Services/ProtocolActivationListener.cs` |
