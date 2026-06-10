@@ -211,6 +211,24 @@ class Settings(BaseSettings):
         default="http://localhost:3000",
         description="Frontend app URL (used as return_url for Stripe portal)",
     )
+    dpop_trusted_hosts: str = Field(
+        default="",
+        description=(
+            "Comma-separated extra public hosts the DPoP middleware may honor "
+            "from X-Forwarded-Host when canonicalizing the request URL. The "
+            "hosts of backend_base_url (the API's own public origin) and "
+            "app_url are always trusted; this is for deployments that serve "
+            "the API under additional public hostnames (e.g. a custom domain "
+            "plus the run.app URL). Untrusted forwarded hosts are ignored — "
+            "the raw request host is used instead.\n\n"
+            "IMPORTANT: the companion signs DPoP proofs against the API host "
+            "it talks to directly, so that host MUST appear in the trusted "
+            "set, otherwise every enrolled-companion request 401s once "
+            "ENABLE_DPOP_VALIDATION is on. It is covered automatically when "
+            "backend_base_url or app_url already names it; list it here only "
+            "when the public API host is neither of those."
+        ),
+    )
 
     # CORS Settings
     cors_origins: str = Field(
@@ -685,6 +703,22 @@ class Settings(BaseSettings):
         description="Mount POST /api/launch/intent + /api/launch/redeem.",
     )
 
+    # Companion device-binding proof enforcement (DPoP, RFC 9449-style).
+    # When false the DPoP middleware is a hard no-op pass-through, so the
+    # validation layer can ship dark while native companions add signing
+    # support. When true, any request carrying an ``X-Install-ID`` header
+    # must also carry a valid ``DPoP`` proof signed by that device's
+    # enrolled key; requests without the header keep working (legacy web
+    # + un-upgraded companions). See
+    # docs/design/companion-dpop-binding.md § Stage 2.
+    enable_dpop_validation: bool = Field(
+        default=False,
+        description=(
+            "Enforce X-Install-ID + DPoP proofs on authenticated routes. "
+            "Off by default; hard no-op when disabled. See "
+            "docs/design/companion-dpop-binding.md."
+        ),
+    )
     # Default chat model — used by ``resolve_chat_model`` when no
     # downstream resolver overrides it. Downstream consumers may swap
     # this per ``caller_feature_key``.

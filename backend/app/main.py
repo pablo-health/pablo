@@ -28,6 +28,7 @@ from .diagnostics.router import (
 from .logging_config import configure_logging
 from .medications.router import medications_router
 from .middleware import (
+    DPoPMiddleware,
     HTTPSEnforcementMiddleware,
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
@@ -111,6 +112,14 @@ register_exception_handlers(app)
 # (SOAP + Narrative). Downstream consumers may register additional
 # formats against the same default registry.
 register_builtin_note_types(get_default_registry())
+
+# DPoP proof-validation middleware. Added BEFORE DatabaseSessionMiddleware
+# so it ends up *inside* it at request time (add_middleware is
+# outermost-last): the device lookup needs the request-scoped DB session,
+# and the user resolution reuses the identity the DB-session middleware
+# already verified+cached. Hard no-op unless ENABLE_DPOP_VALIDATION is on.
+# See docs/design/companion-dpop-binding.md § Stage 2.
+app.add_middleware(DPoPMiddleware, settings=settings)
 
 # Database session middleware (must be added before security middleware
 # so it wraps the request lifecycle inside the security layer)
