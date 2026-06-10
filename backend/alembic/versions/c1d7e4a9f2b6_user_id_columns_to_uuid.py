@@ -71,11 +71,22 @@ lockstep to ``user_id::text = p_user_id``; the ``(UUID, VARCHAR)``
 signature is unchanged, so the RLS USING-clauses (which pass the text
 GUC) and the repo callers (which bind ``:uid`` as text) keep resolving.
 
-Data. Every existing value must be a valid uuid4 string — a row still
-holding a legacy Firebase uid aborts the ``::uuid`` cast (verify before
-applying to a schema with pre-uuid4 rows). ``practices.owner_user_id``
-carried a ``''`` sentinel (app-side ``default=""``); it becomes a
-nullable ``uuid`` with ``''`` mapped to ``NULL``.
+Data. ``a4c91b6e3f08`` linked every pre-existing user as ``('firebase',
+<uid>, <uid>)`` — a legacy account's ``users.id`` IS its Firebase uid,
+not a uuid4 string, and the ``::uuid`` cast aborts on it (this bit a
+real deployment). So before any cast, legacy ids are remapped: each
+non-uuid ``platform.users.id`` gets a fresh ``gen_random_uuid()``,
+propagated to every platform column holding a user_id, and — via the
+unchanged ``user_identities.subject_id``, which is how the user
+authenticates, so logins keep resolving — to the per-tenant ``user_id``
+columns during fan-out. The audit-log columns keep the as-recorded
+legacy id on purpose (see above); it stays resolvable through
+``user_identities.subject_id``. A non-uuid value with no identity
+mapping still aborts the cast — better loud than silently NULLed. The
+remap is not reversed on downgrade (the new ids are valid in a varchar
+column). ``practices.owner_user_id`` carried a ``''`` sentinel
+(app-side ``default=""``); it becomes a nullable ``uuid`` with ``''``
+mapped to ``NULL``.
 
 FK constraints touching converted columns are dropped and recreated via
 ``pg_get_constraintdef`` (``companion_devices.user_id`` -> ``users.id``,
@@ -159,6 +170,80 @@ def _affected_tenant_tables() -> list[str]:
 
 def _quoted_list(values: list[str]) -> str:
     return ", ".join(f"'{v}'" for v in values)
+
+
+# Anchored uuid shape — anything not matching is a legacy id.
+_UUID_RE = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+
+# --------------------------------------------------------------------------
+# Legacy-id remap (see the "Data" note). Runs BEFORE any cast, after the
+# platform FKs are down (they reference users.id). Guarded on users.id still
+# being varchar so per-tenant fan-out replays are no-ops, and a plain UPDATE
+# inside the guard never name-resolves when skipped.
+# --------------------------------------------------------------------------
+def _remap_legacy_platform_user_ids() -> None:
+    op.execute(
+        f"""DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'platform'
+                  AND table_name = 'users'
+                  AND column_name = 'id'
+                  AND data_type = 'character varying'
+            ) THEN
+                RETURN;
+            END IF;
+
+            CREATE TEMP TABLE _phasec_legacy_ids AS
+            SELECT id AS old_id, gen_random_uuid()::text AS new_id
+            FROM platform.users
+            WHERE id !~ '{_UUID_RE}';
+
+            -- subject_id (the external auth uid) is deliberately untouched:
+            -- it is the login key that keeps resolving to the new user_id.
+            UPDATE platform.user_identities ui SET user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE ui.user_id = m.old_id;
+            UPDATE platform.user_preferences p SET user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE p.user_id = m.old_id;
+            UPDATE platform.companion_devices d SET user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE d.user_id = m.old_id;
+            UPDATE platform.practices pr SET owner_user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE pr.owner_user_id = m.old_id;
+            UPDATE platform.users u SET id = m.new_id
+                FROM _phasec_legacy_ids m WHERE u.id = m.old_id;
+
+            DROP TABLE _phasec_legacy_ids;
+        END $$;"""  # noqa: S608
+    )
+
+
+def _remap_legacy_tenant_user_ids() -> None:
+    # Per-tenant values hold the same legacy id the platform side just
+    # remapped; user_identities (subject_id = the legacy id) carries the
+    # old -> new mapping across fan-out invocations. ``user_id::text`` is
+    # valid whether the platform cast has already run (uuid) or not yet
+    # (varchar, same upgrade() invocation on a single-schema install).
+    for table, column in TENANT_COLUMNS:
+        op.execute(
+            f"""DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = '{table}'
+                      AND column_name = '{column}'
+                      AND data_type = 'character varying'
+                ) THEN
+                    UPDATE {table} t SET {column} = ui.user_id::text
+                    FROM platform.user_identities ui
+                    WHERE ui.provider = 'firebase'
+                      AND ui.subject_id = t.{column}
+                      AND t.{column} !~ '{_UUID_RE}';
+                END IF;
+            END $$;"""  # noqa: S608
+        )
 
 
 # --------------------------------------------------------------------------
@@ -479,8 +564,17 @@ def upgrade() -> None:
     # Per-tenant fan-out runs this with search_path = <tenant>, platform,
     # public — current_schema() is the tenant (or the 'practice' template on
     # the deploy-time default path).
+    #
+    # Platform FKs come down first: they reference users.id, which the
+    # legacy remap rewrites, and the remap must precede the tenant section
+    # so a single-schema install has the old -> new mapping in
+    # user_identities before its tenant columns are remapped.
+    _save_and_drop_fks_platform()
+    _remap_legacy_platform_user_ids()
+
     _save_and_drop_policies_current()
     _save_and_drop_fks_current()
+    _remap_legacy_tenant_user_ids()
     for table, column in TENANT_COLUMNS:
         _alter_to_uuid_current(table, column)
     _restore_fks_current()
@@ -490,7 +584,6 @@ def upgrade() -> None:
     op.execute(_HAS_PATIENT_ACCESS_UUID_BODY)
 
     # Platform schema (idempotent across the per-tenant fan-out).
-    _save_and_drop_fks_platform()
     for schema, table, column in PLATFORM_COLUMNS:
         _alter_to_uuid_schema(schema, table, column)
     # practices.owner_user_id: drop the NOT NULL, map '' sentinel to NULL.
