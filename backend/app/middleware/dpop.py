@@ -224,8 +224,17 @@ def _resolve_user_id(request: Request, token: str) -> str | None:
     use. The DatabaseSessionMiddleware has already verified+cached the
     identity on ``request.state`` for the common case, so this is a cache
     hit, not a second verification round-trip. Returns ``None`` if the
-    token doesn't verify — the middleware treats that as a pass-through
-    (the downstream auth dependency will issue the real 401).
+    token doesn't verify (or no token / identity is present).
+
+    When an ``X-Install-ID`` is present, a ``None`` here is fail-closed:
+    the middleware rejects with ``401`` + ``WWW-Authenticate: DPoP
+    error="invalid_proof"`` rather than letting the request through. A
+    proof can't be bound to a device without a resolved user, so an
+    unverifiable token on a companion request is treated as an invalid
+    proof. (A companion with a valid install_id but an expired Firebase
+    token therefore gets the ``invalid_proof`` challenge rather than a
+    standard auth 401 — the companion handles a 401 as re-auth either
+    way; see the design doc's redeem-outcome handling.)
     """
     from ..auth.service import _verify_request_identity
     from ..repositories import get_identity_repository
