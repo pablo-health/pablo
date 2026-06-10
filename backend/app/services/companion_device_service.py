@@ -95,6 +95,10 @@ class CompanionDeviceService:
     def __init__(self, repo: CompanionDeviceRepository) -> None:
         self._repo = repo
 
+    def list_devices(self, user_id: str) -> list[CompanionDevice]:
+        """Return the user's active (non-revoked) enrolled devices."""
+        return self._repo.list_for_user(user_id)
+
     def enroll(self, user_id: str, payload: CompanionEnrollment) -> CompanionDevice:
         """Validate + persist a device enrollment. Returns the stored row."""
         validate_device_jwk(payload.device_public_key_jwk)

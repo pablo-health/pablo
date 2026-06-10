@@ -75,6 +75,33 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
             revoked_at=row.revoked_at,
         )
 
+    def list_for_user(self, user_id: str) -> list[CompanionDevice]:
+        stmt = (
+            select(CompanionDeviceRow)
+            .where(
+                CompanionDeviceRow.user_id == user_id,
+                CompanionDeviceRow.revoked_at.is_(None),
+            )
+            .order_by(CompanionDeviceRow.enrolled_at.asc())
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        return [
+            CompanionDevice(
+                install_id=row.install_id,
+                user_id=row.user_id,
+                device_public_key_jwk=row.device_public_key_jwk,
+                jkt=row.jkt,
+                key_storage=cast("KeyStorage", row.key_storage),
+                platform=cast("DevicePlatform", row.platform),
+                os_version=row.os_version,
+                hostname_hash=row.hostname_hash,
+                enrolled_at=row.enrolled_at,
+                last_seen=row.last_seen,
+                revoked_at=row.revoked_at,
+            )
+            for row in rows
+        ]
+
     def touch_last_seen(self, install_id: str, when: datetime | None = None) -> None:
         ts = when or utc_now()
         stmt = (

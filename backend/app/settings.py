@@ -675,6 +675,16 @@ class Settings(BaseSettings):
             "see docs/architecture/patient-context-chat-oss.md."
         ),
     )
+    # Companion thin-client launch-intent handoff. When false, the
+    # /api/launch/intent + /api/launch/redeem router is NOT mounted, so
+    # both endpoints return 404. Kept off until the desktop companions
+    # ship the verified-link redemption path. See
+    # docs/design/companion-thin-client.md.
+    enable_launch_intent: bool = Field(
+        default=False,
+        description="Mount POST /api/launch/intent + /api/launch/redeem.",
+    )
+
     # Default chat model — used by ``resolve_chat_model`` when no
     # downstream resolver overrides it. Downstream consumers may swap
     # this per ``caller_feature_key``.

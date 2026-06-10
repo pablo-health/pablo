@@ -128,6 +128,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/ext/auth/check-status"),  # account disabled-status check
         # chat.py — context-preview manifest is ids/dates/counts only, PHI-free by design
         ("post", "/api/chat/conversations/preview"),  # context-preview manifest, no PHI
+        # launch.py — issues a single-use intent for an appointment the caller
+        # already holds; discloses no patient data (the redeem step, which does
+        # disclose the patient name, IS audited as launch_intent_redeemed)
+        ("post", "/api/launch/intent"),  # mints opaque launch intent, no PHI disclosed
         # compliance.py — therapist's own compliance checklist (license/insurance/training)
         ("get", "/api/compliance"),  # therapist's own compliance items
         ("get", "/api/compliance/templates"),  # compliance template catalog
@@ -175,6 +179,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/users/me/preferences"),  # caller's own UI preferences
         ("get", "/api/users/me/security-guide-status"),  # caller's own security-guide status
         ("get", "/api/users/me/status"),  # caller's own account/onboarding status
+        ("get", "/api/users/me/devices"),  # caller's own enrolled companion installs, no PHI
         ("patch", "/api/users/me"),  # updates caller's own profile
         ("patch", "/api/users/me/professional-info"),  # updates caller's own license info
         ("post", "/api/users/me/accept-baa"),  # records caller's own BAA acceptance

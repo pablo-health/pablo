@@ -184,6 +184,13 @@ class AuditAction(StrEnum):
     # don't fragment.
     SESSION_AUDIO_UPLOAD_INITIATED = "session_audio_upload_initiated"
 
+    # Companion handoff (companion-thin-client.md). Emitted when a desktop
+    # companion redeems a single-use launch intent and the backend
+    # discloses the appointment's patient name + video URL to it. Logged
+    # at record-level granularity (a patient name is disclosed) with the
+    # patient association carried by the `patient=` argument; the `changes`
+    # payload never carries patient_name, video_url, or the raw intent_id.
+    LAUNCH_INTENT_REDEEMED = "launch_intent_redeemed"
 
 
 class ResourceType(StrEnum):
