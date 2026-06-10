@@ -25,7 +25,7 @@ python-dotenv = "^1.2.2"
 google-cloud-secret-manager = "^2.29.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
-firebase-admin = "^6.9.0"
+firebase-admin = "^7.4.0"
 pyjwt = {extras = ["crypto"], version = ">=2.13.0"}
 
 # PostgreSQL (schema-per-practice multi-tenancy)
