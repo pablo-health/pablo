@@ -71,16 +71,34 @@ lockstep to ``user_id::text = p_user_id``; the ``(UUID, VARCHAR)``
 signature is unchanged, so the RLS USING-clauses (which pass the text
 GUC) and the repo callers (which bind ``:uid`` as text) keep resolving.
 
-Data. Every existing value must be a valid uuid4 string — a row still
-holding a legacy Firebase uid aborts the ``::uuid`` cast (verify before
-applying to a schema with pre-uuid4 rows). ``practices.owner_user_id``
-carried a ``''`` sentinel (app-side ``default=""``); it becomes a
-nullable ``uuid`` with ``''`` mapped to ``NULL``.
+Data. ``a4c91b6e3f08`` linked every pre-existing user as ``('firebase',
+<uid>, <uid>)`` — a legacy account's ``users.id`` IS its Firebase uid,
+not a uuid4 string, and the ``::uuid`` cast aborts on it (this bit a
+real deployment). So before any cast, legacy ids are remapped: each
+non-uuid ``platform.users.id`` gets a fresh ``gen_random_uuid()``,
+propagated to every platform column holding a user_id, and — via the
+unchanged ``user_identities.subject_id``, which is how the user
+authenticates, so logins keep resolving — to the per-tenant ``user_id``
+columns during fan-out. The audit-log columns keep the as-recorded
+legacy id on purpose (see above); it stays resolvable through
+``user_identities.subject_id``. A non-uuid value with no identity
+mapping still aborts the cast — better loud than silently NULLed. The
+remap is not reversed on downgrade (the new ids are valid in a varchar
+column). ``practices.owner_user_id`` carried a ``''`` sentinel
+(app-side ``default=""``); it becomes a nullable ``uuid`` with ``''``
+mapped to ``NULL``.
 
 FK constraints touching converted columns are dropped and recreated via
 ``pg_get_constraintdef`` (``companion_devices.user_id`` -> ``users.id``,
 plus any per-tenant FK on an affected table), same mechanism as
-``b7e25c1d8a4f``.
+``b7e25c1d8a4f``. The platform snapshot intentionally also catches FKs
+from tables this file does not know about — a deployment can define
+extra tables referencing ``users(id)``, and those FKs must come down
+before the cast regardless. Their referencing columns are then flipped
+to ``uuid`` (with the same legacy-id remap) before the FK restore,
+driven by the snapshot itself rather than a hardcoded list — restoring
+a varchar column's FK against the now-uuid ``users.id`` would fail with
+"incompatible types" (this bit a real deployment).
 
 Idempotent under the per-tenant fan-out: every ALTER is guarded on the
 column still being ``character varying``; policy and FK save/restore use
@@ -159,6 +177,80 @@ def _affected_tenant_tables() -> list[str]:
 
 def _quoted_list(values: list[str]) -> str:
     return ", ".join(f"'{v}'" for v in values)
+
+
+# Anchored uuid shape — anything not matching is a legacy id.
+_UUID_RE = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
+
+# --------------------------------------------------------------------------
+# Legacy-id remap (see the "Data" note). Runs BEFORE any cast, after the
+# platform FKs are down (they reference users.id). Guarded on users.id still
+# being varchar so per-tenant fan-out replays are no-ops, and a plain UPDATE
+# inside the guard never name-resolves when skipped.
+# --------------------------------------------------------------------------
+def _remap_legacy_platform_user_ids() -> None:
+    op.execute(
+        f"""DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'platform'
+                  AND table_name = 'users'
+                  AND column_name = 'id'
+                  AND data_type = 'character varying'
+            ) THEN
+                RETURN;
+            END IF;
+
+            CREATE TEMP TABLE _phasec_legacy_ids AS
+            SELECT id AS old_id, gen_random_uuid()::text AS new_id
+            FROM platform.users
+            WHERE id !~ '{_UUID_RE}';
+
+            -- subject_id (the external auth uid) is deliberately untouched:
+            -- it is the login key that keeps resolving to the new user_id.
+            UPDATE platform.user_identities ui SET user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE ui.user_id = m.old_id;
+            UPDATE platform.user_preferences p SET user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE p.user_id = m.old_id;
+            UPDATE platform.companion_devices d SET user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE d.user_id = m.old_id;
+            UPDATE platform.practices pr SET owner_user_id = m.new_id
+                FROM _phasec_legacy_ids m WHERE pr.owner_user_id = m.old_id;
+            UPDATE platform.users u SET id = m.new_id
+                FROM _phasec_legacy_ids m WHERE u.id = m.old_id;
+
+            DROP TABLE _phasec_legacy_ids;
+        END $$;"""  # noqa: S608
+    )
+
+
+def _remap_legacy_tenant_user_ids() -> None:
+    # Per-tenant values hold the same legacy id the platform side just
+    # remapped; user_identities (subject_id = the legacy id) carries the
+    # old -> new mapping across fan-out invocations. ``user_id::text`` is
+    # valid whether the platform cast has already run (uuid) or not yet
+    # (varchar, same upgrade() invocation on a single-schema install).
+    for table, column in TENANT_COLUMNS:
+        op.execute(
+            f"""DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = '{table}'
+                      AND column_name = '{column}'
+                      AND data_type = 'character varying'
+                ) THEN
+                    UPDATE {table} t SET {column} = ui.user_id::text
+                    FROM platform.user_identities ui
+                    WHERE ui.provider = 'firebase'
+                      AND ui.subject_id = t.{column}
+                      AND t.{column} !~ '{_UUID_RE}';
+                END IF;
+            END $$;"""  # noqa: S608
+        )
 
 
 # --------------------------------------------------------------------------
@@ -327,15 +419,20 @@ def _save_and_drop_fks_current() -> None:
         schema_name text NOT NULL,
         table_name text NOT NULL,
         constraint_name text NOT NULL,
-        constraint_def text NOT NULL
+        constraint_def text NOT NULL,
+        ref_schema text,
+        ref_table text
     );
 
-    INSERT INTO _phasec_saved_fks (schema_name, table_name, constraint_name, constraint_def)
-    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid)
+    INSERT INTO _phasec_saved_fks
+        (schema_name, table_name, constraint_name, constraint_def, ref_schema, ref_table)
+    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid),
+           rn.nspname, rc.relname
     FROM pg_constraint con
     JOIN pg_class c  ON con.conrelid  = c.oid
     JOIN pg_namespace n ON c.relnamespace = n.oid
     LEFT JOIN pg_class rc ON con.confrelid = rc.oid
+    LEFT JOIN pg_namespace rn ON rc.relnamespace = rn.oid
     WHERE con.contype = 'f'
       AND n.nspname = current_schema()
       AND (c.relname IN ({table_list}) OR rc.relname IN ({table_list}));
@@ -353,6 +450,17 @@ def _save_and_drop_fks_current() -> None:
 
 
 def _restore_fks_current() -> None:
+    """Re-add the saved tenant FKs with RLS suspended on the scanned tables.
+
+    ``ADD CONSTRAINT ... FOREIGN KEY`` validates existing rows with a scan
+    of both the constrained and the referenced table. When the migration
+    runs as a role without BYPASSRLS against FORCE-RLS tables, that scan is
+    policy-filtered — referenced rows become invisible (the session GUC the
+    policies key on is unset) and perfectly valid data fails validation
+    with a phantom FK violation. So: snapshot each involved table's RLS
+    state, disable RLS for the restore, then put the state back exactly.
+    Validation stays honest — a *real* orphan still aborts loudly.
+    """
     op.execute(
         """
     DO $$
@@ -361,11 +469,47 @@ def _restore_fks_current() -> None:
         IF to_regclass('_phasec_saved_fks') IS NULL THEN
             RETURN;
         END IF;
+
+        -- Snapshot + disable RLS on every table the validation scans touch.
+        DROP TABLE IF EXISTS _phasec_rls_state;
+        CREATE TEMP TABLE _phasec_rls_state AS
+        SELECT DISTINCT n.nspname AS schema_name, c.relname AS table_name,
+               c.relrowsecurity AS rls_enabled, c.relforcerowsecurity AS rls_forced
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE (n.nspname, c.relname) IN (
+            SELECT schema_name, table_name FROM _phasec_saved_fks
+            UNION
+            SELECT ref_schema, ref_table FROM _phasec_saved_fks
+            WHERE ref_schema IS NOT NULL
+        )
+          AND c.relrowsecurity;
+
+        FOR r IN SELECT * FROM _phasec_rls_state LOOP
+            EXECUTE format('ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY',
+                           r.schema_name, r.table_name);
+            EXECUTE format('ALTER TABLE %I.%I DISABLE ROW LEVEL SECURITY',
+                           r.schema_name, r.table_name);
+        END LOOP;
+
         FOR r IN SELECT * FROM _phasec_saved_fks LOOP
             EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s',
                            r.schema_name, r.table_name,
                            r.constraint_name, r.constraint_def);
         END LOOP;
+
+        -- Put the RLS state back exactly as captured.
+        FOR r IN SELECT * FROM _phasec_rls_state LOOP
+            IF r.rls_enabled THEN
+                EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY',
+                               r.schema_name, r.table_name);
+            END IF;
+            IF r.rls_forced THEN
+                EXECUTE format('ALTER TABLE %I.%I FORCE ROW LEVEL SECURITY',
+                               r.schema_name, r.table_name);
+            END IF;
+        END LOOP;
+        DROP TABLE IF EXISTS _phasec_rls_state;
     END $$;
     DROP TABLE IF EXISTS _phasec_saved_fks;
     """
@@ -384,21 +528,29 @@ def _save_and_drop_fks_platform() -> None:
         schema_name text NOT NULL,
         table_name text NOT NULL,
         constraint_name text NOT NULL,
-        constraint_def text NOT NULL
+        constraint_def text NOT NULL,
+        ref_schema text,
+        ref_table text,
+        src_columns text[] NOT NULL
     );
 
     INSERT INTO _phasec_saved_platform_fks
-        (schema_name, table_name, constraint_name, constraint_def)
-    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid)
+        (schema_name, table_name, constraint_name, constraint_def,
+         ref_schema, ref_table, src_columns)
+    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid),
+           rn.nspname, rc.relname,
+           (SELECT array_agg(att.attname ORDER BY u.ord)
+            FROM unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord)
+            JOIN pg_attribute att
+              ON att.attrelid = con.conrelid AND att.attnum = u.attnum)
     FROM pg_constraint con
     JOIN pg_class c  ON con.conrelid  = c.oid
     JOIN pg_namespace n ON c.relnamespace = n.oid
     LEFT JOIN pg_class rc ON con.confrelid = rc.oid
     LEFT JOIN pg_namespace rn ON rc.relnamespace = rn.oid
     WHERE con.contype = 'f'
-      AND n.nspname IN ({schema_list})
       AND (
-          c.relname IN ({table_list})
+          (n.nspname IN ({schema_list}) AND c.relname IN ({table_list}))
           OR (rc.relname IS NOT NULL
               AND rn.nspname IN ({schema_list})
               AND rc.relname IN ({table_list}))
@@ -433,6 +585,91 @@ def _restore_fks_platform() -> None:
     END $$;
     DROP TABLE IF EXISTS _phasec_saved_platform_fks;
     """
+    )
+
+
+# --------------------------------------------------------------------------
+# Columns OUTSIDE the hardcoded lists that reference users(id) via an FK —
+# tables a deployment defines on top of the engine schema. The FK snapshot
+# above already catches them (anything referencing a listed table comes
+# down before the cast); their columns must flip in lockstep with users.id
+# or the FK restore fails with "incompatible types: character varying and
+# uuid". Discovered from the snapshot itself, so nothing is hardcoded.
+# --------------------------------------------------------------------------
+def _convert_snapshotted_user_ref_columns() -> None:
+    op.execute(
+        f"""DO $$
+        DECLARE
+            r RECORD;
+            col text;
+            uuid_re CONSTANT text := '{_UUID_RE}';
+        BEGIN
+            IF to_regclass('_phasec_saved_platform_fks') IS NULL THEN
+                RETURN;
+            END IF;
+            FOR r IN
+                SELECT * FROM _phasec_saved_platform_fks
+                WHERE ref_schema = 'platform' AND ref_table = 'users'
+            LOOP
+                FOREACH col IN ARRAY r.src_columns LOOP
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = r.schema_name
+                          AND table_name = r.table_name
+                          AND column_name = col
+                          AND data_type = 'character varying'
+                    ) THEN
+                        -- Same legacy-id remap as the listed columns: the
+                        -- old -> new mapping rides user_identities
+                        -- (subject_id keeps the external uid).
+                        EXECUTE format(
+                            'UPDATE %I.%I t SET %I = ui.user_id::text
+                             FROM platform.user_identities ui
+                             WHERE ui.provider = ''firebase''
+                               AND ui.subject_id = t.%I
+                               AND t.%I !~ %L',
+                            r.schema_name, r.table_name, col, col, col, uuid_re);
+                        EXECUTE format(
+                            'ALTER TABLE %I.%I ALTER COLUMN %I TYPE uuid
+                             USING NULLIF(%I, '''')::uuid',
+                            r.schema_name, r.table_name, col, col);
+                    END IF;
+                END LOOP;
+            END LOOP;
+        END $$;"""  # noqa: S608
+    )
+
+
+def _revert_snapshotted_user_ref_columns() -> None:
+    op.execute(
+        """DO $$
+        DECLARE
+            r RECORD;
+            col text;
+        BEGIN
+            IF to_regclass('_phasec_saved_platform_fks') IS NULL THEN
+                RETURN;
+            END IF;
+            FOR r IN
+                SELECT * FROM _phasec_saved_platform_fks
+                WHERE ref_schema = 'platform' AND ref_table = 'users'
+            LOOP
+                FOREACH col IN ARRAY r.src_columns LOOP
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = r.schema_name
+                          AND table_name = r.table_name
+                          AND column_name = col
+                          AND data_type = 'uuid'
+                    ) THEN
+                        EXECUTE format(
+                            'ALTER TABLE %I.%I ALTER COLUMN %I TYPE varchar(128)
+                             USING %I::text',
+                            r.schema_name, r.table_name, col, col);
+                    END IF;
+                END LOOP;
+            END LOOP;
+        END $$;"""
     )
 
 
@@ -479,18 +716,36 @@ def upgrade() -> None:
     # Per-tenant fan-out runs this with search_path = <tenant>, platform,
     # public — current_schema() is the tenant (or the 'practice' template on
     # the deploy-time default path).
+    #
+    # Platform FKs come down first: they reference users.id, which the
+    # legacy remap rewrites, and the remap must precede the tenant section
+    # so a single-schema install has the old -> new mapping in
+    # user_identities before its tenant columns are remapped.
+    _save_and_drop_fks_platform()
+    _remap_legacy_platform_user_ids()
+
     _save_and_drop_policies_current()
     _save_and_drop_fks_current()
+    _remap_legacy_tenant_user_ids()
     for table, column in TENANT_COLUMNS:
         _alter_to_uuid_current(table, column)
+    # has_patient_access must flip to the ::text body BEFORE the FK restore.
+    # Re-adding an FK validates existing rows with a scan, and when the
+    # migration runs as a non-superuser role without BYPASSRLS that scan is
+    # subject to the table's RLS policies — policies on tables OUTSIDE the
+    # affected list (e.g. chat_messages) were never dropped and inline
+    # has_patient_access. With the old varchar body still in place the
+    # planner hits ``uuid = character varying`` against the now-uuid
+    # patient_clinicians.user_id and the whole tenant migration aborts.
+    # The ``user_id::text = p_user_id`` body is valid against either column
+    # type, so flipping it early is safe on every path (incl. fan-out
+    # replays). Guarded: the function only exists once patient_clinicians
+    # does; CREATE OR REPLACE is a no-op-safe rewrite on every invocation.
+    op.execute(_HAS_PATIENT_ACCESS_UUID_BODY)
     _restore_fks_current()
     _restore_policies_current()
-    # The function only exists once patient_clinicians does; CREATE OR REPLACE
-    # is a no-op-safe rewrite on every fan-out invocation.
-    op.execute(_HAS_PATIENT_ACCESS_UUID_BODY)
 
     # Platform schema (idempotent across the per-tenant fan-out).
-    _save_and_drop_fks_platform()
     for schema, table, column in PLATFORM_COLUMNS:
         _alter_to_uuid_schema(schema, table, column)
     # practices.owner_user_id: drop the NOT NULL, map '' sentinel to NULL.
@@ -517,6 +772,9 @@ def upgrade() -> None:
             END IF;
         END $$;"""
     )
+    # Any other column the FK snapshot saw referencing users(id) — e.g. a
+    # deployment-defined table — must flip before its FK is restored.
+    _convert_snapshotted_user_ref_columns()
     _restore_fks_platform()
 
 
@@ -546,6 +804,7 @@ def downgrade() -> None:
     )
     for schema, table, column in reversed(PLATFORM_COLUMNS):
         _alter_to_varchar_schema(schema, table, column)
+    _revert_snapshotted_user_ref_columns()
     _restore_fks_platform()
 
     _save_and_drop_policies_current()
