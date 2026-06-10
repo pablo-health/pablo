@@ -236,6 +236,12 @@ ignore = [
 "backend/app/main.py" = [
     "PLC0415",  # Lazy import of background_sync (conditional, behind calendar_auto_sync guard)
 ]
+"backend/app/middleware/dpop.py" = [
+    "PLC0415",  # Lazy imports (auth.service / db / postgres repo) to avoid a circular
+                # import at module load and to defer the DB backend until request time
+    "PLR0913",  # verify_dpop_proof takes the request-derived claims + replay cache as args
+    "PLR0911",  # dispatch() has one early-return per posture-matrix branch by design
+]
 "backend/app/auth/service.py" = [
     "PLC0415",  # Lazy import of subscription module (SaaS-only, behind is_saas guard)
 ]

@@ -2,6 +2,7 @@
 
 """FastAPI middleware components (security + request context)."""
 
+from .dpop import DPoPMiddleware
 from .outbound import (
     build_traceparent,
     inject_trace_headers,
@@ -22,6 +23,7 @@ __all__ = [
     "CLOUD_TRACE_HEADER",
     "REQUEST_ID_HEADER",
     "W3C_TRACEPARENT_HEADER",
+    "DPoPMiddleware",
     "HTTPSEnforcementMiddleware",
     "RequestContextMiddleware",
     "SecurityHeadersMiddleware",
