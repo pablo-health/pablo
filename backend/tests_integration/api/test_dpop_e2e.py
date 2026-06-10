@@ -276,13 +276,35 @@ class TestDPoPEndToEnd:
 
     def test_forwarded_host_canonicalization(self, client: TestClient, enrolled: dict) -> None:
         # Behind the LB the externally-signed URL arrives via
-        # X-Forwarded-Proto/Host; the proof signs the external form.
-        proof = _sign_proof(enrolled["key"], htu=f"https://app.pablo.health{_PROBE_PATH}")
+        # X-Forwarded-Proto/Host; the proof signs the external form. The
+        # middleware only honors a forwarded host that is in its trusted
+        # set (derived from app_url), so we forward the CONFIGURED public
+        # host — whatever APP_URL resolves to in this test environment —
+        # to exercise the trusted path.
+        from urllib.parse import urlsplit  # noqa: PLC0415
+
+        from app.settings import settings  # noqa: PLC0415
+
+        trusted_host = urlsplit(settings.app_url).netloc
+        assert trusted_host, "APP_URL must resolve to a host for this test"
+        proof = _sign_proof(enrolled["key"], htu=f"https://{trusted_host}{_PROBE_PATH}")
         headers = _headers(enrolled["install_id"], proof)
         headers["X-Forwarded-Proto"] = "https"
-        headers["X-Forwarded-Host"] = "app.pablo.health"
+        headers["X-Forwarded-Host"] = trusted_host
         resp = client.get(_PROBE_PATH, headers=headers)
         assert resp.status_code == 200
+
+    def test_spoofed_forwarded_host_rejected(self, client: TestClient, enrolled: dict) -> None:
+        # An untrusted X-Forwarded-Host is client-controlled and must not
+        # shift the htu comparison: the middleware falls back to the raw
+        # request host, so a proof signed for the spoofed host is rejected.
+        proof = _sign_proof(enrolled["key"], htu=f"https://evil.example{_PROBE_PATH}")
+        headers = _headers(enrolled["install_id"], proof)
+        headers["X-Forwarded-Proto"] = "https"
+        headers["X-Forwarded-Host"] = "evil.example"
+        resp = client.get(_PROBE_PATH, headers=headers)
+        assert resp.status_code == 401
+        assert resp.headers["WWW-Authenticate"] == 'DPoP error="invalid_proof"'
 
     def test_stale_iat_rejected(self, client: TestClient, enrolled: dict) -> None:
         proof = _sign_proof(enrolled["key"], iat=time.time() - 120)

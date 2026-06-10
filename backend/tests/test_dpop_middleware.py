@@ -114,8 +114,20 @@ def _sign_proof(
 # Test app factory
 # --------------------------------------------------------------------------- #
 class _FakeSettings:
-    def __init__(self, enable: bool) -> None:
+    def __init__(
+        self,
+        enable: bool,
+        *,
+        app_url: str = "http://testserver",
+        dpop_trusted_hosts: str = "",
+    ) -> None:
         self.enable_dpop_validation = enable
+        # The trusted-host derivation reads these two fields. Default the
+        # app host to the TestClient's host so the standard cases (which
+        # don't set X-Forwarded-Host) and a forwarded-but-trusted case
+        # both line up with the real request host.
+        self.app_url = app_url
+        self.dpop_trusted_hosts = dpop_trusted_hosts
 
 
 def _build_app(
@@ -124,6 +136,8 @@ def _build_app(
     devices: dict[str, CompanionDevice],
     resolve_user_id: str | None = TEST_USER_ID,
     touched: list[str] | None = None,
+    app_url: str = "http://testserver",
+    dpop_trusted_hosts: str = "",
 ):
     """Build a minimal app wired with the DPoP middleware.
 
@@ -144,7 +158,9 @@ def _build_app(
 
     app.add_middleware(
         DPoPMiddleware,
-        settings=_FakeSettings(enable),
+        settings=_FakeSettings(
+            enable, app_url=app_url, dpop_trusted_hosts=dpop_trusted_hosts
+        ),
         device_lookup=devices.get,
         touch=touch_sink.append,
     )
@@ -373,6 +389,74 @@ def test_install_id_without_bearer_is_rejected(keypair) -> None:
         headers={INSTALL_ID_HEADER: INSTALL_ID, DPOP_HEADER: proof},  # no Authorization
     )
     _assert_invalid_proof(resp)
+
+
+def test_spoofed_forwarded_host_falls_back_to_request_host(keypair) -> None:
+    """An untrusted X-Forwarded-Host must NOT shift the htu comparison.
+
+    The header is client-controlled; if the middleware honored it an
+    attacker could pick the host half of the htu and replay a proof signed
+    for an arbitrary host. With ``evil.example`` untrusted, the middleware
+    canonicalizes against the real request host (``testserver``):
+
+    - a proof signed for the spoofed host → 401 (host mismatch),
+    - a proof signed for the real request host → 200.
+    """
+    public_jwk, signing_key = keypair
+    client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
+
+    spoof_proof = _sign_proof(
+        signing_key, htm="POST", htu="https://evil.example/api/sessions/s1"
+    )
+    resp = client.post(
+        "/api/sessions/s1",
+        headers={
+            "Authorization": "Bearer t",
+            INSTALL_ID_HEADER: INSTALL_ID,
+            DPOP_HEADER: spoof_proof,
+            "X-Forwarded-Host": "evil.example",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    _assert_invalid_proof(resp)
+
+    real_proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
+    resp = client.post(
+        "/api/sessions/s1",
+        headers={
+            "Authorization": "Bearer t",
+            INSTALL_ID_HEADER: INSTALL_ID,
+            DPOP_HEADER: real_proof,
+            "X-Forwarded-Host": "evil.example",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_trusted_forwarded_host_is_honored(keypair) -> None:
+    """When the forwarded host IS trusted (configured public host), the
+    htu canonicalizes against the external URL the client signed."""
+    public_jwk, signing_key = keypair
+    client, _ = _build_app(
+        enable=True,
+        devices={INSTALL_ID: _make_device(public_jwk)},
+        app_url="https://app.pablo.health",
+    )
+    proof = _sign_proof(
+        signing_key, htm="POST", htu="https://app.pablo.health/api/sessions/s1"
+    )
+    resp = client.post(
+        "/api/sessions/s1",
+        headers={
+            "Authorization": "Bearer t",
+            INSTALL_ID_HEADER: INSTALL_ID,
+            DPOP_HEADER: proof,
+            "X-Forwarded-Host": "app.pablo.health",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert resp.status_code == 200
 
 
 def test_unresolvable_token_is_rejected(keypair) -> None:

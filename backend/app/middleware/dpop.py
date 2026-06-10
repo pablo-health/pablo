@@ -103,19 +103,62 @@ class DPoPValidationError(Exception):
     """
 
 
-def _canonical_htu(request: Request) -> str:
+def _trusted_hosts(settings: Settings) -> frozenset[str]:
+    """The set of public hosts the middleware may honor from a forwarded header.
+
+    Derived from ``settings.app_url`` (its netloc is always trusted) plus
+    any comma-separated ``DPOP_TRUSTED_HOSTS`` override for deployments
+    that serve the API under more than one public hostname. Hosts are
+    compared case-insensitively (DNS is case-insensitive). An entry that
+    doesn't parse to a netloc is dropped rather than failing closed on the
+    whole set.
+    """
+    hosts: set[str] = set()
+    app_host = urlsplit(settings.app_url).netloc
+    if app_host:
+        hosts.add(app_host.lower())
+    for raw in settings.dpop_trusted_hosts.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        # Accept either a bare host ("app.example") or a full origin
+        # ("https://app.example") — normalize both to a netloc.
+        netloc = urlsplit(entry).netloc or entry
+        hosts.add(netloc.lower())
+    return frozenset(hosts)
+
+
+def _canonical_htu(request: Request, trusted_hosts: frozenset[str]) -> str:
     """Request scheme+host+path with the query string and fragment stripped.
 
     RFC 9449 §4.3 compares ``htu`` against the request URI without query
-    or fragment. We honor ``X-Forwarded-Proto`` / ``X-Forwarded-Host``
-    when present so the comparison uses the externally-visible URL the
-    client actually signed (behind the Cloud Run / LB TLS terminator the
-    raw ASGI scheme is ``http`` and the host is the internal one).
+    or fragment. Behind the Cloud Run / LB TLS terminator the raw ASGI
+    scheme is ``http`` and the host is an internal one, so we want to
+    canonicalize against the externally-visible URL the client actually
+    signed — which arrives via ``X-Forwarded-Proto`` / ``X-Forwarded-Host``.
+
+    But both forwarded headers are client-influenceable: a request can
+    arrive carrying any ``X-Forwarded-Host`` it likes. If we honored an
+    arbitrary forwarded host, an attacker could choose the host half of
+    the ``htu`` comparison and replay a proof signed for one deployment
+    against another. So we only honor a forwarded host when it is in the
+    trusted set (derived from ``settings.app_url`` + the
+    ``DPOP_TRUSTED_HOSTS`` override). For an untrusted or absent forwarded
+    host we fall back to the raw request host, which the client cannot
+    forge (it is the connection's actual ``Host``/authority). The scheme
+    is only upgraded from the forwarded header once we've decided to trust
+    the host, so a spoofed ``X-Forwarded-Proto`` alone can't shift the
+    comparison either.
     """
-    forwarded_proto = request.headers.get("x-forwarded-proto")
     forwarded_host = request.headers.get("x-forwarded-host")
-    scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
-    host = forwarded_host.split(",")[0].strip() if forwarded_host else request.url.netloc
+    candidate = forwarded_host.split(",")[0].strip() if forwarded_host else ""
+    if candidate and candidate.lower() in trusted_hosts:
+        host = candidate
+        forwarded_proto = request.headers.get("x-forwarded-proto")
+        scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
+    else:
+        host = request.url.netloc
+        scheme = request.url.scheme
     return urlunsplit((scheme, host, request.url.path, "", ""))
 
 
@@ -266,6 +309,7 @@ class DPoPMiddleware(BaseHTTPMiddleware):
     ) -> None:
         super().__init__(app)
         self._settings = settings
+        self._trusted_hosts = _trusted_hosts(settings)
         self._device_lookup = device_lookup or _default_device_lookup
         self._touch = touch or _touch_last_seen
         self._replay_cache = replay_guard or get_replay_guard(
@@ -322,7 +366,7 @@ class DPoPMiddleware(BaseHTTPMiddleware):
                 proof,
                 device,
                 method=request.method,
-                htu=_canonical_htu(request),
+                htu=_canonical_htu(request, self._trusted_hosts),
                 replay_cache=self._replay_cache,
             )
         except DPoPValidationError as err:
