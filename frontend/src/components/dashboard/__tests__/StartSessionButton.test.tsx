@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { StartSessionButton } from "../StartSessionButton"
 
 const createLaunchIntent = vi.hoisted(() => vi.fn())
 const clickThroughAnchor = vi.hoisted(() => vi.fn())
-const armNoHandoffFallback = vi.hoisted(() => vi.fn(() => () => {}))
+const armNoHandoffFallback = vi.hoisted(() =>
+  vi.fn((_onNoHandoff: () => void): (() => void) => () => {}),
+)
 
 vi.mock("@/lib/api/devices", () => ({
   createLaunchIntent: (...args: unknown[]) => createLaunchIntent(...args),
@@ -18,7 +20,8 @@ vi.mock("@/lib/companionLaunch", async (importOriginal) => {
   return {
     ...actual,
     clickThroughAnchor: (...args: unknown[]) => clickThroughAnchor(...args),
-    armNoHandoffFallback: (...args: unknown[]) => armNoHandoffFallback(...args),
+    armNoHandoffFallback: (onNoHandoff: () => void) =>
+      armNoHandoffFallback(onNoHandoff),
   }
 })
 
@@ -27,7 +30,7 @@ afterEach(() => {
 })
 
 describe("StartSessionButton", () => {
-  it("POSTs a launch intent and navigates to the verified launch_url on click", async () => {
+  it("prefetches the launch intent on hover and exposes it as the anchor href", async () => {
     createLaunchIntent.mockResolvedValue({
       intent_id: "intent-abc",
       launch_url: "https://app.pablo.health/launch/intent-abc",
@@ -36,14 +39,42 @@ describe("StartSessionButton", () => {
     const user = userEvent.setup()
 
     render(<StartSessionButton appointmentId="appt-1" />)
-    await user.click(screen.getByRole("button", { name: /start session/i }))
+    const link = screen.getByRole("link", { name: /start session/i })
+    // Inert until prefetched — no Universal Link href yet.
+    expect(link).toHaveAttribute("href", "#")
+
+    await user.hover(link)
 
     expect(createLaunchIntent).toHaveBeenCalledWith("appt-1")
-    expect(clickThroughAnchor).toHaveBeenCalledWith(
-      "https://app.pablo.health/launch/intent-abc",
+    await waitFor(() =>
+      expect(link).toHaveAttribute(
+        "href",
+        "https://app.pablo.health/launch/intent-abc",
+      ),
     )
-    // No-handoff timer armed for the legacy fallback.
+  })
+
+  it("arms the no-handoff fallback on a real anchor click without re-POSTing", async () => {
+    createLaunchIntent.mockResolvedValue({
+      intent_id: "intent-abc",
+      launch_url: "https://app.pablo.health/launch/intent-abc",
+      expires_in: 180,
+    })
+    const user = userEvent.setup()
+
+    render(<StartSessionButton appointmentId="appt-1" />)
+    const link = screen.getByRole("link", { name: /start session/i })
+
+    // Hover prefetches; the click then drives the real (verified-link) anchor.
+    await user.hover(link)
+    await waitFor(() => expect(link).not.toHaveAttribute("href", "#"))
+    await user.click(link)
+
+    // The verified link is the anchor's own default navigation — we do NOT
+    // synthesize a click for it; we only arm the legacy fallback timer.
     expect(armNoHandoffFallback).toHaveBeenCalledTimes(1)
+    // Exactly one intent issued — the prefetched one is reused.
+    expect(createLaunchIntent).toHaveBeenCalledTimes(1)
   })
 
   it("falls back to the legacy scheme with the SAME intent when no handoff happens", async () => {
@@ -55,7 +86,11 @@ describe("StartSessionButton", () => {
     const user = userEvent.setup()
 
     render(<StartSessionButton appointmentId="appt-2" />)
-    await user.click(screen.getByRole("button", { name: /start session/i }))
+    const link = screen.getByRole("link", { name: /start session/i })
+
+    await user.hover(link)
+    await waitFor(() => expect(link).not.toHaveAttribute("href", "#"))
+    await user.click(link)
 
     // Simulate the no-handoff timer elapsing by invoking the callback the
     // component handed to armNoHandoffFallback.
@@ -69,18 +104,45 @@ describe("StartSessionButton", () => {
     expect(createLaunchIntent).toHaveBeenCalledTimes(1)
   })
 
-  it("does nothing destructive when intent issuance fails", async () => {
+  it("does not orphan the fallback timer on a rapid second click", async () => {
+    createLaunchIntent.mockResolvedValue({
+      intent_id: "intent-xyz",
+      launch_url: "https://dev.pablo.health/launch/intent-xyz",
+      expires_in: 180,
+    })
+    const cleanup = vi.fn()
+    armNoHandoffFallback.mockReturnValue(cleanup)
+    const user = userEvent.setup()
+
+    render(<StartSessionButton appointmentId="appt-2" />)
+    const link = screen.getByRole("link", { name: /start session/i })
+
+    await user.hover(link)
+    await waitFor(() => expect(link).not.toHaveAttribute("href", "#"))
+    await user.click(link)
+    // A second click while the no-handoff window is still open is a no-op:
+    // no new fallback armed, no new intent issued.
+    await user.click(link)
+
+    expect(armNoHandoffFallback).toHaveBeenCalledTimes(1)
+    expect(createLaunchIntent).toHaveBeenCalledTimes(1)
+    expect(cleanup).not.toHaveBeenCalled()
+  })
+
+  it("does nothing destructive when intent issuance fails on click", async () => {
     createLaunchIntent.mockRejectedValue(new Error("flag off"))
     const user = userEvent.setup()
 
     render(<StartSessionButton appointmentId="appt-3" />)
-    await user.click(screen.getByRole("button", { name: /start session/i }))
+    const link = screen.getByRole("link", { name: /start session/i })
+
+    // No hover prefetch — fetch-on-click path, which rejects.
+    await user.click(link)
 
     expect(clickThroughAnchor).not.toHaveBeenCalled()
     expect(armNoHandoffFallback).not.toHaveBeenCalled()
-    // Button re-enables for a retry.
-    expect(
-      screen.getByRole("button", { name: /start session/i }),
-    ).not.toBeDisabled()
+    // Anchor stays inert (still '#') and re-armable for a retry.
+    expect(link).toHaveAttribute("href", "#")
+    expect(link).not.toHaveAttribute("aria-disabled", "true")
   })
 })

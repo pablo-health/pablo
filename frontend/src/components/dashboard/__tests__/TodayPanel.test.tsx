@@ -134,15 +134,13 @@ describe("TodayPanel", () => {
 
     renderPanel()
 
-    // The launch flow is driven by a click handler (POST intent → verified
-    // link), so it's a button, not a raw href — the old pablohealth:// anchor
-    // is gone.
+    // The launch flow renders a real anchor whose href is the domain-verified
+    // launch_url (prefetched on hover/focus). It's a link so macOS Safari
+    // routes the Universal Link from an actual user-activated click — the old
+    // pablohealth:// appointment-id anchor is gone.
     expect(
-      screen.getByRole("button", { name: /start session/i }),
+      screen.getByRole("link", { name: /start session/i }),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByRole("link", { name: /start session/i }),
-    ).not.toBeInTheDocument()
   })
 
   it("offers Download Pablo Companion when no install is enrolled", () => {
