@@ -47,6 +47,7 @@ from .routes import (
     ehr_routes,
     ext_auth,
     ical_sync,
+    launch,
     note_types,
     notes,
     patient_documents,
@@ -179,6 +180,11 @@ app.include_router(diagnostic_assessments_router)
 app.include_router(patient_diagnostic_assessments_router)
 if settings.enable_patient_chat:
     app.include_router(chat.router)
+# Companion launch-intent handoff. Mounted only when the flag is on so
+# /api/launch/* returns 404 until the desktop companions ship the
+# verified-link redemption path. See docs/design/companion-thin-client.md.
+if settings.enable_launch_intent:
+    app.include_router(launch.router)
 
 
 @app.get("/api/health")

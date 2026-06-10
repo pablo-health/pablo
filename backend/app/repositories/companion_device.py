@@ -30,6 +30,15 @@ class CompanionDeviceRepository(ABC):
     def get(self, install_id: str) -> CompanionDevice | None: ...
 
     @abstractmethod
+    def list_for_user(self, user_id: str) -> list[CompanionDevice]:
+        """Return the user's active (non-revoked) enrolled devices.
+
+        Scoped by ``user_id`` — the platform table has no RLS, so the
+        ``user_id`` filter IS the access-control boundary. Revoked rows
+        (``revoked_at IS NOT NULL``) are excluded.
+        """
+
+    @abstractmethod
     def touch_last_seen(self, install_id: str, when: datetime | None = None) -> None:
         """Update last_seen for an active device. No-op if missing or revoked."""
 
@@ -60,6 +69,14 @@ class InMemoryCompanionDeviceRepository(CompanionDeviceRepository):
     def get(self, install_id: str) -> CompanionDevice | None:
         with self._lock:
             return self._rows.get(install_id)
+
+    def list_for_user(self, user_id: str) -> list[CompanionDevice]:
+        with self._lock:
+            return [
+                row
+                for row in self._rows.values()
+                if row.user_id == user_id and row.revoked_at is None
+            ]
 
     def touch_last_seen(self, install_id: str, when: datetime | None = None) -> None:
         ts = when or utc_now()
