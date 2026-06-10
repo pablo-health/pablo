@@ -118,14 +118,18 @@ class _FakeSettings:
         self,
         enable: bool,
         *,
+        backend_base_url: str = "",
         app_url: str = "http://testserver",
         dpop_trusted_hosts: str = "",
     ) -> None:
         self.enable_dpop_validation = enable
-        # The trusted-host derivation reads these two fields. Default the
+        # The trusted-host derivation reads these three fields. Default the
         # app host to the TestClient's host so the standard cases (which
         # don't set X-Forwarded-Host) and a forwarded-but-trusted case
-        # both line up with the real request host.
+        # both line up with the real request host. backend_base_url
+        # defaults empty (contributing nothing) so existing cases keep
+        # asserting purely on the app_url-derived host.
+        self.backend_base_url = backend_base_url
         self.app_url = app_url
         self.dpop_trusted_hosts = dpop_trusted_hosts
 
@@ -136,6 +140,7 @@ def _build_app(
     devices: dict[str, CompanionDevice],
     resolve_user_id: str | None = TEST_USER_ID,
     touched: list[str] | None = None,
+    backend_base_url: str = "",
     app_url: str = "http://testserver",
     dpop_trusted_hosts: str = "",
 ):
@@ -159,7 +164,10 @@ def _build_app(
     app.add_middleware(
         DPoPMiddleware,
         settings=_FakeSettings(
-            enable, app_url=app_url, dpop_trusted_hosts=dpop_trusted_hosts
+            enable,
+            backend_base_url=backend_base_url,
+            app_url=app_url,
+            dpop_trusted_hosts=dpop_trusted_hosts,
         ),
         device_lookup=devices.get,
         touch=touch_sink.append,
@@ -453,6 +461,38 @@ def test_trusted_forwarded_host_is_honored(keypair) -> None:
             INSTALL_ID_HEADER: INSTALL_ID,
             DPOP_HEADER: proof,
             "X-Forwarded-Host": "app.pablo.health",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_api_origin_forwarded_host_is_honored(keypair) -> None:
+    """The API's own public origin (backend_base_url) is trusted even when
+    app_url names a different host.
+
+    The companion signs proofs against the API host it talks to, which is
+    backend_base_url — not necessarily the Stripe frontend return URL in
+    app_url. With app_url left at the localhost default, forwarding the
+    backend_base_url host must still canonicalize against the external URL
+    the client signed."""
+    public_jwk, signing_key = keypair
+    client, _ = _build_app(
+        enable=True,
+        devices={INSTALL_ID: _make_device(public_jwk)},
+        backend_base_url="https://api.pablo.health",
+        app_url="http://localhost:3000",
+    )
+    proof = _sign_proof(
+        signing_key, htm="POST", htu="https://api.pablo.health/api/sessions/s1"
+    )
+    resp = client.post(
+        "/api/sessions/s1",
+        headers={
+            "Authorization": "Bearer t",
+            INSTALL_ID_HEADER: INSTALL_ID,
+            DPOP_HEADER: proof,
+            "X-Forwarded-Host": "api.pablo.health",
             "X-Forwarded-Proto": "https",
         },
     )

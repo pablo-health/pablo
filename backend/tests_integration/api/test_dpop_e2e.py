@@ -278,15 +278,20 @@ class TestDPoPEndToEnd:
         # Behind the LB the externally-signed URL arrives via
         # X-Forwarded-Proto/Host; the proof signs the external form. The
         # middleware only honors a forwarded host that is in its trusted
-        # set (derived from app_url), so we forward the CONFIGURED public
-        # host — whatever APP_URL resolves to in this test environment —
-        # to exercise the trusted path.
+        # set (the API's public origin from BACKEND_BASE_URL/APP_URL), so we
+        # forward the CONFIGURED public host — whatever this test
+        # environment resolves to — to exercise the trusted path.
         from urllib.parse import urlsplit  # noqa: PLC0415
 
         from app.settings import settings  # noqa: PLC0415
 
-        trusted_host = urlsplit(settings.app_url).netloc
-        assert trusted_host, "APP_URL must resolve to a host for this test"
+        # Mirror the middleware's _trusted_hosts derivation: prefer the
+        # API's own origin (backend_base_url), fall back to app_url.
+        trusted_host = (
+            urlsplit(settings.backend_base_url).netloc
+            or urlsplit(settings.app_url).netloc
+        )
+        assert trusted_host, "BACKEND_BASE_URL or APP_URL must resolve to a host"
         proof = _sign_proof(enrolled["key"], htu=f"https://{trusted_host}{_PROBE_PATH}")
         headers = _headers(enrolled["install_id"], proof)
         headers["X-Forwarded-Proto"] = "https"

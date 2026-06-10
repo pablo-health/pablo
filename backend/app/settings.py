@@ -216,10 +216,17 @@ class Settings(BaseSettings):
         description=(
             "Comma-separated extra public hosts the DPoP middleware may honor "
             "from X-Forwarded-Host when canonicalizing the request URL. The "
-            "host of app_url is always trusted; this is for deployments that "
-            "serve the API under additional public hostnames (e.g. a custom "
-            "domain plus the run.app URL). Untrusted forwarded hosts are "
-            "ignored — the raw request host is used instead."
+            "hosts of backend_base_url (the API's own public origin) and "
+            "app_url are always trusted; this is for deployments that serve "
+            "the API under additional public hostnames (e.g. a custom domain "
+            "plus the run.app URL). Untrusted forwarded hosts are ignored — "
+            "the raw request host is used instead.\n\n"
+            "IMPORTANT: the companion signs DPoP proofs against the API host "
+            "it talks to directly, so that host MUST appear in the trusted "
+            "set, otherwise every enrolled-companion request 401s once "
+            "ENABLE_DPOP_VALIDATION is on. It is covered automatically when "
+            "backend_base_url or app_url already names it; list it here only "
+            "when the public API host is neither of those."
         ),
     )
 

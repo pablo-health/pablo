@@ -106,17 +106,25 @@ class DPoPValidationError(Exception):
 def _trusted_hosts(settings: Settings) -> frozenset[str]:
     """The set of public hosts the middleware may honor from a forwarded header.
 
-    Derived from ``settings.app_url`` (its netloc is always trusted) plus
-    any comma-separated ``DPOP_TRUSTED_HOSTS`` override for deployments
-    that serve the API under more than one public hostname. Hosts are
-    compared case-insensitively (DNS is case-insensitive). An entry that
-    doesn't parse to a netloc is dropped rather than failing closed on the
-    whole set.
+    The companion signs DPoP proofs against the API host it talks to
+    directly, so the API's own public origin must be in this set. We derive
+    it primarily from ``settings.backend_base_url`` (documented as "this
+    service's public base URL") and additionally honor ``settings.app_url``
+    — in prod a single host (``app.pablo.health``) serves both the frontend
+    and the API, but deriving from the API origin keeps the two concerns
+    from silently drifting apart if a deployment ever splits them. The
+    comma-separated ``DPOP_TRUSTED_HOSTS`` override covers any further public
+    hostnames (e.g. a custom domain plus the run.app URL).
+
+    Hosts are compared case-insensitively (DNS is case-insensitive). An
+    entry that doesn't parse to a netloc is dropped rather than failing
+    closed on the whole set.
     """
     hosts: set[str] = set()
-    app_host = urlsplit(settings.app_url).netloc
-    if app_host:
-        hosts.add(app_host.lower())
+    for origin in (settings.backend_base_url, settings.app_url):
+        netloc = urlsplit(origin).netloc
+        if netloc:
+            hosts.add(netloc.lower())
     for raw in settings.dpop_trusted_hosts.split(","):
         entry = raw.strip()
         if not entry:
@@ -142,13 +150,21 @@ def _canonical_htu(request: Request, trusted_hosts: frozenset[str]) -> str:
     arbitrary forwarded host, an attacker could choose the host half of
     the ``htu`` comparison and replay a proof signed for one deployment
     against another. So we only honor a forwarded host when it is in the
-    trusted set (derived from ``settings.app_url`` + the
-    ``DPOP_TRUSTED_HOSTS`` override). For an untrusted or absent forwarded
-    host we fall back to the raw request host, which the client cannot
-    forge (it is the connection's actual ``Host``/authority). The scheme
-    is only upgraded from the forwarded header once we've decided to trust
-    the host, so a spoofed ``X-Forwarded-Proto`` alone can't shift the
-    comparison either.
+    trusted set (see ``_trusted_hosts`` — the API's public origin from
+    ``backend_base_url``/``app_url`` plus the ``DPOP_TRUSTED_HOSTS``
+    override). For an untrusted or absent forwarded host we fall back to
+    the raw request host, which the client cannot forge (it is the
+    connection's actual ``Host``/authority). The scheme is only upgraded
+    from the forwarded header once we've decided to trust the host, so a
+    spoofed ``X-Forwarded-Proto`` alone can't shift the comparison either.
+
+    Availability note: the companion signs proofs against the API host it
+    talks to. That public host MUST be in the trusted set, otherwise we
+    fall back to the internal request host, the ``htu`` never matches, and
+    every enrolled-companion request 401s (fail-closed — no auth bypass,
+    but a hard outage). Set ``BACKEND_BASE_URL`` (or ``APP_URL``, or list
+    the host in ``DPOP_TRUSTED_HOSTS``) to the public API host before
+    enabling ``ENABLE_DPOP_VALIDATION``.
     """
     forwarded_host = request.headers.get("x-forwarded-host")
     candidate = forwarded_host.split(",")[0].strip() if forwarded_host else ""
