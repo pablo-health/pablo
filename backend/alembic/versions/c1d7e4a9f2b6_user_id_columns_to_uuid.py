@@ -419,15 +419,20 @@ def _save_and_drop_fks_current() -> None:
         schema_name text NOT NULL,
         table_name text NOT NULL,
         constraint_name text NOT NULL,
-        constraint_def text NOT NULL
+        constraint_def text NOT NULL,
+        ref_schema text,
+        ref_table text
     );
 
-    INSERT INTO _phasec_saved_fks (schema_name, table_name, constraint_name, constraint_def)
-    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid)
+    INSERT INTO _phasec_saved_fks
+        (schema_name, table_name, constraint_name, constraint_def, ref_schema, ref_table)
+    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid),
+           rn.nspname, rc.relname
     FROM pg_constraint con
     JOIN pg_class c  ON con.conrelid  = c.oid
     JOIN pg_namespace n ON c.relnamespace = n.oid
     LEFT JOIN pg_class rc ON con.confrelid = rc.oid
+    LEFT JOIN pg_namespace rn ON rc.relnamespace = rn.oid
     WHERE con.contype = 'f'
       AND n.nspname = current_schema()
       AND (c.relname IN ({table_list}) OR rc.relname IN ({table_list}));
@@ -445,6 +450,17 @@ def _save_and_drop_fks_current() -> None:
 
 
 def _restore_fks_current() -> None:
+    """Re-add the saved tenant FKs with RLS suspended on the scanned tables.
+
+    ``ADD CONSTRAINT ... FOREIGN KEY`` validates existing rows with a scan
+    of both the constrained and the referenced table. When the migration
+    runs as a role without BYPASSRLS against FORCE-RLS tables, that scan is
+    policy-filtered — referenced rows become invisible (the session GUC the
+    policies key on is unset) and perfectly valid data fails validation
+    with a phantom FK violation. So: snapshot each involved table's RLS
+    state, disable RLS for the restore, then put the state back exactly.
+    Validation stays honest — a *real* orphan still aborts loudly.
+    """
     op.execute(
         """
     DO $$
@@ -453,11 +469,47 @@ def _restore_fks_current() -> None:
         IF to_regclass('_phasec_saved_fks') IS NULL THEN
             RETURN;
         END IF;
+
+        -- Snapshot + disable RLS on every table the validation scans touch.
+        DROP TABLE IF EXISTS _phasec_rls_state;
+        CREATE TEMP TABLE _phasec_rls_state AS
+        SELECT DISTINCT n.nspname AS schema_name, c.relname AS table_name,
+               c.relrowsecurity AS rls_enabled, c.relforcerowsecurity AS rls_forced
+        FROM pg_class c
+        JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE (n.nspname, c.relname) IN (
+            SELECT schema_name, table_name FROM _phasec_saved_fks
+            UNION
+            SELECT ref_schema, ref_table FROM _phasec_saved_fks
+            WHERE ref_schema IS NOT NULL
+        )
+          AND c.relrowsecurity;
+
+        FOR r IN SELECT * FROM _phasec_rls_state LOOP
+            EXECUTE format('ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY',
+                           r.schema_name, r.table_name);
+            EXECUTE format('ALTER TABLE %I.%I DISABLE ROW LEVEL SECURITY',
+                           r.schema_name, r.table_name);
+        END LOOP;
+
         FOR r IN SELECT * FROM _phasec_saved_fks LOOP
             EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s',
                            r.schema_name, r.table_name,
                            r.constraint_name, r.constraint_def);
         END LOOP;
+
+        -- Put the RLS state back exactly as captured.
+        FOR r IN SELECT * FROM _phasec_rls_state LOOP
+            IF r.rls_enabled THEN
+                EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY',
+                               r.schema_name, r.table_name);
+            END IF;
+            IF r.rls_forced THEN
+                EXECUTE format('ALTER TABLE %I.%I FORCE ROW LEVEL SECURITY',
+                               r.schema_name, r.table_name);
+            END IF;
+        END LOOP;
+        DROP TABLE IF EXISTS _phasec_rls_state;
     END $$;
     DROP TABLE IF EXISTS _phasec_saved_fks;
     """
@@ -677,11 +729,21 @@ def upgrade() -> None:
     _remap_legacy_tenant_user_ids()
     for table, column in TENANT_COLUMNS:
         _alter_to_uuid_current(table, column)
+    # has_patient_access must flip to the ::text body BEFORE the FK restore.
+    # Re-adding an FK validates existing rows with a scan, and when the
+    # migration runs as a non-superuser role without BYPASSRLS that scan is
+    # subject to the table's RLS policies — policies on tables OUTSIDE the
+    # affected list (e.g. chat_messages) were never dropped and inline
+    # has_patient_access. With the old varchar body still in place the
+    # planner hits ``uuid = character varying`` against the now-uuid
+    # patient_clinicians.user_id and the whole tenant migration aborts.
+    # The ``user_id::text = p_user_id`` body is valid against either column
+    # type, so flipping it early is safe on every path (incl. fan-out
+    # replays). Guarded: the function only exists once patient_clinicians
+    # does; CREATE OR REPLACE is a no-op-safe rewrite on every invocation.
+    op.execute(_HAS_PATIENT_ACCESS_UUID_BODY)
     _restore_fks_current()
     _restore_policies_current()
-    # The function only exists once patient_clinicians does; CREATE OR REPLACE
-    # is a no-op-safe rewrite on every fan-out invocation.
-    op.execute(_HAS_PATIENT_ACCESS_UUID_BODY)
 
     # Platform schema (idempotent across the per-tenant fan-out).
     for schema, table, column in PLATFORM_COLUMNS:

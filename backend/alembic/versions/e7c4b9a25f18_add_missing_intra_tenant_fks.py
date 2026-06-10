@@ -40,6 +40,16 @@ guarded on the constraint not already existing. Existing rows are
 validated — a pre-launch tenant with an orphan ``patient_id`` will fail
 loudly here, which is the right time to find it.
 
+RLS interaction: ``ADD CONSTRAINT ... FOREIGN KEY`` validates existing
+rows with a scan of both tables. When the migration runs as a role
+without BYPASSRLS against FORCE-RLS tables, that scan is policy-filtered
+— the session GUC the policies key on is unset, every referenced row is
+invisible, and perfectly valid data fails with a phantom FK violation.
+So each involved table's RLS state is snapshotted, RLS is suspended for
+the adds, and the state is restored exactly afterwards (mirrors the FK
+restore in ``c1d7e4a9f2b6``). Validation stays honest — a real orphan
+still aborts loudly.
+
 Revision ID: e7c4b9a25f18
 Revises: a3f8d21c5e90
 Create Date: 2026-06-08
@@ -92,7 +102,66 @@ def _fk_name(table: str, column: str) -> str:
     return f"{table}_{column}_fkey"
 
 
+def _involved_tables() -> list[str]:
+    seen: dict[str, None] = {}
+    for table, _, ref_table, _ in _FOREIGN_KEYS:
+        seen.setdefault(table, None)
+        seen.setdefault(ref_table, None)
+    return list(seen)
+
+
+def _suspend_rls() -> None:
+    table_list = ", ".join(f"'{t}'" for t in _involved_tables())
+    op.execute(
+        f"""DO $$
+        DECLARE r RECORD;
+        BEGIN
+            DROP TABLE IF EXISTS _intra_fk_rls_state;
+            CREATE TEMP TABLE _intra_fk_rls_state AS
+            SELECT n.nspname AS schema_name, c.relname AS table_name,
+                   c.relrowsecurity AS rls_enabled,
+                   c.relforcerowsecurity AS rls_forced
+            FROM pg_class c
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE n.nspname = current_schema()
+              AND c.relname IN ({table_list})
+              AND c.relrowsecurity;
+
+            FOR r IN SELECT * FROM _intra_fk_rls_state LOOP
+                EXECUTE format('ALTER TABLE %I.%I NO FORCE ROW LEVEL SECURITY',
+                               r.schema_name, r.table_name);
+                EXECUTE format('ALTER TABLE %I.%I DISABLE ROW LEVEL SECURITY',
+                               r.schema_name, r.table_name);
+            END LOOP;
+        END $$;"""  # noqa: S608 -- table names are module-level constants
+    )
+
+
+def _restore_rls() -> None:
+    op.execute(
+        """DO $$
+        DECLARE r RECORD;
+        BEGIN
+            IF to_regclass('_intra_fk_rls_state') IS NULL THEN
+                RETURN;
+            END IF;
+            FOR r IN SELECT * FROM _intra_fk_rls_state LOOP
+                IF r.rls_enabled THEN
+                    EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY',
+                                   r.schema_name, r.table_name);
+                END IF;
+                IF r.rls_forced THEN
+                    EXECUTE format('ALTER TABLE %I.%I FORCE ROW LEVEL SECURITY',
+                                   r.schema_name, r.table_name);
+                END IF;
+            END LOOP;
+            DROP TABLE IF EXISTS _intra_fk_rls_state;
+        END $$;"""
+    )
+
+
 def upgrade() -> None:
+    _suspend_rls()
     for table, column, ref_table, on_delete in _FOREIGN_KEYS:
         name = _fk_name(table, column)
         op.execute(
@@ -115,6 +184,7 @@ def upgrade() -> None:
                 END IF;
             END $$;"""  # noqa: S608 -- all identifiers are module-level constants
         )
+    _restore_rls()
 
 
 def downgrade() -> None:
