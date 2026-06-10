@@ -9,6 +9,7 @@ import { createMockPatient } from "@/test/factories"
 
 const useAppointmentList = vi.hoisted(() => vi.fn())
 const usePatientList = vi.hoisted(() => vi.fn())
+const useCompanionDevices = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useAppointments", () => ({
   useAppointmentList: (...args: unknown[]) => useAppointmentList(...args),
@@ -16,6 +17,10 @@ vi.mock("@/hooks/useAppointments", () => ({
 
 vi.mock("@/hooks/usePatients", () => ({
   usePatientList: (...args: unknown[]) => usePatientList(...args),
+}))
+
+vi.mock("@/hooks/useCompanionDevices", () => ({
+  useCompanionDevices: (...args: unknown[]) => useCompanionDevices(...args),
 }))
 
 vi.mock("@/hooks/usePreferences", () => ({
@@ -75,6 +80,10 @@ describe("TodayPanel", () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-05-07T08:00:00Z"))
     usePatientList.mockReturnValue({ data: { data: [] } })
+    // Default: one enrolled companion install (Start Session path).
+    useCompanionDevices.mockReturnValue({
+      data: [{ install_id: "dev-1", platform: "mac" }],
+    })
   })
 
   afterEach(() => {
@@ -117,7 +126,7 @@ describe("TodayPanel", () => {
     expect(items[1]).toHaveTextContent("Afternoon")
   })
 
-  it("emits a pablohealth:// deep link for confirmed appointments without a session", () => {
+  it("shows Start session when a companion install is enrolled", () => {
     useAppointmentList.mockReturnValue({
       data: { data: [makeAppointment({ id: "appt-x" })] },
       isLoading: false,
@@ -125,11 +134,30 @@ describe("TodayPanel", () => {
 
     renderPanel()
 
-    const startLink = screen.getByRole("link", { name: /start session/i })
-    expect(startLink).toHaveAttribute(
-      "href",
-      "pablohealth://session/start?appointment=appt-x",
-    )
+    // The launch flow renders a real anchor whose href is the domain-verified
+    // launch_url (prefetched on hover/focus). It's a link so macOS Safari
+    // routes the Universal Link from an actual user-activated click — the old
+    // pablohealth:// appointment-id anchor is gone.
+    expect(
+      screen.getByRole("link", { name: /start session/i }),
+    ).toBeInTheDocument()
+  })
+
+  it("offers Download Pablo Companion when no install is enrolled", () => {
+    useCompanionDevices.mockReturnValue({ data: [] })
+    useAppointmentList.mockReturnValue({
+      data: { data: [makeAppointment({ id: "appt-x" })] },
+      isLoading: false,
+    })
+
+    renderPanel()
+
+    expect(
+      screen.getByRole("button", { name: /download pablo companion/i }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: /^start session$/i }),
+    ).not.toBeInTheDocument()
   })
 
   it("links already-recorded appointments to the web session detail", () => {

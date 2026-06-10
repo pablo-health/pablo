@@ -7,11 +7,13 @@ import Link from "next/link"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { useAppointmentList } from "@/hooks/useAppointments"
+import { useCompanionDevices } from "@/hooks/useCompanionDevices"
 import { usePatientList } from "@/hooks/usePatients"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { isCompanionAvailable } from "@/lib/companion"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { CompanionGetDialog } from "./CompanionGetDialog"
+import { StartSessionButton } from "./StartSessionButton"
 
 const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
   confirmed: { label: "Scheduled", cls: "bg-secondary-50 text-secondary-700" },
@@ -20,19 +22,19 @@ const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
   no_show: { label: "No-show", cls: "bg-red-50 text-red-700" },
 }
 
-// Recording happens in the desktop companion app, not the browser.
-// See docs/url-scheme.md for the full pablohealth:// grammar.
-function startSessionUri(appointmentId: string): string {
-  return `pablohealth://session/start?appointment=${encodeURIComponent(appointmentId)}`
-}
-
 export function TodayPanel() {
   const { start, end } = todayBounds()
   const timeZone = useUserTimeZone()
   const { data, isLoading } = useAppointmentList(start, end)
   const { data: patientData } = usePatientList()
   const [companionDialogOpen, setCompanionDialogOpen] = useState(false)
-  const companionAvailable = isCompanionAvailable()
+  // Smart detection: only consider the companion handoff on a platform that
+  // can route the deep link, and only treat the user as "set up" once the
+  // backend reports at least one enrolled install. An empty list (or a
+  // backend without the endpoint) falls back to the Download affordance.
+  const platformSupported = isCompanionAvailable()
+  const { data: devices } = useCompanionDevices()
+  const companionEnrolled = platformSupported && (devices?.length ?? 0) > 0
 
   const lastVisitByPatient = useMemo(() => {
     const m = new Map<string, string | null>()
@@ -77,7 +79,9 @@ export function TodayPanel() {
                 appointment={a}
                 lastVisit={lastVisitByPatient.get(a.patient_id) ?? null}
                 timeZone={timeZone}
-                companionAvailable={companionAvailable}
+                companionEnrolled={companionEnrolled}
+                platformSupported={platformSupported}
+                onGetApp={() => setCompanionDialogOpen(true)}
               />
             ))}
           </ul>
@@ -96,14 +100,20 @@ interface AppointmentRowProps {
   appointment: AppointmentResponse
   lastVisit: string | null
   timeZone: string
-  companionAvailable: boolean
+  /** The user has at least one enrolled companion install on a supported OS. */
+  companionEnrolled: boolean
+  /** This OS can route the handoff (gates the Download CTA visibility). */
+  platformSupported: boolean
+  onGetApp: () => void
 }
 
 function AppointmentRow({
   appointment,
   lastVisit,
   timeZone,
-  companionAvailable,
+  companionEnrolled,
+  platformSupported,
+  onGetApp,
 }: AppointmentRowProps) {
   const start = new Date(appointment.start_at)
   const time = start.toLocaleTimeString("en-US", {
@@ -112,10 +122,9 @@ function AppointmentRow({
     timeZone,
   })
   const badge = STATUS_BADGES[appointment.status]
-  const startable =
-    companionAvailable &&
-    appointment.status === "confirmed" &&
-    !appointment.session_id
+  // Only confirmed, not-yet-recorded appointments are launchable.
+  const launchable =
+    appointment.status === "confirmed" && !appointment.session_id
   const lastVisitLabel = formatLastVisit(lastVisit, appointment.start_at)
 
   return (
@@ -138,16 +147,17 @@ function AppointmentRow({
           {badge.label}
         </span>
       )}
-      {startable ? (
-        <Button asChild size="sm">
-          {/* External URL scheme — not a Next route. */}
-          <a href={startSessionUri(appointment.id)}>Start session</a>
-        </Button>
-      ) : appointment.session_id ? (
+      {appointment.session_id ? (
         <Button asChild size="sm" variant="outline">
           <Link href={`/dashboard/sessions/${appointment.session_id}`}>
             Open
           </Link>
+        </Button>
+      ) : launchable && companionEnrolled ? (
+        <StartSessionButton appointmentId={appointment.id} />
+      ) : launchable && platformSupported ? (
+        <Button size="sm" variant="outline" onClick={onGetApp}>
+          Download Pablo Companion
         </Button>
       ) : null}
     </li>

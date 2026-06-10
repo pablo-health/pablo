@@ -134,6 +134,8 @@ const baseQueryKeys = {
   user: {
     all: ["user"] as const,
     preferences: () => [...baseQueryKeys.user.all, "preferences"] as const,
+    // Enrolled companion installs for the current user (desktop handoff).
+    devices: () => [...baseQueryKeys.user.all, "devices"] as const,
   },
 
   // Note (clinical artifact) query keys
