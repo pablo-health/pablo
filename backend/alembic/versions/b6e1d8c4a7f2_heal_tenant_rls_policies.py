@@ -44,10 +44,6 @@ from alembic import op
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-# env.py puts backend/ on sys.path before loading migration modules, so the
-# app package resolves here in both online and offline modes.
-from app.db import enable_rls_on_schema
-
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -60,6 +56,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Imported here, not at module level: env.py puts backend/ on sys.path
+    # for migration runs, but revision *walkers* (provisioning's
+    # stamp-at-head) import every migration module without that setup —
+    # a module-level `from app...` import breaks tenant provisioning.
+    from app.db import enable_rls_on_schema  # noqa: PLC0415
+
     bind = op.get_bind()
     schema = bind.execute(text("SELECT current_schema()")).scalar()
     if not schema:
