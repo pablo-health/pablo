@@ -14,7 +14,7 @@ stored here. Shares the ``platform`` schema (no RLS) with
 ``companion_devices``.
 
 Revision ID: d4b7e9a1c305
-Revises: 1fc013b22ef5
+Revises: b6e1d8c4a7f2
 Create Date: 2026-06-09
 """
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "d4b7e9a1c305"
-down_revision: str | Sequence[str] | None = "1fc013b22ef5"
+down_revision: str | Sequence[str] | None = "b6e1d8c4a7f2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
