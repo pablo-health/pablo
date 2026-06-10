@@ -161,6 +161,109 @@ def test_meets_criteria_nullable_round_trip(fresh_db: str) -> None:
     assert _meets_criteria_is_nullable(fresh_db) is True
 
 
+_LEGACY_UID = "fXEv86J4bZhmzZntfOqEAQQB7M53"
+
+
+def test_phase_c_converts_deployment_defined_user_fk_columns(fresh_db: str) -> None:
+    """Phase C (c1d7e4a9f2b6) must flip EVERY column referencing users(id).
+
+    A deployment can define extra tables (beyond this repo's models) whose
+    columns FK to ``platform.users(id)``. The Phase-C FK snapshot drops
+    those constraints before the cast — but the columns themselves must
+    also flip to ``uuid`` (with the legacy-id remap) before the restore,
+    or the re-add fails with "incompatible types: character varying and
+    uuid". Reproduces a real deployment failure.
+    """
+    _alembic(fresh_db, "upgrade", "head")
+    # Walk users.id (and friends) back to varchar, as a pre-Phase-C DB had.
+    _alembic(fresh_db, "downgrade", "f4c1a9d3b7e2")
+
+    eng = create_engine(fresh_db)
+    try:
+        with eng.begin() as conn:
+            # A legacy account: users.id IS the Firebase uid, linked in
+            # user_identities exactly as a4c91b6e3f08 backfilled it.
+            conn.execute(
+                text(
+                    "INSERT INTO platform.users"
+                    " (id, email, name, created_at, status, is_platform_admin,"
+                    "  chat_quality_review_opt_in, session_notes_quality_review_opt_in)"
+                    " VALUES (:uid, 'legacy@example.test', 'Legacy User', now(),"
+                    "         'approved', false, false, false)"
+                ),
+                {"uid": _LEGACY_UID},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO platform.user_identities"
+                    " (provider, subject_id, user_id, linked_at)"
+                    " VALUES ('firebase', :uid, :uid, now())"
+                ),
+                {"uid": _LEGACY_UID},
+            )
+            # A table this repo knows nothing about, referencing users(id).
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE platform.ext_upload_log (
+                        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                        uploaded_by VARCHAR(128),
+                        CONSTRAINT ext_upload_log_uploaded_by_fkey
+                            FOREIGN KEY (uploaded_by)
+                            REFERENCES platform.users(id) ON DELETE SET NULL
+                    )
+                    """
+                )
+            )
+            conn.execute(
+                text("INSERT INTO platform.ext_upload_log (uploaded_by) VALUES (:uid)"),
+                {"uid": _LEGACY_UID},
+            )
+    finally:
+        eng.dispose()
+
+    _alembic(fresh_db, "upgrade", "head")
+
+    eng = create_engine(fresh_db)
+    try:
+        with eng.connect() as conn:
+            col_type = conn.execute(
+                text(
+                    "SELECT data_type FROM information_schema.columns"
+                    " WHERE table_schema = 'platform'"
+                    " AND table_name = 'ext_upload_log'"
+                    " AND column_name = 'uploaded_by'"
+                )
+            ).scalar_one()
+            fk_count = conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_constraint"
+                    " WHERE conname = 'ext_upload_log_uploaded_by_fkey'"
+                )
+            ).scalar_one()
+            # The legacy uid was remapped to the user's new uuid id.
+            row = conn.execute(
+                text(
+                    "SELECT e.uploaded_by::text, u.id::text"
+                    " FROM platform.ext_upload_log e"
+                    " JOIN platform.user_identities ui"
+                    "   ON ui.provider = 'firebase' AND ui.subject_id = :uid"
+                    " JOIN platform.users u ON u.id = ui.user_id"
+                    " LIMIT 1"
+                ),
+                {"uid": _LEGACY_UID},
+            ).fetchone()
+    finally:
+        eng.dispose()
+
+    assert col_type == "uuid"
+    assert fk_count == 1
+    assert row is not None
+    uploaded_by, new_user_id = row
+    assert uploaded_by == new_user_id
+    assert uploaded_by != _LEGACY_UID
+
+
 def test_upgrade_idempotent_after_simulated_drift(fresh_db: str) -> None:
     """Pre-create the conflicting platform objects exactly as a partial
     prior run would have left them, then upgrade head."""

@@ -91,7 +91,14 @@ mapped to ``NULL``.
 FK constraints touching converted columns are dropped and recreated via
 ``pg_get_constraintdef`` (``companion_devices.user_id`` -> ``users.id``,
 plus any per-tenant FK on an affected table), same mechanism as
-``b7e25c1d8a4f``.
+``b7e25c1d8a4f``. The platform snapshot intentionally also catches FKs
+from tables this file does not know about — a deployment can define
+extra tables referencing ``users(id)``, and those FKs must come down
+before the cast regardless. Their referencing columns are then flipped
+to ``uuid`` (with the same legacy-id remap) before the FK restore,
+driven by the snapshot itself rather than a hardcoded list — restoring
+a varchar column's FK against the now-uuid ``users.id`` would fail with
+"incompatible types" (this bit a real deployment).
 
 Idempotent under the per-tenant fan-out: every ALTER is guarded on the
 column still being ``character varying``; policy and FK save/restore use
@@ -469,21 +476,29 @@ def _save_and_drop_fks_platform() -> None:
         schema_name text NOT NULL,
         table_name text NOT NULL,
         constraint_name text NOT NULL,
-        constraint_def text NOT NULL
+        constraint_def text NOT NULL,
+        ref_schema text,
+        ref_table text,
+        src_columns text[] NOT NULL
     );
 
     INSERT INTO _phasec_saved_platform_fks
-        (schema_name, table_name, constraint_name, constraint_def)
-    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid)
+        (schema_name, table_name, constraint_name, constraint_def,
+         ref_schema, ref_table, src_columns)
+    SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid),
+           rn.nspname, rc.relname,
+           (SELECT array_agg(att.attname ORDER BY u.ord)
+            FROM unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord)
+            JOIN pg_attribute att
+              ON att.attrelid = con.conrelid AND att.attnum = u.attnum)
     FROM pg_constraint con
     JOIN pg_class c  ON con.conrelid  = c.oid
     JOIN pg_namespace n ON c.relnamespace = n.oid
     LEFT JOIN pg_class rc ON con.confrelid = rc.oid
     LEFT JOIN pg_namespace rn ON rc.relnamespace = rn.oid
     WHERE con.contype = 'f'
-      AND n.nspname IN ({schema_list})
       AND (
-          c.relname IN ({table_list})
+          (n.nspname IN ({schema_list}) AND c.relname IN ({table_list}))
           OR (rc.relname IS NOT NULL
               AND rn.nspname IN ({schema_list})
               AND rc.relname IN ({table_list}))
@@ -518,6 +533,91 @@ def _restore_fks_platform() -> None:
     END $$;
     DROP TABLE IF EXISTS _phasec_saved_platform_fks;
     """
+    )
+
+
+# --------------------------------------------------------------------------
+# Columns OUTSIDE the hardcoded lists that reference users(id) via an FK —
+# tables a deployment defines on top of the engine schema. The FK snapshot
+# above already catches them (anything referencing a listed table comes
+# down before the cast); their columns must flip in lockstep with users.id
+# or the FK restore fails with "incompatible types: character varying and
+# uuid". Discovered from the snapshot itself, so nothing is hardcoded.
+# --------------------------------------------------------------------------
+def _convert_snapshotted_user_ref_columns() -> None:
+    op.execute(
+        f"""DO $$
+        DECLARE
+            r RECORD;
+            col text;
+            uuid_re CONSTANT text := '{_UUID_RE}';
+        BEGIN
+            IF to_regclass('_phasec_saved_platform_fks') IS NULL THEN
+                RETURN;
+            END IF;
+            FOR r IN
+                SELECT * FROM _phasec_saved_platform_fks
+                WHERE ref_schema = 'platform' AND ref_table = 'users'
+            LOOP
+                FOREACH col IN ARRAY r.src_columns LOOP
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = r.schema_name
+                          AND table_name = r.table_name
+                          AND column_name = col
+                          AND data_type = 'character varying'
+                    ) THEN
+                        -- Same legacy-id remap as the listed columns: the
+                        -- old -> new mapping rides user_identities
+                        -- (subject_id keeps the external uid).
+                        EXECUTE format(
+                            'UPDATE %I.%I t SET %I = ui.user_id::text
+                             FROM platform.user_identities ui
+                             WHERE ui.provider = ''firebase''
+                               AND ui.subject_id = t.%I
+                               AND t.%I !~ %L',
+                            r.schema_name, r.table_name, col, col, col, uuid_re);
+                        EXECUTE format(
+                            'ALTER TABLE %I.%I ALTER COLUMN %I TYPE uuid
+                             USING NULLIF(%I, '''')::uuid',
+                            r.schema_name, r.table_name, col, col);
+                    END IF;
+                END LOOP;
+            END LOOP;
+        END $$;"""  # noqa: S608
+    )
+
+
+def _revert_snapshotted_user_ref_columns() -> None:
+    op.execute(
+        """DO $$
+        DECLARE
+            r RECORD;
+            col text;
+        BEGIN
+            IF to_regclass('_phasec_saved_platform_fks') IS NULL THEN
+                RETURN;
+            END IF;
+            FOR r IN
+                SELECT * FROM _phasec_saved_platform_fks
+                WHERE ref_schema = 'platform' AND ref_table = 'users'
+            LOOP
+                FOREACH col IN ARRAY r.src_columns LOOP
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = r.schema_name
+                          AND table_name = r.table_name
+                          AND column_name = col
+                          AND data_type = 'uuid'
+                    ) THEN
+                        EXECUTE format(
+                            'ALTER TABLE %I.%I ALTER COLUMN %I TYPE varchar(128)
+                             USING %I::text',
+                            r.schema_name, r.table_name, col, col);
+                    END IF;
+                END LOOP;
+            END LOOP;
+        END $$;"""
     )
 
 
@@ -610,6 +710,9 @@ def upgrade() -> None:
             END IF;
         END $$;"""
     )
+    # Any other column the FK snapshot saw referencing users(id) — e.g. a
+    # deployment-defined table — must flip before its FK is restored.
+    _convert_snapshotted_user_ref_columns()
     _restore_fks_platform()
 
 
@@ -639,6 +742,7 @@ def downgrade() -> None:
     )
     for schema, table, column in reversed(PLATFORM_COLUMNS):
         _alter_to_varchar_schema(schema, table, column)
+    _revert_snapshotted_user_ref_columns()
     _restore_fks_platform()
 
     _save_and_drop_policies_current()
