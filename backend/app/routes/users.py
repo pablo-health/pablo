@@ -10,6 +10,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import google.auth
 import google.auth.transport.requests
@@ -50,6 +51,9 @@ from ..repositories import (
 )
 from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
+
+if TYPE_CHECKING:
+    from ..services.companion_device_service import CompanionDeviceService
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +264,68 @@ def get_current_user_profile(
     Returns the authenticated user's profile information.
     """
     return user
+
+
+def get_companion_device_service_dep() -> "CompanionDeviceService":
+    """Build the companion-device service against the configured backend.
+
+    Separate from the module-level factory so tests can override it via
+    ``app.dependency_overrides`` with an in-memory-backed service.
+    """
+    from ..services.companion_device_service import get_companion_device_service
+
+    return get_companion_device_service()
+
+
+class CompanionDeviceItem(BaseModel):
+    """One enrolled companion install, as surfaced to the dashboard.
+
+    No PHI: ``jkt_fingerprint`` is a 12-char fragment of a public-key
+    hash (a non-secret recognizer like "Mac Mini · a3f9c2e1xxxx").
+    ``hostname_hash`` and the full JWK are intentionally omitted.
+    """
+
+    install_id: str
+    platform: str
+    os_version: str | None = None
+    enrolled_at: str
+    last_seen: str
+    jkt_fingerprint: str | None = None
+
+
+@router.get("/me/devices", response_model=list[CompanionDeviceItem])
+def list_my_devices(
+    user: User = Depends(get_current_user),
+    device_service: "CompanionDeviceService" = Depends(get_companion_device_service_dep),
+) -> list[CompanionDeviceItem]:
+    """List the caller's enrolled (non-revoked) companion installs.
+
+    Powers the dashboard's smart detection (render "Start Session" vs
+    "Download Pablo Companion"). Not gated by ``ENABLE_LAUNCH_INTENT`` —
+    independently safe (returns only the caller's own non-PHI device
+    metadata) and needed even while the launch flow is dark.
+
+    ``companion_devices`` is a platform/shared table (no RLS), so no
+    tenant context is required; the ``user_id`` filter inside
+    ``list_devices`` is the access-control boundary.
+    """
+    devices = device_service.list_devices(user.id)
+    return [
+        CompanionDeviceItem(
+            install_id=d.install_id,
+            platform=d.platform,
+            os_version=d.os_version,
+            enrolled_at=_iso_utc(d.enrolled_at),
+            last_seen=_iso_utc(d.last_seen),
+            jkt_fingerprint=d.jkt[:12] if d.jkt else None,
+        )
+        for d in devices
+    ]
+
+
+def _iso_utc(value: datetime) -> str:
+    """Render a datetime as ISO-8601 UTC with a trailing ``Z``."""
+    return value.isoformat().replace("+00:00", "Z")
 
 
 @router.patch("/me")

@@ -693,6 +693,16 @@ class Settings(BaseSettings):
             "see docs/architecture/patient-context-chat-oss.md."
         ),
     )
+    # Companion thin-client launch-intent handoff. When false, the
+    # /api/launch/intent + /api/launch/redeem router is NOT mounted, so
+    # both endpoints return 404. Kept off until the desktop companions
+    # ship the verified-link redemption path. See
+    # docs/design/companion-thin-client.md.
+    enable_launch_intent: bool = Field(
+        default=False,
+        description="Mount POST /api/launch/intent + /api/launch/redeem.",
+    )
+
     # Companion device-binding proof enforcement (DPoP, RFC 9449-style).
     # When false the DPoP middleware is a hard no-op pass-through, so the
     # validation layer can ship dark while native companions add signing

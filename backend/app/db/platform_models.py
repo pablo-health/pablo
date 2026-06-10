@@ -257,6 +257,52 @@ class CompanionDeviceRow(PlatformBase):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class LaunchIntentRow(PlatformBase):
+    """A single-use launch intent for the web→companion session handoff.
+
+    Created when a therapist clicks "Start Session" on the web dashboard;
+    consumed when the desktop companion redeems it at ``/launch/redeem``.
+    Bound to the issuing ``user_id`` and an ``appointment_id``; the
+    redeem step re-verifies the redeeming token's user against this row.
+
+    Only the SHA-256 hash of the opaque intent id is stored
+    (``intent_hash``, the lookup key) — never the raw id, which leaves
+    the server exactly once in the issue response. ``consumed_at``
+    non-null marks the intent spent (single-use). ``expires_at`` is the
+    authoritative 180s expiry; a periodic sweep / TTL backstop reclaims
+    rows.
+
+    No PHI: ``appointment_id`` is an opaque pointer; no patient data is
+    stored here. Lives in the shared ``platform`` schema (no RLS) — the
+    same scope as ``companion_devices``.
+    """
+
+    __tablename__ = "launch_intents"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    intent_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # The FK to platform.users(id) is declared in the Alembic migration
+    # (raw SQL), not here. ``platform_metadata.create_all`` runs at the
+    # start of every alembic env bootstrap — before migrations — and an
+    # ORM-level ForeignKey would make create_all emit the FK while
+    # users.id is transiently ``varchar`` (e.g. mid down/up replay,
+    # before c1d7e4a9f2b6 re-converts it to uuid), tripping a
+    # uuid↔varchar mismatch. Keeping the constraint migration-only lets
+    # create_all build the bare column and the migration add the FK once
+    # users.id is uuid. ON DELETE CASCADE is preserved in the migration.
+    user_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        nullable=False,
+        index=True,
+    )
+    appointment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class PlatformAuditLogRow(PlatformBase):
     __tablename__ = "platform_audit_logs"
     __table_args__ = {"schema": PLATFORM_SCHEMA}
