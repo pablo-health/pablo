@@ -675,6 +675,22 @@ class Settings(BaseSettings):
             "see docs/architecture/patient-context-chat-oss.md."
         ),
     )
+    # Companion device-binding proof enforcement (DPoP, RFC 9449-style).
+    # When false the DPoP middleware is a hard no-op pass-through, so the
+    # validation layer can ship dark while native companions add signing
+    # support. When true, any request carrying an ``X-Install-ID`` header
+    # must also carry a valid ``DPoP`` proof signed by that device's
+    # enrolled key; requests without the header keep working (legacy web
+    # + un-upgraded companions). See
+    # docs/design/companion-dpop-binding.md § Stage 2.
+    enable_dpop_validation: bool = Field(
+        default=False,
+        description=(
+            "Enforce X-Install-ID + DPoP proofs on authenticated routes. "
+            "Off by default; hard no-op when disabled. See "
+            "docs/design/companion-dpop-binding.md."
+        ),
+    )
     # Default chat model — used by ``resolve_chat_model`` when no
     # downstream resolver overrides it. Downstream consumers may swap
     # this per ``caller_feature_key``.
