@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from ...db.platform_models import PlatformUserPreferencesRow, PlatformUserRow
@@ -19,6 +20,14 @@ class PostgresUserRepository(UserRepository):
         self._session = session
 
     def get(self, user_id: str) -> User | None:
+        # ``users.id`` is a uuid column, but the auth resolve path still
+        # falls back to the provider's raw subject id when no identity
+        # mapping exists yet (a brand-new user). Postgres would reject the
+        # cast with a DataError; "no such user" is the correct answer.
+        try:
+            uuid.UUID(user_id)
+        except ValueError:
+            return None
         row = self._session.get(PlatformUserRow, user_id)
         if row is None:
             return None
