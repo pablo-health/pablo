@@ -181,7 +181,11 @@ export async function apiClient<T>(
     if (response.ok) {
       const contentType = response.headers.get("content-type")
       if (contentType?.includes("application/json")) {
-        return (await response.json()) as T
+        // 204s (and some proxies' empty replies) still carry an
+        // application/json content-type; .json() on an empty body throws
+        // and turns a successful mutation into a phantom error.
+        const text = await response.text()
+        return (text ? JSON.parse(text) : undefined) as T
       }
       return (await response.text()) as unknown as T
     }
