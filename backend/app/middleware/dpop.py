@@ -19,7 +19,9 @@ request carries an ``X-Install-ID`` header:
    - ``htm`` == request method,
    - ``htu`` == request scheme+host+path (query stripped),
    - ``iat`` within ±60s of server time,
-   - ``jti`` unseen (per-process LRU replay cache, 5-minute TTL),
+   - ``jti`` unseen (replay guard, 5-minute TTL — Redis-shared across
+     instances when configured, per-process LRU otherwise; see
+     ``services/replay_guard.py``),
    - signature verifies against the device's stored public JWK.
 4. On success, touch ``last_seen`` and let the request proceed.
 
@@ -47,8 +49,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import OrderedDict
-from threading import Lock
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
@@ -56,6 +56,8 @@ import jwt
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from ..services.replay_guard import ReplayGuard, get_replay_guard
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -88,45 +90,7 @@ _IAT_WINDOW_SECONDS = 60
 # can never fall out of the cache while it is still inside its freshness
 # window. See docs/design/companion-dpop-binding.md § Nonces.
 _JTI_TTL_SECONDS = 300
-_JTI_CACHE_MAX = 10_000
-
-
-class _ReplayCache:
-    """Per-process LRU of seen ``jti`` values with a TTL.
-
-    ``check_and_add`` returns ``True`` if the jti is fresh (and records
-    it) or ``False`` if it was already seen within the TTL. Expired
-    entries are evicted lazily on access plus an LRU cap as a hard
-    backstop against unbounded growth from a flood of unique jtis.
-    """
-
-    def __init__(
-        self, ttl_seconds: int = _JTI_TTL_SECONDS, max_entries: int = _JTI_CACHE_MAX
-    ) -> None:
-        self._ttl = ttl_seconds
-        self._max = max_entries
-        self._seen: OrderedDict[str, float] = OrderedDict()
-        self._lock = Lock()
-
-    def check_and_add(self, jti: str, now: float | None = None) -> bool:
-        ts = time.time() if now is None else now
-        cutoff = ts - self._ttl
-        with self._lock:
-            # Evict expired entries from the front (oldest first).
-            while self._seen:
-                _, oldest_ts = next(iter(self._seen.items()))
-                if oldest_ts <= cutoff:
-                    self._seen.popitem(last=False)
-                else:
-                    break
-            existing = self._seen.get(jti)
-            if existing is not None and existing > cutoff:
-                return False
-            self._seen[jti] = ts
-            self._seen.move_to_end(jti)
-            while len(self._seen) > self._max:
-                self._seen.popitem(last=False)
-            return True
+_JTI_NAMESPACE = "dpop:jti"
 
 
 class DPoPValidationError(Exception):
@@ -167,7 +131,7 @@ def verify_dpop_proof(
     *,
     method: str,
     htu: str,
-    replay_cache: _ReplayCache,
+    replay_cache: ReplayGuard,
     now: float | None = None,
 ) -> None:
     """Verify a DPoP proof against an enrolled device's key.
@@ -287,9 +251,9 @@ class DPoPMiddleware(BaseHTTPMiddleware):
     request-scoped session (used for the device lookup) and the cached
     verified identity are both available when ``dispatch`` runs.
 
-    ``device_lookup`` / ``touch`` are injectable so the integration tests
-    can drive the full middleware stack against an in-memory device
-    registry without a live Postgres.
+    ``device_lookup`` / ``touch`` / ``replay_guard`` are injectable so
+    the integration tests can drive the full middleware stack against an
+    in-memory device registry without a live Postgres or Redis.
     """
 
     def __init__(
@@ -298,12 +262,15 @@ class DPoPMiddleware(BaseHTTPMiddleware):
         settings: Settings,
         device_lookup: Callable[[str], CompanionDevice | None] | None = None,
         touch: Callable[[str], None] | None = None,
+        replay_guard: ReplayGuard | None = None,
     ) -> None:
         super().__init__(app)
         self._settings = settings
         self._device_lookup = device_lookup or _default_device_lookup
         self._touch = touch or _touch_last_seen
-        self._replay_cache = _ReplayCache()
+        self._replay_cache = replay_guard or get_replay_guard(
+            _JTI_NAMESPACE, ttl_seconds=_JTI_TTL_SECONDS
+        )
 
     def _reject(self) -> JSONResponse:
         return JSONResponse(
