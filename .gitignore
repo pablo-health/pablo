@@ -21,6 +21,9 @@ venv/
 .env
 .env.local
 .env*.local
+# Per-project blocking-function env (deploy-time config; keep the example)
+functions/.env.*
+!functions/.env.example
 
 # OS
 .DS_Store
