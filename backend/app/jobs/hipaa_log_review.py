@@ -34,6 +34,20 @@ metadata from a therapy documentation platform. The input is PHI-free:
 opaque UUIDs, timestamps, action strings, IPs, user agents, and
 field-name diffs.
 
+Every ``entries`` row and every ``user_aggregates`` item also carries an
+``is_internal_actor`` boolean. When true, the user is an authorized
+automated actor the operator has registered (a scheduled internal scan,
+a test/E2E identity, a health-check job) — NOT an unknown account.
+Machine-paced behaviour from these actors (rapid sequential reads,
+datacenter-IP origin, high request volume, off-hours activity) is
+expected by design. ATTRIBUTE such activity to the known automated actor
+and report it as informational/LOW; do not escalate it to HIGH purely
+for looking automated or scraper-like. A genuine red flag from an
+internal actor — e.g. a bulk delete, an export spike far above its own
+baseline, or access to a record outside its documented scope — is still
+worth flagging at the severity the evidence warrants; ``is_internal_actor``
+explains the traffic shape, it does not waive scrutiny of the action.
+
 The payload has two parts:
 
 1. ``entries`` — per-row audit data enriched with three booleans:
@@ -254,6 +268,7 @@ def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, A
     )
     from ..repositories.postgres.user import PostgresUserRepository  # noqa: PLC0415
     from ..services.audit_review_service import AuditReviewService  # noqa: PLC0415
+    from ..settings import get_settings  # noqa: PLC0415
 
     session = create_standalone_session(practice_schema=practice_schema)
     try:
@@ -264,7 +279,10 @@ def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, A
             appointment_repo=PostgresAppointmentRepository(session),
             session_repo=PostgresTherapySessionRepository(session),
         )
-        payload = service.compute_payload(window_hours=window_hours)
+        payload = service.compute_payload(
+            window_hours=window_hours,
+            internal_actor_user_ids=get_settings().internal_actor_user_ids,
+        )
         return payload.to_dict()
     finally:
         session.close()

@@ -61,9 +61,7 @@ BULK_DELETE_THRESHOLD = 3
 MIN_BASELINE_DAYS_FOR_EXPORT_RATE = 14
 
 # Audit actions that count as "exports" for the rate alert.
-EXPORT_ACTIONS: frozenset[str] = frozenset(
-    {"patient_exported", "export_action_taken"}
-)
+EXPORT_ACTIONS: frozenset[str] = frozenset({"patient_exported", "export_action_taken"})
 
 
 @dataclass
@@ -95,9 +93,20 @@ class AuditReviewService:
         self._sessions = session_repo
 
     def compute_payload(
-        self, window_hours: int = 24, baseline_days: int = 90
+        self,
+        window_hours: int = 24,
+        baseline_days: int = 90,
+        internal_actor_user_ids: set[str] | None = None,
     ) -> ReviewPayload:
-        """Build the full review payload."""
+        """Build the full review payload.
+
+        ``internal_actor_user_ids`` flags traffic from authorized automated
+        actors (scheduled internal scans, test/E2E identities). Matching
+        entries and aggregates carry ``is_internal_actor=True`` so the
+        review model attributes their machine-paced access rather than
+        alarming on it for being automated.
+        """
+        internal_actors = internal_actor_user_ids or set()
         entries = self._audit.metadata_for_review(
             window_hours=window_hours, baseline_days=baseline_days
         )
@@ -121,12 +130,15 @@ class AuditReviewService:
                 patient_created_at=patient_created_at,
                 user_appointment_counts=user_appointment_counts,
             )
+            entry["is_internal_actor"] = entry["user_id"] in internal_actors
 
         aggregates = self._compute_user_aggregates(
             entries=entries,
             window_hours=window_hours,
             baseline_days=baseline_days,
         )
+        for aggregate in aggregates:
+            aggregate["is_internal_actor"] = aggregate["user_id"] in internal_actors
 
         return ReviewPayload(entries=entries, user_aggregates=aggregates)
 
@@ -180,29 +192,20 @@ class AuditReviewService:
         # System-level warmup: don't fire until the user has enough
         # appointment history that "no appointment" actually means
         # something.
-        if (
-            user_appointment_counts.get(entry["user_id"], 0)
-            < MIN_APPOINTMENTS_FOR_CARETEAM_CHECK
-        ):
+        if user_appointment_counts.get(entry["user_id"], 0) < MIN_APPOINTMENTS_FOR_CARETEAM_CHECK:
             return False
 
         # Patient-level suppression: skip new-patient intake window.
         created = patient_created_at.get(patient_id)
         if created is None:
             return False
-        if (datetime.now(UTC) - created) < timedelta(
-            days=PATIENT_INTAKE_SUPPRESSION_DAYS
-        ):
+        if (datetime.now(UTC) - created) < timedelta(days=PATIENT_INTAKE_SUPPRESSION_DAYS):
             return False
 
         # Now check the actual relationship signal.
         access_ts = _parse_iso(entry["timestamp"])
-        has_appointment = self._has_proximate_appointment(
-            entry["user_id"], patient_id, access_ts
-        )
-        has_session = self._has_recent_session(
-            entry["user_id"], patient_id, access_ts
-        )
+        has_appointment = self._has_proximate_appointment(entry["user_id"], patient_id, access_ts)
+        has_session = self._has_recent_session(entry["user_id"], patient_id, access_ts)
         return not (has_appointment or has_session)
 
     def _has_proximate_appointment(
@@ -210,14 +213,10 @@ class AuditReviewService:
     ) -> bool:
         start = access_ts - timedelta(days=APPOINTMENT_PROXIMITY_DAYS)
         end = access_ts + timedelta(days=APPOINTMENT_PROXIMITY_DAYS)
-        appts = self._appointments.list_by_patient(
-            patient_id=patient_id, user_id=user_id
-        )
+        appts = self._appointments.list_by_patient(patient_id=patient_id, user_id=user_id)
         return any(start <= appt.start_at <= end for appt in appts)
 
-    def _has_recent_session(
-        self, user_id: str, patient_id: str, access_ts: datetime
-    ) -> bool:
+    def _has_recent_session(self, user_id: str, patient_id: str, access_ts: datetime) -> bool:
         sessions = self._sessions.list_by_patient(patient_id, user_id)
         cutoff_lo = access_ts - timedelta(days=1)
         cutoff_hi = access_ts + timedelta(days=1)
@@ -253,9 +252,7 @@ class AuditReviewService:
         out.extend(self._export_rate_alerts(window_hours, baseline_days))
         return out
 
-    def _export_rate_alerts(
-        self, window_hours: int, baseline_days: int
-    ) -> list[dict]:
+    def _export_rate_alerts(self, window_hours: int, baseline_days: int) -> list[dict]:
         # Pull a wider audit slice (window + baseline) once to compute
         # both today's count and the historical distribution per user.
         wide_window_hours = window_hours + baseline_days * 24
@@ -265,9 +262,7 @@ class AuditReviewService:
         window_start = now - timedelta(hours=window_hours)
         warmup_cutoff = now - timedelta(days=MIN_BASELINE_DAYS_FOR_EXPORT_RATE)
 
-        per_user_daily_exports: dict[str, dict[str, int]] = defaultdict(
-            lambda: defaultdict(int)
-        )
+        per_user_daily_exports: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
         per_user_window_exports: Counter[str] = Counter()
         per_user_first_seen: dict[str, datetime] = {}
 
@@ -337,9 +332,7 @@ class AuditReviewService:
                 out[pid] = None
         return out
 
-    def _patient_created_at(
-        self, patient_ids: set[str]
-    ) -> dict[str, datetime | None]:
+    def _patient_created_at(self, patient_ids: set[str]) -> dict[str, datetime | None]:
         """Patient creation timestamps from the audit log itself.
 
         Avoids a join to the patients table — the audit log already
@@ -354,9 +347,7 @@ class AuditReviewService:
         far_past = datetime.now(UTC) - timedelta(days=365 * 5)
         far_future = datetime.now(UTC) + timedelta(days=365)
         for uid in user_ids:
-            appts = self._appointments.list_by_range(
-                user_id=uid, start=far_past, end=far_future
-            )
+            appts = self._appointments.list_by_range(user_id=uid, start=far_past, end=far_future)
             out[uid] = len(appts)
         return out
 

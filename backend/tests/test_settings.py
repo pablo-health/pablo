@@ -52,3 +52,12 @@ def test_is_prod_project_honors_environment_override() -> None:
 
 def test_is_prod_project_default_is_false() -> None:
     assert not _make(environment="development").is_prod_project
+
+
+def test_internal_actor_user_ids_default_is_empty() -> None:
+    assert _make().internal_actor_user_ids == set()
+
+
+def test_internal_actor_user_ids_parses_and_strips() -> None:
+    settings = _make(INTERNAL_ACTOR_USER_IDS=" bot-1 , bot-2 ,, ")
+    assert settings.internal_actor_user_ids == {"bot-1", "bot-2"}
