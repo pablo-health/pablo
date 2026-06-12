@@ -110,6 +110,31 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def count_by_range(self, user_id: str, start: str | datetime, end: str | datetime) -> int:
+        """Aggregate variant of :meth:`list_by_range` — one COUNT, no rows
+        materialised, valid under column-scoped grants."""
+        return (
+            self._session.query(AppointmentRow.id)
+            .filter(
+                AppointmentRow.user_id == user_id,
+                AppointmentRow.start_at >= start,
+                AppointmentRow.start_at < end,
+            )
+            .count()
+        )
+
+    def start_times_by_patient(self, user_id: str, patient_id: str) -> list[datetime]:
+        """Timestamp-only variant of :meth:`list_by_patient`."""
+        if not self._has_patient_access(patient_id, user_id):
+            return []
+        rows = (
+            self._session.query(AppointmentRow.start_at)
+            .filter(AppointmentRow.patient_id == patient_id)
+            .order_by(AppointmentRow.start_at)
+            .all()
+        )
+        return [r[0] for r in rows]
+
     def _has_patient_access(self, patient_id: str, user_id: str) -> bool:
         result = self._session.execute(
             _HAS_PATIENT_ACCESS_SQL,

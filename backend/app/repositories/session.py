@@ -22,6 +22,16 @@ class TherapySessionRepository(ABC):
         """List all therapy sessions for a patient, ensuring user has access."""
         pass
 
+    def session_dates_by_patient(self, patient_id: str, user_id: str) -> list[datetime]:
+        """Session dates only, same access gate as :meth:`list_by_patient`.
+
+        For callers that only correlate timestamps (the audit reviewer's
+        recent-session check) — backends can answer this without loading
+        transcript or note content. Default delegates to
+        ``list_by_patient``.
+        """
+        return [s.session_date for s in self.list_by_patient(patient_id, user_id)]
+
     @abstractmethod
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20
