@@ -84,6 +84,21 @@ class PostgresPatientRepository(PatientRepository):
         )
         return _row_to_patient(row) if row else None
 
+    def get_last_name(self, patient_id: str, user_id: str) -> str | None:
+        """Single-column variant of :meth:`get` — never selects the rest
+        of the chart row, so it stays valid under column-scoped grants."""
+        last_name: str | None = (
+            self._session.query(PatientRow.last_name)
+            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+            .filter(
+                PatientRow.id == patient_id,
+                PatientRow.deleted_at.is_(None),
+                *_live_grant_filter(user_id),
+            )
+            .scalar()
+        )
+        return last_name
+
     def get_multiple(self, patient_ids: list[str], user_id: str) -> dict[str, Patient]:
         if not patient_ids:
             return {}

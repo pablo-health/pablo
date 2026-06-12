@@ -36,6 +36,34 @@ class AppointmentRepository(ABC):
     ) -> list[Appointment]:
         """List appointments for a specific patient."""
 
+    def count_by_range(
+        self,
+        user_id: str,
+        start: str | datetime,
+        end: str | datetime,
+    ) -> int:
+        """Count of the :meth:`list_by_range` slice.
+
+        For callers that only need the volume (the audit reviewer's
+        new-vs-seasoned user signal) — backends can answer with an
+        aggregate instead of loading every row. Default delegates to
+        ``list_by_range``.
+        """
+        return len(self.list_by_range(user_id, start, end))
+
+    def start_times_by_patient(
+        self,
+        user_id: str,
+        patient_id: str,
+    ) -> list[datetime]:
+        """Start timestamps of the :meth:`list_by_patient` slice.
+
+        For callers that only correlate timestamps (the audit reviewer's
+        appointment-proximity check). Default delegates to
+        ``list_by_patient``.
+        """
+        return [a.start_at for a in self.list_by_patient(user_id, patient_id)]
+
     @abstractmethod
     def list_by_recurring_id(
         self,

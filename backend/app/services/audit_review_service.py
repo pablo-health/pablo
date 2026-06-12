@@ -210,18 +210,18 @@ class AuditReviewService:
     ) -> bool:
         start = access_ts - timedelta(days=APPOINTMENT_PROXIMITY_DAYS)
         end = access_ts + timedelta(days=APPOINTMENT_PROXIMITY_DAYS)
-        appts = self._appointments.list_by_patient(
+        starts = self._appointments.start_times_by_patient(
             patient_id=patient_id, user_id=user_id
         )
-        return any(start <= appt.start_at <= end for appt in appts)
+        return any(start <= start_at <= end for start_at in starts)
 
     def _has_recent_session(
         self, user_id: str, patient_id: str, access_ts: datetime
     ) -> bool:
-        sessions = self._sessions.list_by_patient(patient_id, user_id)
+        dates = self._sessions.session_dates_by_patient(patient_id, user_id)
         cutoff_lo = access_ts - timedelta(days=1)
         cutoff_hi = access_ts + timedelta(days=1)
-        return any(cutoff_lo <= s.session_date <= cutoff_hi for s in sessions)
+        return any(cutoff_lo <= d <= cutoff_hi for d in dates)
 
     # ---------- per-user aggregates ----------
 
@@ -329,9 +329,9 @@ class AuditReviewService:
         out: dict[str, str | None] = {}
         for pid in patient_ids:
             for uid in user_ids:
-                patient = self._patients.get(pid, uid)
-                if patient:
-                    out[pid] = (patient.last_name or "").strip().lower() or None
+                last_name = self._patients.get_last_name(pid, uid)
+                if last_name is not None:
+                    out[pid] = last_name.strip().lower() or None
                     break
             else:
                 out[pid] = None
@@ -354,10 +354,9 @@ class AuditReviewService:
         far_past = datetime.now(UTC) - timedelta(days=365 * 5)
         far_future = datetime.now(UTC) + timedelta(days=365)
         for uid in user_ids:
-            appts = self._appointments.list_by_range(
+            out[uid] = self._appointments.count_by_range(
                 user_id=uid, start=far_past, end=far_future
             )
-            out[uid] = len(appts)
         return out
 
 
