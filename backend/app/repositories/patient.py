@@ -28,6 +28,17 @@ class PatientRepository(ABC):
         """Get multiple patients by IDs, ensuring they belong to the user."""
         pass
 
+    def get_last_name(self, patient_id: str, user_id: str) -> str | None:
+        """Last name only, same access gate as :meth:`get`.
+
+        For callers that need a single demographic field (the audit
+        reviewer's name-overlap check) — backends can answer this
+        without materialising the full chart row. Default delegates
+        to ``get``.
+        """
+        patient = self.get(patient_id, user_id)
+        return patient.last_name if patient else None
+
     @abstractmethod
     def list_by_user(
         self,

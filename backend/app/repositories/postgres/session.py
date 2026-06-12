@@ -24,6 +24,8 @@ from ...utcnow import utc_now
 from ..session import TherapySessionRepository, _compute_day_boundaries
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from sqlalchemy.orm import Session
 
 
@@ -80,6 +82,26 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             .all()
         )
         return [_row_to_session(r) for r in rows]
+
+    def session_dates_by_patient(self, patient_id: str, user_id: str) -> list[datetime]:
+        """Timestamp-only variant of :meth:`list_by_patient` — never selects
+        transcript or note content, so it stays valid under column-scoped
+        grants."""
+        rows = (
+            self._session.query(TherapySessionRow.session_date)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            )
+            .filter(
+                TherapySessionRow.patient_id == patient_id,
+                TherapySessionRow.deleted_at.is_(None),
+                *_grant_filters(user_id),
+            )
+            .order_by(TherapySessionRow.session_date.desc())
+            .all()
+        )
+        return [r[0] for r in rows]
 
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20
