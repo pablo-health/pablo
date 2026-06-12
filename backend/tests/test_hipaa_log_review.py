@@ -9,19 +9,91 @@ assert the orchestration logic around it.
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from app.jobs import hipaa_log_review
 
 
 class TestParseSeverity:
-    def test_high_wins_over_medium_and_low(self) -> None:
+    # -- structured severity line (primary contract) --
+
+    def test_overall_severity_line_wins(self) -> None:
+        text = "## Summary\nQuiet day.\n## Anomalies\nNone.\n\nOverall severity: NONE\n"
+        assert hipaa_log_review._parse_severity(text) == "NONE"
+
+    def test_overall_severity_line_high(self) -> None:
+        text = "## Anomalies\n1. Severity: HIGH — snooping\n\nOverall severity: HIGH\n"
+        assert hipaa_log_review._parse_severity(text) == "HIGH"
+
+    def test_overall_severity_line_bold_markdown(self) -> None:
+        assert hipaa_log_review._parse_severity("**Overall severity: MEDIUM**") == "MEDIUM"
+
+    def test_overall_severity_line_beats_stray_tokens(self) -> None:
+        """The model computes the max itself; the structured line is the contract."""
+        text = "## Anomalies\n1. [MEDIUM] odd export\n\nOverall severity: MEDIUM\n"
+        assert hipaa_log_review._parse_severity(text) == "MEDIUM"
+
+    # -- regression: negated mentions must not page (the original bug) --
+
+    def test_no_high_findings_phrase_is_not_high(self) -> None:
+        """'no HIGH-severity findings were identified' must not parse as HIGH."""
+        text = (
+            "## Summary\n"
+            "No HIGH-severity findings were identified in this window.\n"
+            "## Anomalies\n"
+            "None identified.\n"
+            "## No-op confirmations\n"
+            "Checked for off-hours access: nothing unusual.\n"
+        )
+        assert hipaa_log_review._parse_severity(text) == "NONE"
+
+    def test_negated_mention_inside_anomalies_section(self) -> None:
+        text = "## Anomalies\nNo HIGH or MEDIUM severity anomalies were identified.\n"
+        assert hipaa_log_review._parse_severity(text) == "NONE"
+
+    def test_summary_prose_tokens_do_not_count(self) -> None:
+        """Severity words in Summary/No-op prose must not outrank the anomalies."""
+        text = (
+            "## Summary\n"
+            "We reviewed for HIGH-risk patterns such as bulk exports.\n"
+            "## Anomalies\n"
+            "1. Severity: LOW — single after-hours login, known user.\n"
+        )
+        assert hipaa_log_review._parse_severity(text) == "LOW"
+
+    # -- fallback: per-anomaly markers when the structured line is missing --
+
+    def test_fallback_bracket_markers_high_wins(self) -> None:
         text = "## Anomalies\n- [HIGH] foo\n- [MEDIUM] bar\n- [LOW] baz"
         assert hipaa_log_review._parse_severity(text) == "HIGH"
 
-    def test_medium_wins_over_low(self) -> None:
-        assert hipaa_log_review._parse_severity("MEDIUM finding, LOW finding") == "MEDIUM"
+    def test_fallback_severity_label_format(self) -> None:
+        text = "## Anomalies\n1. **Severity:** MEDIUM — same-surname access.\n"
+        assert hipaa_log_review._parse_severity(text) == "MEDIUM"
+
+    def test_fallback_numbered_item_leading_token(self) -> None:
+        text = "## Anomalies\n1. HIGH — novel access to dormant patient.\n"
+        assert hipaa_log_review._parse_severity(text) == "HIGH"
 
     def test_none_when_no_severity_token(self) -> None:
         assert hipaa_log_review._parse_severity("all clear") == "NONE"
+
+
+class TestAskModelEmptyResponse:
+    def test_empty_model_response_raises_instead_of_parsing_none(
+        self, monkeypatch  # type: ignore[no-untyped-def]
+    ) -> None:
+        """A transient empty response must fail the review loudly — a
+        placeholder report would parse as NONE and a model outage would
+        masquerade as a clean day."""
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+        monkeypatch.setenv("HIPAA_REVIEW_MODEL", "gemini-test")
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = MagicMock(text=None)
+        with (
+            patch("google.genai.Client", return_value=mock_client),
+            pytest.raises(RuntimeError, match="empty report"),
+        ):
+            hipaa_log_review._ask_model({"entries": [{"id": "x"}], "user_aggregates": []})
 
 
 class TestWriteReport:
@@ -218,6 +290,41 @@ class TestMultiTenantRun:
 
         assert exit_code == 1
         assert calls == ["practice_a", "practice_b", "practice_c"]
+
+    def test_high_report_pages_through_review_tenant(self) -> None:
+        """The wiring that matters: a HIGH report must reach the notifier."""
+        payload = {"entries": [{"id": "x"}], "user_aggregates": []}
+        report = "## Anomalies\n1. Severity: HIGH — snooping\n\nOverall severity: HIGH\n"
+        with (
+            patch.object(hipaa_log_review, "_load_review_payload", return_value=payload),
+            patch.object(hipaa_log_review, "_ask_model", return_value=report),
+            patch.object(hipaa_log_review, "_write_report", return_value="stdout://r"),
+            patch.object(hipaa_log_review, "_notify_high_finding") as mock_notify,
+        ):
+            hipaa_log_review._review_tenant(
+                practice_schema="practice_x",
+                window_hours=24,
+                review_mode="daily",
+                gcs_bucket=None,
+            )
+        mock_notify.assert_called_once_with("stdout://r", tenant_schema="practice_x")
+
+    def test_medium_report_does_not_page(self) -> None:
+        payload = {"entries": [{"id": "x"}], "user_aggregates": []}
+        report = "## Anomalies\n1. Severity: MEDIUM — same surname\n\nOverall severity: MEDIUM\n"
+        with (
+            patch.object(hipaa_log_review, "_load_review_payload", return_value=payload),
+            patch.object(hipaa_log_review, "_ask_model", return_value=report),
+            patch.object(hipaa_log_review, "_write_report", return_value="stdout://r"),
+            patch.object(hipaa_log_review, "_notify_high_finding") as mock_notify,
+        ):
+            hipaa_log_review._review_tenant(
+                practice_schema="practice_x",
+                window_hours=24,
+                review_mode="daily",
+                gcs_bucket=None,
+            )
+        mock_notify.assert_not_called()
 
     def test_empty_tenant_skips_model_call(self) -> None:
         """Empty payload → canned no-activity report, no LLM invocation."""
