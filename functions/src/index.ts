@@ -16,6 +16,15 @@ setGlobalOptions({
     subnetwork: "default",
   },
   vpcEgress: "ALL_TRAFFIC",
+  // Identity Platform gives blocking functions a hard 7-second response
+  // deadline, and a cold start can eat the whole budget — a user signing
+  // in (or signing up) after an idle period then gets
+  // BLOCKING_FUNCTION_ERROR_RESPONSE instead of a session. Keep one
+  // instance warm; at 1 vCPU / 256Mi the idle cost is roughly $8 a
+  // month per function.
+  // Without this in code, a min-instances setting applied with gcloud is
+  // silently dropped on the next `firebase deploy`.
+  minInstances: 1,
 });
 
 /**
