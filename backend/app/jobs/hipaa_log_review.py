@@ -230,7 +230,7 @@ def _review_tenant(
         report = "# HIPAA Log Review\n\nNo audit activity in the review window.\n"
         severity = "NONE"
     else:
-        report = _ask_model(payload, review_mode=review_mode)
+        report = _ask_model(payload, review_mode=review_mode, tenant_schema=practice_schema)
         severity = _parse_severity(report)
 
     report_path = _write_report(
@@ -270,7 +270,11 @@ def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, A
         session.close()
 
 
-def _ask_model(payload: dict[str, Any], review_mode: str = "daily") -> str:
+def _ask_model(
+    payload: dict[str, Any],
+    review_mode: str = "daily",
+    tenant_schema: str | None = None,
+) -> str:
     """Send payload to Gemini on Vertex AI and return the markdown report.
 
     Uses the same ``google.genai`` Vertex client as the rest of the
@@ -319,6 +323,7 @@ def _ask_model(payload: dict[str, Any], review_mode: str = "daily") -> str:
         contents=user_content,
         config=config,
     )
+    _log_token_usage(resp, review_mode=review_mode, tenant_schema=tenant_schema)
     report = (resp.text or "").strip()
     if not report:
         # An empty response must fail the tenant's review loudly (exit 1,
@@ -328,6 +333,26 @@ def _ask_model(payload: dict[str, Any], review_mode: str = "daily") -> str:
         msg = "Model returned an empty report — failing this review rather than recording NONE"
         raise RuntimeError(msg)
     return report
+
+
+def _log_token_usage(resp: Any, *, review_mode: str, tenant_schema: str | None) -> None:
+    """Emit the model's token counts at INFO so each run's cost is visible
+    in the job logs. Counts only — no prompt or response content — so this
+    stays PHI-free. The SDK leaves ``usage_metadata`` (or any individual
+    field) unset on some responses, so every read is guarded.
+    """
+    usage = getattr(resp, "usage_metadata", None)
+    if usage is None:
+        return
+    logger.info(
+        "token_usage schema=%s mode=%s prompt=%s candidates=%s thoughts=%s total=%s",
+        tenant_schema or "-",
+        review_mode,
+        getattr(usage, "prompt_token_count", None),
+        getattr(usage, "candidates_token_count", None),
+        getattr(usage, "thoughts_token_count", None),
+        getattr(usage, "total_token_count", None),
+    )
 
 
 # The structured line the SYSTEM_PROMPT asks the model to end with.

@@ -7,10 +7,50 @@ assert the orchestration logic around it.
 """
 
 import json
+import logging
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from app.jobs import hipaa_log_review
+
+
+class TestLogTokenUsage:
+    def test_logs_all_token_counts_keyed_by_mode_and_schema(self, caplog) -> None:  # type: ignore[no-untyped-def]
+        usage = SimpleNamespace(
+            prompt_token_count=1200,
+            candidates_token_count=340,
+            thoughts_token_count=512,
+            total_token_count=2052,
+        )
+        resp = SimpleNamespace(usage_metadata=usage)
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            hipaa_log_review._log_token_usage(
+                resp, review_mode="daily", tenant_schema="practice_abc"
+            )
+        line = caplog.text
+        assert "token_usage" in line
+        assert "schema=practice_abc" in line
+        assert "mode=daily" in line
+        assert "prompt=1200" in line
+        assert "candidates=340" in line
+        assert "thoughts=512" in line
+        assert "total=2052" in line
+
+    def test_no_usage_metadata_is_silent(self, caplog) -> None:  # type: ignore[no-untyped-def]
+        resp = SimpleNamespace(usage_metadata=None)
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            hipaa_log_review._log_token_usage(resp, review_mode="daily", tenant_schema=None)
+        assert "token_usage" not in caplog.text
+
+    def test_missing_fields_log_as_none(self, caplog) -> None:  # type: ignore[no-untyped-def]
+        # The SDK omits thoughts_token_count on non-thinking responses.
+        usage = SimpleNamespace(prompt_token_count=10, total_token_count=10)
+        resp = SimpleNamespace(usage_metadata=usage)
+        with caplog.at_level(logging.INFO, logger="hipaa_log_review"):
+            hipaa_log_review._log_token_usage(resp, review_mode="monthly", tenant_schema=None)
+        assert "thoughts=None" in caplog.text
+        assert "candidates=None" in caplog.text
 
 
 class TestParseSeverity:
@@ -80,7 +120,8 @@ class TestParseSeverity:
 
 class TestAskModelEmptyResponse:
     def test_empty_model_response_raises_instead_of_parsing_none(
-        self, monkeypatch  # type: ignore[no-untyped-def]
+        self,
+        monkeypatch,  # type: ignore[no-untyped-def]
     ) -> None:
         """A transient empty response must fail the review loudly — a
         placeholder report would parse as NONE and a model outage would
@@ -126,9 +167,7 @@ class TestWriteReport:
         assert blob_path.startswith("hipaa-log-review/practice_abc123/daily/")
 
     def test_tenant_schema_in_stdout_path_when_no_bucket(self, capsys) -> None:  # type: ignore[no-untyped-def]
-        uri = hipaa_log_review._write_report(
-            "r", gcs_bucket=None, tenant_schema="practice_xyz"
-        )
+        uri = hipaa_log_review._write_report("r", gcs_bucket=None, tenant_schema="practice_xyz")
         assert uri.startswith("stdout://hipaa-log-review/practice_xyz/daily/")
         assert uri.endswith(".md")
         capsys.readouterr()  # drain
@@ -136,7 +175,9 @@ class TestWriteReport:
 
 class TestNotifyHighFinding:
     def test_logs_structured_error_for_cloud_monitoring(
-        self, capsys, monkeypatch  # type: ignore[no-untyped-def]
+        self,
+        capsys,
+        monkeypatch,  # type: ignore[no-untyped-def]
     ) -> None:
         """Cloud Monitoring's alert policy filters on jsonPayload.alert_type —
         logger.extra={} emits textPayload, so we write JSON to stdout directly."""
@@ -169,7 +210,9 @@ class TestNotifyHighFinding:
         assert "gs://bucket/report.md" in body
 
     def test_tenant_schema_included_in_stdout_payload(
-        self, capsys, monkeypatch  # type: ignore[no-untyped-def]
+        self,
+        capsys,
+        monkeypatch,  # type: ignore[no-untyped-def]
     ) -> None:
         """Alert routing needs the schema name to page the right tenant owner."""
         monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
@@ -181,7 +224,8 @@ class TestNotifyHighFinding:
         assert "schema=practice_abc123" in payload["message"]
 
     def test_tenant_schema_included_in_webhook_body(
-        self, monkeypatch  # type: ignore[no-untyped-def]
+        self,
+        monkeypatch,  # type: ignore[no-untyped-def]
     ) -> None:
         monkeypatch.setenv("ALERT_WEBHOOK_URL", "https://example.com/hook")
         mock_response = MagicMock()
@@ -210,9 +254,7 @@ class TestMultiTenantRun:
             calls.append(practice_schema)
 
         with (
-            patch.object(
-                hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]
-            ),
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
             patch.object(
                 hipaa_log_review,
                 "_list_practice_schemas",
@@ -230,12 +272,8 @@ class TestMultiTenantRun:
         so pentest tenants skip the anomaly review path."""
         monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
         with (
-            patch.object(
-                hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]
-            ),
-            patch.object(
-                hipaa_log_review, "_list_practice_schemas", return_value=[]
-            ) as mock_list,
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
+            patch.object(hipaa_log_review, "_list_practice_schemas", return_value=[]) as mock_list,
             patch.object(hipaa_log_review, "_review_tenant"),
         ):
             hipaa_log_review.run()
@@ -251,12 +289,8 @@ class TestMultiTenantRun:
                 "_assert_schema_flag_consistency",
                 return_value=["schema=practice_abc matches pentest pattern..."],
             ),
-            patch.object(
-                hipaa_log_review, "_notify_invariant_violations"
-            ) as mock_notify,
-            patch.object(
-                hipaa_log_review, "_list_practice_schemas", return_value=[]
-            ),
+            patch.object(hipaa_log_review, "_notify_invariant_violations") as mock_notify,
+            patch.object(hipaa_log_review, "_list_practice_schemas", return_value=[]),
         ):
             hipaa_log_review.run()
         mock_notify.assert_called_once()
@@ -267,18 +301,14 @@ class TestMultiTenantRun:
         monkeypatch.delenv("REVIEW_WINDOW_HOURS", raising=False)
         calls: list[str] = []
 
-        def flaky(
-            practice_schema: str, window_hours: int, review_mode: str, gcs_bucket
-        ) -> None:
+        def flaky(practice_schema: str, window_hours: int, review_mode: str, gcs_bucket) -> None:
             calls.append(practice_schema)
             if practice_schema == "practice_b":
                 msg = "synthetic failure"
                 raise RuntimeError(msg)
 
         with (
-            patch.object(
-                hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]
-            ),
+            patch.object(hipaa_log_review, "_assert_schema_flag_consistency", return_value=[]),
             patch.object(
                 hipaa_log_review,
                 "_list_practice_schemas",
@@ -330,9 +360,7 @@ class TestMultiTenantRun:
         """Empty payload → canned no-activity report, no LLM invocation."""
         empty_payload = {"entries": [], "user_aggregates": []}
         with (
-            patch.object(
-                hipaa_log_review, "_load_review_payload", return_value=empty_payload
-            ),
+            patch.object(hipaa_log_review, "_load_review_payload", return_value=empty_payload),
             patch.object(hipaa_log_review, "_ask_model") as mock_ask,
             patch.object(hipaa_log_review, "_write_report", return_value="stdout://x"),
             patch.object(hipaa_log_review, "_notify_high_finding") as mock_notify,
