@@ -27,8 +27,11 @@ DEFAULT_BASELINE_DAYS = 90
 # Minimum baseline history a user must have before any novelty flag can
 # fire for them. Avoids spamming first-week users (their browser
 # changes, device switches, and initial patient imports all look novel
-# against a one-day baseline). Also protects returning users who were
-# away for > baseline_days from getting flagged on re-entry.
+# against a one-day baseline). Note this gate keys off the user's
+# EARLIEST audit row ever, so a user returning from an absence longer
+# than baseline_days IS judged, and their aged-out pairs flag as novel
+# — deliberate: a months-long absence straight into a chart is itself
+# worth a reviewer's glance.
 MIN_USER_BASELINE_DAYS = 7
 
 

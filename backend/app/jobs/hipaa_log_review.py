@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from typing import Any
@@ -77,6 +78,10 @@ Output a markdown report with sections:
 ## Summary (one paragraph)
 ## Anomalies (numbered, each with: severity HIGH/MEDIUM/LOW, evidence, recommended action)
 ## No-op confirmations (things you checked and found nothing unusual)
+
+End the report with exactly one line in this form — the highest
+severity among the anomalies you listed, or NONE when there are none:
+Overall severity: HIGH|MEDIUM|LOW|NONE
 
 Reference users/patients by UUID only; never invent identifying
 information. If the input is empty or too sparse, say so and stop.
@@ -314,15 +319,64 @@ def _ask_model(payload: dict[str, Any], review_mode: str = "daily") -> str:
         contents=user_content,
         config=config,
     )
-    return (resp.text or "").strip() or "# HIPAA Log Review\n\n(empty model response)\n"
+    report = (resp.text or "").strip()
+    if not report:
+        # An empty response must fail the tenant's review loudly (exit 1,
+        # exception in the log) — falling back to a placeholder would
+        # parse as severity NONE and a transient model failure would
+        # masquerade as a clean day.
+        msg = "Model returned an empty report — failing this review rather than recording NONE"
+        raise RuntimeError(msg)
+    return report
+
+
+# The structured line the SYSTEM_PROMPT asks the model to end with.
+# Tolerates markdown bold/blockquote decoration around the line.
+_OVERALL_SEVERITY_RE = re.compile(
+    r"(?im)^[ \t>*_-]*(?:\*\*)?\s*overall severity(?:\*\*)?\s*[:=]"
+    r"\s*(?:\*\*)?\s*(HIGH|MEDIUM|LOW|NONE)\b"
+)
+
+# Body of the "## Anomalies" section: everything up to the next heading.
+_ANOMALIES_SECTION_RE = re.compile(r"(?ims)^#{1,6}[ \t]*anomalies\b[^\n]*$(.*?)(?=^#{1,6}[ \t]|\Z)")
 
 
 def _parse_severity(report: str) -> str:
-    """Extract highest severity token from the markdown report."""
+    """Extract the overall severity from the markdown report.
+
+    Primary contract: the prompt-mandated ``Overall severity: <TOKEN>``
+    line (last occurrence wins). Fallback for non-compliant reports:
+    per-anomaly severity markers inside the ``## Anomalies`` section
+    only. A bare substring match is wrong here — prose like "no
+    HIGH-severity findings were identified" must not page anyone.
+    """
+    line_matches: list[str] = _OVERALL_SEVERITY_RE.findall(report)
+    if line_matches:
+        return line_matches[-1].upper()
+
+    section = _ANOMALIES_SECTION_RE.search(report)
+    scope = section.group(1) if section else report
     for token in ("HIGH", "MEDIUM", "LOW"):
-        if token in report:
+        if _has_severity_marker(scope, token):
             return token
     return "NONE"
+
+
+def _has_severity_marker(text: str, token: str) -> bool:
+    """True when ``token`` appears as a severity *marker*, not prose.
+
+    Accepted shapes: ``severity: HIGH`` (any spacing/bold), ``[HIGH]``,
+    ``**HIGH**``, or a list/numbered item starting with the token
+    (``1. HIGH — …``). Negated prose ("No HIGH-severity findings")
+    matches none of these.
+    """
+    patterns = (
+        rf"(?i)severity\s*(?:\*\*)?\s*[:\-—]?\s*(?:\*\*)?\s*{token}\b",
+        rf"(?i)\[\s*{token}\s*\]",
+        rf"(?i)\*\*\s*{token}\s*\*\*",
+        rf"(?im)^\s*(?:\d+[.)]|[-*•])\s*\**\s*{token}\b",
+    )
+    return any(re.search(p, text) for p in patterns)
 
 
 def _write_report(
