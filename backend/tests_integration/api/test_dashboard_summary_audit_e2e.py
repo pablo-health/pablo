@@ -19,6 +19,15 @@ Requires:
   - ``audit_logs`` table present (``make db-up && make db-migrate``)
 
 Run: ``make test-integration``.
+
+IMPORTANT — no ``app.*`` imports at module top level. ``app/settings.py``
+calls ``get_settings()`` at import, populating the ``lru_cache`` singleton
+the moment any app module is first imported. This module sorts before
+``test_dpop_e2e`` in the integration suite, so a top-level app import here
+would cache settings (and bind the DPoP middleware) before that module's
+``ENABLE_DPOP_VALIDATION`` default is applied — silently disabling DPoP
+enforcement for the whole session. All app imports are therefore deferred
+into fixtures/tests, mirroring the chat and dpop e2e modules.
 """
 
 from __future__ import annotations
@@ -28,45 +37,26 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-# ``ENVIRONMENT=development`` MUST be set before any ``app.*`` import (see the
-# sibling sessions audit e2e for the Settings-cache rationale).
-os.environ.setdefault("ENVIRONMENT", "development")
-
 import pytest
-from app.auth.service import (
-    TenantContext,
-    get_current_user,
-    get_current_user_id,
-    get_current_user_no_mfa,
-    get_tenant_context,
-    require_baa_acceptance,
-)
-from app.models import Patient, SessionStatus, TherapySession, Transcript, User
-from app.repositories import (
-    InMemoryNotesRepository,
-    InMemoryPatientRepository,
-    InMemoryTherapySessionRepository,
-)
-from app.repositories.postgres.audit import PostgresAuditRepository
-from app.routes.scheduling import get_scheduling_service
-from app.routes.sessions import (
-    get_notes_repository as get_sessions_notes_repository,
-)
-from app.routes.sessions import (
-    get_patient_repository as get_sessions_patient_repository,
-)
-from app.routes.sessions import get_session_repository
-from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
-from app.scheduling_engine.services.scheduling import SchedulingService
-from app.services.audit_service import AuditService, get_audit_service
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+
+# ``ENVIRONMENT=development`` before any app import (see the sibling sessions
+# e2e for the Settings-cache rationale). Set via the shared env; the app
+# itself is imported only inside fixtures below.
+os.environ.setdefault("ENVIRONMENT", "development")
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from app.models import User
+    from app.repositories import (
+        InMemoryPatientRepository,
+        InMemoryTherapySessionRepository,
+    )
+    from app.services.audit_service import AuditService
     from fastapi import FastAPI
+    from fastapi.testclient import TestClient
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session
 
@@ -110,13 +100,15 @@ def pg_session(engine: Engine) -> Iterator[Session]:
 
 @pytest.fixture(scope="module")
 def fastapi_app() -> FastAPI:
-    from app.main import app  # noqa: PLC0415  # deferred — DB connect at import
+    from app.main import app  # noqa: PLC0415  # deferred — caches settings on import
 
     return app
 
 
 @pytest.fixture
 def e2e_user() -> User:
+    from app.models import User  # noqa: PLC0415  # deferred — see module docstring
+
     return User(
         id="90f4936f-8aa2-5988-b6ca-906781bc08c7",
         email="e2e@example.com",
@@ -129,6 +121,8 @@ def e2e_user() -> User:
 
 @pytest.fixture
 def session_repo() -> InMemoryTherapySessionRepository:
+    from app.repositories import InMemoryTherapySessionRepository  # noqa: PLC0415
+
     return InMemoryTherapySessionRepository()
 
 
@@ -136,6 +130,8 @@ def session_repo() -> InMemoryTherapySessionRepository:
 def patient_repo(
     session_repo: InMemoryTherapySessionRepository,
 ) -> InMemoryPatientRepository:
+    from app.repositories import InMemoryPatientRepository  # noqa: PLC0415
+
     return InMemoryPatientRepository(session_repo=session_repo)
 
 
@@ -147,6 +143,35 @@ def e2e_client(
     session_repo: InMemoryTherapySessionRepository,
     patient_repo: InMemoryPatientRepository,
 ) -> Iterator[TestClient]:
+    # All app imports deferred (see module docstring): a top-level import here
+    # would cache settings before the dpop suite sets ENABLE_DPOP_VALIDATION.
+    from app.auth.service import (  # noqa: PLC0415
+        TenantContext,
+        get_current_user,
+        get_current_user_id,
+        get_current_user_no_mfa,
+        get_tenant_context,
+        require_baa_acceptance,
+    )
+    from app.repositories import InMemoryNotesRepository  # noqa: PLC0415
+    from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
+    from app.routes.scheduling import get_scheduling_service  # noqa: PLC0415
+    from app.routes.sessions import (  # noqa: PLC0415
+        get_notes_repository as get_sessions_notes_repository,
+    )
+    from app.routes.sessions import (  # noqa: PLC0415
+        get_patient_repository as get_sessions_patient_repository,
+    )
+    from app.routes.sessions import get_session_repository  # noqa: PLC0415
+    from app.scheduling_engine.repositories.appointment import (  # noqa: PLC0415
+        InMemoryAppointmentRepository,
+    )
+    from app.scheduling_engine.services.scheduling import (  # noqa: PLC0415
+        SchedulingService,
+    )
+    from app.services.audit_service import AuditService, get_audit_service  # noqa: PLC0415
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
     def _audit_service() -> AuditService:
         return AuditService(PostgresAuditRepository(pg_session))
 
@@ -175,7 +200,7 @@ def e2e_client(
         fastapi_app.dependency_overrides.clear()
 
 
-def _summary(client: TestClient) -> dict:
+def _summary(client: TestClient) -> object:
     return client.get(
         "/api/dashboard/summary",
         params={
@@ -212,6 +237,13 @@ class TestDashboardSummaryAuditBehavior:
         """Seed more awaiting-review sessions than fit inline. The summary must
         persist exactly one ``session_viewed`` per inline row (capped) and zero
         ``patient_viewed`` rows — the blind patient-list read is gone."""
+        from app.models import (  # noqa: PLC0415  # deferred — see module docstring
+            Patient,
+            SessionStatus,
+            TherapySession,
+            Transcript,
+        )
+
         patient = patient_repo.create(
             Patient(
                 id=str(uuid.uuid4()),
