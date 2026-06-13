@@ -34,6 +34,32 @@ metadata from a therapy documentation platform. The input is PHI-free:
 opaque UUIDs, timestamps, action strings, IPs, user agents, and
 field-name diffs.
 
+SCOPE — read this first. This input is the audit log of a SINGLE tenant
+for a single time window. Anomaly detection has ALREADY been performed
+deterministically before you: each row carries the boolean flags below
+and the ``user_aggregates`` list holds the per-user alerts.
+``summary.model_review_reason`` tells you why you were invoked:
+- ``anomaly``: at least one flag or aggregate fired. SUMMARISE and
+  PRIORITISE those pre-computed signals and judge their severity — the
+  deterministic pass already found them, so focus there.
+- ``monthly_discovery``: a periodic deeper review of an active tenant
+  with NO flag firing. Here you MAY look more broadly across the entries
+  for patterns the flags don't encode (unusual action sequences, timing,
+  concentration) — but if nothing stands out, say so plainly and return
+  LOW/NONE. Do not manufacture a finding to justify the pass.
+
+Two hard rules:
+- Report ONLY what the provided fields support. NEVER claim to have run a
+  check you cannot run from this input. In particular, do NOT state that
+  cross-tenant access was or was not observed: you see one tenant's logs,
+  so you cannot judge it — the deterministic ``foreign_actor`` aggregate
+  is the only cross-tenant signal, and its absence is not something for
+  you to assert. Presenting an impossible check as "passed" is a
+  false-assurance defect, the worst kind of line in a compliance report.
+- The ``entries`` list may be a CAPPED subset (flagged rows plus a recent
+  sample); the ``summary`` block carries the true totals. Reason about
+  volume from ``summary``, and never describe omitted rows as reviewed.
+
 Every ``entries`` row and every ``user_aggregates`` item also carries an
 ``is_internal_actor`` boolean. When true, the user is an authorized
 automated actor the operator has registered (a scheduled internal scan,
@@ -65,12 +91,25 @@ The payload has two parts:
      within ±7 days and no finalized session within ±1 day, AND the
      patient has existed > 14 days, AND the user has >= 5 historical
      appointments (system warmup). Strong insider-snooping signal.
+   - ``is_unauthorized_access``: true when a chart-read action has NO
+     live clinician grant behind it (the user holds no current
+     ``patient_clinicians`` row for that patient). Approximate
+     current-state — a grant revoked since the access reads as
+     unauthorized — so treat it as a signal to surface, not proof.
+     Strong when combined with novelty or no-relationship.
+   - ``is_off_hours``: true when the access fell in the platform's
+     deep-night UTC band. Context, not an alarm on its own.
 
 2. ``user_aggregates`` — per-user alerts that don't fit the per-row
    shape. Each has an ``alert`` type:
    - ``bulk_delete``: user deleted > 3 patients in the window.
    - ``high_export_rate``: user's export count today exceeds their
      own 90-day P95 baseline (only fires with >= 14 days of baseline).
+   - ``foreign_actor``: a user_id acting in this tenant that is NOT in
+     the tenant's authorized roster — a user operating in a practice
+     that does not employ them. This is the deterministic cross-tenant
+     breach signal and is computed in code; when present, treat it as
+     HIGH unless an aggregate is also flagged ``is_internal_actor``.
 
 Warmup note: a brand-new install, a first-week user, or a user
 returning after > 7 days away will have most flags FALSE. That means
@@ -78,15 +117,15 @@ returning after > 7 days away will have most flags FALSE. That means
 rows are flag-less, say so in the report and focus on the other
 anomaly types below.
 
-Your job is to narrate anomalies a human reviewer would care about.
-Look for:
-- Off-hours PHI access (02:00-05:00 local)
-- Bulk reads by one user in a short window
+Narrate and prioritise the signals already surfaced. Weigh:
 - Rows where any of ``is_novel_user_patient``, ``is_same_last_name``,
-  or ``is_no_treatment_relationship`` are true
-- Any ``user_aggregates`` alerts (bulk_delete, high_export_rate)
-- Cross-tenant patterns (if multiple user_ids touch the same patient_id)
-- Unusual action sequences (e.g. LIST -> VIEW -> EXPORT chains)
+  ``is_no_treatment_relationship``, or ``is_unauthorized_access`` are
+  true — strongest when several stack on the same access.
+- Any ``user_aggregates`` alerts (bulk_delete, high_export_rate,
+  foreign_actor).
+- ``is_off_hours`` rows and unusual action sequences (e.g. a
+  LIST -> VIEW -> EXPORT chain) visible among the entries — these add
+  context to a flagged access; on their own they are informational.
 
 Output a markdown report with sections:
 ## Summary (one paragraph)
@@ -232,16 +271,24 @@ def _review_tenant(
     review_mode: str,
     gcs_bucket: str | None,
 ) -> None:
-    payload = _load_review_payload(practice_schema, window_hours)
+    payload = _load_review_payload(practice_schema, window_hours, review_mode)
+    summary = payload["summary"]
     logger.info(
-        "schema=%s entries=%d aggregates=%d",
+        "schema=%s total_entries=%d sent=%d aggregates=%d needs_model=%s",
         practice_schema,
-        len(payload["entries"]),
+        summary["total_entries"],
+        summary["entries_sent"],
         len(payload["user_aggregates"]),
+        summary["needs_model_review"],
     )
 
-    if not payload["entries"] and not payload["user_aggregates"]:
-        report = "# HIPAA Log Review\n\nNo audit activity in the review window.\n"
+    # Deterministic triage: when the in-code pass classified every row as
+    # provably routine and raised no aggregates, the window is "fine" and
+    # never reaches the model — cheaper, and the report states only what
+    # code verified (no model, no false assurance). The model is invoked
+    # only when there is a genuine anomaly cluster worth narrating.
+    if not summary["needs_model_review"]:
+        report = _deterministic_clean_report(summary, review_mode)
         severity = "NONE"
     else:
         report = _ask_model(payload, review_mode=review_mode, tenant_schema=practice_schema)
@@ -256,7 +303,41 @@ def _review_tenant(
         _notify_high_finding(report_path, tenant_schema=practice_schema)
 
 
-def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, Any]:
+def _deterministic_clean_report(summary: dict[str, Any], review_mode: str) -> str:
+    """Report for a window the deterministic pass classified as routine — no
+    model call. States only what code actually verified, so it is honest by
+    construction: it never claims a check it did not run (e.g. it does not
+    assert anything about cross-tenant access beyond the foreign-actor scan,
+    nor about off-hours), which is the false-assurance failure mode this
+    whole path exists to avoid."""
+    total = summary["total_entries"]
+    window = "30-day" if review_mode == "monthly" else "24-hour"
+    if total == 0:
+        return (
+            f"# HIPAA Log Review\n\nNo audit activity in the {window} window.\n\n"
+            "Overall severity: NONE\n"
+        )
+    return (
+        "# HIPAA Log Review\n\n"
+        "## Summary\n"
+        f"Reviewed {total} audit entries ({summary['distinct_users']} users, "
+        f"{summary['distinct_patients']} patients) over the {window} window. "
+        "Every chart access was grant-backed and by a user belonging to this "
+        "tenant; no exports or deletions, no bulk-delete or export-rate "
+        "alerts, and no foreign-actor (cross-tenant) access. Classified "
+        "routine by the deterministic pass; no model review was required.\n\n"
+        "## Anomalies\nNone.\n\n"
+        "## No-op confirmations\n"
+        "- All accesses backed by a live clinician grant.\n"
+        "- No user_id outside this tenant's authorized roster.\n"
+        "- No export, delete, bulk-delete, or export-rate-spike activity.\n\n"
+        "Overall severity: NONE\n"
+    )
+
+
+def _load_review_payload(
+    practice_schema: str, window_hours: int, review_mode: str = "daily"
+) -> dict[str, Any]:
     from ..db import create_standalone_session  # noqa: PLC0415
     from ..repositories.postgres.appointment import (  # noqa: PLC0415
         PostgresAppointmentRepository,
@@ -282,10 +363,50 @@ def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, A
         payload = service.compute_payload(
             window_hours=window_hours,
             internal_actor_user_ids=get_settings().internal_actor_user_ids,
+            authorized_user_ids=_authorized_user_ids(session, practice_schema),
+            review_mode=review_mode,
         )
         return payload.to_dict()
     finally:
         session.close()
+
+
+def _authorized_user_ids(session: Any, practice_schema: str) -> set[str] | None:
+    """The set of user_ids that legitimately belong to ``practice_schema``:
+    its members (per ``platform.email_tenant_mappings``), its practice owner,
+    and all platform admins. Drives the reviewer's deterministic cross-tenant
+    (foreign-actor) check.
+
+    Returns ``None`` when the schema has no platform tenant_id — a
+    self-hosted single-tenant install, where "foreign actor" is undefined
+    and the check must be skipped, not guessed. Email match is
+    case-insensitive (the mapping stores the login email; users store theirs).
+    """
+    from sqlalchemy import text  # noqa: PLC0415
+
+    tenant_id = session.execute(
+        text("SELECT tenant_id FROM platform.practices WHERE schema_name = :s"),
+        {"s": practice_schema},
+    ).scalar()
+    if not tenant_id:
+        return None
+
+    rows = session.execute(
+        text(
+            "SELECT u.id FROM platform.users u "
+            "JOIN platform.email_tenant_mappings m "
+            "  ON lower(u.email) = lower(m.email) "
+            "WHERE m.tenant_id = :tid "
+            "UNION "
+            "SELECT u.id FROM platform.users u "
+            "JOIN platform.practices p ON lower(p.owner_email) = lower(u.email) "
+            "WHERE p.tenant_id = :tid "
+            "UNION "
+            "SELECT id FROM platform.users WHERE is_platform_admin = TRUE"
+        ),
+        {"tid": tenant_id},
+    ).fetchall()
+    return {str(r[0]) for r in rows}
 
 
 def _ask_model(

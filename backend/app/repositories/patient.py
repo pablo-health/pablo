@@ -39,6 +39,22 @@ class PatientRepository(ABC):
         patient = self.get(patient_id, user_id)
         return patient.last_name if patient else None
 
+    def has_live_grant(self, patient_id: str, user_id: str) -> bool:
+        """Whether ``user_id`` currently holds a non-expired clinician grant
+        on ``patient_id`` — independent of whether the patient row is live.
+
+        Unlike :meth:`get`, this answers the *authorization* question
+        ("is this user allowed to open this chart right now?") without
+        conflating it with patient existence: a soft-deleted patient with
+        a live grant still returns True. Used by the audit reviewer to
+        flag accesses that are not grant-backed (approximate, current-
+        state — ``patient_clinicians`` keeps no history, so a grant that
+        existed at access time but has since been revoked cannot be
+        recovered here). Default delegates to ``get``'s gate, which is
+        exact for backends without soft-delete.
+        """
+        return self.get(patient_id, user_id) is not None
+
     @abstractmethod
     def list_by_user(
         self,
