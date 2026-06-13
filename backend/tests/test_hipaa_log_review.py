@@ -323,7 +323,11 @@ class TestMultiTenantRun:
 
     def test_high_report_pages_through_review_tenant(self) -> None:
         """The wiring that matters: a HIGH report must reach the notifier."""
-        payload = {"entries": [{"id": "x"}], "user_aggregates": []}
+        payload = {
+            "entries": [{"id": "x"}],
+            "user_aggregates": [],
+            "summary": {"total_entries": 1, "entries_sent": 1, "needs_model_review": True},
+        }
         report = "## Anomalies\n1. Severity: HIGH — snooping\n\nOverall severity: HIGH\n"
         with (
             patch.object(hipaa_log_review, "_load_review_payload", return_value=payload),
@@ -340,7 +344,11 @@ class TestMultiTenantRun:
         mock_notify.assert_called_once_with("stdout://r", tenant_schema="practice_x")
 
     def test_medium_report_does_not_page(self) -> None:
-        payload = {"entries": [{"id": "x"}], "user_aggregates": []}
+        payload = {
+            "entries": [{"id": "x"}],
+            "user_aggregates": [],
+            "summary": {"total_entries": 1, "entries_sent": 1, "needs_model_review": True},
+        }
         report = "## Anomalies\n1. Severity: MEDIUM — same surname\n\nOverall severity: MEDIUM\n"
         with (
             patch.object(hipaa_log_review, "_load_review_payload", return_value=payload),
@@ -356,21 +364,38 @@ class TestMultiTenantRun:
             )
         mock_notify.assert_not_called()
 
-    def test_empty_tenant_skips_model_call(self) -> None:
-        """Empty payload → canned no-activity report, no LLM invocation."""
-        empty_payload = {"entries": [], "user_aggregates": []}
+    def test_routine_window_skips_model_call(self) -> None:
+        """A window the deterministic pass classified routine (needs_model_review
+        False) → deterministic clean report, no LLM invocation."""
+        routine_payload = {
+            "entries": [],
+            "user_aggregates": [],
+            "summary": {
+                "total_entries": 12,
+                "entries_sent": 0,
+                "distinct_users": 1,
+                "distinct_patients": 3,
+                "needs_model_review": False,
+            },
+        }
         with (
-            patch.object(hipaa_log_review, "_load_review_payload", return_value=empty_payload),
+            patch.object(hipaa_log_review, "_load_review_payload", return_value=routine_payload),
             patch.object(hipaa_log_review, "_ask_model") as mock_ask,
-            patch.object(hipaa_log_review, "_write_report", return_value="stdout://x"),
+            patch.object(hipaa_log_review, "_write_report", return_value="stdout://x") as mock_write,
             patch.object(hipaa_log_review, "_notify_high_finding") as mock_notify,
         ):
             hipaa_log_review._review_tenant(
-                practice_schema="practice_empty",
+                practice_schema="practice_routine",
                 window_hours=24,
                 review_mode="daily",
                 gcs_bucket=None,
             )
 
         mock_ask.assert_not_called()
+        mock_notify.assert_not_called()
+        # The deterministic clean report was still written, and it is honest:
+        # severity NONE, no cross-tenant assurance claim.
+        written = mock_write.call_args.args[0]
+        assert "Overall severity: NONE" in written
+        assert "cross-tenant" not in written.lower() or "foreign-actor" in written.lower()
         mock_notify.assert_not_called()

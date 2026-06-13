@@ -4,6 +4,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+import app.services.audit_review_service as audit_review_service_mod
 import pytest
 from app.models import Patient, User
 from app.models.audit import AuditAction, AuditLogEntry, ResourceType
@@ -567,3 +568,253 @@ class TestInternalActorAnnotation:
         alerts = [a for a in payload.user_aggregates if a["alert"] == "bulk_delete"]
         assert len(alerts) == 1
         assert alerts[0]["is_internal_actor"] is True
+
+
+# A wide window so fixed-date rows below are always in-range; baseline stays
+# thin (single row) so novelty self-suppresses and doesn't add noise.
+_WIDE_WINDOW = 24 * 3650
+
+
+def _ts(hour: int) -> str:
+    return _iso(datetime(2026, 6, 1, hour, 0, tzinfo=UTC))
+
+
+def _recent(hour: int) -> str:
+    """A timestamp ~2 days old at a fixed UTC ``hour``. Recent enough that the
+    user stays under the 7-day baseline (novelty self-suppresses), while the
+    hour is controlled so off-hours is deterministic regardless of wall clock.
+    Pair with a window of a few days so the row stays in range."""
+    base = (datetime.now(UTC) - timedelta(days=2)).replace(
+        hour=hour, minute=0, second=0, microsecond=0
+    )
+    return _iso(base)
+
+
+_FEW_DAYS = 24 * 5
+
+
+class TestUnauthorizedAccess:
+    def test_flagged_when_no_live_grant(self, service, audit_repo, patient_repo) -> None:
+        # Patient created/granted to the owner u_owner; u_snoop reads it.
+        patient_repo.create(
+            Patient(
+                id="p1",
+                first_name="A",
+                last_name="B",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+            "u_owner",
+        )
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u_snoop",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_WIDE_WINDOW)
+        assert payload.entries[0]["is_unauthorized_access"] is True
+
+    def test_not_flagged_when_grant_present(self, service, audit_repo, patient_repo) -> None:
+        patient_repo.create(
+            Patient(
+                id="p1",
+                first_name="A",
+                last_name="B",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+            "u1",
+        )
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_WIDE_WINDOW)
+        assert payload.entries[0]["is_unauthorized_access"] is False
+
+    def test_internal_actor_is_exempt(self, service, audit_repo) -> None:
+        # No grant anywhere, but the actor is a registered internal identity.
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="bot",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(
+            window_hours=_WIDE_WINDOW, internal_actor_user_ids={"bot"}
+        )
+        assert payload.entries[0]["is_unauthorized_access"] is False
+
+
+class TestForeignActor:
+    def test_alert_when_user_not_in_roster(self, service, audit_repo) -> None:
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="outsider",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_WIDE_WINDOW, authorized_user_ids={"member"})
+        foreign = [a for a in payload.user_aggregates if a["alert"] == "foreign_actor"]
+        assert len(foreign) == 1
+        assert foreign[0]["user_id"] == "outsider"
+
+    def test_no_alert_for_roster_member(self, service, audit_repo) -> None:
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="member",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_WIDE_WINDOW, authorized_user_ids={"member"})
+        assert not [a for a in payload.user_aggregates if a["alert"] == "foreign_actor"]
+
+    def test_skipped_when_no_roster(self, service, audit_repo) -> None:
+        # None roster (self-hosted single-tenant) → never guesses.
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="whoever",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_WIDE_WINDOW, authorized_user_ids=None)
+        assert not [a for a in payload.user_aggregates if a["alert"] == "foreign_actor"]
+
+    def test_internal_actor_not_foreign(self, service, audit_repo) -> None:
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="bot",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(
+            window_hours=_WIDE_WINDOW,
+            authorized_user_ids={"member"},
+            internal_actor_user_ids={"bot"},
+        )
+        assert not [a for a in payload.user_aggregates if a["alert"] == "foreign_actor"]
+
+
+class TestDeterministicGate:
+    def test_routine_window_needs_no_model(self, service, audit_repo, patient_repo) -> None:
+        # Grant-backed, normal-hours, ordinary read by an in-roster user.
+        patient_repo.create(
+            Patient(
+                id="p1",
+                first_name="A",
+                last_name="B",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+            "u1",
+        )
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_recent(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_FEW_DAYS, authorized_user_ids={"u1"})
+        assert payload.summary["needs_model_review"] is False
+        assert payload.summary["total_entries"] == 1
+
+    def test_unauthorized_access_trips_gate(self, service, audit_repo) -> None:
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+                timestamp=_ts(18),
+            )
+        )
+        payload = service.compute_payload(window_hours=_WIDE_WINDOW, authorized_user_ids={"u1"})
+        # No grant → unauthorized → window must reach the model.
+        assert payload.summary["needs_model_review"] is True
+
+    def test_off_hours_detection(self, service) -> None:
+        assert service._is_off_hours({"timestamp": _ts(8)}) is True  # in 6-11 UTC
+        assert service._is_off_hours({"timestamp": _ts(18)}) is False
+
+    def test_curation_caps_and_summarizes(
+        self, service, audit_repo, patient_repo, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(audit_review_service_mod, "MAX_MODEL_ENTRIES", 3)
+        # 5 routine grant-backed reads + 1 unauthorized (flagged).
+        patient_repo.create(
+            Patient(
+                id="p1",
+                first_name="A",
+                last_name="B",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+            "u1",
+        )
+        for i in range(5):
+            audit_repo.append(
+                AuditLogEntry(
+                    user_id="u1",
+                    action=AuditAction.PATIENT_VIEWED.value,
+                    resource_type=ResourceType.PATIENT.value,
+                    resource_id="p1",
+                    patient_id="p1",
+                    timestamp=_recent(12 + (i % 4)),
+                ),
+            )
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p_other",
+                patient_id="p_other",
+                timestamp=_recent(18),
+            ),
+        )
+        payload = service.compute_payload(window_hours=_FEW_DAYS, authorized_user_ids={"u1"})
+        # Full volume reported, payload capped, omitted tail accounted for.
+        assert payload.summary["total_entries"] == 6
+        assert payload.summary["entries_sent"] <= 3
+        assert payload.summary["entries_omitted"] >= 1
+        # The flagged (unauthorized) row on p_other survives curation.
+        assert any(
+            e.get("patient_id") == "p_other" and e["is_unauthorized_access"]
+            for e in payload.entries
+        )
