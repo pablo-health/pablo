@@ -4,7 +4,8 @@ import { Sidebar } from "@/components/layout/Sidebar"
 import { Header } from "@/components/layout/Header"
 import { redirect } from "next/navigation"
 import { mockUser } from "@/lib/mockData"
-import { getBAAStatus, getUserStatus } from "@/lib/api/users"
+import { getBAAStatus } from "@/lib/api/users"
+import { getCachedUserStatus } from "@/lib/api/users.server"
 import { getServerSession } from "@/lib/auth/server"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
@@ -46,7 +47,7 @@ export default async function DashboardLayout({
     // SECURITY: Fail-closed — any error blocks access
     // NOTE: redirect() throws NEXT_REDIRECT — must re-throw to avoid catch swallowing it
     try {
-      const userStatus = await getUserStatus(token)
+      const userStatus = await getCachedUserStatus(token)
 
       // Use backend user data for display (token claims may be stripped by auth edge)
       user = {

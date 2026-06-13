@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, text
+from sqlalchemy import String, Uuid, bindparam, func, or_, text
 
 from ...db.models import NoteRow, PatientClinicianRow
 from ...models.note import Note
@@ -126,6 +126,30 @@ class PostgresNotesRepository(NotesRepository):
             query = query.limit(limit)
         rows = query.all()
         return [_row_to_note(r) for r in rows]
+
+    def count_unfinalized(self, user_id: str) -> int:
+        # Single-query join through patient_clinicians so the count covers
+        # exactly the notes the user is granted on. session_id IS NOT NULL
+        # restricts to session-attached notes ("awaiting your signature").
+        return (
+            self._session.query(func.count())
+            .select_from(NoteRow)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == NoteRow.patient_id,
+            )
+            .filter(
+                NoteRow.session_id.is_not(None),
+                NoteRow.finalized_at.is_(None),
+                NoteRow.deleted_at.is_(None),
+                PatientClinicianRow.user_id == user_id,
+                or_(
+                    PatientClinicianRow.expires_at.is_(None),
+                    PatientClinicianRow.expires_at > utc_now(),
+                ),
+            )
+            .scalar()
+        ) or 0
 
     # --- writes ---
 

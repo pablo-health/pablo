@@ -5,18 +5,12 @@ import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { TodayPanel, formatLastVisit } from "../TodayPanel"
-import { createMockPatient } from "@/test/factories"
 
-const useAppointmentList = vi.hoisted(() => vi.fn())
-const usePatientList = vi.hoisted(() => vi.fn())
+const useDashboardSummary = vi.hoisted(() => vi.fn())
 const useCompanionDevices = vi.hoisted(() => vi.fn())
 
-vi.mock("@/hooks/useAppointments", () => ({
-  useAppointmentList: (...args: unknown[]) => useAppointmentList(...args),
-}))
-
-vi.mock("@/hooks/usePatients", () => ({
-  usePatientList: (...args: unknown[]) => usePatientList(...args),
+vi.mock("@/hooks/useDashboard", () => ({
+  useDashboardSummary: (...args: unknown[]) => useDashboardSummary(...args),
 }))
 
 vi.mock("@/hooks/useCompanionDevices", () => ({
@@ -64,6 +58,17 @@ function makeAppointment(
   }
 }
 
+function mockSummary(
+  today_appointments: AppointmentResponse[],
+  last_visit_by_patient: Record<string, string | null> = {},
+  isLoading = false,
+) {
+  useDashboardSummary.mockReturnValue({
+    data: { today_appointments, last_visit_by_patient },
+    isLoading,
+  })
+}
+
 function renderPanel() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -79,7 +84,6 @@ describe("TodayPanel", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-05-07T08:00:00Z"))
-    usePatientList.mockReturnValue({ data: { data: [] } })
     // Default: one enrolled companion install (Start Session path).
     useCompanionDevices.mockReturnValue({
       data: [{ install_id: "dev-1", platform: "mac" }],
@@ -92,7 +96,7 @@ describe("TodayPanel", () => {
   })
 
   it("shows the empty state with Pablo when there are no appointments", () => {
-    useAppointmentList.mockReturnValue({ data: { data: [] }, isLoading: false })
+    mockSummary([])
 
     renderPanel()
 
@@ -101,23 +105,18 @@ describe("TodayPanel", () => {
   })
 
   it("renders appointments sorted by start time", () => {
-    useAppointmentList.mockReturnValue({
-      data: {
-        data: [
-          makeAppointment({
-            id: "a-late",
-            title: "Afternoon",
-            start_at: "2026-05-07T18:00:00Z",
-          }),
-          makeAppointment({
-            id: "a-early",
-            title: "Morning",
-            start_at: "2026-05-07T09:00:00Z",
-          }),
-        ],
-      },
-      isLoading: false,
-    })
+    mockSummary([
+      makeAppointment({
+        id: "a-late",
+        title: "Afternoon",
+        start_at: "2026-05-07T18:00:00Z",
+      }),
+      makeAppointment({
+        id: "a-early",
+        title: "Morning",
+        start_at: "2026-05-07T09:00:00Z",
+      }),
+    ])
 
     renderPanel()
 
@@ -127,10 +126,7 @@ describe("TodayPanel", () => {
   })
 
   it("shows Start session when a companion install is enrolled", () => {
-    useAppointmentList.mockReturnValue({
-      data: { data: [makeAppointment({ id: "appt-x" })] },
-      isLoading: false,
-    })
+    mockSummary([makeAppointment({ id: "appt-x" })])
 
     renderPanel()
 
@@ -145,10 +141,7 @@ describe("TodayPanel", () => {
 
   it("offers Download Pablo Companion when no install is enrolled", () => {
     useCompanionDevices.mockReturnValue({ data: [] })
-    useAppointmentList.mockReturnValue({
-      data: { data: [makeAppointment({ id: "appt-x" })] },
-      isLoading: false,
-    })
+    mockSummary([makeAppointment({ id: "appt-x" })])
 
     renderPanel()
 
@@ -161,17 +154,7 @@ describe("TodayPanel", () => {
   })
 
   it("links already-recorded appointments to the web session detail", () => {
-    useAppointmentList.mockReturnValue({
-      data: {
-        data: [
-          makeAppointment({
-            status: "completed",
-            session_id: "sess-99",
-          }),
-        ],
-      },
-      isLoading: false,
-    })
+    mockSummary([makeAppointment({ status: "completed", session_id: "sess-99" })])
 
     renderPanel()
 
@@ -179,22 +162,12 @@ describe("TodayPanel", () => {
     expect(open).toHaveAttribute("href", "/dashboard/sessions/sess-99")
   })
 
-  it("surfaces last-visit hint when patient data resolves it", () => {
-    useAppointmentList.mockReturnValue({
-      data: { data: [makeAppointment({ patient_id: "patient-7" })] },
-      isLoading: false,
-    })
-    usePatientList.mockReturnValue({
-      data: {
-        data: [
-          createMockPatient({
-            id: "patient-7",
-            // 4 weeks before the appointment.
-            last_session_date: "2026-04-09T13:00:00Z",
-          }),
-        ],
-      },
-    })
+  it("surfaces last-visit hint when the summary resolves it", () => {
+    mockSummary(
+      [makeAppointment({ patient_id: "patient-7" })],
+      // 4 weeks before the appointment.
+      { "patient-7": "2026-04-09T13:00:00Z" },
+    )
 
     renderPanel()
 

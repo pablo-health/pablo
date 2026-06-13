@@ -3,28 +3,16 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo } from "react"
-import { useAppointmentList } from "@/hooks/useAppointments"
-import { useSessionList } from "@/hooks/useSessions"
+import { useDashboardSummary } from "@/hooks/useDashboard"
 
 export function WeekPanel() {
-  const { start, end } = restOfWeekBounds()
-  const { data: apptData } = useAppointmentList(start, end)
-  const { data: sessionData, isLoading: sessionsLoading } = useSessionList()
+  const { data, isLoading: sessionsLoading } = useDashboardSummary()
 
-  const stats = useMemo(() => {
-    const sessions = sessionData?.data ?? []
-    const notesPending = sessions.filter(
-      (s) => s.note !== null && s.note.finalized_at === null,
-    ).length
-    const transcriptionPending = sessions.filter(
-      (s) => s.status === "queued" || s.status === "processing",
-    ).length
-    const upcoming = (apptData?.data ?? []).filter(
-      (a) => a.status === "confirmed",
-    ).length
-    return { notesPending, transcriptionPending, upcoming }
-  }, [sessionData, apptData])
+  const stats = {
+    notesPending: data?.notes_pending_count ?? 0,
+    transcriptionPending: data?.transcription_pending_count ?? 0,
+    upcoming: data?.week_confirmed_count ?? 0,
+  }
 
   return (
     <div className="card">
@@ -85,14 +73,4 @@ function StatRow({ label, value, loading, href, urgent }: StatRowProps) {
       </Link>
     </li>
   )
-}
-
-function restOfWeekBounds(): { start: string; end: string } {
-  const start = new Date()
-  start.setHours(0, 0, 0, 0)
-  const end = new Date(start)
-  // Advance to next Monday 00:00.
-  const daysUntilMonday = (8 - start.getDay()) % 7 || 7
-  end.setDate(end.getDate() + daysUntilMonday)
-  return { start: start.toISOString(), end: end.toISOString() }
 }

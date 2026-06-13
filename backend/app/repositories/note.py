@@ -79,6 +79,15 @@ class NotesRepository(ABC):
         """
 
     @abstractmethod
+    def count_unfinalized(self, user_id: str) -> int:
+        """Count session-attached notes awaiting signature for accessible patients.
+
+        Session-attached means ``session_id IS NOT NULL`` — these are the
+        "notes awaiting your signature" the dashboard surfaces. Counts over
+        the full set, not a page.
+        """
+
+    @abstractmethod
     def add(self, note: Note, user_id: str) -> Note:
         """Insert a new note row. Raises ``PatientAccessDeniedError`` if blocked."""
 
@@ -168,6 +177,15 @@ class InMemoryNotesRepository(NotesRepository):
         if limit is not None:
             notes = notes[:limit]
         return notes
+
+    def count_unfinalized(self, user_id: str = _TEST_DEFAULT_USER) -> int:
+        return sum(
+            1
+            for n in self._notes.values()
+            if n.session_id is not None
+            and n.finalized_at is None
+            and self._can_access(n.patient_id, user_id)
+        )
 
     # --- write methods ---
 

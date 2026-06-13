@@ -181,6 +181,42 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         )
         return [_row_to_session(r) for r in rows]
 
+    def count_by_status(self, user_id: str) -> dict[str, int]:
+        rows = (
+            self._session.query(TherapySessionRow.status, func.count())
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            )
+            .filter(
+                TherapySessionRow.deleted_at.is_(None),
+                *_grant_filters(user_id),
+            )
+            .group_by(TherapySessionRow.status)
+            .all()
+        )
+        return {str(status): count for status, count in rows}
+
+    def list_recent_by_status(
+        self, user_id: str, status: str, *, limit: int
+    ) -> list[TherapySession]:
+        rows = (
+            self._session.query(TherapySessionRow)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            )
+            .filter(
+                TherapySessionRow.status == status,
+                TherapySessionRow.deleted_at.is_(None),
+                *_grant_filters(user_id),
+            )
+            .order_by(TherapySessionRow.session_date.desc())
+            .limit(limit)
+            .all()
+        )
+        return [_row_to_session(r) for r in rows]
+
     def get_session_number_for_patient(self, patient_id: str) -> int:
         # Numbering is monotonic — count soft-deleted sessions too so a
         # restored / re-listed patient doesn't collide on session_number.

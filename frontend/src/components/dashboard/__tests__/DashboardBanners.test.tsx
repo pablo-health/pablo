@@ -4,12 +4,11 @@ import { describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { DashboardBanners } from "../DashboardBanners"
-import { createMockNote, createMockSession } from "@/test/factories"
 
-const useSessionList = vi.hoisted(() => vi.fn())
+const useDashboardSummary = vi.hoisted(() => vi.fn())
 
-vi.mock("@/hooks/useSessions", () => ({
-  useSessionList: (...args: unknown[]) => useSessionList(...args),
+vi.mock("@/hooks/useDashboard", () => ({
+  useDashboardSummary: (...args: unknown[]) => useDashboardSummary(...args),
 }))
 
 function renderBanners() {
@@ -25,7 +24,7 @@ function renderBanners() {
 
 describe("DashboardBanners", () => {
   it("renders nothing when no notes are pending", () => {
-    useSessionList.mockReturnValue({ data: { data: [] } })
+    useDashboardSummary.mockReturnValue({ data: { notes_pending_count: 0 } })
 
     const { container } = renderBanners()
 
@@ -33,16 +32,7 @@ describe("DashboardBanners", () => {
   })
 
   it("renders singular phrasing for one pending note", () => {
-    useSessionList.mockReturnValue({
-      data: {
-        data: [
-          createMockSession({
-            id: "s1",
-            note: createMockNote({ finalized_at: null }),
-          }),
-        ],
-      },
-    })
+    useDashboardSummary.mockReturnValue({ data: { notes_pending_count: 1 } })
 
     renderBanners()
 
@@ -52,24 +42,7 @@ describe("DashboardBanners", () => {
   })
 
   it("renders plural phrasing for multiple pending notes and links to sessions", () => {
-    useSessionList.mockReturnValue({
-      data: {
-        data: [
-          createMockSession({
-            id: "s1",
-            note: createMockNote({ finalized_at: null }),
-          }),
-          createMockSession({
-            id: "s2",
-            note: createMockNote({ finalized_at: null }),
-          }),
-          createMockSession({
-            id: "s3",
-            note: createMockNote({ finalized_at: "2026-04-01T00:00:00Z" }),
-          }),
-        ],
-      },
-    })
+    useDashboardSummary.mockReturnValue({ data: { notes_pending_count: 2 } })
 
     renderBanners()
 
