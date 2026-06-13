@@ -95,6 +95,13 @@ function mergeQueryKeys<A, B>(base: A, ext: B): DeepMerge<A, B> {
 // Internal references use `baseQueryKeys` (not the merged `queryKeys` export)
 // so the base stays self-contained; the merged export is assembled below.
 const baseQueryKeys = {
+  // Dashboard summary (one aggregate read for the home screen)
+  dashboard: {
+    all: ["dashboard"] as const,
+    summary: (params: { today: string; week: string }) =>
+      [...baseQueryKeys.dashboard.all, "summary", params] as const,
+  },
+
   // Patient query keys
   patients: {
     all: ["patients"] as const,

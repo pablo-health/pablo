@@ -3,21 +3,21 @@
 /**
  * AwaitingReviewPanel Component Tests
  *
- * Covers: only pending_review sessions surface, links target the session
- * detail, the panel is absent when empty or loading, and the list caps at
- * MAX_ROWS with a "View all" overflow link.
+ * Covers: the inline rows the server returns link to their session detail,
+ * the panel is absent when empty or loading, and the "View all" overflow link
+ * reflects the full total (which may exceed the inline rows).
  */
 
 import { describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AwaitingReviewPanel } from "../AwaitingReviewPanel"
-import { createMockSession } from "@/test/factories"
+import type { AwaitingReviewItem } from "@/types/dashboard"
 
-const useSessionList = vi.hoisted(() => vi.fn())
+const useDashboardSummary = vi.hoisted(() => vi.fn())
 
-vi.mock("@/hooks/useSessions", () => ({
-  useSessionList: (...args: unknown[]) => useSessionList(...args),
+vi.mock("@/hooks/useDashboard", () => ({
+  useDashboardSummary: (...args: unknown[]) => useDashboardSummary(...args),
 }))
 
 vi.mock("@/hooks/usePreferences", () => ({
@@ -34,6 +34,17 @@ vi.mock("@/components/sessions/SessionStatusBadge", () => ({
   SessionStatusBadge: ({ status }: { status: string }) => <span>{status}</span>,
 }))
 
+function item(overrides: Partial<AwaitingReviewItem>): AwaitingReviewItem {
+  return {
+    session_id: "s1",
+    patient_name: "Patient",
+    session_date: "2026-05-10T12:00:00Z",
+    status: "pending_review",
+    note_finalized_at: null,
+    ...overrides,
+  }
+}
+
 function renderPanel() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -47,37 +58,27 @@ function renderPanel() {
 
 describe("AwaitingReviewPanel", () => {
   it("renders nothing while loading", () => {
-    useSessionList.mockReturnValue({ data: undefined, isLoading: true })
+    useDashboardSummary.mockReturnValue({ data: undefined, isLoading: true })
     const { container } = renderPanel()
     expect(container).toBeEmptyDOMElement()
   })
 
-  it("renders nothing when no session is pending review", () => {
-    useSessionList.mockReturnValue({
-      data: {
-        data: [
-          createMockSession({ id: "s1", status: "processing" }),
-          createMockSession({ id: "s2", status: "finalized" }),
-        ],
-      },
+  it("renders nothing when nothing awaits review", () => {
+    useDashboardSummary.mockReturnValue({
+      data: { awaiting_review: [], awaiting_review_total: 0 },
       isLoading: false,
     })
     const { container } = renderPanel()
     expect(container).toBeEmptyDOMElement()
   })
 
-  it("lists only pending_review sessions, each linking to its detail", () => {
-    useSessionList.mockReturnValue({
+  it("lists the returned rows, each linking to its session detail", () => {
+    useDashboardSummary.mockReturnValue({
       data: {
-        data: [
-          createMockSession({
-            id: "pending-1",
-            patient_name: "Doe, Jane",
-            status: "pending_review",
-          }),
-          createMockSession({ id: "proc-1", status: "processing" }),
-          createMockSession({ id: "final-1", status: "finalized" }),
+        awaiting_review: [
+          item({ session_id: "pending-1", patient_name: "Doe, Jane" }),
         ],
+        awaiting_review_total: 1,
       },
       isLoading: false,
     })
@@ -87,27 +88,19 @@ describe("AwaitingReviewPanel", () => {
     expect(screen.getByText("Notes awaiting review")).toBeInTheDocument()
     const link = screen.getByRole("link", { name: /Doe, Jane/ })
     expect(link).toHaveAttribute("href", "/dashboard/sessions/pending-1")
-    // The finalized/processing sessions are not surfaced here.
-    expect(screen.queryByText(/final-1|proc-1/)).not.toBeInTheDocument()
   })
 
-  it("caps the inline list and shows a View all overflow link", () => {
-    const sessions = Array.from({ length: 7 }, (_, i) =>
-      createMockSession({
-        id: `pending-${i}`,
-        patient_name: `Patient ${i}`,
-        status: "pending_review",
-        session_date: `2026-05-${10 + i}T12:00:00Z`,
-      }),
+  it("shows a View all overflow link when the total exceeds the inline rows", () => {
+    const rows = Array.from({ length: 5 }, (_, i) =>
+      item({ session_id: `pending-${i}`, patient_name: `Patient ${i}` }),
     )
-    useSessionList.mockReturnValue({
-      data: { data: sessions },
+    useDashboardSummary.mockReturnValue({
+      data: { awaiting_review: rows, awaiting_review_total: 7 },
       isLoading: false,
     })
 
     renderPanel()
 
-    // 5 rows inline + the "View all" link = 6 links total.
     const reviewLinks = screen
       .getAllByRole("link")
       .filter((el) => el.getAttribute("href")?.startsWith("/dashboard/sessions"))

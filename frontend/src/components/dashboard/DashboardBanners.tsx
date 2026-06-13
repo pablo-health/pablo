@@ -3,8 +3,7 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo } from "react"
-import { useSessionList } from "@/hooks/useSessions"
+import { useDashboardSummary } from "@/hooks/useDashboard"
 
 /**
  * Stack of action banners shown above today's session list — mirrors the
@@ -12,15 +11,9 @@ import { useSessionList } from "@/hooks/useSessions"
  * nothing urgent, so the dashboard isn't cluttered on a clean day.
  */
 export function DashboardBanners() {
-  const { data: sessionData } = useSessionList()
+  const { data } = useDashboardSummary()
 
-  const notesPending = useMemo(
-    () =>
-      (sessionData?.data ?? []).filter(
-        (s) => s.note !== null && s.note.finalized_at === null,
-      ).length,
-    [sessionData],
-  )
+  const notesPending = data?.notes_pending_count ?? 0
 
   if (notesPending === 0) return null
 

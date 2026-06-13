@@ -2,7 +2,7 @@
 
 import { mockUser } from "@/lib/mockData"
 import { getServerSession } from "@/lib/auth/server"
-import { getUserStatus } from "@/lib/api/users"
+import { getCachedUserStatus } from "@/lib/api/users.server"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { AwaitingReviewPanel } from "@/components/dashboard/AwaitingReviewPanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
@@ -31,7 +31,7 @@ export default async function DashboardPage() {
     }
     if (session?.token) {
       try {
-        const status = await getUserStatus(session.token)
+        const status = await getCachedUserStatus(session.token)
         isPlatformAdmin = status.is_platform_admin
         user = {
           name: status.name || user.name,

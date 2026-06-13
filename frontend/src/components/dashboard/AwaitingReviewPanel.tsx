@@ -16,33 +16,25 @@
 "use client"
 
 import Link from "next/link"
-import { useMemo } from "react"
 import { FileText } from "lucide-react"
-import { useSessionList } from "@/hooks/useSessions"
+import { useDashboardSummary } from "@/hooks/useDashboard"
 import { useUserTimeZone, formatInUserTimeZone } from "@/hooks/usePreferences"
 import { SessionStatusBadge } from "@/components/sessions/SessionStatusBadge"
 
-// Show at most this many rows inline; the rest live on the Review worklist.
-const MAX_ROWS = 5
-
 export function AwaitingReviewPanel() {
-  const { data, isLoading } = useSessionList()
+  const { data, isLoading } = useDashboardSummary()
   const timeZone = useUserTimeZone()
 
-  const pending = useMemo(
-    () =>
-      (data?.data ?? [])
-        .filter((s) => s.status === "pending_review")
-        // Most recent session date first.
-        .sort((a, b) => b.session_date.localeCompare(a.session_date)),
-    [data],
-  )
+  // The server returns the inline rows (already sorted, newest first) plus the
+  // true total over the full set — so the count is correct even when there are
+  // more pending reviews than fit inline.
+  const rows = data?.awaiting_review ?? []
+  const total = data?.awaiting_review_total ?? 0
 
   // Quietly absent while loading or when there's nothing to review.
-  if (isLoading || pending.length === 0) return null
+  if (isLoading || total === 0) return null
 
-  const rows = pending.slice(0, MAX_ROWS)
-  const overflow = pending.length - rows.length
+  const overflow = total - rows.length
 
   return (
     <div className="card">
@@ -50,7 +42,7 @@ export function AwaitingReviewPanel() {
         <h2 className="text-xl font-display font-semibold text-neutral-900">
           Notes awaiting review
         </h2>
-        <span className="text-sm text-neutral-500">{pending.length}</span>
+        <span className="text-sm text-neutral-500">{total}</span>
       </div>
       <p className="text-sm text-neutral-600 mt-1 mb-4">
         Drafts ready for your review and signature.
@@ -58,9 +50,9 @@ export function AwaitingReviewPanel() {
 
       <ul className="space-y-1">
         {rows.map((session) => (
-          <li key={session.id}>
+          <li key={session.session_id}>
             <Link
-              href={`/dashboard/sessions/${session.id}`}
+              href={`/dashboard/sessions/${session.session_id}`}
               className="flex items-center justify-between rounded-md px-3 py-2 -mx-3 hover:bg-neutral-50 transition-colors"
             >
               <span className="flex items-center gap-2 min-w-0">
@@ -81,8 +73,8 @@ export function AwaitingReviewPanel() {
               </span>
               <SessionStatusBadge
                 status={session.status}
-                sessionId={session.id}
-                timestamp={session.note?.finalized_at ?? null}
+                sessionId={session.session_id}
+                timestamp={session.note_finalized_at}
               />
             </Link>
           </li>
@@ -94,7 +86,7 @@ export function AwaitingReviewPanel() {
           href="/dashboard/sessions"
           className="mt-3 inline-block text-sm font-medium text-primary-700 hover:text-primary-800"
         >
-          View all {pending.length} →
+          View all {total} →
         </Link>
       )}
     </div>
