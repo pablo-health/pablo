@@ -99,6 +99,24 @@ class PostgresPatientRepository(PatientRepository):
         )
         return last_name
 
+    def has_live_grant(self, patient_id: str, user_id: str) -> bool:
+        """Whether ``user_id`` holds a non-expired ``patient_clinicians``
+        grant on ``patient_id`` — checked directly against the grant table,
+        independent of the patient row's ``deleted_at`` and without
+        selecting any chart column. Needs only ``patient_clinicians`` SELECT
+        (which the cross-tenant review role holds), so the audit reviewer
+        can compute its "access was not grant-backed" signal under the
+        column-scoped grant. Approximate current-state: a grant revoked
+        since the access cannot be recovered (the table keeps no history)."""
+        return bool(
+            self._session.query(PatientClinicianRow.patient_id)
+            .filter(
+                PatientClinicianRow.patient_id == patient_id,
+                *_live_grant_filter(user_id),
+            )
+            .first()
+        )
+
     def get_multiple(self, patient_ids: list[str], user_id: str) -> dict[str, Patient]:
         if not patient_ids:
             return {}

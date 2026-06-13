@@ -222,4 +222,9 @@ class TestWindowFiltering:
 class TestEmptyDatabase:
     def test_empty_database_yields_empty_payload(self, audit_review: AuditReviewHarness) -> None:
         payload = audit_review.payload(window_hours=24)
-        assert payload == {"entries": [], "user_aggregates": []}
+        assert payload["entries"] == []
+        assert payload["user_aggregates"] == []
+        # No activity → deterministic pass classifies the window routine, so
+        # it never reaches the model.
+        assert payload["summary"]["total_entries"] == 0
+        assert payload["summary"]["needs_model_review"] is False
