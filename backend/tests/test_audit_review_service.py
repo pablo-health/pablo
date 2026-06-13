@@ -105,9 +105,7 @@ def _seed_min_appointments(
 
 
 class TestSameLastNameFlag:
-    def test_fires_when_surnames_match(
-        self, service, audit_repo, patient_repo, user_repo
-    ) -> None:
+    def test_fires_when_surnames_match(self, service, audit_repo, patient_repo, user_repo) -> None:
         user_repo.update(
             User(
                 id="u1",
@@ -123,8 +121,9 @@ class TestSameLastNameFlag:
                 last_name="Smith",  # matches user's surname
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
-            )
-        , "u1")
+            ),
+            "u1",
+        )
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -155,8 +154,9 @@ class TestSameLastNameFlag:
                 last_name="Jones",
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
-            )
-        , "u1")
+            ),
+            "u1",
+        )
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -185,9 +185,7 @@ class TestNoTreatmentRelationshipFlag:
         self, service, audit_repo, patient_repo, user_repo, appointment_repo
     ) -> None:
         """Seasoned user + established patient + no appointment → flagged."""
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         # Patient created 30 days ago (past intake suppression window)
         patient_created_ts = datetime.now(UTC) - timedelta(days=30)
         patient_repo.create(
@@ -197,8 +195,9 @@ class TestNoTreatmentRelationshipFlag:
                 last_name="Y",
                 created_at=patient_created_ts,
                 updated_at=patient_created_ts,
-            )
-        , "u1")
+            ),
+            "u1",
+        )
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -235,9 +234,7 @@ class TestNoTreatmentRelationshipFlag:
     ) -> None:
         """Access to a just-created patient must NOT fire — intake has no
         appointments yet by definition."""
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         # Patient created today (inside intake suppression window)
         now = datetime.now(UTC)
         patient_repo.create(
@@ -247,8 +244,9 @@ class TestNoTreatmentRelationshipFlag:
                 last_name="Y",
                 created_at=now,
                 updated_at=now,
-            )
-        , "u1")
+            ),
+            "u1",
+        )
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -282,9 +280,7 @@ class TestNoTreatmentRelationshipFlag:
         self, service, audit_repo, patient_repo, user_repo, appointment_repo
     ) -> None:
         """Access with a scheduled appointment nearby should NOT fire."""
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         created = datetime.now(UTC) - timedelta(days=30)
         patient_repo.create(
             Patient(
@@ -293,8 +289,9 @@ class TestNoTreatmentRelationshipFlag:
                 last_name="Y",
                 created_at=created,
                 updated_at=created,
-            )
-        , "u1")
+            ),
+            "u1",
+        )
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -343,9 +340,7 @@ class TestNoTreatmentRelationshipFlag:
     ) -> None:
         """If the user has < MIN_APPOINTMENTS_FOR_CARETEAM_CHECK total
         appointments, flag must NOT fire."""
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         created = datetime.now(UTC) - timedelta(days=30)
         patient_repo.create(
             Patient(
@@ -354,8 +349,9 @@ class TestNoTreatmentRelationshipFlag:
                 last_name="Y",
                 created_at=created,
                 updated_at=created,
-            )
-        , "u1")
+            ),
+            "u1",
+        )
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -391,9 +387,7 @@ class TestNoTreatmentRelationshipFlag:
 
 class TestBulkDelete:
     def test_fires_above_threshold(self, service, audit_repo, user_repo) -> None:
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         for i in range(BULK_DELETE_THRESHOLD + 1):
             audit_repo.append(
                 AuditLogEntry(
@@ -411,9 +405,7 @@ class TestBulkDelete:
         assert alerts[0]["count"] == BULK_DELETE_THRESHOLD + 1
 
     def test_does_not_fire_below_threshold(self, service, audit_repo, user_repo) -> None:
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         audit_repo.append(
             AuditLogEntry(
                 user_id="u1",
@@ -431,12 +423,8 @@ class TestBulkDelete:
 
 
 class TestExportRateAlert:
-    def test_fires_when_today_exceeds_p95(
-        self, service, audit_repo, user_repo
-    ) -> None:
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+    def test_fires_when_today_exceeds_p95(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         # Baseline: 20 days of 0-1 exports/day (P95 should be ~1)
         now = datetime.now(UTC)
         for d in range(2, 22):
@@ -467,14 +455,10 @@ class TestExportRateAlert:
         assert len(alerts) == 1
         assert alerts[0]["count"] == 10
 
-    def test_suppressed_during_user_warmup(
-        self, service, audit_repo, user_repo
-    ) -> None:
+    def test_suppressed_during_user_warmup(self, service, audit_repo, user_repo) -> None:
         """User whose first activity is < MIN_BASELINE_DAYS_FOR_EXPORT_RATE
         ago must not trigger an export-rate alert — not enough history."""
-        user_repo.update(
-            User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC))
-        )
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
         now = datetime.now(UTC)
         # First activity 3 days ago — well inside warmup
         audit_repo.append(
@@ -515,3 +499,71 @@ class TestPercentile:
         values = [1, 1, 1, 2, 2, 2, 3, 3, 4, 10]
         result = _percentile(values, 95)
         assert result >= 4  # well above the median
+
+
+# ---------- internal-actor annotation ----------
+
+
+class TestInternalActorAnnotation:
+    def test_entries_flagged_for_listed_user(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(
+            User(id="bot", email="bot@e.com", name="Bot", created_at=datetime.now(UTC))
+        )
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="bot",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+            )
+        )
+        payload = service.compute_payload(internal_actor_user_ids={"bot"})
+        assert payload.entries[0]["is_internal_actor"] is True
+
+    def test_entries_not_flagged_for_unlisted_user(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+            )
+        )
+        payload = service.compute_payload(internal_actor_user_ids={"bot"})
+        assert payload.entries[0]["is_internal_actor"] is False
+
+    def test_default_marks_every_actor_external(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(User(id="u1", email="u@e.com", name="U", created_at=datetime.now(UTC)))
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="p1",
+                patient_id="p1",
+            )
+        )
+        payload = service.compute_payload()
+        assert payload.entries[0]["is_internal_actor"] is False
+
+    def test_aggregates_flagged_for_listed_user(self, service, audit_repo, user_repo) -> None:
+        user_repo.update(
+            User(id="bot", email="bot@e.com", name="Bot", created_at=datetime.now(UTC))
+        )
+        for i in range(BULK_DELETE_THRESHOLD + 1):
+            audit_repo.append(
+                AuditLogEntry(
+                    user_id="bot",
+                    action=AuditAction.PATIENT_DELETED.value,
+                    resource_type=ResourceType.PATIENT.value,
+                    resource_id=f"p{i}",
+                    patient_id=f"p{i}",
+                )
+            )
+        payload = service.compute_payload(internal_actor_user_ids={"bot"})
+        alerts = [a for a in payload.user_aggregates if a["alert"] == "bulk_delete"]
+        assert len(alerts) == 1
+        assert alerts[0]["is_internal_actor"] is True
