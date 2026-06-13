@@ -151,12 +151,32 @@ class Settings(BaseSettings):
         ),
     )
 
+    internal_actor_user_ids_raw: str = Field(
+        default="",
+        alias="INTERNAL_ACTOR_USER_IDS",
+        description=(
+            "Comma-separated user IDs for authorized automated actors "
+            "(scheduled internal scans, test/E2E identities). The audit-log "
+            "review annotates entries from these users so its anomaly model "
+            "attributes their machine-paced traffic rather than treating it "
+            "as a snooping signal. Empty (default): every actor is judged on "
+            "behaviour alone. Configure per-deployment."
+        ),
+    )
+
     @property
     def e2e_test_emails(self) -> set[str]:
         """Parse comma-separated E2E_TEST_EMAILS into a set."""
         if not self.e2e_test_emails_raw:
             return set()
         return {e.strip() for e in self.e2e_test_emails_raw.split(",") if e.strip()}
+
+    @property
+    def internal_actor_user_ids(self) -> set[str]:
+        """Parse comma-separated INTERNAL_ACTOR_USER_IDS into a set."""
+        if not self.internal_actor_user_ids_raw:
+            return set()
+        return {u.strip() for u in self.internal_actor_user_ids_raw.split(",") if u.strip()}
 
     # Trusted Proxy Settings
     trusted_proxy_ips: str = Field(
