@@ -651,3 +651,61 @@ class TestArchiveRestoreRealDB:
         assert any(c["id"] == conv["id"] for c in post_restore.json()["data"]), (
             "Restored conversation should reappear in the default list"
         )
+
+
+# ---------------------------------------------------------------------------
+# Case 6 — connection released across the LLM call (THERAPY-vtrb / blx6)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionReleasedAcrossLLMCall:
+    """Regression guard for THERAPY-vtrb / THERAPY-blx6.
+
+    The chat turn must NOT hold its request-scoped DB connection (an open
+    transaction) across the multi-second gateway LLM call. Holding it
+    idle-in-transaction is what let a handful of concurrent turns exhaust
+    the pool in prod. ``release_db_connection()`` runs at the pre-LLM
+    seam in ``_run_turn_locked``, so by the time ``stream_completion`` is
+    invoked the session has committed and returned its connection to the
+    pool — it is no longer in a transaction. Asserting
+    ``in_transaction() is False`` at the gateway boundary fails closed if
+    that seam is ever removed. Needs the real session lifecycle (the
+    in-memory repo has no transaction), so it lives here.
+    """
+
+    def test_no_open_transaction_when_gateway_call_begins(
+        self,
+        e2e_client: TestClient,
+        engine: Engine,
+        tenant_schema: str,
+        fake_gateway: FakeChatLLMGateway,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.db import get_db_session  # noqa: PLC0415
+        from app.services.chat_llm_gateway import StreamEvent  # noqa: PLC0415
+
+        _truncate_tenant_tables(engine, tenant_schema)
+        patient = _create_patient(e2e_client)
+        conv = _create_conversation(e2e_client, patient["id"])
+
+        captured: dict[str, bool] = {}
+
+        async def _probe(**_kwargs: object):
+            # Snapshot the request session's transaction state at the
+            # exact moment the LLM stream begins.
+            captured["in_transaction"] = get_db_session().in_transaction()
+            yield StreamEvent(finish_reason="stop", output_tokens=1)
+
+        monkeypatch.setattr(fake_gateway, "stream_completion", _probe)
+
+        resp = e2e_client.post(
+            f"/api/chat/conversations/{conv['id']}/messages",
+            json={"content": "ping"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert captured.get("in_transaction") is False, (
+            "Chat turn held an open DB transaction (a pooled connection) when the "
+            "gateway LLM call began. The release_db_connection() seam in "
+            "chat_turn_service._run_turn_locked regressed — this is the "
+            "pool-exhaustion bug class THERAPY-vtrb / THERAPY-blx6."
+        )

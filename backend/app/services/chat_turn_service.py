@@ -356,6 +356,20 @@ class ChatTurnService:
             meta_data["quota_status"] = QuotaStatus.SOFT_WARN.value
         yield TurnStreamEvent(kind="meta", data=meta_data)
 
+        # Release the request-scoped pooled connection before the multi-
+        # second gateway call. Holding it idle-in-transaction across the
+        # LLM stream is what let a handful of concurrent chat turns drain
+        # the pool (THERAPY-blx6 / THERAPY-vtrb). The user + assistant-
+        # placeholder rows commit here; the post-stream update_message()
+        # auto-begins a fresh transaction with search_path and the RLS
+        # GUC re-armed by the checkout / after_begin listeners, so tenant
+        # scoping survives transparently. Same seam the note-import and
+        # SOAP-gen LLM paths already use. No-ops outside request scope
+        # (unit tests with in-memory fakes, to_thread workers).
+        from ..db import release_db_connection
+
+        release_db_connection()
+
         # Stream from the gateway with one transient-error retry.
         attempt_buffers: list[str] = []
         final_event: StreamEvent | None = None
