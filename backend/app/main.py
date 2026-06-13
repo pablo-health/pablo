@@ -44,6 +44,7 @@ from .routes import (
     auth,
     chat,
     compliance,
+    dashboard,
     ehr_routes,
     ext_auth,
     ical_sync,
@@ -162,6 +163,7 @@ app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
+app.include_router(dashboard.router)
 app.include_router(notes.router)
 app.include_router(notes.patient_notes_router)
 app.include_router(patient_documents.patient_documents_router)

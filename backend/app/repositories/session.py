@@ -58,6 +58,22 @@ class TherapySessionRepository(ABC):
         pass
 
     @abstractmethod
+    def count_by_status(self, user_id: str) -> dict[str, int]:
+        """Count non-deleted sessions for accessible patients, grouped by status.
+
+        Powers dashboard aggregates (transcripts in flight, notes awaiting
+        review) over the full set without paging every session into the app.
+        """
+        pass
+
+    @abstractmethod
+    def list_recent_by_status(
+        self, user_id: str, status: str, *, limit: int
+    ) -> list[TherapySession]:
+        """Most-recent accessible sessions (session_date desc) in one status."""
+        pass
+
+    @abstractmethod
     def get_session_number_for_patient(self, patient_id: str) -> int:
         """Get the next session number for a patient."""
         pass
@@ -156,6 +172,25 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         ]
         sessions.sort(key=lambda s: s.scheduled_at or datetime.min.replace(tzinfo=UTC))
         return sessions
+
+    def count_by_status(self, user_id: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for s in self._sessions.values():
+            if self._can_access(s.patient_id, user_id):
+                key = str(s.status)
+                counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    def list_recent_by_status(
+        self, user_id: str, status: str, *, limit: int
+    ) -> list[TherapySession]:
+        sessions = [
+            s
+            for s in self._sessions.values()
+            if s.status == status and self._can_access(s.patient_id, user_id)
+        ]
+        sessions.sort(key=lambda s: s.session_date, reverse=True)
+        return sessions[:limit]
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
         """Get the next session number for a patient."""

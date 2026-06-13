@@ -6,9 +6,8 @@ import Image from "next/image"
 import Link from "next/link"
 import { useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { useAppointmentList } from "@/hooks/useAppointments"
 import { useCompanionDevices } from "@/hooks/useCompanionDevices"
-import { usePatientList } from "@/hooks/usePatients"
+import { useDashboardSummary } from "@/hooks/useDashboard"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { isCompanionAvailable } from "@/lib/companion"
 import type { AppointmentResponse } from "@/types/scheduling"
@@ -23,10 +22,8 @@ const STATUS_BADGES: Record<string, { label: string; cls: string }> = {
 }
 
 export function TodayPanel() {
-  const { start, end } = todayBounds()
   const timeZone = useUserTimeZone()
-  const { data, isLoading } = useAppointmentList(start, end)
-  const { data: patientData } = usePatientList()
+  const { data, isLoading } = useDashboardSummary()
   const [companionDialogOpen, setCompanionDialogOpen] = useState(false)
   // Smart detection: only consider the companion handoff on a platform that
   // can route the deep link, and only treat the user as "set up" once the
@@ -38,12 +35,14 @@ export function TodayPanel() {
 
   const lastVisitByPatient = useMemo(() => {
     const m = new Map<string, string | null>()
-    for (const p of patientData?.data ?? []) m.set(p.id, p.last_session_date)
+    for (const [pid, last] of Object.entries(data?.last_visit_by_patient ?? {})) {
+      m.set(pid, last)
+    }
     return m
-  }, [patientData])
+  }, [data])
 
   const appts = useMemo(() => {
-    const rows = data?.data ?? []
+    const rows = data?.today_appointments ?? []
     return [...rows].sort((a, b) => a.start_at.localeCompare(b.start_at))
   }, [data])
 
@@ -195,14 +194,6 @@ function EmptyDay() {
 // these line up whenever the preference matches the browser zone, which is
 // the default. A tz-aware window would only matter for a clinician viewing
 // the dashboard from a different zone than their preference near midnight.
-function todayBounds(): { start: string; end: string } {
-  const start = new Date()
-  start.setHours(0, 0, 0, 0)
-  const end = new Date(start)
-  end.setDate(end.getDate() + 1)
-  return { start: start.toISOString(), end: end.toISOString() }
-}
-
 // "last visit 4w ago" — coarse-grained on purpose; therapists don't need
 // exact day counts, just "is this someone I just saw or haven't seen in a
 // while." Falls back to null when there's no prior visit (first session)
