@@ -102,6 +102,28 @@ SENSITIVE_ACTIONS: frozenset[str] = EXPORT_ACTIONS | frozenset({"patient_deleted
 OFF_HOURS_UTC_START = 6
 OFF_HOURS_UTC_END = 11
 
+# Monthly open-ended discovery pass. The deterministic gate keeps the daily
+# run cheap, but it can only catch what we encoded — so on the monthly
+# rollup we still send a sample to the model for tenants with real activity,
+# even when no flag fired, to catch patterns the flags don't encode.
+#
+# Policy: ALL SUBSTANTIVE tenants monthly. Any month with at least
+# MIN_ENTRIES of activity gets the discovery pass; an empty/near-empty month
+# is already covered by the deterministic clean report, so it is skipped. The
+# per-call payload is capped (MAX_MODEL_ENTRIES), so cost is bounded and a
+# monthly all-tenants pass is a small fraction of the (now deterministic)
+# daily run.
+#
+# ACCESS_RATIO and HIGH_VOLUME are COST LEVERS for scale, off by default
+# (ratio 0 ⇒ every substantive month qualifies). If monthly LLM spend ever
+# grows material, raise ACCESS_RATIO to narrow to CONCENTRATED-access tenants
+# (many audit events per patient — the shape of over-access), and HIGH_VOLUME
+# keeps very busy tenants in regardless. Tenants that tripped a deterministic
+# flag/aggregate always go to the model anyway, daily or monthly.
+MONTHLY_REVIEW_MIN_ENTRIES = 1
+MONTHLY_REVIEW_ACCESS_RATIO = 0.0
+MONTHLY_REVIEW_HIGH_VOLUME = 2000
+
 
 @dataclass
 class ReviewPayload:
@@ -148,6 +170,7 @@ class AuditReviewService:
         baseline_days: int = 90,
         internal_actor_user_ids: set[str] | None = None,
         authorized_user_ids: set[str] | None = None,
+        review_mode: str = "daily",
     ) -> ReviewPayload:
         """Build the full review payload.
 
@@ -217,7 +240,7 @@ class AuditReviewService:
         # aggregate) are always shipped; the rest of the MAX_MODEL_ENTRIES
         # budget is the most recent unflagged rows. ``summary`` carries the
         # full volume so an omitted tail is never mistaken for "all clear".
-        summary = self._build_summary(entries, aggregates)
+        summary = self._build_summary(entries, aggregates, review_mode)
         curated = self._curate_entries(entries, aggregates)
         summary["entries_sent"] = len(curated)
         summary["entries_omitted"] = len(entries) - len(curated)
@@ -480,23 +503,45 @@ class AuditReviewService:
         # interesting first (capped too, in the pathological all-flagged case).
         return interesting[:MAX_MODEL_ENTRIES] + sample
 
-    def _build_summary(self, entries: list[dict], aggregates: list[dict]) -> dict[str, Any]:
+    def _build_summary(
+        self, entries: list[dict], aggregates: list[dict], review_mode: str
+    ) -> dict[str, Any]:
         action_counts: Counter[str] = Counter(e.get("action", "?") for e in entries)
         flagged = [e for e in entries if self._is_interesting(e)]
-        flagged_users = {a["user_id"] for a in aggregates}
-        needs_model = bool(flagged) or bool(aggregates) or bool(flagged_users)
+        total = len(entries)
+        distinct_patients = len({e["patient_id"] for e in entries if e.get("patient_id")})
+        entries_per_patient = total / max(distinct_patients, 1)
+
+        # A deterministic anomaly always routes to the model (daily or
+        # monthly). Absent one, the monthly rollup still sends the active
+        # tenants for open-ended discovery (see the MONTHLY_REVIEW_* notes).
+        reason = "none"
+        if flagged or aggregates:
+            reason = "anomaly"
+        elif (
+            review_mode == "monthly"
+            and total >= MONTHLY_REVIEW_MIN_ENTRIES
+            and (
+                entries_per_patient >= MONTHLY_REVIEW_ACCESS_RATIO
+                or total >= MONTHLY_REVIEW_HIGH_VOLUME
+            )
+        ):
+            reason = "monthly_discovery"
+
         return {
-            "total_entries": len(entries),
+            "total_entries": total,
             "distinct_users": len({e["user_id"] for e in entries}),
-            "distinct_patients": len({e["patient_id"] for e in entries if e.get("patient_id")}),
+            "distinct_patients": distinct_patients,
+            "entries_per_patient": round(entries_per_patient, 1),
             "counts_by_action": dict(action_counts),
             "flagged_entries": len(flagged),
             "aggregate_alerts": len(aggregates),
-            # The deterministic gate: when False, every row was provably
-            # routine (grant-backed, in-tenant, normal-hours, ordinary
-            # action, no flags) and there are no aggregates — so the window
-            # is classified "fine" in code and never reaches the model.
-            "needs_model_review": needs_model,
+            # The gate. False means: no deterministic anomaly AND (daily, or a
+            # monthly month too quiet/sparse for discovery to add anything) —
+            # so the window is classified "fine" in code and never reaches
+            # the model. ``model_review_reason`` records why when True.
+            "needs_model_review": reason != "none",
+            "model_review_reason": reason,
         }
 
     # ---------- repo lookups ----------

@@ -818,3 +818,100 @@ class TestDeterministicGate:
             e.get("patient_id") == "p_other" and e["is_unauthorized_access"]
             for e in payload.entries
         )
+
+
+class TestMonthlyDiscovery:
+    def _seed_routine(self, audit_repo, patient_repo, n: int, patients: int) -> None:
+        for p in range(patients):
+            patient_repo.create(
+                Patient(
+                    id=f"p{p}",
+                    first_name="A",
+                    last_name="B",
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                ),
+                "u1",
+            )
+        for i in range(n):
+            audit_repo.append(
+                AuditLogEntry(
+                    user_id="u1",
+                    action=AuditAction.PATIENT_VIEWED.value,
+                    resource_type=ResourceType.PATIENT.value,
+                    resource_id=f"p{i % patients}",
+                    patient_id=f"p{i % patients}",
+                    timestamp=_recent(15),
+                )
+            )
+
+    def test_monthly_high_ratio_routes_to_model(self, service, audit_repo, patient_repo) -> None:
+        # 60 routine reads over 1 patient → ratio 60, volume 60 — concentrated.
+        self._seed_routine(audit_repo, patient_repo, n=60, patients=1)
+        payload = service.compute_payload(
+            window_hours=_FEW_DAYS, authorized_user_ids={"u1"}, review_mode="monthly"
+        )
+        assert payload.summary["needs_model_review"] is True
+        assert payload.summary["model_review_reason"] == "monthly_discovery"
+
+    def test_daily_does_not_escalate_on_volume(self, service, audit_repo, patient_repo) -> None:
+        # Same activity, daily mode → routine, no model call.
+        self._seed_routine(audit_repo, patient_repo, n=60, patients=1)
+        payload = service.compute_payload(
+            window_hours=_FEW_DAYS, authorized_user_ids={"u1"}, review_mode="daily"
+        )
+        assert payload.summary["needs_model_review"] is False
+
+    def test_monthly_empty_stays_routine(self, service, audit_repo, patient_repo) -> None:
+        # Zero activity → nothing to discover; the deterministic clean report
+        # covers it, no model call.
+        self._seed_routine(audit_repo, patient_repo, n=0, patients=1)
+        payload = service.compute_payload(
+            window_hours=_FEW_DAYS, authorized_user_ids={"u1"}, review_mode="monthly"
+        )
+        assert payload.summary["needs_model_review"] is False
+        assert payload.summary["model_review_reason"] == "none"
+
+    def test_monthly_distributed_activity_still_reviewed(
+        self, service, audit_repo, patient_repo
+    ) -> None:
+        # All-substantive policy: distributed activity (60 reads over 60
+        # patients, ratio 1) is still reviewed monthly — not only concentrated
+        # tenants. ACCESS_RATIO=0 is the default; raising it would narrow this.
+        self._seed_routine(audit_repo, patient_repo, n=60, patients=60)
+        payload = service.compute_payload(
+            window_hours=_FEW_DAYS, authorized_user_ids={"u1"}, review_mode="monthly"
+        )
+        assert payload.summary["needs_model_review"] is True
+        assert payload.summary["model_review_reason"] == "monthly_discovery"
+
+    def test_monthly_ratio_lever_narrows_when_raised(
+        self, service, audit_repo, patient_repo, monkeypatch
+    ) -> None:
+        # Cost lever: raising ACCESS_RATIO narrows the monthly pass to
+        # concentrated-access tenants. Distributed activity (ratio 1) then
+        # stays routine.
+        monkeypatch.setattr(audit_review_service_mod, "MONTHLY_REVIEW_ACCESS_RATIO", 20.0)
+        self._seed_routine(audit_repo, patient_repo, n=60, patients=60)
+        payload = service.compute_payload(
+            window_hours=_FEW_DAYS, authorized_user_ids={"u1"}, review_mode="monthly"
+        )
+        assert payload.summary["needs_model_review"] is False
+
+    def test_anomaly_reason_wins_over_monthly(self, service, audit_repo) -> None:
+        # An unauthorized access in a monthly window → reason is the anomaly,
+        # not the discovery pass.
+        audit_repo.append(
+            AuditLogEntry(
+                user_id="u1",
+                action=AuditAction.PATIENT_VIEWED.value,
+                resource_type=ResourceType.PATIENT.value,
+                resource_id="px",
+                patient_id="px",
+                timestamp=_recent(15),
+            )
+        )
+        payload = service.compute_payload(
+            window_hours=_FEW_DAYS, authorized_user_ids={"u1"}, review_mode="monthly"
+        )
+        assert payload.summary["model_review_reason"] == "anomaly"

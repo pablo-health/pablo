@@ -36,11 +36,17 @@ field-name diffs.
 
 SCOPE — read this first. This input is the audit log of a SINGLE tenant
 for a single time window. Anomaly detection has ALREADY been performed
-deterministically before you: each row carries the boolean flags below,
-the ``user_aggregates`` list holds the per-user alerts, and you are only
-invoked at all when at least one flag or aggregate fired. Your job is to
-SUMMARISE and PRIORITISE those pre-computed signals into a readable
-report and judge their severity — NOT to hunt for anomalies in raw rows.
+deterministically before you: each row carries the boolean flags below
+and the ``user_aggregates`` list holds the per-user alerts.
+``summary.model_review_reason`` tells you why you were invoked:
+- ``anomaly``: at least one flag or aggregate fired. SUMMARISE and
+  PRIORITISE those pre-computed signals and judge their severity — the
+  deterministic pass already found them, so focus there.
+- ``monthly_discovery``: a periodic deeper review of an active tenant
+  with NO flag firing. Here you MAY look more broadly across the entries
+  for patterns the flags don't encode (unusual action sequences, timing,
+  concentration) — but if nothing stands out, say so plainly and return
+  LOW/NONE. Do not manufacture a finding to justify the pass.
 
 Two hard rules:
 - Report ONLY what the provided fields support. NEVER claim to have run a
@@ -265,7 +271,7 @@ def _review_tenant(
     review_mode: str,
     gcs_bucket: str | None,
 ) -> None:
-    payload = _load_review_payload(practice_schema, window_hours)
+    payload = _load_review_payload(practice_schema, window_hours, review_mode)
     summary = payload["summary"]
     logger.info(
         "schema=%s total_entries=%d sent=%d aggregates=%d needs_model=%s",
@@ -329,7 +335,9 @@ def _deterministic_clean_report(summary: dict[str, Any], review_mode: str) -> st
     )
 
 
-def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, Any]:
+def _load_review_payload(
+    practice_schema: str, window_hours: int, review_mode: str = "daily"
+) -> dict[str, Any]:
     from ..db import create_standalone_session  # noqa: PLC0415
     from ..repositories.postgres.appointment import (  # noqa: PLC0415
         PostgresAppointmentRepository,
@@ -356,6 +364,7 @@ def _load_review_payload(practice_schema: str, window_hours: int) -> dict[str, A
             window_hours=window_hours,
             internal_actor_user_ids=get_settings().internal_actor_user_ids,
             authorized_user_ids=_authorized_user_ids(session, practice_schema),
+            review_mode=review_mode,
         )
         return payload.to_dict()
     finally:
