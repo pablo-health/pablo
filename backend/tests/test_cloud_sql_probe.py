@@ -194,3 +194,43 @@ class TestCloudSqlSummaryShape:
         outputs = [("tables", "", "ERROR: permission denied for table audit_logs")]
         summary = collectors._cloud_sql_summary(outputs)
         assert summary["permission_denied_observed"] == "true"
+
+
+class TestAuditMutabilityTruncate:
+    """The audit-mutability probe must flag TRUNCATE on the app role, not just
+    UPDATE/DELETE. TRUNCATE wipes the whole trail in one statement and is
+    covered by neither a row-level append-only trigger nor an UPDATE/DELETE
+    REVOKE, so it needs its own check (and its own REVOKE)."""
+
+    @staticmethod
+    def _run_audit_checks(mutability_row: str) -> list[dict[str, str]]:
+        # First _run = audit_mutability (UPDATE|DELETE|TRUNCATE booleans);
+        # second _run = audit_fk_cascade (none here).
+        side_effects = [
+            (0, mutability_row, "", 0.0),
+            (0, "", "", 0.0),
+        ]
+        with patch.object(collectors, "_run", side_effect=side_effects):
+            return collectors._audit_integrity_checks(
+                port="15433", env={}, schemas=["practice"], lines=[]
+            )
+
+    def test_flags_truncatable_even_when_update_delete_revoked(self) -> None:
+        # The prod posture: UPDATE/DELETE revoked, TRUNCATE still granted.
+        findings = self._run_audit_checks("f|f|t")
+        ids = {f["id"] for f in findings}
+        assert "audit-logs-truncatable:practice" in ids
+        assert "audit-logs-updatable:practice" not in ids
+        assert "audit-logs-deletable:practice" not in ids
+        assert all(f["severity"] == "MEDIUM" for f in findings)
+
+    def test_clean_when_all_three_revoked(self) -> None:
+        assert self._run_audit_checks("f|f|f") == []
+
+    def test_flags_all_three_when_fully_mutable(self) -> None:
+        ids = {f["id"] for f in self._run_audit_checks("t|t|t")}
+        assert ids == {
+            "audit-logs-updatable:practice",
+            "audit-logs-deletable:practice",
+            "audit-logs-truncatable:practice",
+        }
