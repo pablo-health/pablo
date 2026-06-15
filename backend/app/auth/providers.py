@@ -119,8 +119,12 @@ class FirebaseVerifier:
                     }
                 },
             )
-        firebase_claims = decoded.get("firebase", {})
-        mfa_satisfied = bool(firebase_claims.get("sign_in_second_factor"))
+        # A passkey-authenticated session arrives via a Firebase custom token,
+        # which cannot carry the reserved ``firebase.sign_in_second_factor``
+        # claim — so the WebAuthn factor surfaces through our own ``pablo_amr``
+        # claim. ``second_factor_satisfied`` is the one definition every
+        # enforcement point shares.
+        mfa_satisfied = second_factor_satisfied(decoded)
         return VerifiedIdentity(
             provider=self.provider,
             subject_id=str(uid),
@@ -205,9 +209,23 @@ class OidcVerifier:
             provider=self.provider,
             subject_id=str(subject_id),
             email=str(claims.get("email", "")).lower(),
-            mfa_satisfied=_oidc_mfa_satisfied(claims),
+            mfa_satisfied=second_factor_satisfied(claims),
             claims=claims,
         )
+
+
+def passkey_factor_satisfied(claims: dict[str, Any]) -> bool:
+    """True if the token carries our server-minted WebAuthn factor claim.
+
+    ``pablo_amr`` is a developer claim set by ``create_custom_token`` in
+    the passkey mint endpoint, and only there, only after a verified
+    assertion. It appears at the top level of the resulting Firebase ID
+    token. The client can never set it. This is the single reader; the
+    native-code MFA gate in ``routes/auth.py`` calls it too so both
+    enforcement points honour passkeys identically.
+    """
+    amr = claims.get("pablo_amr")
+    return isinstance(amr, list) and "webauthn" in amr
 
 
 def _oidc_mfa_satisfied(claims: dict[str, Any]) -> bool:
@@ -220,6 +238,26 @@ def _oidc_mfa_satisfied(claims: dict[str, Any]) -> bool:
     if isinstance(amr, list) and any(m in ("mfa", "otp") for m in amr):
         return True
     return claims.get("acr") == "mfa"
+
+
+def second_factor_satisfied(claims: dict[str, Any]) -> bool:
+    """The single definition of "did this identity present a second factor".
+
+    One function consumed by every enforcement point — the Firebase and
+    OIDC verifiers (which set ``VerifiedIdentity.mfa_satisfied``, read by
+    ``require_mfa``) and the parallel hand-rolled native-code gate in
+    ``routes/auth.py``. It recognises a Firebase-native second factor, our
+    WebAuthn ``pablo_amr`` claim, and an OIDC AMR/ACR step-up. Keeping it
+    in one place is what stops those enforcement points from drifting to
+    different definitions of "the second factor" (the adversarial review's
+    cross-cutting fix).
+    """
+    firebase_claims = claims.get("firebase", {})
+    if firebase_claims.get("sign_in_second_factor"):
+        return True
+    if passkey_factor_satisfied(claims):
+        return True
+    return _oidc_mfa_satisfied(claims)
 
 
 def _extract_email_claim(decoded: dict[str, Any]) -> str:
