@@ -94,6 +94,9 @@ def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
     set_tenant_schema(session)
+    # Arm the purge GUC so the append-only BEFORE TRUNCATE trigger allows this
+    # authorized fixture reset (same transaction as the TRUNCATE).
+    session.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
     session.execute(text("TRUNCATE TABLE practice.audit_logs"))
     session.commit()
     try:

@@ -259,6 +259,10 @@ def audit_review(audit_review_engine: Engine) -> Iterator[AuditReviewHarness]:
     factory = sessionmaker(bind=audit_review_engine, expire_on_commit=False)
     session = factory()
     set_tenant_schema(session)
+    # audit_logs is append-only: the BEFORE TRUNCATE trigger blocks the app
+    # role unless the purge GUC is armed. A fixture reset is an authorized
+    # purge, so arm it in the same transaction as the TRUNCATE.
+    session.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
     session.execute(text(_TRUNCATE_SQL))
     session.commit()
     set_tenant_schema(session)

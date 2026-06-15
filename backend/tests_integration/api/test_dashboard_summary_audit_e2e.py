@@ -89,6 +89,9 @@ def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
     session.execute(text("SET search_path = practice, platform, public"))
+    # audit_logs append-only: arm the purge GUC so the BEFORE TRUNCATE trigger
+    # allows this authorized fixture reset (same transaction).
+    session.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
     session.execute(text("TRUNCATE TABLE practice.audit_logs"))
     session.commit()
     try:

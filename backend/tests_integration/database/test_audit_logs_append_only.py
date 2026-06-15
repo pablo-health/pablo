@@ -14,8 +14,12 @@ point. This test locks in the contract:
 
   * UPDATE on an audit_logs row is blocked (append-only).
   * DELETE on an audit_logs row is blocked (append-only).
-  * DELETE wrapped with ``SET LOCAL app.allow_audit_purge = 'on'`` — the
-    retention-cron path — succeeds.
+  * TRUNCATE of audit_logs is blocked (append-only) — a row-level UPDATE/DELETE
+    trigger does NOT fire on TRUNCATE, so a separate statement-level
+    ``audit_logs_no_truncate`` BEFORE TRUNCATE trigger (migration
+    ``a7e3f1b9c204``) closes the wholesale-wipe gap.
+  * DELETE / TRUNCATE wrapped with ``SET LOCAL app.allow_audit_purge = 'on'`` —
+    the retention-cron / authorized-purge path — succeeds.
 
 Uses the alembic-upgrade-head + ``create_practice_schema`` fixture pattern
 (NOT ORM ``create_all``) because the trigger is raw DDL that only lands via
@@ -167,3 +171,28 @@ class TestAuditLogsAppendOnly:
                 {"id": row_id},
             )
         assert result.rowcount == 1
+
+    def test_truncate_is_blocked(self, engine: Engine, tenant_schema: str) -> None:
+        # A row-level UPDATE/DELETE trigger doesn't fire on TRUNCATE; the
+        # separate BEFORE TRUNCATE trigger must, so the app role can't wipe the
+        # whole trail in one statement.
+        _seed_audit_row(engine, tenant_schema, "append-only-truncate")
+
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            with pytest.raises((IntegrityError, InternalError, ProgrammingError)) as exc:
+                conn.execute(text("TRUNCATE TABLE audit_logs"))
+            conn.rollback()
+        assert "append-only" in str(exc.value)
+
+    def test_truncate_with_purge_guc_succeeds(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        _seed_audit_row(engine, tenant_schema, "append-only-truncate-purge")
+
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
+            conn.execute(text("TRUNCATE TABLE audit_logs"))
+            remaining = conn.execute(text("SELECT count(*) FROM audit_logs")).scalar()
+        assert remaining == 0

@@ -24,6 +24,15 @@ Pablo uses a two-layer audit trail:
 
 Both layers ship to **Cloud Logging** as structured JSON and are exported to a dedicated Log Sink (Cloud Storage or BigQuery) for long-term retention.
 
+## Integrity (append-only)
+
+The `audit_logs` table is **append-only** — the application role may `INSERT` and `SELECT` but cannot alter or destroy existing records. This is enforced in the database so a compromised application process can't rewrite history:
+
+- **Self-host (trigger-based).** Every tenant schema carries a `BEFORE UPDATE OR DELETE` trigger (`audit_logs_append_only`) and a statement-level `BEFORE TRUNCATE` trigger (`audit_logs_no_truncate`) that raise on any attempt to edit, delete, or wipe audit rows. They fire even for the table owner — the app connects as that owner, so table privileges alone wouldn't stop it. A row-level UPDATE/DELETE trigger does **not** fire on `TRUNCATE`, which is why the separate TRUNCATE trigger exists (otherwise the trail could be wiped wholesale in one statement). The retention job is the sole exception: it arms a transaction-scoped `SET LOCAL app.allow_audit_purge = 'on'` before deleting rows past the 6-year window. Both triggers ship in `tenant_template.sql` (migrations `b33a493310b6`, `a7e3f1b9c204`).
+- **Managed build (privilege-based).** The managed deployment goes further: the application role is a non-owner with `UPDATE`, `DELETE`, **and `TRUNCATE` revoked** on `audit_logs` (role separation), and a separate maintenance role runs retention — so immutability holds by privilege, independent of any trigger.
+
+The weekly pentest verifies this on every run: it asserts the application role cannot effectively UPDATE, DELETE, or TRUNCATE `audit_logs` (privilege revoked, or a BEFORE trigger enforcing it).
+
 ## Application audit log
 
 `AuditService.log()` is invoked from every route that reads or modifies patient data. The emitted log line is a JSON object shaped by `AuditLogEntry` (`backend/app/models/audit.py`), e.g.:

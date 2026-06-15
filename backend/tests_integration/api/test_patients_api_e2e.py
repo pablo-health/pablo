@@ -232,6 +232,9 @@ def _truncate_tenant_tables(engine: Engine, schema: str) -> None:
     """Reset tenant tables between tests to keep assertions independent."""
     with engine.connect() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
+        # audit_logs append-only: arm the purge GUC so the BEFORE TRUNCATE
+        # trigger allows this authorized fixture reset (same transaction).
+        conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
         conn.execute(
             text("TRUNCATE TABLE patient_clinicians, patients, audit_logs RESTART IDENTITY CASCADE")
         )
