@@ -301,6 +301,112 @@ class TestTitleAndCredentials:
         assert body["title"] is None
         assert body["credentials"] is None
 
+    def test_patch_me_credential_titles_persist_and_derive_display(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        """Structured credential_titles persist as the source of truth and
+        the legacy ``credentials`` display string is derived (joined) from
+        them. Board-cert suffixes are preserved verbatim."""
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+            )
+        )
+
+        response = client.patch(
+            "/api/users/me",
+            json={"credential_titles": ["PMHNP-BC", "RN"]},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["credential_titles"] == ["PMHNP-BC", "RN"]
+        # Display string derived from the structured set.
+        assert body["credentials"] == "PMHNP-BC, RN"
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.credential_titles == ["PMHNP-BC", "RN"]
+        assert stored.credentials == "PMHNP-BC, RN"
+
+    def test_credential_titles_blanks_dropped_and_trimmed(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(user_id=mock_user.id, practice_id="practice-abc")
+        )
+
+        response = client.patch(
+            "/api/users/me",
+            json={"credential_titles": ["  PMHNP-BC  ", "", "   ", "PhD"]},
+        )
+
+        assert response.status_code == 200
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.credential_titles == ["PMHNP-BC", "PhD"]
+
+    def test_credential_titles_preserved_when_only_title_patched(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        """PATCH semantics: sending only ``title`` must not clear the
+        previously-stored credential_titles."""
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                credential_titles=["PMHNP-BC"],
+                credentials="PMHNP-BC",
+            )
+        )
+
+        client.patch("/api/users/me", json={"title": "Dr."})
+
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.title == "Dr."
+        assert stored.credential_titles == ["PMHNP-BC"]
+
+    def test_user_status_includes_credential_titles(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                credential_titles=["PMHNP-BC", "RN"],
+                credentials="PMHNP-BC, RN",
+            )
+        )
+
+        with patch("app.settings.get_settings") as mock_settings:
+            mock_settings.return_value.multi_tenancy_enabled = False
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        assert response.json()["credential_titles"] == ["PMHNP-BC", "RN"]
+
 
 class TestOnboardingState:
     """Test the onboarding_state field on PATCH /api/users/me and

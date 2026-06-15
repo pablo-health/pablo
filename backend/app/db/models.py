@@ -48,6 +48,8 @@ class ClinicianProfileRow(Base):
     practice_id: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str | None] = mapped_column(String(50))
     credentials: Mapped[str | None] = mapped_column(String(100))
+    # Structured credential titles; ``credentials`` is the joined display.
+    credential_titles: Mapped[list | None] = mapped_column(JSONB)
     role: Mapped[str] = mapped_column(String(20), default="clinician")
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     license_number: Mapped[str | None] = mapped_column(String(100))

@@ -30,6 +30,7 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             practice_id=row.practice_id,
             title=row.title,
             credentials=row.credentials,
+            credential_titles=row.credential_titles,
             role=row.role,
             joined_at=row.joined_at,
             license_number=row.license_number,
@@ -44,6 +45,7 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             practice_id=profile.practice_id,
             title=profile.title,
             credentials=profile.credentials,
+            credential_titles=profile.credential_titles,
             role=profile.role,
             joined_at=profile.joined_at or utc_now(),
             license_number=profile.license_number,
@@ -61,6 +63,8 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             return self.create(profile)
         row.title = profile.title
         row.credentials = profile.credentials
+        if profile.credential_titles is not None:
+            row.credential_titles = profile.credential_titles
         row.role = profile.role
         if profile.license_number is not None:
             row.license_number = profile.license_number
