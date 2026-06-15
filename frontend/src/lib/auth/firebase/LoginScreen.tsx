@@ -34,7 +34,7 @@ import {
 import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
-import { isEnabled } from "@/lib/featureFlags"
+import { useConfig } from "@/lib/config"
 import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
@@ -108,6 +108,7 @@ function LastUsedPill() {
 export function FirebaseLoginScreen() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
+  const { passkeysEnabled } = useConfig()
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -158,8 +159,8 @@ export function FirebaseLoginScreen() {
 
   // Detect WebAuthn support client-side (the API is undefined during SSR).
   useEffect(() => {
-    setPasskeySupported(isEnabled("passkeys") && browserSupportsWebAuthn())
-  }, [])
+    setPasskeySupported(passkeysEnabled && browserSupportsWebAuthn())
+  }, [passkeysEnabled])
 
   // Exchange setup token from marketing signup to pre-fill email
   useEffect(() => {

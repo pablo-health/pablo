@@ -19,9 +19,11 @@ import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 import { ThemeFlavorNote } from "@/components/theme/ThemeFlavorNote"
 import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Palette, Settings2, ShieldCheck, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
+import { useConfig } from "@/lib/config"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
 
 export default function SettingsPage() {
+  const { passkeysEnabled } = useConfig()
   const { data: preferences, isLoading, error } = usePreferences()
   const saveMutation = useSavePreferences()
   const { data: userStatus } = useQuery({
@@ -146,7 +148,7 @@ export default function SettingsPage() {
         </SettingsSection>
       )}
 
-      {isEnabled("passkeys") && (
+      {passkeysEnabled && (
         <SettingsSection
           icon={ShieldCheck}
           title="Passkeys"
