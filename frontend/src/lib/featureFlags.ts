@@ -13,6 +13,7 @@ const FLAGS = {
   calendar_integrations: true,
   audio_retention: false,
   companion_mac: true,
+  passkeys: true,
 } as const satisfies Record<string, boolean>
 
 export type FeatureFlag = keyof typeof FLAGS

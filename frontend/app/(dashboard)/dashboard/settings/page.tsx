@@ -13,10 +13,11 @@ import { SessionDefaults } from "@/components/settings/SessionDefaults"
 import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
+import { PasskeySettings } from "@/components/settings/PasskeySettings"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 import { ThemeFlavorNote } from "@/components/theme/ThemeFlavorNote"
-import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Palette, Settings2, User } from "lucide-react"
+import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Palette, Settings2, ShieldCheck, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
 
@@ -142,6 +143,16 @@ export default function SettingsPage() {
             onSave={handleSave}
             isSaving={saveMutation.isPending}
           />
+        </SettingsSection>
+      )}
+
+      {isEnabled("passkeys") && (
+        <SettingsSection
+          icon={ShieldCheck}
+          title="Passkeys"
+          description="Phishing-resistant sign-in using your device's biometrics or security key."
+        >
+          <PasskeySettings />
         </SettingsSection>
       )}
 

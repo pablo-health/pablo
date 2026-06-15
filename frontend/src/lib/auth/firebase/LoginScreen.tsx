@@ -16,6 +16,7 @@ import {
   signInWithPopup,
   signInWithRedirect,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   sendPasswordResetEmail,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -25,8 +26,16 @@ import {
   type MultiFactorResolver,
   type UserCredential,
 } from "firebase/auth"
+import {
+  startAuthentication,
+  browserSupportsWebAuthn,
+  WebAuthnError,
+} from "@simplewebauthn/browser"
+import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useAuth } from "@/lib/auth-context"
+import { isEnabled } from "@/lib/featureFlags"
+import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
   clearFirebaseAuthStorage,
@@ -42,6 +51,7 @@ import {
   AuthHeader,
   AuthInput,
   AuthLinkButton,
+  AuthOutlineButton,
   AuthPrimaryButton,
   MfaChallengeScreen,
   VerifyEmailScreen,
@@ -56,10 +66,11 @@ function getUrlParam(name: string): string {
   return params.get(name) || ""
 }
 
-// "google" = Google sign-in; "email" = the email/password form. The tag is
-// just which button to flag, not a credential — keep it free of any
-// password/secret value so it stays safe to persist in the clear.
-type AuthMethod = "google" | "email"
+// "google" = Google sign-in; "email" = the email/password form; "passkey" =
+// WebAuthn sign-in. The tag is just which button to flag, not a credential —
+// keep it free of any password/secret value so it stays safe to persist in
+// the clear.
+type AuthMethod = "google" | "email" | "passkey"
 
 // Remember how this device last signed in so we can surface a "Last used"
 // hint on the matching button. We store only the method tag — never the
@@ -71,7 +82,7 @@ function readLastAuthMethod(): AuthMethod | null {
   if (typeof window === "undefined") return null
   try {
     const v = window.localStorage.getItem(LAST_AUTH_METHOD_KEY)
-    return v === "google" || v === "email" ? v : null
+    return v === "google" || v === "email" || v === "passkey" ? v : null
   } catch {
     return null
   }
@@ -116,6 +127,10 @@ export function FirebaseLoginScreen() {
   const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
   const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
 
+  // Only offer passkey sign-in where the browser can actually run the
+  // ceremony — resolved client-side after mount to avoid an SSR mismatch.
+  const [passkeySupported, setPasskeySupported] = useState(false)
+
   // Show notice when redirected from idle timeout
   useEffect(() => {
     const reason = getUrlParam("reason")
@@ -139,6 +154,11 @@ export function FirebaseLoginScreen() {
   // Surface the method this device signed in with last.
   useEffect(() => {
     setLastMethod(readLastAuthMethod())
+  }, [])
+
+  // Detect WebAuthn support client-side (the API is undefined during SSR).
+  useEffect(() => {
+    setPasskeySupported(isEnabled("passkeys") && browserSupportsWebAuthn())
   }, [])
 
   // Exchange setup token from marketing signup to pre-fill email
@@ -270,6 +290,26 @@ export function FirebaseLoginScreen() {
     }
   }
 
+  const handlePasskeyLogin = async () => {
+    setError("")
+    setLoading(true)
+    try {
+      const options = await beginAuthentication()
+      const assertion = await startAuthentication(options)
+      const { custom_token } = await finishAuthentication(assertion)
+      // The custom token carries the verified passkey factor (pablo_amr);
+      // signing in with it yields an MFA-satisfied session in one step.
+      const credential = await signInWithCustomToken(getFirebaseAuth(), custom_token)
+      await finishLogin(credential, "passkey")
+    } catch (err) {
+      // User dismissed the platform prompt — leave the form untouched.
+      if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
+      setError("Passkey sign-in failed. Try again, or use your email and password.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleAuthReset = async () => {
     await clearFirebaseAuthStorage()
     window.location.reload()
@@ -361,6 +401,21 @@ export function FirebaseLoginScreen() {
           <AuthGoogleButton onClick={handleGoogleLogin} />
           {!isSignUp && lastMethod === "google" && <LastUsedPill />}
         </div>
+
+        {!isSignUp && passkeySupported && (
+          <div className="relative">
+            <AuthOutlineButton
+              type="button"
+              onClick={handlePasskeyLogin}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Fingerprint className="h-5 w-5" />
+              Sign in with a passkey
+            </AuthOutlineButton>
+            {lastMethod === "passkey" && <LastUsedPill />}
+          </div>
+        )}
 
         <AuthDivider />
 
