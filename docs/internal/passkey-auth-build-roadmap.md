@@ -66,3 +66,26 @@ migration and no tenant-template regeneration.
   reintroduce an H2 first-factor-only bypass as a "support workflow."
 - **Per-environment config** — assert `require_mfa=True` / `is_development=False`
   on any PHI-serving deployment before cutover.
+
+## Hardware security keys (YubiKey etc.)
+
+The .2 ceremony options set no `authenticatorAttachment`, so roaming FIDO2
+authenticators (YubiKey 5 / Bio, etc.) already work alongside platform
+passkeys with **no backend change** — and, unlike synced passkeys, their
+keys are hardware-bound and never ride a cloud account, so they close the
+"a synced passkey is only as strong as the iCloud/Google account" gap.
+Two constraints fall out of the current options, to capture in rollout docs:
+
+- **`userVerification="required"`** — the key must do UV, so users need a
+  FIDO2 **PIN set on the key** (or a Bio model). A presence-only tap with no
+  PIN fails the ceremony.
+- **`residentKey="preferred"` + usernameless `authenticate/begin`** (no
+  `allowCredentials`) — the key must store a **discoverable/resident
+  credential** to be found at login. Modern YubiKeys do (finite slot count);
+  U2F-only keys can't and would register but be invisible to sign-in.
+
+We can *allow* but not *require/prove* hardware keys: `attestation="none"`
+means no provenance check. Enforcing "hardware keys only" (or distinguishing
+a YubiKey from a synced phone passkey) needs `attestation="direct"` + FIDO
+MDS — a scope bump, only if a compliance rule mandates attested hardware.
+

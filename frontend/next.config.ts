@@ -66,6 +66,19 @@ const nextConfig: NextConfig = {
             key: "Cross-Origin-Opener-Policy",
             value: "same-origin-allow-popups",
           },
+          // Clickjacking defense-in-depth for app pages (notably /login and
+          // the passkey ceremony). Same path exclusion as COOP: the Firebase
+          // auth helper loads in a hidden iframe, so DENY must not reach
+          // /__/ or /fbauth-proxy/ or the SDK breaks. frame-ancestors is the
+          // modern equivalent; both are sent for older-browser coverage.
+          {
+            key: "X-Frame-Options",
+            value: "DENY",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'none'",
+          },
         ],
       },
     ];

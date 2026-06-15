@@ -100,3 +100,16 @@ class PostgresPasskeyCredentialRepository(PasskeyCredentialRepository):
         )
         self._session.execute(stmt)
         self._session.flush()
+
+    def revoke(self, credential_id: str, *, user_id: str) -> bool:
+        stmt = select(PasskeyCredentialRow).where(
+            PasskeyCredentialRow.credential_id == credential_id,
+            PasskeyCredentialRow.user_id == user_id,
+            PasskeyCredentialRow.revoked_at.is_(None),
+        )
+        row = self._session.execute(stmt).scalar_one_or_none()
+        if row is None:
+            return False
+        row.revoked_at = utc_now()
+        self._session.flush()
+        return True

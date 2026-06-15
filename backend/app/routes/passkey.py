@@ -19,7 +19,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 
-from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
+from ..api_errors import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+)
 from ..auth.providers import VerifiedIdentity
 from ..auth.route_security import truly_public
 from ..auth.service import get_current_user_no_mfa
@@ -27,6 +32,7 @@ from ..models.passkey import (
     PasskeyAuthenticationBegin,
     PasskeyAuthenticationResult,
     PasskeyAuthenticationVerify,
+    PasskeyCredentialSummary,
     PasskeyRegistrationResult,
     PasskeyRegistrationVerify,
 )
@@ -92,6 +98,36 @@ def register_finish(
         )
     except PasskeyCeremonyError as err:
         raise BadRequestError("Passkey registration could not be verified.") from err
+
+
+@router.get("/credentials", response_model=list[PasskeyCredentialSummary])
+def list_credentials(
+    user: EnrollingUser,
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> list[PasskeyCredentialSummary]:
+    """List the current user's enrolled passkeys for the manage UI."""
+    return passkey_service.list_credentials(user.id)
+
+
+@router.delete("/credentials/{credential_id}", status_code=204)
+def revoke_credential(
+    credential_id: str,
+    request: Request,
+    user: EnrollingUser,
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+) -> None:
+    """Soft-revoke one of the current user's passkeys.
+
+    Requires an MFA-satisfied session: removing a factor is a security
+    downgrade, so a phished first-factor session must not be able to strip
+    passkeys off an account (and re-enroll a rogue one).
+    """
+    if not _session_mfa_satisfied(request):
+        raise ForbiddenError(
+            "Verify a passkey before removing one", code="MFA_REQUIRED"
+        )
+    if not passkey_service.revoke_credential(user_id=user.id, credential_id=credential_id):
+        raise NotFoundError("Passkey not found")
 
 
 @router.post("/authenticate/begin")

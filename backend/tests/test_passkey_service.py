@@ -181,3 +181,37 @@ class TestFinishAuthentication:
         # 0/0 is the legitimate platform-authenticator case (not a clone).
         assert captured["uid"] == "fb-uid"
         assert captured["claims"] == {"pablo_amr": ["webauthn"]}
+
+
+class TestManageCredentials:
+    def test_list_returns_active_summaries(self) -> None:
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0)
+
+        summaries = service.list_credentials(USER_ID)
+
+        assert [s.credential_id for s in summaries] == [CRED_ID]
+        # Summary carries metadata + label only — never key material.
+        assert not hasattr(summaries[0], "public_key")
+
+    def test_revoke_removes_credential_from_list(self) -> None:
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0)
+
+        assert service.revoke_credential(user_id=USER_ID, credential_id=CRED_ID) is True
+        assert service.list_credentials(USER_ID) == []
+        # Revoked credential can no longer satisfy an assertion (H12).
+        assert credentials.get_active(CRED_ID) is None
+
+    def test_revoke_is_scoped_to_owner(self) -> None:
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0)
+
+        other_user = "22222222-2222-4222-8222-222222222222"
+        assert service.revoke_credential(user_id=other_user, credential_id=CRED_ID) is False
+        # The owner's credential is untouched.
+        assert [s.credential_id for s in service.list_credentials(USER_ID)] == [CRED_ID]
+
+    def test_revoke_unknown_credential_returns_false(self) -> None:
+        service, _credentials, _challenges = _build_service()
+        assert service.revoke_credential(user_id=USER_ID, credential_id="nope") is False
