@@ -119,8 +119,10 @@ class FirebaseVerifier:
                     }
                 },
             )
-        firebase_claims = decoded.get("firebase", {})
-        mfa_satisfied = bool(firebase_claims.get("sign_in_second_factor"))
+        # A passkey session arrives via a Firebase custom token, which can't
+        # carry the reserved sign_in_second_factor claim, so the WebAuthn factor
+        # is read from our pablo_amr claim instead (see second_factor_satisfied).
+        mfa_satisfied = second_factor_satisfied(decoded)
         return VerifiedIdentity(
             provider=self.provider,
             subject_id=str(uid),
@@ -205,9 +207,20 @@ class OidcVerifier:
             provider=self.provider,
             subject_id=str(subject_id),
             email=str(claims.get("email", "")).lower(),
-            mfa_satisfied=_oidc_mfa_satisfied(claims),
+            mfa_satisfied=second_factor_satisfied(claims),
             claims=claims,
         )
+
+
+def passkey_factor_satisfied(claims: dict[str, Any]) -> bool:
+    """True if the token carries our server-minted WebAuthn factor claim.
+
+    ``pablo_amr`` is set by ``create_custom_token`` in the passkey mint
+    endpoint and only there, after a verified assertion. It appears at the
+    top level of the Firebase ID token and the client can never set it.
+    """
+    amr = claims.get("pablo_amr")
+    return isinstance(amr, list) and "webauthn" in amr
 
 
 def _oidc_mfa_satisfied(claims: dict[str, Any]) -> bool:
@@ -220,6 +233,24 @@ def _oidc_mfa_satisfied(claims: dict[str, Any]) -> bool:
     if isinstance(amr, list) and any(m in ("mfa", "otp") for m in amr):
         return True
     return claims.get("acr") == "mfa"
+
+
+def second_factor_satisfied(claims: dict[str, Any]) -> bool:
+    """Whether a token presents a second factor, by any supported method.
+
+    Recognises a Firebase-native second factor (TOTP/SMS), our WebAuthn
+    ``pablo_amr`` claim, or an OIDC AMR/ACR step-up. Used by both verifiers
+    and the native code-exchange gate so they share one definition.
+    """
+    # ``firebase.sign_in_second_factor`` is a Firebase-reserved claim, set to
+    # the factor type ("phone"/"totp") only on an MFA sign-in and absent
+    # otherwise; the client cannot set it, so its presence is the test.
+    firebase_claims = claims.get("firebase", {})
+    if firebase_claims.get("sign_in_second_factor"):
+        return True
+    if passkey_factor_satisfied(claims):
+        return True
+    return _oidc_mfa_satisfied(claims)
 
 
 def _extract_email_claim(decoded: dict[str, Any]) -> str:
