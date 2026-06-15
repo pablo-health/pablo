@@ -302,26 +302,7 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Authentication Mode
-    auth_mode: Literal["standard", "iap"] = Field(
-        default="standard",
-        description=(
-            "Authentication mode. "
-            "'standard' = Firebase Auth with optional MFA. "
-            "'iap' = Google Cloud IAP at load balancer; "
-            "REQUIRE_MFA can be false since IAP handles access control."
-        ),
-    )
-    iap_audience: str = Field(
-        default="",
-        description=(
-            "Expected audience claim for IAP JWT verification. "
-            "Format: /projects/{number}/global/backendServices/{id}. "
-            "Required when auth_mode=iap."
-        ),
-    )
-
-    # Pluggable OIDC auth backend (additive — independent of auth_mode).
+    # Pluggable OIDC auth backend (additive).
     # When oidc_issuer is non-empty the backend will additionally accept
     # ID tokens from this issuer, dispatched on the token's `iss` claim and
     # resolved through the same user_identities mapping as Firebase. All
@@ -346,6 +327,38 @@ class Settings(BaseSettings):
             "openid-connect/certs. Required when oidc_issuer is set."
         ),
     )
+
+    # WebAuthn / passkey authentication (PABLO-egm).
+    # The relying-party id is the registrable domain a passkey is scoped to;
+    # origins are the full https:// values the assertion's clientDataJSON must
+    # match. Defaults target local dev; deployments set them via env. The RP id
+    # must be a registrable suffix of every configured origin.
+    webauthn_rp_id: str = Field(
+        default="localhost",
+        description=(
+            "WebAuthn Relying Party ID — the registrable domain passkeys are "
+            "scoped to (e.g. pablo.health). Must be a registrable suffix of "
+            "every origin in WEBAUTHN_ORIGINS."
+        ),
+    )
+    webauthn_rp_name: str = Field(
+        default="Pablo",
+        description="Relying Party display name shown in the OS passkey prompt.",
+    )
+    webauthn_origins_raw: str = Field(
+        default="http://localhost:3000",
+        alias="WEBAUTHN_ORIGINS",
+        description=(
+            "Comma-separated allowed origins (full scheme+host[:port] values) a "
+            "passkey ceremony may originate from, e.g. "
+            "https://app.pablo.health,https://dev.pablo.health."
+        ),
+    )
+
+    @property
+    def webauthn_origins(self) -> list[str]:
+        """Parse comma-separated WEBAUTHN_ORIGINS into a list of origins."""
+        return [o.strip() for o in self.webauthn_origins_raw.split(",") if o.strip()]
 
     @model_validator(mode="after")
     def _validate_oidc_config(self) -> "Settings":

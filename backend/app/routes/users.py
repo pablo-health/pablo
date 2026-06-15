@@ -160,6 +160,8 @@ def get_user_status(
         "legal_name": user.legal_name,
         "license_number": profile.license_number if profile else None,
         "license_state": profile.license_state if profile else None,
+        "dea_number": profile.dea_number if profile else None,
+        "npi_number": profile.npi_number if profile else None,
         "provider_type": user.provider_type,
         "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
         "security_guide_version": user.security_guide_version,
@@ -248,9 +250,7 @@ def record_mfa_enrollment(
 
     user.mfa_enrolled_at = utc_now()
     user_repo.update(user)
-    audit.log_onboarding_milestone(
-        AuditAction.ONBOARDING_MFA_ENROLLED, user, http_request
-    )
+    audit.log_onboarding_milestone(AuditAction.ONBOARDING_MFA_ENROLLED, user, http_request)
     return {"mfa_enrolled_at": utc_now_iso()}
 
 
@@ -381,7 +381,9 @@ def update_current_user_profile(
         action = state_to_action.get(request.onboarding_state)
         if action is not None and prev_state != request.onboarding_state:
             audit.log_onboarding_milestone(
-                action, user, http_request,
+                action,
+                user,
+                http_request,
                 changes={"previous": prev_state, "new": request.onboarding_state},
             )
 
@@ -410,6 +412,8 @@ def _upsert_clinician_profile(
     credentials: str | None = None,
     license_number: str | None = None,
     license_state: str | None = None,
+    dea_number: str | None = None,
+    npi_number: str | None = None,
 ) -> None:
     """Upsert profile metadata on the caller's ClinicianProfile row.
 
@@ -452,6 +456,12 @@ def _upsert_clinician_profile(
             if license_state is not None
             else (existing.license_state if existing else None)
         ),
+        dea_number=(
+            dea_number if dea_number is not None else (existing.dea_number if existing else None)
+        ),
+        npi_number=(
+            npi_number if npi_number is not None else (existing.npi_number if existing else None)
+        ),
     )
     # The RLS app.current_user_id GUC is armed centrally in _resolve_user
     # for every authenticated request (pre-MFA included), so the
@@ -493,12 +503,19 @@ def update_professional_info(
         user.legal_name = request.legal_name
         user_repo.update(user)
 
-    if request.license_number is not None or request.license_state is not None:
+    if (
+        request.license_number is not None
+        or request.license_state is not None
+        or request.dea_number is not None
+        or request.npi_number is not None
+    ):
         _upsert_clinician_profile(
             profile_repo,
             user=user,
             license_number=request.license_number,
             license_state=request.license_state,
+            dea_number=request.dea_number,
+            npi_number=request.npi_number,
         )
 
     if request.business_address is not None:
@@ -522,6 +539,8 @@ def update_professional_info(
         "legal_name": user.legal_name,
         "license_number": request.license_number,
         "license_state": request.license_state,
+        "dea_number": request.dea_number,
+        "npi_number": request.npi_number,
         "business_address": request.business_address,
     }
 

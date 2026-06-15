@@ -3,6 +3,7 @@
 """Therapy session repository implementations."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -71,6 +72,26 @@ class TherapySessionRepository(ABC):
         self, user_id: str, status: str, *, limit: int
     ) -> list[TherapySession]:
         """Most-recent accessible sessions (session_date desc) in one status."""
+        pass
+
+    @abstractmethod
+    def get_next_session_date(
+        self,
+        patient_id: str,
+        user_id: str,
+        *,
+        after: datetime,
+        exclude_statuses: Collection[str],
+    ) -> datetime | None:
+        """Earliest upcoming session datetime for a patient, or ``None``.
+
+        Returns ``MIN(COALESCE(scheduled_at, session_date))`` over the
+        patient's accessible, non-deleted sessions whose status is not in
+        ``exclude_statuses`` and whose effective date is strictly after
+        ``after``. Computed in the store so recomputing a patient's next
+        appointment on every status change doesn't page their entire
+        session history into the app just to take one MIN.
+        """
         pass
 
     @abstractmethod
@@ -191,6 +212,25 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         ]
         sessions.sort(key=lambda s: s.session_date, reverse=True)
         return sessions[:limit]
+
+    def get_next_session_date(
+        self,
+        patient_id: str,
+        user_id: str,
+        *,
+        after: datetime,
+        exclude_statuses: Collection[str],
+    ) -> datetime | None:
+        if not self._can_access(patient_id, user_id):
+            return None
+        candidates = [
+            effective
+            for s in self._sessions.values()
+            if s.patient_id == patient_id and s.status not in exclude_statuses
+            for effective in [s.scheduled_at or s.session_date]
+            if effective > after
+        ]
+        return min(candidates) if candidates else None
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
         """Get the next session number for a patient."""

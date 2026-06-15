@@ -51,6 +51,7 @@ from .routes import (
     launch,
     note_types,
     notes,
+    passkey,
     patient_documents,
     patients,
     scheduling,
@@ -156,6 +157,7 @@ app.add_middleware(RequestContextMiddleware)
 
 # Core routes (always included)
 app.include_router(auth.router)
+app.include_router(passkey.router)
 app.include_router(ext_auth.router)
 app.include_router(admin.router)
 app.include_router(admin_pentest.router)

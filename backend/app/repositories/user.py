@@ -32,6 +32,17 @@ class UserRepository(ABC):
         pass
 
     @abstractmethod
+    def get_preferences_many(self, user_ids: list[str]) -> dict[str, UserPreferences]:
+        """Bulk variant of :meth:`get_preferences`.
+
+        Returns a dict keyed by every id in ``user_ids``; ids with no saved
+        row map to default ``UserPreferences()``. One query instead of one
+        per user — the sync-scheduler dispatch loop fans out across every
+        user with a connected calendar.
+        """
+        pass
+
+    @abstractmethod
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
         """Save user preferences (full replace)."""
         pass
@@ -64,6 +75,9 @@ class InMemoryUserRepository(UserRepository):
 
     def get_preferences(self, user_id: str) -> UserPreferences:
         return self._preferences.get(user_id, UserPreferences())
+
+    def get_preferences_many(self, user_ids: list[str]) -> dict[str, UserPreferences]:
+        return {uid: self._preferences.get(uid, UserPreferences()) for uid in user_ids}
 
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
         self._preferences[user_id] = prefs

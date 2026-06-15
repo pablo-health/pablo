@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
 from ..auth.firebase_init import initialize_firebase_app
+from ..auth.providers import second_factor_satisfied
 from ..auth.route_security import truly_public
 from ..models.companion_device import CompanionEnrollment
 from ..rate_limit import require_rate_limit
@@ -107,12 +108,16 @@ def create_native_code(
         logger.debug("Firebase JWT verify error detail: %s", err)
         raise UnauthorizedError("Invalid or expired id_token.") from err
 
-    # Enforce MFA: reject tokens without a completed second factor
+    # This path issues the native auth code without going through require_mfa,
+    # so it checks the second factor here directly, using the same
+    # second_factor_satisfied() the verifier uses.
     settings = get_settings()
-    if settings.require_mfa and not settings.is_development and settings.auth_mode != "iap":
-        firebase_claims = decoded_token.get("firebase", {})
-        if not firebase_claims.get("sign_in_second_factor"):
-            raise ForbiddenError("Multi-factor authentication is required", code="MFA_REQUIRED")
+    if (
+        settings.require_mfa
+        and not settings.is_development
+        and not second_factor_satisfied(decoded_token)
+    ):
+        raise ForbiddenError("Multi-factor authentication is required", code="MFA_REQUIRED")
 
     code = create_auth_code(
         id_token=request.id_token,

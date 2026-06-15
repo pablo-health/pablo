@@ -275,7 +275,6 @@ class TestRequireMfa:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.is_prod_project = False
             mock_settings.return_value.require_mfa = True
-            mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             result = require_mfa(MagicMock(), mock_credentials)
 
@@ -296,7 +295,6 @@ class TestRequireMfa:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.is_prod_project = True
             mock_settings.return_value.require_mfa = True
-            mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             with pytest.raises(HTTPException) as exc_info:
                 require_mfa(MagicMock(), mock_credentials)
@@ -318,7 +316,6 @@ class TestRequireMfa:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.is_prod_project = False
             mock_settings.return_value.require_mfa = True
-            mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             with pytest.raises(HTTPException) as exc_info:
                 require_mfa(MagicMock(), mock_credentials)
@@ -340,7 +337,6 @@ class TestRequireMfa:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.is_prod_project = False
             mock_settings.return_value.require_mfa = True
-            mock_settings.return_value.auth_mode = "standard"
             mock_settings.return_value.e2e_test_emails = {"test@pablo.health"}
             with pytest.raises(HTTPException) as exc_info:
                 require_mfa(MagicMock(), mock_credentials)
@@ -877,8 +873,7 @@ class TestGetTenantContext:
                 guc_calls = [
                     ex
                     for ex in mock_session.execute.call_args_list
-                    if "set_config" in str(ex.args[0])
-                    and "app.current_user_id" in str(ex.args[0])
+                    if "set_config" in str(ex.args[0]) and "app.current_user_id" in str(ex.args[0])
                 ]
                 assert guc_calls, "get_tenant_context did not arm the RLS GUC"
                 assert guc_calls[0].args[1] == {"uid": "user123"}

@@ -72,9 +72,14 @@ class ExportService:
 
         # Get all sessions for this patient
         sessions = self.session_repo.list_by_patient(patient_id, user_id)
-        notes_by_session = {
-            s.id: self.notes_repo.get_by_session_id(s.id, user_id) for s in sessions
-        }
+        # Load every note for the patient in one query and index by session,
+        # rather than a per-session round-trip (a 200-session export was 201
+        # queries). list_by_patient is newest-first, so the first note seen
+        # for a session is the one to keep.
+        notes_by_session: dict[str, Note | None] = {}
+        for note in self.notes_repo.list_by_patient(patient_id, user_id):
+            if note.session_id is not None:
+                notes_by_session.setdefault(note.session_id, note)
 
         # Convert to response format
         patient_response = PatientResponse.from_patient(patient)
