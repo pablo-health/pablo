@@ -554,6 +554,46 @@ class TestProfessionalInfo:
         # Unspecified field preserved — PATCH, not PUT.
         assert stored.title == "Dr."
 
+    def test_dea_and_npi_persist_on_existing_profile(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                license_number="PSY9001",
+            )
+        )
+        response = client.patch(
+            "/api/users/me/professional-info",
+            json={"dea_number": "BT1234563", "npi_number": "1234567890"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["dea_number"] == "BT1234563"
+        assert body["npi_number"] == "1234567890"
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.dea_number == "BT1234563"
+        assert stored.npi_number == "1234567890"
+        # Unspecified field preserved — PATCH, not PUT.
+        assert stored.license_number == "PSY9001"
+
+    def test_npi_must_be_ten_digits(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        response = client.patch(
+            "/api/users/me/professional-info",
+            json={"npi_number": "12345"},
+        )
+        assert response.status_code == 422
+
     def test_business_address_persists_on_practice(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:

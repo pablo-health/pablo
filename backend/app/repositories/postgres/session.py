@@ -24,6 +24,7 @@ from ...utcnow import utc_now
 from ..session import TherapySessionRepository, _compute_day_boundaries
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
     from datetime import datetime
 
     from sqlalchemy.orm import Session
@@ -216,6 +217,35 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             .all()
         )
         return [_row_to_session(r) for r in rows]
+
+    def get_next_session_date(
+        self,
+        patient_id: str,
+        user_id: str,
+        *,
+        after: datetime,
+        exclude_statuses: Collection[str],
+    ) -> datetime | None:
+        effective_date = func.coalesce(
+            TherapySessionRow.scheduled_at, TherapySessionRow.session_date
+        )
+        query = (
+            self._session.query(func.min(effective_date))
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            )
+            .filter(
+                TherapySessionRow.patient_id == patient_id,
+                TherapySessionRow.deleted_at.is_(None),
+                effective_date > after,
+                *_grant_filters(user_id),
+            )
+        )
+        if exclude_statuses:
+            query = query.filter(TherapySessionRow.status.notin_(list(exclude_statuses)))
+        next_date: datetime | None = query.scalar()
+        return next_date
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
         # Numbering is monotonic — count soft-deleted sessions too so a

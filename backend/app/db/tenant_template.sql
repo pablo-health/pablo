@@ -167,7 +167,9 @@ CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
     role character varying(20) DEFAULT 'clinician'::character varying NOT NULL,
     joined_at timestamp with time zone NOT NULL,
     license_number character varying(100),
-    license_state character varying(2)
+    license_state character varying(2),
+    dea_number character varying(50),
+    npi_number character varying(20)
 );
 
 

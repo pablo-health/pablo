@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import String, Uuid, bindparam, or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, text, update
 
 from ...db.models import AppointmentRow, PatientClinicianRow
 from ...scheduling_engine.models.appointment import Appointment
@@ -15,6 +15,7 @@ from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
 
 if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
     from sqlalchemy.orm import Session
 
 
@@ -188,6 +189,20 @@ class PostgresAppointmentRepository(AppointmentRepository):
         _appointment_to_row(appointment, row)
         self._session.flush()
         return appointment
+
+    def bulk_set_patient(self, appointment_ids: list[str], patient_id: str) -> int:
+        if not appointment_ids:
+            return 0
+        result = cast(
+            "CursorResult[Any]",
+            self._session.execute(
+                update(AppointmentRow)
+                .where(AppointmentRow.id.in_(appointment_ids))
+                .values(patient_id=patient_id, updated_at=utc_now())
+            ),
+        )
+        self._session.flush()
+        return result.rowcount or 0
 
     def delete(self, appointment_id: str, user_id: str) -> bool:
         """Delete an appointment.
