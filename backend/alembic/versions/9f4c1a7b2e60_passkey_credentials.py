@@ -19,7 +19,7 @@ No PHI: authenticator metadata, a user-chosen label, and ceremony hashes
 only. Shared ``platform`` schema (no RLS), same scope as ``companion_devices``.
 
 Revision ID: 9f4c1a7b2e60
-Revises: a7e3f1b9c204
+Revises: d4b7e9a1c305
 Create Date: 2026-06-15
 """
 
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "9f4c1a7b2e60"
-down_revision: str | Sequence[str] | None = "a7e3f1b9c204"
+down_revision: str | Sequence[str] | None = "d4b7e9a1c305"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
