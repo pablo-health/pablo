@@ -34,6 +34,8 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             joined_at=row.joined_at,
             license_number=row.license_number,
             license_state=row.license_state,
+            dea_number=row.dea_number,
+            npi_number=row.npi_number,
         )
 
     def create(self, profile: ClinicianProfile) -> ClinicianProfile:
@@ -46,6 +48,8 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             joined_at=profile.joined_at or utc_now(),
             license_number=profile.license_number,
             license_state=profile.license_state,
+            dea_number=profile.dea_number,
+            npi_number=profile.npi_number,
         )
         self._session.add(row)
         self._session.flush()
@@ -62,5 +66,9 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             row.license_number = profile.license_number
         if profile.license_state is not None:
             row.license_state = profile.license_state
+        if profile.dea_number is not None:
+            row.dea_number = profile.dea_number
+        if profile.npi_number is not None:
+            row.npi_number = profile.npi_number
         self._session.flush()
         return profile

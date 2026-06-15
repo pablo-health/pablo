@@ -81,6 +81,11 @@ class UpdateProfessionalInfoRequest(BaseModel):
     license_number: str | None = Field(None, min_length=1, max_length=100)
     license_state: str | None = Field(None, min_length=2, max_length=2)
     business_address: str | None = Field(None, min_length=1, max_length=500)
+    # Prescriber credential identifiers — optional, only relevant to
+    # provider types that prescribe. Stored once so downstream surfaces
+    # can reuse them instead of re-typing per encounter.
+    dea_number: str | None = Field(None, min_length=1, max_length=50)
+    npi_number: str | None = Field(None, pattern=r"^\d{10}$")
 
 
 class BAAStatusResponse(BaseModel):
