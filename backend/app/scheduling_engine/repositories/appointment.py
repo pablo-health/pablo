@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ...utcnow import utc_now
+
 if TYPE_CHECKING:
     from ..models.appointment import Appointment
 
@@ -92,6 +94,15 @@ class AppointmentRepository(ABC):
     @abstractmethod
     def update(self, appointment: Appointment) -> Appointment:
         """Update an existing appointment."""
+
+    @abstractmethod
+    def bulk_set_patient(self, appointment_ids: list[str], patient_id: str) -> int:
+        """Link many appointments to a patient in one statement.
+
+        Sets ``patient_id`` (and refreshes ``updated_at``) on every
+        appointment in ``appointment_ids``; returns the number updated.
+        Replaces the per-row update loop in iCal client resolution.
+        """
 
     @abstractmethod
     def delete(self, appointment_id: str, user_id: str) -> bool:
@@ -215,6 +226,17 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     def update(self, appointment: Appointment) -> Appointment:
         self._appointments[appointment.id] = appointment
         return appointment
+
+    def bulk_set_patient(self, appointment_ids: list[str], patient_id: str) -> int:
+        now = utc_now()
+        count = 0
+        for appt_id in appointment_ids:
+            appt = self._appointments.get(appt_id)
+            if appt is not None:
+                appt.patient_id = patient_id
+                appt.updated_at = now
+                count += 1
+        return count
 
     def delete(self, appointment_id: str, user_id: str) -> bool:
         appt = self.get(appointment_id, user_id)

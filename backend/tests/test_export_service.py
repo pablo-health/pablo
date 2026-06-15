@@ -121,9 +121,13 @@ def mock_session_repo(mock_sessions):
 
 @pytest.fixture
 def mock_notes_repo(mock_notes):
-    """Create a mock notes repository keyed by session_id."""
+    """Create a mock notes repository.
+
+    Export now loads the patient's notes in one ``list_by_patient`` call
+    and indexes them by session, rather than a per-session round-trip.
+    """
     repo = Mock()
-    repo.get_by_session_id.side_effect = mock_notes.get
+    repo.list_by_patient.return_value = list(mock_notes.values())
     return repo
 
 
