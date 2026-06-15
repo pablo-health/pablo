@@ -104,4 +104,13 @@ uvicorn.run(
     workers=1,
     log_level="info",
     access_log=False,
+    # Keep the JSON logging that app.main installs at import time. Without
+    # this, uvicorn's default dictConfig reinstalls its own plaintext
+    # handlers on the uvicorn.error logger, so unhandled-exception
+    # tracebacks print as multi-line plaintext — and the Cloud Run logging
+    # agent splits each line into a separate entry, fragmenting one stack
+    # across a dozen log records. log_config=None leaves the root JSON
+    # formatter in place; uvicorn's loggers propagate to it and each
+    # traceback lands as a single structured entry (full stack in exc_info).
+    log_config=None,
 )
