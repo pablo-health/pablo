@@ -356,9 +356,6 @@ def require_mfa(
     if settings.is_development:
         logger.debug("MFA check skipped (development mode)")
         return decoded_token
-    if settings.auth_mode == "iap":
-        logger.debug("MFA check skipped (IAP mode — access control at load balancer)")
-        return decoded_token
 
     # E2E test accounts bypass MFA in non-production environments only
     if settings.e2e_test_emails and not settings.is_prod_project:
