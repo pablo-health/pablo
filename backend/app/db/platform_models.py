@@ -15,11 +15,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -374,3 +376,89 @@ class DiagnosticDefinitionRow(PlatformBase):
     suggested_icd10: Mapped[str | None] = mapped_column(String(10))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PasskeyCredentialRow(PlatformBase):
+    """A user's registered WebAuthn passkey — a phishing-resistant possession factor.
+
+    One row per authenticator a user enrolls (phone/laptop platform
+    authenticator, or a roaming hardware key) — a user may hold several.
+    ``credential_id`` is the base64url credential id returned by the
+    authenticator and is the natural lookup key on assertion, so it is the
+    primary key (mirrors ``companion_devices.install_id``).
+
+    Distinct from ``companion_devices`` by design, despite both storing a
+    per-user device public key: a passkey is the *login factor* (verified
+    during the WebAuthn ceremony), whereas a companion device key is a
+    *post-login* binding for an already-authenticated desktop client. They
+    are not interchangeable and must not share a table.
+
+    ``public_key`` is the COSE-encoded public key bytes from registration
+    verification (the assertion-verify path consumes COSE directly), which is
+    why this stores raw bytes rather than the JWK-as-JSONB shape
+    ``companion_devices`` uses. ``sign_count`` is the authenticator's
+    signature counter for clone detection (platform authenticators may
+    legitimately stay at 0). ``backup_eligible`` / ``backup_state`` are the
+    WebAuthn BE/BS flags — whether the credential is a syncable multi-device
+    passkey and whether it is currently synced; a device-bound credential
+    that is the user's only factor is a recoverability signal for the UX.
+
+    No PHI: authenticator metadata plus a user-chosen label only. Lives in
+    the shared ``platform`` schema (no RLS), the same scope as
+    ``companion_devices``. See PABLO-4jy.
+    """
+
+    __tablename__ = "passkey_credentials"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    credential_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # The FK to platform.users(id) is declared in the Alembic migration (raw
+    # SQL), not here — same reason as LaunchIntentRow above:
+    # ``PlatformBase.metadata.create_all`` runs before migrations at env
+    # bootstrap, and an ORM-level ForeignKey would emit the FK while users.id
+    # may be transiently varchar, tripping a uuid<->varchar mismatch.
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sign_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    transports: Mapped[list | None] = mapped_column(JSONB)
+    aaguid: Mapped[str | None] = mapped_column(String(36))
+    backup_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    backup_state: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    device_label: Mapped[str | None] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PasskeyChallengeRow(PlatformBase):
+    """A single-use WebAuthn ceremony challenge (registration or authentication).
+
+    Created when the server issues ceremony options; consumed when the client
+    returns the signed response. Only the SHA-256 hash of the challenge is
+    stored (``challenge_hash``, the lookup key) — never the raw challenge,
+    which leaves the server exactly once in the options response. Modeled on
+    ``LaunchIntentRow``'s single-use store.
+
+    ``consumed_at`` non-null marks the challenge spent (single-use).
+    ``expires_at`` is the authoritative short expiry, re-checked server-side
+    on finish; a periodic sweep / TTL backstop reclaims rows. ``user_id`` is
+    nullable: a usernameless (resident-key) authentication ceremony has no
+    bound user at begin time.
+
+    No PHI. Shares the ``platform`` schema (no RLS) with the other auth
+    tables. See PABLO-4jy.
+    """
+
+    __tablename__ = "passkey_challenges"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    challenge_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ceremony: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Bare user_id (FK in the migration, see PasskeyCredentialRow). Nullable for
+    # usernameless authentication ceremonies.
+    user_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
