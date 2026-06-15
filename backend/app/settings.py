@@ -302,26 +302,7 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Authentication Mode
-    auth_mode: Literal["standard", "iap"] = Field(
-        default="standard",
-        description=(
-            "Authentication mode. "
-            "'standard' = Firebase Auth with optional MFA. "
-            "'iap' = Google Cloud IAP at load balancer; "
-            "REQUIRE_MFA can be false since IAP handles access control."
-        ),
-    )
-    iap_audience: str = Field(
-        default="",
-        description=(
-            "Expected audience claim for IAP JWT verification. "
-            "Format: /projects/{number}/global/backendServices/{id}. "
-            "Required when auth_mode=iap."
-        ),
-    )
-
-    # Pluggable OIDC auth backend (additive — independent of auth_mode).
+    # Pluggable OIDC auth backend (additive).
     # When oidc_issuer is non-empty the backend will additionally accept
     # ID tokens from this issuer, dispatched on the token's `iss` claim and
     # resolved through the same user_identities mapping as Firebase. All

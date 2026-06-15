@@ -109,7 +109,7 @@ def create_native_code(
 
     # Enforce MFA: reject tokens without a completed second factor
     settings = get_settings()
-    if settings.require_mfa and not settings.is_development and settings.auth_mode != "iap":
+    if settings.require_mfa and not settings.is_development:
         firebase_claims = decoded_token.get("firebase", {})
         if not firebase_claims.get("sign_in_second_factor"):
             raise ForbiddenError("Multi-factor authentication is required", code="MFA_REQUIRED")
