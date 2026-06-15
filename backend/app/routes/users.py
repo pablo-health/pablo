@@ -157,6 +157,7 @@ def get_user_status(
         "email": user.email,
         "title": profile.title if profile else None,
         "credentials": profile.credentials if profile else None,
+        "credential_titles": profile.credential_titles if profile else None,
         "legal_name": user.legal_name,
         "license_number": profile.license_number if profile else None,
         "license_state": profile.license_state if profile else None,
@@ -387,18 +388,27 @@ def update_current_user_profile(
                 changes={"previous": prev_state, "new": request.onboarding_state},
             )
 
-    if request.title is not None or request.credentials is not None:
+    if (
+        request.title is not None
+        or request.credentials is not None
+        or request.credential_titles is not None
+    ):
         _upsert_clinician_profile(
             profile_repo,
             user=user,
             title=request.title,
             credentials=request.credentials,
+            credential_titles=request.credential_titles,
         )
         # Mirror onto the response so the client sees the persisted
         # state without a follow-up GET.
         if request.title is not None:
             user.title = request.title
-        if request.credentials is not None:
+        if request.credential_titles is not None:
+            user.credential_titles = request.credential_titles
+            # Keep the display string in sync with the structured titles.
+            user.credentials = ", ".join(request.credential_titles)
+        elif request.credentials is not None:
             user.credentials = request.credentials
 
     return user
@@ -410,6 +420,7 @@ def _upsert_clinician_profile(
     user: User,
     title: str | None = None,
     credentials: str | None = None,
+    credential_titles: list[str] | None = None,
     license_number: str | None = None,
     license_state: str | None = None,
     dea_number: str | None = None,
@@ -423,7 +434,15 @@ def _upsert_clinician_profile(
     Practice_id is resolved from the caller's email; the row's existing
     practice_id wins if a profile already exists, so this is a no-op for
     unmapped emails that have an existing row.
+
+    ``credential_titles`` is the structured source of truth for the
+    credential set. When supplied, the ``credentials`` display string is
+    derived from it (joined with ", ") so signature lines and any reader
+    of the legacy field stay in sync — an explicit ``credentials`` value
+    is only used when no titles are given.
     """
+    if credential_titles is not None:
+        credentials = ", ".join(credential_titles)
     existing = profile_repo.get(user.id)
     practice_id = existing.practice_id if existing else _resolve_practice_id_for(user)
     if practice_id is None:
@@ -443,6 +462,11 @@ def _upsert_clinician_profile(
         title=title if title is not None else (existing.title if existing else None),
         credentials=(
             credentials if credentials is not None else (existing.credentials if existing else None)
+        ),
+        credential_titles=(
+            credential_titles
+            if credential_titles is not None
+            else (existing.credential_titles if existing else None)
         ),
         role=existing.role if existing else "clinician",
         joined_at=existing.joined_at if existing else None,

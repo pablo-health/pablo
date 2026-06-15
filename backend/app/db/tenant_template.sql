@@ -169,7 +169,8 @@ CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
     license_number character varying(100),
     license_state character varying(2),
     dea_number character varying(50),
-    npi_number character varying(20)
+    npi_number character varying(20),
+    credential_titles jsonb
 );
 
 
