@@ -197,16 +197,17 @@ class ICalSyncService:
         )
         self._mapping_repo.save(mapping)
 
-        # Update existing appointments with this identifier
+        # Update existing appointments with this identifier — collect the
+        # matches and link them in a single UPDATE rather than one per row.
         appointments = self._appt_repo.list_by_ical_source(user_id, ehr_system)
-        for appt in appointments:
-            if (
-                appt.patient_id == ""
-                and self._get_client_identifier(ehr_system, appt.notes or "") == client_identifier
-            ):
-                appt.patient_id = patient_id
-                appt.updated_at = _now()
-                self._appt_repo.update(appt)
+        matching_ids = [
+            appt.id
+            for appt in appointments
+            if appt.patient_id == ""
+            and self._get_client_identifier(ehr_system, appt.notes or "") == client_identifier
+        ]
+        if matching_ids:
+            self._appt_repo.bulk_set_patient(matching_ids, patient_id)
 
     def import_clients(
         self,

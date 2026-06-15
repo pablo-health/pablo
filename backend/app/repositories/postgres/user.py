@@ -52,6 +52,17 @@ class PostgresUserRepository(UserRepository):
             return UserPreferences()
         return UserPreferences(**row.preferences)
 
+    def get_preferences_many(self, user_ids: list[str]) -> dict[str, UserPreferences]:
+        if not user_ids:
+            return {}
+        rows = (
+            self._session.query(PlatformUserPreferencesRow)
+            .filter(PlatformUserPreferencesRow.user_id.in_(user_ids))
+            .all()
+        )
+        saved = {row.user_id: UserPreferences(**row.preferences) for row in rows}
+        return {uid: saved.get(uid, UserPreferences()) for uid in user_ids}
+
     def save_preferences(self, user_id: str, prefs: UserPreferences) -> UserPreferences:
         row = self._session.get(PlatformUserPreferencesRow, user_id)
         if row is None:

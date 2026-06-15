@@ -198,14 +198,12 @@ class SessionService:
 
     def _update_next_session_date(self, patient: Patient, user_id: str) -> None:
         """Recompute and persist next_session_date from scheduled sessions."""
-        sessions = self.session_repo.list_by_patient(patient.id, user_id)
-        now = datetime.now(UTC)
-        future = [
-            s.scheduled_at or s.session_date
-            for s in sessions
-            if (s.scheduled_at or s.session_date) > now and s.status not in TERMINAL_STATUSES
-        ]
-        patient.next_session_date = min(future) if future else None
+        patient.next_session_date = self.session_repo.get_next_session_date(
+            patient.id,
+            user_id,
+            after=datetime.now(UTC),
+            exclude_statuses=TERMINAL_STATUSES,
+        )
         self.patient_repo.update(patient)
 
     # --- Generation pipeline ---

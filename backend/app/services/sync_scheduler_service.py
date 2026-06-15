@@ -123,6 +123,9 @@ class SyncSchedulerService:
             state.max_error_count = max(state.max_error_count, tok.consecutive_error_count)
 
         max_failures = settings.calendar_sync_max_consecutive_failures
+        # One query for every dispatched user's preferences instead of one
+        # per user inside the loop.
+        prefs_by_user = self._user_repo.get_preferences_many(list(user_sources))
 
         for user_id, state in user_sources.items():
             # Circuit breaker: skip users whose sources all exceed max failures
@@ -131,7 +134,7 @@ class SyncSchedulerService:
                 continue
 
             # Working hours filter
-            prefs = self._user_repo.get_preferences(user_id)
+            prefs = prefs_by_user[user_id]
             if not _is_within_working_hours(prefs):
                 summary.skipped_outside_hours += 1
                 continue
