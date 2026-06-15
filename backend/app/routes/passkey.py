@@ -2,20 +2,14 @@
 
 """WebAuthn passkey ceremony endpoints (epic PABLO-egm, slice PABLO-egm.1).
 
-Four begin/finish halves:
+- ``register/begin|finish`` enroll an authenticator on the current user
+  (posture ``get_current_user_no_mfa``). The first passkey may be enrolled
+  from a first-factor session; a later one needs an MFA-satisfied session.
+  Enrolling does not grant PHI access.
+- ``authenticate/begin|finish`` assert a passkey (posture ``truly_public`` +
+  rate limit). ``finish`` mints the custom token that carries ``pablo_amr``.
 
-- ``register/begin|finish`` — enrol an authenticator on an existing
-  identity. Posture: ``get_current_user_no_mfa`` (pre-MFA onboarding);
-  the first passkey may be enrolled from a first-factor session, a
-  subsequent one needs an already-MFA-satisfied session (step-up).
-  Enrolling grants NO PHI access — the user still has to assert.
-- ``authenticate/begin|finish`` — assert a passkey. Posture:
-  ``truly_public`` + rate limit; ``finish`` is a pre-auth, token-issuing
-  surface, so it is the most security-sensitive route here. The custom
-  token it mints is the ONLY place ``pablo_amr`` is stamped.
-
-No PHI: authenticator metadata and a user label only — these routes are
-classified non-PHI in ``check_route_audit.py``.
+No PHI — authenticator metadata and a user label only.
 """
 
 from __future__ import annotations
@@ -50,17 +44,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth/passkey", tags=["auth", "passkey"])
 
-# Module-level alias so ``User`` is referenced at runtime (FastAPI evaluates
-# the annotation; the alias also keeps the import out of a typing-only use).
+# Module-level alias so FastAPI resolves ``User`` at runtime.
 EnrollingUser = Annotated[User, Depends(get_current_user_no_mfa)]
 
 
 def _session_mfa_satisfied(request: Request) -> bool:
-    """Whether the current first-factor session already cleared MFA.
+    """Whether the current session already cleared MFA.
 
     ``get_current_user_no_mfa`` stashes the VerifiedIdentity on
-    ``request.state``; its ``mfa_satisfied`` already reflects passkey
-    (``pablo_amr``) and legacy TOTP via the single provider seam.
+    ``request.state``; its ``mfa_satisfied`` covers passkey and TOTP.
     """
     identity = getattr(request.state, "verified_identity", None)
     return isinstance(identity, VerifiedIdentity) and identity.mfa_satisfied
@@ -81,7 +73,7 @@ def register_begin(
         )
     except PasskeyEnrollmentError as err:
         raise ForbiddenError(
-            "Verify an existing passkey before enrolling another", code="MFA_REQUIRED"
+            "Verify an existing passkey before adding another", code="MFA_REQUIRED"
         ) from err
 
 
@@ -122,9 +114,8 @@ def authenticate_finish(
 ) -> PasskeyAuthenticationResult:
     """Verify the assertion and mint the passkey-factor custom token.
 
-    Pre-auth, token-issuing surface. ``pablo_amr: ["webauthn"]`` is
-    stamped on the minted token ONLY here, only after a fresh, verified
-    assertion.
+    ``pablo_amr: ["webauthn"]`` is stamped on the token only here, after a
+    verified assertion.
     """
     try:
         return passkey_service.finish_authentication(credential=payload.credential)

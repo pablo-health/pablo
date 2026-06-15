@@ -108,12 +108,9 @@ def create_native_code(
         logger.debug("Firebase JWT verify error detail: %s", err)
         raise UnauthorizedError("Invalid or expired id_token.") from err
 
-    # Enforce MFA: reject tokens without a completed second factor. This is a
-    # parallel, hand-rolled gate (the native/desktop path doesn't transit
-    # ``require_mfa``), so it goes through the same ``second_factor_satisfied``
-    # definition the verifier seam uses — otherwise a passkey-authenticated
-    # desktop login would be rejected here (build-spec hardening H3) or the two
-    # gates would drift apart.
+    # This path issues the native auth code without going through require_mfa,
+    # so it checks the second factor here directly, using the same
+    # second_factor_satisfied() the verifier uses.
     settings = get_settings()
     if (
         settings.require_mfa

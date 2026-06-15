@@ -2,16 +2,11 @@
 
 """WebAuthn passkey ceremony orchestration.
 
-Drives the four ceremony halves (register begin/finish, authenticate
-begin/finish) using ``py_webauthn``, the single-use challenge store, and
-the credential repository. On a verified assertion it mints a Firebase
-custom token carrying ``pablo_amr: ["webauthn"]`` — the server-only
-factor claim that ``auth.providers`` ORs into ``mfa_satisfied``.
-
-The mint is the load-bearing gate (build-spec hardening H1): the claim
-is stamped ONLY here, only after a fresh ``py_webauthn`` assertion
-verification, in the same request. It is never derived from a
-first-factor token and never client-supplied.
+Drives the four ceremony halves using ``py_webauthn``, the single-use
+challenge store, and the credential repository. On a verified assertion it
+mints a Firebase custom token carrying ``pablo_amr: ["webauthn"]`` — the
+factor claim ``auth.providers`` reads in ``mfa_satisfied``. The claim is
+set only here, after a verified assertion, in the same request.
 
 No PHI is logged — identifiers (user_id, credential_id) only.
 """
@@ -61,7 +56,7 @@ _ZERO_AAGUID = "00000000-0000-0000-0000-000000000000"
 
 
 class PasskeyEnrollmentError(Exception):
-    """Adding another passkey needs an already-MFA-satisfied session (H4)."""
+    """Adding another passkey needs an already-MFA-satisfied session."""
 
 
 class PasskeyCeremonyError(Exception):
@@ -75,9 +70,9 @@ class PasskeyAssertionError(Exception):
 def _extract_challenge(credential: dict[str, Any]) -> bytes:
     """Recover the challenge bytes from the response's signed clientDataJSON.
 
-    The challenge is the single-use lookup key: hashing it and atomically
-    consuming the matching row proves we issued it. SHA-256 preimage
-    resistance is what makes "the client hands back the challenge" safe.
+    The challenge is the single-use lookup key: hashing it and consuming the
+    matching row proves we issued it (SHA-256 preimage resistance is why the
+    client returning the challenge is safe).
     """
     try:
         client_data = json.loads(base64url_to_bytes(credential["response"]["clientDataJSON"]))
@@ -120,13 +115,10 @@ class PasskeyService:
     def begin_registration(
         self, *, user_id: str, account_email: str, session_mfa_satisfied: bool
     ) -> dict[str, Any]:
-        """Issue registration options and persist the ceremony challenge.
-
-        Enrolment gate (H4): the first passkey may be enrolled from a
-        first-factor session, but adding a *second* one requires an
-        already-MFA-satisfied session — a phished password must not be
-        able to bolt a rogue passkey onto an already-protected account.
-        """
+        """Issue registration options and persist the ceremony challenge."""
+        # First passkey can be enrolled from a first-factor session; adding
+        # another requires an MFA-satisfied session, so a phished password
+        # can't add a passkey to an already-protected account.
         existing = self._credentials.list_for_user(user_id)
         if existing and not session_mfa_satisfied:
             raise PasskeyEnrollmentError
@@ -207,12 +199,8 @@ class PasskeyService:
     def finish_authentication(
         self, *, credential: dict[str, Any]
     ) -> PasskeyAuthenticationResult:
-        """Verify the assertion and mint the passkey-factor custom token.
-
-        Order matters: consume the single-use challenge BEFORE issuing
-        anything, then verify the signature against the *stored* public
-        key and counter, then mint.
-        """
+        """Verify the assertion and mint the passkey-factor custom token."""
+        # Consume the single-use challenge before issuing anything.
         challenge = _extract_challenge(credential)
         if self._challenges.consume("authenticate", challenge) is None:
             raise PasskeyCeremonyError("challenge")
@@ -221,6 +209,7 @@ class PasskeyService:
         if not isinstance(credential_id, str):
             raise PasskeyCeremonyError("credential")
 
+        # Verify the signature against the stored public key and counter.
         stored = self._credentials.get_active(credential_id)
         if stored is None:
             raise PasskeyAssertionError
@@ -241,8 +230,9 @@ class PasskeyService:
             )
             raise PasskeyAssertionError from err
 
-        # Clone detection (H7): a non-increasing counter means a cloned
-        # authenticator — except the legitimate platform 0/0 case.
+        # A signature counter that doesn't increase signals a cloned
+        # authenticator — unless both are 0, which is normal for authenticators
+        # that don't keep a counter (most platform authenticators).
         new_count = verification.new_sign_count
         if new_count <= stored.sign_count and not (new_count == 0 and stored.sign_count == 0):
             logger.warning(
@@ -264,6 +254,7 @@ class PasskeyService:
             backup_state=verification.credential_backed_up,
         )
 
+        # Mint the factor token; pablo_amr is set only here, after verification.
         initialize_firebase_app()
         token = firebase_auth.create_custom_token(firebase_uid, {"pablo_amr": ["webauthn"]})
         logger.info(
@@ -275,8 +266,8 @@ class PasskeyService:
 def get_passkey_service() -> PasskeyService:
     """Wire the service against the request-scoped Postgres session.
 
-    Falls back to in-memory repositories when no DB session is in scope
-    (tests / dev harnesses) — never used in production.
+    The in-memory repositories are for unit tests only. Outside development a
+    missing DB session is an error — never silently fall back in production.
     """
     settings = get_settings()
     challenges = build_challenge_store()
@@ -288,6 +279,9 @@ def get_passkey_service() -> PasskeyService:
 
         session = get_db_session()
     except RuntimeError:
+        # No request-scoped session: allowed only in development (unit tests).
+        if not settings.is_development:
+            raise
         from ..repositories.identity import InMemoryIdentityRepository
         from ..repositories.passkey_credential import InMemoryPasskeyCredentialRepository
 
