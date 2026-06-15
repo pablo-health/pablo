@@ -66,7 +66,7 @@ class PasskeyChallengeStore(Protocol):
 
     def create(self, ceremony: Ceremony, user_id: str | None, challenge: bytes) -> None:
         """Persist the SHA-256 of a freshly-issued ceremony challenge."""
-        ...
+        raise NotImplementedError
 
     def consume(self, ceremony: Ceremony, challenge: bytes) -> ConsumedChallenge | None:
         """Atomically claim a pending challenge for ``ceremony``.
@@ -75,7 +75,7 @@ class PasskeyChallengeStore(Protocol):
         already-consumed / wrong-ceremony — indistinguishably, so the
         caller maps all to one generic failure.
         """
-        ...
+        raise NotImplementedError
 
 
 class InMemoryPasskeyChallengeStore:
@@ -232,4 +232,10 @@ def build_challenge_store() -> PasskeyChallengeStore:
     if client is not None:
         return RedisPasskeyChallengeStore(client)
 
+    # In-memory is unit-test-only. Outside development, no DB session and no
+    # Redis is an error, not a silent non-durable fallback.
+    from ..settings import get_settings
+
+    if not get_settings().is_development:
+        raise RuntimeError("no durable passkey challenge store available (no DB session, no Redis)")
     return _ensure_memory_store()
