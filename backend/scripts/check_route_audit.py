@@ -126,6 +126,11 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/auth/native/exchange"),  # exchanges code for auth tokens
         ("post", "/api/ext/auth/check-allowlist"),  # allowlist membership check
         ("post", "/api/ext/auth/check-status"),  # account disabled-status check
+        # passkey.py — WebAuthn ceremonies: authenticator metadata + token mint, no PHI
+        ("post", "/api/auth/passkey/register/begin"),  # issues registration options
+        ("post", "/api/auth/passkey/register/finish"),  # stores enrolled authenticator
+        ("post", "/api/auth/passkey/authenticate/begin"),  # issues authentication options
+        ("post", "/api/auth/passkey/authenticate/finish"),  # verifies assertion, mints token
         # chat.py — context-preview manifest is ids/dates/counts only, PHI-free by design
         ("post", "/api/chat/conversations/preview"),  # context-preview manifest, no PHI
         # launch.py — issues a single-use intent for an appointment the caller

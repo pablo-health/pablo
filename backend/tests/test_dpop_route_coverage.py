@@ -87,6 +87,11 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # and sign-in screen before a session exists. No authenticated user. ---
     "POST /api/ext/auth/check-allowlist": "pre-auth: checks email allowlist before sign-in",
     "POST /api/ext/auth/check-status": "pre-auth: checks account status before sign-in",
+    # --- Pre-auth WebAuthn assertion: this IS the factor being asserted, so
+    # there is no authenticated session (and no enrolled companion) to bind a
+    # device proof to. ---
+    "POST /api/auth/passkey/authenticate/begin": "pre-auth: issues passkey assertion options",
+    "POST /api/auth/passkey/authenticate/finish": "pre-auth: verifies passkey assertion + mints",
     # --- Public BAA document fetch (the legal text shown pre-acceptance);
     # no authenticated user. ---
     "GET /api/users/baa": "public: serves the current BAA document text, no user",
