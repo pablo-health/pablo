@@ -25,6 +25,8 @@ class ClinicianProfile:
     joined_at: datetime | None = None
     license_number: str | None = None
     license_state: str | None = None
+    dea_number: str | None = None
+    npi_number: str | None = None
 
 
 class ClinicianProfileRepository(ABC):
