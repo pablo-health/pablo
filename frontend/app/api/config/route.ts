@@ -20,5 +20,8 @@ export async function GET() {
     ratingFeedbackRequiredBelow: parseInt(process.env.RATING_FEEDBACK_REQUIRED_BELOW || '5', 10),
     showVerificationBadges: process.env.SHOW_VERIFICATION_BADGES === 'true',
     introVideoUrl: process.env.INTRO_VIDEO_URL || '',
+    // Runtime toggle (no client rebuild) for the WebAuthn passkey UI, dark
+    // until the egm.4 cutover. Set PASSKEYS_ENABLED=true on the container.
+    passkeysEnabled: process.env.PASSKEYS_ENABLED === 'true',
   })
 }

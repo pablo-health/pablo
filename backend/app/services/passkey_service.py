@@ -38,6 +38,7 @@ from ..auth.firebase_init import initialize_firebase_app
 from ..models.passkey import (
     PasskeyAuthenticationResult,
     PasskeyCredential,
+    PasskeyCredentialSummary,
     PasskeyRegistrationResult,
 )
 from ..settings import get_settings
@@ -261,6 +262,24 @@ class PasskeyService:
             "passkey_assertion_ok user_id=%s credential_id=%s", stored.user_id, credential_id
         )
         return PasskeyAuthenticationResult(custom_token=token.decode("utf-8"))
+
+    # --- management ---------------------------------------------------
+
+    def list_credentials(self, user_id: str) -> list[PasskeyCredentialSummary]:
+        """Return the user's active passkeys for the manage UI."""
+        return [
+            PasskeyCredentialSummary.from_credential(c)
+            for c in self._credentials.list_for_user(user_id)
+        ]
+
+    def revoke_credential(self, *, user_id: str, credential_id: str) -> bool:
+        """Soft-revoke one of the user's passkeys; return whether it matched."""
+        revoked = self._credentials.revoke(credential_id, user_id=user_id)
+        if revoked:
+            logger.info(
+                "passkey_revoked user_id=%s credential_id=%s", user_id, credential_id
+            )
+        return revoked
 
 
 def get_passkey_service() -> PasskeyService:

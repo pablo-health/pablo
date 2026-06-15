@@ -18,6 +18,7 @@ export interface RuntimeConfig {
   ratingFeedbackRequiredBelow: number
   showVerificationBadges: boolean
   introVideoUrl: string
+  passkeysEnabled: boolean
 }
 
 interface ConfigContextValue {

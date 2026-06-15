@@ -10,6 +10,7 @@ identical to ``CompanionDeviceRepository``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 from datetime import datetime
 from threading import Lock
 
@@ -51,6 +52,14 @@ class PasskeyCredentialRepository(ABC):
         last_used_at: datetime | None = None,
     ) -> None:
         """Persist the post-assertion counter, BS flag, and last-used time."""
+
+    @abstractmethod
+    def revoke(self, credential_id: str, *, user_id: str) -> bool:
+        """Soft-revoke a credential the user owns; return whether one matched.
+
+        Scoped to ``user_id`` so a session can only remove its own factors.
+        Already-revoked or unknown credentials return ``False`` (idempotent).
+        """
 
 
 class InMemoryPasskeyCredentialRepository(PasskeyCredentialRepository):
@@ -108,3 +117,15 @@ class InMemoryPasskeyCredentialRepository(PasskeyCredentialRepository):
                 last_used_at=ts,
                 revoked_at=existing.revoked_at,
             )
+
+    def revoke(self, credential_id: str, *, user_id: str) -> bool:
+        with self._lock:
+            existing = self._rows.get(credential_id)
+            if (
+                existing is None
+                or existing.user_id != user_id
+                or existing.revoked_at is not None
+            ):
+                return False
+            self._rows[credential_id] = replace(existing, revoked_at=utc_now())
+            return True

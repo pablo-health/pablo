@@ -78,3 +78,28 @@ class PasskeyAuthenticationResult(BaseModel):
     """
 
     custom_token: str
+
+
+class PasskeyCredentialSummary(BaseModel):
+    """A user's enrolled passkey, as shown in the manage UI.
+
+    Authenticator metadata and a user label only — no PHI, no key material.
+    """
+
+    credential_id: str
+    device_label: str | None
+    transports: list[str] | None
+    backup_eligible: bool
+    created_at: datetime
+    last_used_at: datetime | None
+
+    @classmethod
+    def from_credential(cls, credential: PasskeyCredential) -> PasskeyCredentialSummary:
+        return cls(
+            credential_id=credential.credential_id,
+            device_label=credential.device_label,
+            transports=credential.transports,
+            backup_eligible=credential.backup_eligible,
+            created_at=credential.created_at,
+            last_used_at=credential.last_used_at,
+        )
