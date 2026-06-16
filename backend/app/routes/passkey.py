@@ -29,6 +29,7 @@ from ..api_errors import (
 from ..auth.providers import VerifiedIdentity
 from ..auth.route_security import truly_public
 from ..auth.service import get_current_user_no_mfa
+from ..models.audit import AuditAction
 from ..models.passkey import (
     PasskeyAuthenticationBegin,
     PasskeyAuthenticationResult,
@@ -39,6 +40,8 @@ from ..models.passkey import (
 )
 from ..models.user import User
 from ..rate_limit import require_rate_limit
+from ..repositories import UserRepository, get_user_repository
+from ..services import AuditService, get_audit_service
 from ..services.passkey_service import (
     PasskeyAssertionError,
     PasskeyCeremonyError,
@@ -48,6 +51,7 @@ from ..services.passkey_service import (
     get_passkey_service,
 )
 from ..settings import get_settings
+from ..utcnow import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -89,18 +93,35 @@ def register_begin(
 @router.post("/register/finish", response_model=PasskeyRegistrationResult, status_code=201)
 def register_finish(
     payload: PasskeyRegistrationVerify,
+    request: Request,
     user: EnrollingUser,
     passkey_service: PasskeyService = Depends(get_passkey_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> PasskeyRegistrationResult:
-    """Verify the attestation response and persist the credential."""
+    """Verify the attestation response and persist the credential.
+
+    A verified passkey is a phishing-resistant second factor, so the first
+    one a user enrolls satisfies the second-factor milestone the onboarding
+    wizard and the dashboard gate read (``mfa_enrolled_at``) — this is what
+    lets onboarding be passkey-first with TOTP as a fallback.
+    """
     try:
-        return passkey_service.finish_registration(
+        result = passkey_service.finish_registration(
             user_id=user.id,
             credential=payload.credential,
             device_label=payload.device_label,
         )
     except PasskeyCeremonyError as err:
         raise BadRequestError("Passkey registration could not be verified.") from err
+
+    if user.mfa_enrolled_at is None:
+        user.mfa_enrolled_at = utc_now()
+        user_repo.update(user)
+        audit.log_onboarding_milestone(
+            AuditAction.ONBOARDING_MFA_ENROLLED, user, request, changes={"factor": "passkey"}
+        )
+    return result
 
 
 @router.get("/credentials", response_model=list[PasskeyCredentialSummary])
