@@ -43,12 +43,14 @@ from ..models.passkey import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
+from .passkey_attestation import AttestationUntrustedError, build_attestation_verifier
 from .passkey_challenge_store import build_challenge_store
 
 if TYPE_CHECKING:
     from ..repositories.identity import IdentityRepository
     from ..repositories.passkey_credential import PasskeyCredentialRepository
     from ..settings import Settings
+    from .passkey_attestation import AttestationVerifier
     from .passkey_challenge_store import PasskeyChallengeStore
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,13 @@ class PasskeyCeremonyError(Exception):
 
 class PasskeyAssertionError(Exception):
     """Assertion failed verification or no usable credential → 401."""
+
+
+class PasskeyLastHardwareKeyError(Exception):
+    """Refuse to revoke an admin's only hardware key under enforcement → 409.
+
+    Removing it would lock the admin out of every hardware-gated route. The
+    user must enrol a second hardware key first (the >=2-key floor)."""
 
 
 def _extract_challenge(credential: dict[str, Any]) -> bytes:
@@ -104,11 +113,13 @@ class PasskeyService:
         credentials: PasskeyCredentialRepository,
         challenges: PasskeyChallengeStore,
         identities: IdentityRepository,
+        attestation: AttestationVerifier,
         settings: Settings,
     ) -> None:
         self._credentials = credentials
         self._challenges = challenges
         self._identities = identities
+        self._attestation = attestation
         self._settings = settings
 
     # --- registration -------------------------------------------------
@@ -164,6 +175,18 @@ class PasskeyService:
             logger.warning("passkey_registration_rejected user_id=%s reason=%s", user_id, err)
             raise PasskeyCeremonyError("verification") from err
 
+        try:
+            attestation_verified = self._attestation.evaluate(
+                credential=json.dumps(credential),
+                expected_challenge=challenge,
+                expected_origin=self._settings.webauthn_origins,
+                expected_rp_id=self._settings.webauthn_rp_id,
+                strict=self._settings.webauthn_attestation_require_trusted_root,
+            )
+        except AttestationUntrustedError as err:
+            logger.warning("passkey_registration_untrusted user_id=%s fmt=%s", user_id, err)
+            raise PasskeyCeremonyError("attestation") from err
+
         credential_id = bytes_to_base64url(verification.credential_id)
         now = utc_now()
         self._credentials.add(
@@ -174,6 +197,8 @@ class PasskeyService:
                 sign_count=verification.sign_count,
                 transports=_transports(credential),
                 aaguid=_normalize_aaguid(verification.aaguid),
+                fmt=verification.fmt,
+                attestation_verified=attestation_verified,
                 backup_eligible=verification.credential_device_type == "multi_device",
                 backup_state=verification.credential_backed_up,
                 device_label=device_label,
@@ -184,13 +209,14 @@ class PasskeyService:
         )
         logger.info(
             "passkey_enrolled user_id=%s credential_id=%s fmt=%s aaguid=%s "
-            "device_type=%s backed_up=%s",
+            "device_type=%s backed_up=%s attested=%s",
             user_id,
             credential_id,
             verification.fmt,
             verification.aaguid,
             verification.credential_device_type,
             verification.credential_backed_up,
+            attestation_verified,
         )
         return PasskeyRegistrationResult(credential_id=credential_id, created_at=now)
 
@@ -265,10 +291,26 @@ class PasskeyService:
         )
 
         # Mint the factor token; pablo_amr is set only here, after verification.
+        # pablo_passkey records the asserting credential's provenance so admin
+        # hardware-key enforcement can bind this session to a device-bound
+        # (and optionally attested) authenticator — not just "some passkey".
         initialize_firebase_app()
-        token = firebase_auth.create_custom_token(firebase_uid, {"pablo_amr": ["webauthn"]})
+        token = firebase_auth.create_custom_token(
+            firebase_uid,
+            {
+                "pablo_amr": ["webauthn"],
+                "pablo_passkey": {
+                    "hw": stored.is_hardware_authenticator,
+                    "att": stored.attestation_verified,
+                },
+            },
+        )
         logger.info(
-            "passkey_assertion_ok user_id=%s credential_id=%s", stored.user_id, credential_id
+            "passkey_assertion_ok user_id=%s credential_id=%s hw=%s att=%s",
+            stored.user_id,
+            credential_id,
+            stored.is_hardware_authenticator,
+            stored.attestation_verified,
         )
         return PasskeyAuthenticationResult(custom_token=token.decode("utf-8"))
 
@@ -281,8 +323,24 @@ class PasskeyService:
             for c in self._credentials.list_for_user(user_id)
         ]
 
-    def revoke_credential(self, *, user_id: str, credential_id: str) -> bool:
-        """Soft-revoke one of the user's passkeys; return whether it matched."""
+    def revoke_credential(
+        self, *, user_id: str, credential_id: str, require_hardware_floor: bool = False
+    ) -> bool:
+        """Soft-revoke one of the user's passkeys; return whether it matched.
+
+        When ``require_hardware_floor`` is set (admin under hardware-key
+        enforcement), refuse to remove the user's *last* hardware credential —
+        that would lock them out of every hardware-gated route. They must
+        enrol a second hardware key first.
+        """
+        if require_hardware_floor:
+            active = self._credentials.list_for_user(user_id)
+            target = next((c for c in active if c.credential_id == credential_id), None)
+            if target is not None and target.is_hardware_authenticator:
+                hardware = [c for c in active if c.is_hardware_authenticator]
+                if len(hardware) <= 1:
+                    raise PasskeyLastHardwareKeyError
+
         revoked = self._credentials.revoke(credential_id, user_id=user_id)
         if revoked:
             logger.info(
@@ -299,6 +357,7 @@ def get_passkey_service() -> PasskeyService:
     """
     settings = get_settings()
     challenges = build_challenge_store()
+    attestation = build_attestation_verifier(settings.webauthn_attestation_roots_dir)
 
     credentials: PasskeyCredentialRepository
     identities: IdentityRepository
@@ -328,5 +387,6 @@ def get_passkey_service() -> PasskeyService:
         credentials=credentials,
         challenges=challenges,
         identities=identities,
+        attestation=attestation,
         settings=settings,
     )

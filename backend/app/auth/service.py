@@ -969,6 +969,49 @@ def require_admin(
     return user
 
 
+def _session_passkey_hardware_satisfied(request: Request) -> bool:
+    """Whether the request's session was satisfied by a device-bound passkey.
+
+    Reads the ``pablo_passkey`` claim the assertion-finish endpoint stamps on
+    a verified passkey token. A TOTP-satisfied or synced-passkey session does
+    not qualify — only a device-bound (hardware) authenticator does.
+    """
+    identity = getattr(request.state, "verified_identity", None)
+    claims = identity.claims if isinstance(identity, VerifiedIdentity) else {}
+    passkey = claims.get("pablo_passkey")
+    return isinstance(passkey, dict) and passkey.get("hw") is True
+
+
+def require_admin_hardware_key(
+    request: Request,
+    user: User = Depends(require_admin),
+) -> User:
+    """Admin gate that additionally requires a hardware-passkey step-up.
+
+    Builds on ``require_admin`` (admin role + dev bypass), then — when
+    ``webauthn_admin_require_hardware_key`` is enabled — requires the session
+    to have been satisfied by a device-bound passkey. A phishing-resistant
+    hardware key is the point of the control, so a TOTP or synced-passkey
+    session is rejected even for an admin. Default-off: with the flag unset
+    this is exactly ``require_admin``.
+    """
+    settings = get_settings()
+    if not settings.webauthn_admin_require_hardware_key or settings.is_development:
+        return user
+    if not _session_passkey_hardware_satisfied(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "HARDWARE_KEY_REQUIRED",
+                    "message": "A hardware security key is required for admin access",
+                    "details": {},
+                }
+            },
+        )
+    return user
+
+
 def get_baa_version() -> str:
     """Return the latest BAA version, or "" if no BAA files are bundled.
 

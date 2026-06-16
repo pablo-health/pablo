@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from ..api_errors import BadRequestError, NotFoundError
-from ..auth.service import require_admin
+from ..auth.service import require_admin_hardware_key
 from ..db import get_db_session
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
@@ -83,7 +83,7 @@ class AddToAllowlistRequest(BaseModel):
 
 @router.get("/api/admin/users")
 def list_users(
-    _admin: User = Depends(require_admin),
+    _admin: User = Depends(require_admin_hardware_key),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> UserListResponse:
     """List all users with status information."""
@@ -107,7 +107,7 @@ def list_users(
 @router.patch("/api/admin/users/{user_id}/disable")
 def disable_user(
     user_id: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_hardware_key),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> dict[str, str]:
     """Disable a user account."""
@@ -125,7 +125,7 @@ def disable_user(
 @router.patch("/api/admin/users/{user_id}/enable")
 def enable_user(
     user_id: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_hardware_key),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> dict[str, str]:
     """Re-enable a disabled user account."""
@@ -143,7 +143,7 @@ def enable_user(
 
 @router.get("/api/admin/allowlist")
 def list_allowlist(
-    _admin: User = Depends(require_admin),
+    _admin: User = Depends(require_admin_hardware_key),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> AllowlistResponse:
     """List all allowlisted emails."""
@@ -162,7 +162,7 @@ def list_allowlist(
 @router.post("/api/admin/allowlist", status_code=status.HTTP_201_CREATED)
 def add_to_allowlist(
     request: AddToAllowlistRequest,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_hardware_key),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> dict[str, str]:
     """Add an email to the allowlist (this IS the invitation)."""
@@ -191,7 +191,7 @@ class TenantExportRequest(BaseModel):
 def tenant_export(
     body: TenantExportRequest,
     request: Request,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_hardware_key),
     db: Session = Depends(get_db_session),
     audit: AuditService = Depends(get_audit_service),
 ) -> StreamingResponse:
@@ -260,7 +260,7 @@ def tenant_export(
 @router.delete("/api/admin/allowlist/{email}")
 def remove_from_allowlist(
     email: str,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_admin_hardware_key),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> dict[str, str]:
     """Remove an email from the allowlist."""

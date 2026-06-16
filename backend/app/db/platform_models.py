@@ -422,6 +422,14 @@ class PasskeyCredentialRow(PlatformBase):
     sign_count: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
     transports: Mapped[list | None] = mapped_column(JSONB)
     aaguid: Mapped[str | None] = mapped_column(String(36))
+    # WebAuthn attestation statement format ('packed'/'apple'/'fido-u2f'/'tpm'/
+    # 'none') and whether its certificate chain validated to a curated trust
+    # root. fmt is informational provenance; attestation_verified gates the
+    # "trusted hardware" signal admin enforcement reads. See PABLO-f00.
+    fmt: Mapped[str | None] = mapped_column(String(32))
+    attestation_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     backup_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     backup_state: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     device_label: Mapped[str | None] = mapped_column(String(120))

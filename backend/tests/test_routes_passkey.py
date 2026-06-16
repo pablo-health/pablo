@@ -60,5 +60,5 @@ class TestRevokeCredential:
         service.revoke_credential.return_value = True
         revoke_credential("cred-1", _request(mfa_satisfied=True), USER, service)
         service.revoke_credential.assert_called_once_with(
-            user_id=USER.id, credential_id="cred-1"
+            user_id=USER.id, credential_id="cred-1", require_hardware_floor=False
         )
