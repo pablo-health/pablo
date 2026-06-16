@@ -354,6 +354,38 @@ class Settings(BaseSettings):
             "the RP can verify its provenance (e.g. genuine Apple/Microsoft)."
         ),
     )
+    webauthn_attestation_roots_dir: str = Field(
+        default="",
+        description=(
+            "Directory of curated attestation root-CA certificates used to "
+            "verify authenticator provenance. Files are named "
+            "'<fmt>.pem' (e.g. 'apple.pem', 'packed.pem', 'fido-u2f.pem', "
+            "'tpm.pem'); each may concatenate multiple PEM roots for that "
+            "attestation format. Empty (the default) disables chain "
+            "verification — credentials still enroll, but attestation_verified "
+            "is always false (informational only)."
+        ),
+    )
+    webauthn_attestation_require_trusted_root: bool = Field(
+        default=False,
+        description=(
+            "Strict mode: reject registration when the authenticator presents "
+            "an attestation of a format we have roots for but its certificate "
+            "chain does not validate to a trusted root. Default false accepts "
+            "the enrolment and records attestation_verified=false. Requires "
+            "WEBAUTHN_ATTESTATION_ROOTS_DIR to be set to have any effect."
+        ),
+    )
+    webauthn_admin_require_hardware_key: bool = Field(
+        default=False,
+        description=(
+            "When true, platform-admin routes require step-up with a "
+            "device-bound (hardware) passkey — a synced passkey or TOTP does "
+            "not satisfy admin access. Default false leaves admin auth "
+            "unchanged. Enable only after admins hold >=2 hardware keys "
+            "(anti-lockout) and attestation roots are provisioned."
+        ),
+    )
     webauthn_origins_raw: str = Field(
         default="http://localhost:3000",
         alias="WEBAUTHN_ORIGINS",

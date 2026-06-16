@@ -324,7 +324,12 @@ class TestAuthentication:
         # The factor claim is stamped only here, after a verified assertion,
         # and against the user's resolved Firebase uid (the H1 guard).
         assert harness.mint["uid"] == seed_user["firebase_uid"]
-        assert harness.mint["claims"] == {"pablo_amr": ["webauthn"]}
+        # The mint also records the asserting credential's provenance: the soft
+        # authenticator is device-bound (hw) and, with no trust store, unattested.
+        assert harness.mint["claims"] == {
+            "pablo_amr": ["webauthn"],
+            "pablo_passkey": {"hw": True, "att": False},
+        }
 
         # The DB sign counter advanced (0 at enrollment → 1 after assertion).
         with engine.connect() as conn:

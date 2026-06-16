@@ -110,6 +110,8 @@ class InMemoryPasskeyCredentialRepository(PasskeyCredentialRepository):
                 sign_count=sign_count,
                 transports=existing.transports,
                 aaguid=existing.aaguid,
+                fmt=existing.fmt,
+                attestation_verified=existing.attestation_verified,
                 backup_eligible=existing.backup_eligible,
                 backup_state=backup_state,
                 device_label=existing.device_label,
