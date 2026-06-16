@@ -470,3 +470,32 @@ class PasskeyChallengeRow(PlatformBase):
         DateTime(timezone=True), nullable=False, index=True
     )
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PasskeyBackupCodeRow(PlatformBase):
+    """A single one-time account-recovery backup code (hashed).
+
+    Layer-1 of the recovery model (``docs/security/account-recovery-procedure.md``
+    and ``authentication-mfa-policy.md`` §6.4): a set is issued at first-passkey
+    enrollment so a user who loses their authenticator can still get in
+    self-service. One row per code.
+
+    Only the SHA-256 hash of the code is stored — never the plaintext, which is
+    shown to the user exactly once at issuance. Codes are high-entropy
+    (``secrets``), so a fast one-way hash is sufficient (same rationale as
+    ``PasskeyChallengeRow.challenge_hash``). ``consumed_at`` non-null marks a
+    code spent (single-use); regenerating a set revokes the user's prior unused
+    codes. A redeemed code is a *second* factor, never a standalone login.
+
+    No PHI. Shared ``platform`` schema (no RLS), same scope as the other auth
+    tables. See PABLO-e82.
+    """
+
+    __tablename__ = "passkey_backup_codes"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    code_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Bare user_id (FK declared in the migration, see PasskeyCredentialRow).
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
