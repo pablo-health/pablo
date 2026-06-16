@@ -274,6 +274,31 @@ class TestRegistration:
         assert row["device_label"] == "Test Key"
         assert row["revoked_at"] is None
 
+    def test_first_enrollment_issues_backup_codes_stored_hashed(
+        self, harness: SimpleNamespace, engine: Engine, seed_user: dict[str, str]
+    ) -> None:
+        # First passkey = first second factor: the response carries the one-time
+        # recovery codes (plaintext, once) and the DB holds only their hashes.
+        body = _register(harness.client, SoftWebAuthnAuthenticator())
+        codes = body["backup_codes"]
+        assert isinstance(codes, list) and len(codes) == 10
+
+        with engine.connect() as conn:
+            stored = {
+                r[0]
+                for r in conn.execute(
+                    text(
+                        "SELECT code_hash FROM platform.passkey_backup_codes "
+                        "WHERE user_id = :uid"
+                    ),
+                    {"uid": seed_user["user_id"]},
+                )
+            }
+        assert len(stored) == 10
+        # No plaintext code is persisted — only hashes.
+        for code in codes:
+            assert code not in stored
+
     def test_replayed_registration_challenge_rejected(self, harness: SimpleNamespace) -> None:
         authenticator = SoftWebAuthnAuthenticator()
         options = harness.client.post(f"{_BASE}/register/begin").json()
