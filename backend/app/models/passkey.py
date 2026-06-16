@@ -32,12 +32,27 @@ class PasskeyCredential:
     sign_count: int
     transports: list[str] | None
     aaguid: str | None
+    fmt: str | None
+    attestation_verified: bool
     backup_eligible: bool
     backup_state: bool
     device_label: str | None
     created_at: datetime
     last_used_at: datetime | None
     revoked_at: datetime | None
+
+    @property
+    def is_hardware_authenticator(self) -> bool:
+        """True for a device-bound authenticator (a roaming hardware key or a
+        non-syncable platform credential).
+
+        The WebAuthn BE flag is the cryptographic signal: a syncable
+        multi-device passkey (iCloud/Google Password Manager) sets
+        ``backup_eligible``; a hardware security key does not. Admin
+        hardware-key enforcement keys off this, strengthened by
+        ``attestation_verified`` when a trust store is provisioned.
+        """
+        return not self.backup_eligible
 
 
 class PasskeyRegistrationVerify(BaseModel):
@@ -90,6 +105,8 @@ class PasskeyCredentialSummary(BaseModel):
     device_label: str | None
     transports: list[str] | None
     backup_eligible: bool
+    is_hardware_authenticator: bool
+    attestation_verified: bool
     created_at: datetime
     last_used_at: datetime | None
 
@@ -100,6 +117,8 @@ class PasskeyCredentialSummary(BaseModel):
             device_label=credential.device_label,
             transports=credential.transports,
             backup_eligible=credential.backup_eligible,
+            is_hardware_authenticator=credential.is_hardware_authenticator,
+            attestation_verified=credential.attestation_verified,
             created_at=credential.created_at,
             last_used_at=credential.last_used_at,
         )

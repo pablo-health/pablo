@@ -18,10 +18,12 @@ from app.models.passkey import PasskeyCredential
 from app.repositories.identity import InMemoryIdentityRepository
 from app.repositories.passkey_credential import InMemoryPasskeyCredentialRepository
 from app.services import passkey_service as svc
+from app.services.passkey_attestation import build_attestation_verifier
 from app.services.passkey_challenge_store import InMemoryPasskeyChallengeStore
 from app.services.passkey_service import (
     PasskeyAssertionError,
     PasskeyEnrollmentError,
+    PasskeyLastHardwareKeyError,
     PasskeyService,
 )
 from app.settings import get_settings
@@ -44,21 +46,31 @@ def _build_service() -> tuple[
         credentials=credentials,
         challenges=challenges,
         identities=identities,
+        attestation=build_attestation_verifier(""),
         settings=get_settings(),
     )
     return service, credentials, challenges
 
 
-def _seed_credential(repo: InMemoryPasskeyCredentialRepository, sign_count: int) -> None:
+def _seed_credential(
+    repo: InMemoryPasskeyCredentialRepository,
+    sign_count: int,
+    *,
+    credential_id: str = CRED_ID,
+    backup_eligible: bool = False,
+    attestation_verified: bool = False,
+) -> None:
     repo.add(
         PasskeyCredential(
-            credential_id=CRED_ID,
+            credential_id=credential_id,
             user_id=USER_ID,
             public_key=b"cose-public-key",
             sign_count=sign_count,
             transports=None,
             aaguid=None,
-            backup_eligible=False,
+            fmt=None,
+            attestation_verified=attestation_verified,
+            backup_eligible=backup_eligible,
             backup_state=False,
             device_label=None,
             created_at=utc_now(),
@@ -107,6 +119,59 @@ class TestEnrolmentGate:
             user_id=USER_ID, account_email="t@pablo.health", session_mfa_satisfied=True
         )
         assert "challenge" in options
+
+
+def _registration_credential(challenge: bytes) -> dict[str, Any]:
+    client_data = json.dumps(
+        {
+            "type": "webauthn.create",
+            "challenge": bytes_to_base64url(challenge),
+            "origin": "http://localhost:3000",
+        }
+    ).encode()
+    return {
+        "id": "new-cred",
+        "rawId": "new-cred",
+        "type": "public-key",
+        "response": {
+            "clientDataJSON": bytes_to_base64url(client_data),
+            "attestationObject": bytes_to_base64url(b"\xa0"),
+        },
+    }
+
+
+class TestFinishRegistration:
+    def test_stores_fmt_and_attestation_verdict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # py_webauthn returns fmt as a plain string; persist it verbatim and,
+        # with no trust store configured, record attestation_verified=False.
+        service, credentials, challenges = _build_service()
+        challenges.create("register", USER_ID, CHALLENGE)
+        monkeypatch.setattr(
+            svc,
+            "verify_registration_response",
+            lambda **_: SimpleNamespace(
+                credential_id=b"\x01\x02\x03",
+                credential_public_key=b"cose",
+                sign_count=0,
+                aaguid="00000000-0000-0000-0000-000000000000",
+                fmt="packed",
+                credential_device_type="single_device",
+                credential_backed_up=False,
+            ),
+        )
+
+        result = service.finish_registration(
+            user_id=USER_ID,
+            credential=_registration_credential(CHALLENGE),
+            device_label="My Key",
+        )
+
+        stored = credentials.get_active(result.credential_id)
+        assert stored is not None
+        assert stored.fmt == "packed"
+        assert stored.attestation_verified is False
+        # single_device → device-bound hardware authenticator.
+        assert stored.is_hardware_authenticator is True
 
 
 class TestFinishAuthentication:
@@ -180,7 +245,11 @@ class TestFinishAuthentication:
 
         # 0/0 is the legitimate platform-authenticator case (not a clone).
         assert captured["uid"] == "fb-uid"
-        assert captured["claims"] == {"pablo_amr": ["webauthn"]}
+        # Seeded credential is device-bound (backup_eligible=False) and unattested.
+        assert captured["claims"] == {
+            "pablo_amr": ["webauthn"],
+            "pablo_passkey": {"hw": True, "att": False},
+        }
 
 
 class TestManageCredentials:
@@ -215,3 +284,50 @@ class TestManageCredentials:
     def test_revoke_unknown_credential_returns_false(self) -> None:
         service, _credentials, _challenges = _build_service()
         assert service.revoke_credential(user_id=USER_ID, credential_id="nope") is False
+
+
+class TestHardwareKeyFloor:
+    """>=2-key anti-lockout guard under admin hardware-key enforcement."""
+
+    def test_cannot_revoke_last_hardware_key(self) -> None:
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0, backup_eligible=False)
+        with pytest.raises(PasskeyLastHardwareKeyError):
+            service.revoke_credential(
+                user_id=USER_ID, credential_id=CRED_ID, require_hardware_floor=True
+            )
+        # The key survives the refused revoke.
+        assert credentials.get_active(CRED_ID) is not None
+
+    def test_can_revoke_when_a_second_hardware_key_remains(self) -> None:
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0, backup_eligible=False)
+        _seed_credential(
+            credentials, sign_count=0, credential_id="cred-2", backup_eligible=False
+        )
+        assert (
+            service.revoke_credential(
+                user_id=USER_ID, credential_id=CRED_ID, require_hardware_floor=True
+            )
+            is True
+        )
+
+    def test_floor_ignores_synced_passkeys(self) -> None:
+        # A second synced (backup_eligible) passkey does not satisfy the
+        # hardware floor — only device-bound keys count.
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0, backup_eligible=False)
+        _seed_credential(
+            credentials, sign_count=0, credential_id="synced", backup_eligible=True
+        )
+        with pytest.raises(PasskeyLastHardwareKeyError):
+            service.revoke_credential(
+                user_id=USER_ID, credential_id=CRED_ID, require_hardware_floor=True
+            )
+
+    def test_floor_off_allows_last_key_revoke(self) -> None:
+        service, credentials, _challenges = _build_service()
+        _seed_credential(credentials, sign_count=0, backup_eligible=False)
+        assert (
+            service.revoke_credential(user_id=USER_ID, credential_id=CRED_ID) is True
+        )

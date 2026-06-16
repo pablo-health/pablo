@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Request
 
 from ..api_errors import (
     BadRequestError,
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
@@ -42,9 +43,11 @@ from ..services.passkey_service import (
     PasskeyAssertionError,
     PasskeyCeremonyError,
     PasskeyEnrollmentError,
+    PasskeyLastHardwareKeyError,
     PasskeyService,
     get_passkey_service,
 )
+from ..settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +129,20 @@ def revoke_credential(
         raise ForbiddenError(
             "Verify a passkey before removing one", code="MFA_REQUIRED"
         )
-    if not passkey_service.revoke_credential(user_id=user.id, credential_id=credential_id):
+    settings = get_settings()
+    require_hardware_floor = settings.webauthn_admin_require_hardware_key and user.is_admin
+    try:
+        removed = passkey_service.revoke_credential(
+            user_id=user.id,
+            credential_id=credential_id,
+            require_hardware_floor=require_hardware_floor,
+        )
+    except PasskeyLastHardwareKeyError as err:
+        raise ConflictError(
+            "Enroll a second hardware security key before removing this one",
+            code="LAST_HARDWARE_KEY",
+        ) from err
+    if not removed:
         raise NotFoundError("Passkey not found")
 
 
