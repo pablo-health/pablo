@@ -79,10 +79,17 @@ class PasskeyAuthenticationVerify(BaseModel):
 
 
 class PasskeyRegistrationResult(BaseModel):
-    """Result of a successful enrolment."""
+    """Result of a successful enrolment.
+
+    ``backup_codes`` is populated **only** when this enrolment is the user's
+    first second factor — the plaintext one-time recovery codes, returned
+    exactly once so the client can show them. ``None`` on every later
+    enrolment (the user already has codes). See PABLO-e82.
+    """
 
     credential_id: str
     created_at: datetime
+    backup_codes: list[str] | None = None
 
 
 class PasskeyAuthenticationResult(BaseModel):

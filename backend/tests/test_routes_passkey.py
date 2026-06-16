@@ -17,6 +17,7 @@ import pytest
 from app.api_errors import ForbiddenError, NotFoundError
 from app.auth.providers import VerifiedIdentity
 from app.models.audit import AuditAction
+from app.models.passkey import PasskeyRegistrationResult
 from app.routes.passkey import list_credentials, register_finish, revoke_credential
 
 USER = SimpleNamespace(id="11111111-1111-4111-8111-111111111111", email="t@pablo.health")
@@ -39,44 +40,61 @@ class TestRegisterFinish:
     def _user(self, *, mfa_enrolled_at: object) -> SimpleNamespace:
         return SimpleNamespace(id=USER.id, email=USER.email, mfa_enrolled_at=mfa_enrolled_at)
 
-    def test_first_passkey_stamps_second_factor_milestone(self) -> None:
-        # A verified passkey is a second factor: enrolling the first one must
-        # set mfa_enrolled_at so onboarding/dashboard gates clear (passkey-first).
-        service, user_repo, audit = MagicMock(), MagicMock(), MagicMock()
-        service.finish_registration.return_value = "result"
+    def _service(self) -> MagicMock:
+        service = MagicMock()
+        service.finish_registration.return_value = PasskeyRegistrationResult(
+            credential_id="cred-1", created_at=datetime(2026, 6, 1, tzinfo=UTC)
+        )
+        return service
+
+    def test_first_passkey_stamps_milestone_and_issues_backup_codes(self) -> None:
+        # First second factor: stamp mfa_enrolled_at AND issue one-time codes,
+        # returned once so the client can show them (passkey-first onboarding).
+        service, user_repo, audit, backup = self._service(), MagicMock(), MagicMock(), MagicMock()
+        backup.issue.return_value = ["AAAAA-BBBBB", "CCCCC-DDDDD"]
         user = self._user(mfa_enrolled_at=None)
-        payload = SimpleNamespace(credential={}, device_label=None)
 
-        out = register_finish(payload, MagicMock(), user, service, user_repo, audit)
-
-        assert out == "result"
-        assert user.mfa_enrolled_at is not None
-        user_repo.update.assert_called_once_with(user)
-        action, milestone_user, _req = audit.log_onboarding_milestone.call_args.args
-        assert action == AuditAction.ONBOARDING_MFA_ENROLLED
-        assert milestone_user is user
-        assert audit.log_onboarding_milestone.call_args.kwargs["changes"] == {"factor": "passkey"}
-
-    def test_does_not_restamp_when_already_enrolled(self) -> None:
-        # A user who already has a second factor (TOTP or an earlier passkey)
-        # keeps their original milestone timestamp; no duplicate audit entry.
-        service, user_repo, audit = MagicMock(), MagicMock(), MagicMock()
-        service.finish_registration.return_value = "result"
-        already = datetime(2026, 1, 1, tzinfo=UTC)
-        user = self._user(mfa_enrolled_at=already)
-
-        register_finish(
+        out = register_finish(
             SimpleNamespace(credential={}, device_label=None),
             MagicMock(),
             user,
             service,
             user_repo,
             audit,
+            backup,
+        )
+
+        assert user.mfa_enrolled_at is not None
+        user_repo.update.assert_called_once_with(user)
+        action, milestone_user, _req = audit.log_onboarding_milestone.call_args.args
+        assert action == AuditAction.ONBOARDING_MFA_ENROLLED
+        assert milestone_user is user
+        assert audit.log_onboarding_milestone.call_args.kwargs["changes"] == {"factor": "passkey"}
+        backup.issue.assert_called_once_with(user.id)
+        assert out.backup_codes == ["AAAAA-BBBBB", "CCCCC-DDDDD"]
+
+    def test_subsequent_passkey_does_not_restamp_or_reissue(self) -> None:
+        # A user who already has a second factor keeps their timestamp, gets no
+        # duplicate audit entry, and is NOT issued a fresh code set.
+        service, user_repo, audit, backup = self._service(), MagicMock(), MagicMock(), MagicMock()
+        already = datetime(2026, 1, 1, tzinfo=UTC)
+        user = self._user(mfa_enrolled_at=already)
+
+        out = register_finish(
+            SimpleNamespace(credential={}, device_label=None),
+            MagicMock(),
+            user,
+            service,
+            user_repo,
+            audit,
+            backup,
         )
 
         assert user.mfa_enrolled_at == already
         user_repo.update.assert_not_called()
         audit.log_onboarding_milestone.assert_not_called()
+        backup.issue.assert_not_called()
+        assert out.backup_codes is None
 
 
 class TestListCredentials:
