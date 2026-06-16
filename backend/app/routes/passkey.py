@@ -42,6 +42,7 @@ from ..models.user import User
 from ..rate_limit import require_rate_limit
 from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
+from ..services.backup_code_service import BackupCodeService, get_backup_code_service
 from ..services.passkey_service import (
     PasskeyAssertionError,
     PasskeyCeremonyError,
@@ -98,13 +99,16 @@ def register_finish(
     passkey_service: PasskeyService = Depends(get_passkey_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
+    backup: BackupCodeService = Depends(get_backup_code_service),
 ) -> PasskeyRegistrationResult:
     """Verify the attestation response and persist the credential.
 
     A verified passkey is a phishing-resistant second factor, so the first
     one a user enrolls satisfies the second-factor milestone the onboarding
     wizard and the dashboard gate read (``mfa_enrolled_at``) — this is what
-    lets onboarding be passkey-first with TOTP as a fallback.
+    lets onboarding be passkey-first with TOTP as a fallback. On that first
+    enrolment we also issue one-time backup codes and return them once so the
+    client can show them (Layer-1 recovery; see authentication-mfa-policy §6.4).
     """
     try:
         result = passkey_service.finish_registration(
@@ -121,6 +125,7 @@ def register_finish(
         audit.log_onboarding_milestone(
             AuditAction.ONBOARDING_MFA_ENROLLED, user, request, changes={"factor": "passkey"}
         )
+        result = result.model_copy(update={"backup_codes": backup.issue(user.id)})
     return result
 
 
