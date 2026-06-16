@@ -281,7 +281,8 @@ class TestRegistration:
         # recovery codes (plaintext, once) and the DB holds only their hashes.
         body = _register(harness.client, SoftWebAuthnAuthenticator())
         codes = body["backup_codes"]
-        assert isinstance(codes, list) and len(codes) == 10
+        assert isinstance(codes, list)
+        assert len(codes) == 10
 
         with engine.connect() as conn:
             stored = {
