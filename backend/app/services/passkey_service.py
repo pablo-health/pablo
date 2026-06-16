@@ -130,7 +130,7 @@ class PasskeyService:
             user_id=user_id.encode("utf-8"),
             user_name=account_email,
             user_display_name=account_email,
-            attestation=AttestationConveyancePreference.NONE,
+            attestation=AttestationConveyancePreference(self._settings.webauthn_attestation),
             authenticator_selection=AuthenticatorSelectionCriteria(
                 resident_key=ResidentKeyRequirement.PREFERRED,
                 user_verification=UserVerificationRequirement.REQUIRED,
@@ -182,7 +182,16 @@ class PasskeyService:
                 revoked_at=None,
             )
         )
-        logger.info("passkey_enrolled user_id=%s credential_id=%s", user_id, credential_id)
+        logger.info(
+            "passkey_enrolled user_id=%s credential_id=%s fmt=%s aaguid=%s "
+            "device_type=%s backed_up=%s",
+            user_id,
+            credential_id,
+            verification.fmt,
+            verification.aaguid,
+            verification.credential_device_type,
+            verification.credential_backed_up,
+        )
         return PasskeyRegistrationResult(credential_id=credential_id, created_at=now)
 
     # --- authentication ----------------------------------------------

@@ -345,6 +345,15 @@ class Settings(BaseSettings):
         default="Pablo",
         description="Relying Party display name shown in the OS passkey prompt.",
     )
+    webauthn_attestation: str = Field(
+        default="none",
+        description=(
+            "WebAuthn attestation conveyance requested at registration: one of "
+            "none|indirect|direct|enterprise. 'none' (the default) asks for no "
+            "attestation; 'direct' requests the authenticator's attestation so "
+            "the RP can verify its provenance (e.g. genuine Apple/Microsoft)."
+        ),
+    )
     webauthn_origins_raw: str = Field(
         default="http://localhost:3000",
         alias="WEBAUTHN_ORIGINS",
