@@ -493,6 +493,7 @@ CREATE TABLE __TENANT_SCHEMA__.prescribing_encounters (
     finalized_by uuid,
     attestation_statement text,
     clinical_reasoning text,
+    requires_delegation boolean,
     CONSTRAINT ck_prescribing_encounters_modality CHECK (((modality IS NULL) OR ((modality)::text = ANY ((ARRAY['in_person'::character varying, 'audio_video'::character varying, 'audio_only'::character varying, 'async'::character varying])::text[])))),
     CONSTRAINT ck_prescribing_encounters_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'finalized'::character varying, 'voided'::character varying])::text[])))
 );
