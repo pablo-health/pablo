@@ -37,11 +37,13 @@ from ..models.passkey import (
     PasskeyCredentialSummary,
     PasskeyRegistrationResult,
     PasskeyRegistrationVerify,
+    RecoveryCodeRedeem,
 )
 from ..models.user import User
 from ..rate_limit import require_rate_limit
 from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
+from ..services.backup_code_service import BackupCodeService, get_backup_code_service
 from ..services.passkey_service import (
     PasskeyAssertionError,
     PasskeyCeremonyError,
@@ -196,3 +198,33 @@ def authenticate_finish(
         raise BadRequestError("Passkey assertion could not be verified.") from err
     except PasskeyAssertionError as err:
         raise UnauthorizedError("Passkey authentication failed.") from err
+
+
+@router.post("/recovery-code/redeem", response_model=PasskeyAuthenticationResult)
+def redeem_recovery_code(
+    payload: RecoveryCodeRedeem,
+    user: EnrollingUser,
+    passkey_service: PasskeyService = Depends(get_passkey_service),
+    backup: BackupCodeService = Depends(get_backup_code_service),
+    _: None = Depends(require_rate_limit),
+) -> PasskeyAuthenticationResult:
+    """Redeem a one-time backup code as the SECOND factor and mint a session.
+
+    Runs on a first-factor session (``get_current_user_no_mfa``): the caller
+    has already proven email/password or Google. The code is the *second*
+    factor — no session reaches here without a first factor, so a code is never
+    a standalone login. On success the code is spent (single-use) and a
+    ``pablo_amr: ["recovery"]`` token is minted; the client exchanges it for an
+    MFA-satisfied session and is then prompted to enroll a fresh passkey.
+
+    TODO (slice 3 follow-ups, see PABLO-gqp): force re-enrolment before PHI,
+    re-issue a fresh code set, and email a "recovery code used" alert.
+    """
+    if not backup.redeem(user.id, payload.code):
+        raise UnauthorizedError(
+            "Invalid or already-used recovery code.", code="INVALID_RECOVERY_CODE"
+        )
+    try:
+        return passkey_service.mint_recovery_session(user.id)
+    except PasskeyAssertionError as err:
+        raise UnauthorizedError("Recovery sign-in failed.") from err

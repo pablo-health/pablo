@@ -78,6 +78,15 @@ class PasskeyAuthenticationVerify(BaseModel):
     credential: dict[str, Any]
 
 
+class RecoveryCodeRedeem(BaseModel):
+    """Redeem-recovery-code payload: one one-time backup code.
+
+    Submitted on a first-factor session — the code is the *second* factor.
+    """
+
+    code: str = Field(min_length=1, max_length=64)
+
+
 class PasskeyRegistrationResult(BaseModel):
     """Result of a successful enrolment."""
 

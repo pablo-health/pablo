@@ -50,6 +50,11 @@ class TestSecondFactorSatisfied:
     def test_passkey_factor(self) -> None:
         assert second_factor_satisfied({"pablo_amr": ["webauthn"]}) is True
 
+    def test_recovery_code_factor(self) -> None:
+        # A redeemed backup code (minted as pablo_amr ["recovery"]) is a valid
+        # second factor — it was combined with a first factor at redemption.
+        assert second_factor_satisfied({"pablo_amr": ["recovery"]}) is True
+
     def test_oidc_amr_step_up(self) -> None:
         assert second_factor_satisfied({"amr": ["mfa"]}) is True
 
