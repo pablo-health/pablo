@@ -21,6 +21,10 @@ class ClinicianProfile:
     practice_id: str
     title: str | None = None
     credentials: str | None = None
+    # Structured, multi-value credential titles (e.g. ["PMHNP-BC", "RN"]).
+    # Source of truth for the credential set; ``credentials`` above is kept
+    # as the joined display string derived from this list.
+    credential_titles: list[str] | None = None
     role: str = "clinician"
     joined_at: datetime | None = None
     license_number: str | None = None

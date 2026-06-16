@@ -16,6 +16,9 @@ ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
 ThemeName = Literal["warm-paper", "dark", "high-contrast", "boring-ehr"]
 
+# Max length of a single credential title (matches clinician_profiles.title).
+MAX_CREDENTIAL_TITLE_LEN = 50
+
 
 class UpdateUserRequest(BaseModel):
     """Request to update user profile."""
@@ -24,6 +27,9 @@ class UpdateUserRequest(BaseModel):
     legal_name: str | None = Field(None, min_length=1, max_length=255)
     title: str | None = Field(None, max_length=50)
     credentials: str | None = Field(None, max_length=100)
+    # Structured credential titles (multi-select picker + free-text). When
+    # present, the server derives the ``credentials`` display string from it.
+    credential_titles: list[str] | None = Field(None, max_length=20)
     provider_type: ProviderType | None = None
     onboarding_state: OnboardingState | None = None
     phone: str | None = Field(None, max_length=50)
@@ -34,6 +40,26 @@ class UpdateUserRequest(BaseModel):
     def _validate_phone(cls, v: str | None) -> str | None:
         """Normalize/validate an optional phone number (None when blank)."""
         return validate_phone(v)
+
+    @field_validator("credential_titles")
+    @classmethod
+    def _clean_credential_titles(cls, v: list[str] | None) -> list[str] | None:
+        """Strip each title, drop blanks, and bound length. Order and any
+        board-certification suffix are preserved verbatim (``PMHNP`` and
+        ``PMHNP-BC`` are distinct values)."""
+        if v is None:
+            return None
+        cleaned: list[str] = []
+        for raw in v:
+            title = raw.strip()
+            if not title:
+                continue
+            if len(title) > MAX_CREDENTIAL_TITLE_LEN:
+                raise ValueError(
+                    f"each credential title must be {MAX_CREDENTIAL_TITLE_LEN} characters or fewer"
+                )
+            cleaned.append(title)
+        return cleaned
 
 
 class UserPreferences(BaseModel):
@@ -130,6 +156,7 @@ class User:
     created_at: datetime
     title: str | None = None
     credentials: str | None = None
+    credential_titles: list[str] | None = None
     picture: str | None = None
     phone: str | None = None
     baa_accepted_at: datetime | None = None
