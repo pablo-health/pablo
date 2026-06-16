@@ -1011,6 +1011,12 @@ class PrescribingEncounterRow(Base):
     modality: Mapped[str | None] = mapped_column(String(20))
     prior_in_person: Mapped[bool | None] = mapped_column(Boolean)
     patient_in_sud_program: Mapped[bool | None] = mapped_column(Boolean)
+    # Whether this prescriber operates under a supervisory/collaborative
+    # (delegation) agreement for this encounter — snapshotted at create from
+    # the prescriber's standing credentials. ``False`` means an independent
+    # prescriber, so delegation-only ledger items don't apply; ``NULL`` (legacy
+    # rows, or no credential signal) preserves the ruleset's default behavior.
+    requires_delegation: Mapped[bool | None] = mapped_column(Boolean)
     # The ruleset version in force, stamped when the encounter is evaluated /
     # finalized (e.g. "MI-RX-2026.06"). Null until then.
     ruleset_version: Mapped[str | None] = mapped_column(String(40))
