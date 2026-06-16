@@ -30,9 +30,12 @@ export interface PasskeyCredentialSummary {
   last_used_at: string | null
 }
 
-interface PasskeyRegistrationResult {
+export interface PasskeyRegistrationResult {
   credential_id: string
   created_at: string
+  // One-time recovery codes, present only on the user's first second-factor
+  // enrolment — show them once, then they're gone (the server keeps only hashes).
+  backup_codes?: string[] | null
 }
 
 interface PasskeyAuthenticationResult {
