@@ -44,27 +44,30 @@ from __future__ import annotations
 from app.auth.route_security import truly_public
 from app.auth.service import (
     get_current_user_no_mfa,
+    require_cloud_tasks_invoker,
     require_mfa,
     require_pentest_runner,
 )
 from app.main import app
 from fastapi.routing import APIRoute
 
-# The four marker callables that classify a route's security posture.
-# Order matters only for reporting; any one of them satisfies the test.
-SECURITY_MARKERS = {
-    "mfa-required": require_mfa,
-    "pre-mfa-onboarding": get_current_user_no_mfa,
-    "service-account-auth": require_pentest_runner,
-    "truly-public": truly_public,
+# The four marker postures that classify a route's security posture. A posture
+# may be satisfied by any one of several marker callables (e.g. there is more
+# than one service-account auth dependency); each value is the tuple of
+# callables that count for that posture.
+SECURITY_MARKERS: dict[str, tuple] = {
+    "mfa-required": (require_mfa,),
+    "pre-mfa-onboarding": (get_current_user_no_mfa,),
+    "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
+    "truly-public": (truly_public,),
 }
 
 
-def _has_dependency(dependant, target_callable) -> bool:
-    """True if ``target_callable`` appears anywhere in this Dependant's tree."""
-    if dependant.call is target_callable:
+def _has_dependency(dependant, target_callables: tuple) -> bool:
+    """True if any of ``target_callables`` appears anywhere in this tree."""
+    if dependant.call in target_callables:
         return True
-    return any(_has_dependency(sub, target_callable) for sub in dependant.dependencies)
+    return any(_has_dependency(sub, target_callables) for sub in dependant.dependencies)
 
 
 def _classify(route: APIRoute) -> str | None:
