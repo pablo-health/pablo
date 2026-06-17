@@ -36,6 +36,7 @@ from __future__ import annotations
 from app.auth.route_security import truly_public
 from app.auth.service import (
     get_current_user_no_mfa,
+    require_cloud_tasks_invoker,
     require_mfa,
     require_pentest_runner,
 )
@@ -48,11 +49,13 @@ from fastapi.routing import APIRoute
 # covered. "service-account-auth" routes authenticate via Cloud Tasks-style
 # ID tokens, never a companion, so a proof is not applicable. Only
 # "truly-public" has no user for the middleware to bind a device to.
-_MARKERS = {
-    "mfa-required": require_mfa,
-    "pre-mfa-onboarding": get_current_user_no_mfa,
-    "service-account-auth": require_pentest_runner,
-    "truly-public": truly_public,
+# A posture may be satisfied by any of several marker callables (e.g. more
+# than one service-account dependency).
+_MARKERS: dict[str, tuple] = {
+    "mfa-required": (require_mfa,),
+    "pre-mfa-onboarding": (get_current_user_no_mfa,),
+    "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
+    "truly-public": (truly_public,),
 }
 
 # Postures the DPoP middleware can enforce against (the request resolves to
@@ -101,13 +104,13 @@ DPOP_UNCOVERABLE: dict[str, str] = {
 
 
 def _classify(route: APIRoute) -> str | None:
-    def has(dep, target) -> bool:
-        if dep.call is target:
+    def has(dep, targets) -> bool:
+        if dep.call in targets:
             return True
-        return any(has(sub, target) for sub in dep.dependencies)
+        return any(has(sub, targets) for sub in dep.dependencies)
 
-    for name, marker in _MARKERS.items():
-        if has(route.dependant, marker):
+    for name, markers in _MARKERS.items():
+        if has(route.dependant, markers):
             return name
     return None
 
