@@ -43,7 +43,9 @@ class TestRegisterFinish:
     def _service(self) -> MagicMock:
         service = MagicMock()
         service.finish_registration.return_value = PasskeyRegistrationResult(
-            credential_id="cred-1", created_at=datetime(2026, 6, 1, tzinfo=UTC)
+            credential_id="cred-1",
+            created_at=datetime(2026, 6, 1, tzinfo=UTC),
+            custom_token="factor-token",  # noqa: S106 — test fixture value, not a real secret
         )
         return service
 
@@ -72,6 +74,9 @@ class TestRegisterFinish:
         assert audit.log_onboarding_milestone.call_args.kwargs["changes"] == {"factor": "passkey"}
         backup.issue.assert_called_once_with(user.id)
         assert out.backup_codes == ["AAAAA-BBBBB", "CCCCC-DDDDD"]
+        # The backup-code model_copy must not drop the minted factor token —
+        # it's what lets the passkey-first onboard reach PHI (PABLO-mee).
+        assert out.custom_token == "factor-token"
 
     def test_subsequent_passkey_does_not_restamp_or_reissue(self) -> None:
         # A user who already has a second factor keeps their timestamp, gets no

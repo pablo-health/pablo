@@ -33,6 +33,11 @@ export interface PasskeyCredentialSummary {
 export interface PasskeyRegistrationResult {
   credential_id: string
   created_at: string
+  // A Firebase custom token carrying the webauthn second-factor claim, minted
+  // from the just-verified attestation. Exchange it via `signInWithCustomToken`
+  // and force-refresh the ID token so a freshly-enrolled session clears MFA in
+  // one ceremony — no sign-out/in before reaching protected data (PABLO-mee).
+  custom_token?: string | null
   // One-time recovery codes, present only on the user's first second-factor
   // enrolment — show them once, then they're gone (the server keeps only hashes).
   backup_codes?: string[] | null

@@ -140,25 +140,36 @@ def _registration_credential(challenge: bytes) -> dict[str, Any]:
     }
 
 
+def _patch_registration_verify(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    device_type: str = "single_device",
+    backed_up: bool = False,
+) -> None:
+    monkeypatch.setattr(
+        svc,
+        "verify_registration_response",
+        lambda **_: SimpleNamespace(
+            credential_id=b"\x01\x02\x03",
+            credential_public_key=b"cose",
+            sign_count=0,
+            aaguid="00000000-0000-0000-0000-000000000000",
+            fmt="packed",
+            credential_device_type=device_type,
+            credential_backed_up=backed_up,
+        ),
+    )
+
+
 class TestFinishRegistration:
     def test_stores_fmt_and_attestation_verdict(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # py_webauthn returns fmt as a plain string; persist it verbatim and,
         # with no trust store configured, record attestation_verified=False.
         service, credentials, challenges = _build_service()
         challenges.create("register", USER_ID, CHALLENGE)
-        monkeypatch.setattr(
-            svc,
-            "verify_registration_response",
-            lambda **_: SimpleNamespace(
-                credential_id=b"\x01\x02\x03",
-                credential_public_key=b"cose",
-                sign_count=0,
-                aaguid="00000000-0000-0000-0000-000000000000",
-                fmt="packed",
-                credential_device_type="single_device",
-                credential_backed_up=False,
-            ),
-        )
+        _patch_registration_verify(monkeypatch)
+        monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
+        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", lambda *_: b"tok")
 
         result = service.finish_registration(
             user_id=USER_ID,
@@ -172,6 +183,71 @@ class TestFinishRegistration:
         assert stored.attestation_verified is False
         # single_device → device-bound hardware authenticator.
         assert stored.is_hardware_authenticator is True
+
+    def test_enrolment_mints_webauthn_factor_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # PABLO-mee: a verified attestation proves possession now, so the
+        # freshly-enrolled session is second-factor-satisfied — register/finish
+        # returns a custom token carrying the same pablo_amr claim an assertion
+        # would, so a passkey-first onboard reaches PHI without a sign-out/in.
+        service, _credentials, challenges = _build_service()
+        challenges.create("register", USER_ID, CHALLENGE)
+        _patch_registration_verify(monkeypatch)
+        monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
+        captured: dict[str, Any] = {}
+
+        def _capture(uid: str, claims: dict[str, Any]) -> bytes:
+            captured["uid"] = uid
+            captured["claims"] = claims
+            return b"minted-token"
+
+        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", _capture)
+
+        result = service.finish_registration(
+            user_id=USER_ID,
+            credential=_registration_credential(CHALLENGE),
+            device_label="My Key",
+        )
+
+        assert result.custom_token == "minted-token"
+        assert captured["uid"] == "fb-uid"
+        # single_device (device-bound) + no trust store → hw=True, att=False.
+        assert captured["claims"] == {
+            "pablo_amr": ["webauthn"],
+            "pablo_passkey": {"hw": True, "att": False},
+        }
+
+    def test_enrolment_without_firebase_identity_still_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Best-effort mint: the credential is already persisted, so a missing
+        # Firebase link must not fail an otherwise-successful enrolment — the
+        # client can still step up via the authenticate ceremony.
+        credentials = InMemoryPasskeyCredentialRepository()
+        challenges = InMemoryPasskeyChallengeStore()
+        identities = InMemoryIdentityRepository()  # no firebase link for USER_ID
+        service = PasskeyService(
+            credentials=credentials,
+            challenges=challenges,
+            identities=identities,
+            attestation=build_attestation_verifier(""),
+            settings=get_settings(),
+        )
+        challenges.create("register", USER_ID, CHALLENGE)
+        _patch_registration_verify(monkeypatch)
+
+        def _explode(*_: Any) -> bytes:
+            raise AssertionError("must not mint without a Firebase uid")
+
+        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", _explode)
+
+        result = service.finish_registration(
+            user_id=USER_ID,
+            credential=_registration_credential(CHALLENGE),
+            device_label="My Key",
+        )
+
+        assert result.custom_token is None
+        assert credentials.get_active(result.credential_id) is not None
 
 
 class TestFinishAuthentication:
