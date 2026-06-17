@@ -192,6 +192,28 @@ def get_session_service(
     )
 
 
+def get_worker_session_service(
+    note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
+) -> SessionService:
+    """SessionService for the off-request Cloud Tasks worker.
+
+    Built from the raw repository factories — NOT the ``get_tenant_context``-
+    scoped wrappers ``get_session_service`` uses. The worker authenticates as
+    the Cloud-Tasks service account and arms its own tenant scope
+    (``set_tenant_schema`` + RLS) inside ``run_soap_generation_job``, so it must
+    not depend on ``get_tenant_context`` — that requires a Firebase user
+    session and would 401 the service-account OIDC token before the handler
+    runs. ``note_generation_service`` stays injected so tests can substitute a
+    deterministic mock.
+    """
+    return SessionService(
+        _session_repo_factory(),
+        _patient_repo_factory(),
+        note_generation_service,
+        NoteService(_notes_repo_factory()),
+    )
+
+
 def _embed_note(note: Note | None) -> NoteResponse | None:
     return NoteResponse.from_note(note) if note is not None else None
 
@@ -257,7 +279,7 @@ def generate_soap_job(
     payload: GenerateSoapJob,
     http_request: Request,
     _invoker: None = Depends(require_cloud_tasks_invoker),
-    session_service: SessionService = Depends(get_session_service),
+    session_service: SessionService = Depends(get_worker_session_service),
     user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
