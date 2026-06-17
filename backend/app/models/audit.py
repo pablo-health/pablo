@@ -39,6 +39,10 @@ class AuditAction(StrEnum):
     SESSION_RATING_UPDATED = "session_rating_updated"
     SESSION_TRANSCRIPT_UPLOADED = "session_transcript_uploaded"
     SESSION_AUDIO_UPLOADED = "session_audio_uploaded"
+    # The SOAP note (clinical PHI) is written by the off-request generation
+    # worker, not on the upload request — so the note's creation is audited
+    # there, at the point the PHI actually comes into existence.
+    SESSION_NOTE_GENERATED = "session_note_generated"
     # Recorded session audio deleted by the per-practice audio retention
     # cron (THERAPY-ab7). The action value is defined here so audit-log
     # readers and dashboards render it consistently regardless of which

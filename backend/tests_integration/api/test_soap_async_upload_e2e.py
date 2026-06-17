@@ -157,7 +157,7 @@ def tenant_a_client(
         require_active_subscription,
         require_baa_acceptance,
     )
-    from app.db import get_db_session  # noqa: PLC0415
+    from app.db import arm_current_user_id, get_db_session  # noqa: PLC0415
     from app.routes.sessions import get_note_generation_service  # noqa: PLC0415
     from app.services.note_generation_service import MockNoteGenerationService  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
@@ -170,11 +170,10 @@ def tenant_a_client(
     )
 
     def _tenant_context() -> TenantContext:
-        session = get_db_session()
-        session.execute(
-            text("SELECT set_config('app.current_user_id', :uid, true)"),
-            {"uid": _USER_A},
-        )
+        # Mirror the real get_tenant_context: arm via session.info so the RLS
+        # GUC survives the mid-request commit in create_session_for_generation
+        # (a transaction-local set_config would be lost at that commit).
+        arm_current_user_id(get_db_session(), _USER_A)
         return TenantContext(
             user_id=_USER_A, practice_id="tenant-a", practice_schema=tenant_a_schema
         )
@@ -185,7 +184,11 @@ def tenant_a_client(
     fastapi_app.dependency_overrides[require_active_subscription] = lambda: user_a
     fastapi_app.dependency_overrides[require_baa_acceptance] = lambda: user_a
     fastapi_app.dependency_overrides[get_tenant_context] = _tenant_context
-    fastapi_app.dependency_overrides[get_note_generation_service] = MockNoteGenerationService
+    # Lambda is required: FastAPI introspects a dependency's signature, and the
+    # class __init__ takes a `registry` param it would mistake for a field.
+    fastapi_app.dependency_overrides[get_note_generation_service] = (
+        lambda: MockNoteGenerationService()  # noqa: PLW0108
+    )
 
     try:
         yield TestClient(fastapi_app)
@@ -220,6 +223,18 @@ def _session_status(engine: Engine, schema: str, session_id: str) -> str | None:
             {"id": session_id},
         ).scalar_one_or_none()
         return row
+
+
+def _note_count_for_session(engine: Engine, schema: str, session_id: str) -> int:
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {schema}, platform, public"))
+        conn.execute(
+            text("SELECT set_config('app.current_user_id', :uid, false)"), {"uid": _USER_A}
+        )
+        return conn.execute(
+            text("SELECT count(*) FROM notes WHERE session_id = CAST(:id AS uuid)"),
+            {"id": session_id},
+        ).scalar_one()
 
 
 _TRANSCRIPT = {"format": "txt", "content": "[00:00] Therapist: Hi.\n[00:01] Client: Hello."}
@@ -345,7 +360,10 @@ class TestSoapWorkerFailurePath:
             lambda _user_id: tenant_a_schema,
         )
         fastapi_app.dependency_overrides[require_cloud_tasks_invoker] = lambda: None
-        fastapi_app.dependency_overrides[get_note_generation_service] = _ExplodingGen
+        # Lambda required (FastAPI signature introspection — see above).
+        fastapi_app.dependency_overrides[get_note_generation_service] = (
+            lambda: _ExplodingGen()  # noqa: PLW0108
+        )
         try:
             worker = TestClient(fastapi_app).post(
                 "/api/internal/jobs/generate-soap",
@@ -358,5 +376,7 @@ class TestSoapWorkerFailurePath:
         # The worker should not 500 the queue into infinite retries on a
         # deterministic generation failure; it records FAILED and returns.
         assert _session_status(engine, tenant_a_schema, session_id) == "failed"
-        assert _count(engine, tenant_a_schema, "notes") == 0
+        # No note was written for THIS session (schema is module-scoped and may
+        # hold notes from sibling tests, so assert session-scoped, not global).
+        assert _note_count_for_session(engine, tenant_a_schema, session_id) == 0
         assert worker.status_code in (200, 422)
