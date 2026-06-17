@@ -54,11 +54,12 @@ import {
   AuthOutlineButton,
   AuthPrimaryButton,
   MfaChallengeScreen,
+  RecoveryCodeScreen,
   VerifyEmailScreen,
 } from "@/components/auth"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 
-type LoginStep = "sign-in" | "mfa" | "verify-email"
+type LoginStep = "sign-in" | "mfa" | "recovery-code" | "verify-email"
 
 function getUrlParam(name: string): string {
   if (typeof window === "undefined") return ""
@@ -345,6 +346,19 @@ export function FirebaseLoginScreen() {
     )
   }
 
+  if (step === "recovery-code") {
+    return (
+      <RecoveryCodeScreen
+        initialEmail={email}
+        onSuccess={(credential) => finishLogin(credential, "passkey")}
+        onCancel={() => {
+          setError("")
+          setStep("sign-in")
+        }}
+      />
+    )
+  }
+
   if (step === "verify-email") {
     const handleResendVerification = async () => {
       const auth = getFirebaseAuth()
@@ -404,17 +418,30 @@ export function FirebaseLoginScreen() {
         </div>
 
         {!isSignUp && passkeySupported && (
-          <div className="relative">
-            <AuthOutlineButton
-              type="button"
-              onClick={handlePasskeyLogin}
-              disabled={loading}
-              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Fingerprint className="h-5 w-5" />
-              Sign in with a passkey
-            </AuthOutlineButton>
-            {lastMethod === "passkey" && <LastUsedPill />}
+          <div className="space-y-2">
+            <div className="relative">
+              <AuthOutlineButton
+                type="button"
+                onClick={handlePasskeyLogin}
+                disabled={loading}
+                className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Fingerprint className="h-5 w-5" />
+                Sign in with a passkey
+              </AuthOutlineButton>
+              {lastMethod === "passkey" && <LastUsedPill />}
+            </div>
+            <div className="text-center">
+              <AuthLinkButton
+                size="sm"
+                onClick={() => {
+                  setError("")
+                  setStep("recovery-code")
+                }}
+              >
+                Lost your passkey? Use a recovery code
+              </AuthLinkButton>
+            </div>
           </div>
         )}
 
