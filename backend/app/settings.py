@@ -732,6 +732,17 @@ class Settings(BaseSettings):
         default="pablo-transcription",
         description="Cloud Tasks queue name for transcription polling",
     )
+    soap_generation_task_queue: str = Field(
+        default="pablo-soap-generation",
+        description=(
+            "Cloud Tasks queue for off-request SOAP generation. The upload "
+            "route persists a PROCESSING session, enqueues a job here, and "
+            "returns 202; a worker drains the queue and runs the LLM. The "
+            "queue's maxConcurrentDispatches (set in queue config, not here) "
+            "bounds how many generations run at once — the actual guard against "
+            "saturating the request threadpool under concurrent uploads."
+        ),
+    )
 
     # NLI Model Settings
     nli_model_path: str = Field(

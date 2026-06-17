@@ -226,32 +226,32 @@ class SessionService:
             user_id=user_id,
         )
 
-    def upload_session(
+    def create_session_for_generation(
         self,
         patient_id: str,
         user_id: str,
         request: UploadSessionRequest,
-    ) -> tuple[TherapySession, Patient, Note]:
-        """Create a session, generate the note, and update patient metadata.
+    ) -> tuple[TherapySession, Patient]:
+        """Persist a ``PROCESSING`` session and commit, without generating.
 
-        Returns ``(session, patient, note)``.
+        This is the request-thread half of the async upload: it does the cheap,
+        bounded DB work (validate the patient, insert the session, commit) so
+        the route can return ``202`` immediately and hand the multi-second LLM
+        generation to a Cloud Tasks worker (``generate_session_note``). The
+        commit also releases the pooled connection before the worker runs —
+        nothing holds locks across the Gemini call (THERAPY-da7t).
+
+        Returns ``(session, patient)``.
 
         Raises:
             PatientNotFoundError: If patient doesn't exist or doesn't belong to user.
-            SOAPGenerationFailedError: If note generation fails.
         """
         patient = self.patient_repo.get(patient_id, user_id)
         if not patient:
             raise PatientNotFoundError(f"Patient {patient_id} not found")
 
         now = _now()
-
         session_number = self.session_repo.get_session_number_for_patient(patient_id)
-
-        # Txn 1: persist the session row in PROCESSING and commit before
-        # the LLM call. Holding row locks on therapy_sessions and the
-        # RLS read on patient_clinicians across a multi-second Gemini
-        # call is the deadlock-amplifying window THERAPY-da7t hit.
         session = TherapySession(
             id=str(uuid.uuid4()),
             user_id=user_id,
@@ -268,6 +268,36 @@ class SessionService:
         )
         session = self.session_repo.create(session)
         _commit_intermediate(user_id)
+        return session, patient
+
+    def generate_session_note(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> tuple[TherapySession, Patient, Note]:
+        """Generate the SOAP note for an already-persisted ``PROCESSING`` session.
+
+        The worker half of the async upload: loads the session created by
+        ``create_session_for_generation``, runs the LLM with no open DB
+        transaction, then flips the session to ``PENDING_REVIEW`` and updates
+        patient metadata. On failure the session is marked ``FAILED`` and the
+        status is committed before re-raising, so a failed generation leaves a
+        durable record rather than vanishing on rollback. Idempotent inputs
+        re-resolve from the DB, so the job is safe to retry while ``PROCESSING``.
+
+        Returns ``(session, patient, note)``.
+
+        Raises:
+            SessionNotFoundError: If the session no longer exists / isn't visible.
+            PatientNotFoundError: If the session's patient is gone.
+            SOAPGenerationFailedError: If note generation fails.
+        """
+        session = self.session_repo.get(session_id, user_id)
+        if session is None:
+            raise SessionNotFoundError(f"Session {session_id} not found")
+        patient = self.patient_repo.get(session.patient_id, user_id)
+        if not patient:
+            raise PatientNotFoundError(f"Patient {session.patient_id} not found")
 
         try:
             logger.info("Starting note generation for session %s", session.id)
@@ -296,11 +326,28 @@ class SessionService:
         # via the middleware. Lock window for txn 2 is bounded by the
         # session/note/patient writes plus the audit insert.
         patient.session_count += 1
-        if patient.last_session_date is None or request.session_date > patient.last_session_date:
-            patient.last_session_date = request.session_date
+        if patient.last_session_date is None or session.session_date > patient.last_session_date:
+            patient.last_session_date = session.session_date
         self.patient_repo.update(patient)
 
         return session, patient, note
+
+    def upload_session(
+        self,
+        patient_id: str,
+        user_id: str,
+        request: UploadSessionRequest,
+    ) -> tuple[TherapySession, Patient, Note]:
+        """Synchronous create-then-generate, kept for direct/non-async callers.
+
+        The HTTP upload route runs the two halves separately (202 + Cloud Tasks
+        worker); this convenience method chains them for tests and any caller
+        that wants the note inline.
+
+        Returns ``(session, patient, note)``.
+        """
+        session, _patient = self.create_session_for_generation(patient_id, user_id, request)
+        return self.generate_session_note(session.id, user_id)
 
     def import_session(
         self,
