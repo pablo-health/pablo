@@ -825,6 +825,32 @@ class Settings(BaseSettings):
             "this value. Tune per-deployment via NOTE_MAX_OUTPUT_TOKENS."
         ),
     )
+    note_source_attribution_max_output_tokens: int = Field(
+        default=32768,
+        description=(
+            "Output-token budget for the source-attribution call (Call 2) that "
+            "grounds each SOAP claim to transcript segments. This is a separate, "
+            "larger budget than note generation because a thinking model shares "
+            "the output budget with its reasoning tokens: on a long indexed "
+            "transcript the reasoning alone can exhaust a small budget and the "
+            "call truncates with zero output (the claim->segment JSON never "
+            "emits). Sized so reasoning (capped by "
+            "NOTE_SOURCE_ATTRIBUTION_THINKING_BUDGET) plus the mapping always "
+            "fit. Tune via NOTE_SOURCE_ATTRIBUTION_MAX_OUTPUT_TOKENS."
+        ),
+    )
+    note_source_attribution_thinking_budget: int = Field(
+        default=8192,
+        description=(
+            "Reasoning-token cap for the source-attribution call (Call 2). "
+            "Attribution is a near-mechanical claim->segment mapping, so we cap "
+            "thinking rather than letting it run to the model default — an "
+            "uncapped budget on a long transcript consumes the whole output "
+            "window on reasoning and returns zero characters. Capping it "
+            "guarantees output room (max_output_tokens minus this) and bounds "
+            "latency. Tune via NOTE_SOURCE_ATTRIBUTION_THINKING_BUDGET."
+        ),
+    )
     # LLM quota enforcement switch for the chat primitive
     # (THERAPY-f6eg). ``off`` (the default) records usage but never
     # rejects a turn; ``on`` lets ``LlmUsageMeter.check_quota`` consult
