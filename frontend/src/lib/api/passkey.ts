@@ -73,6 +73,19 @@ export function finishAuthentication(
   })
 }
 
+/**
+ * Spend a one-time recovery code as the SECOND factor.
+ *
+ * Runs on a first-factor session (the caller has just signed in with a
+ * password), so `post` attaches that bearer token. The backend verifies and
+ * consumes the single-use code and returns a custom token carrying the
+ * `recovery` factor claim — exchange it via `signInWithCustomToken` and
+ * force-refresh the ID token to reach an MFA-satisfied session.
+ */
+export function redeemRecoveryCode(code: string): Promise<PasskeyAuthenticationResult> {
+  return post<PasskeyAuthenticationResult>("/api/auth/passkey/recovery-code/redeem", { code })
+}
+
 export function listPasskeys(): Promise<PasskeyCredentialSummary[]> {
   return get<PasskeyCredentialSummary[]>("/api/auth/passkey/credentials")
 }
