@@ -88,10 +88,27 @@ class RecoveryCodeRedeem(BaseModel):
 
 
 class PasskeyRegistrationResult(BaseModel):
-    """Result of a successful enrolment."""
+    """Result of a successful enrolment.
+
+    ``custom_token`` is a Firebase custom token carrying
+    ``pablo_amr: ["webauthn"]``, minted from the just-verified attestation —
+    the same factor claim ``authenticate/finish`` returns. The client
+    exchanges it via ``signInWithCustomToken`` and force-refreshes its ID
+    token so the freshly-enrolled session clears MFA without a second WebAuthn
+    ceremony or a sign-out/in (PABLO-mee). A verified attestation proves
+    possession at enrolment time, so treating it as second-factor-satisfied is
+    legitimate.
+
+    ``backup_codes`` is populated **only** when this enrolment is the user's
+    first second factor — the plaintext one-time recovery codes, returned
+    exactly once so the client can show them. ``None`` on every later
+    enrolment (the user already has codes). See PABLO-e82.
+    """
 
     credential_id: str
     created_at: datetime
+    custom_token: str | None = None
+    backup_codes: list[str] | None = None
 
 
 class PasskeyAuthenticationResult(BaseModel):

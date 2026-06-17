@@ -251,6 +251,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 return
 
             prompt = build_attribution_prompt(claims, indexed_transcript)
+            settings = get_settings()
             completion = self._llm_gateway.complete_structured(
                 model=self._resolve_model(),
                 system_prompt=(
@@ -261,12 +262,16 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 ),
                 user_prompt=prompt,
                 response_schema=_SOAP_ATTRIBUTION_SCHEMA,
-                # Generous so a thinking model's reasoning tokens don't crowd
-                # out the claim->segment mapping on a long note (the mapping
-                # itself is small, but reasoning shares this budget). This
-                # call is non-fatal — truncation just drops source links —
-                # but we'd rather keep grounding working on real transcripts.
-                max_output_tokens=8192,
+                # The output budget is shared between reasoning and output on a
+                # thinking model. On a long indexed transcript the reasoning
+                # alone could exhaust a small budget and truncate with zero
+                # output (the mapping never emits). So we cap thinking
+                # explicitly and give the call its own generous output budget,
+                # sized so reasoning + the (small) mapping always fit. This
+                # call is non-fatal — truncation just drops source links — but
+                # we'd rather keep grounding working on real transcripts.
+                max_output_tokens=settings.note_source_attribution_max_output_tokens,
+                thinking_budget=settings.note_source_attribution_thinking_budget,
                 temperature=0.0,
             )
             parse_attribution_response(

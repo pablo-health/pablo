@@ -65,4 +65,5 @@ local/
 
 # Per-run pentest reports detail the live attack surface — on-request only, never committed.
 # (Methodology guide, README, and VULNERABILITY_EXCEPTIONS.md stay tracked.)
-docs/pentest/*_pentest_report.md
+# The trailing wildcard also covers suffixed variants (e.g. *_pentest_report_OSS.md).
+docs/pentest/*_pentest_report*.md

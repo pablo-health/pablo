@@ -29,6 +29,7 @@ from app.services.structured_llm_gateway import (
     StructuredCompletion,
     StructuredOutputTruncatedError,
 )
+from app.settings import get_settings
 
 
 @pytest.fixture
@@ -501,6 +502,75 @@ class TestRegistryGeneration:
         # Second call is Call-2 source attribution.
         attribution_call = gateway.calls[1]
         assert "claim" in attribution_call["user_prompt"].lower()
+
+    def test_source_attribution_uses_own_budget_and_capped_thinking(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """Call-2 (source attribution) must run with its own larger output
+        budget AND an explicit thinking cap. Regression for the production
+        failure where a thinking model exhausted the shared 8192 budget on
+        reasoning and truncated with zero output, silently dropping source
+        links on long transcripts."""
+        transcript = Transcript(format="txt", content="[00:00] Client: hello")
+        soap_llm_data = {
+            "subjective": {
+                "chief_complaint": "Greeting only.",
+                "mood_affect": "Neutral.",
+                "symptoms": [],
+                "client_narrative": "Greeting exchange.",
+            },
+            "objective": {
+                "appearance": "",
+                "behavior": "Brief.",
+                "speech": "",
+                "thought_process": "",
+                "affect_observed": "",
+            },
+            "assessment": {
+                "clinical_impression": "Insufficient content.",
+                "progress": "",
+                "risk_assessment": "No risk indicators present.",
+                "functioning_level": "",
+            },
+            "plan": {
+                "interventions_used": [],
+                "homework_assignments": [],
+                "next_steps": ["Continue treatment."],
+                "next_session": "",
+            },
+        }
+        gateway = FakeStructuredLLMGateway(
+            responses=[
+                StructuredCompletion(data=soap_llm_data),
+                StructuredCompletion(data={}),
+            ]
+        )
+        service = RegistryNoteGenerationService(
+            registry=isolated_registry, llm_gateway=gateway
+        )
+        service.generate_note(
+            "soap",
+            transcript,
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        settings = get_settings()
+        attribution_call = gateway.calls[1]
+        # Its own (larger) output budget, not the note-generation budget.
+        assert (
+            attribution_call["max_output_tokens"]
+            == settings.note_source_attribution_max_output_tokens
+        )
+        # Thinking is explicitly capped so reasoning can't eat the whole budget.
+        assert (
+            attribution_call["thinking_budget"]
+            == settings.note_source_attribution_thinking_budget
+        )
+        # And the cap leaves real room for the mapping to emit.
+        assert (
+            attribution_call["max_output_tokens"] > attribution_call["thinking_budget"]
+        )
 
     def test_unknown_note_type_raises(
         self, isolated_registry: NoteTypeRegistry, patient: Patient
