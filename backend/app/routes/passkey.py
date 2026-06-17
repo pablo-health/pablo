@@ -109,6 +109,11 @@ def register_finish(
     lets onboarding be passkey-first with TOTP as a fallback. On that first
     enrolment we also issue one-time backup codes and return them once so the
     client can show them (Layer-1 recovery; see authentication-mfa-policy §6.4).
+
+    The result also carries a ``custom_token`` minted from the verified
+    attestation (``pablo_amr: ["webauthn"]``). The client exchanges it and
+    force-refreshes its ID token so the freshly-enrolled session clears MFA
+    in one ceremony — no sign-out/in before reaching PHI (PABLO-mee).
     """
     try:
         result = passkey_service.finish_registration(

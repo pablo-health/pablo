@@ -189,24 +189,23 @@ class PasskeyService:
 
         credential_id = bytes_to_base64url(verification.credential_id)
         now = utc_now()
-        self._credentials.add(
-            PasskeyCredential(
-                credential_id=credential_id,
-                user_id=user_id,
-                public_key=verification.credential_public_key,
-                sign_count=verification.sign_count,
-                transports=_transports(credential),
-                aaguid=_normalize_aaguid(verification.aaguid),
-                fmt=verification.fmt,
-                attestation_verified=attestation_verified,
-                backup_eligible=verification.credential_device_type == "multi_device",
-                backup_state=verification.credential_backed_up,
-                device_label=device_label,
-                created_at=now,
-                last_used_at=None,
-                revoked_at=None,
-            )
+        credential_record = PasskeyCredential(
+            credential_id=credential_id,
+            user_id=user_id,
+            public_key=verification.credential_public_key,
+            sign_count=verification.sign_count,
+            transports=_transports(credential),
+            aaguid=_normalize_aaguid(verification.aaguid),
+            fmt=verification.fmt,
+            attestation_verified=attestation_verified,
+            backup_eligible=verification.credential_device_type == "multi_device",
+            backup_state=verification.credential_backed_up,
+            device_label=device_label,
+            created_at=now,
+            last_used_at=None,
+            revoked_at=None,
         )
+        self._credentials.add(credential_record)
         logger.info(
             "passkey_enrolled user_id=%s credential_id=%s fmt=%s aaguid=%s "
             "device_type=%s backed_up=%s attested=%s",
@@ -218,7 +217,28 @@ class PasskeyService:
             verification.credential_backed_up,
             attestation_verified,
         )
-        return PasskeyRegistrationResult(credential_id=credential_id, created_at=now)
+
+        # A verified attestation proves possession of the authenticator right
+        # now, so the just-enrolled session is legitimately second-factor-
+        # satisfied — mint the same webauthn factor token an assertion would.
+        # Without this, a passkey-first onboard holds a first-factor-only token
+        # and is blocked from every PHI route until it signs out and back in
+        # (PABLO-mee). Best-effort: every user has a Firebase identity, but if
+        # the lookup misses we don't fail an otherwise-successful enrolment —
+        # the client can still step up via the authenticate ceremony.
+        custom_token: str | None = None
+        firebase_uid = self._identities.get_subject_id(user_id, "firebase")
+        if firebase_uid is None:
+            logger.warning("passkey_registration_no_firebase_uid user_id=%s", user_id)
+        else:
+            custom_token = self._mint_factor_token(
+                firebase_uid,
+                hardware=credential_record.is_hardware_authenticator,
+                attested=attestation_verified,
+            )
+        return PasskeyRegistrationResult(
+            credential_id=credential_id, created_at=now, custom_token=custom_token
+        )
 
     # --- authentication ----------------------------------------------
 
@@ -290,20 +310,12 @@ class PasskeyService:
             backup_state=verification.credential_backed_up,
         )
 
-        # Mint the factor token; pablo_amr is set only here, after verification.
-        # pablo_passkey records the asserting credential's provenance so admin
-        # hardware-key enforcement can bind this session to a device-bound
-        # (and optionally attested) authenticator — not just "some passkey".
-        initialize_firebase_app()
-        token = firebase_auth.create_custom_token(
+        # Mint the factor token; pablo_amr is set only after a verified
+        # ceremony — an assertion here, or a fresh attestation at enrolment.
+        token = self._mint_factor_token(
             firebase_uid,
-            {
-                "pablo_amr": ["webauthn"],
-                "pablo_passkey": {
-                    "hw": stored.is_hardware_authenticator,
-                    "att": stored.attestation_verified,
-                },
-            },
+            hardware=stored.is_hardware_authenticator,
+            attested=stored.attestation_verified,
         )
         logger.info(
             "passkey_assertion_ok user_id=%s credential_id=%s hw=%s att=%s",
@@ -312,7 +324,27 @@ class PasskeyService:
             stored.is_hardware_authenticator,
             stored.attestation_verified,
         )
-        return PasskeyAuthenticationResult(custom_token=token.decode("utf-8"))
+        return PasskeyAuthenticationResult(custom_token=token)
+
+    def _mint_factor_token(self, firebase_uid: str, *, hardware: bool, attested: bool) -> str:
+        """Mint a Firebase custom token carrying the webauthn second-factor claim.
+
+        ``pablo_amr: ["webauthn"]`` marks the session second-factor-satisfied.
+        ``pablo_passkey`` records the verified credential's provenance so admin
+        hardware-key enforcement can bind the session to a device-bound (and
+        optionally attested) authenticator — not just "some passkey". Both an
+        assertion (``authenticate/finish``) and a fresh attestation
+        (``register/finish``) reach this after the ceremony is verified.
+        """
+        initialize_firebase_app()
+        token: bytes = firebase_auth.create_custom_token(
+            firebase_uid,
+            {
+                "pablo_amr": ["webauthn"],
+                "pablo_passkey": {"hw": hardware, "att": attested},
+            },
+        )
+        return token.decode("utf-8")
 
     # --- management ---------------------------------------------------
 
