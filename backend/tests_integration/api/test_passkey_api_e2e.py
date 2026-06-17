@@ -80,6 +80,7 @@ _RP_ID = "localhost"
 _ORIGIN = "http://localhost:3000"
 
 _BASE = "/api/auth/passkey"
+_REDEEM = f"{_BASE}/recovery-code/redeem"
 
 
 @pytest.fixture(scope="module")
@@ -159,12 +160,18 @@ def seed_user(engine: Engine) -> Iterator[dict[str, str]]:
 
 @pytest.fixture(autouse=True)
 def _clean_passkey_tables(engine: Engine) -> None:
-    """Reset the shared platform passkey tables so each test is independent."""
+    """Reset the shared platform passkey tables so each test is independent.
+
+    Includes ``passkey_backup_codes``: codes are issued at first enrollment and
+    ``consumed_at`` rows are never deleted (only unused ones are), so without a
+    truncate a redeemed/leftover code from one test would bleed into the next.
+    """
     with engine.begin() as conn:
         conn.execute(
             text(
                 "TRUNCATE TABLE platform.passkey_credentials, "
-                "platform.passkey_challenges RESTART IDENTITY"
+                "platform.passkey_challenges, platform.passkey_backup_codes "
+                "RESTART IDENTITY"
             )
         )
 
@@ -289,8 +296,7 @@ class TestRegistration:
                 r[0]
                 for r in conn.execute(
                     text(
-                        "SELECT code_hash FROM platform.passkey_backup_codes "
-                        "WHERE user_id = :uid"
+                        "SELECT code_hash FROM platform.passkey_backup_codes WHERE user_id = :uid"
                     ),
                     {"uid": seed_user["user_id"]},
                 )
@@ -457,3 +463,140 @@ class TestAuthentication:
         # fails verification — see the wrong-origin test above).
         resp = _authenticate(harness.client, authenticator, user_verified=False)
         assert resp.status_code == 401, resp.text
+
+
+# --- recovery-code redemption ----------------------------------------------
+
+
+def _unused_code_count(engine: Engine, user_id: str) -> int:
+    """How many of a user's backup codes are still spendable."""
+    with engine.connect() as conn:
+        return int(
+            conn.execute(
+                text(
+                    "SELECT count(*) FROM platform.passkey_backup_codes "
+                    "WHERE user_id = CAST(:uid AS uuid) AND consumed_at IS NULL"
+                ),
+                {"uid": user_id},
+            ).scalar_one()
+        )
+
+
+class TestRecoveryCodeRedeem:
+    """Spend a one-time backup code as the SECOND factor against the real DB.
+
+    The codes are issued for real at first enrollment (``_register``), hashed in
+    ``platform.passkey_backup_codes``; redemption runs the real
+    ``BackupCodeService`` + ``mint_recovery_session`` against Postgres. Only the
+    Firebase ``create_custom_token`` seam is stubbed (captured), same as the
+    ceremony tests. This proves the security shape the route depends on — a code
+    is a second factor combined with a first-factor session, single-use, and
+    owner-scoped — independently of any UI.
+    """
+
+    def test_valid_code_mints_recovery_session_and_consumes_it(
+        self, harness: SimpleNamespace, engine: Engine, seed_user: dict[str, str]
+    ) -> None:
+        code = _register(harness.client, SoftWebAuthnAuthenticator())["backup_codes"][0]
+        assert _unused_code_count(engine, seed_user["user_id"]) == 10
+
+        resp = harness.client.post(_REDEEM, json={"code": code})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["custom_token"] == "custom-token-stub"  # noqa: S105 — stub mint
+
+        # The recovery factor is stamped for THIS user, and only the recovery
+        # AMR — no passkey provenance (a code is not a device-bound authenticator).
+        assert harness.mint["uid"] == seed_user["firebase_uid"]
+        assert harness.mint["claims"] == {"pablo_amr": ["recovery"]}
+
+        # Single-use: exactly the redeemed code is now spent (9 of 10 remain).
+        assert _unused_code_count(engine, seed_user["user_id"]) == 9
+
+    def test_redeemed_claim_satisfies_mfa_seam(self, harness: SimpleNamespace) -> None:
+        """A redeemed-code session is MFA-satisfied by the real verifier.
+
+        Closes the loop: real redemption → minted ``pablo_amr: ["recovery"]`` →
+        the same ``FirebaseVerifier`` production uses → ``require_mfa`` passes.
+        """
+        from app.auth.providers import FirebaseVerifier  # noqa: PLC0415
+
+        code = _register(harness.client, SoftWebAuthnAuthenticator())["backup_codes"][0]
+        assert harness.client.post(_REDEEM, json={"code": code}).status_code == 200
+
+        minted = FirebaseVerifier().verify_from_decoded(
+            {"uid": harness.mint["uid"], "email": "t@example.com", **harness.mint["claims"]}
+        )
+        assert minted.mfa_satisfied is True
+
+    def test_second_redeem_of_same_code_rejected(
+        self, harness: SimpleNamespace, engine: Engine, seed_user: dict[str, str]
+    ) -> None:
+        code = _register(harness.client, SoftWebAuthnAuthenticator())["backup_codes"][0]
+        assert harness.client.post(_REDEEM, json={"code": code}).status_code == 200
+
+        # The same code again: already consumed → 401, no second factor granted.
+        replay = harness.client.post(_REDEEM, json={"code": code})
+        assert replay.status_code == 401, replay.text
+        assert replay.json()["error"]["code"] == "INVALID_RECOVERY_CODE"
+        # No further code was spent by the failed attempt.
+        assert _unused_code_count(engine, seed_user["user_id"]) == 9
+
+    def test_invalid_code_rejected_without_consuming(
+        self, harness: SimpleNamespace, engine: Engine, seed_user: dict[str, str]
+    ) -> None:
+        _register(harness.client, SoftWebAuthnAuthenticator())
+
+        resp = harness.client.post(_REDEEM, json={"code": "ZZZZZ-ZZZZZ"})
+        assert resp.status_code == 401, resp.text
+        assert resp.json()["error"]["code"] == "INVALID_RECOVERY_CODE"
+        # A wrong guess spends nothing — all 10 codes remain.
+        assert _unused_code_count(engine, seed_user["user_id"]) == 10
+
+    def test_code_is_owner_scoped(
+        self,
+        harness: SimpleNamespace,
+        fastapi_app: FastAPI,
+        engine: Engine,
+        seed_user: dict[str, str],
+    ) -> None:
+        # User A enrolls and receives a valid code.
+        a_code = _register(harness.client, SoftWebAuthnAuthenticator())["backup_codes"][0]
+
+        # Re-point the (still first-factor) session at a DIFFERENT user B and try
+        # A's code. ``redeem`` is scoped to the caller's user_id, so B can't spend
+        # A's code — even though it's a perfectly valid code for A.
+        from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
+        from app.models.user import User  # noqa: PLC0415
+        from app.utcnow import utc_now  # noqa: PLC0415
+
+        other = User(
+            id=str(uuid.uuid4()), email="other@example.com", name="B", created_at=utc_now()
+        )
+        fastapi_app.dependency_overrides[get_current_user_no_mfa] = lambda: other
+
+        resp = harness.client.post(_REDEEM, json={"code": a_code})
+        assert resp.status_code == 401, resp.text
+        assert resp.json()["error"]["code"] == "INVALID_RECOVERY_CODE"
+        # A's code is untouched — still spendable by its real owner.
+        assert _unused_code_count(engine, seed_user["user_id"]) == 10
+
+    def test_redeem_requires_a_first_factor_session(self, fastapi_app: FastAPI) -> None:
+        """A bare code with no first-factor session never reaches the mint.
+
+        The endpoint runs under ``get_current_user_no_mfa``; with no bearer the
+        ``HTTPBearer`` guard rejects before any code is read — a code is always a
+        SECOND factor, never a standalone login.
+        """
+        from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
+        from app.rate_limit import require_rate_limit  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        # Ensure auth is the REAL dependency (no leftover override), and keep the
+        # IP limiter out of the way so we isolate the auth gate.
+        fastapi_app.dependency_overrides.pop(get_current_user_no_mfa, None)
+        fastapi_app.dependency_overrides[require_rate_limit] = lambda: None
+        try:
+            resp = TestClient(fastapi_app).post(_REDEEM, json={"code": "ABCDE-FGHJK"})
+            assert resp.status_code in (401, 403), resp.text
+        finally:
+            fastapi_app.dependency_overrides.clear()

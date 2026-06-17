@@ -223,6 +223,18 @@ def passkey_factor_satisfied(claims: dict[str, Any]) -> bool:
     return isinstance(amr, list) and "webauthn" in amr
 
 
+def _recovery_factor_satisfied(claims: dict[str, Any]) -> bool:
+    """True if the token carries our server-minted recovery-code factor claim.
+
+    Set by the recovery-code redemption endpoint only, after the user has
+    proven a first factor and spent a valid single-use backup code — so a
+    backup code is always a *second* factor (first factor + code), never a
+    standalone login. Like ``pablo_amr: ["webauthn"]``, the client can't set it.
+    """
+    amr = claims.get("pablo_amr")
+    return isinstance(amr, list) and "recovery" in amr
+
+
 def _oidc_mfa_satisfied(claims: dict[str, Any]) -> bool:
     """Derive MFA satisfaction from OIDC AMR/ACR claims.
 
@@ -249,6 +261,8 @@ def second_factor_satisfied(claims: dict[str, Any]) -> bool:
     if firebase_claims.get("sign_in_second_factor"):
         return True
     if passkey_factor_satisfied(claims):
+        return True
+    if _recovery_factor_satisfied(claims):
         return True
     return _oidc_mfa_satisfied(claims)
 

@@ -346,6 +346,26 @@ class PasskeyService:
         )
         return token.decode("utf-8")
 
+    # --- recovery -----------------------------------------------------
+
+    def mint_recovery_session(self, user_id: str) -> PasskeyAuthenticationResult:
+        """Mint a factor token for a user who redeemed a recovery code.
+
+        The caller MUST have already proven a first factor (the route runs on a
+        first-factor session) and spent a valid single-use code — so this is the
+        *second* factor, never a standalone login. ``pablo_amr: ["recovery"]``
+        is what ``require_mfa`` honours; it is set only here, only after a
+        verified redemption.
+        """
+        firebase_uid = self._identities.get_subject_id(user_id, "firebase")
+        if firebase_uid is None:
+            logger.warning("recovery_mint_no_firebase_uid user_id=%s", user_id)
+            raise PasskeyAssertionError
+        initialize_firebase_app()
+        token = firebase_auth.create_custom_token(firebase_uid, {"pablo_amr": ["recovery"]})
+        logger.info("recovery_session_minted user_id=%s", user_id)
+        return PasskeyAuthenticationResult(custom_token=token.decode("utf-8"))
+
     # --- management ---------------------------------------------------
 
     def list_credentials(self, user_id: str) -> list[PasskeyCredentialSummary]:

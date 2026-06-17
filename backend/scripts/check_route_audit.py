@@ -133,6 +133,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/auth/passkey/authenticate/finish"),  # verifies assertion, mints token
         ("get", "/api/auth/passkey/credentials"),  # lists own authenticator metadata + labels
         ("delete", "/api/auth/passkey/credentials/{credential_id}"),  # soft-revokes own passkey
+        ("post", "/api/auth/passkey/recovery-code/redeem"),  # spends a backup code, mints token
+
         # chat.py — context-preview manifest is ids/dates/counts only, PHI-free by design
         ("post", "/api/chat/conversations/preview"),  # context-preview manifest, no PHI
         # launch.py — issues a single-use intent for an appointment the caller
