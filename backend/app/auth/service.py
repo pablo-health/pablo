@@ -23,7 +23,7 @@ from ..repositories import (
     get_identity_repository,
     get_user_repository,
 )
-from ..settings import get_settings
+from ..settings import Settings, get_settings
 from ..utcnow import utc_now
 from ..version_check import check_client_version
 from .firebase_init import initialize_firebase_app
@@ -930,6 +930,87 @@ def require_pentest_runner(request: Request) -> str:
             },
         )
     return email
+
+
+def _cloud_tasks_backend_audience(settings: Settings) -> str:
+    """The OIDC audience Cloud Tasks stamps on internal-job tokens.
+
+    Must match what ``cloud_tasks_service.enqueue_cloud_task`` sets as the
+    token audience (the backend's own URL), or verification rejects every job.
+    """
+    return settings.transcription_backend_callback_url or settings.app_url.replace(
+        ":3000", ":8000"
+    )
+
+
+def require_cloud_tasks_invoker(request: Request) -> None:
+    """Gate internal job endpoints to the Cloud-Tasks invoker service account.
+
+    Cloud Tasks delivers jobs as an authenticated HTTP POST carrying a Google
+    OIDC token signed by ``cloud-tasks-invoker@<project>`` with the backend URL
+    as its audience (see ``cloud_tasks_service.enqueue_cloud_task``). Verify the
+    signature, issuer, audience, and that the email is exactly that service
+    account before any job runs — these routes drive privileged, tenant-scoped
+    work and must never be reachable by an ordinary user token. Rejects a
+    missing bearer with 401 and any other failure with 403, mirroring
+    :func:`require_pentest_runner`.
+    """
+    settings = get_settings()
+    expected_sa = f"cloud-tasks-invoker@{settings.gcp_project_id}.iam.gserviceaccount.com"
+    audience = _cloud_tasks_backend_audience(settings)
+    if not settings.gcp_project_id or not audience:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": "CLOUD_TASKS_INVOKER_NOT_CONFIGURED",
+                    "message": "Cloud Tasks invoker identity is not configured.",
+                    "details": {},
+                }
+            },
+        )
+
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "CLOUD_TASKS_INVOKER_REQUIRED",
+                    "message": "Missing bearer token.",
+                    "details": {},
+                }
+            },
+        )
+    token = auth_header[7:]
+
+    try:
+        claims = _verify_google_oidc_token(token, audience=audience)
+    except Exception as exc:
+        logger.warning("Cloud Tasks invoker OIDC verification failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "CLOUD_TASKS_INVOKER_REQUIRED",
+                    "message": "Invalid Cloud Tasks invoker token.",
+                    "details": {},
+                }
+            },
+        ) from exc
+
+    email = str(claims.get("email", "")).lower()
+    if email != expected_sa.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "CLOUD_TASKS_INVOKER_REQUIRED",
+                    "message": "Token does not belong to the Cloud Tasks invoker.",
+                    "details": {},
+                }
+            },
+        )
 
 
 def require_admin(

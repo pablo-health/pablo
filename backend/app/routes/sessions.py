@@ -13,8 +13,14 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Upl
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
-from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from ..auth.service import (
+    TenantContext,
+    get_tenant_context,
+    require_baa_acceptance,
+    require_cloud_tasks_invoker,
+)
 from ..db import release_db_connection
+from ..jobs.task_queue import enqueue
 from ..models import (
     AuditAction,
     FinalizeSessionRequest,
@@ -39,6 +45,8 @@ from ..repositories import (
     NotesRepository,
     PatientRepository,
     TherapySessionRepository,
+    UserRepository,
+    get_user_repository,
 )
 from ..repositories import (
     get_notes_repository as _notes_repo_factory,
@@ -70,6 +78,10 @@ from ..services.note_import_service import (
     NoteImportService,
     UnsupportedDocumentTypeError,
     extract_document_text,
+)
+from ..services.session_generation_worker import (
+    UnknownTenantError,
+    run_soap_generation_job,
 )
 from ..services.transcription_queue_service import (
     MockTranscriptionQueueService,
@@ -184,7 +196,7 @@ def _embed_note(note: Note | None) -> NoteResponse | None:
     return NoteResponse.from_note(note) if note is not None else None
 
 
-@router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_201_CREATED)
+@router.post("/api/patients/{patient_id}/sessions/upload", status_code=status.HTTP_202_ACCEPTED)
 def upload_session(
     patient_id: str,
     http_request: Request,
@@ -194,7 +206,14 @@ def upload_session(
     audit: AuditService = Depends(get_audit_service),
 ) -> SessionResponse:
     """
-    Upload transcript and create session with SOAP note generation.
+    Upload a transcript and start SOAP generation asynchronously.
+
+    Persists the session in ``processing`` and returns ``202`` immediately;
+    the multi-second LLM generation runs on a Cloud Tasks worker
+    (``/api/internal/jobs/generate-soap``) so it never holds the request
+    thread (THERAPY-jonc). Poll ``GET /api/sessions/{id}`` for ``status`` —
+    ``pending_review`` when the note is ready, ``failed`` if generation failed.
+    The returned ``note`` is ``null`` until then.
 
     - **patient_id**: Patient ID for this session
     - **session_date**: ISO 8601 datetime of session
@@ -202,13 +221,104 @@ def upload_session(
     """
     _gate_trial_session(user.email)
     try:
-        session, patient, note = session_service.upload_session(patient_id, user.id, request)
+        session, patient = session_service.create_session_for_generation(
+            patient_id, user.id, request
+        )
     except PatientNotFoundError as e:
         raise NotFoundError("Patient not found", {"patient_id": patient_id}) from e
 
+    settings = get_settings()
+    enqueue(
+        settings.soap_generation_task_queue,
+        "/api/internal/jobs/generate-soap",
+        {"session_id": session.id, "user_id": user.id},
+        dedup_key=session.id,
+    )
+
     audit.log_session_action(AuditAction.SESSION_CREATED, user, http_request, session, patient)
 
-    return SessionResponse.from_session(session, patient.display_name, _embed_note(note))
+    return SessionResponse.from_session(session, patient.display_name, _embed_note(None))
+
+
+class GenerateSoapJob(BaseModel):
+    """Cloud Tasks payload for off-request SOAP generation.
+
+    Opaque identifiers only — deliberately no tenant schema name (it can
+    identify a tenant) and no transcript/PHI. The worker re-resolves the schema
+    from ``user_id`` server-side.
+    """
+
+    session_id: str
+    user_id: str
+
+
+@router.post("/api/internal/jobs/generate-soap", status_code=status.HTTP_200_OK)
+def generate_soap_job(
+    payload: GenerateSoapJob,
+    http_request: Request,
+    _invoker: None = Depends(require_cloud_tasks_invoker),
+    session_service: SessionService = Depends(get_session_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> dict[str, str]:
+    """Worker: generate the SOAP note for a ``PROCESSING`` session.
+
+    Invoked only by Cloud Tasks (service-account OIDC, enforced by
+    ``require_cloud_tasks_invoker``). Scopes itself to the job's tenant and runs
+    the LLM off the upload request thread.
+
+    The SOAP note — clinical PHI — is created here, not at upload, so this is
+    where its creation is audited (``SESSION_NOTE_GENERATED``), once the tenant
+    schema is in scope. The actor is the owning clinician; the request context
+    is the Cloud Tasks delivery (system-initiated), which is recorded honestly.
+
+    Always answers ``200`` once the job is accounted for — including the
+    non-retryable outcomes (unknown tenant, vanished session) and a recorded
+    generation failure (the session is durably marked ``failed``). Returning
+    ``200`` stops Cloud Tasks from retrying a job that can't succeed; only an
+    unexpected ``5xx`` triggers the queue's retry/backoff.
+    """
+    try:
+        session, patient, note = run_soap_generation_job(
+            session_id=payload.session_id,
+            user_id=payload.user_id,
+            session_service=session_service,
+        )
+    except UnknownTenantError:
+        logger.warning(
+            "generate-soap job: no active tenant for session %s — dropping (non-retryable)",
+            payload.session_id,
+        )
+        return {"status": "unknown_tenant"}
+    except SessionNotFoundError:
+        logger.warning(
+            "generate-soap job: session %s not found — dropping (non-retryable)",
+            payload.session_id,
+        )
+        return {"status": "not_found"}
+    except SOAPGenerationFailedError:
+        # Session already marked FAILED + committed inside the service. Don't
+        # 5xx — a deterministic generation failure must not loop the queue.
+        return {"status": "failed"}
+
+    # Audit the PHI write at its creation point, in the tenant now in scope.
+    owner = user_repo.get(payload.user_id)
+    if owner is not None:
+        audit.log_note_action(
+            AuditAction.SESSION_NOTE_GENERATED,
+            owner,
+            http_request,
+            note_id=note.id,
+            patient_id=patient.id,
+            session_id=session.id,
+        )
+    else:
+        logger.warning(
+            "generate-soap job: owner %s not found for audit on session %s",
+            payload.user_id,
+            session.id,
+        )
+    return {"status": "ok"}
 
 
 # Generous guardrail for an uploaded note document. A single SOAP note is
