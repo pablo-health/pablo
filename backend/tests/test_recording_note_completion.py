@@ -13,34 +13,35 @@ through two server-side stages:
    report ``transcribing``. It deliberately does not wait for a
    transcript.
 
-2. When transcription finishes, the transcript is written to the session
-   and the SOAP pipeline runs, landing the session in ``pending_review``
-   with the note embedded under ``GET /api/sessions/{id}``. That
-   pipeline is the same synchronous path the
-   ``POST /api/sessions/{id}/transcript`` endpoint exposes
-   (``SessionService.upload_transcript_to_session`` →
-   ``_generate_and_persist_note``), so we exercise completion through it
-   with a deterministic note generator instead of a real model — no
-   network, no GPU, stable assertions.
+2. When transcription finishes, the transcript is posted to
+   ``POST /api/sessions/{id}/transcript``, which persists it, returns
+   ``202``, and hands SOAP generation to the Cloud Tasks worker
+   (``SessionService.generate_session_note``). The worker lands the
+   session in ``pending_review`` with the note embedded under
+   ``GET /api/sessions/{id}``. We assert the route's async contract, then
+   run ``generate_session_note`` directly with a deterministic note
+   generator instead of a real model — no network, no GPU, stable
+   assertions.
 
 Splitting the proof this way keeps it deterministic: stage 1 asserts the
 upload contract (including the revert-on-enqueue-failure guard), stage 2
-asserts that a completed transcript produces a four-section SOAP note the
-client can read back. Note *quality* is an eval concern, not a unit-test
-one.
+asserts that a completed transcript yields a 202 and that generation then
+produces a four-section SOAP note the client can read back. Note *quality*
+is an eval concern, not a unit-test one.
 """
 
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-from app.main import app
+import pytest
 from app.models import Patient, SessionStatus, TherapySession, Transcript
 from app.repositories import (
+    InMemoryNotesRepository,
     InMemoryPatientRepository,
     InMemoryTherapySessionRepository,
 )
-from app.routes.sessions import get_note_generation_service
+from app.services import NoteService, SessionService, SOAPGenerationFailedError
 from app.services.note_generation_service import (
     GeneratedNote,
     MockNoteGenerationService,
@@ -247,20 +248,29 @@ def test_completed_transcript_yields_pending_review_with_four_section_soap(
     client,
     mock_session_repo: InMemoryTherapySessionRepository,
     mock_repo: InMemoryPatientRepository,
+    mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    app.dependency_overrides[get_note_generation_service] = _deterministic_note_generator
-
     patient = _seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
 
+    # The route persists the transcript and returns 202 — generation is handed
+    # to the Cloud Tasks worker, so no note is produced inline.
     complete = client.post(
         f"/api/sessions/{session.id}/transcript",
         json={"format": "txt", "content": "Therapist: ... Client: ..."},
     )
-    assert complete.status_code == 200, complete.text
+    assert complete.status_code == 202, complete.text
+    assert complete.json()["status"] == SessionStatus.PROCESSING
+
+    # Run the worker's generation step (SessionService.generate_session_note,
+    # exactly what the Cloud Tasks worker invokes) and assert the produced note.
+    service = SessionService(
+        mock_session_repo, mock_repo, _deterministic_note_generator(), NoteService(mock_notes_repo)
+    )
+    service.generate_session_note(session.id, mock_user_id)
 
     fetched = client.get(f"/api/sessions/{session.id}")
     assert fetched.status_code == 200, fetched.text
@@ -279,20 +289,27 @@ def test_note_generation_failure_marks_session_failed(
     client,
     mock_session_repo: InMemoryTherapySessionRepository,
     mock_repo: InMemoryPatientRepository,
+    mock_notes_repo: InMemoryNotesRepository,
     mock_user_id: str,
 ) -> None:
-    app.dependency_overrides[get_note_generation_service] = _failing_note_generator
-
     patient = _seed_patient(mock_repo, mock_user_id)
     session = _seed_session(
         mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
     )
 
+    # Upload returns 202; the failure happens in the worker, not on the request.
     complete = client.post(
         f"/api/sessions/{session.id}/transcript",
         json={"format": "txt", "content": "Therapist: ... Client: ..."},
     )
-    assert complete.status_code >= 500, complete.text
+    assert complete.status_code == 202, complete.text
+
+    # The worker's generation raises and durably marks the session FAILED.
+    service = SessionService(
+        mock_session_repo, mock_repo, _failing_note_generator(), NoteService(mock_notes_repo)
+    )
+    with pytest.raises(SOAPGenerationFailedError):
+        service.generate_session_note(session.id, mock_user_id)
 
     fetched = client.get(f"/api/sessions/{session.id}")
     assert fetched.status_code == 200, fetched.text

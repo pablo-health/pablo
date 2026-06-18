@@ -129,3 +129,52 @@ class TestSessionListAudit:
             if call.args[0].action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
+
+
+class TestUploadTranscriptAsync:
+    """POST /api/sessions/{id}/transcript persists the transcript and returns
+    202, handing generation to the worker rather than generating inline
+    (THERAPY-jonc)."""
+
+    def test_returns_202_and_marks_processing(
+        self,
+        client: TestClient,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        session = _seed_session(
+            mock_session_repo, owner=mock_user_id, status=SessionStatus.RECORDING_COMPLETE
+        )
+
+        resp = client.post(
+            f"/api/sessions/{session.id}/transcript",
+            json={"format": "txt", "content": "[00:00] Hello."},
+        )
+
+        assert resp.status_code == 202, resp.text
+        body = resp.json()
+        assert body["id"] == session.id
+        assert body["status"] == SessionStatus.PROCESSING.value
+        # Persisted as PROCESSING with the new transcript; the note is produced
+        # off-request by the worker, so none is generated inline here.
+        updated = mock_session_repo.get(session.id, mock_user_id)
+        assert updated is not None
+        assert updated.status == SessionStatus.PROCESSING
+        assert updated.transcript.content == "[00:00] Hello."
+
+    def test_rejects_session_in_wrong_status(
+        self,
+        client: TestClient,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        session = _seed_session(
+            mock_session_repo, owner=mock_user_id, status=SessionStatus.PENDING_REVIEW
+        )
+
+        resp = client.post(
+            f"/api/sessions/{session.id}/transcript",
+            json={"format": "txt", "content": "x"},
+        )
+
+        assert resp.status_code == 400, resp.text
