@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
+from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
@@ -762,7 +763,7 @@ def update_session_metadata(
     return SessionResponse.from_session(session, patient_name)
 
 
-@router.post("/api/sessions/{session_id}/transcript")
+@router.post("/api/sessions/{session_id}/transcript", status_code=status.HTTP_202_ACCEPTED)
 def upload_transcript_to_session(
     session_id: str,
     http_request: Request,
@@ -771,9 +772,17 @@ def upload_transcript_to_session(
     session_service: SessionService = Depends(get_session_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
-    """Upload a transcript to an existing session and trigger SOAP pipeline."""
+    """Attach a transcript to an existing session and start async generation.
+
+    Persists the transcript, marks the session ``processing``, returns ``202``,
+    and enqueues SOAP generation on the Cloud Tasks worker — the note is
+    produced off the request thread (THERAPY-jonc). Poll
+    ``GET /api/sessions/{id}`` for status (``pending_review`` / ``failed``).
+    """
     try:
-        session, _note = session_service.upload_transcript_to_session(session_id, user.id, request)
+        session = session_service.prepare_transcript_session_for_generation(
+            session_id, user.id, request
+        )
     except SessionNotFoundError as e:
         raise NotFoundError("Session not found") from e
     except InvalidSessionStatusError as e:
@@ -781,10 +790,21 @@ def upload_transcript_to_session(
             f"Session must be in 'recording_complete' status, got '{e.current_status}'",
             code="INVALID_STATUS",
         ) from e
-    except SOAPGenerationFailedError as e:
-        raise ServerError(
-            "SOAP generation failed. Please try again.", code="SOAP_GENERATION_FAILED"
-        ) from e
+
+    settings = get_settings()
+    try:
+        enqueue(
+            settings.soap_generation_task_queue,
+            "/api/internal/jobs/generate-soap",
+            {"session_id": session.id, "user_id": user.id},
+            dedup_key=session.id,
+        )
+    except AlreadyExists:
+        # A generation job for this session is already queued (e.g. a
+        # double-submit, or a retry inside the dedup window). The session is
+        # PROCESSING and the in-flight job reads the latest transcript, so
+        # there's nothing to do — answer 202 either way.
+        logger.info("generate-soap already enqueued for session %s (dedup)", session.id)
 
     audit.log_session_action(
         AuditAction.SESSION_TRANSCRIPT_UPLOADED,
