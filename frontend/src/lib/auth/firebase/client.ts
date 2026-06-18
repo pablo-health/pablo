@@ -21,6 +21,7 @@ import {
 
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
+import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
 import type { AuthState, AuthUser, ClientAuthProvider } from "@/lib/auth/types"
 
 /**
@@ -83,10 +84,64 @@ export async function resolveCurrentUser(auth: Auth): Promise<User | null> {
 }
 
 /**
+ * Upper bound on the boot-time auth-state sync (token refresh + cookie
+ * write). A restored session whose refresh token has expired makes
+ * ``getIdToken()`` reach out to Firebase, and the cookie sync is a network
+ * call too; either can stall. The splash must never outlive this, so the
+ * race below rejects past the deadline and the caller falls back to a
+ * clean signed-out state.
+ */
+const AUTH_SYNC_TIMEOUT_MS = 10_000
+
+/**
+ * Reject ``promise`` if it has not settled within ``ms``. The timer is
+ * cleared on settle so a resolved promise leaves nothing pending.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * Reset a wedged Firebase session: sign the SDK out, wipe the persisted
+ * auth record the SDK restores from on the next load, and clear the SSR
+ * cookie. Best-effort throughout — the caller has already decided to treat
+ * the user as signed out, so a failure on any step must not propagate.
+ */
+export async function clearStaleSession(auth: Auth): Promise<void> {
+  try {
+    await firebaseSdkSignOut(auth)
+  } catch {
+    // SDK may already be wedged; we wipe its storage next regardless.
+  }
+  await clearFirebaseAuthStorage()
+  try {
+    await fetch("/api/logout")
+  } catch {
+    // Best-effort cookie clear.
+  }
+}
+
+/**
  * Live auth state for the React context. Initializes Firebase from the
  * runtime config, then mirrors ``onIdTokenChanged`` into a provider-neutral
  * {@link AuthUser} and syncs the token to the server session cookie
  * (the ``next-firebase-auth-edge`` cookie that SSR + middleware read).
+ *
+ * The token refresh and cookie sync are awaited before reporting the user
+ * because route-protection middleware gates ``/dashboard`` on that cookie —
+ * surfacing the user any earlier races the redirect ahead of the cookie and
+ * bounces back to ``/login``. But both steps are network calls: a restored
+ * session with an expired refresh token makes ``getIdToken()`` reject, and a
+ * flaky network can stall the cookie write. Either left the boot wedged on
+ * the loading splash forever (no ``setLoading(false)``), recoverable only by
+ * clearing site data — the SDK's own stuck-state recovery only catches one
+ * specific internal assertion, not a rejected refresh. So: bound both calls,
+ * always clear ``loading`` in ``finally``, and on failure drop the stale
+ * session and let the user sign in fresh.
  */
 export function useFirebaseAuthState(): AuthState {
   const config = useConfig()
@@ -104,19 +159,34 @@ export function useFirebaseAuthState(): AuthState {
     })
 
     return onIdTokenChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const idToken = await firebaseUser.getIdToken()
-        // Sync token to server cookie
-        await fetch("/api/login", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${idToken}` },
-        })
-        setUser(toAuthUser(firebaseUser))
-      } else {
-        await fetch("/api/logout")
+      try {
+        if (firebaseUser) {
+          const idToken = await withTimeout(
+            firebaseUser.getIdToken(),
+            AUTH_SYNC_TIMEOUT_MS,
+            "getIdToken",
+          )
+          // Sync token to server cookie
+          await withTimeout(
+            fetch("/api/login", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${idToken}` },
+            }),
+            AUTH_SYNC_TIMEOUT_MS,
+            "/api/login",
+          )
+          setUser(toAuthUser(firebaseUser))
+        } else {
+          await fetch("/api/logout")
+          setUser(null)
+        }
+      } catch (err) {
+        console.error("Auth state sync failed; clearing stale session:", err)
         setUser(null)
+        await clearStaleSession(auth)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     })
   }, [config])
 
