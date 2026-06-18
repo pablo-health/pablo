@@ -26,21 +26,30 @@ You need a BAA with every vendor that handles PHI on your behalf.
 
 Session audio is PHI. Pablo supports two transcription backends, chosen via the `TRANSCRIPTION_PROVIDER` environment variable:
 
-| Provider | Default | BAA requirement |
+| Provider | Status | BAA requirement |
 |---|---|---|
-| `whisper` (recommended for self-host) | Yes, in `settings.py` | Already covered — Cloud Batch + Cloud Storage are under the Google Cloud BAA above. No separate vendor BAA needed. |
-| `assemblyai` | Opt-in | **You must sign a direct BAA with AssemblyAI before processing any real PHI.** Contact AssemblyAI sales to request one. The default free/trial tier does **not** include a BAA. |
+| `assemblyai` | **Supported today** | **You must sign a direct BAA with AssemblyAI before processing any real PHI.** Contact AssemblyAI sales to request one. The default free/trial tier does **not** include a BAA. |
+| `whisper` | **Not yet operational** (planned default) | Will need no third-party BAA — Cloud Batch + Cloud Storage fall under the Google Cloud BAA above. See "Enabling whisper" below for what it takes to turn on. |
 
-If you deploy with `TRANSCRIPTION_PROVIDER=assemblyai` and no signed BAA, session audio leaving Pablo for AssemblyAI is a §164.504(e) impermissible disclosure and a §164.402 Breach. The `whisper` path keeps every byte inside your GCP project.
+Today, **AssemblyAI is the only transcription backend wired for deployment**, and it requires a signed BAA. If you deploy with `TRANSCRIPTION_PROVIDER=assemblyai` and no signed BAA, session audio leaving Pablo for AssemblyAI is a §164.504(e) impermissible disclosure and a §164.402 Breach — the BAA is non-negotiable. The `whisper` backend is designed to keep every byte inside your own GCP project (no third-party processor), but it is **not yet operational**.
 
 **How `setup-solo.sh` handles this:**
 
 During Step 9 (Cloud Run deploy), the script prompts you to choose a transcription provider:
 
 - If you pick **AssemblyAI**, the script requires you to type `I have a signed AssemblyAI BAA` verbatim before continuing, then prompts for the API key (input hidden), stores it in Secret Manager as `pablo-assemblyai-api-key`, and wires the secret into the backend deploy. There is no way to deploy onto the AssemblyAI path without the explicit BAA acknowledgement.
-- If you pick **Whisper**, the script currently aborts with instructions, because the whisper path needs Cloud Batch + GPU + a worker container image that `setup-solo.sh` does not yet provision. That provisioning is tracked as a follow-up; once it lands, `whisper` will become the default.
+- If you pick **Whisper**, the script currently aborts with instructions, because the whisper backend is not yet wired for deployment (see "Enabling whisper" below).
 
 On a re-run, if `pablo-assemblyai-api-key` already exists in Secret Manager, the script reuses it without re-prompting.
+
+**Enabling whisper.** The whisper backend isn't operational out of the box. Making it run in your own project takes, roughly:
+
+1. **GPU quota** in your GCP project (e.g. an NVIDIA T4) in the region you deploy to.
+2. **A Cloud Batch worker job** that pulls audio from the bucket, runs inference, and writes the transcript back.
+3. **A transcription-worker container image** packaging whisper and the worker entrypoint.
+4. **A dedicated transcription-worker service account**, least-privilege and scoped to the audio/transcript bucket and Cloud Batch — separate from the app service account.
+
+Until that provisioning ships in `setup-solo.sh`, AssemblyAI (with a signed BAA) is the supported path. Once it lands, `whisper` becomes the default, since it keeps audio in your project and needs no third-party BAA.
 
 ## 2. Access Control
 
