@@ -235,11 +235,17 @@ class SessionService:
         """Persist a ``PROCESSING`` session and commit, without generating.
 
         This is the request-thread half of the async upload: it does the cheap,
-        bounded DB work (validate the patient, insert the session, commit) so
-        the route can return ``202`` immediately and hand the multi-second LLM
-        generation to a Cloud Tasks worker (``generate_session_note``). The
-        commit also releases the pooled connection before the worker runs —
-        nothing holds locks across the Gemini call (THERAPY-da7t).
+        bounded DB work (validate the patient, insert the session, bump patient
+        metadata, commit) so the route can return ``202`` immediately and hand
+        the multi-second LLM generation to a Cloud Tasks worker
+        (``generate_session_note``). The commit also releases the pooled
+        connection before the worker runs — nothing holds locks across the
+        Gemini call (THERAPY-da7t).
+
+        The session is counted here, at creation, rather than after generation:
+        a session row exists regardless of whether its note generates, and
+        counting once at creation is idempotent — a generation retry can't
+        double-count it.
 
         Returns ``(session, patient)``.
 
@@ -267,6 +273,12 @@ class SessionService:
             processing_started_at=now,
         )
         session = self.session_repo.create(session)
+
+        patient.session_count += 1
+        if patient.last_session_date is None or request.session_date > patient.last_session_date:
+            patient.last_session_date = request.session_date
+        self.patient_repo.update(patient)
+
         _commit_intermediate(user_id)
         return session, patient
 
@@ -277,13 +289,16 @@ class SessionService:
     ) -> tuple[TherapySession, Patient, Note]:
         """Generate the SOAP note for an already-persisted ``PROCESSING`` session.
 
-        The worker half of the async upload: loads the session created by
-        ``create_session_for_generation``, runs the LLM with no open DB
-        transaction, then flips the session to ``PENDING_REVIEW`` and updates
-        patient metadata. On failure the session is marked ``FAILED`` and the
-        status is committed before re-raising, so a failed generation leaves a
-        durable record rather than vanishing on rollback. Idempotent inputs
-        re-resolve from the DB, so the job is safe to retry while ``PROCESSING``.
+        The worker half shared by both async upload paths — a fresh upload
+        (``create_session_for_generation``) and a transcript added to an
+        existing session (``prepare_transcript_session_for_generation``). Loads
+        the session, runs the LLM with no open DB transaction, then flips the
+        session to ``PENDING_REVIEW``. The note type is taken from any
+        pre-existing Note row (set at schedule time) or defaults. On failure the
+        session is marked ``FAILED`` and committed before re-raising, so a failed
+        generation leaves a durable record rather than vanishing on rollback.
+        It does not touch patient metadata (the session is counted at creation),
+        so retrying the job while ``PROCESSING`` is safe and never double-counts.
 
         Returns ``(session, patient, note)``.
 
@@ -299,12 +314,18 @@ class SessionService:
         if not patient:
             raise PatientNotFoundError(f"Patient {session.patient_id} not found")
 
+        # Pick the note type from any pre-existing Note row (e.g. set at
+        # schedule time, or by a transcript upload onto an existing session).
+        # Fall back to the default for a freshly-created upload session.
+        existing_note = self.note_service.get_note_by_session_id(session.id, user_id)
+        note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
+
         try:
             logger.info("Starting note generation for session %s", session.id)
             # The LLM call inside _generate_and_persist_note runs with
             # no open DB transaction. The note INSERT autobegins a new
             # short-lived transaction immediately before the flush.
-            note = self._generate_and_persist_note(session, patient, DEFAULT_NOTE_TYPE, user_id)
+            note = self._generate_and_persist_note(session, patient, note_type, user_id)
             logger.info("Note generation completed for session %s", session.id)
 
             session.status = SessionStatus.PENDING_REVIEW
@@ -322,14 +343,10 @@ class SessionService:
             _commit_intermediate(user_id)
             raise SOAPGenerationFailedError from e
 
-        # Patient-metadata + audit log commit together at request end
-        # via the middleware. Lock window for txn 2 is bounded by the
-        # session/note/patient writes plus the audit insert.
-        patient.session_count += 1
-        if patient.last_session_date is None or session.session_date > patient.last_session_date:
-            patient.last_session_date = session.session_date
-        self.patient_repo.update(patient)
-
+        # The session was already counted at creation
+        # (create_session_for_generation / the recording flow), so generation
+        # only flips status — no patient-metadata change here, which keeps a
+        # generation retry from double-counting.
         return session, patient, note
 
     def upload_session(
@@ -683,20 +700,26 @@ class SessionService:
         patient = self._get_patient_or_raise(session.patient_id, user_id)
         return session, patient
 
-    def upload_transcript_to_session(
+    def prepare_transcript_session_for_generation(
         self,
         session_id: str,
         user_id: str,
         request: UploadTranscriptToSessionRequest,
-    ) -> tuple[TherapySession, Note]:
-        """Upload a transcript to an existing session and run note generation.
+    ) -> TherapySession:
+        """Attach a transcript to an existing session and mark it ``PROCESSING``.
 
-        Returns ``(session, note)``.
+        The request-thread half of the async transcript upload: validate the
+        session, persist the transcript + ``PROCESSING`` status, and commit so
+        row locks release before the LLM call (THERAPY-da7t). Generation is
+        handed to the worker (``generate_session_note``), which reads the
+        transcript and note type off the persisted session. The session is not
+        re-counted here — it was counted when it was first created.
+
+        Returns the updated ``session``.
 
         Raises:
             SessionNotFoundError: If session doesn't exist.
-            InvalidSessionStatusError: If session is not in recording_complete status.
-            SOAPGenerationFailedError: If note generation fails.
+            InvalidSessionStatusError: If session is not in recording_complete/failed.
         """
         session = self.session_repo.get(session_id, user_id)
         if not session:
@@ -705,49 +728,33 @@ class SessionService:
         if session.status not in (SessionStatus.RECORDING_COMPLETE, SessionStatus.FAILED):
             raise InvalidSessionStatusError(session.status, "recording_complete or failed")
 
-        # Txn 1: persist transcript + PROCESSING status, then commit so
-        # row locks release before the LLM call. Same anti-deadlock
-        # pattern as upload_session (THERAPY-da7t).
         session.transcript = Transcript(format=request.format, content=request.content)
         session.status = SessionStatus.PROCESSING
         session.processing_started_at = _now()
         session.updated_at = _now()
         session = self.session_repo.update(session)
         _commit_intermediate(user_id)
+        return session
 
-        patient = self.patient_repo.get(session.patient_id, user_id)
-        if not patient:
-            raise PatientNotFoundError(f"Patient {session.patient_id} not found")
+    def upload_transcript_to_session(
+        self,
+        session_id: str,
+        user_id: str,
+        request: UploadTranscriptToSessionRequest,
+    ) -> tuple[TherapySession, Note]:
+        """Synchronous prepare-then-generate, kept for direct/non-async callers.
 
-        # Pick note_type from any pre-existing Note row (e.g. set at
-        # schedule time). Fall back to the default if absent.
-        existing_note = self.note_service.get_note_by_session_id(session.id, user_id)
-        note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
+        The HTTP route runs the two halves separately (``202`` + Cloud Tasks
+        worker); this convenience method chains them for tests and any caller
+        that wants the note inline.
 
-        # The patient + existing-note SELECTs above autobegin a fresh
-        # transaction on the request session. If we entered the LLM call
-        # with that transaction still open, the connection would sit
-        # idle-in-transaction for the full Gemini round-trip and Postgres
-        # would terminate it via idle_in_transaction_session_timeout
-        # (30s on this engine). Commit here so the LLM call runs with no
-        # open transaction; the next DB op autobegins on a fresh checkout.
-        _commit_intermediate(user_id)
+        Returns ``(session, note)``.
 
-        try:
-            logger.info("Starting note generation for session %s", session.id)
-            note = self._generate_and_persist_note(session, patient, note_type, user_id)
-            logger.info("Note generation completed for session %s", session.id)
-
-            session.status = SessionStatus.PENDING_REVIEW
-            session.processing_completed_at = _now()
-            session = self.session_repo.update(session)
-
-        except Exception as e:
-            logger.exception("Note generation failed for session %s", session.id)
-            session.status = SessionStatus.FAILED
-            session.error = "SOAP generation failed"
-            self.session_repo.update(session)
-            _commit_intermediate(user_id)
-            raise SOAPGenerationFailedError from e
-
+        Raises:
+            SessionNotFoundError: If session doesn't exist.
+            InvalidSessionStatusError: If session is not in recording_complete status.
+            SOAPGenerationFailedError: If note generation fails.
+        """
+        self.prepare_transcript_session_for_generation(session_id, user_id, request)
+        session, _patient, note = self.generate_session_note(session_id, user_id)
         return session, note
