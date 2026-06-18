@@ -126,6 +126,60 @@ export async function clearStaleSession(auth: Auth): Promise<void> {
 }
 
 /**
+ * Reconcile a single ``onIdTokenChanged`` tick into the provider-neutral
+ * user and the SSR session cookie. Extracted from the hook so the
+ * credential-vs-cookie failure handling below can be unit tested without
+ * rendering. The caller owns the ``loading`` lifecycle (always cleared in a
+ * ``finally``); a throw here is a bug, since every awaited call is guarded.
+ */
+export async function syncAuthTick(
+  auth: Auth,
+  firebaseUser: User | null,
+  setUser: (user: AuthUser | null) => void,
+): Promise<void> {
+  if (!firebaseUser) {
+    setUser(null)
+    try {
+      await fetch("/api/logout")
+    } catch (err) {
+      console.warn("Session cookie clear failed:", err)
+    }
+    return
+  }
+
+  let idToken: string
+  try {
+    idToken = await withTimeout(firebaseUser.getIdToken(), AUTH_SYNC_TIMEOUT_MS, "getIdToken")
+  } catch (err) {
+    // The SDK restored a session but can't mint a token — the refresh token
+    // is expired or revoked. Drop the stale record so the next sign-in
+    // starts clean instead of wedging the boot.
+    console.warn("Firebase token refresh failed; clearing stale session:", err)
+    setUser(null)
+    await clearStaleSession(auth)
+    return
+  }
+
+  // Sync the SSR session cookie before surfacing the user (middleware gates
+  // /dashboard on it). A failed sync — commonly an in-flight request aborted
+  // by navigation — is non-fatal: the SDK session is still valid and the next
+  // token tick re-syncs, so keep the user rather than signing them out.
+  try {
+    await withTimeout(
+      fetch("/api/login", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      }),
+      AUTH_SYNC_TIMEOUT_MS,
+      "/api/login",
+    )
+  } catch (err) {
+    console.warn("Session cookie sync failed; will retry on next token change:", err)
+  }
+  setUser(toAuthUser(firebaseUser))
+}
+
+/**
  * Live auth state for the React context. Initializes Firebase from the
  * runtime config, then mirrors ``onIdTokenChanged`` into a provider-neutral
  * {@link AuthUser} and syncs the token to the server session cookie
@@ -134,14 +188,22 @@ export async function clearStaleSession(auth: Auth): Promise<void> {
  * The token refresh and cookie sync are awaited before reporting the user
  * because route-protection middleware gates ``/dashboard`` on that cookie —
  * surfacing the user any earlier races the redirect ahead of the cookie and
- * bounces back to ``/login``. But both steps are network calls: a restored
- * session with an expired refresh token makes ``getIdToken()`` reject, and a
- * flaky network can stall the cookie write. Either left the boot wedged on
- * the loading splash forever (no ``setLoading(false)``), recoverable only by
- * clearing site data — the SDK's own stuck-state recovery only catches one
- * specific internal assertion, not a rejected refresh. So: bound both calls,
- * always clear ``loading`` in ``finally``, and on failure drop the stale
- * session and let the user sign in fresh.
+ * bounces back to ``/login``. Both steps are network calls and are bounded by
+ * ``withTimeout``, and ``loading`` always clears in ``finally`` so the boot
+ * can never wedge on the splash (which it did before: an un-caught
+ * ``getIdToken()`` rejection killed the listener and left ``loading`` true,
+ * recoverable only by clearing site data — the SDK's own stuck-state recovery
+ * catches only one specific internal assertion, not a rejected refresh).
+ *
+ * The two failures are handled differently because they mean different
+ * things. A rejected ``getIdToken()`` means the restored refresh token is
+ * expired or revoked — the credential is dead, so drop the stale session and
+ * let the user sign in fresh. A failed cookie sync is usually just an
+ * in-flight ``fetch`` aborted by navigation; the SDK session is still valid
+ * and the next token tick re-syncs, so it must NOT tear down the session
+ * (doing so signed users out on a transient blip and tripped the smoke
+ * console-error guard). Both are handled, self-healing conditions, so they
+ * log at ``warn`` — ``error`` is reserved for failures the user must act on.
  */
 export function useFirebaseAuthState(): AuthState {
   const config = useConfig()
@@ -160,31 +222,9 @@ export function useFirebaseAuthState(): AuthState {
 
     return onIdTokenChanged(auth, async (firebaseUser) => {
       try {
-        if (firebaseUser) {
-          const idToken = await withTimeout(
-            firebaseUser.getIdToken(),
-            AUTH_SYNC_TIMEOUT_MS,
-            "getIdToken",
-          )
-          // Sync token to server cookie
-          await withTimeout(
-            fetch("/api/login", {
-              method: "POST",
-              headers: { Authorization: `Bearer ${idToken}` },
-            }),
-            AUTH_SYNC_TIMEOUT_MS,
-            "/api/login",
-          )
-          setUser(toAuthUser(firebaseUser))
-        } else {
-          await fetch("/api/logout")
-          setUser(null)
-        }
-      } catch (err) {
-        console.error("Auth state sync failed; clearing stale session:", err)
-        setUser(null)
-        await clearStaleSession(auth)
+        await syncAuthTick(auth, firebaseUser, setUser)
       } finally {
+        // Always clear loading — a thrown sync must never wedge the splash.
         setLoading(false)
       }
     })
