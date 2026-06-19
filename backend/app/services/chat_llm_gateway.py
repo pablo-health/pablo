@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span
+from .vertex_client import vertex_genai_client
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
@@ -156,16 +157,9 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         return stripped
 
     def _get_client(self) -> Any:
-        """Lazily initialize the Vertex AI client.
-
-        Matches the lazy pattern used by ``embedding_service`` and
-        ``ehr_navigation_service``: import inside the function so units
-        that never call the gateway don't pay the import cost.
-        """
+        """Lazily build the Vertex client (shared factory)."""
         if self._client is None:
-            from google import genai
-
-            self._client = genai.Client(vertexai=True)
+            self._client = vertex_genai_client()
         return self._client
 
     def _finish_reason_from_chunk(self, chunk: Any) -> FinishReason | None:
