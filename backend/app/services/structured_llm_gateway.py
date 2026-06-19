@@ -30,6 +30,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 
 logger = logging.getLogger(__name__)
@@ -124,13 +125,6 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             self._client = genai.Client(vertexai=True)
         return self._client
 
-    @staticmethod
-    def _normalize_model(model: str) -> str:
-        """Strip a leading ``google:`` provider prefix (see chat gateway)."""
-        if model.startswith("google:"):
-            return model[len("google:") :]
-        return model
-
     def complete_structured(
         self,
         *,
@@ -150,7 +144,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
             ) from exc
 
         client = self._get_client()
-        normalized_model = self._normalize_model(model)
+        normalized_model = strip_provider_prefix(model)
         schema = _to_gemini_schema(types, response_schema)
         config = types.GenerateContentConfig(
             system_instruction=system_prompt,
