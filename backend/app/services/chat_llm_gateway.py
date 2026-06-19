@@ -35,6 +35,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span
 
 if TYPE_CHECKING:
@@ -131,29 +132,28 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         self._warned_prefixes: set[str] = set()
 
     def _normalize_model(self, model: str) -> str:
-        """Strip a leading ``google:`` provider prefix.
+        """Strip a known ``provider:`` prefix, warning once per prefix.
 
-        Operators occasionally configure ``AI_MODEL`` /
-        ``AI_MODEL_FLASH`` with a LiteLLM-style ``google:`` prefix
-        (e.g. ``google:gemini-2.5-flash``). Vertex AI concatenates the
-        raw string into the endpoint path
+        Operators occasionally configure ``AI_MODEL`` / ``AI_MODEL_FLASH``
+        with a LiteLLM-style prefix (e.g. ``google:gemini-2.5-flash``).
+        Vertex AI concatenates the raw string into the endpoint path
         (``publishers/google/models/<model>``) and returns ``400
-        INVALID_ARGUMENT`` for the colon. Strip the prefix defensively
-        and warn once per prefix so the misconfiguration is visible
-        without breaking chat.
+        INVALID_ARGUMENT`` for the colon. Strip it defensively and warn once
+        per prefix so the misconfiguration is visible without breaking chat.
         """
-        if model.startswith("google:"):
-            stripped = model[len("google:") :]
-            if "google:" not in self._warned_prefixes:
+        stripped = strip_provider_prefix(model)
+        if stripped != model:
+            prefix = model[: len(model) - len(stripped)]
+            if prefix not in self._warned_prefixes:
                 logger.warning(
-                    "stripping unsupported 'google:' prefix from chat model "
+                    "stripping unsupported %r prefix from chat model "
                     "(configured=%r, used=%r); fix env to drop the prefix",
+                    prefix,
                     model,
                     stripped,
                 )
-                self._warned_prefixes.add("google:")
-            return stripped
-        return model
+                self._warned_prefixes.add(prefix)
+        return stripped
 
     def _get_client(self) -> Any:
         """Lazily initialize the Vertex AI client.

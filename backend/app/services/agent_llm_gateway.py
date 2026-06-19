@@ -1,18 +1,12 @@
 """Agent gateway: a tool-using LLM loop that ends in one structured object.
 
-The third member of the gateway family. :class:`StructuredLLMGateway` does a
-one-shot JSON completion; :class:`ChatLLMGateway` does streaming chat; this one
-runs a *multi-step tool-calling loop* — the model calls the provided tools to
-gather context over several turns, then emits a single structured object
-constrained to a schema.
+The model calls caller-supplied tools to gather context over several turns,
+then emits a single object constrained to a response schema. Generic by design:
+callers own the tools (name, description, parameters, handler), the prompts, and
+the schema; the gateway owns the loop and the final structured emit.
 
-It is deliberately generic: callers supply the tools (name, description,
-parameters, and a handler callable), the prompts, and the response schema. The
-gateway owns the loop and the final structured emit; it knows nothing about
-what the tools read or what the verdict means.
-
-Sync, like :class:`StructuredLLMGateway` — agent callers run from sync service
-code and an async gateway would force ``asyncio.run`` gymnastics for no benefit.
+Sync, matching the other gateways — callers run from sync service code and an
+async gateway would force ``asyncio.run`` gymnastics for no benefit.
 
 Logging hygiene: prompts, tool arguments, and tool results may carry sensitive
 content. Nothing here logs or embeds them — log lines and telemetry spans carry
@@ -21,13 +15,14 @@ counts, tool names, and the model name only.
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .llm_json import extract_json_object
+from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .structured_llm_gateway import _to_gemini_schema
 
@@ -37,9 +32,6 @@ logger = logging.getLogger(__name__)
 # that is fed back into the conversation. Handlers own their own side-effect and
 # logging hygiene (e.g. read-only sources, no sensitive content in their logs).
 ToolHandler = Callable[[dict[str, Any]], str]
-
-# Provider prefix shared with the other gateways' ``provider:model`` convention.
-_GOOGLE_PREFIX = "google:"
 
 
 @dataclass(frozen=True)
@@ -105,11 +97,6 @@ class AgentLLMGateway(ABC):
         """
 
 
-def _normalize_model(model: str) -> str:
-    """Strip a leading ``google:`` provider prefix (parity with the siblings)."""
-    return model[len(_GOOGLE_PREFIX) :] if model.startswith(_GOOGLE_PREFIX) else model
-
-
 def _function_calls(response: Any) -> list[Any]:
     """Extract function-call parts from a genai response, defensively."""
     calls: list[Any] = []
@@ -161,7 +148,7 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
         from google.genai import types
 
         client = self._get_client()
-        normalized = _normalize_model(model)
+        normalized = strip_provider_prefix(model)
         by_name = {t.name: t for t in tools}
         declarations = [
             types.FunctionDeclaration(
@@ -278,14 +265,12 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
         )
         response = self._generate(client, model, emit_contents, config)
         p, o, t = usage_tokens(getattr(response, "usage_metadata", None))
-        text = (getattr(response, "text", "") or "").strip()
-        try:
-            parsed = json.loads(text)
-        except (ValueError, RecursionError):
+        text = getattr(response, "text", "") or ""
+        data = extract_json_object(text)
+        if data is None:
             # Never log the model text. The caller degrades on an empty object.
-            logger.warning("agent final emit was not valid JSON; returning empty object")
-            return {}, p or 0, o or 0, t or 0
-        data = parsed if isinstance(parsed, dict) else {}
+            logger.warning("agent final emit had no JSON object; returning empty object")
+            data = {}
         return data, p or 0, o or 0, t or 0
 
     @staticmethod

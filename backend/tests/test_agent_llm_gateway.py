@@ -14,7 +14,6 @@ from backend.app.services.agent_llm_gateway import (
     ToolCall,
     ToolSpec,
     _function_calls,
-    _normalize_model,
     get_default_agent_llm_gateway,
 )
 
@@ -95,10 +94,6 @@ class TestFakeAgentLLMGateway:
 
 
 class TestHelpers:
-    def test_normalize_model_strips_google_prefix(self) -> None:
-        assert _normalize_model("google:gemini-3.1-pro") == "gemini-3.1-pro"
-        assert _normalize_model("gemini-3.1-pro") == "gemini-3.1-pro"
-
     def test_function_calls_is_defensive_on_empty_response(self) -> None:
         assert _function_calls(object()) == []
         assert _function_calls(None) == []
