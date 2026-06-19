@@ -192,6 +192,11 @@ class GeminiChatLLMGateway(ChatLLMGateway):
         max_output_tokens: int,
         temperature: float = 0.4,
     ) -> AsyncIterator[StreamEvent]:
+        # Never hold a pooled DB connection across the model round-trip — the
+        # caller must release_db_connection() first (raises in dev/test).
+        from ..db import assert_no_held_db_connection
+
+        assert_no_held_db_connection("chat-llm")
         try:
             from google.genai import types
         except ImportError as exc:

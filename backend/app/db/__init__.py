@@ -313,6 +313,44 @@ def assert_tenant_schema_set() -> None:
         raise RuntimeError(msg)
 
 
+def assert_no_held_db_connection(context: str = "") -> None:
+    """Guard against holding a pooled DB connection across a slow external call.
+
+    Call this at the entry of any external round-trip that can take many
+    hundreds of milliseconds or more -- notably an LLM request -- so a pooled
+    connection (and the open transaction holding whatever locks it took at
+    request entry) is never left idle across the call. The caller is expected
+    to have run ``release_db_connection()`` first; the next query after that
+    auto-begins a fresh, re-armed transaction.
+
+    No-ops when no request-scoped session is bound (``to_thread`` workers, CLI
+    scripts, unit tests with in-memory fakes), or when the bound session has no
+    open transaction -- the released, correct state. When a connection IS held:
+    raises in development/test, turning a forgotten release into an immediate,
+    obvious failure; in production it logs an error instead of crashing a live
+    request (the call still works -- the slip is alerted, not silent).
+    """
+    session = _request_session.get()
+    if session is None or not session.in_transaction():
+        return
+
+    from ..settings import get_settings
+
+    detail = (
+        f"A pooled DB connection is held during an external call "
+        f"({context or 'unspecified'}); call release_db_connection() before it "
+        f"so a connection is not held idle across the round-trip."
+    )
+    if get_settings().is_production:
+        import logging
+
+        logging.getLogger(__name__).error(
+            "held_db_connection_during_external_call context=%s", context or "unspecified"
+        )
+        return
+    raise RuntimeError(detail)
+
+
 def _validate_schema_name(name: str) -> None:
     """Validate a PostgreSQL schema name to prevent SQL injection.
 
@@ -958,7 +996,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
 
 
 def rls_forced_tenant_tables() -> set[str]:
-    '''Return every tenant table that enable_rls_on_schema force-enables RLS on.
+    """Return every tenant table that enable_rls_on_schema force-enables RLS on.
 
     Mirrors that function's selection: a table is RLS-forced if it carries any
     of user_id / patient_id / id (the columns the provisioning query keys on),
@@ -967,7 +1005,7 @@ def rls_forced_tenant_tables() -> set[str]:
     a per-row policy. Derived from the ORM so a new RLS-bearing table — whether
     patient-access, user-owned, or special-cased — is covered automatically,
     with no hand-maintained list. MUST stay consistent with enable_rls_on_schema.
-    '''
+    """
     from app.db.models import Base  # lazy import — avoid circular import
 
     not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
