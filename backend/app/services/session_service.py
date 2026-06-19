@@ -320,11 +320,21 @@ class SessionService:
         existing_note = self.note_service.get_note_by_session_id(session.id, user_id)
         note_type = existing_note.note_type if existing_note is not None else DEFAULT_NOTE_TYPE
 
+        # Release the pooled connection before the multi-second model call. The
+        # SELECTs above (session, patient, existing note) opened a read
+        # transaction; holding it across generation leaves the connection
+        # idle-in-transaction long enough for the server/proxy to drop it, and
+        # the note INSERT afterward then fails with OperationalError ->
+        # PendingRollbackError, so the worker keeps retrying. Commit here (the
+        # either-side-of-the-LLM pattern upload_session uses) so generation runs
+        # with nothing checked out. expire_on_commit=False keeps session/patient
+        # usable, transcript is a loaded JSONB column (no lazy reload), and the
+        # note INSERT autobegins a fresh, pre-pinged connection that the
+        # checkout / after_begin listeners re-arm with search_path + the RLS GUC.
+        _commit_intermediate(user_id)
+
         try:
             logger.info("Starting note generation for session %s", session.id)
-            # The LLM call inside _generate_and_persist_note runs with
-            # no open DB transaction. The note INSERT autobegins a new
-            # short-lived transaction immediately before the flush.
             note = self._generate_and_persist_note(session, patient, note_type, user_id)
             logger.info("Note generation completed for session %s", session.id)
 
