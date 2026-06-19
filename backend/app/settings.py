@@ -623,11 +623,15 @@ class Settings(BaseSettings):
         ),
     )
     transcription_provider: Literal["whisper", "assemblyai"] = Field(
-        default="whisper",
+        default="assemblyai",
         description=(
             "Transcription provider for session audio. "
-            "'whisper' = self-hosted faster-whisper on GCP Batch spot GPUs. "
-            "'assemblyai' = AssemblyAI batch API (lower ops, higher per-session cost)."
+            "'assemblyai' = AssemblyAI batch API (requires a signed BAA and "
+            "ASSEMBLYAI_API_KEY) — the supported, operational path and the "
+            "default. "
+            "'whisper' = self-hosted faster-whisper on GCP Batch spot GPUs; "
+            "planned but not yet operational (the Batch worker image and queue "
+            "are not wired), so it is not a working default."
         ),
     )
     transcription_audio_bucket: str = Field(
