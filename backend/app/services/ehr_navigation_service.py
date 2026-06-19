@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .vertex_client import vertex_genai_client
 
 if TYPE_CHECKING:
     from ..repositories.ehr_prompt import EhrPromptRepository
@@ -50,11 +51,9 @@ class GeminiEhrNavigationService(EhrNavigationService):
         self._client: Any = None
 
     def _get_client(self) -> Any:
-        """Lazily initialize the google.genai client."""
+        """Lazily build the Vertex client (shared factory)."""
         if self._client is None:
-            from google import genai
-
-            self._client = genai.Client(vertexai=True)
+            self._client = vertex_genai_client()
         return self._client
 
     async def get_ehr_prompt(self, ehr_system: str) -> str:

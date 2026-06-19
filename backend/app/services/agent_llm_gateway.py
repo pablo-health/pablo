@@ -25,6 +25,7 @@ from .llm_json import extract_json_object
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .structured_llm_gateway import _to_gemini_schema
+from .vertex_client import vertex_genai_client
 
 logger = logging.getLogger(__name__)
 
@@ -124,13 +125,7 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
 
     def _get_client(self) -> Any:
         if self._client is None:
-            try:
-                from google import genai
-            except ImportError as exc:  # pragma: no cover - import guard
-                raise RuntimeError(
-                    "google-genai package is required for GeminiAgentLLMGateway"
-                ) from exc
-            self._client = genai.Client(vertexai=True)
+            self._client = vertex_genai_client()
         return self._client
 
     def run_agent(

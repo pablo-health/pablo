@@ -32,6 +32,7 @@ from typing import Any
 
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
+from .vertex_client import vertex_genai_client
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +120,9 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         self._client: Any = None
 
     def _get_client(self) -> Any:
+        """Lazily build the Vertex client (shared factory)."""
         if self._client is None:
-            from google import genai
-
-            self._client = genai.Client(vertexai=True)
+            self._client = vertex_genai_client()
         return self._client
 
     def complete_structured(
