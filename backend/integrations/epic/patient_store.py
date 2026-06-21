@@ -19,7 +19,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from integrations.epic.ingest import ImportedRecord, ImportResult
-from integrations.epic.vault import Vault
+from integrations.epic.vault import KeyProvider, Vault
 
 _SOURCE = "epic"
 _RECORD_FILE = "record.enc"
@@ -108,33 +108,41 @@ class PatientOwnedStore:
 
 
 class PatientOwnedSink:
-    """Land an imported record into the patient's own encrypted store."""
+    """Land an imported record into the patient's own encrypted store.
+
+    The :class:`~integrations.epic.vault.KeyProvider` decides key custody:
+    ``LocalKeyProvider`` for a patient-held (zero-knowledge) key, or
+    ``CmekKeyProvider`` for a KMS-wrapped key Pablo can use server-side.
+    Whatever key material the provider issues is persisted in the manifest.
+    """
 
     def __init__(
         self,
         store: PatientOwnedStore,
-        vault: Vault,
+        key_provider: KeyProvider,
         *,
         ttl: timedelta | None = _DEFAULT_TTL,
         metadata_extra: JsonDict | None = None,
     ) -> None:
         self._store = store
-        self._vault = vault
+        self._key_provider = key_provider
         self._ttl = ttl
         self._metadata_extra = metadata_extra or {}
 
     def write(self, record: ImportedRecord) -> ImportResult:
         vault_id = record.patient.source_id or uuid4().hex
+        vault, key_material = self._key_provider.issue()
         self._store.write(
             vault_id,
             record_payload(record),
-            self._vault,
+            vault,
             ttl=self._ttl,
             metadata={
                 "source": _SOURCE,
                 "medications": len(record.medications),
                 "conditions": len(record.conditions),
                 "sensitive_skipped": record.sensitive_skipped,
+                "key": key_material,
                 **self._metadata_extra,
             },
         )
@@ -144,6 +152,18 @@ class PatientOwnedSink:
             conditions_recorded=len(record.conditions),
             sensitive_skipped=record.sensitive_skipped,
         )
+
+
+def load_payload(
+    store: PatientOwnedStore, key_provider: KeyProvider, vault_id: str
+) -> bytes | None:
+    """Read a stored record back, rebuilding the key from the manifest."""
+    manifest = store.manifest(vault_id)
+    if manifest is None:
+        return None
+    key_material = manifest.get("key", {})
+    vault = key_provider.restore(key_material if isinstance(key_material, dict) else {})
+    return store.read(vault_id, vault)
 
 
 def record_payload(record: ImportedRecord) -> bytes:
