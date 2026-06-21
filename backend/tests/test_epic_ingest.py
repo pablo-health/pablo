@@ -23,6 +23,8 @@ from integrations.epic.mappers import (
     map_medication,
     map_patient,
 )
+from integrations.epic.profiles import MINIMAL, PROFILES
+from integrations.epic.sensitivity import is_restricted
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -157,6 +159,60 @@ def test_tenant_sink_create_auto_grants_importer_access() -> None:
 def test_patient_owned_sink_is_not_yet_implemented() -> None:
     with pytest.raises(NotImplementedError):
         PatientOwnedSink().write(_record())
+
+
+def test_profile_scopes_track_resources() -> None:
+    patient_scopes = MINIMAL.scopes_for("patient")
+    assert "patient/Patient.read" in patient_scopes
+    assert "patient/MedicationRequest.read" in patient_scopes
+    assert "patient/Procedure.read" not in patient_scopes  # not in the minimal profile
+    assert "offline_access" in patient_scopes
+
+    backend_scopes = MINIMAL.scopes_for("backend")
+    assert "system/Patient.read" in backend_scopes
+    assert "patient/" not in backend_scopes
+
+
+def test_profiles_widen_from_minimal_to_full() -> None:
+    minimal = set(PROFILES["minimal"].resources)
+    clinical = set(PROFILES["clinical"].resources)
+    full = set(PROFILES["full"].resources)
+    assert minimal < clinical < full
+
+
+def test_is_restricted_flags_part2_and_confidentiality() -> None:
+    assert is_restricted({"meta": {"security": [{"code": "ETH"}]}})  # substance abuse
+    assert is_restricted({"meta": {"security": [{"code": "R"}]}})  # restricted
+    assert not is_restricted({"meta": {"security": [{"code": "N"}]}})  # normal
+    assert not is_restricted({})
+
+
+def test_build_record_excludes_sensitive_resources(tmp_path: Path) -> None:
+    (tmp_path / "Patient.json").write_text(json.dumps(PATIENT_FHIR))
+    (tmp_path / "MedicationRequest.json").write_text(
+        json.dumps(
+            {
+                "resourceType": "Bundle",
+                "entry": [
+                    {"resource": {"id": "m1", "status": "active",
+                                  "medicationCodeableConcept": {"text": "Sertraline"}}},
+                    {"resource": {"id": "m2", "status": "active",
+                                  "meta": {"security": [{"code": "ETH"}]},
+                                  "medicationCodeableConcept": {"text": "Buprenorphine"}}},
+                ],
+            }
+        )
+    )
+    (tmp_path / "Condition.json").write_text(json.dumps({"resourceType": "Bundle", "entry": []}))
+
+    excluded = build_record_from_export(tmp_path)
+    assert len(excluded.medications) == 1  # the Part 2 med is dropped
+    assert excluded.sensitive_skipped == 1
+    assert excluded.medications[0].drug_name == "Sertraline"
+
+    included = build_record_from_export(tmp_path, exclude_sensitive=False)
+    assert len(included.medications) == 2
+    assert included.sensitive_skipped == 0
 
 
 def test_import_export_reads_run_dir(tmp_path: Path) -> None:
