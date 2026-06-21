@@ -105,6 +105,32 @@ counts.
 | `--port` / `EPIC_REDIRECT_PORT`      | Loopback callback port (match the registered URI). |
 | `--no-browser`                       | Print the auth URL instead of opening a browser.   |
 
+## Where imported data lands (retention sinks)
+
+Mapping (`mappers`) is shared; *where the data is kept* is a pluggable
+`ImportSink`, because the two use cases have different legal/retention models:
+
+- **`TenantSink`** (`tenant_sink.py`) — clinician / prescriber case. Pablo is
+  a Business Associate; data lands in the practice tenant schema via the
+  access-scoped repositories (inherits RLS + soft-delete/purge), provenance-
+  tagged. The triggering route owns the audit entry.
+- **`PatientOwnedSink`** (`patient_store.py`) — patient-support case. The
+  record is **encrypted at rest** (`vault.py`, Fernet/AES), carries a **TTL**
+  (default 30 days), and is removable with a one-call **`purge()`**. PHR /
+  FTC-Health-Breach-Notification-Rule posture — deliberately *not* in a
+  clinician's schema. Key custody is pluggable (`KeyProvider`):
+  - **`LocalKeyProvider`** — zero-knowledge. Key is patient-held (generated or
+    passphrase-derived via scrypt); Pablo can't decrypt, so no server-side AI.
+    Nothing secret is persisted.
+  - **`CmekKeyProvider`** (`cmek.py`) — Cloud KMS envelope encryption. A
+    per-record DEK is wrapped by a per-patient KMS key; Pablo (with IAM on the
+    key) can decrypt for server-side AI, and destroying the KMS key
+    **crypto-shreds** every record under it. One KMS call per record (cost
+    tracks record count, not size). Needs `google-cloud-kms` in production.
+
+Sensitivity filtering (42 CFR Part 2 / DS4P) is applied before either sink,
+so specially-protected data only lands with a deliberate opt-in.
+
 ## Pointing at a real MyChart org
 
 Once you have a **production** client id approved for a specific Epic
