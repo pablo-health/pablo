@@ -103,7 +103,12 @@ def map_condition(resource: JsonDict) -> MappedCondition:
 
 def map_bundle(bundle: JsonDict, mapper: Any) -> list[Any]:
     """Apply ``mapper`` to every resource entry in a searchset Bundle."""
-    return [mapper(entry["resource"]) for entry in bundle.get("entry", []) if "resource" in entry]
+    return [mapper(resource) for resource in bundle_resources(bundle)]
+
+
+def bundle_resources(bundle: JsonDict) -> list[JsonDict]:
+    """Return the raw resources from a searchset Bundle's entries."""
+    return [entry["resource"] for entry in bundle.get("entry", []) if "resource" in entry]
 
 
 # --- FHIR field extractors -------------------------------------------------

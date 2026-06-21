@@ -36,11 +36,12 @@ from integrations.epic.mappers import (
     MappedCondition,
     MappedMedication,
     MappedPatient,
-    map_bundle,
+    bundle_resources,
     map_condition,
     map_medication,
     map_patient,
 )
+from integrations.epic.sensitivity import is_restricted
 
 _PROVENANCE = "epic"
 
@@ -52,6 +53,7 @@ class ImportedRecord:
     patient: MappedPatient
     medications: tuple[MappedMedication, ...]
     conditions: tuple[MappedCondition, ...]
+    sensitive_skipped: int = 0
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,7 @@ class ImportResult:
     patient_id: str
     medications_created: int
     conditions_recorded: int
+    sensitive_skipped: int = 0
 
 
 class ImportSink(Protocol):
@@ -98,6 +101,7 @@ class TenantSink:
             patient_id=patient.id,
             medications_created=created,
             conditions_recorded=len(record.conditions),
+            sensitive_skipped=record.sensitive_skipped,
         )
 
     def _create_patient(self, record: ImportedRecord) -> Patient:
@@ -151,21 +155,38 @@ class PatientOwnedSink:
         )
 
 
-def build_record_from_export(run_dir: Path) -> ImportedRecord:
-    """Assemble an :class:`ImportedRecord` from an on-disk export run dir."""
-    patient = map_patient(_read_json(run_dir / "Patient.json"))
-    medications = map_bundle(_read_json(run_dir / "MedicationRequest.json"), map_medication)
-    conditions = map_bundle(_read_json(run_dir / "Condition.json"), map_condition)
+def build_record_from_export(run_dir: Path, *, exclude_sensitive: bool = True) -> ImportedRecord:
+    """Assemble an :class:`ImportedRecord` from an on-disk export run dir.
+
+    When ``exclude_sensitive`` is set (the default), DS4P / 42 CFR Part 2
+    labeled resources are dropped before mapping and counted, rather than
+    landing in the sink.
+    """
+    med_resources = bundle_resources(_read_json(run_dir / "MedicationRequest.json"))
+    condition_resources = bundle_resources(_read_json(run_dir / "Condition.json"))
+
+    skipped = 0
+    if exclude_sensitive:
+        kept_meds = [r for r in med_resources if not is_restricted(r)]
+        kept_conditions = [r for r in condition_resources if not is_restricted(r)]
+        skipped = (len(med_resources) - len(kept_meds)) + (
+            len(condition_resources) - len(kept_conditions)
+        )
+        med_resources, condition_resources = kept_meds, kept_conditions
+
     return ImportedRecord(
-        patient=patient,
-        medications=tuple(medications),
-        conditions=tuple(conditions),
+        patient=map_patient(_read_json(run_dir / "Patient.json")),
+        medications=tuple(map_medication(r) for r in med_resources),
+        conditions=tuple(map_condition(r) for r in condition_resources),
+        sensitive_skipped=skipped,
     )
 
 
-def import_export(run_dir: Path, sink: ImportSink) -> ImportResult:
+def import_export(
+    run_dir: Path, sink: ImportSink, *, exclude_sensitive: bool = True
+) -> ImportResult:
     """Read an export run dir and land it into ``sink``."""
-    return sink.write(build_record_from_export(run_dir))
+    return sink.write(build_record_from_export(run_dir, exclude_sensitive=exclude_sensitive))
 
 
 def _diagnosis_text(conditions: tuple[MappedCondition, ...]) -> str | None:
