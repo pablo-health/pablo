@@ -10,9 +10,12 @@ key or tampered ciphertext fails loudly rather than returning garbage.
 """
 
 import base64
+from typing import Protocol
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+JsonDict = dict[str, object]
 
 # scrypt work factors — interactive-grade, ample for a per-patient key.
 _SCRYPT_N = 2**14
@@ -51,3 +54,35 @@ class Vault:
             return self._fernet.decrypt(token)
         except InvalidToken as exc:
             raise VaultError("decryption failed — wrong key or corrupted data") from exc
+
+
+class KeyProvider(Protocol):
+    """Supplies the key for each stored record, plus what to persist with it.
+
+    ``issue`` returns a fresh :class:`Vault` for a write and the non-secret
+    key material to store alongside the ciphertext; ``restore`` rebuilds the
+    Vault from that material on read. This is the seam that lets the same
+    store run zero-knowledge (patient-held key) or CMEK (KMS-wrapped key).
+    """
+
+    def issue(self) -> tuple[Vault, JsonDict]: ...
+
+    def restore(self, key_material: JsonDict) -> Vault: ...
+
+
+class LocalKeyProvider:
+    """Patient-held symmetric key (zero-knowledge): nothing secret is stored.
+
+    The key lives with the patient (generated or passphrase-derived); Pablo
+    cannot decrypt without it, so server-side processing is impossible by
+    design. No key material is persisted in the manifest.
+    """
+
+    def __init__(self, key: bytes) -> None:
+        self._key = key
+
+    def issue(self) -> tuple[Vault, JsonDict]:
+        return Vault(self._key), {}
+
+    def restore(self, key_material: JsonDict) -> Vault:  # noqa: ARG002 - key is held, not stored
+        return Vault(self._key)
