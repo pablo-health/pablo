@@ -11,8 +11,8 @@ import httpx
 from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicAuthError, EpicConfigError
 from integrations.epic.exporter import export_patient_data
-from integrations.epic.fhir_client import FhirClient
-from integrations.epic.smart_auth import StandaloneLaunchFlow
+from integrations.epic.fhir_client import FhirClient, fetch_capability_statement
+from integrations.epic.smart_auth import StandaloneLaunchFlow, discover_smart_configuration
 
 _REGISTER_HINT = (
     "Set EPIC_CLIENT_ID (or pass --client-id) to the client id of your "
@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the authorization URL instead of opening a browser.",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Probe the FHIR endpoint (SMART discovery + /metadata) and exit, no login.",
+    )
     return parser
 
 
@@ -56,14 +61,29 @@ def _resolve_settings(args: argparse.Namespace) -> EpicSettings:
     return settings.model_copy(update=overrides) if overrides else settings
 
 
+def _run_check(settings: EpicSettings, client: httpx.Client) -> int:
+    """Verify the FHIR endpoint is reachable before the interactive login."""
+    print(f"Checking Epic FHIR endpoint: {settings.fhir_base_url}")
+    smart = discover_smart_configuration(settings.fhir_base_url, client)
+    print(f"  authorize endpoint: {smart.authorization_endpoint}")
+    print(f"  token endpoint:     {smart.token_endpoint}")
+    capability = fetch_capability_statement(settings.fhir_base_url, client)
+    print(f"  FHIR version:       {capability.get('fhirVersion', 'unknown')}")
+    print("\nConnectivity OK. Re-run without --check (with EPIC_CLIENT_ID set) to pull data.")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = _resolve_settings(args)
 
-    if not settings.client_id:
-        raise EpicConfigError(_REGISTER_HINT)
-
     with httpx.Client(timeout=settings.request_timeout, follow_redirects=False) as client:
+        if args.check:
+            return _run_check(settings, client)
+
+        if not settings.client_id:
+            raise EpicConfigError(_REGISTER_HINT)
+
         flow = StandaloneLaunchFlow(settings, client)
         token = flow.authorize(open_browser=not args.no_browser)
         if token.patient_id is None:
