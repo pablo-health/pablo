@@ -105,6 +105,25 @@ counts.
 | `--port` / `EPIC_REDIRECT_PORT`      | Loopback callback port (match the registered URI). |
 | `--no-browser`                       | Print the auth URL instead of opening a browser.   |
 
+## Where imported data lands (retention sinks)
+
+Mapping (`mappers`) is shared; *where the data is kept* is a pluggable
+`ImportSink`, because the two use cases have different legal/retention models:
+
+- **`TenantSink`** (`tenant_sink.py`) — clinician / prescriber case. Pablo is
+  a Business Associate; data lands in the practice tenant schema via the
+  access-scoped repositories (inherits RLS + soft-delete/purge), provenance-
+  tagged. The triggering route owns the audit entry.
+- **`PatientOwnedSink`** (`patient_store.py`) — patient-support case. The
+  record is **encrypted at rest** with a key the *patient* controls (`vault.py`,
+  Fernet/AES), carries a **TTL** (default 30 days), and is removable with a
+  one-call **`purge()`**. PHR / FTC-Health-Breach-Notification-Rule posture —
+  deliberately *not* in a clinician's schema. The key never touches disk; the
+  manifest stores only non-secret metadata (timestamps, TTL, provenance, counts).
+
+Sensitivity filtering (42 CFR Part 2 / DS4P) is applied before either sink,
+so specially-protected data only lands with a deliberate opt-in.
+
 ## Pointing at a real MyChart org
 
 Once you have a **production** client id approved for a specific Epic
