@@ -13,19 +13,23 @@ Run from the ``backend/`` directory (so ``integrations`` is importable)::
     poetry run python -m integrations.epic --help
 """
 
+from integrations.epic.auth import AccessGrant, TokenProvider
+from integrations.epic.backend_services import BackendServicesAuth
 from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicAuthError, EpicConfigError
 from integrations.epic.exporter import ExportSummary, export_patient_data
 from integrations.epic.fhir_client import FhirClient
-from integrations.epic.smart_auth import StandaloneLaunchFlow, TokenResponse
+from integrations.epic.smart_auth import StandaloneLaunchFlow
 
 __all__ = [
+    "AccessGrant",
+    "BackendServicesAuth",
     "EpicAuthError",
     "EpicConfigError",
     "EpicSettings",
     "ExportSummary",
     "FhirClient",
     "StandaloneLaunchFlow",
-    "TokenResponse",
+    "TokenProvider",
     "export_patient_data",
 ]

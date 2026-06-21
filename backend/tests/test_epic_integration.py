@@ -9,8 +9,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import jwt
 import pytest
-from integrations.epic.cli import _resolve_settings, build_parser, main
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from integrations.epic.backend_services import BackendServicesAuth
+from integrations.epic.cli import _build_provider, _resolve_settings, build_parser, main
 from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicConfigError
 from integrations.epic.exporter import export_patient_data
@@ -175,5 +179,82 @@ def test_resolve_settings_applies_cli_overrides() -> None:
 
 def test_main_requires_client_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("EPIC_CLIENT_ID", raising=False)
+    monkeypatch.delenv("EPIC_AUTH_MODE", raising=False)
     with pytest.raises(EpicConfigError):
         main([])
+
+
+def _rsa_private_key_pem(tmp_path: Path) -> tuple[Path, rsa.RSAPrivateKey]:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    path = tmp_path / "backend_key.pem"
+    path.write_bytes(pem)
+    return path, key
+
+
+def test_backend_services_acquire_signs_jwt(tmp_path: Path) -> None:
+    key_path, key = _rsa_private_key_pem(tmp_path)
+    settings = _settings(
+        auth_mode="backend",
+        client_id="backend-app",
+        backend_private_key_path=key_path,
+        backend_kid="kid-1",
+    )
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/.well-known/smart-configuration"):
+            return httpx.Response(
+                200,
+                json={
+                    "authorization_endpoint": "https://auth.example/authorize",
+                    "token_endpoint": "https://auth.example/token",
+                },
+            )
+        body = parse_qs(request.content.decode())
+        assert body["grant_type"] == ["client_credentials"]
+        assert body["scope"] == [settings.backend_scopes]
+        captured["assertion"] = body["client_assertion"][0]
+        return httpx.Response(
+            200, json={"access_token": "systok", "scope": "system/Patient.read", "expires_in": 3600}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        grant = BackendServicesAuth(settings, client).acquire()
+
+    assert grant.access_token == "systok"
+    assert grant.patient_id is None
+    decoded = jwt.decode(
+        captured["assertion"],
+        key.public_key(),
+        algorithms=["RS384"],
+        audience="https://auth.example/token",
+    )
+    assert decoded["iss"] == "backend-app"
+    assert decoded["sub"] == "backend-app"
+
+
+def test_backend_services_requires_key_and_kid() -> None:
+    settings = _settings(auth_mode="backend", client_id="backend-app")  # no key/kid
+    with httpx.Client() as client, pytest.raises(EpicConfigError):
+        BackendServicesAuth(settings, client).acquire()
+
+
+def test_build_provider_selects_flow_by_mode() -> None:
+    with httpx.Client() as client:
+        backend = _build_provider(
+            _settings(auth_mode="backend", client_id="x"), client, open_browser=False
+        )
+        patient = _build_provider(_settings(client_id="x"), client, open_browser=False)
+    assert isinstance(backend, BackendServicesAuth)
+    assert isinstance(patient, StandaloneLaunchFlow)
+
+
+def test_auth_mode_and_patient_id_parse() -> None:
+    args = build_parser().parse_args(["--auth-mode", "backend", "--patient-id", "pX"])
+    assert args.auth_mode == "backend"
+    assert args.patient_id == "pX"
