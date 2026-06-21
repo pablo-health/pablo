@@ -14,6 +14,7 @@ from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicAuthError, EpicConfigError
 from integrations.epic.exporter import export_patient_data
 from integrations.epic.fhir_client import FhirClient, fetch_capability_statement
+from integrations.epic.profiles import DEFAULT_PROFILE, PROFILES
 from integrations.epic.smart_auth import StandaloneLaunchFlow, discover_smart_configuration
 
 _REGISTER_HINT = (
@@ -32,6 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--auth-mode",
         choices=("patient", "backend"),
         help="'patient' = interactive MyChart login (default); 'backend' = headless JWT.",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=tuple(PROFILES),
+        default=DEFAULT_PROFILE,
+        help=f"Import breadth: minimal | clinical | full (default: {DEFAULT_PROFILE}).",
     )
     parser.add_argument("--client-id", help="OAuth2 client id of your registered Epic app.")
     parser.add_argument("--fhir-base-url", help="FHIR R4 base URL (defaults to Epic's sandbox).")
@@ -109,6 +116,10 @@ def _run_check(settings: EpicSettings, client: httpx.Client) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = _resolve_settings(args)
+    profile = PROFILES[args.profile]
+    # Keep consent in lockstep with breadth: request only the profile's scopes.
+    scope_field = "backend_scopes" if settings.auth_mode == "backend" else "scopes"
+    settings = settings.model_copy(update={scope_field: profile.scopes_for(settings.auth_mode)})
 
     with httpx.Client(timeout=settings.request_timeout, follow_redirects=False) as client:
         if args.check:
@@ -124,9 +135,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
         fhir = FhirClient(settings.fhir_base_url, grant.access_token, client)
-        summary = export_patient_data(fhir, patient_id, settings.output_dir)
+        summary = export_patient_data(fhir, patient_id, settings.output_dir, profile.queries)
 
-    print(f"\nExport complete for patient {patient_id}")
+    # Don't echo the patient identifier to stdout (PHI hygiene); it's recorded
+    # in the export's _export_metadata.json on disk instead.
+    print(f"\nExport complete (profile: {profile.name})")
     print(f"Wrote {len(summary.counts)} resource files to: {summary.output_dir}")
     for label, count in summary.counts.items():
         print(f"  {label}: {count}")
