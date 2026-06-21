@@ -14,13 +14,14 @@ import hashlib
 import secrets
 import time
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
+from integrations.epic.auth import AccessGrant
 from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicAuthError
 
@@ -40,18 +41,6 @@ class SmartConfiguration:
 
     authorization_endpoint: str
     token_endpoint: str
-
-
-@dataclass(frozen=True)
-class TokenResponse:
-    """Result of a successful authorization-code token exchange."""
-
-    access_token: str
-    patient_id: str | None
-    scope: str
-    expires_in: int
-    refresh_token: str | None
-    raw: dict[str, Any] = field(repr=False)
 
 
 def generate_pkce_pair() -> tuple[str, str]:
@@ -118,11 +107,14 @@ def _first(params: dict[str, list[str]], key: str) -> str | None:
 class StandaloneLaunchFlow:
     """Drives the SMART standalone patient launch to a usable token."""
 
-    def __init__(self, settings: EpicSettings, client: httpx.Client) -> None:
+    def __init__(
+        self, settings: EpicSettings, client: httpx.Client, *, open_browser: bool = True
+    ) -> None:
         self._settings = settings
         self._client = client
+        self._open_browser = open_browser
 
-    def authorize(self, *, open_browser: bool = True) -> TokenResponse:
+    def acquire(self) -> AccessGrant:
         """Run the full flow and return the access token for the patient."""
         smart = discover_smart_configuration(self._settings.fhir_base_url, self._client)
         verifier, challenge = generate_pkce_pair()
@@ -131,7 +123,7 @@ class StandaloneLaunchFlow:
 
         print("\nOpen this URL and sign in to MyChart to authorize the import:\n")
         print(f"  {authorize_url}\n")
-        if open_browser:
+        if self._open_browser:
             webbrowser.open(authorize_url)
 
         code = self._await_callback(state)
@@ -180,7 +172,7 @@ class StandaloneLaunchFlow:
             raise EpicAuthError("No authorization code returned on the redirect.")
         return server.auth_code
 
-    def _exchange_code(self, token_endpoint: str, code: str, verifier: str) -> TokenResponse:
+    def _exchange_code(self, token_endpoint: str, code: str, verifier: str) -> AccessGrant:
         response = self._client.post(
             token_endpoint,
             data={
@@ -197,7 +189,7 @@ class StandaloneLaunchFlow:
                 f"Token exchange failed ({response.status_code}): {response.text}"
             )
         payload = response.json()
-        return TokenResponse(
+        return AccessGrant(
             access_token=payload["access_token"],
             patient_id=payload.get("patient"),
             scope=payload.get("scope", ""),

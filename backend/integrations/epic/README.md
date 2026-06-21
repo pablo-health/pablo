@@ -111,3 +111,44 @@ Once you have a **production** client id approved for a specific Epic
 organization, set `EPIC_CLIENT_ID` to it and `EPIC_FHIR_BASE_URL` to that
 org's FHIR R4 base (from their Epic endpoint directory). The flow is
 identical; the patient signs in with their real MyChart credentials.
+
+## Two auth modes
+
+The token-acquisition strategy is pluggable (`TokenProvider` → `AccessGrant`);
+everything downstream (FHIR client, exporter) is identical regardless of mode.
+
+| Mode | `--auth-mode` | Who authorizes | When Pablo uses it |
+| ---- | ------------- | -------------- | ------------------ |
+| **Patient launch** (default) | `patient` | the patient, via MyChart login (auth-code + PKCE) | patient-mediated import; works across orgs with no B2B deal |
+| **Backend Services** | `backend` | the org, once (signed-JWT client-credentials, no browser) | headless server-side sync of a caseload, after the org onboards the app |
+
+### Backend Services (headless)
+
+No browser, no patient login. The app authenticates with a JWT signed by a
+registered RSA key and gets a **system-level** token, so you name the patient
+explicitly:
+
+```bash
+cd backend
+poetry run python -m integrations.epic \
+  --auth-mode backend \
+  --client-id <backend-app-client-id> \
+  --private-key /path/to/private_key.pem \
+  --kid <public-jwk-kid> \
+  --patient-id <fhir-patient-id>
+```
+
+Backend mode requires a **backend** app registration (system scopes +
+the matching public JWK uploaded to Epic) — not the patient app above.
+Env equivalents: `EPIC_BACKEND_PRIVATE_KEY_PATH`, `EPIC_BACKEND_KID`,
+`EPIC_AUTH_MODE=backend`.
+
+### Useful flags (both modes)
+
+| Flag / env var                       | Purpose                                            |
+| ------------------------------------ | -------------------------------------------------- |
+| `--auth-mode` / `EPIC_AUTH_MODE`     | `patient` (default) or `backend`.                  |
+| `--client-id` / `EPIC_CLIENT_ID`     | Registered app's client id.                        |
+| `--fhir-base-url` / `EPIC_FHIR_BASE_URL` | Point at a real Epic org instead of the sandbox.   |
+| `--output-dir` / `EPIC_OUTPUT_DIR`   | Where export runs are written.                     |
+| `--check`                            | Probe connectivity and exit (no login).            |

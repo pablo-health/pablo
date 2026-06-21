@@ -8,6 +8,8 @@ from pathlib import Path
 
 import httpx
 
+from integrations.epic.auth import TokenProvider
+from integrations.epic.backend_services import BackendServicesAuth
 from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicAuthError, EpicConfigError
 from integrations.epic.exporter import export_patient_data
@@ -26,8 +28,23 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m integrations.epic",
         description="Pull a MyChart patient's records via SMART on FHIR and save them as JSON.",
     )
+    parser.add_argument(
+        "--auth-mode",
+        choices=("patient", "backend"),
+        help="'patient' = interactive MyChart login (default); 'backend' = headless JWT.",
+    )
     parser.add_argument("--client-id", help="OAuth2 client id of your registered Epic app.")
     parser.add_argument("--fhir-base-url", help="FHIR R4 base URL (defaults to Epic's sandbox).")
+    parser.add_argument(
+        "--patient-id",
+        help="FHIR patient id to pull (required in backend mode; patient mode derives it).",
+    )
+    parser.add_argument(
+        "--private-key",
+        type=Path,
+        help="Path to the RSA private key (PEM) signing the JWT assertion (backend mode).",
+    )
+    parser.add_argument("--kid", help="Key id of the registered public JWK (backend mode).")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -50,15 +67,31 @@ def build_parser() -> argparse.ArgumentParser:
 def _resolve_settings(args: argparse.Namespace) -> EpicSettings:
     settings = EpicSettings()
     overrides: dict[str, object] = {}
+    if args.auth_mode:
+        overrides["auth_mode"] = args.auth_mode
     if args.client_id:
         overrides["client_id"] = args.client_id
     if args.fhir_base_url:
         overrides["fhir_base_url"] = args.fhir_base_url
+    if args.private_key:
+        overrides["backend_private_key_path"] = args.private_key
+    if args.kid:
+        overrides["backend_kid"] = args.kid
     if args.output_dir:
         overrides["output_dir"] = args.output_dir
     if args.port:
         overrides["redirect_port"] = args.port
     return settings.model_copy(update=overrides) if overrides else settings
+
+
+def _build_provider(
+    settings: EpicSettings, client: httpx.Client, *, open_browser: bool
+) -> TokenProvider:
+    if settings.auth_mode == "backend":
+        return BackendServicesAuth(settings, client)
+    if not settings.client_id:
+        raise EpicConfigError(_REGISTER_HINT)
+    return StandaloneLaunchFlow(settings, client, open_browser=open_browser)
 
 
 def _run_check(settings: EpicSettings, client: httpx.Client) -> int:
@@ -81,21 +114,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.check:
             return _run_check(settings, client)
 
-        if not settings.client_id:
-            raise EpicConfigError(_REGISTER_HINT)
-
-        flow = StandaloneLaunchFlow(settings, client)
-        token = flow.authorize(open_browser=not args.no_browser)
-        if token.patient_id is None:
+        provider = _build_provider(settings, client, open_browser=not args.no_browser)
+        grant = provider.acquire()
+        patient_id = grant.patient_id or args.patient_id
+        if patient_id is None:
             raise EpicAuthError(
-                "Token response did not include a patient context — confirm the app is "
-                "registered for standalone patient launch with the patient/* scopes."
+                "No patient context — pass --patient-id (required in backend mode), or in "
+                "patient mode confirm the app requests standalone launch + patient/* scopes."
             )
 
-        fhir = FhirClient(settings.fhir_base_url, token.access_token, client)
-        summary = export_patient_data(fhir, token.patient_id, settings.output_dir)
+        fhir = FhirClient(settings.fhir_base_url, grant.access_token, client)
+        summary = export_patient_data(fhir, patient_id, settings.output_dir)
 
-    print(f"\nExport complete for patient {token.patient_id}")
+    print(f"\nExport complete for patient {patient_id}")
     print(f"Wrote {len(summary.counts)} resource files to: {summary.output_dir}")
     for label, count in summary.counts.items():
         print(f"  {label}: {count}")

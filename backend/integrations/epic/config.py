@@ -7,6 +7,7 @@ variables (or a local ``.env``) and overridden on the CLI.
 """
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,6 +36,21 @@ DEFAULT_SCOPES = (
     "patient/Encounter.read",
 )
 
+# System-level read scopes for the headless Backend Services flow. There
+# is no patient context, so the caller names the patient explicitly.
+DEFAULT_SYSTEM_SCOPES = (
+    "system/Patient.read",
+    "system/AllergyIntolerance.read",
+    "system/Condition.read",
+    "system/MedicationRequest.read",
+    "system/Observation.read",
+    "system/Immunization.read",
+    "system/Procedure.read",
+    "system/DiagnosticReport.read",
+    "system/DocumentReference.read",
+    "system/Encounter.read",
+)
+
 
 class EpicSettings(BaseSettings):
     """Runtime configuration for the Epic SMART on FHIR puller."""
@@ -47,6 +63,10 @@ class EpicSettings(BaseSettings):
         extra="ignore",
     )
 
+    auth_mode: Literal["patient", "backend"] = Field(
+        default="patient",
+        description="'patient' = interactive MyChart login; 'backend' = headless JWT credentials.",
+    )
     fhir_base_url: str = Field(
         default=EPIC_SANDBOX_R4_BASE,
         description="FHIR R4 base URL of the Epic endpoint to pull from.",
@@ -82,6 +102,24 @@ class EpicSettings(BaseSettings):
     callback_timeout: float = Field(
         default=300.0,
         description="How long to wait for the MyChart redirect before giving up, in seconds.",
+    )
+
+    # --- Backend Services (headless client-credentials) ---
+    backend_scopes: str = Field(
+        default=" ".join(DEFAULT_SYSTEM_SCOPES),
+        description="Space-delimited system/* scopes requested in backend mode.",
+    )
+    backend_private_key_path: Path | None = Field(
+        default=None,
+        description="Path to the RSA private key (PEM) that signs the JWT client assertion.",
+    )
+    backend_kid: str = Field(
+        default="",
+        description="Key id (kid) of the public JWK registered with the Epic backend app.",
+    )
+    jwt_assertion_ttl: int = Field(
+        default=300,
+        description="Lifetime of the signed JWT client assertion, in seconds.",
     )
 
     @property
