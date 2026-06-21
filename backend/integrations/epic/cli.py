@@ -137,7 +137,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         fhir = FhirClient(settings.fhir_base_url, grant.access_token, client)
         summary = export_patient_data(fhir, patient_id, settings.output_dir, profile.queries)
 
-    print(f"\nExport complete for patient {patient_id} (profile: {profile.name})")
+    # Don't echo the patient identifier to stdout (PHI hygiene); it's recorded
+    # in the export's _export_metadata.json on disk instead.
+    print(f"\nExport complete (profile: {profile.name})")
     print(f"Wrote {len(summary.counts)} resource files to: {summary.output_dir}")
     for label, count in summary.counts.items():
         print(f"  {label}: {count}")
