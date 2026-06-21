@@ -13,8 +13,6 @@ from app.medications.repository import (
 from app.repositories.patient import InMemoryPatientRepository
 from integrations.epic.ingest import (
     ImportedRecord,
-    PatientOwnedSink,
-    TenantSink,
     build_record_from_export,
     import_export,
 )
@@ -25,6 +23,7 @@ from integrations.epic.mappers import (
 )
 from integrations.epic.profiles import MINIMAL, PROFILES
 from integrations.epic.sensitivity import is_restricted
+from integrations.epic.tenant_sink import TenantSink
 
 USER_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -154,11 +153,6 @@ def test_tenant_sink_create_auto_grants_importer_access() -> None:
 
     with pytest.raises(PatientMedicationAccessDeniedError):
         TenantSink(patient_repo, medication_repo, USER_ID).write(record)
-
-
-def test_patient_owned_sink_is_not_yet_implemented() -> None:
-    with pytest.raises(NotImplementedError):
-        PatientOwnedSink().write(_record())
 
 
 def test_profile_scopes_track_resources() -> None:
