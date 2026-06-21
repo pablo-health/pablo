@@ -143,10 +143,37 @@ the matching public JWK uploaded to Epic) — not the patient app above.
 Env equivalents: `EPIC_BACKEND_PRIVATE_KEY_PATH`, `EPIC_BACKEND_KID`,
 `EPIC_AUTH_MODE=backend`.
 
+## Import levels (`--profile`)
+
+A profile sets the **breadth/depth** of the pull and, crucially, the OAuth
+**scopes requested** — so consent and import stay in lockstep (we never ask
+for a scope the profile won't use):
+
+| Profile | Resources | Use |
+| ------- | --------- | --- |
+| `minimal` | demographics + **active** problems + **active** meds | prescriber quick context |
+| `clinical` | + allergies, labs, vitals, immunizations, encounters | fuller clinical picture |
+| `full` (default) | + procedures, diagnostic reports, documents | everything the scopes allow |
+
+```bash
+poetry run python -m integrations.epic --profile minimal
+```
+
+### Sensitivity (42 CFR Part 2 / DS4P)
+
+Specially-protected records — substance-use disorder (42 CFR Part 2),
+psychiatry, HIV, sexual/domestic-violence — carry FHIR `meta.security`
+labels. Ingestion **excludes these by default** (`exclude_sensitive=True`):
+they are dropped before landing in any sink and counted as
+`sensitive_skipped`. Opting in is a deliberate, consent-gated decision, not
+a flag flip — importing Part 2 data without Part 2-compliant consent is a
+violation, not a preference.
+
 ### Useful flags (both modes)
 
 | Flag / env var                       | Purpose                                            |
 | ------------------------------------ | -------------------------------------------------- |
+| `--profile`                          | `minimal` / `clinical` / `full` (default `full`).  |
 | `--auth-mode` / `EPIC_AUTH_MODE`     | `patient` (default) or `backend`.                  |
 | `--client-id` / `EPIC_CLIENT_ID`     | Registered app's client id.                        |
 | `--fhir-base-url` / `EPIC_FHIR_BASE_URL` | Point at a real Epic org instead of the sandbox.   |
