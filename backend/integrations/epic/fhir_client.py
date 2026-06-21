@@ -60,3 +60,13 @@ def _next_link(bundle: JsonDict) -> str | None:
         if link.get("relation") == "next":
             return link.get("url")
     return None
+
+
+def fetch_capability_statement(base_url: str, client: httpx.Client) -> JsonDict:
+    """Read the server's ``/metadata`` CapabilityStatement (no auth required)."""
+    response = client.get(
+        f"{base_url.rstrip('/')}/metadata",
+        headers={"Accept": "application/fhir+json"},
+    )
+    response.raise_for_status()
+    return response.json()

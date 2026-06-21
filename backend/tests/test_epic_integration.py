@@ -14,7 +14,7 @@ from integrations.epic.cli import _resolve_settings, build_parser, main
 from integrations.epic.config import EpicSettings
 from integrations.epic.errors import EpicConfigError
 from integrations.epic.exporter import export_patient_data
-from integrations.epic.fhir_client import FhirClient, _next_link
+from integrations.epic.fhir_client import FhirClient, _next_link, fetch_capability_statement
 from integrations.epic.smart_auth import (
     StandaloneLaunchFlow,
     discover_smart_configuration,
@@ -122,6 +122,24 @@ def test_fhir_client_search_follows_next_links() -> None:
 
 def test_next_link_returns_none_without_next() -> None:
     assert _next_link({"link": [{"relation": "self", "url": "x"}]}) is None
+
+
+def test_fetch_capability_statement() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/metadata")
+        return httpx.Response(
+            200, json={"resourceType": "CapabilityStatement", "fhirVersion": "4.0.1"}
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        capability = fetch_capability_statement(FHIR_BASE, client)
+
+    assert capability["fhirVersion"] == "4.0.1"
+
+
+def test_check_flag_parses() -> None:
+    assert build_parser().parse_args(["--check"]).check is True
+    assert build_parser().parse_args([]).check is False
 
 
 class _FakeFhirClient:

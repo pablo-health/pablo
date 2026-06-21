@@ -50,6 +50,24 @@ is `epicfhir11` for all of them):
 
 ## 3. Run it
 
+First confirm the endpoint is reachable (no login, no client id needed):
+
+```bash
+cd backend
+poetry run python -m integrations.epic --check
+```
+
+Expected output (verified against the live sandbox):
+
+```
+Checking Epic FHIR endpoint: https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4
+  authorize endpoint: https://fhir.epic.com/interconnect-fhir-oauth/oauth2/authorize
+  token endpoint:     https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token
+  FHIR version:       4.0.1
+```
+
+Then run the real pull:
+
 ```bash
 export EPIC_CLIENT_ID=your-non-production-client-id
 
