@@ -67,3 +67,6 @@ local/
 # (Methodology guide, README, and VULNERABILITY_EXCEPTIONS.md stay tracked.)
 # The trailing wildcard also covers suffixed variants (e.g. *_pentest_report_OSS.md).
 docs/pentest/*_pentest_report*.md
+
+# Standalone Epic/MyChart puller output (FHIR JSON exports — may contain PHI)
+epic_export/
