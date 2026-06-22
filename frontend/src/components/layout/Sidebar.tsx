@@ -8,6 +8,7 @@ import { AdminNav } from "./AdminNav"
 import { PabloNote } from "./PabloNote"
 import { SidebarFooter } from "./SidebarFooter"
 import { clinicianNavigation, settingsItem } from "./sidebarExtensions"
+import { useNavVisibility } from "./sidebarVisibility"
 
 interface SidebarProps {
   isAdmin?: boolean
@@ -21,10 +22,11 @@ interface SidebarProps {
 
 export function Sidebar({ isAdmin = false, hideClinicianMenus = false }: SidebarProps) {
   const pathname = usePathname()
+  const isVisible = useNavVisibility()
 
-  const items = hideClinicianMenus
-    ? [settingsItem]
-    : [...clinicianNavigation, settingsItem]
+  const items = (
+    hideClinicianMenus ? [settingsItem] : [...clinicianNavigation, settingsItem]
+  ).filter(isVisible)
 
   return (
     <div className="flex h-full w-64 flex-col bg-card border-r border-neutral-200">
