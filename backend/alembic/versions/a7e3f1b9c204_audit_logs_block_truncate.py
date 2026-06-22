@@ -24,7 +24,7 @@ Backfills via the per-tenant fan-out; new tenants get it from
 ``CREATE OR REPLACE FUNCTION`` + ``DROP TRIGGER IF EXISTS`` before create.
 
 Revision ID: a7e3f1b9c204
-Revises: d4b7e9a1c305
+Revises: b2e8c4f6a1d3
 Create Date: 2026-06-14
 """
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "a7e3f1b9c204"
-down_revision: str | Sequence[str] | None = "d4b7e9a1c305"
+down_revision: str | Sequence[str] | None = "b2e8c4f6a1d3"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
