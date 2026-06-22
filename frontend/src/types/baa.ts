@@ -1,25 +1,10 @@
 /**
- * BAA type stubs.
+ * BAA types.
  *
- * BAA acceptance is provided by an optional backend overlay. These
- * stubs exist so that shared API modules (users.ts) compile when the
- * overlay is not present.
+ * The contract lives in `baa.extensions.ts` — a single-file slot a downstream
+ * build overwrites to supply the real shapes and any form types. This file is
+ * a stable re-export shim so shared modules import from `@/types/baa` without
+ * ever forking it. See `baa.extensions.ts` for the stub/extension contract.
  */
 
-export interface BAAStatusResponse {
-  accepted: boolean
-  accepted_at: string | null
-  version: string | null
-  current_version: string | null
-  needs_update: boolean
-}
-
-export interface AcceptBAARequest {
-  legal_name: string
-  license_number: string
-  license_state: string
-  practice_name: string
-  business_address: string
-  version: string
-  accepted: boolean
-}
+export * from "./baa.extensions"

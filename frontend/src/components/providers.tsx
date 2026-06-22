@@ -11,6 +11,7 @@ import { ToastProvider } from "@/components/ui/Toast"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
 import { installGlobalErrorReporter } from "@/lib/feErrorReporter"
 import { OidcSessionProviderWrapper } from "@/lib/auth/oidc/SessionProviderWrapper"
+import { outerProviderWrappers } from "./providers.extensions"
 
 export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -29,22 +30,34 @@ export function Providers({ children }: { children: React.ReactNode }) {
       })
   )
 
+  // OidcSessionProviderWrapper is a no-op when the active provider is not
+  // `oidc` — the Firebase path is unchanged at runtime.
+  const core = (
+    <OidcSessionProviderWrapper>
+      <ConfigProvider>
+        <AuthProvider>
+          <ThemeProvider>
+            <ToastProvider>
+              {children}
+              <ReactQueryDevtools initialIsOpen={false} />
+            </ToastProvider>
+          </ThemeProvider>
+        </AuthProvider>
+      </ConfigProvider>
+    </OidcSessionProviderWrapper>
+  )
+
+  // Downstream builds may wrap the whole app in extra providers (e.g. one that
+  // must render even when the auth/config providers below it are degraded).
+  // Applied outermost-first, just inside QueryClientProvider.
   return (
     <QueryClientProvider client={queryClient}>
-      {/* OidcSessionProviderWrapper is a no-op when the active provider is
-          not `oidc` — the Firebase path is unchanged at runtime. */}
-      <OidcSessionProviderWrapper>
-        <ConfigProvider>
-          <AuthProvider>
-            <ThemeProvider>
-              <ToastProvider>
-                {children}
-                <ReactQueryDevtools initialIsOpen={false} />
-              </ToastProvider>
-            </ThemeProvider>
-          </AuthProvider>
-        </ConfigProvider>
-      </OidcSessionProviderWrapper>
+      {outerProviderWrappers.reduceRight(
+        (acc, Wrapper) => (
+          <Wrapper>{acc}</Wrapper>
+        ),
+        core
+      )}
     </QueryClientProvider>
   )
 }
