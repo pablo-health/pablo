@@ -28,6 +28,19 @@ export interface NavItem {
   requiresFlag?: string
 }
 
+/**
+ * Shape of the merge slot (`sidebarExtensions.extensions.ts`). Declared here in
+ * the stable file so the downstream build's replacement slot can import the type
+ * (it can't import it from the file it is replacing).
+ *
+ * - `overrides`: per-href patches applied to base items (relabel / re-icon).
+ * - `append`: items added after the base clinician nav.
+ */
+export interface NavExtensions {
+  overrides: Record<string, Partial<Omit<NavItem, "href">>>
+  append: NavItem[]
+}
+
 const baseClinicianNavigation: NavItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: Home },
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
