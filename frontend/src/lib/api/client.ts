@@ -8,6 +8,17 @@
  */
 
 import { getClientAuthProvider } from "@/lib/auth/provider"
+import { apiErrorInterceptors } from "./client.extensions"
+
+/**
+ * Observe a failed response before its body is consumed and return a partial
+ * to assign onto the thrown `ApiError` (or null to do nothing). A downstream
+ * build registers these via `client.extensions.ts` — see that file. Guard on
+ * `response.status` first so successful responses pay only a status check.
+ */
+export type ApiErrorInterceptor = (
+  response: Response,
+) => Promise<Record<string, unknown> | null>
 
 let idleTimeoutLogoutInFlight = false
 
@@ -178,6 +189,16 @@ export async function apiClient<T>(
       }
     }
 
+    // Error-path interceptors run before the body is consumed below. A
+    // downstream build uses these to detect a condition (e.g. a maintenance
+    // 503) and ride extra fields onto the thrown ApiError, so a server-side
+    // caller can react without the client-only stores. Empty by default.
+    let interceptorData: Record<string, unknown> | null = null
+    for (const interceptor of apiErrorInterceptors) {
+      const data = await interceptor(response)
+      if (data) interceptorData = { ...(interceptorData ?? {}), ...data }
+    }
+
     if (response.ok) {
       const contentType = response.headers.get("content-type")
       if (contentType?.includes("application/json")) {
@@ -219,7 +240,9 @@ export async function apiClient<T>(
       handleIdleTimeoutLogout()
     }
 
-    throw new ApiError(errorCode, errorMessage, errorDetails, response.status)
+    const apiError = new ApiError(errorCode, errorMessage, errorDetails, response.status)
+    if (interceptorData) Object.assign(apiError, interceptorData)
+    throw apiError
   } catch (error) {
     if (error instanceof ApiError) {
       throw error
@@ -326,3 +349,8 @@ export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
   }
   return response.blob()
 }
+
+// Surface any downstream-build additions (interceptors, error-readers) through
+// the canonical `@/lib/api/client` path, so consumers never import the slot
+// directly. Empty re-export in OSS.
+export * from "./client.extensions"
