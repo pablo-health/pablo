@@ -196,15 +196,17 @@ class TestCloudSqlSummaryShape:
         assert summary["permission_denied_observed"] == "true"
 
 
-class TestAuditMutabilityTruncate:
-    """The audit-mutability probe must flag TRUNCATE on the app role, not just
-    UPDATE/DELETE. TRUNCATE wipes the whole trail in one statement and is
-    covered by neither a row-level append-only trigger nor an UPDATE/DELETE
-    REVOKE, so it needs its own check (and its own REVOKE)."""
+class TestAuditMutability:
+    """The audit-mutability probe flags an operation only when the app role
+    BOTH holds the privilege AND no BEFORE trigger blocks it — crediting both
+    enforcement models (privilege-revoke for the managed build, trigger for
+    OSS self-host), and treating TRUNCATE as its own axis (a row-level
+    UPDATE/DELETE trigger doesn't fire on TRUNCATE)."""
 
     @staticmethod
     def _run_audit_checks(mutability_row: str) -> list[dict[str, str]]:
-        # First _run = audit_mutability (UPDATE|DELETE|TRUNCATE booleans);
+        # First _run = audit_mutability — six booleans:
+        #   upd_priv|del_priv|trunc_priv|upd_blocked|del_blocked|trunc_blocked
         # second _run = audit_fk_cascade (none here).
         side_effects = [
             (0, mutability_row, "", 0.0),
@@ -215,22 +217,31 @@ class TestAuditMutabilityTruncate:
                 port="15433", env={}, schemas=["practice"], lines=[]
             )
 
-    def test_flags_truncatable_even_when_update_delete_revoked(self) -> None:
-        # The prod posture: UPDATE/DELETE revoked, TRUNCATE still granted.
-        findings = self._run_audit_checks("f|f|t")
-        ids = {f["id"] for f in findings}
-        assert "audit-logs-truncatable:practice" in ids
-        assert "audit-logs-updatable:practice" not in ids
-        assert "audit-logs-deletable:practice" not in ids
-        assert all(f["severity"] == "MEDIUM" for f in findings)
+    def test_managed_posture_clean_all_revoked(self) -> None:
+        # Privilege-based model: UPDATE/DELETE/TRUNCATE revoked, no triggers.
+        assert self._run_audit_checks("f|f|f|f|f|f") == []
 
-    def test_clean_when_all_three_revoked(self) -> None:
-        assert self._run_audit_checks("f|f|f") == []
+    def test_oss_trigger_model_clean(self) -> None:
+        # OSS self-host: app role owns the table (keeps all privileges) but a
+        # BEFORE UPDATE/DELETE/TRUNCATE trigger blocks every op.
+        assert self._run_audit_checks("t|t|t|t|t|t") == []
 
-    def test_flags_all_three_when_fully_mutable(self) -> None:
-        ids = {f["id"] for f in self._run_audit_checks("t|t|t")}
+    def test_oss_trigger_without_truncate_cover_flags_only_truncate(self) -> None:
+        # OSS today: BEFORE UPDATE/DELETE trigger present, but TRUNCATE neither
+        # revoked nor trigger-covered — the one real gap.
+        ids = {f["id"] for f in self._run_audit_checks("t|t|t|t|t|f")}
+        assert ids == {"audit-logs-truncatable:practice"}
+
+    def test_privilege_without_trigger_flags_all(self) -> None:
+        # Genuinely unprotected: privileges held, no triggers.
+        ids = {f["id"] for f in self._run_audit_checks("t|t|t|f|f|f")}
         assert ids == {
             "audit-logs-updatable:practice",
             "audit-logs-deletable:practice",
             "audit-logs-truncatable:practice",
         }
+        assert all(f["severity"] == "MEDIUM" for f in self._run_audit_checks("t|t|t|f|f|f"))
+
+    def test_truncate_revoked_clears_truncatable_even_without_trigger(self) -> None:
+        # Managed TRUNCATE handling is a revoke, not a trigger.
+        assert self._run_audit_checks("t|t|f|t|t|f") == []

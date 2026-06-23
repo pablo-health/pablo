@@ -90,6 +90,9 @@ def pg_session(engine: Engine) -> Iterator[Session]:
     # patient_clinicians → patients (added in migration 777b846ab944)
     # doesn't block the wipe — TRUNCATE needs every FK-related table
     # in the same statement or an explicit CASCADE.
+    # audit_logs is append-only: arm the purge GUC so the BEFORE TRUNCATE
+    # trigger allows this authorized fixture reset.
+    session.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
     session.execute(
         text(
             "TRUNCATE TABLE "
