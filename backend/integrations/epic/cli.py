@@ -127,6 +127,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         provider = _build_provider(settings, client, open_browser=not args.no_browser)
         grant = provider.acquire()
+        print(f"\nGranted scopes: {grant.scope}\n")
         patient_id = grant.patient_id or args.patient_id
         if patient_id is None:
             raise EpicAuthError(
