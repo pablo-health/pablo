@@ -23,7 +23,7 @@ vi.mock("@/lib/firebaseAuthRecovery", () => ({ clearFirebaseAuthStorage }))
 vi.mock("@/lib/firebase", () => ({ getFirebaseAuth: vi.fn(), initFirebase: vi.fn() }))
 vi.mock("@/lib/config", () => ({ useConfig: vi.fn() }))
 
-import { clearStaleSession, syncAuthTick, withTimeout } from "../client"
+import { clearStaleSession, firebaseSignOut, syncAuthTick, withTimeout } from "../client"
 
 describe("withTimeout", () => {
   it("resolves with the value when the promise settles in time", async () => {
@@ -80,6 +80,40 @@ describe("clearStaleSession", () => {
   it("swallows a failing cookie clear", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("network"))
     await expect(clearStaleSession(auth)).resolves.toBeUndefined()
+    expect(clearFirebaseAuthStorage).toHaveBeenCalledOnce()
+  })
+})
+
+describe("firebaseSignOut", () => {
+  beforeEach(() => {
+    signOut.mockReset().mockResolvedValue(undefined)
+    clearFirebaseAuthStorage.mockReset().mockResolvedValue(undefined)
+    global.fetch = vi.fn().mockResolvedValue({ ok: true } as Response)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("signs out and clears the cookie, leaving persisted storage intact by default", async () => {
+    await firebaseSignOut()
+    expect(signOut).toHaveBeenCalledOnce()
+    expect(global.fetch).toHaveBeenCalledWith("/api/logout")
+    // A plain sign-out must not nuke the IndexedDB record — only the
+    // idle-timeout recovery path opts into that.
+    expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
+  })
+
+  it("wipes the persisted SDK session when wipePersisted is set", async () => {
+    await firebaseSignOut({ wipePersisted: true })
+    expect(signOut).toHaveBeenCalledOnce()
+    expect(clearFirebaseAuthStorage).toHaveBeenCalledOnce()
+    expect(global.fetch).toHaveBeenCalledWith("/api/logout")
+  })
+
+  it("still wipes persisted storage when the SDK sign-out throws", async () => {
+    signOut.mockRejectedValue(new Error("wedged"))
+    await expect(firebaseSignOut({ wipePersisted: true })).resolves.toBeUndefined()
     expect(clearFirebaseAuthStorage).toHaveBeenCalledOnce()
   })
 })

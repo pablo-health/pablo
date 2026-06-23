@@ -9,7 +9,7 @@
  * `/login` route is a thin shell that picks this per the active provider.
  */
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
@@ -33,6 +33,7 @@ import {
 } from "@simplewebauthn/browser"
 import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
+import { clearStaleSession } from "./client"
 import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
 import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
@@ -133,12 +134,22 @@ export function FirebaseLoginScreen() {
   // ceremony — resolved client-side after mount to avoid an SSR mismatch.
   const [passkeySupported, setPasskeySupported] = useState(false)
 
+  // Whether this mount was reached via the idle-timeout boot. Captured
+  // synchronously (before the effect below strips the param) so the
+  // "already authenticated → /dashboard" redirect can't bounce a
+  // restored-but-stale session straight back into the idle 401 loop.
+  const cameFromIdleTimeout = useRef(getUrlParam("reason") === "idle_timeout")
+
   // Show notice when redirected from idle timeout
   useEffect(() => {
-    const reason = getUrlParam("reason")
-    if (reason === "idle_timeout") {
+    if (cameFromIdleTimeout.current) {
       setError("You were signed out due to inactivity.")
       window.history.replaceState({}, "", "/login")
+      // Backstop: the idle-logout path already wipes the persisted session,
+      // but clear again here in case that raced or was bypassed. Otherwise a
+      // session the SDK re-hydrates on this page would auto-redirect to the
+      // dashboard and re-trip the server idle check. Forces a fresh sign-in.
+      void clearStaleSession(getFirebaseAuth())
     }
   }, [])
 
@@ -197,9 +208,18 @@ export function FirebaseLoginScreen() {
       })
   }, [])
 
-  // Redirect to dashboard when already authenticated (but not during signup flow)
+  // Redirect to dashboard when already authenticated (but not during signup
+  // flow, and not when we arrived here from an idle timeout — that session is
+  // stale and being cleared; bouncing back would re-enter the 401 loop).
+  // A genuine re-login navigates via finishLogin(), not this effect.
   useEffect(() => {
-    if (user && !authLoading && step !== "verify-email" && !isSignUp) {
+    if (
+      user &&
+      !authLoading &&
+      step !== "verify-email" &&
+      !isSignUp &&
+      !cameFromIdleTimeout.current
+    ) {
       router.push("/dashboard")
     }
   }, [user, authLoading, router, step, isSignUp])
