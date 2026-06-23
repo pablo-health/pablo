@@ -57,8 +57,14 @@ export interface ClientAuthProvider {
   /**
    * Sign out fully: clear the client SDK session AND the server session
    * cookie. Callers handle their own post-logout redirect.
+   *
+   * `wipePersisted` additionally deletes any persisted credential the SDK
+   * would restore from on the next load (e.g. Firebase's IndexedDB
+   * record). The idle-timeout path sets this so a bfcache/iOS-restored
+   * session can't silently re-authenticate with the same `auth_time` and
+   * re-trip the server idle check in a redirect loop.
    */
-  signOut(): Promise<void>
+  signOut(opts?: { wipePersisted?: boolean }): Promise<void>
 }
 
 /** Props accepted by a provider's MFA-enrollment surface. */

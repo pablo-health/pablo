@@ -27,9 +27,13 @@ function handleIdleTimeoutLogout() {
   idleTimeoutLogoutInFlight = true
   void (async () => {
     try {
-      // Provider sign-out clears both the client SDK session and the
-      // server cookie (best-effort on each).
-      await getClientAuthProvider().signOut()
+      // Wipe the persisted SDK session, not just the in-memory one: an
+      // idle-timed-out session is tombstoned server-side by its `auth_time`,
+      // and that `auth_time` survives a Firebase token refresh. If the SDK
+      // re-hydrates the old session from storage (bfcache / iOS Safari), the
+      // user re-authenticates with the same tombstoned `auth_time` and loops
+      // on the idle 401 forever. Forcing a fresh sign-in mints a new one.
+      await getClientAuthProvider().signOut({ wipePersisted: true })
     } catch {
       // Provider not initialized — still redirect.
     }

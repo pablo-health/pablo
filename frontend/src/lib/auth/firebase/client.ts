@@ -273,12 +273,24 @@ export async function getFirebaseIdToken(forceRefresh = false): Promise<string |
 /**
  * Full sign-out: clear the Firebase SDK session and the server session
  * cookie. Best-effort on both — a caller still redirects afterward.
+ *
+ * With `wipePersisted`, also delete the IndexedDB record the SDK restores
+ * from on the next load. `firebaseSdkSignOut` clears the in-memory user but
+ * a tab restored from bfcache (notably iOS Safari) can re-hydrate the old
+ * session — and with it the original `auth_time` — straight back in. The
+ * idle-timeout path needs the persisted record gone so re-login mints a
+ * fresh `auth_time` instead of looping on the server idle check.
  */
-export async function firebaseSignOut(): Promise<void> {
+export async function firebaseSignOut(opts?: {
+  wipePersisted?: boolean
+}): Promise<void> {
   try {
     await firebaseSdkSignOut(getFirebaseAuth())
   } catch {
     // Firebase not initialized (dev mode) — still clear the server cookie.
+  }
+  if (opts?.wipePersisted) {
+    await clearFirebaseAuthStorage()
   }
   try {
     await fetch("/api/logout")
