@@ -88,11 +88,13 @@ HIPAA requires audit trails for PHI access.
 | Application logs | Cloud Run logs to Cloud Logging | Same |
 | Data access logs | You enable Cloud Audit Logs | Pre-configured |
 | Log retention | You configure retention policy | We manage it |
+| Log immutability | `audit_logs` ships **append-only** — database triggers block the app role from altering, deleting, or `TRUNCATE`-ing audit rows | Enforced by privilege (the app role is a non-owner with `UPDATE`/`DELETE`/`TRUNCATE` revoked; separate maintenance role) |
 
 **What you need to do:**
 1. Enable Data Access audit logs for Cloud SQL in GCP Console
 2. Set a log retention period (HIPAA requires minimum 6 years)
 3. Restrict access to logs to authorized personnel
+4. Audit-log immutability works out of the box — the append-only triggers are in the tenant schema template. For defense-in-depth you can also `REVOKE UPDATE, DELETE, TRUNCATE ON <schema>.audit_logs FROM <your app role>` (see `docs/HIPAA_AUDIT_LOGS.md` → Integrity). This is what the managed build does as its primary control.
 
 ## 5. Backup and Disaster Recovery
 

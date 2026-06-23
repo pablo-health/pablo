@@ -222,6 +222,10 @@ def _truncate_tenant_tables(engine: Engine, schema: str) -> None:
     every test starts from an empty chart."""
     with engine.connect() as conn:
         conn.execute(text(f"SET search_path = {schema}, platform, public"))
+        # audit_logs is append-only: the BEFORE TRUNCATE trigger blocks the app
+        # role unless the purge GUC is armed. A fixture reset is an authorized
+        # purge, so arm it in the same transaction as the TRUNCATE.
+        conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
         conn.execute(
             text(
                 "TRUNCATE TABLE chat_messages, chat_conversations, "
