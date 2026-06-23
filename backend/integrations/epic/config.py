@@ -87,6 +87,22 @@ class EpicSettings(BaseSettings):
         default="/callback",
         description="Path of the OAuth redirect URI.",
     )
+    redirect_scheme: Literal["http", "https"] = Field(
+        default="http",
+        description=(
+            "Scheme of the OAuth redirect URI. Loopback defaults to http (fine for "
+            "the sandbox); set https with tls_certfile/tls_keyfile for production "
+            "Epic app registrations, which require an https redirect."
+        ),
+    )
+    tls_certfile: Path | None = Field(
+        default=None,
+        description="PEM cert for the https loopback callback server (self-signed is fine).",
+    )
+    tls_keyfile: Path | None = Field(
+        default=None,
+        description="PEM private key for the https loopback callback server.",
+    )
     scopes: str = Field(
         default=" ".join(DEFAULT_SCOPES),
         description="Space-delimited SMART on FHIR scopes to request.",
@@ -125,4 +141,7 @@ class EpicSettings(BaseSettings):
     @property
     def redirect_uri(self) -> str:
         """Full loopback redirect URI registered with the Epic app."""
-        return f"http://{self.redirect_host}:{self.redirect_port}{self.redirect_path}"
+        return (
+            f"{self.redirect_scheme}://{self.redirect_host}"
+            f":{self.redirect_port}{self.redirect_path}"
+        )

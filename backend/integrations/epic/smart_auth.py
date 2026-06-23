@@ -12,6 +12,7 @@ code_verifier is the proof-of-possession.
 import base64
 import hashlib
 import secrets
+import ssl
 import time
 import webbrowser
 from dataclasses import dataclass
@@ -151,6 +152,17 @@ class StandaloneLaunchFlow:
             _CallbackHandler,
         )
         server.expected_path = self._settings.redirect_path
+        if self._settings.redirect_scheme == "https":
+            if not (self._settings.tls_certfile and self._settings.tls_keyfile):
+                raise EpicAuthError(
+                    "https redirect requires EPIC_TLS_CERTFILE and EPIC_TLS_KEYFILE."
+                )
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(
+                certfile=str(self._settings.tls_certfile),
+                keyfile=str(self._settings.tls_keyfile),
+            )
+            server.socket = ctx.wrap_socket(server.socket, server_side=True)
         server.timeout = 1.0
         deadline = time.monotonic() + self._settings.callback_timeout
         try:

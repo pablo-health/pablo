@@ -2,6 +2,7 @@
 
 """Thin FHIR R4 read/search client over an authenticated httpx session."""
 
+import base64
 from typing import Any
 
 import httpx
@@ -28,6 +29,27 @@ class FhirClient:
         )
         response.raise_for_status()
         return response.json()
+
+    def get_binary(self, ref: str) -> tuple[str, bytes]:
+        """Fetch a Binary (e.g. a DocumentReference attachment) by reference.
+
+        ``ref`` may be relative (``Binary/abc``) or absolute. Returns the
+        ``(content_type, raw_bytes)``; Epic returns a FHIR Binary resource
+        with base64 ``data``, but we fall back to raw response bytes.
+        """
+        url = ref if ref.startswith("http") else f"{self._base}/{ref}"
+        response = self._client.get(
+            url, headers={**self._headers, "Accept": "application/fhir+json"}
+        )
+        response.raise_for_status()
+        try:
+            payload = response.json()
+            if payload.get("resourceType") == "Binary" and payload.get("data"):
+                ctype = payload.get("contentType", "application/octet-stream")
+                return ctype, base64.b64decode(payload["data"])
+        except ValueError:
+            pass  # not JSON — Epic returned the raw document
+        return response.headers.get("Content-Type", "application/octet-stream"), response.content
 
     def search(self, resource_type: str, params: dict[str, str]) -> JsonDict:
         """Search a resource type, following ``next`` links into one Bundle.
