@@ -158,6 +158,8 @@ class StandaloneLaunchFlow:
                     "https redirect requires EPIC_TLS_CERTFILE and EPIC_TLS_KEYFILE."
                 )
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            # Disallow legacy TLS (TLSv1/1.1); require TLS 1.2+.
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(
                 certfile=str(self._settings.tls_certfile),
                 keyfile=str(self._settings.tls_keyfile),
