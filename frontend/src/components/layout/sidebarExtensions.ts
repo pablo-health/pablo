@@ -29,16 +29,27 @@ export interface NavItem {
 }
 
 /**
+ * An appended nav item, optionally placed relative to a base item instead of at
+ * the end. `insertAfter` names the href of a base nav item; the appended item is
+ * spliced in immediately after it. An unset or unmatched `insertAfter` falls back
+ * to appending at the end (after the base clinician nav).
+ */
+export interface AppendNavItem extends NavItem {
+  insertAfter?: string
+}
+
+/**
  * Shape of the merge slot (`sidebarExtensions.extensions.ts`). Declared here in
  * the stable file so the downstream build's replacement slot can import the type
  * (it can't import it from the file it is replacing).
  *
  * - `overrides`: per-href patches applied to base items (relabel / re-icon).
- * - `append`: items added after the base clinician nav.
+ * - `append`: items added to the clinician nav — at the end by default, or after
+ *   a named base item via `insertAfter`.
  */
 export interface NavExtensions {
   overrides: Record<string, Partial<Omit<NavItem, "href">>>
-  append: NavItem[]
+  append: AppendNavItem[]
 }
 
 const baseClinicianNavigation: NavItem[] = [
@@ -55,10 +66,25 @@ function applyOverrides(items: NavItem[]): NavItem[] {
   )
 }
 
-export const clinicianNavigation: NavItem[] = [
-  ...applyOverrides(baseClinicianNavigation),
-  ...navExtensions.append,
-]
+/**
+ * Merge the slot's appended items into the base nav. An item with `insertAfter`
+ * is spliced immediately after the named base href; everything else is appended
+ * at the end, preserving slot order.
+ */
+function mergeAppended(base: NavItem[]): NavItem[] {
+  const items = [...base]
+  for (const { insertAfter, ...item } of navExtensions.append) {
+    const idx = insertAfter ? items.findIndex((existing) => existing.href === insertAfter) : -1
+    if (idx === -1) {
+      items.push(item)
+    } else {
+      items.splice(idx + 1, 0, item)
+    }
+  }
+  return items
+}
+
+export const clinicianNavigation: NavItem[] = mergeAppended(applyOverrides(baseClinicianNavigation))
 
 export const settingsItem: NavItem = {
   name: "Settings",
