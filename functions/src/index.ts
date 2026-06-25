@@ -124,9 +124,17 @@ export const beforeSignIn = beforeUserSignedIn(async (event) => {
     }
   } catch (error) {
     if (error instanceof HttpsError) throw error;
-    // If backend unreachable, allow sign-in (fail open for existing users)
-    // The backend auth middleware will still validate the JWT
-    console.error("Failed to check user status:", error);
+    // Backend unreachable: allow the session shell, but a disabled account is
+    // STILL blocked on every authenticated request by the backend's per-request
+    // auth seam (_resolve_user in app/auth/service.py reads status=="disabled"
+    // and raises 403 USER_DISABLED — covered by test_rejects_disabled_user). So
+    // a fail-open login here yields only a token that can read no PHI; the
+    // disable control does not depend on this check alone.
+    //
+    // Fail OPEN (unlike beforeCreate) on purpose: beforeSignIn runs on every
+    // login, so a transient check-status blip must not lock every existing user
+    // out of signing in. Login availability is the trade; PHI access is not.
+    console.error("Failed to check user status (failing open):", error);
   }
 
   return;
