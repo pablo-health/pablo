@@ -29,7 +29,7 @@ from ..api_errors import (
 from ..auth.providers import VerifiedIdentity
 from ..auth.route_security import truly_public
 from ..auth.service import get_current_user_no_mfa
-from ..models.audit import AuditAction
+from ..models.audit import AuditAction, ResourceType
 from ..models.passkey import (
     PasskeyAuthenticationBegin,
     PasskeyAuthenticationResult,
@@ -213,8 +213,10 @@ def authenticate_finish(
 def redeem_recovery_code(
     payload: RecoveryCodeRedeem,
     user: EnrollingUser,
+    request: Request,
     passkey_service: PasskeyService = Depends(get_passkey_service),
     backup: BackupCodeService = Depends(get_backup_code_service),
+    audit: AuditService = Depends(get_audit_service),
     _: None = Depends(require_rate_limit),
 ) -> PasskeyAuthenticationResult:
     """Redeem a one-time backup code as the SECOND factor and mint a session.
@@ -226,6 +228,10 @@ def redeem_recovery_code(
     ``pablo_amr: ["recovery"]`` token is minted; the client exchanges it for an
     MFA-satisfied session and is then prompted to enroll a fresh passkey.
 
+    The redemption is recorded as a durable audit event — this is the
+    highest-value account-recovery path, so an app log line is not enough
+    (HIPAA § 164.312(b) / § 164.308(a)(5)(ii)(C)).
+
     TODO (slice 3 follow-ups, see PABLO-gqp): force re-enrolment before PHI,
     re-issue a fresh code set, and email a "recovery code used" alert.
     """
@@ -234,6 +240,14 @@ def redeem_recovery_code(
             "Invalid or already-used recovery code.", code="INVALID_RECOVERY_CODE"
         )
     try:
-        return passkey_service.mint_recovery_session(user.id)
+        result = passkey_service.mint_recovery_session(user.id)
     except PasskeyAssertionError as err:
         raise UnauthorizedError("Recovery sign-in failed.") from err
+    audit.log(
+        AuditAction.RECOVERY_CODE_REDEEMED,
+        user,
+        request,
+        resource_type=ResourceType.SELF,
+        resource_id=user.id,
+    )
+    return result

@@ -135,6 +135,13 @@ class AuditAction(StrEnum):
     ONBOARDING_SECURITY_GUIDE_ACKNOWLEDGED = "onboarding_security_guide_acknowledged"
     ONBOARDING_COMPLETED = "onboarding_completed"
 
+    # Account-recovery / authentication security events (HIPAA
+    # § 164.308(a)(5)(ii)(C) login monitoring, § 164.312(b) audit controls).
+    # A one-time backup code redeemed as the second factor is the highest-value
+    # recovery path in the system — it mints an MFA-satisfied session, so the
+    # event needs a durable, queryable record, not just an app log line.
+    RECOVERY_CODE_REDEEMED = "recovery_code_redeemed"
+
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
     # land in the audit log; per-turn detail lives on chat_messages rows.
