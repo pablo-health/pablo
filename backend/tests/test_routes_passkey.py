@@ -110,31 +110,38 @@ class TestRegisterFinish:
 class TestRedeemRecoveryCode:
     def test_valid_code_consumes_and_mints_recovery_session(self) -> None:
         # First-factor session + a valid code = two factors → mint a session.
-        service, backup = MagicMock(), MagicMock()
+        service, backup, audit = MagicMock(), MagicMock(), MagicMock()
         backup.redeem.return_value = True
         service.mint_recovery_session.return_value = PasskeyAuthenticationResult(
             custom_token="recovery-tok"  # noqa: S106 — stub mint, not a secret
         )
 
         out = redeem_recovery_code(
-            SimpleNamespace(code="ABCDE-FGHJK"), USER, service, backup, None
+            SimpleNamespace(code="ABCDE-FGHJK"), USER, MagicMock(), service, backup, audit, None
         )
 
         backup.redeem.assert_called_once_with(USER.id, "ABCDE-FGHJK")
         service.mint_recovery_session.assert_called_once_with(USER.id)
         assert out.custom_token == "recovery-tok"
+        # The redemption is recorded as a durable security event (HIPAA audit).
+        audit.log.assert_called_once()
+        assert audit.log.call_args.args[0] is AuditAction.RECOVERY_CODE_REDEEMED
 
     def test_invalid_or_used_code_rejected_without_minting(self) -> None:
         # A bad/spent code never mints — and a code alone (no first factor)
         # can't reach here, so this is always first-factor + code.
-        service, backup = MagicMock(), MagicMock()
+        service, backup, audit = MagicMock(), MagicMock(), MagicMock()
         backup.redeem.return_value = False
 
         with pytest.raises(UnauthorizedError) as err:
-            redeem_recovery_code(SimpleNamespace(code="nope"), USER, service, backup, None)
+            redeem_recovery_code(
+                SimpleNamespace(code="nope"), USER, MagicMock(), service, backup, audit, None
+            )
 
         assert err.value.code == "INVALID_RECOVERY_CODE"
         service.mint_recovery_session.assert_not_called()
+        # A rejected code mints nothing and writes no audit row.
+        audit.log.assert_not_called()
 
 
 class TestListCredentials:
