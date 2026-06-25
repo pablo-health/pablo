@@ -102,6 +102,26 @@ class PatientRow(Base):
     # ``chart_closed_at``.
     chart_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     chart_closure_reason: Mapped[str | None] = mapped_column(Text)
+    # Whether the patient has consented to receive protected health information
+    # by email, and the provenance of that decision. Emailing a patient about
+    # their care can disclose PHI over an external channel, so any deployment
+    # that sends patient email needs to know whether email is a consented PHI
+    # channel for this patient before including clinical detail.
+    #
+    # ``phi_email_consent`` is a NULLABLE boolean carrying three states: ``NULL``
+    # = no record on file (never asked), ``True`` = consented, ``False`` =
+    # declined. The current decision lives here; the grant/withdrawal *history*
+    # lives in the audit trail (recording a change is an audited event). A
+    # withdrawal is simply setting the flag back to ``False``.
+    phi_email_consent: Mapped[bool | None] = mapped_column(Boolean)
+    # When the consent decision was recorded / obtained.
+    phi_email_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Optional reference to a signed consent document (e.g. a patient_document
+    # id or storage path) backing the attestation. ``NULL`` when the consent was
+    # recorded as a clinician attestation without an attached document.
+    phi_email_consent_doc: Mapped[str | None] = mapped_column(Text)
+    # The user who recorded the consent decision (audit provenance).
+    phi_email_consent_by: Mapped[str | None] = mapped_column(String(128))
 
 
 class TherapySessionRow(Base):
