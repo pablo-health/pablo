@@ -33,7 +33,7 @@ jobs:
     name: Build & Push Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
@@ -71,7 +71,7 @@ jobs:
     name: Build & Push Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
@@ -109,7 +109,7 @@ jobs:
     name: Build & Push Pentest Image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
 
