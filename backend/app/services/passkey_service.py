@@ -18,7 +18,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from firebase_admin import auth as firebase_auth
 from webauthn import (
     generate_authentication_options,
     generate_registration_options,
@@ -35,7 +34,6 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from ..auth.firebase_init import initialize_firebase_app
 from ..models.passkey import (
     PasskeyAuthenticationResult,
     PasskeyCredential,
@@ -45,7 +43,15 @@ from ..models.passkey import (
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .passkey_attestation import AttestationUntrustedError, build_attestation_verifier
+from .passkey_ceremony import extract_challenge, normalize_aaguid, read_transports
 from .passkey_challenge_store import build_challenge_store
+from .passkey_errors import (
+    PasskeyAssertionError,
+    PasskeyCeremonyError,
+    PasskeyEnrollmentError,
+    PasskeyLastHardwareKeyError,
+)
+from .passkey_tokens import mint_factor_token, mint_recovery_token
 
 if TYPE_CHECKING:
     from ..repositories.identity import IdentityRepository
@@ -55,8 +61,6 @@ if TYPE_CHECKING:
     from .passkey_challenge_store import PasskeyChallengeStore
 
 logger = logging.getLogger(__name__)
-
-_ZERO_AAGUID = "00000000-0000-0000-0000-000000000000"
 
 
 @dataclass(frozen=True)
@@ -70,54 +74,6 @@ class AuthenticatedAssertion:
 
     result: PasskeyAuthenticationResult
     user_id: str
-
-
-class PasskeyEnrollmentError(Exception):
-    """Adding another passkey needs an already-MFA-satisfied session."""
-
-
-class PasskeyCeremonyError(Exception):
-    """Malformed / expired / replayed ceremony input → 400."""
-
-
-class PasskeyAssertionError(Exception):
-    """Assertion failed verification or no usable credential → 401."""
-
-
-class PasskeyLastHardwareKeyError(Exception):
-    """Refuse to revoke an admin's only hardware key under enforcement → 409.
-
-    Removing it would lock the admin out of every hardware-gated route. The
-    user must enrol a second hardware key first (the >=2-key floor)."""
-
-
-def _extract_challenge(credential: dict[str, Any]) -> bytes:
-    """Recover the challenge bytes from the response's signed clientDataJSON.
-
-    The challenge is the single-use lookup key: hashing it and consuming the
-    matching row proves we issued it (SHA-256 preimage resistance is why the
-    client returning the challenge is safe).
-    """
-    try:
-        client_data = json.loads(base64url_to_bytes(credential["response"]["clientDataJSON"]))
-        return base64url_to_bytes(client_data["challenge"])
-    except (KeyError, TypeError, ValueError) as err:
-        raise PasskeyCeremonyError("clientDataJSON") from err
-
-
-def _transports(credential: dict[str, Any]) -> list[str] | None:
-    response = credential.get("response")
-    transports = response.get("transports") if isinstance(response, dict) else None
-    if isinstance(transports, list) and all(isinstance(t, str) for t in transports):
-        return transports or None
-    return None
-
-
-def _normalize_aaguid(aaguid: str | None) -> str | None:
-    # All-zero AAGUID is the privacy-preserving sentinel → store NULL.
-    if not aaguid or aaguid == _ZERO_AAGUID:
-        return None
-    return aaguid
 
 
 class PasskeyService:
@@ -172,7 +128,7 @@ class PasskeyService:
     def finish_registration(
         self, *, user_id: str, credential: dict[str, Any], device_label: str | None
     ) -> PasskeyRegistrationResult:
-        challenge = _extract_challenge(credential)
+        challenge = extract_challenge(credential)
         consumed = self._challenges.consume("register", challenge)
         if consumed is None or consumed.user_id != user_id:
             raise PasskeyCeremonyError("challenge")
@@ -208,8 +164,8 @@ class PasskeyService:
             user_id=user_id,
             public_key=verification.credential_public_key,
             sign_count=verification.sign_count,
-            transports=_transports(credential),
-            aaguid=_normalize_aaguid(verification.aaguid),
+            transports=read_transports(credential),
+            aaguid=normalize_aaguid(verification.aaguid),
             fmt=verification.fmt,
             attestation_verified=attestation_verified,
             backup_eligible=verification.credential_device_type == "multi_device",
@@ -245,7 +201,7 @@ class PasskeyService:
         if firebase_uid is None:
             logger.warning("passkey_registration_no_firebase_uid user_id=%s", user_id)
         else:
-            custom_token = self._mint_factor_token(
+            custom_token = mint_factor_token(
                 firebase_uid,
                 hardware=credential_record.is_hardware_authenticator,
                 attested=attestation_verified,
@@ -273,7 +229,7 @@ class PasskeyService:
         record a durable login audit event.
         """
         # Consume the single-use challenge before issuing anything.
-        challenge = _extract_challenge(credential)
+        challenge = extract_challenge(credential)
         if self._challenges.consume("authenticate", challenge) is None:
             raise PasskeyCeremonyError("challenge")
 
@@ -328,7 +284,7 @@ class PasskeyService:
 
         # Mint the factor token; pablo_amr is set only after a verified
         # ceremony — an assertion here, or a fresh attestation at enrolment.
-        token = self._mint_factor_token(
+        token = mint_factor_token(
             firebase_uid,
             hardware=stored.is_hardware_authenticator,
             attested=stored.attestation_verified,
@@ -345,26 +301,6 @@ class PasskeyService:
             user_id=stored.user_id,
         )
 
-    def _mint_factor_token(self, firebase_uid: str, *, hardware: bool, attested: bool) -> str:
-        """Mint a Firebase custom token carrying the webauthn second-factor claim.
-
-        ``pablo_amr: ["webauthn"]`` marks the session second-factor-satisfied.
-        ``pablo_passkey`` records the verified credential's provenance so admin
-        hardware-key enforcement can bind the session to a device-bound (and
-        optionally attested) authenticator — not just "some passkey". Both an
-        assertion (``authenticate/finish``) and a fresh attestation
-        (``register/finish``) reach this after the ceremony is verified.
-        """
-        initialize_firebase_app()
-        token: bytes = firebase_auth.create_custom_token(
-            firebase_uid,
-            {
-                "pablo_amr": ["webauthn"],
-                "pablo_passkey": {"hw": hardware, "att": attested},
-            },
-        )
-        return token.decode("utf-8")
-
     # --- recovery -----------------------------------------------------
 
     def mint_recovery_session(self, user_id: str) -> PasskeyAuthenticationResult:
@@ -380,10 +316,9 @@ class PasskeyService:
         if firebase_uid is None:
             logger.warning("recovery_mint_no_firebase_uid user_id=%s", user_id)
             raise PasskeyAssertionError
-        initialize_firebase_app()
-        token = firebase_auth.create_custom_token(firebase_uid, {"pablo_amr": ["recovery"]})
+        token = mint_recovery_token(firebase_uid)
         logger.info("recovery_session_minted user_id=%s", user_id)
-        return PasskeyAuthenticationResult(custom_token=token.decode("utf-8"))
+        return PasskeyAuthenticationResult(custom_token=token)
 
     # --- management ---------------------------------------------------
 

@@ -198,7 +198,7 @@ def harness(
     from app.auth.service import get_current_user_no_mfa  # noqa: PLC0415
     from app.models.user import User  # noqa: PLC0415
     from app.rate_limit import require_rate_limit  # noqa: PLC0415
-    from app.services import passkey_service as svc  # noqa: PLC0415
+    from app.services import passkey_tokens as tokens  # noqa: PLC0415
     from app.utcnow import utc_now  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
@@ -218,8 +218,8 @@ def harness(
         captured["claims"] = claims
         return b"custom-token-stub"
 
-    monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
-    monkeypatch.setattr(svc.firebase_auth, "create_custom_token", _mint)
+    monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
+    monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", _mint)
 
     try:
         yield SimpleNamespace(client=TestClient(fastapi_app), user=user, mint=captured)
