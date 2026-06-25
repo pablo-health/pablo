@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from firebase_admin import auth as firebase_auth
@@ -56,6 +57,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ZERO_AAGUID = "00000000-0000-0000-0000-000000000000"
+
+
+@dataclass(frozen=True)
+class AuthenticatedAssertion:
+    """Outcome of a verified passkey assertion.
+
+    ``result`` is the client-facing token. ``user_id`` is surfaced separately
+    (never serialized into the token response) so the route can write a durable
+    login audit row scoped to the authenticated user's tenant.
+    """
+
+    result: PasskeyAuthenticationResult
+    user_id: str
 
 
 class PasskeyEnrollmentError(Exception):
@@ -252,10 +266,12 @@ class PasskeyService:
         result: dict[str, Any] = json.loads(options_to_json(options))
         return result
 
-    def finish_authentication(
-        self, *, credential: dict[str, Any]
-    ) -> PasskeyAuthenticationResult:
-        """Verify the assertion and mint the passkey-factor custom token."""
+    def finish_authentication(self, *, credential: dict[str, Any]) -> AuthenticatedAssertion:
+        """Verify the assertion and mint the passkey-factor custom token.
+
+        Returns the token plus the authenticated ``user_id`` so the route can
+        record a durable login audit event.
+        """
         # Consume the single-use challenge before issuing anything.
         challenge = _extract_challenge(credential)
         if self._challenges.consume("authenticate", challenge) is None:
@@ -324,7 +340,10 @@ class PasskeyService:
             stored.is_hardware_authenticator,
             stored.attestation_verified,
         )
-        return PasskeyAuthenticationResult(custom_token=token)
+        return AuthenticatedAssertion(
+            result=PasskeyAuthenticationResult(custom_token=token),
+            user_id=stored.user_id,
+        )
 
     def _mint_factor_token(self, firebase_uid: str, *, hardware: bool, attested: bool) -> str:
         """Mint a Firebase custom token carrying the webauthn second-factor claim.
@@ -395,9 +414,7 @@ class PasskeyService:
 
         revoked = self._credentials.revoke(credential_id, user_id=user_id)
         if revoked:
-            logger.info(
-                "passkey_revoked user_id=%s credential_id=%s", user_id, credential_id
-            )
+            logger.info("passkey_revoked user_id=%s credential_id=%s", user_id, credential_id)
         return revoked
 
 

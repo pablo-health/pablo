@@ -269,9 +269,7 @@ class TestFinishAuthentication:
         service, credentials, _challenges = _build_service()
         _seed_credential(credentials, sign_count=5)
         # No challenge was created → consume returns None before any verify.
-        monkeypatch.setattr(
-            svc, "verify_authentication_response", lambda **_: SimpleNamespace()
-        )
+        monkeypatch.setattr(svc, "verify_authentication_response", lambda **_: SimpleNamespace())
         with pytest.raises(svc.PasskeyCeremonyError):
             service.finish_authentication(credential=_assertion_credential(CHALLENGE))
 
@@ -287,13 +285,13 @@ class TestFinishAuthentication:
             lambda **_: SimpleNamespace(new_sign_count=6, credential_backed_up=True),
         )
         monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
-        monkeypatch.setattr(
-            svc.firebase_auth, "create_custom_token", lambda *_: b"minted-token"
-        )
+        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", lambda *_: b"minted-token")
 
-        result = service.finish_authentication(credential=_assertion_credential(CHALLENGE))
+        outcome = service.finish_authentication(credential=_assertion_credential(CHALLENGE))
 
-        assert result.custom_token == "minted-token"
+        assert outcome.result.custom_token == "minted-token"
+        # The authenticated user is surfaced so the route can audit the login.
+        assert outcome.user_id == USER_ID
         stored = credentials.get_active(CRED_ID)
         assert stored is not None
         assert stored.sign_count == 6
@@ -378,9 +376,7 @@ class TestHardwareKeyFloor:
     def test_can_revoke_when_a_second_hardware_key_remains(self) -> None:
         service, credentials, _challenges = _build_service()
         _seed_credential(credentials, sign_count=0, backup_eligible=False)
-        _seed_credential(
-            credentials, sign_count=0, credential_id="cred-2", backup_eligible=False
-        )
+        _seed_credential(credentials, sign_count=0, credential_id="cred-2", backup_eligible=False)
         assert (
             service.revoke_credential(
                 user_id=USER_ID, credential_id=CRED_ID, require_hardware_floor=True
@@ -393,9 +389,7 @@ class TestHardwareKeyFloor:
         # hardware floor — only device-bound keys count.
         service, credentials, _challenges = _build_service()
         _seed_credential(credentials, sign_count=0, backup_eligible=False)
-        _seed_credential(
-            credentials, sign_count=0, credential_id="synced", backup_eligible=True
-        )
+        _seed_credential(credentials, sign_count=0, credential_id="synced", backup_eligible=True)
         with pytest.raises(PasskeyLastHardwareKeyError):
             service.revoke_credential(
                 user_id=USER_ID, credential_id=CRED_ID, require_hardware_floor=True
@@ -404,6 +398,4 @@ class TestHardwareKeyFloor:
     def test_floor_off_allows_last_key_revoke(self) -> None:
         service, credentials, _challenges = _build_service()
         _seed_credential(credentials, sign_count=0, backup_eligible=False)
-        assert (
-            service.revoke_credential(user_id=USER_ID, credential_id=CRED_ID) is True
-        )
+        assert service.revoke_credential(user_id=USER_ID, credential_id=CRED_ID) is True

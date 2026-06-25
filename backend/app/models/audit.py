@@ -141,6 +141,10 @@ class AuditAction(StrEnum):
     # recovery path in the system — it mints an MFA-satisfied session, so the
     # event needs a durable, queryable record, not just an app log line.
     RECOVERY_CODE_REDEEMED = "recovery_code_redeemed"
+    # A passwordless passkey assertion that minted a session. The primary
+    # passwordless sign-in event, audited alongside recovery so login
+    # monitoring covers the whole authenticator surface.
+    PASSKEY_AUTHENTICATED = "passkey_authenticated"
 
     # Patient-context chat (THERAPY-bhv). Two-tier audit policy per
     # docs/architecture/patient-context-chat-oss.md §10: lifecycle events
