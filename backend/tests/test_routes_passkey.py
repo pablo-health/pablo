@@ -14,16 +14,19 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from app import routes
 from app.api_errors import ForbiddenError, NotFoundError, UnauthorizedError
 from app.auth.providers import VerifiedIdentity
 from app.models.audit import AuditAction
 from app.models.passkey import PasskeyAuthenticationResult, PasskeyRegistrationResult
 from app.routes.passkey import (
+    authenticate_finish,
     list_credentials,
     redeem_recovery_code,
     register_finish,
     revoke_credential,
 )
+from app.services.passkey_service import AuthenticatedAssertion
 
 USER = SimpleNamespace(id="11111111-1111-4111-8111-111111111111", email="t@pablo.health")
 
@@ -173,3 +176,61 @@ class TestRevokeCredential:
         service.revoke_credential.assert_called_once_with(
             user_id=USER.id, credential_id="cred-1", require_hardware_floor=False
         )
+
+
+class TestAuthenticateFinish:
+    def _service(self) -> MagicMock:
+        service = MagicMock()
+        service.finish_authentication.return_value = AuthenticatedAssertion(
+            result=PasskeyAuthenticationResult(custom_token="login-tok"),  # noqa: S106 — stub
+            user_id=USER.id,
+        )
+        return service
+
+    def _patch_tenant(self, monkeypatch: pytest.MonkeyPatch, *, schema: str | None) -> None:
+        # The route re-arms the request session onto the resolved tenant before
+        # the audit write; stub the db plumbing so the unit test stays in-memory.
+        monkeypatch.setattr(routes.passkey, "resolve_tenant_schema_for_user", lambda _u: schema)
+        monkeypatch.setattr(routes.passkey, "get_db_session", MagicMock)
+        monkeypatch.setattr(routes.passkey, "set_tenant_schema", lambda *_a, **_k: None)
+        monkeypatch.setattr(routes.passkey, "arm_current_user_id", lambda *_a, **_k: None)
+
+    def test_audits_login_against_resolved_tenant(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        service, audit = self._service(), MagicMock()
+        self._patch_tenant(monkeypatch, schema="practice_x")
+
+        out = authenticate_finish(
+            SimpleNamespace(credential={}), MagicMock(), service, audit, None, None
+        )
+
+        assert out.custom_token == "login-tok"
+        audit.log_account_security_event.assert_called_once()
+        action, user_id, _req = audit.log_account_security_event.call_args.args
+        assert action is AuditAction.PASSKEY_AUTHENTICATED
+        assert user_id == USER.id
+
+    def test_unmapped_user_returns_token_without_audit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # OSS self-host / no active tenant: no tenant log to write to → skip.
+        service, audit = self._service(), MagicMock()
+        self._patch_tenant(monkeypatch, schema=None)
+
+        out = authenticate_finish(
+            SimpleNamespace(credential={}), MagicMock(), service, audit, None, None
+        )
+
+        assert out.custom_token == "login-tok"
+        audit.log_account_security_event.assert_not_called()
+
+    def test_audit_failure_does_not_block_login(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Best-effort: an audit-store hiccup must not deny a verified login.
+        service, audit = self._service(), MagicMock()
+        self._patch_tenant(monkeypatch, schema="practice_x")
+        audit.log_account_security_event.side_effect = RuntimeError("db down")
+
+        out = authenticate_finish(
+            SimpleNamespace(credential={}), MagicMock(), service, audit, None, None
+        )
+
+        assert out.custom_token == "login-tok"

@@ -35,9 +35,7 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         AuditAction.PATIENT_DOCUMENT_VIEWED,
     }
 )
-_COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(
-    a.value for a in _COALESCED_READ_ACTIONS
-)
+_COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)
 
 
 class AuditService:
@@ -85,9 +83,7 @@ class AuditService:
             first_time = redis.set(key, "1", nx=True, ex=ttl)
             return first_time is None
         except Exception:
-            logger.warning(
-                "Audit coalesce check failed; writing row (fail-open)", exc_info=True
-            )
+            logger.warning("Audit coalesce check failed; writing row (fail-open)", exc_info=True)
             return False
 
     def _persist(self, entry: AuditLogEntry) -> None:
@@ -396,6 +392,31 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_account_security_event(
+        self,
+        action: AuditAction,
+        user_id: str,
+        request: Request,
+    ) -> AuditLogEntry:
+        """Record an account-security event keyed by ``user_id`` alone.
+
+        For auth surfaces that mint a session without loading a full ``User``
+        — notably the usernameless passkey login, where the caller is only
+        known after the assertion verifies. Resource is SELF; the payload
+        carries no PHI.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=user_id,
+            action=action.value,
+            resource_type=ResourceType.SELF.value,
+            resource_id=user_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        self._persist(entry)
+        return entry
+
     def log_self_audit_view(
         self,
         user: User,
@@ -415,7 +436,6 @@ class AuditService:
         )
         self._persist(entry)
         return entry
-
 
     def log_admin_action(
         self,
