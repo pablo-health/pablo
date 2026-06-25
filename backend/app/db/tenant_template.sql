@@ -438,7 +438,11 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     updated_at timestamp with time zone NOT NULL,
     deleted_at timestamp with time zone,
     chart_closed_at timestamp with time zone,
-    chart_closure_reason text
+    chart_closure_reason text,
+    phi_email_consent boolean,
+    phi_email_consent_at timestamp with time zone,
+    phi_email_consent_doc text,
+    phi_email_consent_by character varying(128)
 );
 
 
