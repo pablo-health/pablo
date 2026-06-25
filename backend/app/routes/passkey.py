@@ -45,14 +45,13 @@ from ..rate_limit import require_rate_limit
 from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
 from ..services.backup_code_service import BackupCodeService, get_backup_code_service
-from ..services.passkey_service import (
+from ..services.passkey_errors import (
     PasskeyAssertionError,
     PasskeyCeremonyError,
     PasskeyEnrollmentError,
     PasskeyLastHardwareKeyError,
-    PasskeyService,
-    get_passkey_service,
 )
+from ..services.passkey_service import PasskeyService, get_passkey_service
 from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now

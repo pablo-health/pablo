@@ -18,6 +18,7 @@ from app.models.passkey import PasskeyCredential
 from app.repositories.identity import InMemoryIdentityRepository
 from app.repositories.passkey_credential import InMemoryPasskeyCredentialRepository
 from app.services import passkey_service as svc
+from app.services import passkey_tokens as tokens
 from app.services.passkey_attestation import build_attestation_verifier
 from app.services.passkey_challenge_store import InMemoryPasskeyChallengeStore
 from app.services.passkey_service import (
@@ -168,8 +169,8 @@ class TestFinishRegistration:
         service, credentials, challenges = _build_service()
         challenges.create("register", USER_ID, CHALLENGE)
         _patch_registration_verify(monkeypatch)
-        monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
-        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", lambda *_: b"tok")
+        monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", lambda *_: b"tok")
 
         result = service.finish_registration(
             user_id=USER_ID,
@@ -192,7 +193,7 @@ class TestFinishRegistration:
         service, _credentials, challenges = _build_service()
         challenges.create("register", USER_ID, CHALLENGE)
         _patch_registration_verify(monkeypatch)
-        monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
+        monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
         captured: dict[str, Any] = {}
 
         def _capture(uid: str, claims: dict[str, Any]) -> bytes:
@@ -200,7 +201,7 @@ class TestFinishRegistration:
             captured["claims"] = claims
             return b"minted-token"
 
-        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", _capture)
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", _capture)
 
         result = service.finish_registration(
             user_id=USER_ID,
@@ -238,7 +239,7 @@ class TestFinishRegistration:
         def _explode(*_: Any) -> bytes:
             raise AssertionError("must not mint without a Firebase uid")
 
-        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", _explode)
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", _explode)
 
         result = service.finish_registration(
             user_id=USER_ID,
@@ -284,8 +285,8 @@ class TestFinishAuthentication:
             "verify_authentication_response",
             lambda **_: SimpleNamespace(new_sign_count=6, credential_backed_up=True),
         )
-        monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
-        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", lambda *_: b"minted-token")
+        monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", lambda *_: b"minted-token")
 
         outcome = service.finish_authentication(credential=_assertion_credential(CHALLENGE))
 
@@ -306,7 +307,7 @@ class TestFinishAuthentication:
             "verify_authentication_response",
             lambda **_: SimpleNamespace(new_sign_count=0, credential_backed_up=False),
         )
-        monkeypatch.setattr(svc, "initialize_firebase_app", lambda: None)
+        monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
         captured: dict[str, Any] = {}
 
         def _capture(uid: str, claims: dict[str, Any]) -> bytes:
@@ -314,7 +315,7 @@ class TestFinishAuthentication:
             captured["claims"] = claims
             return b"tok"
 
-        monkeypatch.setattr(svc.firebase_auth, "create_custom_token", _capture)
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", _capture)
         service.finish_authentication(credential=_assertion_credential(CHALLENGE))
 
         # 0/0 is the legitimate platform-authenticator case (not a clone).
