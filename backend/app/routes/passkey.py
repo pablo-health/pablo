@@ -29,6 +29,7 @@ from ..api_errors import (
 from ..auth.providers import VerifiedIdentity
 from ..auth.route_security import truly_public
 from ..auth.service import get_current_user_no_mfa
+from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models.audit import AuditAction, ResourceType
 from ..models.passkey import (
     PasskeyAuthenticationBegin,
@@ -52,6 +53,7 @@ from ..services.passkey_service import (
     PasskeyService,
     get_passkey_service,
 )
+from ..services.session_generation_worker import resolve_tenant_schema_for_user
 from ..settings import get_settings
 from ..utcnow import utc_now
 
@@ -158,9 +160,7 @@ def revoke_credential(
     passkeys off an account (and re-enroll a rogue one).
     """
     if not _session_mfa_satisfied(request):
-        raise ForbiddenError(
-            "Verify a passkey before removing one", code="MFA_REQUIRED"
-        )
+        raise ForbiddenError("Verify a passkey before removing one", code="MFA_REQUIRED")
     settings = get_settings()
     require_hardware_floor = settings.webauthn_admin_require_hardware_key and user.is_admin
     try:
@@ -192,21 +192,47 @@ def authenticate_begin(
 @router.post("/authenticate/finish", response_model=PasskeyAuthenticationResult)
 def authenticate_finish(
     payload: PasskeyAuthenticationVerify,
+    request: Request,
     passkey_service: PasskeyService = Depends(get_passkey_service),
+    audit: AuditService = Depends(get_audit_service),
     _: None = Depends(require_rate_limit),
     _public: None = Depends(truly_public),
 ) -> PasskeyAuthenticationResult:
     """Verify the assertion and mint the passkey-factor custom token.
 
     ``pablo_amr: ["webauthn"]`` is stamped on the token only here, after a
-    verified assertion.
+    verified assertion. The primary passwordless sign-in is recorded as a
+    durable login audit event (HIPAA § 164.308(a)(5)(ii)(C)).
     """
     try:
-        return passkey_service.finish_authentication(credential=payload.credential)
+        outcome = passkey_service.finish_authentication(credential=payload.credential)
     except PasskeyCeremonyError as err:
         raise BadRequestError("Passkey assertion could not be verified.") from err
     except PasskeyAssertionError as err:
         raise UnauthorizedError("Passkey authentication failed.") from err
+
+    # Durable login record, scoped to the authenticated user's tenant. The route
+    # is usernameless, so the request session sits on the default schema —
+    # resolve the user's tenant and re-arm before the write (off-request worker
+    # pattern). Best-effort: a login must not be denied because the audit store
+    # hiccuped, but the happy path persists a row rather than a log line. An
+    # unmapped user (OSS self-host / no active tenant) has no tenant log to
+    # write to, so it is skipped.
+    try:
+        schema = resolve_tenant_schema_for_user(outcome.user_id)
+        if schema is not None:
+            session = get_db_session()
+            set_tenant_schema(session, schema)
+            arm_current_user_id(session, outcome.user_id)
+            audit.log_account_security_event(
+                AuditAction.PASSKEY_AUTHENTICATED, outcome.user_id, request
+            )
+        else:
+            logger.info("passkey_login_no_tenant user_id=%s", outcome.user_id)
+    except Exception:
+        logger.warning("passkey_login_audit_failed user_id=%s", outcome.user_id, exc_info=True)
+
+    return outcome.result
 
 
 @router.post("/recovery-code/redeem", response_model=PasskeyAuthenticationResult)
