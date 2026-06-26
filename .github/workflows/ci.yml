@@ -24,7 +24,7 @@ jobs:
     name: Version consistency
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check version sync
         run: bash scripts/check-version-sync.sh
@@ -37,7 +37,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -57,7 +57,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
           sudo apt-get clean
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -70,7 +70,7 @@ jobs:
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -111,7 +111,7 @@ jobs:
     name: Backend integration (Postgres)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -124,7 +124,7 @@ jobs:
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -148,7 +148,7 @@ jobs:
       # level (THERAPY-o1zh soft-delete uuid drift, THERAPY-n0ac
       # tenant-fan-out semantics); re-enable them as those issues close.
       - name: Cache Postgres test image
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
@@ -184,7 +184,7 @@ jobs:
     name: Tenant template matches alembic head
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
@@ -197,7 +197,7 @@ jobs:
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
@@ -206,7 +206,7 @@ jobs:
         run: poetry install --no-interaction --no-ansi
 
       - name: Cache Postgres test image
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
@@ -245,7 +245,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v6
         with:
