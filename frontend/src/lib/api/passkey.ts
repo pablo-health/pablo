@@ -17,7 +17,7 @@ import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
-} from "@simplewebauthn/types"
+} from "@simplewebauthn/browser"
 
 import { del, get, post } from "./client"
 
