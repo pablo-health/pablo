@@ -28,7 +28,7 @@
     "@simplewebauthn/browser": "^9.0.1",
     "@tanstack/react-query": "^5.101.1",
     "@tanstack/react-query-devtools": "^5.101.1",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "class-variance-authority": "^0.7.1",
