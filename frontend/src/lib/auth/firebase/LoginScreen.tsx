@@ -317,7 +317,7 @@ export function FirebaseLoginScreen() {
     setLoading(true)
     try {
       const options = await beginAuthentication()
-      const assertion = await startAuthentication(options)
+      const assertion = await startAuthentication({ optionsJSON: options })
       const { custom_token } = await finishAuthentication(assertion)
       // The custom token carries the verified passkey factor (pablo_amr);
       // signing in with it yields an MFA-satisfied session in one step.

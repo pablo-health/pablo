@@ -65,7 +65,7 @@ export function PasskeySettings() {
   const addMutation = useMutation({
     mutationFn: async (deviceLabel: string) => {
       const options = await beginRegistration()
-      const response = await startRegistration(options)
+      const response = await startRegistration({ optionsJSON: options })
       await finishRegistration(response, deviceLabel.trim() || null)
     },
     onSuccess: () => {
