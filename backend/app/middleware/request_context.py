@@ -38,6 +38,7 @@ from ..logging_config import (
     tenant_id_var,
     user_id_var,
 )
+from ..route_introspection import iter_app_routes
 
 # Dedicated logger for the per-request completion line. Distinct name
 # (``pablo.access``) keeps the access log filterable in Cloud Logging
@@ -114,13 +115,16 @@ def resolve_route_template(request: Request) -> str | None:
     the request scope. This is safe because matching is pure; it
     returns the literal route declaration, never a resolved path
     parameter (so PHI ids never end up in `route_template`).
+
+    ``iter_app_routes`` flattens fastapi 0.137+'s nested route tree so we
+    still see routes mounted via ``include_router`` (almost all of them),
+    and reports each route's full path template rather than the
+    router-relative one.
     """
-    for route in request.app.router.routes:
+    for path, route in iter_app_routes(request.app):
         match, _ = route.matches(request.scope)
         if match == Match.FULL:
-            path = getattr(route, "path", None)
-            if isinstance(path, str):
-                return path
+            return path
     return None
 
 

@@ -33,6 +33,8 @@ every such route MUST appear in the allow-list with a justification.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from app.auth.route_security import truly_public
 from app.auth.service import (
     get_current_user_no_mfa,
@@ -41,7 +43,10 @@ from app.auth.service import (
     require_pentest_runner,
 )
 from app.main import app
-from fastapi.routing import APIRoute
+from app.route_introspection import iter_api_routes
+
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
 
 # Postures, in classification order. "mfa-required" and
 # "pre-mfa-onboarding" both resolve the bearer token to an authenticated
@@ -116,13 +121,14 @@ def _classify(route: APIRoute) -> str | None:
 
 
 def _iter_routes():
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    # iter_api_routes flattens fastapi 0.137+'s nested route tree and reports
+    # each route's full path template (router prefixes included), so the keys
+    # below match the real mounted paths rather than router-relative ones.
+    for path, route in iter_api_routes(app):
         for method in route.methods:
             if method == "HEAD":
                 continue
-            yield route, method
+            yield route, method, path
 
 
 def _key(method: str, path: str) -> str:
@@ -138,10 +144,10 @@ def test_public_routes_are_explicitly_allowlisted() -> None:
     entry in ``DPOP_UNCOVERABLE``. A new one that isn't fails here.
     """
     missing: list[str] = []
-    for route, method in _iter_routes():
+    for route, method, path in _iter_routes():
         posture = _classify(route)
         if posture in _UNCOVERABLE_POSTURES:
-            key = _key(method, route.path)
+            key = _key(method, path)
             if key not in DPOP_UNCOVERABLE:
                 handler = route.endpoint.__qualname__
                 missing.append(f"  {key}  (handler: {handler}, posture: {posture})")
@@ -163,8 +169,8 @@ def test_allowlist_has_no_stale_entries() -> None:
     exists, and no entry for a route that is actually authenticated (which
     would mean the middleware DOES cover it and the exemption is wrong)."""
     live: dict[str, str | None] = {}
-    for route, method in _iter_routes():
-        live[_key(method, route.path)] = _classify(route)
+    for route, method, path in _iter_routes():
+        live[_key(method, path)] = _classify(route)
 
     stale = [k for k in DPOP_UNCOVERABLE if k not in live]
     assert not stale, (
@@ -186,9 +192,9 @@ def test_every_route_is_either_covered_or_allowlisted() -> None:
     """Belt-and-braces: every route is accounted for — either DPoP-covered
     (authenticated / service-account) or explicitly allow-listed."""
     unaccounted: list[str] = []
-    for route, method in _iter_routes():
+    for route, method, path in _iter_routes():
         posture = _classify(route)
-        key = _key(method, route.path)
+        key = _key(method, path)
         if posture in _DPOP_COVERED_POSTURES:
             continue
         if key in DPOP_UNCOVERABLE:

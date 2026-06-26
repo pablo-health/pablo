@@ -20,7 +20,7 @@ import pytest
 from app.auth.providers import FirebaseVerifier, VerifiedIdentity, second_factor_satisfied
 from app.auth.service import get_current_user_id
 from app.main import app
-from fastapi.routing import APIRoute
+from app.route_introspection import iter_api_routes
 from pydantic import ValidationError
 
 
@@ -34,8 +34,7 @@ def test_no_route_depends_on_get_current_user_id() -> None:
     """No route may use the non-MFA/non-idle ``get_current_user_id`` (F4)."""
     offenders = [
         f"  {method:6s} {route.path}  (handler: {route.endpoint.__qualname__})"
-        for route in app.routes
-        if isinstance(route, APIRoute)
+        for _path, route in iter_api_routes(app)
         for method in route.methods
         if method != "HEAD" and _has_dependency(route.dependant, get_current_user_id)
     ]

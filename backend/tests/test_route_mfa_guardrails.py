@@ -38,6 +38,8 @@ to the handler signature, then re-run the test.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 # conftest.py mocks the DB engine + session factory and sets
 # ENVIRONMENT=development before any app code is imported, so this
 # import does not need a live Postgres.
@@ -49,7 +51,10 @@ from app.auth.service import (
     require_pentest_runner,
 )
 from app.main import app
-from fastapi.routing import APIRoute
+from app.route_introspection import iter_api_routes
+
+if TYPE_CHECKING:
+    from fastapi.routing import APIRoute
 
 # The four marker postures that classify a route's security posture. A posture
 # may be satisfied by any one of several marker callables (e.g. there is more
@@ -82,12 +87,12 @@ def _classify(route: APIRoute) -> str | None:
 def _iter_api_routes():
     """Yield (route, method) for every real APIRoute on the app.
 
-    Method aliases (``HEAD`` synthesized from ``GET``) are skipped so a
-    single endpoint counts once, not twice.
+    Sources routes via ``iter_api_routes``, which flattens fastapi 0.137+'s
+    nested route tree (routes mounted via ``include_router`` are no longer at
+    the top level of ``app.routes``). Method aliases (``HEAD`` synthesized
+    from ``GET``) are skipped so a single endpoint counts once, not twice.
     """
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for _path, route in iter_api_routes(app):
         for method in route.methods:
             if method == "HEAD":
                 continue
@@ -147,3 +152,22 @@ def test_security_posture_inventory_is_documented() -> None:
     for name, count in counts.items():
         print(f"  {name:24s} {count}")
     print(f"  {'total':24s} {sum(counts.values())}")
+
+
+def test_route_enumeration_is_not_blind() -> None:
+    """Tripwire: route introspection must not silently collapse.
+
+    Every guardrail in this file (and the DPoP coverage test) derives its
+    expectations from the live route set. If enumeration ever goes blind —
+    e.g. fastapi 0.137 turned ``app.routes`` into a nested tree that a flat
+    scan no longer traverses — those guardrails would pass *vacuously*,
+    reporting green while inspecting almost nothing. Pin a floor so that
+    failure is loud instead of a false green. ``app.route_introspection``
+    flattens the tree; this asserts it actually found the routes.
+    """
+    route_count = len({path for path, _route in iter_api_routes(app)})
+    assert route_count > 80, (
+        f"Only {route_count} API routes enumerated — expected ~110+. Route "
+        "introspection has likely gone blind (see app.route_introspection), "
+        "which would make the posture guardrails above pass vacuously."
+    )
