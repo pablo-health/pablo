@@ -13,7 +13,12 @@ packages = [{include = "backend"}]
 [tool.poetry.dependencies]
 
 # Web Framework
-fastapi = ">=0.138.1"
+# Pinned below 0.137 for now: 0.137 changed app.routes from a flat list of
+# APIRoute objects into a nested tree, which our route-introspection code
+# (route_template resolution in request_context, the DPoP route-coverage
+# test) iterates as a flat list. Lift the cap once those sites recurse the
+# tree.
+fastapi = ">=0.136.3,<0.137"
 uvicorn = {extras = ["standard"], version = "^0.49.0"}
 pydantic = "^2.13.4"
 pydantic-settings = "^2.14.2"
