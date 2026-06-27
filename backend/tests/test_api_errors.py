@@ -9,8 +9,9 @@ single source IP (THERAPY-8uww).
 
 The handler must:
 - emit on 401 and 403, with the envelope ``error.code`` as ``reason``;
-- skip ``MFA_REQUIRED`` (expected first-login flow, not a brute-force
-  signal);
+- skip expected, benign session states that are not a brute-force signal —
+  ``MFA_REQUIRED`` (first-login), ``IDLE_TIMEOUT`` (session aged out) and
+  ``TOKEN_EXPIRED`` (client behind on token refresh);
 - not emit on 200 / 400 / 404 / 500;
 - never break the response — a logging error is swallowed.
 """
@@ -64,11 +65,31 @@ def _build_app() -> FastAPI:
     def ok() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/unauth-invalid-token")
+    def unauth_invalid_token() -> None:
+        # A forged / malformed token — the brute-force signal the counter
+        # exists to catch. It MUST increment.
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "INVALID_TOKEN", "message": "...", "details": {}}},
+        )
+
     @app.get("/unauth-token-expired")
     def unauth_token_expired() -> None:
+        # An expired ID token is an ordinary "client fell behind on refresh"
+        # state, not an attack — it must NOT increment the counter.
         raise HTTPException(
             status_code=401,
             detail={"error": {"code": "TOKEN_EXPIRED", "message": "...", "details": {}}},
+        )
+
+    @app.get("/unauth-idle-timeout")
+    def unauth_idle_timeout() -> None:
+        # The idle activity heartbeat lapsed; the session aged out. Expected
+        # user state, not a brute-force signal — it must NOT increment.
+        raise HTTPException(
+            status_code=401,
+            detail={"error": {"code": "IDLE_TIMEOUT", "message": "...", "details": {}}},
         )
 
     @app.get("/forbidden-no-practice")
@@ -163,16 +184,16 @@ def _lines(buf: io.StringIO) -> list[dict[str, object]]:
 
 
 def test_emits_on_401_with_envelope_reason(auth_logs: io.StringIO) -> None:
-    response = TestClient(_build_app()).get("/unauth-token-expired")
+    response = TestClient(_build_app()).get("/unauth-invalid-token")
     assert response.status_code == 401
     # Default FastAPI envelope shape must be preserved.
     assert response.json() == {
-        "detail": {"error": {"code": "TOKEN_EXPIRED", "message": "...", "details": {}}}
+        "detail": {"error": {"code": "INVALID_TOKEN", "message": "...", "details": {}}}
     }
     payloads = _lines(auth_logs)
     assert len(payloads) == 1
     assert payloads[0]["event"] == "auth_failed"
-    assert payloads[0]["reason"] == "TOKEN_EXPIRED"
+    assert payloads[0]["reason"] == "INVALID_TOKEN"
     assert payloads[0]["status_code"] == 401
 
 
@@ -190,6 +211,25 @@ def test_skips_mfa_required(auth_logs: io.StringIO) -> None:
     # Response is unchanged...
     assert response.json()["detail"]["error"]["code"] == "MFA_REQUIRED"
     # ...but the auth-failed counter is NOT incremented.
+    assert _lines(auth_logs) == []
+
+
+def test_skips_idle_timeout(auth_logs: io.StringIO) -> None:
+    # A session that aged out is expected-user, not a brute-force signal:
+    # one dashboard load can fan out enough parallel 401s to trip the
+    # per-IP spike alert on its own, so IDLE_TIMEOUT must not be counted.
+    response = TestClient(_build_app()).get("/unauth-idle-timeout")
+    assert response.status_code == 401
+    assert response.json()["detail"]["error"]["code"] == "IDLE_TIMEOUT"
+    assert _lines(auth_logs) == []
+
+
+def test_skips_token_expired(auth_logs: io.StringIO) -> None:
+    # An expired ID token carries no attack value and bursts the same way
+    # on a single load; it must not increment the counter either.
+    response = TestClient(_build_app()).get("/unauth-token-expired")
+    assert response.status_code == 401
+    assert response.json()["detail"]["error"]["code"] == "TOKEN_EXPIRED"
     assert _lines(auth_logs) == []
 
 
@@ -218,7 +258,7 @@ def test_string_detail_falls_back_to_unknown_reason(auth_logs: io.StringIO) -> N
 def test_source_ip_recorded(auth_logs: io.StringIO) -> None:
     # TestClient sets the client address to "testclient" (127.0.0.1) so
     # we just verify the field is populated, not its exact value.
-    TestClient(_build_app()).get("/unauth-token-expired")
+    TestClient(_build_app()).get("/unauth-invalid-token")
     payloads = _lines(auth_logs)
     assert "source_ip" in payloads[0]
 
@@ -227,7 +267,7 @@ def test_x_forwarded_for_used_when_present(auth_logs: io.StringIO) -> None:
     # The trusted proxy (Cloud Run) appends the real client IP on the RIGHT;
     # a client-supplied leftmost value is spoofable and must be ignored.
     TestClient(_build_app()).get(
-        "/unauth-token-expired",
+        "/unauth-invalid-token",
         headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.7"},
     )
     payloads = _lines(auth_logs)

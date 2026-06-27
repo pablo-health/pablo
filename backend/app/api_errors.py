@@ -26,11 +26,20 @@ from .request_context import extract_request_context
 _auth_logger = logging.getLogger("pablo.auth")
 _logger = logging.getLogger("pablo.unhandled")
 
-# Codes that look like "auth failed" but are part of the expected
-# first-login flow rather than a brute-force / bad-token signal.
-# Excluded from the auth_failed counter so the spike alert isn't
-# polluted by users who simply haven't enrolled MFA yet.
-_AUTH_FAILED_EXEMPT_CODES: frozenset[str] = frozenset({"MFA_REQUIRED"})
+# Codes that look like "auth failed" but are expected, benign session
+# states rather than a brute-force / bad-token signal — excluded from the
+# auth_failed counter so the spike alert isn't polluted by ordinary users:
+#   - MFA_REQUIRED: the first-login state before MFA enrolment.
+#   - IDLE_TIMEOUT: the activity heartbeat lapsed; the session aged out.
+#   - TOKEN_EXPIRED: the client fell behind on ID-token refresh. An expired
+#     token carries no attack value (it is rejected on its own), and a
+#     single dashboard load fans out enough parallel requests to trip the
+#     per-IP spike threshold by itself the moment the token expires.
+# Genuinely suspicious codes (INVALID_TOKEN, TOKEN_REVOKED, USER_DISABLED)
+# still count — those are the signal the alert exists to catch.
+_AUTH_FAILED_EXEMPT_CODES: frozenset[str] = frozenset(
+    {"MFA_REQUIRED", "IDLE_TIMEOUT", "TOKEN_EXPIRED"}
+)
 
 
 class APIError(Exception):
@@ -177,9 +186,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return response  # type: ignore[return-value]
 
     @app.exception_handler(Exception)
-    async def _unhandled_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Last-resort handler for anything not raised as an APIError/HTTPException.
 
         Without this, an unexpected exception escapes to Starlette's
