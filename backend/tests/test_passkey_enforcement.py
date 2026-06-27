@@ -67,9 +67,7 @@ class TestVerifierSeam:
         return {"uid": "fb-uid", "email": "t@pablo.health", **extra}
 
     def test_passkey_claim_alone_satisfies_mfa(self) -> None:
-        identity = FirebaseVerifier().verify_from_decoded(
-            self._decoded(pablo_amr=["webauthn"])
-        )
+        identity = FirebaseVerifier().verify_from_decoded(self._decoded(pablo_amr=["webauthn"]))
         assert identity.mfa_satisfied is True
 
     def test_legacy_second_factor_alone_satisfies_mfa(self) -> None:

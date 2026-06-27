@@ -112,9 +112,7 @@ def _pdf_with_pages(n: int) -> bytes:
     return buf.getvalue()
 
 
-def _fake_response(
-    *, text: str, confidences: list[float]
-) -> _FakeResponse:
+def _fake_response(*, text: str, confidences: list[float]) -> _FakeResponse:
     pages = [_FakePage(layout=_FakeLayout(confidence=c)) for c in confidences]
     return _FakeResponse(document=_FakeDocument(text=text, pages=pages))
 
@@ -194,9 +192,7 @@ class TestExtract:
     def test_page_count_cap_skips_call(self) -> None:
         # 5-page PDF + cap of 3 → return None without calling the API
         fake = _FakeDocAiClient(response=_fake_response(text="x", confidences=[0.9]))
-        client = DocumentAiOcrClient(
-            settings=_settings(max_pages=3), client_factory=lambda: fake
-        )
+        client = DocumentAiOcrClient(settings=_settings(max_pages=3), client_factory=lambda: fake)
 
         result = client.extract(pdf_bytes=_pdf_with_pages(5), mime_type="application/pdf")
 

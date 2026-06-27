@@ -96,9 +96,9 @@ def get_dashboard_summary(
 
     # Session aggregates computed over the full accessible set, not a page.
     status_counts = session_repo.count_by_status(user.id)
-    transcription_pending_count = status_counts.get(
-        SessionStatus.QUEUED, 0
-    ) + status_counts.get(SessionStatus.PROCESSING, 0)
+    transcription_pending_count = status_counts.get(SessionStatus.QUEUED, 0) + status_counts.get(
+        SessionStatus.PROCESSING, 0
+    )
     awaiting_review_total = status_counts.get(SessionStatus.PENDING_REVIEW, 0)
     notes_pending_count = notes_repo.count_unfinalized(user.id)
 
@@ -107,9 +107,7 @@ def get_dashboard_summary(
     recent = session_repo.list_recent_by_status(
         user.id, SessionStatus.PENDING_REVIEW, limit=AWAITING_REVIEW_LIMIT
     )
-    review_patients = patient_repo.get_multiple(
-        list({s.patient_id for s in recent}), user.id
-    )
+    review_patients = patient_repo.get_multiple(list({s.patient_id for s in recent}), user.id)
     awaiting_review: list[AwaitingReviewItem] = []
     for s in recent:
         patient = review_patients.get(s.patient_id)

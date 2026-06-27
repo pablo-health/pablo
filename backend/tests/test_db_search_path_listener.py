@@ -50,9 +50,7 @@ def test_applies_search_path_when_contextvar_set() -> None:
     _reapply_search_path_on_checkout(conn, None, None)
     conn.cursor.assert_called_once()
     cursor = conn.cursor.return_value
-    cursor.execute.assert_called_once_with(
-        "SET search_path = practice_abc123, platform, public"
-    )
+    cursor.execute.assert_called_once_with("SET search_path = practice_abc123, platform, public")
     cursor.close.assert_called_once()
 
 

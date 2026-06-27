@@ -52,9 +52,7 @@ class ChatRepository(ABC):
     """
 
     @abstractmethod
-    def get_conversation(
-        self, conversation_id: str, user_id: str
-    ) -> ChatConversation | None:
+    def get_conversation(self, conversation_id: str, user_id: str) -> ChatConversation | None:
         """Fetch a conversation if accessible, else ``None``.
 
         Returns ``None`` indistinguishably for "doesn't exist" and
@@ -77,9 +75,7 @@ class ChatRepository(ABC):
         """List conversations for a patient. Returns ``([], 0)`` when access denied."""
 
     @abstractmethod
-    def list_messages(
-        self, conversation_id: str, user_id: str
-    ) -> list[ChatMessage]:
+    def list_messages(self, conversation_id: str, user_id: str) -> list[ChatMessage]:
         """Return all messages for an accessible conversation.
 
         ``[]`` if the conversation does not exist or the caller has no
@@ -109,9 +105,7 @@ class ChatRepository(ABC):
         """
 
     @abstractmethod
-    def add_conversation(
-        self, conversation: ChatConversation, user_id: str
-    ) -> ChatConversation:
+    def add_conversation(self, conversation: ChatConversation, user_id: str) -> ChatConversation:
         """Insert a new conversation row.
 
         Raises :class:`PatientAccessDeniedError` if ``user_id`` has no
@@ -121,9 +115,7 @@ class ChatRepository(ABC):
         """
 
     @abstractmethod
-    def update_conversation(
-        self, conversation: ChatConversation, user_id: str
-    ) -> ChatConversation:
+    def update_conversation(self, conversation: ChatConversation, user_id: str) -> ChatConversation:
         """Persist mutable fields. Raises :class:`PatientAccessDeniedError` if blocked."""
 
     @abstractmethod
@@ -317,9 +309,7 @@ class InMemoryChatRepository(ChatRepository):
         self._conversations[conversation.id] = conversation
         return conversation
 
-    def delete_conversation(
-        self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER
-    ) -> int:
+    def delete_conversation(self, conversation_id: str, user_id: str = _TEST_DEFAULT_USER) -> int:
         conv = self._conversations.get(conversation_id)
         if conv is None or not self._can_access(conv.patient_id, user_id):
             return 0

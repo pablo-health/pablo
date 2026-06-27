@@ -57,13 +57,9 @@ class TestRenderMarkdown:
         assert "42" in md
 
     def test_reports_retention_locked_status(self) -> None:
-        md_locked = hipaa_attestation._render_markdown(
-            _evidence(bucket_retention_locked=True)
-        )
+        md_locked = hipaa_attestation._render_markdown(_evidence(bucket_retention_locked=True))
         assert "LOCKED" in md_locked
-        md_unlocked = hipaa_attestation._render_markdown(
-            _evidence(bucket_retention_locked=False)
-        )
+        md_unlocked = hipaa_attestation._render_markdown(_evidence(bucket_retention_locked=False))
         assert "not yet locked" in md_unlocked
 
     def test_handles_empty_bucket_gracefully(self) -> None:
@@ -123,9 +119,7 @@ class TestWriteReport:
         with patch("google.cloud.storage.Client", return_value=mock_client):
             uri = hipaa_attestation._write_report("body", gcs_bucket="b")
         assert uri.startswith("gs://b/attestations/")
-        mock_blob.upload_from_string.assert_called_once_with(
-            "body", content_type="text/markdown"
-        )
+        mock_blob.upload_from_string.assert_called_once_with("body", content_type="text/markdown")
 
 
 def _fake_blob(name: str, time_created: datetime) -> MagicMock:

@@ -177,9 +177,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return response  # type: ignore[return-value]
 
     @app.exception_handler(Exception)
-    async def _unhandled_exception_handler(
-        request: Request, exc: Exception
-    ) -> JSONResponse:
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Last-resort handler for anything not raised as an APIError/HTTPException.
 
         Without this, an unexpected exception escapes to Starlette's

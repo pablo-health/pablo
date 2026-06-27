@@ -312,10 +312,13 @@ class TestTenantDbSessionNested:
         outer_session = _make_mock_session()
         inner_session = _make_mock_session()
 
-        with patch(
-            "app.db.tenant_session.create_standalone_session",
-            side_effect=[outer_session, inner_session],
-        ), tenant_db_session("practice_outer", "user-outer") as s_outer:
+        with (
+            patch(
+                "app.db.tenant_session.create_standalone_session",
+                side_effect=[outer_session, inner_session],
+            ),
+            tenant_db_session("practice_outer", "user-outer") as s_outer,
+        ):
             assert _request_session.get() is s_outer
             with tenant_db_session("practice_inner", "user-inner") as s_inner:
                 assert _request_session.get() is s_inner
@@ -328,10 +331,13 @@ class TestTenantDbSessionNested:
         outer_session = _make_mock_session()
         inner_session = _make_mock_session()
 
-        with patch(
-            "app.db.tenant_session.create_standalone_session",
-            side_effect=[outer_session, inner_session],
-        ), tenant_db_session("practice_outer", "user-outer"):
+        with (
+            patch(
+                "app.db.tenant_session.create_standalone_session",
+                side_effect=[outer_session, inner_session],
+            ),
+            tenant_db_session("practice_outer", "user-outer"),
+        ):
             assert _current_user_id.get() == "user-outer"
             with tenant_db_session("practice_inner", "user-inner"):
                 assert _current_user_id.get() == "user-inner"
@@ -396,10 +402,13 @@ class TestRunInTenant:
             raise ValueError("worker failure")
 
         mock_session = _make_mock_session()
-        with patch(
-            "app.db.tenant_session.create_standalone_session",
-            return_value=mock_session,
-        ), pytest.raises(ValueError, match="worker failure"):
+        with (
+            patch(
+                "app.db.tenant_session.create_standalone_session",
+                return_value=mock_session,
+            ),
+            pytest.raises(ValueError, match="worker failure"),
+        ):
             asyncio.run(run_in_tenant("practice_abc", "user-1", _fn))
 
     def test_session_is_rolled_back_when_fn_raises(self) -> None:
@@ -407,10 +416,13 @@ class TestRunInTenant:
             raise RuntimeError("boom")
 
         mock_session = _make_mock_session()
-        with patch(
-            "app.db.tenant_session.create_standalone_session",
-            return_value=mock_session,
-        ), pytest.raises(RuntimeError):
+        with (
+            patch(
+                "app.db.tenant_session.create_standalone_session",
+                return_value=mock_session,
+            ),
+            pytest.raises(RuntimeError),
+        ):
             asyncio.run(run_in_tenant("practice_abc", "user-1", _fn))
 
         mock_session.rollback.assert_called_once()

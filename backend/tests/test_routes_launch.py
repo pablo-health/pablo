@@ -173,18 +173,12 @@ def test_issue_intent_unknown_appointment_404(launch_client: TestClient) -> None
 
 def test_issue_intent_missing_field_422(launch_client: TestClient) -> None:
     assert launch_client.post("/api/launch/intent", json={}).status_code == 422
-    assert (
-        launch_client.post("/api/launch/intent", json={"appointment_id": ""}).status_code == 422
-    )
+    assert launch_client.post("/api/launch/intent", json={"appointment_id": ""}).status_code == 422
 
 
 def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestClient) -> None:
-    issued = launch_client.post(
-        "/api/launch/intent", json={"appointment_id": "appt-1"}
-    ).json()
-    resp = launch_client.post(
-        "/api/launch/redeem", json={"intent_id": issued["intent_id"]}
-    )
+    issued = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    resp = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]})
     assert resp.status_code == 200
     body = resp.json()
     assert body["appointment_id"] == "appt-1"
@@ -206,9 +200,7 @@ def test_redeem_happy_path_returns_appointment_and_audits(launch_client: TestCli
 
 
 def test_redeem_is_single_use(launch_client: TestClient) -> None:
-    issued = launch_client.post(
-        "/api/launch/intent", json={"appointment_id": "appt-1"}
-    ).json()
+    issued = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
     first = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]})
     assert first.status_code == 200
     second = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]})
@@ -225,12 +217,8 @@ def test_redeem_unknown_intent_410(launch_client: TestClient) -> None:
 def test_redeem_expired_intent_410(launch_client: TestClient) -> None:
     store: InMemoryLaunchIntentStore = launch_client.store  # type: ignore[attr-defined]
     store.ttl_seconds = 0  # everything is immediately expired
-    issued = launch_client.post(
-        "/api/launch/intent", json={"appointment_id": "appt-1"}
-    ).json()
-    resp = launch_client.post(
-        "/api/launch/redeem", json={"intent_id": issued["intent_id"]}
-    )
+    issued = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    resp = launch_client.post("/api/launch/redeem", json={"intent_id": issued["intent_id"]})
     assert resp.status_code == 410
 
 

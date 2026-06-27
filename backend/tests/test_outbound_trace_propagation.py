@@ -59,9 +59,7 @@ class TestBuildTraceparent:
         tp = build_traceparent(rid)
         assert tp is not None
         # Shape: 00-<32hex>-<16hex>-<2hex flags>
-        assert re.fullmatch(
-            r"00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}", tp
-        ), tp
+        assert re.fullmatch(r"00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}", tp), tp
 
     def test_returns_none_for_non_w3c_id(self) -> None:
         assert build_traceparent("1-67891233-abcdef012345678912345678") is None
@@ -139,9 +137,7 @@ class TestTracingAsyncClient:
             await client.get("https://api.example.com/v1/thing")
 
         assert captured[REQUEST_ID_HEADER.lower()] == "105445aa7843bc8bf206b12000100000"
-        assert captured[W3C_TRACEPARENT_HEADER].startswith(
-            "00-105445aa7843bc8bf206b12000100000-"
-        )
+        assert captured[W3C_TRACEPARENT_HEADER].startswith("00-105445aa7843bc8bf206b12000100000-")
 
     @pytest.mark.anyio
     async def test_preserves_caller_supplied_event_hooks(self) -> None:

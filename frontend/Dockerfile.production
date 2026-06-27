@@ -1,5 +1,5 @@
 # Frontend Production Dockerfile
-# Multi-stage build for Next.js 15 with standalone output
+# Multi-stage build for Next.js 16 with standalone output
 # Optimized for Google Cloud Run deployment
 
 # Stage 1: Builder - Build Next.js app

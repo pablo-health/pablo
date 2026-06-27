@@ -83,9 +83,7 @@ def upgrade() -> None:
         $$
         """
     )
-    op.execute(
-        f"DROP TRIGGER IF EXISTS audit_logs_append_only ON {schema}.audit_logs"
-    )
+    op.execute(f"DROP TRIGGER IF EXISTS audit_logs_append_only ON {schema}.audit_logs")
     op.execute(
         f"""
         CREATE TRIGGER audit_logs_append_only
@@ -98,7 +96,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     schema = _current_schema()
-    op.execute(
-        f"DROP TRIGGER IF EXISTS audit_logs_append_only ON {schema}.audit_logs"
-    )
+    op.execute(f"DROP TRIGGER IF EXISTS audit_logs_append_only ON {schema}.audit_logs")
     op.execute(f"DROP FUNCTION IF EXISTS {schema}.audit_logs_append_only()")

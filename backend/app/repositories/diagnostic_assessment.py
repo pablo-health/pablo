@@ -98,9 +98,7 @@ class InMemoryDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
             and (instrument is None or str(r["instrument"]) == instrument)
         ]
 
-    def add(
-        self, row: dict[str, object], user_id: str = _TEST_DEFAULT_USER
-    ) -> dict[str, object]:
+    def add(self, row: dict[str, object], user_id: str = _TEST_DEFAULT_USER) -> dict[str, object]:
         patient_id = str(row["patient_id"])
         if not self._can_access(patient_id, user_id):
             raise PatientDiagnosticAccessDeniedError(patient_id, user_id)

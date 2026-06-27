@@ -31,9 +31,7 @@ def test_returns_empty_when_no_adc_configured(
     mock_default: MagicMock,
 ) -> None:
     """CI test runners have no ADC — fall through quietly."""
-    mock_default.side_effect = google.auth.exceptions.DefaultCredentialsError(
-        "no ADC"
-    )
+    mock_default.side_effect = google.auth.exceptions.DefaultCredentialsError("no ADC")
     assert _iam_signing_kwargs() == {}
 
 
@@ -60,9 +58,7 @@ def test_resolves_default_marker_via_metadata_lookup(
     mock_metadata.assert_called_once()
     creds.refresh.assert_called_once()
     assert out == {
-        "service_account_email": (
-            "pablo-backend@proj.iam.gserviceaccount.com"
-        ),
+        "service_account_email": ("pablo-backend@proj.iam.gserviceaccount.com"),
         "access_token": "ya29.fake-token",
     }
 
@@ -83,9 +79,7 @@ def test_returns_iam_signing_kwargs_for_compute_engine_creds_with_explicit_email
 
     creds.refresh.assert_called_once()
     assert out == {
-        "service_account_email": (
-            "pablo-backend@proj.iam.gserviceaccount.com"
-        ),
+        "service_account_email": ("pablo-backend@proj.iam.gserviceaccount.com"),
         "access_token": "ya29.fake-token",
     }
 

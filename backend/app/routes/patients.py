@@ -205,9 +205,7 @@ def list_patients(
             page_size=total,
         )
 
-    patients, total = repo.list_by_user(
-        user.id, search=search, page=page, page_size=page_size
-    )
+    patients, total = repo.list_by_user(user.id, search=search, page=page, page_size=page_size)
 
     responses = [PatientResponse.from_patient(p) for p in patients]
     # The list payload carries clinical PHI (diagnosis) plus identifiers

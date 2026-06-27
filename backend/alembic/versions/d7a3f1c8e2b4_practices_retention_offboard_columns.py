@@ -100,13 +100,9 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS platform.idx_practices_deleted_at")
     op.execute("DROP INDEX IF EXISTS platform.idx_practices_offboard_scheduled_at")
     op.execute("ALTER TABLE platform.practices DROP COLUMN IF EXISTS deleted_at")
-    op.execute(
-        "ALTER TABLE platform.practices DROP COLUMN IF EXISTS offboard_scheduled_at"
-    )
+    op.execute("ALTER TABLE platform.practices DROP COLUMN IF EXISTS offboard_scheduled_at")
     op.execute(
         "ALTER TABLE platform.practices "
         "DROP CONSTRAINT IF EXISTS ck_practices_audio_retention_days_range"
     )
-    op.execute(
-        "ALTER TABLE platform.practices DROP COLUMN IF EXISTS audio_retention_days"
-    )
+    op.execute("ALTER TABLE platform.practices DROP COLUMN IF EXISTS audio_retention_days")

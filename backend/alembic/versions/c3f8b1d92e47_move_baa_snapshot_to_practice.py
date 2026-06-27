@@ -52,10 +52,7 @@ def upgrade() -> None:
     # ── Platform: practices gains address + BAA snapshot ───────────────
     # Idempotent (IF NOT EXISTS): platform.practices is cross-tenant but
     # the chain re-runs once per practice schema during fan-out.
-    op.execute(
-        "ALTER TABLE platform.practices "
-        "ADD COLUMN IF NOT EXISTS address VARCHAR(500)"
-    )
+    op.execute("ALTER TABLE platform.practices ADD COLUMN IF NOT EXISTS address VARCHAR(500)")
     for col, coltype in (
         ("baa_accepted_at", "TIMESTAMPTZ"),
         ("baa_version", "VARCHAR(10)"),
@@ -66,14 +63,10 @@ def upgrade() -> None:
         ("baa_business_address", "VARCHAR(500)"),
         ("baa_full_text", "TEXT"),
     ):
-        op.execute(
-            f"ALTER TABLE platform.practices ADD COLUMN IF NOT EXISTS {col} {coltype}"
-        )
+        op.execute(f"ALTER TABLE platform.practices ADD COLUMN IF NOT EXISTS {col} {coltype}")
 
     # ── Platform: users gains legal_name ───────────────────────────────
-    op.execute(
-        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255)"
-    )
+    op.execute("ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS legal_name VARCHAR(255)")
 
     # ── Per-tenant: clinician_profiles gains license_* ─────────────────
     # Unqualified name resolves via search_path to the active practice
@@ -81,9 +74,7 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE clinician_profiles ADD COLUMN IF NOT EXISTS license_number VARCHAR(100)"
     )
-    op.execute(
-        "ALTER TABLE clinician_profiles ADD COLUMN IF NOT EXISTS license_state VARCHAR(2)"
-    )
+    op.execute("ALTER TABLE clinician_profiles ADD COLUMN IF NOT EXISTS license_state VARCHAR(2)")
 
     # ── Data migration + column drop (guarded, fan-out-safe) ───────────
     # Solo-therapist assumption: one practice ↔ one therapist, mapped via
@@ -139,18 +130,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Re-add the moved columns to users, copy back from the practice
     # snapshot (1:1), then drop the practice/clinician additions.
-    op.execute(
-        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_legal_name VARCHAR(255)"
-    )
+    op.execute("ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_legal_name VARCHAR(255)")
     op.execute(
         "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_license_number VARCHAR(100)"
     )
-    op.execute(
-        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_license_state VARCHAR(2)"
-    )
-    op.execute(
-        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_practice_name VARCHAR(255)"
-    )
+    op.execute("ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_license_state VARCHAR(2)")
+    op.execute("ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_practice_name VARCHAR(255)")
     op.execute(
         "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS baa_business_address VARCHAR(500)"
     )

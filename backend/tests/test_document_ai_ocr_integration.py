@@ -147,8 +147,7 @@ def _tokenize(text: str) -> set[str]:
 
 _INTEGRATION_ENABLED = os.environ.get("DOCAI_INTEGRATION") == "1"
 _HAS_CREDS = bool(
-    os.environ.get("DOCUMENT_AI_PROJECT_ID")
-    and os.environ.get("DOCUMENT_AI_PROCESSOR_ID")
+    os.environ.get("DOCUMENT_AI_PROJECT_ID") and os.environ.get("DOCUMENT_AI_PROCESSOR_ID")
 )
 
 pytestmark = pytest.mark.skipif(

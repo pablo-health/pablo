@@ -57,12 +57,13 @@ class TestCreateOrUpdateForSession:
         assert note.content == _SOAP
         assert note.content_edited is None
 
-    def test_updates_existing_note_when_session_already_has_one(
-        self, service: NoteService
-    ) -> None:
+    def test_updates_existing_note_when_session_already_has_one(self, service: NoteService) -> None:
         sid = _new_session_id()
         first = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         # Add an in-progress edit to ensure regeneration clears it.
@@ -70,7 +71,10 @@ class TestCreateOrUpdateForSession:
 
         new_content = {**_SOAP, "subjective": "S2"}
         updated = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=new_content,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=new_content,
             user_id=_USER,
         )
         assert updated.id == first.id  # same row, updated
@@ -94,7 +98,10 @@ class TestGetNote:
     def test_returns_note_when_exists(self, service: NoteService) -> None:
         sid = _new_session_id()
         added = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         assert service.get_note(added.id, _USER).id == added.id
@@ -108,7 +115,10 @@ class TestGetByAndListByPatient:
     def test_get_note_by_session_id_returns_match(self, service: NoteService) -> None:
         sid = _new_session_id()
         service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         assert service.get_note_by_session_id(sid, _USER) is not None
@@ -143,12 +153,13 @@ class TestUpdateNoteEdits:
     def test_persists_edits(self, service: NoteService) -> None:
         sid = _new_session_id()
         note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
-        edited = service.update_note_edits(
-            note.id, {**_SOAP, "subjective": "edited"}, _USER
-        )
+        edited = service.update_note_edits(note.id, {**_SOAP, "subjective": "edited"}, _USER)
         assert edited.content_edited is not None
         assert edited.content_edited["subjective"] == "edited"
 
@@ -161,7 +172,10 @@ class TestFinalizeNote:
     def test_records_quality_rating_and_finalized_at(self, service: NoteService) -> None:
         sid = _new_session_id()
         note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         finalized = service.finalize_note(note.id, quality_rating=4, user_id=_USER)
@@ -171,7 +185,10 @@ class TestFinalizeNote:
     def test_rejects_double_finalize(self, service: NoteService) -> None:
         sid = _new_session_id()
         note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         service.finalize_note(note.id, quality_rating=4, user_id=_USER)
@@ -183,20 +200,24 @@ class TestUpdateQualityRating:
     def test_returns_old_rating(self, service: NoteService) -> None:
         sid = _new_session_id()
         note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         service.finalize_note(note.id, quality_rating=4, user_id=_USER)
-        updated, old = service.update_quality_rating(
-            note.id, quality_rating=2, user_id=_USER
-        )
+        updated, old = service.update_quality_rating(note.id, quality_rating=2, user_id=_USER)
         assert updated.quality_rating == 2
         assert old == 4
 
     def test_rejects_unfinalized(self, service: NoteService) -> None:
         sid = _new_session_id()
         note = service.create_or_update_for_session(
-            session_id=sid, patient_id="p1", note_type="soap", content=_SOAP,
+            session_id=sid,
+            patient_id="p1",
+            note_type="soap",
+            content=_SOAP,
             user_id=_USER,
         )
         with pytest.raises(NoteNotFinalizedError):

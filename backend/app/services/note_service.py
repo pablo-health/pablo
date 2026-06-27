@@ -147,9 +147,7 @@ class NoteService:
 
     # --- Edits ---
 
-    def update_note_edits(
-        self, note_id: str, content_edited: dict[str, Any], user_id: str
-    ) -> Note:
+    def update_note_edits(self, note_id: str, content_edited: dict[str, Any], user_id: str) -> Note:
         """Persist clinician edits to a note's content."""
         note = self.get_note(note_id, user_id)
         note.content_edited = content_edited

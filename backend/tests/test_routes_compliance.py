@@ -71,7 +71,7 @@ class InMemoryComplianceItemRepository:
 @pytest.fixture
 def compliance_repo(
     client: TestClient,
-) -> Generator[InMemoryComplianceItemRepository, None, None]:
+) -> Generator[InMemoryComplianceItemRepository]:
     """In-memory compliance repo wired into the FastAPI dep graph."""
     repo = InMemoryComplianceItemRepository()
     app.dependency_overrides[get_compliance_item_repository] = lambda: repo

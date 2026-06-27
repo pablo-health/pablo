@@ -78,9 +78,9 @@ def test_list_patients_audits_view_per_returned_patient(
     read-coalescing.
     """
     first = client.post("/api/patients", json=sample_patient_data).json()["id"]
-    second = client.post(
-        "/api/patients", json={"first_name": "Jane", "last_name": "Smith"}
-    ).json()["id"]
+    second = client.post("/api/patients", json={"first_name": "Jane", "last_name": "Smith"}).json()[
+        "id"
+    ]
 
     response = client.get("/api/patients")
     assert response.status_code == status.HTTP_200_OK

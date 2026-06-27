@@ -280,11 +280,7 @@ class TestDashboardSummaryAuditBehavior:
         assert len(body["awaiting_review"]) == _AWAITING_REVIEW_LIMIT
 
         pg_session.expire_all()
-        rows = (
-            pg_session.execute(text("SELECT action FROM practice.audit_logs"))
-            .mappings()
-            .all()
-        )
+        rows = pg_session.execute(text("SELECT action FROM practice.audit_logs")).mappings().all()
         actions = [r["action"] for r in rows]
         # One session_viewed per inline row — and nothing else.
         assert actions == ["session_viewed"] * _AWAITING_REVIEW_LIMIT

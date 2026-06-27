@@ -266,8 +266,7 @@ def test_drop_legacy_note_columns_from_therapy_sessions(pg_session: Session) -> 
         "exported_at",
     }
     assert cols.isdisjoint(legacy), (
-        f"therapy_sessions still has legacy columns after pa-0nx.2: "
-        f"{sorted(cols & legacy)}"
+        f"therapy_sessions still has legacy columns after pa-0nx.2: {sorted(cols & legacy)}"
     )
 
     # Recording-only columns survive.

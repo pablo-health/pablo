@@ -300,9 +300,7 @@ class TestSeedIdempotency:
         from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
 
         def _counts(conn) -> tuple[int, int]:  # type: ignore[no-untyped-def]
-            n_codes = conn.execute(
-                text("SELECT count(*) FROM platform.icd10_codes")
-            ).scalar()
+            n_codes = conn.execute(text("SELECT count(*) FROM platform.icd10_codes")).scalar()
             n_defs = conn.execute(
                 text("SELECT count(*) FROM platform.diagnostic_definitions")
             ).scalar()

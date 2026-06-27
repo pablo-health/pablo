@@ -145,9 +145,7 @@ class PostgresChatRepository(ChatRepository):
 
     # --- reads ---
 
-    def get_conversation(
-        self, conversation_id: str, user_id: str
-    ) -> ChatConversation | None:
+    def get_conversation(self, conversation_id: str, user_id: str) -> ChatConversation | None:
         row = (
             self._session.query(ChatConversationRow)
             .join(
@@ -201,9 +199,7 @@ class PostgresChatRepository(ChatRepository):
         rows = query.offset(offset).limit(page_size).all()
         return [_row_to_conversation(r) for r in rows], total
 
-    def list_messages(
-        self, conversation_id: str, user_id: str
-    ) -> list[ChatMessage]:
+    def list_messages(self, conversation_id: str, user_id: str) -> list[ChatMessage]:
         # Join through the parent conversation + patient_clinicians so a
         # caller without a grant sees an empty list regardless of
         # whether the conversation exists. One SQL round trip; no
@@ -259,18 +255,14 @@ class PostgresChatRepository(ChatRepository):
         head_rows: list[ChatMessageRow] = []
         if head:
             head_rows = list(
-                self._session.execute(
-                    base.order_by(ChatMessageRow.sequence.asc()).limit(head)
-                )
+                self._session.execute(base.order_by(ChatMessageRow.sequence.asc()).limit(head))
                 .scalars()
                 .all()
             )
         tail_rows: list[ChatMessageRow] = []
         if tail:
             tail_rows = list(
-                self._session.execute(
-                    base.order_by(ChatMessageRow.sequence.desc()).limit(tail)
-                )
+                self._session.execute(base.order_by(ChatMessageRow.sequence.desc()).limit(tail))
                 .scalars()
                 .all()
             )
@@ -285,9 +277,7 @@ class PostgresChatRepository(ChatRepository):
 
     # --- writes ---
 
-    def add_conversation(
-        self, conversation: ChatConversation, user_id: str
-    ) -> ChatConversation:
+    def add_conversation(self, conversation: ChatConversation, user_id: str) -> ChatConversation:
         if not self._has_access(conversation.patient_id, user_id):
             raise PatientAccessDeniedError(conversation.patient_id, user_id)
         row = ChatConversationRow()
@@ -296,9 +286,7 @@ class PostgresChatRepository(ChatRepository):
         self._session.flush()
         return conversation
 
-    def update_conversation(
-        self, conversation: ChatConversation, user_id: str
-    ) -> ChatConversation:
+    def update_conversation(self, conversation: ChatConversation, user_id: str) -> ChatConversation:
         if not self._has_access(conversation.patient_id, user_id):
             raise PatientAccessDeniedError(conversation.patient_id, user_id)
         row = self._session.get(ChatConversationRow, conversation.id)

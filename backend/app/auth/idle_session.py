@@ -164,8 +164,7 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
         # via IDLE_SESSION_FAIL_OPEN=true.
         if settings.idle_session_fail_open:
             logger.error(
-                "Idle session check failed; allowing request "
-                "(IDLE_SESSION_FAIL_OPEN=true): %s",
+                "Idle session check failed; allowing request (IDLE_SESSION_FAIL_OPEN=true): %s",
                 exc,
             )
             return

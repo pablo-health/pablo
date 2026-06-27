@@ -38,10 +38,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "ALTER TABLE platform.passkey_credentials "
-        "ADD COLUMN IF NOT EXISTS fmt VARCHAR(32)"
-    )
+    op.execute("ALTER TABLE platform.passkey_credentials ADD COLUMN IF NOT EXISTS fmt VARCHAR(32)")
     op.execute(
         "ALTER TABLE platform.passkey_credentials "
         "ADD COLUMN IF NOT EXISTS attestation_verified BOOLEAN NOT NULL DEFAULT FALSE"
@@ -49,5 +46,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE platform.passkey_credentials DROP COLUMN IF EXISTS attestation_verified")
+    op.execute(
+        "ALTER TABLE platform.passkey_credentials DROP COLUMN IF EXISTS attestation_verified"
+    )
     op.execute("ALTER TABLE platform.passkey_credentials DROP COLUMN IF EXISTS fmt")

@@ -130,9 +130,7 @@ class InMemoryLaunchIntentStore:
         )
 
     def _prune(self, now: float) -> None:
-        expired = [
-            h for h, r in self._records.items() if now - r.created_at > self.ttl_seconds
-        ]
+        expired = [h for h, r in self._records.items() if now - r.created_at > self.ttl_seconds]
         for h in expired:
             del self._records[h]
 

@@ -98,9 +98,7 @@ class TestClosedLoopAuditCollector:
         assert artifact.summary["highest_severity"] == "HIGH"
         assert artifact.summary["findings_count"] == "1"
 
-    def test_audit_endpoint_unreachable_is_high(
-        self, bundle_dir, targets, creds
-    ) -> None:
+    def test_audit_endpoint_unreachable_is_high(self, bundle_dir, targets, creds) -> None:
         http, _ = _make_http(
             [
                 (201, {"id": "patient-abc"}),
