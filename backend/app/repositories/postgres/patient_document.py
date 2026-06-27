@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, select, text
 
 from ...db.models import PatientClinicianRow, PatientDocumentRow
 from ...models import DocumentCategory, PatientDocument
@@ -92,15 +92,13 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         finalized_at: object,
     ) -> PatientDocument | None:
         # Finalize restricted to uploader — see abstract method docstring.
-        row = (
-            self._session.query(PatientDocumentRow)
-            .filter(
+        row = self._session.execute(
+            select(PatientDocumentRow).where(
                 PatientDocumentRow.id == document_id,
                 PatientDocumentRow.user_id == user_id,
                 PatientDocumentRow.deleted_at.is_(None),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         if row is None:
             return None
         row.size_bytes = size_bytes
@@ -113,15 +111,13 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
 
     def soft_delete(self, document_id: str, user_id: str, deleted_at: object) -> bool:
         # Delete restricted to uploader — see abstract method docstring.
-        row = (
-            self._session.query(PatientDocumentRow)
-            .filter(
+        row = self._session.execute(
+            select(PatientDocumentRow).where(
                 PatientDocumentRow.id == document_id,
                 PatientDocumentRow.user_id == user_id,
                 PatientDocumentRow.deleted_at.is_(None),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         if row is None:
             return False
         row.deleted_at = deleted_at  # type: ignore[assignment]
@@ -138,14 +134,14 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         OR branch 2: ``category`` is one of the restricted values AND
         caller is the uploader.
         """
-        row = (
-            self._session.query(PatientDocumentRow)
+        row = self._session.execute(
+            select(PatientDocumentRow)
             .outerjoin(
                 PatientClinicianRow,
                 (PatientClinicianRow.patient_id == PatientDocumentRow.patient_id)
                 & (PatientClinicianRow.user_id == user_id),
             )
-            .filter(
+            .where(
                 PatientDocumentRow.id == document_id,
                 PatientDocumentRow.deleted_at.is_(None),
                 or_(
@@ -155,8 +151,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
                     & (PatientDocumentRow.user_id == user_id),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_document(row) if row else None
 
     def get_many(self, document_ids: list[str], user_id: str) -> list[PatientDocument]:
@@ -173,46 +168,52 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         if not document_ids:
             return []
         rows = (
-            self._session.query(PatientDocumentRow)
-            .outerjoin(
-                PatientClinicianRow,
-                (PatientClinicianRow.patient_id == PatientDocumentRow.patient_id)
-                & (PatientClinicianRow.user_id == user_id),
-            )
-            .filter(
-                PatientDocumentRow.id.in_(document_ids),
-                PatientDocumentRow.deleted_at.is_(None),
-                or_(
-                    (PatientDocumentRow.category == "chart")
+            self._session.execute(
+                select(PatientDocumentRow)
+                .outerjoin(
+                    PatientClinicianRow,
+                    (PatientClinicianRow.patient_id == PatientDocumentRow.patient_id)
                     & (PatientClinicianRow.user_id == user_id),
-                    PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
-                    & (PatientDocumentRow.user_id == user_id),
-                ),
+                )
+                .where(
+                    PatientDocumentRow.id.in_(document_ids),
+                    PatientDocumentRow.deleted_at.is_(None),
+                    or_(
+                        (PatientDocumentRow.category == "chart")
+                        & (PatientClinicianRow.user_id == user_id),
+                        PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
+                        & (PatientDocumentRow.user_id == user_id),
+                    ),
+                )
             )
+            .scalars()
             .all()
         )
         return [_row_to_document(row) for row in rows]
 
     def list_for_patient(self, patient_id: str, user_id: str) -> list[PatientDocument]:
         rows = (
-            self._session.query(PatientDocumentRow)
-            .outerjoin(
-                PatientClinicianRow,
-                (PatientClinicianRow.patient_id == PatientDocumentRow.patient_id)
-                & (PatientClinicianRow.user_id == user_id),
-            )
-            .filter(
-                PatientDocumentRow.patient_id == patient_id,
-                PatientDocumentRow.deleted_at.is_(None),
-                PatientDocumentRow.finalized_at.is_not(None),
-                or_(
-                    (PatientDocumentRow.category == "chart")
+            self._session.execute(
+                select(PatientDocumentRow)
+                .outerjoin(
+                    PatientClinicianRow,
+                    (PatientClinicianRow.patient_id == PatientDocumentRow.patient_id)
                     & (PatientClinicianRow.user_id == user_id),
-                    PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
-                    & (PatientDocumentRow.user_id == user_id),
-                ),
+                )
+                .where(
+                    PatientDocumentRow.patient_id == patient_id,
+                    PatientDocumentRow.deleted_at.is_(None),
+                    PatientDocumentRow.finalized_at.is_not(None),
+                    or_(
+                        (PatientDocumentRow.category == "chart")
+                        & (PatientClinicianRow.user_id == user_id),
+                        PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
+                        & (PatientDocumentRow.user_id == user_id),
+                    ),
+                )
+                .order_by(PatientDocumentRow.created_at.desc())
             )
-            .order_by(PatientDocumentRow.created_at.desc())
+            .scalars()
             .all()
         )
         return [_row_to_document(row) for row in rows]

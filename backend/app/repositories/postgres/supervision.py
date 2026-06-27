@@ -22,6 +22,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import (
     ComplianceItemRow,
     SupervisionHoursRow,
@@ -117,9 +119,12 @@ class PostgresSupervisionRepository:
 
     def list_by_user(self, user_id: str) -> list[SupervisionRelationship]:
         rows = (
-            self._session.query(SupervisionRelationshipRow)
-            .filter(SupervisionRelationshipRow.user_id == user_id)
-            .order_by(SupervisionRelationshipRow.created_at)
+            self._session.execute(
+                select(SupervisionRelationshipRow)
+                .where(SupervisionRelationshipRow.user_id == user_id)
+                .order_by(SupervisionRelationshipRow.created_at)
+            )
+            .scalars()
             .all()
         )
         return [_row_to_relationship(r) for r in rows]
@@ -163,12 +168,15 @@ class PostgresSupervisionRepository:
         user_id: str,
     ) -> list[SupervisionHours]:
         rows = (
-            self._session.query(SupervisionHoursRow)
-            .filter(
-                SupervisionHoursRow.supervision_relationship_id == relationship_id,
-                SupervisionHoursRow.user_id == user_id,
+            self._session.execute(
+                select(SupervisionHoursRow)
+                .where(
+                    SupervisionHoursRow.supervision_relationship_id == relationship_id,
+                    SupervisionHoursRow.user_id == user_id,
+                )
+                .order_by(SupervisionHoursRow.logged_date)
             )
-            .order_by(SupervisionHoursRow.logged_date)
+            .scalars()
             .all()
         )
         return [_row_to_hours(r) for r in rows]

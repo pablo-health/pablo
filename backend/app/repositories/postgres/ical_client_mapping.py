@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import ICalClientMappingRow
 from ...utcnow import utc_now
 from ..ical_client_mapping import ICalClientMapping, ICalClientMappingRepository
@@ -31,19 +33,23 @@ class PostgresICalClientMappingRepository(ICalClientMappingRepository):
 
     def list_by_user(self, user_id: str) -> list[ICalClientMapping]:
         rows = (
-            self._session.query(ICalClientMappingRow)
-            .filter(ICalClientMappingRow.user_id == user_id)
+            self._session.execute(
+                select(ICalClientMappingRow).where(ICalClientMappingRow.user_id == user_id)
+            )
+            .scalars()
             .all()
         )
         return [_row_to_mapping(r) for r in rows]
 
     def list_by_source(self, user_id: str, ehr_system: str) -> list[ICalClientMapping]:
         rows = (
-            self._session.query(ICalClientMappingRow)
-            .filter(
-                ICalClientMappingRow.user_id == user_id,
-                ICalClientMappingRow.ehr_system == ehr_system,
+            self._session.execute(
+                select(ICalClientMappingRow).where(
+                    ICalClientMappingRow.user_id == user_id,
+                    ICalClientMappingRow.ehr_system == ehr_system,
+                )
             )
+            .scalars()
             .all()
         )
         return [_row_to_mapping(r) for r in rows]

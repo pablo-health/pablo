@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import AvailabilityRuleRow
 from ...scheduling_engine.models.availability import AvailabilityRule
 from ...scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
@@ -26,9 +28,12 @@ class PostgresAvailabilityRuleRepository(AvailabilityRuleRepository):
 
     def list_by_user(self, user_id: str) -> list[AvailabilityRule]:
         rows = (
-            self._session.query(AvailabilityRuleRow)
-            .filter(AvailabilityRuleRow.user_id == user_id)
-            .order_by(AvailabilityRuleRow.created_at)
+            self._session.execute(
+                select(AvailabilityRuleRow)
+                .where(AvailabilityRuleRow.user_id == user_id)
+                .order_by(AvailabilityRuleRow.created_at)
+            )
+            .scalars()
             .all()
         )
         return [_row_to_rule(r) for r in rows]
