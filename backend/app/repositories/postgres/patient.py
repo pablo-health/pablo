@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, text
+from sqlalchemy import String, Uuid, bindparam, delete, func, or_, select, text, update
 
 from ...db.models import (
     NoteRow,
@@ -73,13 +73,16 @@ class PostgresPatientRepository(PatientRepository):
         existence oracle).
         """
         row = (
-            self._session.query(PatientRow)
-            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
-            .filter(
-                PatientRow.id == patient_id,
-                PatientRow.deleted_at.is_(None),
-                *_live_grant_filter(user_id),
+            self._session.execute(
+                select(PatientRow)
+                .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+                .where(
+                    PatientRow.id == patient_id,
+                    PatientRow.deleted_at.is_(None),
+                    *_live_grant_filter(user_id),
+                )
             )
+            .scalars()
             .one_or_none()
         )
         return _row_to_patient(row) if row else None
@@ -87,15 +90,14 @@ class PostgresPatientRepository(PatientRepository):
     def get_last_name(self, patient_id: str, user_id: str) -> str | None:
         """Single-column variant of :meth:`get` — never selects the rest
         of the chart row, so it stays valid under column-scoped grants."""
-        last_name: str | None = (
-            self._session.query(PatientRow.last_name)
+        last_name: str | None = self._session.scalar(
+            select(PatientRow.last_name)
             .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
-            .filter(
+            .where(
                 PatientRow.id == patient_id,
                 PatientRow.deleted_at.is_(None),
                 *_live_grant_filter(user_id),
             )
-            .scalar()
         )
         return last_name
 
@@ -109,25 +111,28 @@ class PostgresPatientRepository(PatientRepository):
         column-scoped grant. Approximate current-state: a grant revoked
         since the access cannot be recovered (the table keeps no history)."""
         return bool(
-            self._session.query(PatientClinicianRow.patient_id)
-            .filter(
-                PatientClinicianRow.patient_id == patient_id,
-                *_live_grant_filter(user_id),
-            )
-            .first()
+            self._session.execute(
+                select(PatientClinicianRow.patient_id).where(
+                    PatientClinicianRow.patient_id == patient_id,
+                    *_live_grant_filter(user_id),
+                )
+            ).first()
         )
 
     def get_multiple(self, patient_ids: list[str], user_id: str) -> dict[str, Patient]:
         if not patient_ids:
             return {}
         rows = (
-            self._session.query(PatientRow)
-            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
-            .filter(
-                PatientRow.id.in_(patient_ids),
-                PatientRow.deleted_at.is_(None),
-                *_live_grant_filter(user_id),
+            self._session.execute(
+                select(PatientRow)
+                .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+                .where(
+                    PatientRow.id.in_(patient_ids),
+                    PatientRow.deleted_at.is_(None),
+                    *_live_grant_filter(user_id),
+                )
             )
+            .scalars()
             .all()
         )
         return {r.id: _row_to_patient(r) for r in rows}
@@ -151,10 +156,10 @@ class PostgresPatientRepository(PatientRepository):
         supervisor, or covering. v1 ships with primary-only grants so
         the result set matches the prior ``user_id``-column semantics.
         """
-        query = (
-            self._session.query(PatientRow)
+        stmt = (
+            select(PatientRow)
             .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
-            .filter(
+            .where(
                 PatientRow.deleted_at.is_(None),
                 *_live_grant_filter(user_id),
             )
@@ -162,18 +167,18 @@ class PostgresPatientRepository(PatientRepository):
 
         if search:
             search_lower = search.lower()
-            query = query.filter(
+            stmt = stmt.where(
                 or_(
                     PatientRow.first_name_lower.contains(search_lower),
                     PatientRow.last_name_lower.contains(search_lower),
                 )
             )
 
-        query = query.order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
+        stmt = stmt.order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
 
-        total = query.count()
+        total = self._session.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         offset = (page - 1) * page_size
-        rows = query.offset(offset).limit(page_size).all()
+        rows = self._session.execute(stmt.offset(offset).limit(page_size)).scalars().all()
         return [_row_to_patient(r) for r in rows], total
 
     def create(self, patient: Patient, user_id: str) -> Patient:
@@ -247,14 +252,24 @@ class PostgresPatientRepository(PatientRepository):
             return False
 
         now = utc_now()
-        self._session.query(TherapySessionRow).filter(
-            TherapySessionRow.patient_id == patient_id,
-            TherapySessionRow.deleted_at.is_(None),
-        ).update({TherapySessionRow.deleted_at: now}, synchronize_session=False)
-        self._session.query(NoteRow).filter(
-            NoteRow.patient_id == patient_id,
-            NoteRow.deleted_at.is_(None),
-        ).update({NoteRow.deleted_at: now}, synchronize_session=False)
+        self._session.execute(
+            update(TherapySessionRow)
+            .where(
+                TherapySessionRow.patient_id == patient_id,
+                TherapySessionRow.deleted_at.is_(None),
+            )
+            .values({TherapySessionRow.deleted_at: now})
+            .execution_options(synchronize_session=False)
+        )
+        self._session.execute(
+            update(NoteRow)
+            .where(
+                NoteRow.patient_id == patient_id,
+                NoteRow.deleted_at.is_(None),
+            )
+            .values({NoteRow.deleted_at: now})
+            .execution_options(synchronize_session=False)
+        )
         row.deleted_at = now
         self._session.flush()
         return True
@@ -268,14 +283,17 @@ class PostgresPatientRepository(PatientRepository):
         """Soft-deleted patients still inside the undo window."""
         cutoff = utc_now() - timedelta(days=window_days)
         rows = (
-            self._session.query(PatientRow)
-            .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
-            .filter(
-                PatientRow.deleted_at.isnot(None),
-                PatientRow.deleted_at > cutoff,
-                *_live_grant_filter(user_id),
+            self._session.execute(
+                select(PatientRow)
+                .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+                .where(
+                    PatientRow.deleted_at.isnot(None),
+                    PatientRow.deleted_at > cutoff,
+                    *_live_grant_filter(user_id),
+                )
+                .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
             )
-            .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)
+            .scalars()
             .all()
         )
         return [(_row_to_patient(r), r.deleted_at) for r in rows if r.deleted_at is not None]
@@ -295,14 +313,24 @@ class PostgresPatientRepository(PatientRepository):
         # Cascade: only undo rows whose deleted_at matches the patient's
         # tombstone — those are the ones the patient delete cascaded
         # onto. Earlier independent per-row soft-deletes stay tombstoned.
-        self._session.query(TherapySessionRow).filter(
-            TherapySessionRow.patient_id == patient_id,
-            TherapySessionRow.deleted_at == patient_stamp,
-        ).update({TherapySessionRow.deleted_at: None}, synchronize_session=False)
-        self._session.query(NoteRow).filter(
-            NoteRow.patient_id == patient_id,
-            NoteRow.deleted_at == patient_stamp,
-        ).update({NoteRow.deleted_at: None}, synchronize_session=False)
+        self._session.execute(
+            update(TherapySessionRow)
+            .where(
+                TherapySessionRow.patient_id == patient_id,
+                TherapySessionRow.deleted_at == patient_stamp,
+            )
+            .values({TherapySessionRow.deleted_at: None})
+            .execution_options(synchronize_session=False)
+        )
+        self._session.execute(
+            update(NoteRow)
+            .where(
+                NoteRow.patient_id == patient_id,
+                NoteRow.deleted_at == patient_stamp,
+            )
+            .values({NoteRow.deleted_at: None})
+            .execution_options(synchronize_session=False)
+        )
         row.deleted_at = None
         self._session.flush()
         return _row_to_patient(row)
@@ -346,12 +374,16 @@ class PostgresPatientRepository(PatientRepository):
         if row is None:
             return False
         # Mirror cascade order from soft-delete.
-        self._session.query(NoteRow).filter(NoteRow.patient_id == patient_id).delete(
-            synchronize_session=False
+        self._session.execute(
+            delete(NoteRow)
+            .where(NoteRow.patient_id == patient_id)
+            .execution_options(synchronize_session=False)
         )
-        self._session.query(TherapySessionRow).filter(
-            TherapySessionRow.patient_id == patient_id
-        ).delete(synchronize_session=False)
+        self._session.execute(
+            delete(TherapySessionRow)
+            .where(TherapySessionRow.patient_id == patient_id)
+            .execution_options(synchronize_session=False)
+        )
         # patient_clinicians has ON DELETE CASCADE so grants are removed
         # automatically when the patient row goes.
         self._session.delete(row)

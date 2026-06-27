@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, case, nulls_last, or_, text
+from sqlalchemy import String, Uuid, bindparam, case, nulls_last, or_, select, text
 
 from ...db.models import PatientClinicianRow, PatientMedicationRow
 from ...utcnow import utc_now
@@ -63,13 +63,13 @@ class PostgresMedicationRepository(MedicationRepository):
 
     def get(self, medication_id: str, user_id: str) -> dict[str, object] | None:
         """Fetch by id with access check, or ``None`` if absent/denied."""
-        row = (
-            self._session.query(PatientMedicationRow)
+        row = self._session.execute(
+            select(PatientMedicationRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == PatientMedicationRow.patient_id,
             )
-            .filter(
+            .where(
                 PatientMedicationRow.id == medication_id,
                 PatientClinicianRow.user_id == user_id,
                 or_(
@@ -77,8 +77,7 @@ class PostgresMedicationRepository(MedicationRepository):
                     PatientClinicianRow.expires_at > utc_now(),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_dict(row) if row else None
 
     def list_by_patient(
@@ -90,18 +89,18 @@ class PostgresMedicationRepository(MedicationRepository):
     ) -> list[dict[str, object]]:
         if not self._has_access(patient_id, user_id):
             return []
-        query = self._session.query(PatientMedicationRow).filter(
+        query = select(PatientMedicationRow).where(
             PatientMedicationRow.patient_id == patient_id,
             PatientMedicationRow.deleted_at.is_(None),
         )
         if status is not None:
-            query = query.filter(PatientMedicationRow.status == status)
+            query = query.where(PatientMedicationRow.status == status)
         # Active first, then other statuses; within each group started_at desc nulls last
         query = query.order_by(
             case((PatientMedicationRow.status == "active", 0), else_=1),
             nulls_last(PatientMedicationRow.started_at.desc()),
         )
-        return [_row_to_dict(r) for r in query.all()]
+        return [_row_to_dict(r) for r in self._session.execute(query).scalars().all()]
 
     # --- writes ---
 
@@ -148,13 +147,13 @@ class PostgresMedicationRepository(MedicationRepository):
         return _row_to_dict(orm_row)
 
     def soft_delete(self, medication_id: str, user_id: str) -> None:
-        orm_row = (
-            self._session.query(PatientMedicationRow)
+        orm_row = self._session.execute(
+            select(PatientMedicationRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == PatientMedicationRow.patient_id,
             )
-            .filter(
+            .where(
                 PatientMedicationRow.id == medication_id,
                 PatientClinicianRow.user_id == user_id,
                 or_(
@@ -162,8 +161,7 @@ class PostgresMedicationRepository(MedicationRepository):
                     PatientClinicianRow.expires_at > utc_now(),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         if orm_row is None:
             # No row or no access — treat as access denied to be safe
             raise PatientMedicationAccessDeniedError(medication_id, user_id)

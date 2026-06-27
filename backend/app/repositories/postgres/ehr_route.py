@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import EhrRouteRow
 from ...models.ehr_route import EhrRoute, EhrRouteStep
 from ...utcnow import utc_now
@@ -20,7 +22,11 @@ class PostgresEhrRouteRepository(EhrRouteRepository):
         self._session = session
 
     def get(self, ehr_system: str) -> EhrRoute | None:
-        row = self._session.query(EhrRouteRow).filter_by(ehr_system=ehr_system).first()
+        row = (
+            self._session.execute(select(EhrRouteRow).filter_by(ehr_system=ehr_system))
+            .scalars()
+            .first()
+        )
         if row is None:
             return None
         return _row_to_route(row)
@@ -51,7 +57,11 @@ class PostgresEhrRouteRepository(EhrRouteRepository):
         selector: str,
         a11y_fingerprint: str,
     ) -> EhrRoute | None:
-        row = self._session.query(EhrRouteRow).filter_by(ehr_system=ehr_system).first()
+        row = (
+            self._session.execute(select(EhrRouteRow).filter_by(ehr_system=ehr_system))
+            .scalars()
+            .first()
+        )
         if row is None:
             return None
         steps = list(row.steps)
@@ -67,7 +77,11 @@ class PostgresEhrRouteRepository(EhrRouteRepository):
         return _row_to_route(row)
 
     def increment_success(self, ehr_system: str) -> None:
-        row = self._session.query(EhrRouteRow).filter_by(ehr_system=ehr_system).first()
+        row = (
+            self._session.execute(select(EhrRouteRow).filter_by(ehr_system=ehr_system))
+            .scalars()
+            .first()
+        )
         if row:
             row.success_count += 1
             row.last_success = utc_now()

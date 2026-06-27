@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, select, text
 
 from ...db.models import OutcomeMeasureRow, PatientClinicianRow
 from ...utcnow import utc_now
@@ -65,13 +65,13 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
 
     def get(self, measure_id: str, user_id: str) -> dict[str, object] | None:
         """Fetch by id with access check, or ``None`` if absent/denied."""
-        row = (
-            self._session.query(OutcomeMeasureRow)
+        row = self._session.execute(
+            select(OutcomeMeasureRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == OutcomeMeasureRow.patient_id,
             )
-            .filter(
+            .where(
                 OutcomeMeasureRow.id == measure_id,
                 PatientClinicianRow.user_id == user_id,
                 or_(
@@ -79,8 +79,7 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
                     PatientClinicianRow.expires_at > utc_now(),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_dict(row) if row else None
 
     def list_by_patient(
@@ -92,13 +91,13 @@ class PostgresOutcomeMeasureRepository(OutcomeMeasureRepository):
     ) -> list[dict[str, object]]:
         if not self._has_access(patient_id, user_id):
             return []
-        query = self._session.query(OutcomeMeasureRow).filter(
+        query = select(OutcomeMeasureRow).where(
             OutcomeMeasureRow.patient_id == patient_id,
         )
         if instrument is not None:
-            query = query.filter(OutcomeMeasureRow.instrument == instrument)
+            query = query.where(OutcomeMeasureRow.instrument == instrument)
         query = query.order_by(OutcomeMeasureRow.administered_at.asc())
-        return [_row_to_dict(r) for r in query.all()]
+        return [_row_to_dict(r) for r in self._session.execute(query).scalars().all()]
 
     # --- writes ---
 
