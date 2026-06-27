@@ -28,6 +28,13 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # eslint 10 is blocked by eslint-plugin-import (pulled in via
+      # eslint-config-next), whose peer dependency caps at eslint 9. The bump
+      # can't install, so Dependabot just re-opens an un-mergeable PR. Remove
+      # this once eslint-plugin-import ships eslint-10 support.
+      - dependency-name: "eslint"
+        versions: [">=10"]
 
   - package-ecosystem: github-actions
     directory: /
