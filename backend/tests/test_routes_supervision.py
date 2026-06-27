@@ -112,7 +112,7 @@ class InMemorySupervisionRepository:
 @pytest.fixture
 def supervision_repo(
     client: TestClient,
-) -> Generator[InMemorySupervisionRepository, None, None]:
+) -> Generator[InMemorySupervisionRepository]:
     """In-memory supervision repo wired into the FastAPI dep graph."""
     repo = InMemorySupervisionRepository()
     app.dependency_overrides[get_supervision_repository] = lambda: repo
