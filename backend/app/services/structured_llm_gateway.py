@@ -26,15 +26,23 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .vertex_client import anthropic_vertex_client, vertex_genai_client
 
 logger = logging.getLogger(__name__)
+
+# Mistral publisher models on Vertex are reached via the regional rawPredict
+# endpoint (no global endpoint); default to us-central1, overridable.
+_MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
 
 
 class StructuredOutputTruncatedError(ValueError):
@@ -351,6 +359,140 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
         )
 
 
+class MistralStructuredLLMGateway(StructuredLLMGateway):
+    """Structured-output gateway backed by Mistral on Vertex AI.
+
+    Mistral publisher models are served through Vertex's ``:rawPredict`` endpoint
+    (OpenAI-shaped chat completions) rather than the google-genai or Anthropic
+    clients, so this issues a signed HTTPS request directly. Structure is enforced
+    the same way as the Anthropic path — a forced function call whose parameters
+    are the caller's ``response_schema`` — and the system prompt is a plain message
+    (Vertex Mistral has no prompt-cache control). Auth is the ambient Google
+    application-default credentials (the service account in prod, ADC locally).
+
+    Selected for ``mistralai:``-prefixed model ids by
+    :func:`resolve_structured_llm_gateway`.
+    """
+
+    _TOOL_NAME = "emit_structured_output"
+    _SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+
+    def __init__(
+        self,
+        *,
+        region: str | None = None,
+        request: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
+        self._region = region or _MISTRAL_VERTEX_REGION
+        # Injectable transport for tests: (url, payload) -> parsed JSON response.
+        self._request = request
+
+    def _do_request(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._request is not None:
+            return self._request(url, payload)
+        # Lazy: only the Mistral path needs these.
+        import google.auth
+        import google.auth.transport.requests
+        import httpx
+
+        creds, _ = google.auth.default(scopes=[self._SCOPE])
+        creds.refresh(google.auth.transport.requests.Request())
+        resp = httpx.post(
+            url,
+            headers={"Authorization": f"Bearer {creds.token}"},
+            json=payload,
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return cast("dict[str, Any]", resp.json())
+
+    def complete_structured(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any],
+        max_output_tokens: int,
+        temperature: float = 0.3,
+        thinking_budget: int | None = None,
+    ) -> StructuredCompletion:
+        from ..db import assert_no_held_db_connection
+
+        assert_no_held_db_connection("structured-llm")
+
+        # ``thinking_budget`` is part of the shared contract but unused here.
+        del thinking_budget
+
+        normalized_model = strip_provider_prefix(model)
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        url = (
+            f"https://{self._region}-aiplatform.googleapis.com/v1/projects/{project}"
+            f"/locations/{self._region}/publishers/mistralai/models/{normalized_model}:rawPredict"
+        )
+        payload: dict[str, Any] = {
+            "model": normalized_model,
+            "max_tokens": max_output_tokens,
+            "temperature": temperature,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": self._TOOL_NAME,
+                        "description": "Return the result as structured output.",
+                        "parameters": response_schema,
+                    },
+                }
+            ],
+            "tool_choice": "any",
+        }
+
+        with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
+            try:
+                data = self._do_request(url, payload)
+            except Exception as exc:
+                logger.exception("Mistral structured completion failed")
+                raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
+            usage = data.get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            output_tokens = usage.get("completion_tokens")
+            span.set_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=usage.get("total_tokens"),
+            )
+
+        choices = data.get("choices") or []
+        finish = choices[0].get("finish_reason") if choices else None
+        if finish == "length":
+            raise StructuredOutputTruncatedError(
+                f"LLM output truncated at max_output_tokens={max_output_tokens} "
+                f"(model={normalized_model}). Retry with a larger output budget."
+            )
+
+        try:
+            arguments = choices[0]["message"]["tool_calls"][0]["function"]["arguments"]
+        except (IndexError, KeyError, TypeError) as exc:
+            raise ValueError(
+                f"Mistral response had no '{self._TOOL_NAME}' tool call (finish={finish})"
+            ) from exc
+
+        parsed = arguments if isinstance(arguments, dict) else json.loads(arguments)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"Structured tool input was not an object ({type(parsed).__name__})")
+
+        finish_reason = "safety" if finish == "content_filter" else "stop"
+        return StructuredCompletion(
+            data=parsed,
+            output_tokens=output_tokens,
+            finish_reason=finish_reason,
+        )
+
+
 def _to_gemini_schema(types: Any, schema: dict[str, Any]) -> Any:
     """Translate a JSON-schema-style dict into a ``types.Schema``.
 
@@ -467,6 +609,7 @@ def get_default_structured_llm_gateway() -> StructuredLLMGateway:
 
 
 _anthropic_gateway_holder: list[StructuredLLMGateway] = []
+_mistral_gateway_holder: list[StructuredLLMGateway] = []
 
 
 def _get_anthropic_structured_llm_gateway() -> StructuredLLMGateway:
@@ -476,17 +619,27 @@ def _get_anthropic_structured_llm_gateway() -> StructuredLLMGateway:
     return _anthropic_gateway_holder[0]
 
 
+def _get_mistral_structured_llm_gateway() -> StructuredLLMGateway:
+    """Return the process-wide :class:`MistralStructuredLLMGateway`."""
+    if not _mistral_gateway_holder:
+        _mistral_gateway_holder.append(MistralStructuredLLMGateway())
+    return _mistral_gateway_holder[0]
+
+
 def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
     """Pick the structured gateway for a (possibly provider-prefixed) model id.
 
-    ``anthropic:claude-...`` routes to Claude on Vertex AI; a bare id or any
-    other prefix (e.g. ``google:``) routes to the default Gemini gateway. Lets a
-    single caller target either provider by model string alone, the same way
-    :func:`strip_provider_prefix` already lets the prefix ride through config.
+    ``anthropic:claude-...`` → Claude on Vertex, ``mistralai:mistral-...`` →
+    Mistral on Vertex; a bare id or any other prefix (e.g. ``google:``) → the
+    default Gemini gateway. Lets a single caller target any provider by model
+    string alone, the same way :func:`strip_provider_prefix` already lets the
+    prefix ride through config.
     """
     provider, sep, _rest = model.partition(":")
     if sep and provider == LLMProvider.ANTHROPIC:
         return _get_anthropic_structured_llm_gateway()
+    if sep and provider == LLMProvider.MISTRALAI:
+        return _get_mistral_structured_llm_gateway()
     return get_default_structured_llm_gateway()
 
 
@@ -494,6 +647,7 @@ __all__ = [
     "AnthropicStructuredLLMGateway",
     "FakeStructuredLLMGateway",
     "GeminiStructuredLLMGateway",
+    "MistralStructuredLLMGateway",
     "StructuredCompletion",
     "StructuredLLMGateway",
     "get_default_structured_llm_gateway",

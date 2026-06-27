@@ -20,6 +20,7 @@ class LLMProvider(StrEnum):
 
     GOOGLE = "google"
     ANTHROPIC = "anthropic"
+    MISTRALAI = "mistralai"
 
 
 _KNOWN_PREFIXES: frozenset[str] = frozenset(p.value for p in LLMProvider)

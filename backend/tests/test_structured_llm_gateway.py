@@ -10,12 +10,15 @@ exceptions, falls back to ``default_response``, and records calls.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from backend.app.services.structured_llm_gateway import (
     AnthropicStructuredLLMGateway,
     FakeStructuredLLMGateway,
     GeminiStructuredLLMGateway,
+    MistralStructuredLLMGateway,
     StructuredCompletion,
     StructuredOutputTruncatedError,
     _to_gemini_schema,
@@ -299,10 +302,103 @@ class TestAnthropicStructuredLLMGateway:
             )
 
 
+class TestMistralStructuredLLMGateway:
+    def _ok_response(self, captured: dict, verdict: str = "block") -> dict:
+        def request(url: str, payload: dict) -> dict:
+            captured["url"] = url
+            captured["payload"] = payload
+            return {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "emit_structured_output",
+                                        "arguments": json.dumps(
+                                            {"verdict": verdict, "category": "medical_advice"}
+                                        ),
+                                    }
+                                }
+                            ]
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128},
+            }
+
+        return request
+
+    def test_rawpredict_request_shape_and_parse(self) -> None:
+        captured: dict = {}
+        gw = MistralStructuredLLMGateway(region="us-central1", request=self._ok_response(captured))
+        result = gw.complete_structured(
+            model="mistralai:mistral-small-2503",
+            system_prompt="POLICY",
+            user_prompt="candidate",
+            response_schema={"type": "object", "properties": {"verdict": {"type": "string"}}},
+            max_output_tokens=64,
+        )
+        assert result.data == {"verdict": "block", "category": "medical_advice"}
+        assert result.output_tokens == 8
+        # Provider prefix stripped; regional rawPredict endpoint; forced function.
+        assert ":rawPredict" in captured["url"]
+        assert "/publishers/mistralai/models/mistral-small-2503:rawPredict" in captured["url"]
+        assert captured["payload"]["model"] == "mistral-small-2503"
+        assert captured["payload"]["tool_choice"] == "any"
+        assert captured["payload"]["tools"][0]["function"]["name"] == "emit_structured_output"
+
+    def test_string_arguments_are_parsed(self) -> None:
+        gw = MistralStructuredLLMGateway(
+            region="us-central1", request=self._ok_response({}, "allow")
+        )
+        result = gw.complete_structured(
+            model="mistralai:mistral-small-2503",
+            system_prompt="s",
+            user_prompt="u",
+            response_schema={"type": "object"},
+            max_output_tokens=64,
+        )
+        assert result.data["verdict"] == "allow"
+
+    def test_missing_tool_call_raises(self) -> None:
+        def request(url: str, payload: dict) -> dict:
+            return {"choices": [{"finish_reason": "stop", "message": {"content": "no tool"}}]}
+
+        gw = MistralStructuredLLMGateway(region="us-central1", request=request)
+        with pytest.raises(ValueError, match="tool call"):
+            gw.complete_structured(
+                model="mistralai:mistral-small-2503",
+                system_prompt="s",
+                user_prompt="u",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+            )
+
+    def test_truncation_raises(self) -> None:
+        def request(url: str, payload: dict) -> dict:
+            return {"choices": [{"finish_reason": "length", "message": {}}]}
+
+        gw = MistralStructuredLLMGateway(region="us-central1", request=request)
+        with pytest.raises(StructuredOutputTruncatedError):
+            gw.complete_structured(
+                model="mistralai:mistral-small-2503",
+                system_prompt="s",
+                user_prompt="u",
+                response_schema={"type": "object"},
+                max_output_tokens=64,
+            )
+
+
 class TestResolveStructuredLLMGateway:
     def test_anthropic_prefix_routes_to_claude(self) -> None:
         gw = resolve_structured_llm_gateway("anthropic:claude-haiku-4-5")
         assert isinstance(gw, AnthropicStructuredLLMGateway)
+
+    def test_mistral_prefix_routes_to_mistral(self) -> None:
+        gw = resolve_structured_llm_gateway("mistralai:mistral-small-2503")
+        assert isinstance(gw, MistralStructuredLLMGateway)
 
     def test_bare_and_google_route_to_gemini(self) -> None:
         assert isinstance(
