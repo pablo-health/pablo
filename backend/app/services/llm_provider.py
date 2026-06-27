@@ -19,6 +19,8 @@ class LLMProvider(StrEnum):
     """Known provider prefixes used in ``provider:model`` model strings."""
 
     GOOGLE = "google"
+    ANTHROPIC = "anthropic"
+    MISTRALAI = "mistralai"
 
 
 _KNOWN_PREFIXES: frozenset[str] = frozenset(p.value for p in LLMProvider)
