@@ -424,6 +424,7 @@ class TestIDOR:
         finally:
             self._cleanup_overrides()
 
+
 class TestListPatientNotesAudit:
     """The patient-notes list returns every note's full SOAP body, so it must
     audit a per-note view (resource_type=session, the clinical-artifact family)

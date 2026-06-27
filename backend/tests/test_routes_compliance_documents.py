@@ -150,7 +150,7 @@ def doc_client(
     doc_repo: _InMemoryComplianceDocumentRepository,
     storage: _InMemoryStorageBackend,
     doc_settings: Settings,
-) -> Generator[TestClient, None, None]:
+) -> Generator[TestClient]:
     """TestClient with compliance-document deps overridden."""
     app.dependency_overrides[get_compliance_item_repository] = lambda: item_repo
     app.dependency_overrides[get_compliance_document_repository] = lambda: doc_repo

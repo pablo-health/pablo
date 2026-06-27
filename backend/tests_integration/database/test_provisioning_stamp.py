@@ -51,9 +51,7 @@ def _alembic_head() -> str:
     return head
 
 
-def test_create_practice_schema_stamps_alembic_version_at_head(
-    engine, tenant_schema: str
-) -> None:
+def test_create_practice_schema_stamps_alembic_version_at_head(engine, tenant_schema: str) -> None:
     create_practice_schema(engine, tenant_schema)
 
     with engine.connect() as conn:

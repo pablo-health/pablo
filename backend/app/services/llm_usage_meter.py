@@ -94,8 +94,7 @@ class LlmUsageMeter:
             )
         except Exception:
             logger.exception(
-                "llm_usage_meter: failed to record turn "
-                "(user_id=%s feature_key=%s model=%s)",
+                "llm_usage_meter: failed to record turn (user_id=%s feature_key=%s model=%s)",
                 user_id,
                 feature_key,
                 model,

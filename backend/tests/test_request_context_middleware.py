@@ -191,31 +191,20 @@ class TestRequestIdMinting:
     def test_cloud_trace_header_honored(self) -> None:
         client = TestClient(_build_app())
         trace = "105445aa7843bc8bf206b12000100000/1;o=1"
-        response = client.get(
-            "/api/health", headers={CLOUD_TRACE_HEADER: trace}
-        )
+        response = client.get("/api/health", headers={CLOUD_TRACE_HEADER: trace})
         assert response.headers[REQUEST_ID_HEADER] == "105445aa7843bc8bf206b12000100000"
 
     def test_w3c_traceparent_honored(self) -> None:
         client = TestClient(_build_app())
         traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-        response = client.get(
-            "/api/health", headers={W3C_TRACEPARENT_HEADER: traceparent}
-        )
+        response = client.get("/api/health", headers={W3C_TRACEPARENT_HEADER: traceparent})
         assert response.headers[REQUEST_ID_HEADER] == "4bf92f3577b34da6a3ce929d0e0e4736"
 
     def test_aws_trace_header_honored(self) -> None:
         client = TestClient(_build_app())
-        aws_trace = (
-            "Root=1-67891233-abcdef012345678912345678;Parent=53995c3f42cd8ad8;Sampled=1"
-        )
-        response = client.get(
-            "/api/health", headers={AWS_TRACE_HEADER: aws_trace}
-        )
-        assert (
-            response.headers[REQUEST_ID_HEADER]
-            == "1-67891233-abcdef012345678912345678"
-        )
+        aws_trace = "Root=1-67891233-abcdef012345678912345678;Parent=53995c3f42cd8ad8;Sampled=1"
+        response = client.get("/api/health", headers={AWS_TRACE_HEADER: aws_trace})
+        assert response.headers[REQUEST_ID_HEADER] == "1-67891233-abcdef012345678912345678"
 
     def test_w3c_traceparent_takes_priority_over_cloud_specific(self) -> None:
         # If both headers are present (e.g. an OTel-instrumented client
@@ -225,9 +214,7 @@ class TestRequestIdMinting:
         response = client.get(
             "/api/health",
             headers={
-                W3C_TRACEPARENT_HEADER: (
-                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-                ),
+                W3C_TRACEPARENT_HEADER: ("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
                 CLOUD_TRACE_HEADER: "105445aa7843bc8bf206b12000100000/1;o=1",
             },
         )
@@ -347,9 +334,7 @@ class TestRequestCompletedLog:
         # request_id flows in via the contextvar, not extra=
         assert "request_id" in payload
 
-    def test_status_code_reflects_5xx_response(
-        self, captured_access_logs: io.StringIO
-    ) -> None:
+    def test_status_code_reflects_5xx_response(self, captured_access_logs: io.StringIO) -> None:
         # The 5xx alert must see status_code>=500. Verify a route that
         # raises an unhandled exception still produces the expected
         # access-log entry — finally-block emit, not happy-path-only.

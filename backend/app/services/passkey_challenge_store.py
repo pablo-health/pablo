@@ -129,9 +129,7 @@ class RedisPasskeyChallengeStore:
 
     def create(self, ceremony: Ceremony, user_id: str | None, challenge: bytes) -> None:
         data = json.dumps({"ceremony": ceremony, "user_id": user_id})
-        self._redis.setex(
-            f"{self.KEY_PREFIX}{_hash_challenge(challenge)}", self.ttl_seconds, data
-        )
+        self._redis.setex(f"{self.KEY_PREFIX}{_hash_challenge(challenge)}", self.ttl_seconds, data)
 
     def consume(self, ceremony: Ceremony, challenge: bytes) -> ConsumedChallenge | None:
         key = f"{self.KEY_PREFIX}{_hash_challenge(challenge)}"

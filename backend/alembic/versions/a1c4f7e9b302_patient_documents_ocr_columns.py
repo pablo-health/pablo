@@ -65,8 +65,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_patient_documents_extracted_via", "patient_documents", type_="check"
-    )
+    op.drop_constraint("ck_patient_documents_extracted_via", "patient_documents", type_="check")
     op.drop_column("patient_documents", "extraction_metadata")
     op.drop_column("patient_documents", "extracted_via")

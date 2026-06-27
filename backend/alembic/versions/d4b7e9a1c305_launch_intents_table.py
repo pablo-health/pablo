@@ -51,8 +51,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_launch_intents_user_id "
-        "ON platform.launch_intents (user_id)"
+        "CREATE INDEX IF NOT EXISTS ix_launch_intents_user_id ON platform.launch_intents (user_id)"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_launch_intents_expires_at "

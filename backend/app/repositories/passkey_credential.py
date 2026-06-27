@@ -123,11 +123,7 @@ class InMemoryPasskeyCredentialRepository(PasskeyCredentialRepository):
     def revoke(self, credential_id: str, *, user_id: str) -> bool:
         with self._lock:
             existing = self._rows.get(credential_id)
-            if (
-                existing is None
-                or existing.user_id != user_id
-                or existing.revoked_at is not None
-            ):
+            if existing is None or existing.user_id != user_id or existing.revoked_at is not None:
                 return False
             self._rows[credential_id] = replace(existing, revoked_at=utc_now())
             return True

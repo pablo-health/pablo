@@ -628,7 +628,7 @@ async def send_message(
             detail="Another turn is already in progress for this conversation.",
         ) from exc
 
-    async def _sse() -> AsyncGenerator[bytes, None]:  # type: ignore[name-defined]
+    async def _sse() -> AsyncGenerator[bytes]:  # type: ignore[name-defined]
         for event in collected:
             payload = json.dumps(event.data, default=str)
             yield f"event: {event.kind}\ndata: {payload}\n\n".encode()

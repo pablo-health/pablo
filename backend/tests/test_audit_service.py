@@ -206,6 +206,7 @@ class TestAuditService:
         assert entry.session_id == test_session.id
         assert entry.patient_id == test_patient.id
 
+
 class _FakeRedis:
     """Minimal Redis stand-in implementing ``SET key val NX EX ttl``.
 

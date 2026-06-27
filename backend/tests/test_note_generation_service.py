@@ -408,12 +408,8 @@ class TestRegistryGeneration:
                 )
             }
         }
-        gateway = FakeStructuredLLMGateway(
-            responses=[StructuredCompletion(data=llm_data)]
-        )
-        service = RegistryNoteGenerationService(
-            registry=isolated_registry, llm_gateway=gateway
-        )
+        gateway = FakeStructuredLLMGateway(responses=[StructuredCompletion(data=llm_data)])
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
         result = service.generate_note(
             "narrative",
             transcript,
@@ -443,9 +439,7 @@ class TestRegistryGeneration:
         hand-tuned prompt from prompts/soap.py instead of the auto-built
         one. The hand-tuned prompt is recognizable by its 'SOAP Note
         Structure' heading; the registry default has 'Section ... Fields'."""
-        transcript = Transcript(
-            format="txt", content="[00:00] Therapist: Hi.\n[00:01] Client: Hi."
-        )
+        transcript = Transcript(format="txt", content="[00:00] Therapist: Hi.\n[00:01] Client: Hi.")
         soap_llm_data = {
             "subjective": {
                 "chief_complaint": "Greeting only.",
@@ -482,9 +476,7 @@ class TestRegistryGeneration:
                 StructuredCompletion(data={}),
             ]
         )
-        service = RegistryNoteGenerationService(
-            registry=isolated_registry, llm_gateway=gateway
-        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
         result = service.generate_note(
             "soap",
             transcript,
@@ -545,9 +537,7 @@ class TestRegistryGeneration:
                 StructuredCompletion(data={}),
             ]
         )
-        service = RegistryNoteGenerationService(
-            registry=isolated_registry, llm_gateway=gateway
-        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
         service.generate_note(
             "soap",
             transcript,
@@ -564,13 +554,10 @@ class TestRegistryGeneration:
         )
         # Thinking is explicitly capped so reasoning can't eat the whole budget.
         assert (
-            attribution_call["thinking_budget"]
-            == settings.note_source_attribution_thinking_budget
+            attribution_call["thinking_budget"] == settings.note_source_attribution_thinking_budget
         )
         # And the cap leaves real room for the mapping to emit.
-        assert (
-            attribution_call["max_output_tokens"] > attribution_call["thinking_budget"]
-        )
+        assert attribution_call["max_output_tokens"] > attribution_call["thinking_budget"]
 
     def test_unknown_note_type_raises(
         self, isolated_registry: NoteTypeRegistry, patient: Patient
@@ -599,9 +586,7 @@ class TestRegistryGeneration:
                 StructuredCompletion(data=narrative),
             ]
         )
-        service = RegistryNoteGenerationService(
-            registry=isolated_registry, llm_gateway=gateway
-        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
 
         result = service.generate_note(
             "narrative",
@@ -628,9 +613,7 @@ class TestRegistryGeneration:
                 StructuredOutputTruncatedError("truncated #2"),
             ]
         )
-        service = RegistryNoteGenerationService(
-            registry=isolated_registry, llm_gateway=gateway
-        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
 
         with pytest.raises(ValueError, match="Note generation failed"):
             service.generate_note(
@@ -726,9 +709,7 @@ class TestRegistryGeneration:
                 )
             ]
         )
-        service = RegistryNoteGenerationService(
-            registry=isolated_registry, llm_gateway=gateway
-        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
         result = service.generate_note(
             "dap_test",
             Transcript(format="txt", content="[00:00] Therapist: Hi.\n[00:01] Client: Hi."),

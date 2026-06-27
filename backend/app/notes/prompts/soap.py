@@ -63,14 +63,10 @@ def build_soap_prompt(
         normalize_transcript_to_canonical_lines,
     )
 
-    canonical = normalize_transcript_to_canonical_lines(
-        transcript.content, transcript.format
-    )
+    canonical = normalize_transcript_to_canonical_lines(transcript.content, transcript.format)
     indexed = format_transcript_with_segment_ids(canonical)
     session_date_str = session_date.isoformat().split("T", maxsplit=1)[0]
-    diagnosis_line = (
-        f"- Diagnosis: {patient.diagnosis}" if patient.diagnosis else ""
-    )
+    diagnosis_line = f"- Diagnosis: {patient.diagnosis}" if patient.diagnosis else ""
 
     return f"""# Session Information
 - Client: the client

@@ -105,13 +105,19 @@ class TestUserPatientNovelty:
         repo = InMemoryAuditRepository()
         repo.append(
             AuditLogEntry(
-                user_id="u", action="x", resource_type="patient", resource_id="1",
+                user_id="u",
+                action="x",
+                resource_type="patient",
+                resource_id="1",
                 timestamp=_ago(hours=48),
             )
         )
         repo.append(
             AuditLogEntry(
-                user_id="u", action="y", resource_type="patient", resource_id="2",
+                user_id="u",
+                action="y",
+                resource_type="patient",
+                resource_id="2",
             )
         )
         assert len(repo.metadata_for_review(window_hours=24)) == 1
@@ -122,22 +128,31 @@ class TestUserPatientNovelty:
         # Seasoned user: known patient-A 30 days ago
         repo.append(
             AuditLogEntry(
-                user_id="seasoned", action="patient_viewed",
-                resource_type="patient", resource_id="A", patient_id="A",
+                user_id="seasoned",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="A",
+                patient_id="A",
                 timestamp=_ago(**SEASONED_USER_FIRST_SEEN),
             )
         )
         # Today: re-accesses A (known) and accesses B (novel)
         repo.append(
             AuditLogEntry(
-                user_id="seasoned", action="patient_viewed",
-                resource_type="patient", resource_id="A", patient_id="A",
+                user_id="seasoned",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="A",
+                patient_id="A",
             )
         )
         repo.append(
             AuditLogEntry(
-                user_id="seasoned", action="patient_viewed",
-                resource_type="patient", resource_id="B", patient_id="B",
+                user_id="seasoned",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="B",
+                patient_id="B",
             )
         )
         rows = repo.metadata_for_review(window_hours=24)
@@ -151,8 +166,11 @@ class TestUserPatientNovelty:
         for i in range(20):
             repo.append(
                 AuditLogEntry(
-                    user_id="new", action="patient_viewed",
-                    resource_type="patient", resource_id=f"p{i}", patient_id=f"p{i}",
+                    user_id="new",
+                    action="patient_viewed",
+                    resource_type="patient",
+                    resource_id=f"p{i}",
+                    patient_id=f"p{i}",
                 )
             )
         rows = repo.metadata_for_review(window_hours=24)
@@ -166,16 +184,22 @@ class TestUserPatientNovelty:
         # User signed up 3 days ago and accessed patient-A back then
         repo.append(
             AuditLogEntry(
-                user_id="rookie", action="patient_viewed",
-                resource_type="patient", resource_id="A", patient_id="A",
+                user_id="rookie",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="A",
+                patient_id="A",
                 timestamp=_ago(days=3),
             )
         )
         # Today: accesses patient-B (would be novel against the 3-day-old baseline)
         repo.append(
             AuditLogEntry(
-                user_id="rookie", action="patient_viewed",
-                resource_type="patient", resource_id="B", patient_id="B",
+                user_id="rookie",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="B",
+                patient_id="B",
             )
         )
         rows = repo.metadata_for_review(window_hours=24)
@@ -190,16 +214,22 @@ class TestUserPatientNovelty:
         # User active 100d ago (outside the 90d baseline window)
         repo.append(
             AuditLogEntry(
-                user_id="returner", action="patient_viewed",
-                resource_type="patient", resource_id="A", patient_id="A",
+                user_id="returner",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="A",
+                patient_id="A",
                 timestamp=_ago(days=100),
             )
         )
         # Returns today
         repo.append(
             AuditLogEntry(
-                user_id="returner", action="patient_viewed",
-                resource_type="patient", resource_id="A", patient_id="A",
+                user_id="returner",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="A",
+                patient_id="A",
             )
         )
         rows = repo.metadata_for_review(window_hours=24)
@@ -223,22 +253,31 @@ class TestUserPatientNovelty:
         # Seasoned user
         repo.append(
             AuditLogEntry(
-                user_id="u", action="patient_viewed",
-                resource_type="patient", resource_id="old", patient_id="old",
+                user_id="u",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="old",
+                patient_id="old",
                 timestamp=_ago(**SEASONED_USER_FIRST_SEEN),
             )
         )
         # Today: creates new patient + views them
         repo.append(
             AuditLogEntry(
-                user_id="u", action="patient_created",
-                resource_type="patient", resource_id="new", patient_id="new",
+                user_id="u",
+                action="patient_created",
+                resource_type="patient",
+                resource_id="new",
+                patient_id="new",
             )
         )
         repo.append(
             AuditLogEntry(
-                user_id="u", action="patient_viewed",
-                resource_type="patient", resource_id="new", patient_id="new",
+                user_id="u",
+                action="patient_viewed",
+                resource_type="patient",
+                resource_id="new",
+                patient_id="new",
             )
         )
         rows = repo.metadata_for_review(window_hours=24)

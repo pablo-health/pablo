@@ -86,13 +86,9 @@ class ExportService:
         exported_at = datetime.now(UTC).isoformat()
 
         if export_format == "json":
-            return self._export_as_json(
-                patient_response, sessions, notes_by_session, exported_at
-            )
+            return self._export_as_json(patient_response, sessions, notes_by_session, exported_at)
         elif export_format == "pdf":
-            return self._export_as_pdf(
-                patient_response, sessions, notes_by_session, exported_at
-            )
+            return self._export_as_pdf(patient_response, sessions, notes_by_session, exported_at)
         else:
             raise ValueError(f"Unsupported export format: {export_format}")
 
@@ -113,9 +109,7 @@ class ExportService:
             "export_format": "json",
         }
 
-    def _session_to_export_dict(
-        self, session: TherapySession, note: Note | None
-    ) -> dict[str, Any]:
+    def _session_to_export_dict(self, session: TherapySession, note: Note | None) -> dict[str, Any]:
         """Convert TherapySession + linked note to export dictionary."""
         final_content = (note.content_edited or note.content) if note else None
         return {

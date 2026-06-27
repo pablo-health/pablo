@@ -72,8 +72,7 @@ def test_create_persists_only_the_hash(pg_session: Session) -> None:
 
     rows = pg_session.execute(
         text(
-            "SELECT intent_hash, user_id, appointment_id, consumed_at "
-            "FROM platform.launch_intents"
+            "SELECT intent_hash, user_id, appointment_id, consumed_at FROM platform.launch_intents"
         )
     ).all()
     assert len(rows) == 1

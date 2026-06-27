@@ -50,9 +50,7 @@ P1 = "patient-with-appt"
 P2 = "patient-no-appt"
 
 
-def _appt(
-    user_id: str, patient_id: str, start: str, *, status: AppointmentStatus
-) -> Appointment:
+def _appt(user_id: str, patient_id: str, start: str, *, status: AppointmentStatus) -> Appointment:
     now = datetime.now(UTC)
     start_dt = datetime.fromisoformat(start)
     return Appointment(

@@ -155,11 +155,7 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         the user is granted on, not sessions the user personally
         recorded.
         """
-        sessions = [
-            s
-            for s in self._sessions.values()
-            if self._can_access(s.patient_id, user_id)
-        ]
+        sessions = [s for s in self._sessions.values() if self._can_access(s.patient_id, user_id)]
         sessions.sort(key=lambda s: s.session_date, reverse=True)
         total = len(sessions)
         offset = (page - 1) * page_size

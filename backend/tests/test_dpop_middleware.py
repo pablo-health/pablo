@@ -310,9 +310,7 @@ def test_stale_iat_is_rejected(keypair) -> None:
     public_jwk, signing_key = keypair
     client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
     stale = int(time.time()) - 120  # outside the ±60s window
-    proof = _sign_proof(
-        signing_key, htm="POST", htu="http://testserver/api/sessions/s1", iat=stale
-    )
+    proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1", iat=stale)
     resp = client.post(
         "/api/sessions/s1",
         headers={"Authorization": "Bearer t", INSTALL_ID_HEADER: INSTALL_ID, DPOP_HEADER: proof},
@@ -413,9 +411,7 @@ def test_spoofed_forwarded_host_falls_back_to_request_host(keypair) -> None:
     public_jwk, signing_key = keypair
     client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
 
-    spoof_proof = _sign_proof(
-        signing_key, htm="POST", htu="https://evil.example/api/sessions/s1"
-    )
+    spoof_proof = _sign_proof(signing_key, htm="POST", htu="https://evil.example/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
         headers={
@@ -451,9 +447,7 @@ def test_trusted_forwarded_host_is_honored(keypair) -> None:
         devices={INSTALL_ID: _make_device(public_jwk)},
         app_url="https://app.pablo.health",
     )
-    proof = _sign_proof(
-        signing_key, htm="POST", htu="https://app.pablo.health/api/sessions/s1"
-    )
+    proof = _sign_proof(signing_key, htm="POST", htu="https://app.pablo.health/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
         headers={
@@ -483,9 +477,7 @@ def test_api_origin_forwarded_host_is_honored(keypair) -> None:
         backend_base_url="https://api.pablo.health",
         app_url="http://localhost:3000",
     )
-    proof = _sign_proof(
-        signing_key, htm="POST", htu="https://api.pablo.health/api/sessions/s1"
-    )
+    proof = _sign_proof(signing_key, htm="POST", htu="https://api.pablo.health/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
         headers={

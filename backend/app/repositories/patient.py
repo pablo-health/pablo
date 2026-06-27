@@ -231,8 +231,7 @@ class InMemoryPatientRepository(PatientRepository):
             patients = [
                 p
                 for p in patients
-                if search_lower in p.first_name_lower
-                or search_lower in p.last_name_lower
+                if search_lower in p.first_name_lower or search_lower in p.last_name_lower
             ]
 
         # Sort by last name, then first name (clinical standard)
@@ -288,9 +287,7 @@ class InMemoryPatientRepository(PatientRepository):
         rows = [
             (self._patients[pid], stamp)
             for pid, stamp in self._deleted_at.items()
-            if pid in self._patients
-            and self._can_access(pid, user_id)
-            and stamp > cutoff
+            if pid in self._patients and self._can_access(pid, user_id) and stamp > cutoff
         ]
         rows.sort(key=lambda pair: (pair[0].last_name_lower, pair[0].first_name_lower))
         return rows

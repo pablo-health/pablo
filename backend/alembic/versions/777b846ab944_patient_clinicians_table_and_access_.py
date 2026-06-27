@@ -97,8 +97,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_patient_clinicians_user_id "
-        "ON patient_clinicians (user_id)"
+        "CREATE INDEX IF NOT EXISTS ix_patient_clinicians_user_id ON patient_clinicians (user_id)"
     )
 
     # Single authorization predicate. STABLE so PG can short-circuit

@@ -68,9 +68,7 @@ def get_compliance_retention_stub_writer() -> ComplianceRetentionStubWriter | No
 
 def _compliance_schema_exists(conn: Any) -> bool:
     row = conn.execute(
-        text(
-            "SELECT 1 FROM information_schema.schemata WHERE schema_name = 'compliance'"
-        )
+        text("SELECT 1 FROM information_schema.schemata WHERE schema_name = 'compliance'")
     ).fetchone()
     return row is not None
 
@@ -92,10 +90,7 @@ class SqlComplianceRetentionStubWriter:
 
     def stub_row_exists(self, conn: Any, patient_id: str) -> bool:
         row = conn.execute(
-            text(
-                "SELECT 1 FROM compliance.patient_identity_tombstone "
-                "WHERE patient_id = :pid"
-            ),
+            text("SELECT 1 FROM compliance.patient_identity_tombstone WHERE patient_id = :pid"),
             {"pid": patient_id},
         ).fetchone()
         return row is not None
@@ -108,11 +103,7 @@ class SqlComplianceRetentionStubWriter:
             " original_practice_schema, tombstoned_at, tombstoned_reason, expires_at"
             ") VALUES ("
         )
-        tail = (
-            " CAST(NULL AS text), :tenant, :schema, "
-            " NOW(), :reason, :exp"
-            ")"
-        )
+        tail = " CAST(NULL AS text), :tenant, :schema,  NOW(), :reason, :exp)"
         params_base: dict[str, Any] = {
             "pid": stub.patient_id,
             "name": stub.display_name,

@@ -34,9 +34,7 @@ class PostgresAuditRepository(AuditRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def earliest_create_for_patients(
-        self, patient_ids: set[str]
-    ) -> dict[str, datetime | None]:
+    def earliest_create_for_patients(self, patient_ids: set[str]) -> dict[str, datetime | None]:
         out: dict[str, datetime | None] = dict.fromkeys(patient_ids)
         if not patient_ids:
             return out

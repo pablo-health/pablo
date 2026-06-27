@@ -203,11 +203,7 @@ class TestSessionsListAuditBehavior:
         assert body["total"] == 0
 
         pg_session.expire_all()
-        rows = (
-            pg_session.execute(text("SELECT action FROM practice.audit_logs"))
-            .mappings()
-            .all()
-        )
+        rows = pg_session.execute(text("SELECT action FROM practice.audit_logs")).mappings().all()
         assert rows == []
 
     def test_list_writes_session_viewed_row_per_returned_session(

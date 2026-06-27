@@ -188,11 +188,21 @@ def test_build_record_excludes_sensitive_resources(tmp_path: Path) -> None:
             {
                 "resourceType": "Bundle",
                 "entry": [
-                    {"resource": {"id": "m1", "status": "active",
-                                  "medicationCodeableConcept": {"text": "Sertraline"}}},
-                    {"resource": {"id": "m2", "status": "active",
-                                  "meta": {"security": [{"code": "ETH"}]},
-                                  "medicationCodeableConcept": {"text": "Buprenorphine"}}},
+                    {
+                        "resource": {
+                            "id": "m1",
+                            "status": "active",
+                            "medicationCodeableConcept": {"text": "Sertraline"},
+                        }
+                    },
+                    {
+                        "resource": {
+                            "id": "m2",
+                            "status": "active",
+                            "meta": {"security": [{"code": "ETH"}]},
+                            "medicationCodeableConcept": {"text": "Buprenorphine"},
+                        }
+                    },
                 ],
             }
         )

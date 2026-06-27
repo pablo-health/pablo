@@ -107,9 +107,7 @@ def provisioned_schema(tenant_schema_name: str) -> str:  # type: ignore[return]
 
     cleanup_engine = create_engine(_db_url, pool_pre_ping=True)
     with cleanup_engine.begin() as conn:
-        conn.execute(
-            text(f"DROP SCHEMA IF EXISTS {tenant_schema_name} CASCADE")
-        )
+        conn.execute(text(f"DROP SCHEMA IF EXISTS {tenant_schema_name} CASCADE"))
     cleanup_engine.dispose()
 
 
@@ -143,9 +141,7 @@ def _assert_same_pid(engine: Engine, expected_pid: int) -> None:
 class TestCheckinSearchPathReset:
     """Prove the fail-open hazard exists and that the checkin reset closes it."""
 
-    def test_without_reset_leaks_tenant_schema(
-        self, provisioned_schema: str
-    ) -> None:
+    def test_without_reset_leaks_tenant_schema(self, provisioned_schema: str) -> None:
         """Without a checkin reset, a forgetful checkout inherits the prior tenant schema.
 
         This test demonstrates the failure mode: a connection armed with
@@ -167,9 +163,7 @@ class TestCheckinSearchPathReset:
                 # No SET search_path — simulating a worker or background task
                 # that forgot to stamp the schema.
                 try:
-                    count = conn.execute(
-                        text("SELECT count(*) FROM _checkin_probe")
-                    ).scalar_one()
+                    count = conn.execute(text("SELECT count(*) FROM _checkin_probe")).scalar_one()
                     # The table resolved to the tenant schema — the leak exists.
                     assert count > 0, (
                         "Expected the tenant schema to be leaking (count > 0), "
@@ -232,9 +226,7 @@ class TestCheckinSearchPathReset:
                 # connection defaults to search_path=public, which would pass
                 # the assertions below even if the reset never effectively
                 # fired. Asserting the PID closes that false-pass hole.
-                step3_pid: int = conn.execute(
-                    text("SELECT pg_backend_pid()")
-                ).scalar_one()
+                step3_pid: int = conn.execute(text("SELECT pg_backend_pid()")).scalar_one()
                 assert step3_pid == pid, (
                     f"Step 3 got a different physical connection (PID {step3_pid} "
                     f"vs armed PID {pid}). A fresh connection is public by default "
@@ -243,9 +235,7 @@ class TestCheckinSearchPathReset:
                 )
 
                 # No SET search_path — simulating a forgetful caller.
-                current_path: str = conn.execute(
-                    text("SHOW search_path")
-                ).scalar_one()
+                current_path: str = conn.execute(text("SHOW search_path")).scalar_one()
 
                 # The path must not contain the tenant schema.
                 assert provisioned_schema not in current_path, (
@@ -269,8 +259,7 @@ class TestCheckinSearchPathReset:
                     # the expected outcome — the table is not visible in public.
                     exc_str = str(exc).lower()
                     if not any(
-                        kw in exc_str
-                        for kw in ("_checkin_probe", "exist", "relation", "table")
+                        kw in exc_str for kw in ("_checkin_probe", "exist", "relation", "table")
                     ):
                         raise AssertionError(
                             f"Unexpected exception when probing _checkin_probe: {exc!r}"

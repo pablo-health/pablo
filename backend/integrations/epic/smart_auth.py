@@ -199,9 +199,7 @@ class StandaloneLaunchFlow:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if response.status_code != httpx.codes.OK:
-            raise EpicAuthError(
-                f"Token exchange failed ({response.status_code}): {response.text}"
-            )
+            raise EpicAuthError(f"Token exchange failed ({response.status_code}): {response.text}")
         payload = response.json()
         return AccessGrant(
             access_token=payload["access_token"],

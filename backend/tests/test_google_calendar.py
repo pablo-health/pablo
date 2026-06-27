@@ -30,7 +30,7 @@ from app.settings import get_settings
 
 
 @pytest.fixture(autouse=True)
-def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     """Provide a valid AES-256 encryption key for all tests."""
     key = base64.b64encode(os.urandom(32)).decode()
     monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", key)

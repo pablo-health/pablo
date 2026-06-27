@@ -40,8 +40,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute(
-        "ALTER TABLE platform.users "
-        "ADD COLUMN IF NOT EXISTS onboarding_state VARCHAR(20) NULL"
+        "ALTER TABLE platform.users ADD COLUMN IF NOT EXISTS onboarding_state VARCHAR(20) NULL"
     )
 
 

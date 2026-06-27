@@ -308,15 +308,11 @@ def create_practice_schema(engine: Engine, schema_name: str) -> None:
     # concurrent caller appears -- the second caller sees a populated
     # schema and takes the idempotent legacy-reconcile path.
     with engine.connect() as lock_conn:
-        lock_conn.execute(
-            text("SELECT pg_advisory_lock(hashtext(:s))"), {"s": schema_name}
-        )
+        lock_conn.execute(text("SELECT pg_advisory_lock(hashtext(:s))"), {"s": schema_name})
         try:
             _create_practice_schema_locked(engine, schema_name)
         finally:
-            lock_conn.execute(
-                text("SELECT pg_advisory_unlock(hashtext(:s))"), {"s": schema_name}
-            )
+            lock_conn.execute(text("SELECT pg_advisory_unlock(hashtext(:s))"), {"s": schema_name})
             lock_conn.commit()
 
 

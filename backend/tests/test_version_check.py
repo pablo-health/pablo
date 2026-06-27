@@ -82,7 +82,7 @@ class TestNativeCodeVersionCheck:
     REDIRECT_URI = "pablohealth://callback"
 
     @pytest.fixture(autouse=True)
-    def _mock_firebase(self) -> Generator[None, None, None]:
+    def _mock_firebase(self) -> Generator[None]:
         with (
             patch("app.routes.auth.initialize_firebase_app"),
             patch("app.routes.auth.firebase_auth") as mock_auth,

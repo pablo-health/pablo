@@ -489,9 +489,7 @@ class TestCurrentMedicationsTableSource:
         med_repo = InMemoryMedicationRepository()
         med_repo.grant_all_access()
         med_repo.create(self._make_med_row(drug_name="Sertraline", dose="50mg daily"), USER_ID)
-        med_repo.create(
-            self._make_med_row(drug_name="Aripiprazole", dose="5mg nightly"), USER_ID
-        )
+        med_repo.create(self._make_med_row(drug_name="Aripiprazole", dose="5mg nightly"), USER_ID)
 
         bundle = assemble_context_bundle(
             notes_repo=notes_repo,
@@ -507,9 +505,7 @@ class TestCurrentMedicationsTableSource:
         assert "Aripiprazole" in bundle.text
         assert "5mg nightly" in bundle.text
 
-    def test_started_at_appended_when_present(
-        self, notes_repo: InMemoryNotesRepository
-    ) -> None:
+    def test_started_at_appended_when_present(self, notes_repo: InMemoryNotesRepository) -> None:
         """started_at date appears in the formatted bullet."""
         med_repo = InMemoryMedicationRepository()
         med_repo.grant_all_access()

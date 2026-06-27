@@ -392,9 +392,7 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.phone = patient.phone
     row.status = patient.status
     # ISO string (or "" / None) from the API -> native DATE (or NULL).
-    row.date_of_birth = (
-        date.fromisoformat(patient.date_of_birth) if patient.date_of_birth else None
-    )
+    row.date_of_birth = date.fromisoformat(patient.date_of_birth) if patient.date_of_birth else None
     row.diagnosis = patient.diagnosis
     row.session_count = patient.session_count
     row.last_session_date = patient.last_session_date
