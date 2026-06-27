@@ -134,23 +134,31 @@ export function FirebaseLoginScreen() {
   // ceremony — resolved client-side after mount to avoid an SSR mismatch.
   const [passkeySupported, setPasskeySupported] = useState(false)
 
-  // Whether this mount was reached via the idle-timeout boot. Captured
-  // synchronously (before the effect below strips the param) so the
-  // "already authenticated → /dashboard" redirect can't bounce a
-  // restored-but-stale session straight back into the idle 401 loop.
-  const cameFromIdleTimeout = useRef(getUrlParam("reason") === "idle_timeout")
+  // Whether this mount was reached via a forced logout — an idle timeout, or a
+  // session whose token expired/was revoked. Captured synchronously (before the
+  // effect below strips the param) so the "already authenticated → /dashboard"
+  // redirect can't bounce a restored-but-stale session straight back into the
+  // 401 loop.
+  const forcedLogoutReason = useRef(getUrlParam("reason"))
+  const cameFromForcedLogout = useRef(
+    forcedLogoutReason.current === "idle_timeout" ||
+      forcedLogoutReason.current === "session_expired",
+  )
 
-  // Show notice when redirected from idle timeout
+  // Show a notice when we arrived here from a forced logout.
   useEffect(() => {
-    if (cameFromIdleTimeout.current) {
-      setError("You were signed out due to inactivity.")
-      window.history.replaceState({}, "", "/login")
-      // Backstop: the idle-logout path already wipes the persisted session,
-      // but clear again here in case that raced or was bypassed. Otherwise a
-      // session the SDK re-hydrates on this page would auto-redirect to the
-      // dashboard and re-trip the server idle check. Forces a fresh sign-in.
-      void clearStaleSession(getFirebaseAuth())
-    }
+    if (!cameFromForcedLogout.current) return
+    setError(
+      forcedLogoutReason.current === "idle_timeout"
+        ? "You were signed out due to inactivity."
+        : "Your session expired. Please sign in again.",
+    )
+    window.history.replaceState({}, "", "/login")
+    // Backstop: the logout path already wipes the persisted session, but clear
+    // again here in case that raced or was bypassed. Otherwise a session the
+    // SDK re-hydrates on this page would auto-redirect to the dashboard and
+    // re-trip the same 401. Forces a fresh sign-in.
+    void clearStaleSession(getFirebaseAuth())
   }, [])
 
   // Arm the Firebase Auth stuck-state recovery and surface a one-line
@@ -209,7 +217,7 @@ export function FirebaseLoginScreen() {
   }, [])
 
   // Redirect to dashboard when already authenticated (but not during signup
-  // flow, and not when we arrived here from an idle timeout — that session is
+  // flow, and not when we arrived here from a forced logout — that session is
   // stale and being cleared; bouncing back would re-enter the 401 loop).
   // A genuine re-login navigates via finishLogin(), not this effect.
   useEffect(() => {
@@ -218,7 +226,7 @@ export function FirebaseLoginScreen() {
       !authLoading &&
       step !== "verify-email" &&
       !isSignUp &&
-      !cameFromIdleTimeout.current
+      !cameFromForcedLogout.current
     ) {
       router.push("/dashboard")
     }

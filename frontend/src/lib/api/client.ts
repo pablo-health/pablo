@@ -20,24 +20,34 @@ export type ApiErrorInterceptor = (
   response: Response,
 ) => Promise<Record<string, unknown> | null>
 
-let idleTimeoutLogoutInFlight = false
+let terminalAuthLogoutInFlight = false
 
-function handleIdleTimeoutLogout() {
-  if (idleTimeoutLogoutInFlight) return
-  idleTimeoutLogoutInFlight = true
+/**
+ * Sign the user out and bounce to /login for an unrecoverable auth failure —
+ * an idle timeout, or a session whose token is expired/revoked/disabled and
+ * can't be refreshed. Without this the request just throws an ApiError and the
+ * user is stranded on a logged-in-looking page that errors on every action.
+ *
+ * Re-entry guarded so a burst of parallel 401s (a single dashboard load fires
+ * several requests at once) yields ONE sign-out + redirect, not many. ``reason``
+ * is surfaced on the login screen.
+ */
+function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expired") {
+  if (terminalAuthLogoutInFlight) return
+  terminalAuthLogoutInFlight = true
   void (async () => {
     try {
-      // Wipe the persisted SDK session, not just the in-memory one: an
-      // idle-timed-out session is tombstoned server-side by its `auth_time`,
-      // and that `auth_time` survives a Firebase token refresh. If the SDK
-      // re-hydrates the old session from storage (bfcache / iOS Safari), the
-      // user re-authenticates with the same tombstoned `auth_time` and loops
-      // on the idle 401 forever. Forcing a fresh sign-in mints a new one.
+      // Wipe the persisted SDK session, not just the in-memory one. For an idle
+      // timeout the session is tombstoned server-side by its `auth_time`, which
+      // survives a Firebase token refresh; for an expired/revoked session the
+      // stored refresh token is itself dead. Either way, if the SDK re-hydrates
+      // the old session from storage (bfcache / iOS Safari) the user loops on
+      // the same 401 forever. Forcing a fresh sign-in mints a new one.
       await getClientAuthProvider().signOut({ wipePersisted: true })
     } catch {
       // Provider not initialized — still redirect.
     }
-    window.location.assign("/login?reason=idle_timeout")
+    window.location.assign(`/login?reason=${reason}`)
   })()
 }
 
@@ -102,6 +112,22 @@ interface FetchOptions extends RequestInit {
  * backend dead. ``getIdToken(true)`` force-refreshes past that.
  */
 export const TOKEN_REFRESH_RETRY_CODES = new Set(["TOKEN_EXPIRED", "INVALID_TOKEN"])
+
+/**
+ * Backend auth 401 codes that mean the session is unrecoverable — the token is
+ * expired (and a refresh didn't help), malformed/invalid, revoked, or the
+ * account is disabled. These boot the user to /login rather than letting the
+ * request throw and strand them. Deliberately EXCLUDES ``MFA_REQUIRED`` (a
+ * step-up flow handled inline) and ``IDLE_TIMEOUT`` (handled separately, with
+ * its own reason). ``TOKEN_REVOKED`` / ``USER_DISABLED`` are terminal on
+ * arrival — no refresh is attempted for them.
+ */
+export const TERMINAL_AUTH_CODES = new Set([
+  "TOKEN_EXPIRED",
+  "INVALID_TOKEN",
+  "TOKEN_REVOKED",
+  "USER_DISABLED",
+])
 
 /**
  * Resolve the bearer token for an authenticated request.
@@ -232,16 +258,21 @@ export async function apiClient<T>(
       `API request failed with status ${response.status}`
     const errorDetails = errorData?.error?.details
 
-    // Backend-enforced idle timeout: sign out and redirect so the user
-    // sees the same /login?reason=idle_timeout flow as the client-side
-    // IdleTimeout component. Guarded against re-entry so a parallel
-    // burst of 401s doesn't fire multiple sign-outs / redirects.
-    if (
-      response.status === 401 &&
-      errorCode === "IDLE_TIMEOUT" &&
-      typeof window !== "undefined"
-    ) {
-      handleIdleTimeoutLogout()
+    // An unrecoverable 401 boots the user to /login instead of stranding them
+    // on a logged-in-looking page that throws on every action. IDLE_TIMEOUT
+    // mirrors the client-side IdleTimeout component. A token-level failure that
+    // survived the force-refresh retry above (expired/invalid) or is terminal
+    // on arrival (revoked/disabled) sends the user to a fresh sign-in — scoped
+    // to client-managed tokens (no caller-supplied `token`), since a caller
+    // that owns its token owns its own auth handling. Both paths are re-entry
+    // guarded so a parallel burst of 401s fires one redirect. MFA_REQUIRED is
+    // intentionally excluded (it drives the step-up flow, not a logout).
+    if (response.status === 401 && typeof window !== "undefined") {
+      if (errorCode === "IDLE_TIMEOUT") {
+        handleTerminalAuthLogout("idle_timeout")
+      } else if (!token && TERMINAL_AUTH_CODES.has(errorCode)) {
+        handleTerminalAuthLogout("session_expired")
+      }
     }
 
     const apiError = new ApiError(errorCode, errorMessage, errorDetails, response.status)
