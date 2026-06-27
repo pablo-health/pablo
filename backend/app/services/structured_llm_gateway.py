@@ -30,9 +30,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
-from .llm_provider import strip_provider_prefix
+from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
-from .vertex_client import vertex_genai_client
+from .vertex_client import anthropic_vertex_client, vertex_genai_client
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +223,134 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
         )
 
 
+class AnthropicStructuredLLMGateway(StructuredLLMGateway):
+    """Structured-output gateway backed by Claude on Vertex AI.
+
+    Sibling to :class:`GeminiStructuredLLMGateway` for the Anthropic publisher
+    models served through Vertex (the same BAA-covered endpoint, not the public
+    Anthropic API). Anthropic has no ``response_schema`` knob, so the schema is
+    enforced with a single forced tool call: the model must call
+    ``emit_structured_output`` whose ``input_schema`` *is* the caller's
+    ``response_schema``, and the validated tool input is the parsed JSON object.
+    The static ``system_prompt`` is sent as a cached block, so a repeated prefix
+    (the common case for a fixed instruction) bills at cache-read rates.
+
+    Selected for ``anthropic:``-prefixed model ids by
+    :func:`resolve_structured_llm_gateway`.
+    """
+
+    _TOOL_NAME = "emit_structured_output"
+
+    def __init__(self, client: Any = None) -> None:
+        # Injectable for tests; lazily built from the shared factory otherwise.
+        self._client = client
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            self._client = anthropic_vertex_client()
+        return self._client
+
+    def complete_structured(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        response_schema: dict[str, Any],
+        max_output_tokens: int,
+        temperature: float = 0.3,
+        thinking_budget: int | None = None,
+    ) -> StructuredCompletion:
+        # Never hold a pooled DB connection across the model round-trip — the
+        # caller must release_db_connection() first (raises in dev/test).
+        from ..db import assert_no_held_db_connection
+
+        assert_no_held_db_connection("structured-llm")
+
+        # ``thinking_budget`` is part of the shared contract but unused here: the
+        # Anthropic structured path issues a single non-thinking completion.
+        del thinking_budget
+
+        client = self._get_client()
+        normalized_model = strip_provider_prefix(model)
+        tool = {
+            "name": self._TOOL_NAME,
+            "description": "Return the result as structured output.",
+            "input_schema": response_schema,
+        }
+
+        with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
+            try:
+                response = client.messages.create(
+                    model=normalized_model,
+                    max_tokens=max_output_tokens,
+                    temperature=temperature,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": system_prompt,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    tools=[tool],
+                    tool_choice={"type": "tool", "name": self._TOOL_NAME},
+                    messages=[{"role": "user", "content": user_prompt}],
+                )
+            except Exception as exc:
+                logger.exception("Anthropic structured completion failed")
+                raise RuntimeError(f"Structured LLM call failed: {exc}") from exc
+
+            usage = getattr(response, "usage", None)
+            prompt_tokens = getattr(usage, "input_tokens", None)
+            output_tokens = getattr(usage, "output_tokens", None)
+            total = (
+                (prompt_tokens or 0) + (output_tokens or 0)
+                if prompt_tokens is not None or output_tokens is not None
+                else None
+            )
+            span.set_token_usage(
+                prompt_tokens=prompt_tokens,
+                completion_tokens=output_tokens,
+                total_tokens=total,
+            )
+
+        # Distinguish a token-capped completion (partial / no tool call) from a
+        # genuine malformed response, mirroring the Gemini path's finish-reason
+        # classification before parsing.
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            raise StructuredOutputTruncatedError(
+                f"LLM output truncated at max_output_tokens={max_output_tokens} "
+                f"(model={normalized_model}). Retry with a larger output budget."
+            )
+        finish_reason = "safety" if stop_reason == "refusal" else "stop"
+
+        tool_input = next(
+            (
+                block.input
+                for block in getattr(response, "content", None) or []
+                if getattr(block, "type", None) == "tool_use"
+                and getattr(block, "name", None) == self._TOOL_NAME
+            ),
+            None,
+        )
+        if tool_input is None:
+            raise ValueError(
+                f"Anthropic response had no '{self._TOOL_NAME}' tool call "
+                f"(stop_reason={stop_reason})"
+            )
+        if not isinstance(tool_input, dict):
+            raise ValueError(
+                f"Structured tool input was not an object ({type(tool_input).__name__})"
+            )
+
+        return StructuredCompletion(
+            data=tool_input,
+            output_tokens=output_tokens,
+            finish_reason=finish_reason,
+        )
+
+
 def _to_gemini_schema(types: Any, schema: dict[str, Any]) -> Any:
     """Translate a JSON-schema-style dict into a ``types.Schema``.
 
@@ -338,10 +466,36 @@ def get_default_structured_llm_gateway() -> StructuredLLMGateway:
     return _default_gateway_holder[0]
 
 
+_anthropic_gateway_holder: list[StructuredLLMGateway] = []
+
+
+def _get_anthropic_structured_llm_gateway() -> StructuredLLMGateway:
+    """Return the process-wide :class:`AnthropicStructuredLLMGateway`."""
+    if not _anthropic_gateway_holder:
+        _anthropic_gateway_holder.append(AnthropicStructuredLLMGateway())
+    return _anthropic_gateway_holder[0]
+
+
+def resolve_structured_llm_gateway(model: str) -> StructuredLLMGateway:
+    """Pick the structured gateway for a (possibly provider-prefixed) model id.
+
+    ``anthropic:claude-...`` routes to Claude on Vertex AI; a bare id or any
+    other prefix (e.g. ``google:``) routes to the default Gemini gateway. Lets a
+    single caller target either provider by model string alone, the same way
+    :func:`strip_provider_prefix` already lets the prefix ride through config.
+    """
+    provider, sep, _rest = model.partition(":")
+    if sep and provider == LLMProvider.ANTHROPIC:
+        return _get_anthropic_structured_llm_gateway()
+    return get_default_structured_llm_gateway()
+
+
 __all__ = [
+    "AnthropicStructuredLLMGateway",
     "FakeStructuredLLMGateway",
     "GeminiStructuredLLMGateway",
     "StructuredCompletion",
     "StructuredLLMGateway",
     "get_default_structured_llm_gateway",
+    "resolve_structured_llm_gateway",
 ]
