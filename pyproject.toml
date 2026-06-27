@@ -80,6 +80,12 @@ google-cloud-logging = "^3.16.0"
 # THERAPY-71d5 dropped meeting-transcription, so pin explicitly.
 google-genai = "^2.10.0"
 
+# Claude on Vertex AI — the Anthropic structured-output gateway provider
+# (backend/app/services/structured_llm_gateway.py). The "vertex" extra pulls the
+# google-auth bits the AnthropicVertex client needs; the public Anthropic API is
+# never used.
+anthropic = {version = "^0.75.0", extras = ["vertex"]}
+
 # TOTP generation — pentest identity bootstrap (backend/app/jobs/pentest_identity.py)
 # creates ephemeral MFA-enrolled Firebase users for the automated pentest.
 pyotp = "^2.10.0"
