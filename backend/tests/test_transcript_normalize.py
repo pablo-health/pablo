@@ -44,8 +44,7 @@ class TestVttFormat:
         )
         result = normalize_transcript_to_canonical_lines(content, "vtt")
         assert result == (
-            "[00:05] Sarah Chen: Good morning everyone\n"
-            "[00:09] John Doe: Glad to be here"
+            "[00:05] Sarah Chen: Good morning everyone\n[00:09] John Doe: Glad to be here"
         )
 
     def test_vtt_multi_line_cue(self) -> None:
@@ -57,10 +56,7 @@ class TestVttFormat:
             "everyone, glad you could come\n"
         )
         result = normalize_transcript_to_canonical_lines(content, "vtt")
-        assert (
-            result
-            == "[00:05] Sarah Chen: Good morning everyone, glad you could come"
-        )
+        assert result == "[00:05] Sarah Chen: Good morning everyone, glad you could come"
 
     def test_vtt_continuation_reuses_prior_speaker(self) -> None:
         content = (
@@ -80,28 +76,16 @@ class TestVttFormat:
         )
 
     def test_vtt_hour_rolls_into_minutes(self) -> None:
-        content = (
-            "WEBVTT\n"
-            "\n"
-            "01:02:03.000 --> 01:02:05.000\n"
-            "Speaker: At one hour\n"
-        )
+        content = "WEBVTT\n\n01:02:03.000 --> 01:02:05.000\nSpeaker: At one hour\n"
         result = normalize_transcript_to_canonical_lines(content, "vtt")
         assert result == "[62:03] Speaker: At one hour"
 
 
 class TestGoogleMeetFormat:
     def test_bracketed_timestamp(self) -> None:
-        content = (
-            "[00:00:08]\n"
-            "Sarah Chen: Hello\n"
-            "[00:00:14]\n"
-            "John Doe: Hi there\n"
-        )
+        content = "[00:00:08]\nSarah Chen: Hello\n[00:00:14]\nJohn Doe: Hi there\n"
         result = normalize_transcript_to_canonical_lines(content, "google_meet")
-        assert result == (
-            "[00:08] Sarah Chen: Hello\n[00:14] John Doe: Hi there"
-        )
+        assert result == ("[00:08] Sarah Chen: Hello\n[00:14] John Doe: Hi there")
 
     def test_speaker_continuation(self) -> None:
         content = (
@@ -113,8 +97,7 @@ class TestGoogleMeetFormat:
         )
         result = normalize_transcript_to_canonical_lines(content, "google_meet")
         assert result == (
-            "[00:08] Sarah Chen: First sentence. More from same speaker.\n"
-            "[00:20] John Doe: My turn"
+            "[00:08] Sarah Chen: First sentence. More from same speaker.\n[00:20] John Doe: My turn"
         )
 
     def test_mm_ss_timestamp_form(self) -> None:
@@ -141,10 +124,7 @@ class TestJsonFormat:
             ]
         )
         result = normalize_transcript_to_canonical_lines(content, "json")
-        assert result == (
-            "[00:05] Sarah Chen: Hello everyone\n"
-            "[00:09] John Doe: Glad to be here"
-        )
+        assert result == ("[00:05] Sarah Chen: Hello everyone\n[00:09] John Doe: Glad to be here")
 
     def test_plain_segment_shape(self) -> None:
         content = json.dumps(

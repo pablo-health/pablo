@@ -53,9 +53,7 @@ def upgrade() -> None:
             server_default="soap",
         ),
         sa.Column("content", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column(
-            "content_edited", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
+        sa.Column("content_edited", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("finalized_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("quality_rating", sa.Integer(), nullable=True),
         sa.Column("quality_rating_reason", sa.Text(), nullable=True),
@@ -74,9 +72,7 @@ def upgrade() -> None:
         sa.Column("export_reviewed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("export_reviewed_by", sa.String(length=128), nullable=True),
         sa.Column("exported_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column(
-            "redacted_content", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
+        sa.Column("redacted_content", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column(
             "naturalized_content",
             postgresql.JSONB(astext_type=sa.Text()),

@@ -938,9 +938,7 @@ def _cloud_tasks_backend_audience(settings: Settings) -> str:
     Must match what ``cloud_tasks_service.enqueue_cloud_task`` sets as the
     token audience (the backend's own URL), or verification rejects every job.
     """
-    return settings.transcription_backend_callback_url or settings.app_url.replace(
-        ":3000", ":8000"
-    )
+    return settings.transcription_backend_callback_url or settings.app_url.replace(":3000", ":8000")
 
 
 def require_cloud_tasks_invoker(request: Request) -> None:

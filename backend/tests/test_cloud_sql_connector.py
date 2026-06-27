@@ -96,7 +96,8 @@ def _inject_connector(
         "google.cloud.sql.connector",
     ]
     original: dict[str, types.ModuleType | None] = {
-        k: sys.modules.get(k) for k in keys  # type: ignore[misc]
+        k: sys.modules.get(k)
+        for k in keys  # type: ignore[misc]
     }
     google_mod: types.ModuleType = types.ModuleType("google")
     google_cloud_mod = types.ModuleType("google.cloud")
@@ -257,9 +258,7 @@ class TestCloudSqlConnectorPath:
         s = _settings()
         with patch("app.db.create_engine") as mock_ce:
             mock_ce.return_value = MagicMock()
-            _build_cloud_sql_engine(
-                s, ["-c lock_timeout=5000", "-c statement_timeout=60000"]
-            )
+            _build_cloud_sql_engine(s, ["-c lock_timeout=5000", "-c statement_timeout=60000"])
 
             _, kwargs = mock_ce.call_args
             kwargs["creator"]()

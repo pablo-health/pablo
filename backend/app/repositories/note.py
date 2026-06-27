@@ -29,9 +29,7 @@ class PatientAccessDeniedError(Exception):
     """
 
     def __init__(self, patient_id: str, user_id: str) -> None:
-        super().__init__(
-            f"user {user_id!r} has no access grant for patient {patient_id!r}"
-        )
+        super().__init__(f"user {user_id!r} has no access grant for patient {patient_id!r}")
         self.patient_id = patient_id
         self.user_id = user_id
 
@@ -150,9 +148,7 @@ class InMemoryNotesRepository(NotesRepository):
             return None
         return note
 
-    def get_by_session_id(
-        self, session_id: str, user_id: str = _TEST_DEFAULT_USER
-    ) -> Note | None:
+    def get_by_session_id(self, session_id: str, user_id: str = _TEST_DEFAULT_USER) -> Note | None:
         for note in self._notes.values():
             if note.session_id == session_id:
                 if not self._can_access(note.patient_id, user_id):
@@ -171,7 +167,7 @@ class InMemoryNotesRepository(NotesRepository):
             return []
         notes = [n for n in self._notes.values() if n.patient_id == patient_id]
         notes.sort(
-            key=lambda n: (n.finalized_at or n.created_at),
+            key=lambda n: n.finalized_at or n.created_at,
             reverse=True,
         )
         if limit is not None:

@@ -41,8 +41,7 @@ def test_no_route_depends_on_get_current_user_id() -> None:
     assert not offenders, (
         "These routes depend on get_current_user_id, which enforces neither MFA "
         "nor the idle gate — a first-factor-only path to whatever they return. "
-        "Use get_current_user / get_tenant_context (MFA-required) instead:\n"
-        + "\n".join(offenders)
+        "Use get_current_user / get_tenant_context (MFA-required) instead:\n" + "\n".join(offenders)
     )
 
 

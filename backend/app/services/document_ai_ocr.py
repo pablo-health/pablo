@@ -39,9 +39,7 @@ _RETRY_BACKOFF_SECONDS = 2.0
 # lets auth and quota failures surface in seconds.
 _PROCESS_TIMEOUT_SECONDS = 60.0
 
-_LOW_CONFIDENCE_MARKER = (
-    "[extraction had low confidence — verify before relying on details]\n\n"
-)
+_LOW_CONFIDENCE_MARKER = "[extraction had low confidence — verify before relying on details]\n\n"
 
 
 class OcrUnavailableError(RuntimeError):
@@ -82,9 +80,7 @@ class DocumentAiOcrClient:
         """True iff a processor is set and the kill-switch is on."""
         s = self._settings
         return bool(
-            s.allow_document_ai_ocr
-            and s.document_ai_project_id
-            and s.document_ai_processor_id
+            s.allow_document_ai_ocr and s.document_ai_project_id and s.document_ai_processor_id
         )
 
     def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None:
@@ -132,9 +128,7 @@ class DocumentAiOcrClient:
             from google.api_core.client_options import ClientOptions
             from google.cloud import documentai  # type: ignore[attr-defined]
         except ImportError as exc:
-            raise OcrUnavailableError(
-                "google-cloud-documentai not installed"
-            ) from exc
+            raise OcrUnavailableError("google-cloud-documentai not installed") from exc
 
         endpoint = f"{self._settings.document_ai_location}-documentai.googleapis.com"
         self._client = documentai.DocumentProcessorServiceClient(
@@ -233,8 +227,7 @@ def _parse_response(response: Any, *, latency_ms: int) -> OcrResult:
 
     flagged_overall = avg_confidence < _AVG_CONFIDENCE_LOW_THRESHOLD or (
         page_count > 0
-        and len(low_confidence_pages) / page_count
-        > _LOW_CONFIDENCE_PAGE_FRACTION_THRESHOLD
+        and len(low_confidence_pages) / page_count > _LOW_CONFIDENCE_PAGE_FRACTION_THRESHOLD
     )
     if flagged_overall and text:
         text = _LOW_CONFIDENCE_MARKER + text

@@ -62,13 +62,14 @@ class TestListForUser:
 
 class TestSelfAuditViewRoute:
     def test_returns_only_caller_rows(
-        self, client, mock_user_id, mock_audit_service  # type: ignore[no-untyped-def]
+        self,
+        client,
+        mock_user_id,
+        mock_audit_service,  # type: ignore[no-untyped-def]
     ) -> None:
         audit = mock_audit_service
         audit._repo = InMemoryAuditRepository()
-        audit._repo.append(
-            AuditLogEntry(user_id=mock_user_id, action="patient_viewed")
-        )
+        audit._repo.append(AuditLogEntry(user_id=mock_user_id, action="patient_viewed"))
         audit._repo.append(AuditLogEntry(user_id="someone-else", action="patient_viewed"))
 
         resp = client.get("/api/users/me/audit-log")
@@ -82,7 +83,10 @@ class TestSelfAuditViewRoute:
         assert "changes" not in body["data"][0]
 
     def test_read_is_meta_audited(
-        self, client, mock_user_id, mock_audit_service  # type: ignore[no-untyped-def]
+        self,
+        client,
+        mock_user_id,
+        mock_audit_service,  # type: ignore[no-untyped-def]
     ) -> None:
         audit = mock_audit_service
         audit._repo = InMemoryAuditRepository()
@@ -101,7 +105,9 @@ class TestSelfAuditViewRoute:
         assert resp.status_code == 422  # FastAPI bounds rejection
 
     def test_user_id_param_not_accepted(
-        self, client, mock_user_id  # type: ignore[no-untyped-def]
+        self,
+        client,
+        mock_user_id,  # type: ignore[no-untyped-def]
     ) -> None:
         # Even if a caller passes user_id=other, results are still the caller's own.
         resp = client.get("/api/users/me/audit-log?user_id=other-user")

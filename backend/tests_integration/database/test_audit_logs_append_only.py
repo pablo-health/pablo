@@ -102,7 +102,7 @@ def _seed_audit_row(engine: Engine, schema: str, user_id: str) -> str:
         )
         conn.execute(
             text(
-                "INSERT INTO audit_logs (id, \"timestamp\", expires_at, "
+                'INSERT INTO audit_logs (id, "timestamp", expires_at, '
                 "user_id, action, resource_type, resource_id) "
                 "VALUES (CAST(:id AS uuid), now(), now() - interval '1 day', "
                 ":u, 'read', 'patient', 'res-1')"
@@ -151,9 +151,7 @@ class TestAuditLogsAppendOnly:
             conn.rollback()
         assert "append-only" in str(exc.value)
 
-    def test_retention_path_delete_succeeds(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
+    def test_retention_path_delete_succeeds(self, engine: Engine, tenant_schema: str) -> None:
         user_id = "append-only-purge"
         row_id = _seed_audit_row(engine, tenant_schema, user_id)
 
@@ -185,9 +183,7 @@ class TestAuditLogsAppendOnly:
             conn.rollback()
         assert "append-only" in str(exc.value)
 
-    def test_truncate_with_purge_guc_succeeds(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
+    def test_truncate_with_purge_guc_succeeds(self, engine: Engine, tenant_schema: str) -> None:
         _seed_audit_row(engine, tenant_schema, "append-only-truncate-purge")
 
         with engine.begin() as conn:

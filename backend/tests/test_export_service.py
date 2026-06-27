@@ -215,9 +215,7 @@ def test_export_with_no_sessions(export_service, mock_patient_repo, mock_session
 
 def test_session_to_export_dict_includes_all_fields(export_service, mock_sessions, mock_notes):
     """Test that session export includes all relevant fields."""
-    session_dict = export_service._session_to_export_dict(
-        mock_sessions[0], mock_notes["session-1"]
-    )
+    session_dict = export_service._session_to_export_dict(mock_sessions[0], mock_notes["session-1"])
 
     # Verify all expected fields are present (excluding internal metadata)
     assert "id" in session_dict

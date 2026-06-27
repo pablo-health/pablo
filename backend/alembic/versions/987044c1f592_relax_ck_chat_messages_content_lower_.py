@@ -46,10 +46,7 @@ def upgrade() -> None:
     # pablohealth-prod's first chat_messages migration (chat_messages
     # tables there were created by create_all and never carried this
     # particular constraint name).
-    op.execute(
-        "ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS "
-        "ck_chat_messages_content_len"
-    )
+    op.execute("ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS ck_chat_messages_content_len")
     op.create_check_constraint(
         "ck_chat_messages_content_len",
         "chat_messages",
@@ -58,10 +55,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        "ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS "
-        "ck_chat_messages_content_len"
-    )
+    op.execute("ALTER TABLE chat_messages DROP CONSTRAINT IF EXISTS ck_chat_messages_content_len")
     op.create_check_constraint(
         "ck_chat_messages_content_len",
         "chat_messages",

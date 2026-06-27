@@ -99,9 +99,7 @@ def run_migrations_online() -> None:
             seed_session.flush()
 
     with connectable.connect() as connection:
-        connection.execute(
-            text(f"SET search_path = {target_schema}, {PLATFORM_SCHEMA}, public")
-        )
+        connection.execute(text(f"SET search_path = {target_schema}, {PLATFORM_SCHEMA}, public"))
         connection.commit()
 
         context.configure(

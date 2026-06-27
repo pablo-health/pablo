@@ -246,14 +246,14 @@ can re-run this job to verify.
 Implemented as scheduled Cloud Run Jobs that run every day (focused
 anomaly detection on a 24-hour window) and every month (slow-burn
 patterns on a 30-day window). Reports are written to
-`gs://{e.compliance_bucket or '<unconfigured>'}/hipaa-log-review/` and
+`gs://{e.compliance_bucket or "<unconfigured>"}/hipaa-log-review/` and
 retained under the bucket's lifecycle policy (see § 164.316(b)(2)).
 
 | Metric | Value |
 |---|---|
 | Daily reviews in last 30 days | {e.daily_review_count_30d} |
 | Monthly rollups in last 365 days | {e.monthly_review_count_1y} |
-| Most recent daily review | `{e.last_daily_review or '(none)'}` |
+| Most recent daily review | `{e.last_daily_review or "(none)"}` |
 
 ### § 164.308(a)(8) — Evaluation (Pentest)
 
@@ -264,7 +264,7 @@ alongside the log review evidence.
 | Metric | Value |
 |---|---|
 | Pentests in last 90 days | {e.pentest_count_90d} |
-| Most recent pentest | `{e.last_pentest or '(none)'}` |
+| Most recent pentest | `{e.last_pentest or "(none)"}` |
 
 Maps to **NIST SP 800-53 CA-8 (Penetration Testing)**.
 
@@ -283,8 +283,8 @@ routes from bypassing the service.
 | Metric | Value |
 |---|---|
 | Rows in `audit_logs` | {e.audit_row_count:,} |
-| Oldest entry | `{e.audit_oldest_ts or '(empty)'}` |
-| Newest entry | `{e.audit_newest_ts or '(empty)'}` |
+| Oldest entry | `{e.audit_oldest_ts or "(empty)"}` |
+| Newest entry | `{e.audit_newest_ts or "(empty)"}` |
 | Configured retention (days) | {e.audit_retention_days} |
 
 Retention of {e.audit_retention_days} days exceeds the HIPAA minimum
@@ -350,7 +350,7 @@ already signed.*
 ### § 164.316(b)(2)(i) — Retention of Documentation (6-year minimum)
 
 The compliance reports bucket
-(`gs://{e.compliance_bucket or '<unconfigured>'}`) is configured with
+(`gs://{e.compliance_bucket or "<unconfigured>"}`) is configured with
 a retention policy of **{retention_line}**. Bucket lock makes the
 retention policy irreversible for the configured period, satisfying
 the "retained for 6 years" requirement for all review artifacts.
@@ -367,7 +367,7 @@ The compliance pipeline itself is monitored with two signals:
 
 | Signal | Last observed |
 |---|---|
-| Weekly synthetic heartbeat (Monday 09:00 local) | `{e.last_heartbeat or '(none)'}` |
+| Weekly synthetic heartbeat (Monday 09:00 local) | `{e.last_heartbeat or "(none)"}` |
 | Heartbeat emissions in last 30 days | {e.heartbeat_count_30d} |
 
 A Cloud Monitoring log-based alert fires on the structured `ERROR`

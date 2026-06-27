@@ -82,7 +82,8 @@ USER_ID = "eval-clinician-1"
 # mental-health-domain to mirror the documents a Pablo clinician actually
 # uploads (psych evals, testing batteries, intake notes) rather than generic
 # medical records.
-_PSYCH_EVAL = """\
+_PSYCH_EVAL = (
+    """\
 PSYCHIATRIC EVALUATION
 Patient: [redacted]  Date: 2026-03-15
 Referring clinician: Dr. Rivera
@@ -113,9 +114,12 @@ PLAN:
 Start sertraline 50 mg daily, titrate as tolerated.
 Continue weekly cognitive behavioral therapy.
 Safety plan reviewed and updated. Follow up in 4 weeks.
-""" * 3  # repeat to give it real bulk
+"""
+    * 3
+)  # repeat to give it real bulk
 
-_UNRELATED_NEUROPSYCH = """\
+_UNRELATED_NEUROPSYCH = (
+    """\
 NEUROPSYCHOLOGICAL TESTING — COGNITIVE BATTERY
 Administered: 2025-09-01
 
@@ -140,7 +144,9 @@ Executive Function:
 IMPRESSION:
 Cognitive profile within normal limits across all domains. No evidence
 of focal deficit. Findings do not support a neurocognitive disorder.
-""" * 4  # long enough to be heavier than the psychiatric eval
+"""
+    * 4
+)  # long enough to be heavier than the psychiatric eval
 
 _BRIEF_INTAKE = "Patient intake note. Presenting concern: anxiety and insomnia."
 
@@ -182,6 +188,7 @@ def docs_repo() -> InMemoryPatientDocumentRepository:
 
 
 # ── 1. Manifest invariant ─────────────────────────────────────────────────────
+
 
 class TestManifestInvariant:
     """Manifest always present — even when full doc bodies are budget-dropped."""
@@ -271,6 +278,7 @@ class TestManifestInvariant:
 
 
 # ── 2. Relevance ordering ─────────────────────────────────────────────────────
+
 
 class TestRelevanceOrdering:
     """The document most lexically relevant to the query survives budget cuts."""
@@ -460,6 +468,7 @@ class TestRelevanceLengthBias:
 
 # ── 3. Summary fallback ───────────────────────────────────────────────────────
 
+
 class TestSummaryFallback:
     """Over-cap docs render their stored summary instead of a head-clipped body."""
 
@@ -551,6 +560,7 @@ class TestSummaryFallback:
 
 # ── 4. Safety invariant (regression) ─────────────────────────────────────────
 
+
 class TestSafetyInvariant:
     """safety_plan_active must survive any budget pressure — pre-existing
     invariant verified here to catch regressions from priority reordering."""
@@ -572,9 +582,12 @@ class TestSafetyInvariant:
         notes_repo.add(
             _make_note(
                 note_type="safety_plan",
-                content={"warning_signs": [
-                    "Crisis line: 988. Safe person: spouse. Means restriction: firearms removed."
-                ]},
+                content={
+                    "warning_signs": [
+                        "Crisis line: 988. Safe person: spouse. "
+                        "Means restriction: firearms removed."
+                    ]
+                },
             )
         )
 
@@ -695,8 +708,9 @@ class TestDocumentStrategySeam:
         not fall back to raw_text."""
         register_strategy(
             "padded_marker",
-            lambda docs: "## MARKER\n\n"
-            + "\n\n".join(f"<<{d.filename}>>" + (" x" * 4000) for d in docs),
+            lambda docs: (
+                "## MARKER\n\n" + "\n\n".join(f"<<{d.filename}>>" + (" x" * 4000) for d in docs)
+            ),
         )
         keep = _doc(
             filename="keep.pdf",

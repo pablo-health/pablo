@@ -42,9 +42,7 @@ class TestTracePropagationHeaders:
         assert headers[REQUEST_ID_HEADER] == "105445aa7843bc8bf206b12000100000"
         # traceparent for a 32-hex trace_id has the shape
         # 00-<trace_id>-<16hex span_id>-<2hex flags>
-        assert headers[W3C_TRACEPARENT_HEADER].startswith(
-            "00-105445aa7843bc8bf206b12000100000-"
-        )
+        assert headers[W3C_TRACEPARENT_HEADER].startswith("00-105445aa7843bc8bf206b12000100000-")
 
     def test_uuid_request_id_yields_traceparent(self) -> None:
         # Default-minted UUID4 ids should still produce a valid

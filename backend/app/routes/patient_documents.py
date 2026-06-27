@@ -430,9 +430,7 @@ def download_document_file(
     before any log harvesting that might surface it.
     """
     try:
-        result = service.signed_download_url(
-            document_id, user.id, disposition=disposition
-        )
+        result = service.signed_download_url(document_id, user.id, disposition=disposition)
     except DocumentsBucketNotConfiguredError as exc:
         raise ServerError(
             "Patient document uploads are not configured on this deployment",

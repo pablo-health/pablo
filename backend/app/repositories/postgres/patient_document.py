@@ -159,9 +159,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         )
         return _row_to_document(row) if row else None
 
-    def get_many(
-        self, document_ids: list[str], user_id: str
-    ) -> list[PatientDocument]:
+    def get_many(self, document_ids: list[str], user_id: str) -> list[PatientDocument]:
         """Bulk variant of :meth:`get` — one query for a set of ids.
 
         Carries the same combined access predicate (chart rows need a

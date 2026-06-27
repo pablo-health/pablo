@@ -30,9 +30,7 @@ import json
 import re
 from typing import Any
 
-_VTT_TIMESTAMP = re.compile(
-    r"^(\d{2}:\d{2}:\d{2})\.\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}\.\d{3}$"
-)
+_VTT_TIMESTAMP = re.compile(r"^(\d{2}:\d{2}:\d{2})\.\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}\.\d{3}$")
 _BRACKETED_TIMESTAMP = re.compile(r"^\[(\d{2}:\d{2}:\d{2}|\d{2}:\d{2})\]$")
 _SPEAKER_LINE = re.compile(r"^([^:\n]+):\s+(.+)$")
 
@@ -137,8 +135,7 @@ def _normalize_bracketed(content: str) -> str:
         text = " ".join(current_text).strip()
         if text:
             out.append(
-                f"[{_normalize_bracket_ts(current_ts) or '00:00'}] "
-                f"{current_speaker}: {text}"
+                f"[{_normalize_bracket_ts(current_ts) or '00:00'}] {current_speaker}: {text}"
             )
         current_text = []
 

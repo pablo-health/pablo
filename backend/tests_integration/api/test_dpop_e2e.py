@@ -288,8 +288,7 @@ class TestDPoPEndToEnd:
         # Mirror the middleware's _trusted_hosts derivation: prefer the
         # API's own origin (backend_base_url), fall back to app_url.
         trusted_host = (
-            urlsplit(settings.backend_base_url).netloc
-            or urlsplit(settings.app_url).netloc
+            urlsplit(settings.backend_base_url).netloc or urlsplit(settings.app_url).netloc
         )
         assert trusted_host, "BACKEND_BASE_URL or APP_URL must resolve to a host"
         proof = _sign_proof(enrolled["key"], htu=f"https://{trusted_host}{_PROBE_PATH}")

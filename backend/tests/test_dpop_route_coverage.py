@@ -178,9 +178,7 @@ def test_allowlist_has_no_stale_entries() -> None:
         "Remove the stale entries:\n  " + "\n  ".join(sorted(stale))
     )
 
-    wrongly_listed = [
-        k for k in DPOP_UNCOVERABLE if live.get(k) in _DPOP_COVERED_POSTURES
-    ]
+    wrongly_listed = [k for k in DPOP_UNCOVERABLE if live.get(k) in _DPOP_COVERED_POSTURES]
     assert not wrongly_listed, (
         "DPOP_UNCOVERABLE lists routes that ARE authenticated (and therefore "
         "already DPoP-covered by the global middleware). Drop these entries:\n  "
@@ -203,6 +201,5 @@ def test_every_route_is_either_covered_or_allowlisted() -> None:
 
     assert not unaccounted, (
         "Routes are neither DPoP-covered nor allow-listed. See "
-        "docs/design/companion-dpop-binding.md § 'Test enforcement':\n"
-        + "\n".join(unaccounted)
+        "docs/design/companion-dpop-binding.md § 'Test enforcement':\n" + "\n".join(unaccounted)
     )

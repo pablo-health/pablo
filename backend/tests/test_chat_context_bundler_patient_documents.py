@@ -173,9 +173,7 @@ class TestPatientDocumentsSource:
                 patient_id=PATIENT_ID,
                 user_id=USER_ID,
                 selection={
-                    SOURCE_KEY_PATIENT_DOCUMENTS: {
-                        "limit": PATIENT_DOCUMENTS_LIMIT_MAX + 1
-                    }
+                    SOURCE_KEY_PATIENT_DOCUMENTS: {"limit": PATIENT_DOCUMENTS_LIMIT_MAX + 1}
                 },
             )
 
@@ -231,9 +229,7 @@ class TestPatientDocumentsSource:
             patient_documents_repo=patient_documents_repo,
             patient_id=PATIENT_ID,
             user_id=USER_ID,
-            selection={
-                SOURCE_KEY_PATIENT_DOCUMENTS: {"document_ids": ["doc-c", "doc-a"]}
-            },
+            selection={SOURCE_KEY_PATIENT_DOCUMENTS: {"document_ids": ["doc-c", "doc-a"]}},
         )
         entry = next(
             s

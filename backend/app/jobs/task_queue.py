@@ -41,7 +41,5 @@ def enqueue(
     config (gcloud tasks queues update), never in app code.
     """
     if dedup_key is not None and not _TASK_NAME_RE.match(dedup_key):
-        raise ValueError(
-            f"dedup_key must match [A-Za-z0-9_-]{{1,500}}, got: {dedup_key!r}"
-        )
+        raise ValueError(f"dedup_key must match [A-Za-z0-9_-]{{1,500}}, got: {dedup_key!r}")
     enqueue_cloud_task(queue_name, handler_path, payload, task_name=dedup_key)

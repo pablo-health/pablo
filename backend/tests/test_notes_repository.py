@@ -73,13 +73,9 @@ class TestInMemoryNotesRepository:
         assert found.session_id == "session-B"
         assert repo.get_by_session_id("missing", _USER) is None
 
-    def test_list_by_patient_sorted_newest_first(
-        self, repo: InMemoryNotesRepository
-    ) -> None:
+    def test_list_by_patient_sorted_newest_first(self, repo: InMemoryNotesRepository) -> None:
         base = datetime(2026, 1, 1, tzinfo=UTC)
-        older = _make_note(
-            patient_id="patient-1", finalized_at=base, created_at=base
-        )
+        older = _make_note(patient_id="patient-1", finalized_at=base, created_at=base)
         newer = _make_note(
             patient_id="patient-1",
             finalized_at=base + timedelta(days=2),

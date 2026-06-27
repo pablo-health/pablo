@@ -52,9 +52,7 @@ class AuditRepository(ABC):
         """Return this user's own audit rows, newest first."""
 
     @abstractmethod
-    def earliest_create_for_patients(
-        self, patient_ids: set[str]
-    ) -> dict[str, datetime | None]:
+    def earliest_create_for_patients(self, patient_ids: set[str]) -> dict[str, datetime | None]:
         """Return earliest PATIENT_CREATED timestamp per patient_id.
 
         Used by the review service to suppress care-team checks during
@@ -108,9 +106,7 @@ class InMemoryAuditRepository(AuditRepository):
         rows.sort(key=lambda e: e.timestamp, reverse=True)
         return rows[:limit]
 
-    def earliest_create_for_patients(
-        self, patient_ids: set[str]
-    ) -> dict[str, datetime | None]:
+    def earliest_create_for_patients(self, patient_ids: set[str]) -> dict[str, datetime | None]:
         out: dict[str, datetime | None] = dict.fromkeys(patient_ids)
         for e in self._entries:
             if e.action != "patient_created" or not e.patient_id:
@@ -154,9 +150,7 @@ class InMemoryAuditRepository(AuditRepository):
             uid for uid, earliest in earliest_activity.items() if earliest < min_baseline_cutoff
         }
 
-        known_user_patient = {
-            (e.user_id, e.patient_id) for e in baseline_rows if e.patient_id
-        }
+        known_user_patient = {(e.user_id, e.patient_id) for e in baseline_rows if e.patient_id}
 
         # Same-window creates suppress novelty (user just made the patient).
         created_in_window = {

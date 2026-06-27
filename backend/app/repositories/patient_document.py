@@ -82,9 +82,7 @@ class PatientDocumentRepository(ABC):
         """
 
     @abstractmethod
-    def get_many(
-        self, document_ids: list[str], user_id: str
-    ) -> list[PatientDocument]:
+    def get_many(self, document_ids: list[str], user_id: str) -> list[PatientDocument]:
         """Bulk-fetch documents by id under the combined access predicate.
 
         Single query for a set of ids — replaces a per-id fetch loop on
@@ -180,15 +178,9 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
             return None
         return doc
 
-    def get_many(
-        self, document_ids: list[str], user_id: str
-    ) -> list[PatientDocument]:
+    def get_many(self, document_ids: list[str], user_id: str) -> list[PatientDocument]:
         wanted = set(document_ids)
-        return [
-            d
-            for d in self._by_id.values()
-            if d.id in wanted and self._can_read(d, user_id)
-        ]
+        return [d for d in self._by_id.values() if d.id in wanted and self._can_read(d, user_id)]
 
     def list_for_patient(self, patient_id: str, user_id: str) -> list[PatientDocument]:
         rows = [

@@ -558,9 +558,7 @@ class ChatTurnService:
                 and not marker_inserted
                 and msg.sequence > elide_after_seq
             ):
-                prior.append(
-                    UserAssistantTurn(role="assistant", content=ELIDED_HISTORY_MARKER)
-                )
+                prior.append(UserAssistantTurn(role="assistant", content=ELIDED_HISTORY_MARKER))
                 marker_inserted = True
             prior.append(UserAssistantTurn(role=role, content=msg.content))
         return prior

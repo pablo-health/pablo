@@ -122,9 +122,7 @@ def no_confabulation_scorer(
 
     commission_score = 1.0 if no_invention else 0.0
     omission_score = 1.0 if (not must_acknowledge or acknowledged) else 0.0
-    score = (
-        _SIN_OF_COMMISSION_WEIGHT * commission_score + _SIN_OF_OMISSION_WEIGHT * omission_score
-    )
+    score = _SIN_OF_COMMISSION_WEIGHT * commission_score + _SIN_OF_OMISSION_WEIGHT * omission_score
 
     return {
         "name": "no_confabulation",

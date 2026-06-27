@@ -175,10 +175,7 @@ class TestGetConversation:
         response = client.get(f"/api/chat/conversations/{conv_id}")
         assert response.status_code == 200
 
-        actions = [
-            call.args[0].action
-            for call in mock_audit_service._repo.append.call_args_list
-        ]
+        actions = [call.args[0].action for call in mock_audit_service._repo.append.call_args_list]
         assert AuditAction.CHAT_CONVERSATION_VIEWED.value in actions
 
 

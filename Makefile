@@ -41,6 +41,8 @@ install:
 lint:
 	@echo "Running Ruff linter..."
 	poetry run ruff check backend/
+	@echo "Checking Ruff format..."
+	poetry run ruff format --check backend/
 	@echo "Running mypy type checker..."
 	cd backend && poetry run mypy app
 

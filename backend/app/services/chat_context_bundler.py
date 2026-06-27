@@ -1008,9 +1008,7 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
     # per-source loader doesn't make a DB call inside the dispatch loop.
     medication_rows: list[dict[str, Any]] | None = None
     if medication_repo is not None:
-        medication_rows = medication_repo.list_by_patient(
-            patient_id, user_id, status="active"
-        )
+        medication_rows = medication_repo.list_by_patient(patient_id, user_id, status="active")
     for key, raw in selection.items():
         if key not in V1_SOURCE_KEYS:
             raise InvalidSelectionError(f"unknown source key {key!r}")
@@ -1019,9 +1017,7 @@ def _load_selected_sources(  # noqa: PLR0912 — one dispatch arm per source key
         if key == SOURCE_KEY_PASTED_TEXT:
             loaded.append(_load_pasted_text(raw))
         elif key == SOURCE_KEY_CURRENT_MEDICATIONS:
-            loaded.append(
-                _load_current_medications(raw, notes, medication_rows=medication_rows)
-            )
+            loaded.append(_load_current_medications(raw, notes, medication_rows=medication_rows))
         elif key == SOURCE_KEY_MOST_RECENT_INTAKE:
             loaded.append(_load_most_recent_intake(raw, notes))
         elif key == SOURCE_KEY_PROGRESS_NOTES_RECENT:
@@ -1330,9 +1326,7 @@ def assemble_context_bundle(
     # keeps a patient with a very long note history from loading the
     # entire chart on every turn — the budget walk and per-source limits
     # already mean only the most-recent notes survive into the prompt.
-    notes = notes_repo.list_by_patient(
-        patient_id, user_id, limit=PROGRESS_NOTES_LIMIT_MAX
-    )
+    notes = notes_repo.list_by_patient(patient_id, user_id, limit=PROGRESS_NOTES_LIMIT_MAX)
     loaded = _load_selected_sources(
         selection=selection,
         notes=notes,

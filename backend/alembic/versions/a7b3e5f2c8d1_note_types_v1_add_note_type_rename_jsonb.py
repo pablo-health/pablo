@@ -118,6 +118,4 @@ def downgrade() -> None:
         """
     )
 
-    op.execute(
-        "ALTER TABLE therapy_sessions DROP COLUMN IF EXISTS note_type;"
-    )
+    op.execute("ALTER TABLE therapy_sessions DROP COLUMN IF EXISTS note_type;")

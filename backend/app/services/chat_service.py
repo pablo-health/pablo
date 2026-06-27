@@ -51,17 +51,13 @@ class ChatService:
     # Reads
     # ------------------------------------------------------------------
 
-    def get_conversation(
-        self, conversation_id: str, user_id: str
-    ) -> ChatConversation:
+    def get_conversation(self, conversation_id: str, user_id: str) -> ChatConversation:
         conv = self._repo.get_conversation(conversation_id, user_id)
         if conv is None:
             raise ChatConversationNotFoundError(conversation_id)
         return conv
 
-    def list_messages(
-        self, conversation_id: str, user_id: str
-    ) -> list[ChatMessage]:
+    def list_messages(self, conversation_id: str, user_id: str) -> list[ChatMessage]:
         return self._repo.list_messages(conversation_id, user_id)
 
     def list_conversations(
