@@ -7,6 +7,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.platform_models import PlatformUserPreferencesRow, PlatformUserRow
 from ...models import User, UserPreferences
 from ..user import UserRepository
@@ -43,7 +45,7 @@ class PostgresUserRepository(UserRepository):
         return user
 
     def list_all(self) -> list[User]:
-        rows = self._session.query(PlatformUserRow).all()
+        rows = self._session.execute(select(PlatformUserRow)).scalars().all()
         return [_row_to_user(r) for r in rows]
 
     def get_preferences(self, user_id: str) -> UserPreferences:
@@ -56,8 +58,12 @@ class PostgresUserRepository(UserRepository):
         if not user_ids:
             return {}
         rows = (
-            self._session.query(PlatformUserPreferencesRow)
-            .filter(PlatformUserPreferencesRow.user_id.in_(user_ids))
+            self._session.execute(
+                select(PlatformUserPreferencesRow).where(
+                    PlatformUserPreferencesRow.user_id.in_(user_ids)
+                )
+            )
+            .scalars()
             .all()
         )
         saved = {row.user_id: UserPreferences(**row.preferences) for row in rows}

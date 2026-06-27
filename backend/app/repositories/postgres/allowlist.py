@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
+
 from ...db.platform_models import PlatformAllowedEmailRow
 from ...utcnow import utc_now
 from ..allowlist import AllowlistRepository
@@ -46,7 +48,7 @@ class PostgresAllowlistRepository(AllowlistRepository):
         return True
 
     def list_all(self) -> list[dict[str, Any]]:
-        rows = self._session.query(PlatformAllowedEmailRow).all()
+        rows = self._session.execute(select(PlatformAllowedEmailRow)).scalars().all()
         return [
             {
                 "email": r.email,

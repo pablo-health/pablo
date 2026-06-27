@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import ComplianceDocumentRow
 
 if TYPE_CHECKING:
@@ -47,9 +49,12 @@ class PostgresComplianceDocumentRepository:
 
     def list_for_item(self, compliance_item_id: str) -> list[ComplianceDocument]:
         rows = (
-            self._session.query(ComplianceDocumentRow)
-            .filter(ComplianceDocumentRow.compliance_item_id == compliance_item_id)
-            .order_by(ComplianceDocumentRow.uploaded_at.desc())
+            self._session.execute(
+                select(ComplianceDocumentRow)
+                .where(ComplianceDocumentRow.compliance_item_id == compliance_item_id)
+                .order_by(ComplianceDocumentRow.uploaded_at.desc())
+            )
+            .scalars()
             .all()
         )
         return [_row_to_doc(r) for r in rows]

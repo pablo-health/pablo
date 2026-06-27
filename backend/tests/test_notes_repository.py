@@ -219,9 +219,8 @@ class TestPostgresNotesRepositoryMapping:
 
     def test_get_returns_none_for_missing_row(self) -> None:
         session = self._session_with_access_granted()
-        # The query path returns None when no row matches the join.
-        q = session.query.return_value.join.return_value.filter.return_value
-        q.one_or_none.return_value = None
+        # The join select returns None when no row matches.
+        session.execute.return_value.scalar_one_or_none.return_value = None
         repo = PostgresNotesRepository(session)
         assert repo.get("missing", _USER) is None
 

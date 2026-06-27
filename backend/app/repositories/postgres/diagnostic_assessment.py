@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, or_, text
+from sqlalchemy import String, Uuid, bindparam, or_, select, text
 
 from ...db.models import DiagnosticAssessmentRow, PatientClinicianRow
 from ...utcnow import utc_now
@@ -66,13 +66,13 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
         return bool(result)
 
     def get(self, assessment_id: str, user_id: str) -> dict[str, object] | None:
-        row = (
-            self._session.query(DiagnosticAssessmentRow)
+        row = self._session.execute(
+            select(DiagnosticAssessmentRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == DiagnosticAssessmentRow.patient_id,
             )
-            .filter(
+            .where(
                 DiagnosticAssessmentRow.id == assessment_id,
                 PatientClinicianRow.user_id == user_id,
                 or_(
@@ -80,8 +80,7 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
                     PatientClinicianRow.expires_at > utc_now(),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_dict(row) if row else None
 
     def list_by_patient(
@@ -93,13 +92,13 @@ class PostgresDiagnosticAssessmentRepository(DiagnosticAssessmentRepository):
     ) -> list[dict[str, object]]:
         if not self._has_access(patient_id, user_id):
             return []
-        query = self._session.query(DiagnosticAssessmentRow).filter(
+        query = select(DiagnosticAssessmentRow).where(
             DiagnosticAssessmentRow.patient_id == patient_id,
         )
         if instrument is not None:
-            query = query.filter(DiagnosticAssessmentRow.instrument == instrument)
+            query = query.where(DiagnosticAssessmentRow.instrument == instrument)
         query = query.order_by(DiagnosticAssessmentRow.assessed_at.asc())
-        return [_row_to_dict(r) for r in query.all()]
+        return [_row_to_dict(r) for r in self._session.execute(query).scalars().all()]
 
     def add(self, row: dict[str, object], user_id: str) -> dict[str, object]:
         patient_id = str(row["patient_id"])

@@ -191,15 +191,15 @@ class TestRelationshipQueries:
 
     def test_list_by_user_filters_and_orders(self) -> None:
         session = MagicMock()
-        query = session.query.return_value
-        query.filter.return_value.order_by.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         repo = PostgresSupervisionRepository(session)
 
-        repo.list_by_user("user-1")
+        assert repo.list_by_user("user-1") == []
 
-        session.query.assert_called_once_with(SupervisionRelationshipRow)
-        query.filter.assert_called_once()
-        query.filter.return_value.order_by.assert_called_once()
+        session.execute.assert_called_once()
+        stmt = str(session.execute.call_args.args[0])
+        assert SupervisionRelationshipRow.__tablename__ in stmt
+        assert "ORDER BY" in stmt
 
     def test_delete_returns_false_for_other_users_row(self) -> None:
         session = MagicMock()
@@ -228,12 +228,12 @@ class TestSupervisionHours:
 
     def test_list_hours_filters_by_relationship_and_user(self) -> None:
         session = MagicMock()
-        query = session.query.return_value
-        query.filter.return_value.order_by.return_value.all.return_value = []
+        session.execute.return_value.scalars.return_value.all.return_value = []
         repo = PostgresSupervisionRepository(session)
 
-        repo.list_hours("rel-1", "user-1")
+        assert repo.list_hours("rel-1", "user-1") == []
 
-        session.query.assert_called_once_with(SupervisionHoursRow)
-        query.filter.assert_called_once()
-        query.filter.return_value.order_by.assert_called_once()
+        session.execute.assert_called_once()
+        stmt = str(session.execute.call_args.args[0])
+        assert SupervisionHoursRow.__tablename__ in stmt
+        assert "ORDER BY" in stmt

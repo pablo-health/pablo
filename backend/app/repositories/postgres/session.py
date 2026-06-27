@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, func, or_, text
+from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
 from ...db.models import PatientClinicianRow, TherapySessionRow
 from ...models.session import TherapySession, Transcript
@@ -52,34 +52,36 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         self._session = session
 
     def get(self, session_id: str, user_id: str) -> TherapySession | None:
-        row = (
-            self._session.query(TherapySessionRow)
+        row = self._session.execute(
+            select(TherapySessionRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
             )
-            .filter(
+            .where(
                 TherapySessionRow.id == session_id,
                 TherapySessionRow.deleted_at.is_(None),
                 *_grant_filters(user_id),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_session(row) if row else None
 
     def list_by_patient(self, patient_id: str, user_id: str) -> list[TherapySession]:
         rows = (
-            self._session.query(TherapySessionRow)
-            .join(
-                PatientClinicianRow,
-                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            self._session.execute(
+                select(TherapySessionRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+                )
+                .where(
+                    TherapySessionRow.patient_id == patient_id,
+                    TherapySessionRow.deleted_at.is_(None),
+                    *_grant_filters(user_id),
+                )
+                .order_by(TherapySessionRow.session_date.desc())
             )
-            .filter(
-                TherapySessionRow.patient_id == patient_id,
-                TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
-            )
-            .order_by(TherapySessionRow.session_date.desc())
+            .scalars()
             .all()
         )
         return [_row_to_session(r) for r in rows]
@@ -89,20 +91,23 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         transcript or note content, so it stays valid under column-scoped
         grants."""
         rows = (
-            self._session.query(TherapySessionRow.session_date)
-            .join(
-                PatientClinicianRow,
-                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            self._session.execute(
+                select(TherapySessionRow.session_date)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+                )
+                .where(
+                    TherapySessionRow.patient_id == patient_id,
+                    TherapySessionRow.deleted_at.is_(None),
+                    *_grant_filters(user_id),
+                )
+                .order_by(TherapySessionRow.session_date.desc())
             )
-            .filter(
-                TherapySessionRow.patient_id == patient_id,
-                TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
-            )
-            .order_by(TherapySessionRow.session_date.desc())
+            .scalars()
             .all()
         )
-        return [r[0] for r in rows]
+        return list(rows)
 
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20
@@ -118,22 +123,23 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         now sees the full chart history they're authorized to see.
         """
         base = (
-            self._session.query(TherapySessionRow)
+            select(TherapySessionRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
             )
-            .filter(
+            .where(
                 TherapySessionRow.deleted_at.is_(None),
                 *_grant_filters(user_id),
             )
         )
-        total = base.count()
+        total = self._session.scalar(select(func.count()).select_from(base.subquery())) or 0
         offset = (page - 1) * page_size
         rows = (
-            base.order_by(TherapySessionRow.session_date.desc())
-            .offset(offset)
-            .limit(page_size)
+            self._session.execute(
+                base.order_by(TherapySessionRow.session_date.desc()).offset(offset).limit(page_size)
+            )
+            .scalars()
             .all()
         )
         return [_row_to_session(r) for r in rows], total
@@ -165,55 +171,60 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         """List today's scheduled sessions for any patient the user has access to."""
         start_utc, end_utc = _compute_day_boundaries(tz_name)
         rows = (
-            self._session.query(TherapySessionRow)
-            .join(
-                PatientClinicianRow,
-                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            self._session.execute(
+                select(TherapySessionRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+                )
+                .where(
+                    TherapySessionRow.scheduled_at.is_not(None),
+                    TherapySessionRow.scheduled_at >= start_utc,
+                    TherapySessionRow.scheduled_at < end_utc,
+                    TherapySessionRow.deleted_at.is_(None),
+                    *_grant_filters(user_id),
+                )
+                .order_by(TherapySessionRow.scheduled_at)
             )
-            .filter(
-                TherapySessionRow.scheduled_at.is_not(None),
-                TherapySessionRow.scheduled_at >= start_utc,
-                TherapySessionRow.scheduled_at < end_utc,
-                TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
-            )
-            .order_by(TherapySessionRow.scheduled_at)
+            .scalars()
             .all()
         )
         return [_row_to_session(r) for r in rows]
 
     def count_by_status(self, user_id: str) -> dict[str, int]:
-        rows = (
-            self._session.query(TherapySessionRow.status, func.count())
+        rows = self._session.execute(
+            select(TherapySessionRow.status, func.count())
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
             )
-            .filter(
+            .where(
                 TherapySessionRow.deleted_at.is_(None),
                 *_grant_filters(user_id),
             )
             .group_by(TherapySessionRow.status)
-            .all()
-        )
+        ).all()
         return {str(status): count for status, count in rows}
 
     def list_recent_by_status(
         self, user_id: str, status: str, *, limit: int
     ) -> list[TherapySession]:
         rows = (
-            self._session.query(TherapySessionRow)
-            .join(
-                PatientClinicianRow,
-                PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+            self._session.execute(
+                select(TherapySessionRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+                )
+                .where(
+                    TherapySessionRow.status == status,
+                    TherapySessionRow.deleted_at.is_(None),
+                    *_grant_filters(user_id),
+                )
+                .order_by(TherapySessionRow.session_date.desc())
+                .limit(limit)
             )
-            .filter(
-                TherapySessionRow.status == status,
-                TherapySessionRow.deleted_at.is_(None),
-                *_grant_filters(user_id),
-            )
-            .order_by(TherapySessionRow.session_date.desc())
-            .limit(limit)
+            .scalars()
             .all()
         )
         return [_row_to_session(r) for r in rows]
@@ -230,12 +241,12 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             TherapySessionRow.scheduled_at, TherapySessionRow.session_date
         )
         query = (
-            self._session.query(func.min(effective_date))
+            select(func.min(effective_date))
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
             )
-            .filter(
+            .where(
                 TherapySessionRow.patient_id == patient_id,
                 TherapySessionRow.deleted_at.is_(None),
                 effective_date > after,
@@ -243,17 +254,17 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
             )
         )
         if exclude_statuses:
-            query = query.filter(TherapySessionRow.status.notin_(list(exclude_statuses)))
-        next_date: datetime | None = query.scalar()
+            query = query.where(TherapySessionRow.status.notin_(list(exclude_statuses)))
+        next_date: datetime | None = self._session.scalar(query)
         return next_date
 
     def get_session_number_for_patient(self, patient_id: str) -> int:
         # Numbering is monotonic — count soft-deleted sessions too so a
         # restored / re-listed patient doesn't collide on session_number.
-        result = (
-            self._session.query(func.max(TherapySessionRow.session_number))
-            .filter(TherapySessionRow.patient_id == patient_id)
-            .scalar()
+        result = self._session.scalar(
+            select(func.max(TherapySessionRow.session_number)).where(
+                TherapySessionRow.patient_id == patient_id
+            )
         )
         return (result or 0) + 1
 

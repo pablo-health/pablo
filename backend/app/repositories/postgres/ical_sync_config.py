@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import ICalSyncConfigRow
 from ...utcnow import utc_now
 from ..ical_sync_config import ICalSyncConfig, ICalSyncConfigRepository
@@ -29,15 +31,17 @@ class PostgresICalSyncConfigRepository(ICalSyncConfigRepository):
 
     def list_by_user(self, user_id: str) -> list[ICalSyncConfig]:
         rows = (
-            self._session.query(ICalSyncConfigRow)
-            .filter(ICalSyncConfigRow.user_id == user_id)
+            self._session.execute(
+                select(ICalSyncConfigRow).where(ICalSyncConfigRow.user_id == user_id)
+            )
+            .scalars()
             .all()
         )
         return [_row_to_config(r) for r in rows]
 
     def list_all(self) -> list[ICalSyncConfig]:
         """Return all configs across all users (for scheduled sync dispatch)."""
-        rows = self._session.query(ICalSyncConfigRow).all()
+        rows = self._session.execute(select(ICalSyncConfigRow)).scalars().all()
         return [_row_to_config(r) for r in rows]
 
     def save(self, config: ICalSyncConfig) -> None:

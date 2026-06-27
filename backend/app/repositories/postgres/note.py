@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, func, or_, text
+from sqlalchemy import String, Uuid, bindparam, func, or_, select, text
 
 from ...db.models import NoteRow, PatientClinicianRow
 from ...models.note import Note
@@ -64,13 +64,13 @@ class PostgresNotesRepository(NotesRepository):
         request is indistinguishable from a missing row at the SQL
         layer — no existence oracle.
         """
-        row = (
-            self._session.query(NoteRow)
+        row = self._session.execute(
+            select(NoteRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == NoteRow.patient_id,
             )
-            .filter(
+            .where(
                 NoteRow.id == note_id,
                 NoteRow.deleted_at.is_(None),
                 PatientClinicianRow.user_id == user_id,
@@ -79,18 +79,17 @@ class PostgresNotesRepository(NotesRepository):
                     PatientClinicianRow.expires_at > utc_now(),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_note(row) if row else None
 
     def get_by_session_id(self, session_id: str, user_id: str) -> Note | None:
-        row = (
-            self._session.query(NoteRow)
+        row = self._session.execute(
+            select(NoteRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == NoteRow.patient_id,
             )
-            .filter(
+            .where(
                 NoteRow.session_id == session_id,
                 NoteRow.deleted_at.is_(None),
                 PatientClinicianRow.user_id == user_id,
@@ -99,8 +98,7 @@ class PostgresNotesRepository(NotesRepository):
                     PatientClinicianRow.expires_at > utc_now(),
                 ),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_note(row) if row else None
 
     def list_by_patient(
@@ -112,8 +110,8 @@ class PostgresNotesRepository(NotesRepository):
         if not self._has_access(patient_id, user_id):
             return []
         query = (
-            self._session.query(NoteRow)
-            .filter(
+            select(NoteRow)
+            .where(
                 NoteRow.patient_id == patient_id,
                 NoteRow.deleted_at.is_(None),
             )
@@ -124,7 +122,7 @@ class PostgresNotesRepository(NotesRepository):
         )
         if limit is not None:
             query = query.limit(limit)
-        rows = query.all()
+        rows = self._session.execute(query).scalars().all()
         return [_row_to_note(r) for r in rows]
 
     def count_unfinalized(self, user_id: str) -> int:
@@ -132,24 +130,26 @@ class PostgresNotesRepository(NotesRepository):
         # exactly the notes the user is granted on. session_id IS NOT NULL
         # restricts to session-attached notes ("awaiting your signature").
         return (
-            self._session.query(func.count())
-            .select_from(NoteRow)
-            .join(
-                PatientClinicianRow,
-                PatientClinicianRow.patient_id == NoteRow.patient_id,
+            self._session.scalar(
+                select(func.count())
+                .select_from(NoteRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == NoteRow.patient_id,
+                )
+                .where(
+                    NoteRow.session_id.is_not(None),
+                    NoteRow.finalized_at.is_(None),
+                    NoteRow.deleted_at.is_(None),
+                    PatientClinicianRow.user_id == user_id,
+                    or_(
+                        PatientClinicianRow.expires_at.is_(None),
+                        PatientClinicianRow.expires_at > utc_now(),
+                    ),
+                )
             )
-            .filter(
-                NoteRow.session_id.is_not(None),
-                NoteRow.finalized_at.is_(None),
-                NoteRow.deleted_at.is_(None),
-                PatientClinicianRow.user_id == user_id,
-                or_(
-                    PatientClinicianRow.expires_at.is_(None),
-                    PatientClinicianRow.expires_at > utc_now(),
-                ),
-            )
-            .scalar()
-        ) or 0
+            or 0
+        )
 
     # --- writes ---
 

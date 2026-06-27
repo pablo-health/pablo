@@ -109,9 +109,12 @@ class PostgresAuditRepository(AuditRepository):
         min_baseline_cutoff = now - timedelta(days=MIN_USER_BASELINE_DAYS)
 
         window_rows = (
-            self._session.query(AuditLogRow)
-            .filter(AuditLogRow.timestamp >= window_start)
-            .order_by(AuditLogRow.timestamp.asc())
+            self._session.execute(
+                select(AuditLogRow)
+                .where(AuditLogRow.timestamp >= window_start)
+                .order_by(AuditLogRow.timestamp.asc())
+            )
+            .scalars()
             .all()
         )
 

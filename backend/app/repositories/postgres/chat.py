@@ -146,18 +146,17 @@ class PostgresChatRepository(ChatRepository):
     # --- reads ---
 
     def get_conversation(self, conversation_id: str, user_id: str) -> ChatConversation | None:
-        row = (
-            self._session.query(ChatConversationRow)
+        row = self._session.execute(
+            select(ChatConversationRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == ChatConversationRow.patient_id,
             )
-            .filter(
+            .where(
                 ChatConversationRow.id == conversation_id,
                 *_grant_filters(user_id),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_conversation(row) if row is not None else None
 
     def list_conversations(  # noqa: PLR0913 — keyword-only filter + pagination
@@ -177,26 +176,33 @@ class PostgresChatRepository(ChatRepository):
         if not self._has_access(patient_id, user_id):
             return [], 0
 
-        query = self._session.query(ChatConversationRow).filter(
-            ChatConversationRow.patient_id == patient_id,
-        )
+        conditions = [ChatConversationRow.patient_id == patient_id]
         if caller_feature_key is not None:
-            query = query.filter(ChatConversationRow.caller_feature_key == caller_feature_key)
+            conditions.append(ChatConversationRow.caller_feature_key == caller_feature_key)
         if not include_archived:
-            query = query.filter(ChatConversationRow.archived_at.is_(None))
+            conditions.append(ChatConversationRow.archived_at.is_(None))
 
         # ORDER BY last_turn_at DESC NULLS LAST, created_at DESC. Postgres
         # treats DESC NULLS as LAST by default, so an explicit clause is
         # not required, but spell it out for portability across dialects
         # used in dev/test.
-        query = query.order_by(
-            ChatConversationRow.last_turn_at.desc().nullslast(),
-            ChatConversationRow.created_at.desc(),
+        query = (
+            select(ChatConversationRow)
+            .where(*conditions)
+            .order_by(
+                ChatConversationRow.last_turn_at.desc().nullslast(),
+                ChatConversationRow.created_at.desc(),
+            )
         )
 
-        total = query.count()
+        total = (
+            self._session.scalar(
+                select(func.count()).select_from(ChatConversationRow).where(*conditions)
+            )
+            or 0
+        )
         offset = (page - 1) * page_size
-        rows = query.offset(offset).limit(page_size).all()
+        rows = self._session.execute(query.offset(offset).limit(page_size)).scalars().all()
         return [_row_to_conversation(r) for r in rows], total
 
     def list_messages(self, conversation_id: str, user_id: str) -> list[ChatMessage]:
@@ -356,9 +362,12 @@ class PostgresChatRepository(ChatRepository):
         # Count messages before delete so the caller can surface it
         # (e.g. in the audit log payload).
         count = (
-            self._session.query(ChatMessageRow)
-            .filter(ChatMessageRow.conversation_id == conversation_id)
-            .count()
+            self._session.scalar(
+                select(func.count())
+                .select_from(ChatMessageRow)
+                .where(ChatMessageRow.conversation_id == conversation_id)
+            )
+            or 0
         )
         # The FK has ON DELETE CASCADE; the explicit message delete is a
         # belt-and-suspenders guard for backends or test doubles where the

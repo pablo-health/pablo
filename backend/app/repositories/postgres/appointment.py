@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import String, Uuid, bindparam, or_, text, update
+from sqlalchemy import String, Uuid, bindparam, func, or_, select, text, update
 
 from ...db.models import AppointmentRow, PatientClinicianRow
 from ...scheduling_engine.models.appointment import Appointment
@@ -55,18 +55,17 @@ class PostgresAppointmentRepository(AppointmentRepository):
         self._session = session
 
     def get(self, appointment_id: str, user_id: str) -> Appointment | None:
-        row = (
-            self._session.query(AppointmentRow)
+        row = self._session.execute(
+            select(AppointmentRow)
             .join(
                 PatientClinicianRow,
                 PatientClinicianRow.patient_id == AppointmentRow.patient_id,
             )
-            .filter(
+            .where(
                 AppointmentRow.id == appointment_id,
                 *_grant_filters(user_id),
             )
-            .one_or_none()
-        )
+        ).scalar_one_or_none()
         return _row_to_appointment(row) if row else None
 
     def list_by_range(
@@ -81,13 +80,16 @@ class PostgresAppointmentRepository(AppointmentRepository):
         future per-call elevation, not the default view.
         """
         rows = (
-            self._session.query(AppointmentRow)
-            .filter(
-                AppointmentRow.user_id == user_id,
-                AppointmentRow.start_at >= start,
-                AppointmentRow.start_at < end,
+            self._session.execute(
+                select(AppointmentRow)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.start_at >= start,
+                    AppointmentRow.start_at < end,
+                )
+                .order_by(AppointmentRow.start_at)
             )
-            .order_by(AppointmentRow.start_at)
+            .scalars()
             .all()
         )
         return [_row_to_appointment(r) for r in rows]
@@ -102,11 +104,14 @@ class PostgresAppointmentRepository(AppointmentRepository):
         if not self._has_patient_access(patient_id, user_id):
             return []
         rows = (
-            self._session.query(AppointmentRow)
-            .filter(
-                AppointmentRow.patient_id == patient_id,
+            self._session.execute(
+                select(AppointmentRow)
+                .where(
+                    AppointmentRow.patient_id == patient_id,
+                )
+                .order_by(AppointmentRow.start_at)
             )
-            .order_by(AppointmentRow.start_at)
+            .scalars()
             .all()
         )
         return [_row_to_appointment(r) for r in rows]
@@ -115,25 +120,27 @@ class PostgresAppointmentRepository(AppointmentRepository):
         """Aggregate variant of :meth:`list_by_range` — one COUNT, no rows
         materialised, valid under column-scoped grants."""
         return (
-            self._session.query(AppointmentRow.id)
-            .filter(
-                AppointmentRow.user_id == user_id,
-                AppointmentRow.start_at >= start,
-                AppointmentRow.start_at < end,
+            self._session.scalar(
+                select(func.count())
+                .select_from(AppointmentRow)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.start_at >= start,
+                    AppointmentRow.start_at < end,
+                )
             )
-            .count()
+            or 0
         )
 
     def start_times_by_patient(self, user_id: str, patient_id: str) -> list[datetime]:
         """Timestamp-only variant of :meth:`list_by_patient`."""
         if not self._has_patient_access(patient_id, user_id):
             return []
-        rows = (
-            self._session.query(AppointmentRow.start_at)
-            .filter(AppointmentRow.patient_id == patient_id)
+        rows = self._session.execute(
+            select(AppointmentRow.start_at)
+            .where(AppointmentRow.patient_id == patient_id)
             .order_by(AppointmentRow.start_at)
-            .all()
-        )
+        ).all()
         return [r[0] for r in rows]
 
     def _has_patient_access(self, patient_id: str, user_id: str) -> bool:
@@ -146,22 +153,26 @@ class PostgresAppointmentRepository(AppointmentRepository):
     def list_by_recurring_id(
         self, user_id: str, recurring_appointment_id: str, after: str | datetime | None = None
     ) -> list[Appointment]:
-        query = self._session.query(AppointmentRow).filter(
+        query = select(AppointmentRow).where(
             AppointmentRow.user_id == user_id,
             AppointmentRow.recurring_appointment_id == recurring_appointment_id,
         )
         if after:
-            query = query.filter(AppointmentRow.start_at >= after)
-        return [_row_to_appointment(r) for r in query.order_by(AppointmentRow.start_at).all()]
+            query = query.where(AppointmentRow.start_at >= after)
+        rows = self._session.execute(query.order_by(AppointmentRow.start_at)).scalars().all()
+        return [_row_to_appointment(r) for r in rows]
 
     def list_by_ical_source(self, user_id: str, ehr_system: str) -> list[Appointment]:
         rows = (
-            self._session.query(AppointmentRow)
-            .filter(
-                AppointmentRow.user_id == user_id,
-                AppointmentRow.ical_source == ehr_system,
+            self._session.execute(
+                select(AppointmentRow)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.ical_source == ehr_system,
+                )
+                .order_by(AppointmentRow.start_at)
             )
-            .order_by(AppointmentRow.start_at)
+            .scalars()
             .all()
         )
         return [_row_to_appointment(r) for r in rows]

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
+
 from ...db.models import GoogleCalendarTokenRow
 from ...utcnow import utc_now
 from ..google_calendar_token import GoogleCalendarTokenDoc, GoogleCalendarTokenRepository
@@ -28,7 +30,7 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
 
     def list_all(self) -> list[GoogleCalendarTokenDoc]:
         """Return all token docs across all users (for scheduled sync dispatch)."""
-        rows = self._session.query(GoogleCalendarTokenRow).all()
+        rows = self._session.execute(select(GoogleCalendarTokenRow)).scalars().all()
         return [_row_to_doc(row) for row in rows]
 
     def save(self, token_doc: GoogleCalendarTokenDoc) -> None:
