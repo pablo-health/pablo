@@ -169,16 +169,16 @@ class TestPostgresComplianceDocumentRepository:
                 uploaded_by_user_id="user-1",
             ),
         ]
-        query = session.query.return_value
-        query.filter.return_value.order_by.return_value.all.return_value = rows
+        session.execute.return_value.scalars.return_value.all.return_value = rows
         repo = PostgresComplianceDocumentRepository(session)
 
         result = repo.list_for_item("item-1")
 
-        session.query.assert_called_once_with(ComplianceDocumentRow)
-        # Confirm a filter and order_by were applied before all().
-        query.filter.assert_called_once()
-        query.filter.return_value.order_by.assert_called_once()
+        session.execute.assert_called_once()
+        # Confirm a SELECT against the documents table with an ORDER BY.
+        stmt = str(session.execute.call_args.args[0])
+        assert ComplianceDocumentRow.__tablename__ in stmt
+        assert "ORDER BY" in stmt
         assert len(result) == 1
         assert result[0].id == "doc-A"
         assert result[0].compliance_item_id == "item-1"
