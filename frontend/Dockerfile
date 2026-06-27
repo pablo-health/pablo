@@ -1,7 +1,7 @@
 # Frontend Dockerfile for local development
 # Uses Node.js 22 LTS for Next.js 15
 
-FROM node:22-slim
+FROM node:24-slim
 
 WORKDIR /app
 
