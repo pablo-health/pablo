@@ -804,16 +804,20 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         #     a user_id column but no patient_id (e.g. availability_rules,
         #     google_calendar_tokens, ical_client_mappings).
         if table_name == "patient_documents":
-            # category = 'chart' → patient_access (co-treaters share).
-            # category IN ('therapist_private', 'psychotherapy_notes')
-            # → uploader-only. Both restricted categories collapse to
-            # the same access predicate; the distinction matters at
-            # the disclosure-workflow layer, not RLS.
+            # Non-restricted categories (chart, consent) → patient_access
+            # (co-treaters share). category IN ('therapist_private',
+            # 'psychotherapy_notes') → uploader-only. Both restricted
+            # categories collapse to the same access predicate; the
+            # distinction matters at the disclosure-workflow layer, not
+            # RLS. Gated by the restricted set (not an enumerated
+            # allow-list) so adding a future non-restricted category
+            # needs no RLS change.
             session.execute(
                 text(
                     f"CREATE POLICY rls_patient_doc_access ON {qualified} "
                     f"USING ("
-                    f"  (category = 'chart' AND has_patient_access("
+                    f"  (category NOT IN ('therapist_private', 'psychotherapy_notes') "
+                    f"   AND has_patient_access("
                     f"    patient_id, current_setting('app.current_user_id', true)"
                     f"  )) "
                     f"  OR "

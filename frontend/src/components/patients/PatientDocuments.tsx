@@ -35,6 +35,11 @@ const CATEGORY_OPTIONS: { value: DocumentCategory; label: string; hint: string }
     hint: "Shared with co-treating clinicians. Releasable to the patient via standard records request.",
   },
   {
+    value: "consent",
+    label: "Consent",
+    hint: "Signed consent or authorization form. Part of the patient record, same as patient chart.",
+  },
+  {
     value: "therapist_private",
     label: "Therapist private",
     hint: "Only visible to you. Working material kept out of the patient record.",

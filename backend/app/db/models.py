@@ -887,7 +887,7 @@ class PatientDocumentRow(Base):
     __table_args__ = (
         Index("ix_patient_documents_patient_deleted", "patient_id", "deleted_at"),
         CheckConstraint(
-            "category IN ('chart', 'therapist_private', 'psychotherapy_notes')",
+            "category IN ('chart', 'consent', 'therapist_private', 'psychotherapy_notes')",
             name="ck_patient_documents_category",
         ),
         CheckConstraint(

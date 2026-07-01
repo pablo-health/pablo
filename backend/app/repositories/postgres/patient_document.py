@@ -5,8 +5,8 @@
 Combined access predicate (mirrors the DB-level RLS policy
 ``rls_patient_doc_access``):
 
-* ``category = 'chart'`` rows visible to anyone with a
-  ``patient_clinicians`` grant on the patient (delegated to the
+* Non-restricted rows (``chart``, ``consent``) are visible to anyone
+  with a ``patient_clinicians`` grant on the patient (delegated to the
   ``has_patient_access`` SQL function for a single source of truth).
 * ``category IN ('therapist_private', 'psychotherapy_notes')`` rows
   visible to the uploader only. The two restricted categories share
@@ -129,8 +129,8 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
     def get(self, document_id: str, user_id: str) -> PatientDocument | None:
         """Single-query combined access predicate.
 
-        OR branch 1: ``category = 'chart'`` AND caller has a live
-        patient_clinicians grant.
+        OR branch 1: ``category`` is non-restricted (``chart``,
+        ``consent``) AND caller has a live patient_clinicians grant.
         OR branch 2: ``category`` is one of the restricted values AND
         caller is the uploader.
         """
@@ -145,7 +145,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
                 PatientDocumentRow.id == document_id,
                 PatientDocumentRow.deleted_at.is_(None),
                 or_(
-                    (PatientDocumentRow.category == "chart")
+                    (~PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES))
                     & (PatientClinicianRow.user_id == user_id),
                     PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
                     & (PatientDocumentRow.user_id == user_id),
@@ -179,7 +179,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
                     PatientDocumentRow.id.in_(document_ids),
                     PatientDocumentRow.deleted_at.is_(None),
                     or_(
-                        (PatientDocumentRow.category == "chart")
+                        (~PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES))
                         & (PatientClinicianRow.user_id == user_id),
                         PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
                         & (PatientDocumentRow.user_id == user_id),
@@ -205,7 +205,7 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
                     PatientDocumentRow.deleted_at.is_(None),
                     PatientDocumentRow.finalized_at.is_not(None),
                     or_(
-                        (PatientDocumentRow.category == "chart")
+                        (~PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES))
                         & (PatientClinicianRow.user_id == user_id),
                         PatientDocumentRow.category.in_(_RESTRICTED_CATEGORIES)
                         & (PatientDocumentRow.user_id == user_id),

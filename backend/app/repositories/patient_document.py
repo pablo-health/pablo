@@ -5,7 +5,7 @@
 Access shape (per :class:`app.db.models.PatientDocumentRow` and
 :class:`app.models.DocumentCategory`):
 
-* ``category = 'chart'`` rows follow
+* Non-restricted rows (``chart``, ``consent``) follow
   ``has_patient_access(patient_id, user_id)`` — anyone with a
   ``patient_clinicians`` grant sees the doc, same as :class:`NoteRow`.
 * ``category IN ('therapist_private', 'psychotherapy_notes')`` rows
