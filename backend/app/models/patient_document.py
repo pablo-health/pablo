@@ -30,7 +30,7 @@ from enum import StrEnum
 class DocumentCategory(StrEnum):
     """Access + disclosure classification for an uploaded document.
 
-    Three values, chosen to give us regulatory hooks now and physical-
+    Four values, chosen to give us regulatory hooks now and physical-
     separation room later (the enum can become a partition predicate
     if compliance review pushes for separate tables or buckets).
 
@@ -39,6 +39,12 @@ class DocumentCategory(StrEnum):
       the patient via the standard HIPAA right-of-access workflow.
       Default for new uploads. Examples: labs, intake, insurance, ID,
       ROIs, prior-provider records, patient-supplied homework.
+
+    * ``CONSENT`` — a signed consent or authorization form attached
+      to the patient's chart. Same access class as ``CHART``: visible
+      to anyone with a ``patient_clinicians`` grant on the patient and
+      releasable via the standard right-of-access workflow. Not
+      restricted, not uploader-only.
 
     * ``THERAPIST_PRIVATE`` — provider's working material, uploader-
       only. Outside the standard patient record but without the
@@ -71,6 +77,7 @@ class DocumentCategory(StrEnum):
     """
 
     CHART = "chart"
+    CONSENT = "consent"
     THERAPIST_PRIVATE = "therapist_private"
     PSYCHOTHERAPY_NOTES = "psychotherapy_notes"
 

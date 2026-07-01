@@ -21,6 +21,9 @@ export type AllowedDocumentMimeType = (typeof ALLOWED_DOCUMENT_MIME_TYPES)[numbe
  *
  * - `chart`: part of the patient record, visible to co-treating
  *   clinicians via patient_clinicians grants. Default.
+ * - `consent`: a signed consent or authorization form attached to
+ *   the patient's chart. Same access class as `chart` — not
+ *   uploader-private.
  * - `therapist_private`: uploader-only. Provider working material.
  * - `psychotherapy_notes`: uploader-only. HIPAA §164.501 carve-out —
  *   subject to separate authorization for release and exempt from
@@ -28,6 +31,7 @@ export type AllowedDocumentMimeType = (typeof ALLOWED_DOCUMENT_MIME_TYPES)[numbe
  */
 export const DOCUMENT_CATEGORIES = [
   "chart",
+  "consent",
   "therapist_private",
   "psychotherapy_notes",
 ] as const
