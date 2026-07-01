@@ -395,7 +395,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     category character varying(32) DEFAULT 'chart'::character varying NOT NULL,
     extracted_via character varying(32),
     extraction_metadata jsonb,
-    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
+    CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'consent'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
     CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[]))))
 );
 
@@ -1174,4 +1174,4 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
-CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text = 'chart'::text) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY (ARRAY[('therapist_private'::character varying)::text, ('psychotherapy_notes'::character varying)::text])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));
+CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text <> ALL ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));
