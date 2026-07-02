@@ -108,10 +108,11 @@ def get_dashboard_summary(
         user.id, SessionStatus.PENDING_REVIEW, limit=AWAITING_REVIEW_LIMIT
     )
     review_patients = patient_repo.get_multiple(list({s.patient_id for s in recent}), user.id)
+    review_notes = notes_repo.get_by_session_ids([s.id for s in recent], user.id)
     awaiting_review: list[AwaitingReviewItem] = []
     for s in recent:
         patient = review_patients.get(s.patient_id)
-        note = notes_repo.get_by_session_id(s.id, user.id)
+        note = review_notes.get(s.id)
         awaiting_review.append(
             AwaitingReviewItem(
                 session_id=s.id,

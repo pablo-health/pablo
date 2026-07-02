@@ -101,6 +101,33 @@ class PostgresNotesRepository(NotesRepository):
         ).scalar_one_or_none()
         return _row_to_note(row) if row else None
 
+    def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Note]:
+        if not session_ids:
+            return {}
+        rows = (
+            self._session.execute(
+                select(NoteRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == NoteRow.patient_id,
+                )
+                .where(
+                    NoteRow.session_id.in_(session_ids),
+                    NoteRow.deleted_at.is_(None),
+                    PatientClinicianRow.user_id == user_id,
+                    or_(
+                        PatientClinicianRow.expires_at.is_(None),
+                        PatientClinicianRow.expires_at > utc_now(),
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # session_id is a nullable column but the IN filter selects only the
+        # requested (non-null) ids, so the guard is just for the type-checker.
+        return {row.session_id: _row_to_note(row) for row in rows if row.session_id is not None}
+
     def list_by_patient(
         self, patient_id: str, user_id: str, *, limit: int | None = None
     ) -> list[Note]:

@@ -55,6 +55,16 @@ class PatientRepository(ABC):
         """
         return self.get(patient_id, user_id) is not None
 
+    def live_grant_pairs(self, pairs: set[tuple[str, str]]) -> set[tuple[str, str]]:
+        """Batch form of :meth:`has_live_grant` — return the ``(user_id,
+        patient_id)`` pairs (from ``pairs``) that currently have a live grant.
+
+        Default checks each pair individually; the Postgres backend overrides
+        this with a single query so the audit reviewer's grant check doesn't
+        issue one query per distinct access pair.
+        """
+        return {(uid, pid) for (uid, pid) in pairs if self.has_live_grant(pid, uid)}
+
     @abstractmethod
     def list_by_user(
         self,

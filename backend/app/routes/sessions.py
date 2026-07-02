@@ -471,6 +471,7 @@ def list_sessions(
 
     patient_ids = list({s.patient_id for s in sessions})
     patients = patient_repo.get_multiple(patient_ids, user.id)
+    notes = notes_repo.get_by_session_ids([s.id for s in sessions], user.id)
 
     session_responses = []
     for s in sessions:
@@ -480,7 +481,7 @@ def list_sessions(
             SessionResponse.from_session(
                 s,
                 patient_name,
-                _embed_note(notes_repo.get_by_session_id(s.id, user.id)),
+                _embed_note(notes.get(s.id)),
             )
         )
         # This list embeds the full SOAP note in each item (see _embed_note),
