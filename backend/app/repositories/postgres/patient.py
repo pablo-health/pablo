@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String, Uuid, bindparam, delete, func, or_, select, text, update
+from sqlalchemy import String, Uuid, bindparam, delete, func, or_, select, text, tuple_, update
 
 from ...db.models import (
     NoteRow,
@@ -118,6 +118,25 @@ class PostgresPatientRepository(PatientRepository):
                 )
             ).first()
         )
+
+    def live_grant_pairs(self, pairs: set[tuple[str, str]]) -> set[tuple[str, str]]:
+        if not pairs:
+            return set()
+        # One query for all (user_id, patient_id) pairs. The expiry predicate
+        # can't reuse _live_grant_filter (that pins a single user_id), so the
+        # not-expired clause is inlined; the tuple IN matches each pair exactly.
+        rows = self._session.execute(
+            select(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).where(
+                tuple_(PatientClinicianRow.user_id, PatientClinicianRow.patient_id).in_(
+                    [(uid, pid) for (uid, pid) in pairs]
+                ),
+                or_(
+                    PatientClinicianRow.expires_at.is_(None),
+                    PatientClinicianRow.expires_at > utc_now(),
+                ),
+            )
+        ).all()
+        return {(row.user_id, row.patient_id) for row in rows}
 
     def get_multiple(self, patient_ids: list[str], user_id: str) -> dict[str, Patient]:
         if not patient_ids:

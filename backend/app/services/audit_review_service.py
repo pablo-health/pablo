@@ -331,14 +331,14 @@ class AuditReviewService:
 
     def _grant_backed_pairs(self, entries: list[dict]) -> set[tuple[str, str]]:
         """Return the (user_id, patient_id) pairs — among PHI-access rows —
-        that currently have a live clinician grant. Computed once per
-        distinct pair to bound the query count regardless of row volume."""
+        that currently have a live clinician grant. Deduped to distinct pairs
+        and resolved in a single batched query regardless of row volume."""
         pairs = {
             (e["user_id"], e["patient_id"])
             for e in entries
             if e.get("patient_id") and e.get("action") in PHI_ACCESS_ACTIONS
         }
-        return {(uid, pid) for (uid, pid) in pairs if self._patients.has_live_grant(pid, uid)}
+        return self._patients.live_grant_pairs(pairs)
 
     def _is_unauthorized_access(self, entry: dict, grant_backed: set[tuple[str, str]]) -> bool:
         """True when a chart-read action has no live clinician grant behind

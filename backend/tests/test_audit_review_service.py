@@ -643,6 +643,23 @@ class TestUnauthorizedAccess:
         payload = service.compute_payload(window_hours=_WIDE_WINDOW)
         assert payload.entries[0]["is_unauthorized_access"] is False
 
+    def test_live_grant_pairs_batches_the_grant_check(self, patient_repo) -> None:
+        # Direct contract for the batched grant lookup the reviewer uses: only
+        # pairs with a live grant come back; an empty input short-circuits.
+        patient_repo.create(
+            Patient(
+                id="p1",
+                first_name="A",
+                last_name="B",
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            ),
+            "u1",
+        )
+        result = patient_repo.live_grant_pairs({("u1", "p1"), ("u1", "p2"), ("u2", "p1")})
+        assert result == {("u1", "p1")}
+        assert patient_repo.live_grant_pairs(set()) == set()
+
     def test_internal_actor_is_exempt(self, service, audit_repo) -> None:
         # No grant anywhere, but the actor is a registered internal identity.
         audit_repo.append(

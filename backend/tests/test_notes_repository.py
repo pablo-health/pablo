@@ -73,6 +73,21 @@ class TestInMemoryNotesRepository:
         assert found.session_id == "session-B"
         assert repo.get_by_session_id("missing", _USER) is None
 
+    def test_get_by_session_ids_batches(self, repo: InMemoryNotesRepository) -> None:
+        repo.add(_make_note(session_id="session-A"), _USER)
+        repo.add(_make_note(session_id="session-B"), _USER)
+        repo.add(_make_note(session_id=None), _USER)
+
+        found = repo.get_by_session_ids(["session-A", "session-B", "missing"], _USER)
+
+        assert set(found) == {"session-A", "session-B"}
+        assert found["session-A"].session_id == "session-A"
+        # A session with no note is simply absent from the map.
+        assert "missing" not in found
+
+    def test_get_by_session_ids_empty_returns_empty(self, repo: InMemoryNotesRepository) -> None:
+        assert repo.get_by_session_ids([], _USER) == {}
+
     def test_list_by_patient_sorted_newest_first(self, repo: InMemoryNotesRepository) -> None:
         base = datetime(2026, 1, 1, tzinfo=UTC)
         older = _make_note(patient_id="patient-1", finalized_at=base, created_at=base)
@@ -131,6 +146,15 @@ class TestInMemoryAccessControl:
         note.quality_rating = 5
         with pytest.raises(PatientAccessDeniedError):
             repo.update(note, "bob")
+
+    def test_get_by_session_ids_denied_excludes_note(self) -> None:
+        repo = InMemoryNotesRepository()
+        repo.grant_access("pt-A", "alice")
+        repo.add(_make_note(patient_id="pt-A", session_id="sess-A"), "alice")
+
+        # Bob has no grant for patient A, so the batch map is empty for him.
+        assert repo.get_by_session_ids(["sess-A"], "bob") == {}
+        assert set(repo.get_by_session_ids(["sess-A"], "alice")) == {"sess-A"}
 
     def test_list_by_patient_denied_returns_empty(self) -> None:
         repo = InMemoryNotesRepository()

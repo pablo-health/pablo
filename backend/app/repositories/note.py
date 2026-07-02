@@ -60,6 +60,16 @@ class NotesRepository(ABC):
         """
 
     @abstractmethod
+    def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Note]:
+        """Batch form of :meth:`get_by_session_id` — one query for many sessions.
+
+        Returns a ``{session_id: Note}`` map containing only the sessions the
+        user can access that have a note; sessions with no note (or no access)
+        are simply absent from the map. Lets list endpoints embed notes without
+        a per-row query. An empty ``session_ids`` returns ``{}``.
+        """
+
+    @abstractmethod
     def list_by_patient(
         self, patient_id: str, user_id: str, *, limit: int | None = None
     ) -> list[Note]:
@@ -155,6 +165,16 @@ class InMemoryNotesRepository(NotesRepository):
                     return None
                 return note
         return None
+
+    def get_by_session_ids(
+        self, session_ids: list[str], user_id: str = _TEST_DEFAULT_USER
+    ) -> dict[str, Note]:
+        wanted = set(session_ids)
+        return {
+            note.session_id: note
+            for note in self._notes.values()
+            if note.session_id in wanted and self._can_access(note.patient_id, user_id)
+        }
 
     def list_by_patient(
         self,
