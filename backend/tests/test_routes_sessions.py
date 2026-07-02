@@ -31,6 +31,7 @@ def _seed_session(
     owner: str,
     status: SessionStatus = SessionStatus.PENDING_REVIEW,
     source: str | None = None,
+    scheduled_at: datetime | None = None,
 ) -> TherapySession:
     """Create a session owned by ``owner``. create() grants access to the
     owner only — no other user can reach it."""
@@ -43,6 +44,7 @@ def _seed_session(
         status=status,
         transcript=Transcript(format="txt", content="original document text"),
         source=source,
+        scheduled_at=scheduled_at,
         created_at=datetime.now(UTC),
     )
     return repo.create(session)
@@ -121,6 +123,34 @@ class TestSessionListAudit:
         second = _seed_session(mock_session_repo, owner=mock_user_id)
 
         resp = client.get("/api/sessions")
+        assert resp.status_code == 200
+
+        viewed = {
+            call.args[0].resource_id
+            for call in mock_audit_service._repo.append.call_args_list
+            if call.args[0].action == AuditAction.SESSION_VIEWED.value
+        }
+        assert viewed == {first.id, second.id}
+
+
+class TestTodaySessionsAudit:
+    """GET /api/sessions/today discloses patient names + free-text session notes,
+    so it audits a per-record ``session_viewed`` for each session it returns —
+    the same audit-of-record contract as the full session list.
+    """
+
+    def test_today_emits_session_viewed_per_returned_session(
+        self,
+        client: TestClient,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_audit_service: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        now = datetime.now(UTC)
+        first = _seed_session(mock_session_repo, owner=mock_user_id, scheduled_at=now)
+        second = _seed_session(mock_session_repo, owner=mock_user_id, scheduled_at=now)
+
+        resp = client.get("/api/sessions/today")
         assert resp.status_code == 200
 
         viewed = {

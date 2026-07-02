@@ -172,7 +172,11 @@ class JSONFormatter(logging.Formatter):
 
         if record.exc_info:
             payload["error_class"] = record.exc_info[0].__name__ if record.exc_info[0] else None
-            payload["exc_info"] = self.formatException(record.exc_info)
+            # The traceback carries the exception's own message, which can echo
+            # PHI from a wrapped ValueError (e.g. a note/transcript parse error).
+            # RedactPHIFilter only scrubs the log message, not exc_info, so run
+            # the same Layer-2 shape-scrub here — parity with the message path.
+            payload["exc_info"] = _scrub_text(self.formatException(record.exc_info))
 
         return json.dumps(payload, default=str, separators=(",", ":"))
 
