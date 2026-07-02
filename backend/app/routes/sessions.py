@@ -500,10 +500,12 @@ def list_sessions(
 
 @router.get("/api/sessions/today")
 def get_today_sessions(
+    request: Request,
     timezone: str = Query("UTC", description="IANA timezone (e.g. America/New_York)"),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> TodaySessionListResponse:
     """Fetch today's sessions for the authenticated therapist."""
     try:
@@ -542,6 +544,11 @@ def get_today_sessions(
                 updated_at=s.updated_at,
             )
         )
+        # This view discloses patient names and free-text session notes, so each
+        # row is a per-record content read — audit one session_viewed per session,
+        # matching GET /api/sessions. The read-coalescing gate collapses repeats
+        # of the same session within the window so polling doesn't flood the sink.
+        audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, s, patient)
 
     return TodaySessionListResponse(data=data, total=len(data))
 
