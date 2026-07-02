@@ -90,9 +90,8 @@ jobs:
       - name: Alembic single-head check
         # Two PRs that each add a migration off the same parent will
         # silently produce two heads and break ``alembic upgrade head``
-        # for every downstream consumer (most painfully, pablo-saas's
-        # ``saas.bin.migrate``). Catch it at PR time instead of after
-        # the merge.
+        # for every downstream consumer. Catch it at PR time instead of
+        # after the merge.
         run: |
           cd backend
           heads=$(poetry run alembic heads | grep -c "(head)")
@@ -256,8 +255,7 @@ jobs:
       - name: Install dependencies
         # --audit-signatures verifies each package's npm registry signature
         # before install, catching account-takeover republishes that share
-        # a pinned version. See docs (pablo-saas)
-        # docs/internal/vendor-verification/supply-chain-review-2026-05-19.md.
+        # a pinned version.
         run: npm ci --audit-signatures
         env:
           npm_config_fetch_retries: 5

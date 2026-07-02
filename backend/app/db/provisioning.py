@@ -37,8 +37,8 @@ type PostProvisionHook = Callable[["Engine", str], None]
 # overlay registers ``_apply_saas_tenant_template`` +
 # ``_stamp_saas_tenant_at_head`` here so every fresh-tenant code path
 # (signup provisioning, pentest provisioning, …) gets the SaaS-tenant
-# addendum applied atomically — without OSS importing from SaaS
-# (guardrail S1 in pablo-saas/CLAUDE.md).
+# addendum applied atomically — without OSS importing from the
+# overlay.
 #
 # Convention: hooks fire only on the fresh-template branch of
 # :func:`create_practice_schema`. The legacy reconcile branch is used

@@ -4,7 +4,7 @@
 
 Schema-per-practice multi-tenancy: each practice gets its own PostgreSQL schema
 (practice_{id}) for HIPAA-grade data isolation. The `platform` schema stores
-cross-practice data (practice registry, subscriptions, phone numbers).
+cross-practice data such as the practice registry and system config.
 
 Usage:
     from app.db import get_db_session, get_engine

@@ -48,7 +48,7 @@ cd backend && poetry install && poetry run uvicorn app.main:app --reload
 # Frontend
 cd frontend && npm ci && npm run dev
 
-# Or use Docker
+# Or use Docker (brings up the backend + Postgres only; run the frontend separately)
 docker compose up
 ```
 
@@ -56,7 +56,7 @@ docker compose up
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui |
+| Frontend | Next.js 16, TypeScript, Tailwind CSS, shadcn/ui |
 | Backend | FastAPI, Python 3.13, PostgreSQL (Cloud SQL) |
 | AI | Google Gemini (via Vertex AI, default) or Anthropic Claude |
 | Infra | Google Cloud Run, pre-built images on `ghcr.io/pablo-health` |
@@ -68,7 +68,7 @@ Self-hosting Pablo means **you** are responsible for HIPAA compliance. See our [
 Two things worth flagging up front for self-hosters:
 
 1. **Sign the Google Cloud BAA** before you deploy. It's free, takes a few minutes, and covers Cloud Run / Cloud SQL / Cloud Storage / Cloud Batch / Secret Manager / Identity Platform / Vertex AI. Console → Settings → Compliance → Business Associate Agreement.
-2. **Pick your transcription provider and its BAA.** Pablo supports `whisper` (self-hosted on Cloud Batch, covered by the Google Cloud BAA — coming soon in `setup-solo.sh`) and `assemblyai` (lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent). Step 9 of `setup-solo.sh` prompts you to choose and refuses to deploy on the AssemblyAI path without an explicit BAA acknowledgement + API key. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#1-business-associate-agreement-baa).
+2. **Pick your transcription provider and its BAA.** `assemblyai` is the only transcription backend wired for deployment today — it's lower ops, but requires a direct BAA with AssemblyAI before any PHI is sent. A self-hosted `whisper` path (Cloud Batch + spot GPUs, covered by the Google Cloud BAA and needing no third-party BAA) is planned but not yet operational. Step 9 of `setup-solo.sh` prompts you to choose and refuses to deploy on the AssemblyAI path without an explicit BAA acknowledgement + API key. Details in the [Self-Hosting HIPAA Guide](docs/SELF_HOSTING_HIPAA_GUIDE.md#1-business-associate-agreement-baa).
 
 ## Want Managed Hosting?
 

@@ -512,9 +512,9 @@ class TestGetCurrentUser:
     def test_allows_e2e_prefixed_user_without_allowlist(self, mock_verify: MagicMock) -> None:
         """Reserved e2etest-<8hex>@pablo.health prefix bypasses the allowlist.
 
-        Mirrors the existing pentest bypass. Used by pablo-saas/e2e Cloud
-        Run Job so the test runner doesn't need write access to
-        platform.allowed_emails (THERAPY-wy0f).
+        Mirrors the existing pentest bypass. Used by a downstream e2e
+        Cloud Run Job so the test runner doesn't need write access to
+        platform.allowed_emails.
         """
         mock_verify.return_value = {
             "uid": "e2e-user",

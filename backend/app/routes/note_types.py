@@ -81,13 +81,12 @@ class NoteTypeSchema(BaseModel):
     is_locked: bool = Field(
         default=False,
         description=(
-            "True when the caller's subscription / role does not permit "
-            "creating this note type. The OSS authorizer allows everything, "
-            "so OSS responses always carry False; downstream overlays "
-            "(SaaS subscription-gated authorizer) populate True for "
-            "extension types the caller has not unlocked. Frontends "
-            "should render locked types with an upgrade affordance "
-            "rather than as live picker options."
+            "True when the injected authorizer does not permit the caller "
+            "to create this note type. The open-source authorizer allows "
+            "everything, so OSS responses always carry False; a deployment "
+            "may inject an authorizer that locks certain extension types per "
+            "its own policy. Frontends should render locked types as "
+            "unavailable rather than as live picker options."
         ),
     )
 
@@ -142,10 +141,9 @@ def list_note_types(
 
     Each entry carries ``is_locked``, computed from the injected
     :class:`NoteTypeAuthorizer`. OSS ships an allow-all authorizer so
-    self-hosters see every type unlocked; the SaaS overlay swaps in a
-    subscription-gated authorizer so Practice-tier extension types
-    (DAP, BIRP, GIRP, ...) render locked for callers who haven't
-    subscribed.
+    self-hosters see every type unlocked; a deployment may inject an
+    authorizer that locks certain extension types (DAP, BIRP, GIRP, ...)
+    per its own policy.
     """
     definitions = registry.all()
     if context is not None:

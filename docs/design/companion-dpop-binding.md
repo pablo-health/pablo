@@ -1,7 +1,7 @@
 # Companion device binding — DPoP and the install_id deviation
 
-**Status:** active design — stage 1 implemented (THERAPY-xo0o), stage 2
-(middleware enforcement) tracked under THERAPY-6qtr.
+**Status:** active design — stage 1 implemented, stage 2
+(middleware enforcement) is next.
 
 **Audience:** Pablo engineers, security reviewers, future-Kurt, anyone
 reading the codebase six months from now wondering why the `DPoP`
@@ -11,8 +11,8 @@ doc is the reason.
 **See also:**
 - `docs/design/companion-thin-client.md` — the product-shape doc this
   security architecture sits underneath.
-- THERAPY-xo0o (stage 1: enrollment + DPoP-ready schema), THERAPY-6qtr
-  (stage 2: middleware proof enforcement).
+- Stage 1: enrollment + DPoP-ready schema. Stage 2: middleware proof
+  enforcement.
 
 ---
 
@@ -125,13 +125,13 @@ problem and we need to revisit.
 | 4 | Attacker steals the access token AND knows a valid install_id (e.g. cross-user observation) | ❌ Blocked — install_id ≠ key; needs signed proof | ❌ Blocked — middleware checks install_id belongs to the user; cross-user pairings fail | Critical: install_id-user binding check is load-bearing |
 | 5 | Attacker uses victim's install_id with their own Firebase token | N/A (no install_id concept) | ❌ Blocked — install_id must belong to authenticated user | Stage 2 middleware test: cross-user install_id → 401 |
 | 6 | Attacker enrolls a fake companion (script-runs the enrollment endpoint with a freshly-minted key) | ⚠️ Possible — RFC 9449 doesn't address enrollment | ⚠️ Possible — App Attest (separate, lower-priority bead) closes this | Mitigation deferred; install_id revocation gives ops a knob |
-| 7 | Attacker briefly bypasses Secure Enclave (e.g., 60s memory inspection), pre-computes future proofs | ⚠️ Mitigated by server-issued DPoP-Nonce (RFC 9449 §8) | ⚠️ Same gap | Server-nonce deferred in 6qtr; narrow threat |
-| 8 | Stolen unlocked device | ❌ Not addressed by either scheme | ❌ Same | Idle-logout (THERAPY-a290) is the relevant control |
+| 7 | Attacker briefly bypasses Secure Enclave (e.g., 60s memory inspection), pre-computes future proofs | ⚠️ Mitigated by server-issued DPoP-Nonce (RFC 9449 §8) | ⚠️ Same gap | Server-nonce deferred to stage 2; narrow threat |
+| 8 | Stolen unlocked device | ❌ Not addressed by either scheme | ❌ Same | Web idle-logout is the relevant control |
 | 9 | OAuth authorization-code interception | ❌ Not addressed by either scheme | ❌ Same | PKCE is the answer; orthogonal to DPoP |
 | 10 | Lost laptop, user reports it | ⚠️ DPoP can't help — the key is on the device | ⚠️ Same — install_id-bound key is on the device | DPoP is the wrong layer; see "Lost laptop is a different problem" below |
 | 11 | TPM-less Windows machine | N/A | ⚠️ Graceful fallback: `key_storage='software'`. Same threat model as scenario 3's software case | Compliance team can query for hardware-bound coverage |
 | 12 | Companion auth code intercepted between web and native app (loopback / custom scheme) | Out of scope (PKCE territory) | Same | The auth code itself is 60s TTL single-use, separate defense |
-| 13 | User reinstalls OS / wipes companion | Existing flow: re-authenticate via OAuth | Same: new install_id, new key, new row; old row remains until ops/user revokes | Stale rows are visible in `GET /me/devices` (THERAPY-kcz0) for cleanup |
+| 13 | User reinstalls OS / wipes companion | Existing flow: re-authenticate via OAuth | Same: new install_id, new key, new row; old row remains until ops/user revokes | Stale rows are visible in `GET /me/devices` for cleanup |
 | 14 | Stolen Firebase refresh token | Firebase: refresh ATs without device proof → useless for protected endpoints | Same | Refresh path bypasses our middleware; ATs the refresh emits are still useless without install_id + proof |
 | 15 | Stale device with revoked_at set tries to use a still-valid Firebase token | Token revoke required | Middleware rejects on `revoked_at IS NOT NULL` lookup | Faster + finer-grained than token revocation |
 
@@ -164,7 +164,7 @@ either:
 
 1. **The browser** — click `Start Session` on app.pablo.health, or
    read whatever logged-in tab is already open. The relevant
-   control is web idle-logout (THERAPY-a290 — currently a launch
+   control is web idle-logout (currently a launch
    blocker), **not** any companion-side defense.
 2. **A script** that uses the companion's stored Firebase refresh
    token + device key to call backend APIs directly. Realistic for a
@@ -180,7 +180,7 @@ The controls that actually mitigate this scenario, in priority order:
 
 | Control | Owned by | Status |
 |---|---|---|
-| Web idle-logout | Pablo (frontend) | THERAPY-a290, launch-blocker |
+| Web idle-logout | Pablo (frontend) | Launch-blocker |
 | Companion has no PHI-browsing UI | Pablo (design) | Already true in thin-client v1 |
 | Self-serve `revoke device` button on the device list | Pablo (frontend + backend) | Not yet filed |
 | Refresh-token TTL bounded to N hours | Pablo (Firebase config) | Audit task, not yet filed |
@@ -230,7 +230,7 @@ narrow extra guarantee: an attacker who briefly compromised the
 device key (say 60s of Secure Enclave bypass) cannot pre-generate
 future proofs, because they don't yet know the future nonce.
 
-We deferred this in 6qtr because:
+We deferred this in stage 2 because:
 
 1. Brief-bypass-then-no-bypass is an exotic threat model. If the
    attacker has briefly bypassed Secure Enclave, they probably have
@@ -243,15 +243,15 @@ We deferred this in 6qtr because:
    client logic per platform.
 
 If the threat model evolves (e.g., we get a CVE in our threat
-landscape that this would address), file a follow-on bead and turn
-it on. The 6qtr middleware should be structured so server-nonce can
+landscape that this would address), file a follow-on task and turn
+it on. The stage 2 middleware should be structured so server-nonce can
 be added without breaking changes.
 
 ---
 
 ## Stage rollout
 
-### Stage 1: schema + enrollment (THERAPY-xo0o) — *shipped*
+### Stage 1: schema + enrollment — *shipped*
 
 - `platform.companion_devices` table with DPoP-ready columns
 - `/api/auth/native/exchange` accepts optional enrollment payload
@@ -264,7 +264,7 @@ existing clients without the enrollment payload continue to work
 unchanged. The `enrollment` field on `ExchangeAuthCodeRequest` is
 `Optional[CompanionEnrollment] = None`.
 
-### Stage 2: proof enforcement middleware (THERAPY-6qtr) — *next*
+### Stage 2: proof enforcement middleware — *next*
 
 - FastAPI middleware verifies `X-Install-ID` + `DPoP` on every
   authenticated request when `ENABLE_DPOP_VALIDATION=true`
@@ -277,7 +277,7 @@ authenticated request from a companion-issued auth code must have a
 DPoP proof** — there must be no opt-out by accident. See "Test
 enforcement" below.
 
-### Stage 3: companion-side signing (PABLO-D epic) — *separate repo*
+### Stage 3: companion-side signing — *separate repo*
 
 - Mac: `SecKeyCreateRandomKey` + `kSecAttrTokenIDSecureEnclave`
 - Windows: `CngKey.Create` w/ `MicrosoftPlatformCryptoProvider`
@@ -317,7 +317,7 @@ definition. Anything not exempted is enforced. Exemptions are:
   authenticated user yet, no install_id to check
 - Inbound webhooks (Stripe, Plunk, etc.) — auth is by shared-secret
   signature, not user JWT
-- Internal SaaS-only admin routes that don't accept companion clients
+- Internal admin routes (configured per deployment, not exposed to companion clients)
 
 Every exempt route must justify itself in a code comment.
 
@@ -333,7 +333,7 @@ Adding a new authenticated route without addressing one of those
 two paths causes the test to fail. This is the **load-bearing test**
 that makes the system fail-closed.
 
-A bead for this test is filed alongside 6qtr; the test ships in the
+This test is tracked alongside stage 2; it ships in the
 same PR as the middleware.
 
 ### 3. Integration test that exercises the actual middleware stack
@@ -385,8 +385,8 @@ working unmodified:
   required.
 - Existing 1029 unit tests pass unchanged.
 
-The OSS / SaaS boundary is preserved: every change is in OSS pablo;
-the SaaS overlay imports nothing new.
+Every change lives in the OSS codebase; no downstream deployment needs
+new imports.
 
 ---
 
@@ -398,7 +398,7 @@ operational story is robust:
 - **Per-device revocation**: ops updates
   `companion_devices.revoked_at`; middleware rejects within the next
   request. Other devices for the same user keep working.
-- **Device list UX (THERAPY-kcz0)**: `GET /me/devices` returns the
+- **Device list UX**: `GET /me/devices` returns the
   user's enrolled devices with a short `jkt_fingerprint` so users
   can recognize "Mac Mini · a3f9c2e1" and self-serve revoke.
 - **Audit posture**: rows record `enrolled_at`, `last_seen`,
@@ -415,7 +415,7 @@ operational story is robust:
 
 - The web frontend's auth (separate concern; same-origin sign-in).
 - Inbound webhook signature verification — see CLAUDE.md guardrail
-  S4 and `backend/saas/webhooks/plunk.py`.
+  S4 and the downstream deployment's webhook handler.
 - HIPAA audit logs for device events — currently a Python `logger.
   info` line; upgrade to a structured audit-action enum is a follow-
   on if compliance asks.

@@ -618,8 +618,8 @@ def _compose_system_prompt(
     the chart contains no data. Without this, the model receives only
     the caller prompt and a question, and defaults to "being helpful"
     by confabulating a plausible patient from training-data priors.
-    See pablo-saas ``THERAPY-fr6y`` for the prod failure that motivated
-    this change. Regression-tested by the chat-hallu-005 case in
+    This change was motivated by a downstream production failure.
+    Regression-tested by the chat-hallu-005 case in
     ``backend/evals/datasets/chat.yaml``.
     """
     parts = [caller_system_prompt.strip(), "\n\n--- PATIENT CONTEXT ---\n"]

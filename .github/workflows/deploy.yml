@@ -70,8 +70,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=oss-backend
           # SBOM + SLSA provenance attestations attach to the image in
           # Artifact Registry. Lets us answer "what's in this prod image,
-          # and where did it come from" without rebuilding. Referenced by
-          # Risk 11 in pablo-saas docs/internal/risk-assessment-2026-05-18.md.
+          # and where did it come from" without rebuilding.
           sbom: true
           provenance: mode=max
 

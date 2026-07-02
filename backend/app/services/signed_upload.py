@@ -44,7 +44,7 @@ def _iam_signing_kwargs() -> dict[str, Any]:
     a local private key (gcloud ADC refresh tokens, downloaded SA
     JSON keys) — those still self-sign without an IAM round-trip.
 
-    Discovered via pablo-saas E2E (THERAPY-wy0f.4 / THERAPY-vapd).
+    Discovered via a downstream end-to-end test run.
     Without this, patient document upload has never worked end-to-end
     against any deployed environment.
     """

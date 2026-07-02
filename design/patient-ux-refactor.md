@@ -81,8 +81,8 @@ defaults to `search_by=last_name` and matches with
 `startswith(search_lower)` prefix-only
 (`backend/app/repositories/patient.py:206-208`); the placeholder
 ("Search patients by name…") implies more than it delivers, and a first-name
-query silently returns nothing. Tracked as **PABLO-y93** (pagination) and
-**PABLO-vk6** (search).
+query silently returns nothing. Both pagination and search are tracked
+follow-ups.
 
 ## Approach
 
@@ -146,24 +146,23 @@ Why co-locate visually:
   SSE streaming, and API client are all already AGPL OSS. The mount passes **no
   `callerSystemPrompt`** so the backend resolves the prompt server-side
   (`backend/app/prompts/chat.py::get_chat_system_prompt`): OSS gets
-  `DEFAULT_PROMPT`; pablo-saas gets its proprietary provider-aware resolver,
-  already registered via `register_provider` in
-  `pablo-saas/backend/saas/prompts/chat.py`. Audit events already fire through
-  the existing chat routes — the modal is a presentation change only.
+  `DEFAULT_PROMPT`; a downstream deployment can register a proprietary
+  provider-aware resolver via `register_provider`. Audit events already fire
+  through the existing chat routes — the modal is a presentation change only.
 
-  **Cross-repo impact (this is the one OSS+SaaS-paired item):**
+  **Deployment note (OSS core + downstream deployments):**
   - *OSS adds:* `PatientChatDialog` + the Chat button + a neutral default
     source-selection (the current `DEFAULT_SELECTION` is not proprietary).
     Today OSS's `PatientChartExtras` returns `null` and the only chat mount is
     the dev route — this is the first real OSS mount.
-  - *SaaS removes:* the inline chat mount in
-    `frontend/overlay/src/components/patients/PatientChartExtras.tsx` (so chat
-    doesn't double-render once OSS owns the patient-page modal) **and** the
-    hardcoded proprietary `SYSTEM_PROMPTS` in that file — they are redundant
-    with the already-registered SaaS backend resolver. Net: proprietary prompt
-    text leaves the frontend entirely. Land via the `/ship` paired-PR dance.
-  - *Delete `frontend/app/dev/chat/`* in the OSS PR — referenced nowhere in OSS
-    or SaaS. Sequence: add the modal mount first (same PR), then delete the dev
+  - *Downstream deployments:* a deployment's own inline chat mount is removed
+    in favor of the shared OSS patient-page modal (so chat doesn't
+    double-render once OSS owns it), along with any hardcoded proprietary
+    system-prompt text in the frontend — that text is redundant with the
+    backend resolver. Net: proprietary prompt text leaves the frontend
+    entirely.
+  - *Delete `frontend/app/dev/chat/`* in the OSS PR — referenced nowhere.
+    Sequence: add the modal mount first (same PR), then delete the dev
     route, so OSS never loses chat access mid-change.
 - **Document viewer** = a right-side `Sheet`/`Dialog` drawer. Render the signed
   URL with a native `<embed type="application/pdf">` for PDFs and `<img>` for
@@ -174,11 +173,11 @@ Why co-locate visually:
 
 ### Patient list — target
 
-- **Pagination (PABLO-y93):** short-term, request `page_size: 100` (API max) so
+- **Pagination:** short-term, request `page_size: 100` (API max) so
   no one hits the cap in practice; surface the real `total` ("Showing N
   patients"). Add Prev/Next controls only if a practice exceeds 100 — noted as a
   follow-up, not built now.
-- **Search (PABLO-vk6):** switch the repo from `startswith` to substring
+- **Search:** switch the repo from `startswith` to substring
   (`contains`) across **both** first and last name; drop the unused `search_by`
   toggle; keep the placeholder generic ("Search patients…") now that behavior
   matches it. Backend + tests change in one place.
@@ -203,7 +202,7 @@ within a phase, items are parallelizable.
   - acceptance: tabs render on the patient page below the summary; switching
     tabs works; no content yet beyond placeholders.
 
-- **[pablo]** Fix document download auth (PABLO-47h) — the current
+- **[pablo]** Fix document download auth — the current
   `<a href="/api/documents/{id}/file">` 401s because anchor navigation can't
   send the Firebase bearer token. Return the signed URL via the authenticated
   fetch client, then navigate to GCS. **Establishes the contract the viewer
@@ -215,20 +214,20 @@ within a phase, items are parallelizable.
 
 - **[pablo]** Add `DocumentViewerSheet` — new
   `components/patients/DocumentViewerSheet.tsx`: a right drawer that takes a
-  document id, obtains the signed URL via the **authenticated-fetch pattern from
-  PABLO-47h**, renders `<embed>` (PDF) or `<img>` (image), with loading + error
-  states.
-  - depends on: Fix document download auth (PABLO-47h)
+  document id, obtains the signed URL via the **authenticated-fetch pattern
+  from the document download auth fix**, renders `<embed>` (PDF) or `<img>`
+  (image), with loading + error states.
+  - depends on: Fix document download auth
   - acceptance: given a document id, the sheet opens and renders the file;
     document-access audit event still fires; closes cleanly.
 
-- **[pablo]** Patient list pagination (PABLO-y93) — request `page_size: 100`;
+- **[pablo]** Patient list pagination — request `page_size: 100`;
   display real `total`.
   - depends on: none
   - acceptance: a user with >20 patients sees all (≤100); "Showing N" visible;
     test covers the page_size.
 
-- **[pablo]** Patient list search (PABLO-vk6) — substring match across both
+- **[pablo]** Patient list search — substring match across both
   names in `backend/app/repositories/patient.py`; drop `search_by` from the UI
   path; keep generic placeholder.
   - depends on: none
@@ -252,19 +251,19 @@ within a phase, items are parallelizable.
   - acceptance: upload/list/delete still work; lock icon on
     `psychotherapy_notes`/`therapist_private` preserved; View opens the viewer.
 
-- **[pablo + pablo_saas]** Chat modal (OSS+SaaS paired, via `/ship`) —
+- **[pablo]** Chat modal (OSS core; downstream deployments update in step) —
   *OSS:* new `components/patients/PatientChatDialog.tsx` (Radix Dialog wrapping
   the existing `ChatPanelWithHistory`), header `Chat` button, neutral default
   source-selection, **no `callerSystemPrompt`** (backend resolves); delete
   `frontend/app/dev/chat/` in the same PR.
-  *SaaS:* remove the inline chat mount + hardcoded proprietary `SYSTEM_PROMPTS`
-  from `frontend/overlay/src/components/patients/PatientChartExtras.tsx` (now
-  redundant with the backend resolver).
+  *Downstream deployment:* a deployment's own inline chat mount and any
+  hardcoded proprietary system-prompt text are removed (now redundant with the
+  backend resolver).
   - depends on: PatientSummary extract (header refactor lands there)
   - acceptance: button opens modal; past conversations listed and selectable;
-    new turn streams; OSS standalone uses `DEFAULT_PROMPT`, SaaS uses its
-    registered proprietary prompt (no frontend prompt); chat audit events fire;
-    no double-render on SaaS; dev route gone; `/ship` lands both PRs.
+    new turn streams; OSS core uses `DEFAULT_PROMPT`, a downstream deployment
+    uses its registered proprietary prompt (no frontend prompt); chat audit
+    events fire; no double-render; dev route gone.
 
 ### Phase 3 — finish
 
@@ -287,8 +286,9 @@ within a phase, items are parallelizable.
   yet.
 - **Search** — substring across both names; drop the `search_by` toggle from the
   UI.
-- **Chat ownership** — OSS owns the mount (button + modal); SaaS deletes its
-  inline mount + frontend prompts; prompt resolution stays server-side.
+- **Chat ownership** — OSS owns the mount (button + modal); a downstream
+  deployment drops its inline mount + frontend prompts; prompt resolution stays
+  server-side.
 - **Chat modal** — modal-only, **no** `?chat=` deep-link param.
 - **Image viewer** — plain `<img>` fit-to-width; zoom/pan deferred.
 - **Section name** — "Chart".

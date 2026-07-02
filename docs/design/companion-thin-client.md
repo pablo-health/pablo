@@ -58,7 +58,7 @@ experience later if the product calls for it. Nothing is deleted.
 Three independent pressures point the same direction:
 
 1. **The "wow page" landing flow.** The new marketing/landing page
-   (THERAPY-3253 epic) is the first thing a prospective therapist
+   is the first thing a prospective therapist
    sees. The conversion moment is "click here to start a session" —
    that click should land on the web dashboard, not on a desktop UI
    the user has never seen before. The desktop UI is a second mental
@@ -200,13 +200,13 @@ useless.
 **Staged rollout (so we don't ship the middleware before companions
 support signing):**
 
-1. **Stage 1 — THERAPY-xo0o** (backend): `companion_devices` table,
+1. **Stage 1** (backend): `companion_devices` table,
    enrollment payload accepted at `/api/auth/native/exchange`,
    stored but not enforced.
-2. **Stage 2 — THERAPY-6qtr** (backend): `DPoP` middleware enforces
+2. **Stage 2** (backend): `DPoP` middleware enforces
    per-request proofs. Behind `ENABLE_DPOP_VALIDATION` until
    companions ship.
-3. **Stage 3 — PABLO-D epic** (companion repo): Secure Enclave / TPM
+3. **Stage 3** (companion repo): Secure Enclave / TPM
    key generation, JWK serialization, per-request proof signing on
    Mac and Windows.
 4. **Stage 4 (optional)**: App Attest / TPM AIK enrollment-time
@@ -368,7 +368,7 @@ independently shippable.
   replaces).
 - Deleting any native dashboard code.
 - Mobile / iOS companion app.
-- Self-hosted OSS users getting a SaaS-flavored Universal Link
+- Self-hosted OSS users getting a deployment-branded Universal Link
   experience.
 - Cross-device session handoff (start on laptop, finish on iPad). Not
   asked for, not designed for.
@@ -380,8 +380,7 @@ independently shippable.
   our deviation from RFC 9449 and the per-scenario threat table.
 - `docs/url-scheme.md` — the existing `pablohealth://` URI grammar
   (still applies; this doc augments it with the verified-link path).
-- THERAPY-3253 epic — marketing/landing page (the "wow page" this
-  flow plugs into).
-- THERAPY-a290 — frontend idle-logout for HIPAA (the auto-record
+- Marketing/landing page (the "wow page" this flow plugs into).
+- Frontend idle-logout for HIPAA (the auto-record
   concern in §"Affirmative confirmation" is directly related; both
   exist for the same compliance posture).
