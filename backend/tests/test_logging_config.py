@@ -170,6 +170,26 @@ class TestJSONFormatter:
         assert payload["error_class"] == "ValueError"
         assert "boom" in payload["exc_info"]
 
+    def test_exception_traceback_phi_shape_scrubbed(self) -> None:
+        # A wrapped exception whose message echoes a PHI-shaped value (here an
+        # SSN) must not reach the sink verbatim via the traceback — the formatter
+        # scrubs exc_info on the same Layer-2 shapes as the message.
+        try:
+            raise ValueError("import failed for 123-45-6789")
+        except ValueError:
+            rec = logging.LogRecord(
+                name="test",
+                level=logging.ERROR,
+                pathname=__file__,
+                lineno=1,
+                msg="note import failed",
+                args=None,
+                exc_info=sys.exc_info(),
+            )
+        payload = json.loads(self.fmt.format(rec))
+        assert "123-45-6789" not in payload["exc_info"]
+        assert "[REDACTED-SSN]" in payload["exc_info"]
+
 
 class TestEndToEnd:
     def test_phi_keyed_extra_redacted_in_json_output(self) -> None:
