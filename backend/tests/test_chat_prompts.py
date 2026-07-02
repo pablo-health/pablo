@@ -5,7 +5,7 @@
 Covers: OSS default is returned when no resolver is registered; a
 registered resolver overrides the default; resetting clears the
 override; the OSS default text contains the empty-chart safety
-guidance that pablo-saas THERAPY-fr6y depends on.
+guidance that downstream consumers depend on.
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ def test_register_provider_is_idempotent() -> None:
 
 # ---------------------------------------------------------------------------
 # Content assertions for the OSS default — these document the safety floor
-# that downstream consumers MUST preserve in any overlay (pablo-saas
-# THERAPY-fr6y traceback).
+# that downstream consumers MUST preserve in any overlay (motivated
+# by a downstream production traceback).
 # ---------------------------------------------------------------------------
 
 
@@ -69,7 +69,7 @@ def test_default_prompt_forbids_invention() -> None:
 
 def test_default_prompt_handles_empty_chart_case() -> None:
     """OSS default must explicitly tell the model what to do when the
-    chart is entirely empty (pablo-saas THERAPY-fr6y safety floor)."""
+    chart is entirely empty (downstream-motivated safety floor)."""
     body = chat_prompts.DEFAULT_PROMPT.lower()
     empty_chart_phrases = (
         "chart is empty",

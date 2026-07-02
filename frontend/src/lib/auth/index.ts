@@ -5,8 +5,7 @@
  *
  * The app depends on this barrel, not on any concrete auth SDK. A single
  * implementation is selected per deployment by `NEXT_PUBLIC_AUTH_PROVIDER`
- * (default `firebase`). See `docs/internal/identity-provider-migration-design.md`
- * (pablo-saas) for the why.
+ * (default `firebase`).
  */
 
 export * from "./types"

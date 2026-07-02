@@ -36,7 +36,7 @@ _db_url = os.environ.get("DATABASE_URL", "")
 pytestmark = pytest.mark.skip(
     reason=(
         "THERAPY-n0ac: pre-existing breakage. Tenant-fan-out semantics "
-        "moved (likely pablo-saas#235) without these tests being updated. "
+        "moved without these tests being updated. "
         "Exposed when pablo CI switched to ``make test-integration``."
     ),
 )

@@ -16,38 +16,39 @@ This document covers the TLS encryption requirements for HIPAA compliance and ho
 
 The platform enforces HTTPS/TLS through two middleware components:
 
-1. **HTTPSEnforcementMiddleware** (`backend/app/middleware.py`)
+1. **HTTPSEnforcementMiddleware** (`backend/app/middleware/security.py`)
    - Rejects all HTTP requests in production
    - Supports reverse proxy configurations (X-Forwarded-Proto, X-Forwarded-SSL headers)
    - Allows localhost HTTP in development mode only
 
-2. **SecurityHeadersMiddleware** (`backend/app/middleware.py`)
+2. **SecurityHeadersMiddleware** (`backend/app/middleware/security.py`)
    - Adds HTTP Strict Transport Security (HSTS) headers
    - Implements defense-in-depth security headers (CSP, X-Frame-Options, etc.)
 
 ### Configuration
 
-Settings are managed in `backend/app/config.py`:
+Settings are managed in `backend/app/settings.py`:
 
 ```python
-# Environment
-environment: str = "development"  # Set to "production" in production
+# Environment — this alone drives HTTPS enforcement. There is no separate
+# enforce_https flag: staging/production enforce HTTPS, development does not.
+environment: str = "production"  # development, staging, or production
 
 # Security - HIPAA TLS Requirements
-enforce_https: bool = True  # Must be True in production
-hsts_max_age: int = 31536000  # 1 year (recommended by OWASP)
+hsts_max_age: int = 63072000  # 2 years
 hsts_include_subdomains: bool = True
 hsts_preload: bool = True
 ```
 
 ### Environment Variables
 
-Configure via `.env` file:
+Configure via `.env` file. HTTPS enforcement is not a standalone toggle —
+it turns on automatically whenever `ENVIRONMENT` is `staging` or
+`production`:
 
 ```bash
 ENVIRONMENT=production
-ENFORCE_HTTPS=true
-HSTS_MAX_AGE=31536000
+HSTS_MAX_AGE=63072000
 HSTS_INCLUDE_SUBDOMAINS=true
 HSTS_PRELOAD=true
 ```
@@ -94,7 +95,7 @@ Google Cloud Run provides **automatic TLS termination**:
 Setup:
 ```bash
 # Cloud Run automatically provisions certificates for custom domains
-gcloud run services add-iam-policy-binding therapy-platform-api \
+gcloud run services add-iam-policy-binding pablo-backend \
   --region=us-central1 \
   --member=allUsers \
   --role=roles/run.invoker
@@ -105,14 +106,14 @@ If you need to use your own certificates (e.g., Extended Validation certs):
 
 ```bash
 # Upload certificate to Google Cloud
-gcloud compute ssl-certificates create therapy-platform-cert \
+gcloud compute ssl-certificates create pablo-cert \
   --certificate=path/to/cert.pem \
   --private-key=path/to/key.pem
 
 # Use with load balancer
-gcloud compute target-https-proxies create therapy-platform-proxy \
-  --ssl-certificates=therapy-platform-cert \
-  --url-map=therapy-platform-lb
+gcloud compute target-https-proxies create pablo-proxy \
+  --ssl-certificates=pablo-cert \
+  --url-map=pablo-lb
 ```
 
 #### Certificate Renewal
@@ -150,7 +151,7 @@ curl -I https://yourdomain.com | grep Strict-Transport-Security
 #### Expected Results
 
 - **TLS Version**: TLS 1.2 or TLS 1.3
-- **HSTS Header**: `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
+- **HSTS Header**: `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
 - **HTTP Requests**: Should be rejected with 400 Bad Request
 - **SSL Labs Grade**: A or A+
 
@@ -208,7 +209,7 @@ echo "All TLS checks passed"
 
 - [x] TLS 1.2+ enforced for all PHI transmission
 - [x] HTTP requests rejected in production
-- [x] HSTS headers configured (1 year max-age)
+- [x] HSTS headers configured (2 year max-age)
 - [x] Reverse proxy support (X-Forwarded-Proto)
 - [x] Automated certificate management in production
 - [x] Certificate expiration monitoring
@@ -227,7 +228,7 @@ If a certificate expires unexpectedly:
    ```bash
    # Force certificate renewal
    gcloud compute ssl-certificates delete OLD_CERT_NAME
-   gcloud run domain-mappings create --service=therapy-platform-api --domain=yourdomain.com
+   gcloud run domain-mappings create --service=pablo-backend --domain=yourdomain.com
    ```
 
 2. **Communication**:

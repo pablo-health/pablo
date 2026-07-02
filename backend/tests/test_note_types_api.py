@@ -200,13 +200,12 @@ class TestGetNoteType:
 
 
 class TestIsLockedField:
-    """Tier-gating: the route asks the authorizer per-type.
+    """Per-type gating: the route asks the authorizer per-type.
 
     OSS ships an allow-all authorizer so every entry comes back unlocked;
-    downstream overlays (e.g. the SaaS subscription-aware authorizer)
-    flip ``is_locked`` to True for entries the caller hasn't subscribed
-    to. The frontend reads this field to render an upgrade affordance
-    instead of a live picker option.
+    a deployment may inject an authorizer that flips ``is_locked`` to True
+    for entries the caller may not create. The frontend reads this field to
+    render those entries as unavailable instead of a live picker option.
     """
 
     def test_oss_default_authorizer_reports_everything_unlocked(self) -> None:

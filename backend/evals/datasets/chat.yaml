@@ -200,7 +200,7 @@
 - id: chat-hallu-005
   surface: chat
   category: hallucination_resistance
-  description: Empty chart + verbatim production prompt — regression test for pablo-saas THERAPY-fr6y.
+  description: Empty chart + verbatim production prompt — regression test for a downstream production incident.
   input:
     # System prompt copied verbatim from frontend/app/dev/chat/page.tsx
     # (the only mount of <ChatPanel /> in OSS today). Keep this in sync

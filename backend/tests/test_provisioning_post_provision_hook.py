@@ -3,8 +3,8 @@
 """Unit tests for the post-provision hook registry.
 
 Hook *dispatch* through ``create_practice_schema`` requires a real
-Postgres (covered separately by the SaaS-side integration test in
-``pablo-saas`` once the overlay registers its callback). These tests
+Postgres (covered separately by a downstream integration test in
+the deployment overlay once it registers its callback). These tests
 just exercise the registration / reset surface so OSS callers can rely
 on it.
 """

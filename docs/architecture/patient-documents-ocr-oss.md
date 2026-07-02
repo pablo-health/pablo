@@ -1,4 +1,4 @@
-# Patient-document OCR fallback (THERAPY-ak6m.2.3)
+# Patient-document OCR fallback
 
 ## Goal
 
@@ -6,7 +6,7 @@ When `PatientDocumentsService.finalize_upload` runs `_extract_pdf_text` and
 PyMuPDF returns `None` — i.e. the PDF has no embedded text and is presumed
 scanned/faxed — fall back to **Google Document AI** (Document OCR processor)
 to extract text. Store the result in `patient_documents.extracted_text`, the
-same column the chat bundler already reads (THERAPY-ak6m.2.2).
+same column the chat bundler already reads.
 
 This unblocks the PMHNP pilot for patients whose prior-provider records
 arrived as faxed paper rather than digital EHR exports.
@@ -59,7 +59,7 @@ arrived as faxed paper rather than digital EHR exports.
 ```python
 class Settings(BaseSettings):
     ...
-    # Document AI (ak6m.2.3 OCR fallback)
+    # Document AI (OCR fallback)
     document_ai_project_id: str | None = None    # e.g. "pablo-prod"
     document_ai_location: str = "us"             # "us" or "eu"
     document_ai_processor_id: str | None = None  # resource id of the OCR processor
@@ -209,7 +209,6 @@ without losing access to PyMuPDF extraction.
 * `make check` clean (lint + mypy + tests).
 * Manual smoke against 2-3 real pilot PDFs (or representative samples) —
   this is the actual go/no-go signal. Eval cases come later.
-* `bd update ak6m.2.3 --notes "PR #..."` when the PR is cut.
 
 ## Out of scope (do NOT add)
 

@@ -1,9 +1,8 @@
 # Patient-Context Chat — OSS Design Doc
 
 **Status:** Living. Reflects HEAD as of 2026-06-02.
-**Epic:** THERAPY-bhv (OSS patient-context chat primitive).
 **Phases shipped:** 1 (lifecycle), 2 (context bundler), 3 (streaming turn service), doc-context-quality (document manifest, relevance ordering, per-doc render cap + summary fallback).
-**Phases planned:** 3b (LlmUsageMeter), 4 (frontend ChatPanel + companion beads), 5 (retention sweep + invariant checks), 6 (operations docs).
+**Phases planned:** 3b (LlmUsageMeter), 4 (frontend ChatPanel), 5 (retention sweep + invariant checks), 6 (operations docs).
 
 > **New here?** Start with the runtime overview:
 > [`chat-context-overview.md`](./chat-context-overview.md). This file is the
@@ -17,8 +16,8 @@ should be treated as a bug in the code or a needed amendment to this doc — not
 
 The chat primitive is **OSS, AGPL, and clinically neutral by design.** Pablo
 ships only the infrastructure: a chart-aware context bundler, a streaming LLM
-gateway, lifecycle CRUD, audit hooks. The caller — an OSS UI surface or a SaaS
-overlay — supplies the **system prompt**, **feature key**, and (optionally) the
+gateway, lifecycle CRUD, audit hooks. The caller — an OSS UI surface or any
+downstream deployment — supplies the **system prompt**, **feature key**, and (optionally) the
 **starter prompts** that frame *what kind of conversation this is* (session
 prep, insurer continuation, peer note, patient homework summary, etc.). No
 clinical opinion ships in OSS.
@@ -37,7 +36,7 @@ clinical opinion ships in OSS.
   documents went into the latest reply — surfaced via the per-message
   `context_manifest` (§7.5).
 - Stay **caller-agnostic.** OSS ships no fixed feature workflow. The same
-  primitive supports SaaS-overlay workflows (rx-justification, session prep,
+  primitive supports downstream workflows (rx-justification, session prep,
   letter drafting), forensic review, and any future caller.
 - **HIPAA-compliant by default.** All PHI flows through Vertex AI under
   Pablo's existing BAA; lifecycle events are audited; per-turn forensic
@@ -55,11 +54,12 @@ clinical opinion ships in OSS.
   system prompt frames the conversation that way, that's the caller's
   responsibility — OSS stays neutral.
 - **No supervisor / chart-shared access.** A conversation is owned by the user
-  who created it (§4). Multi-user access is a SaaS concern.
+  who created it (§4). Multi-user access is configured per deployment and is
+  out of scope for the core primitive.
 - **No tool-use / function-calling.** The model writes text. It doesn't issue
   search calls, run code, or trigger workflows. (Phase 6+ may revisit.)
 - **No streaming SSE on the frontend until Phase 4.** Phases 1–3 expose the
-  HTTP surface; the React component lands in Phase 4 (THERAPY-q3z).
+  HTTP surface; the React component lands in Phase 4.
 - **No quota enforcement on by default.** The Phase-3b `LlmUsageMeter` (§11)
   records usage for forensic + future-tier purposes; OSS does not block on it.
 
@@ -214,7 +214,7 @@ Defined in `backend/app/models/audit.py::AuditAction`:
 | `CHAT_CONVERSATION_ARCHIVED`  | `PATCH /api/chat/conversations/{id}` or `DELETE …?mode=archive` | The boolean transition `archived_at: NULL → NOT NULL`.                               |
 | `CHAT_CONVERSATION_PURGED`    | `DELETE /api/chat/conversations/{id}` (mode=purge, default)     | The conversation row and its messages have been hard-deleted.                        |
 | `CHAT_TURN_BLOCKED`           | `POST .../messages` (during stream)                             | The turn ended with a `safety_block`, `context_too_large`, or `quota_exceeded` error.|
-| `CHAT_CHART_PROMOTION`        | (reserved)                                                      | A future SaaS surface promotes a chat exchange into the chart as a note.             |
+| `CHAT_CHART_PROMOTION`        | (reserved)                                                      | A future surface promotes a chat exchange into the chart as a note.                  |
 
 `CHAT_TURN_BLOCKED` is the only per-turn audit event, and it fires only on
 **safety / quota / budget** failures. Successful turns are forensically
@@ -337,8 +337,8 @@ SOURCE_KEY_LAB_VALUES_RECENT       = "lab_values_recent"   # stub — module_not
 SOURCE_KEY_VITALS_RECENT           = "vitals_recent"        # stub — module_not_available
 ```
 
-The frozen tuple `V1_SOURCE_KEYS` is the closed set the assembler accepts. SaaS
-overlays import it for tier gating.
+The frozen tuple `V1_SOURCE_KEYS` is the closed set the assembler accepts. A
+downstream deployment can import it for feature gating.
 
 ### §7.2 Source selection shape
 
@@ -393,7 +393,7 @@ at all. Sitting at priority 5 — above `patient_documents` (6) — means the
 budget-dropped, so the model always knows a document exists. It is a
 separate selectable key, not auto-added when `patient_documents` is on.
 
-`patient_documents` (THERAPY-ak6m.2.2) sits between explicit progress notes
+`patient_documents` sits between explicit progress notes
 and the recent-progress-notes window. The reasoning: uploaded chart artifacts
 (prior-provider PDFs, intake packets, lab printouts) are clinician-curated
 chart material — closer in stature to a progress note than to a stub source —
@@ -430,9 +430,9 @@ function is the OSS recommended baseline.
 globally would change context shape for every existing chat conversation
 without an explicit opt-in, including conversations whose patients have a
 large legacy chart attached as PDFs (budget pressure, surprise PHI surface).
-The pre-visit-brief (THERAPY-ak6m.1) and letter-generator (THERAPY-ak6m.3)
+The pre-visit-brief and letter-generator
 callers should opt in via their own `defaultSourceSelection` when those
-beads ship — both rely on uploaded chart history as primary input, where
+features ship — both rely on uploaded chart history as primary input, where
 the chat surface treats it as opt-in supplemental context.
 
 ### §7.5 Manifest shape
@@ -775,10 +775,11 @@ model (or `ai_model` if flash is unset).
 ### §11.3 Dependency-injection hook
 
 `get_chat_model_resolver()` is a FastAPI dependency that returns the active
-resolver. SaaS overlays substitute via
-`app.dependency_overrides[get_chat_model_resolver] = saas_resolver`. The OSS
-hook signature accepts `user` and `feature_key` so the substituted resolver
-can implement tier-aware policy (Solo → flash-lite, Practice+ → Pro,
+resolver. A downstream deployment can substitute its own via
+`app.dependency_overrides[get_chat_model_resolver] = custom_resolver`; the OSS
+default resolver returns `DEFAULT_PROMPT`. The OSS
+hook signature accepts `user` and `feature_key` so a substituted resolver
+can implement deployment-specific routing policy (per-plan model selection,
 per-feature pin for rx-justification, etc.).
 
 OSS itself **must not** ship any feature-keyed routing. AGPL safeguard.
@@ -800,7 +801,7 @@ OSS itself **must not** ship any feature-keyed routing. AGPL safeguard.
 
 ### §11.5 LlmUsageMeter (Phase 3b — planned)
 
-To land in Phase 3b (THERAPY-bhv follow-up bead). Public interface:
+To land in Phase 3b. Public interface:
 
 ```python
 class LlmUsageMeter:
@@ -810,8 +811,8 @@ class LlmUsageMeter:
 ```
 
 Quota enforcement is **off by default** in OSS. `check_quota` returns `True`
-unless `settings.chat_quota_enforced` is set. SaaS overlays may flip the flag
-and configure per-tier quotas.
+unless `settings.chat_quota_enforced` is set. A downstream deployment may flip
+the flag and configure per-plan quotas.
 
 ### §11.6 Per-turn `llm_model` recording
 
@@ -856,7 +857,7 @@ open decision.
 ## §13. Frontend component contract
 
 The OSS frontend ships a single React component, `ChatPanel`, mountable by
-any caller (OSS dashboard, SaaS overlay workflows, future surfaces).
+any caller (OSS dashboard, downstream workflows, future surfaces).
 `ChatPanel` is intentionally **callable, not routed**: there is no
 `/app/chat` route in OSS. Callers embed the component in their own surface
 (e.g. a patient-detail sidebar) and supply the per-conversation framing.
@@ -867,7 +868,7 @@ DM Sans body + Fraunces display, no framer-motion). Implementation uses
 Tailwind v4 + shadcn primitives (`Button`, `Dialog`, `Popover`,
 `DropdownMenu`, `Textarea`).
 
-### §13.1 Prop API (baseline — THERAPY-q3z)
+### §13.1 Prop API (baseline)
 
 ```ts
 interface ChatPanelProps {
@@ -984,8 +985,8 @@ interface StarterPrompt {
 ```
 
 **OSS must ship `starterPrompts === undefined` by default.** OSS never bakes
-clinical-workflow opinions into the component. The SaaS overlay (or any other
-caller) supplies its own template list per `callerFeatureKey` (work-excuse
+clinical-workflow opinions into the component. A downstream deployment (or any
+other caller) supplies its own template list per `callerFeatureKey` (work-excuse
 letter, insurer continuation, peer/PCP note, patient homework summary in lay
 terms, dr-to-dr clinical note, ESA letter, etc.).
 
@@ -1112,7 +1113,7 @@ and proceed normally.
 ## §15. Settings
 
 ```python
-# Patient-context chat primitive (THERAPY-bhv).
+# Patient-context chat primitive.
 enable_patient_chat: bool = False
 
 # Default chat models.
@@ -1193,33 +1194,33 @@ refactor.
 
 ## §17. Phase plan
 
-| Phase  | Bead                                                  | Status        |
+| Phase  | Work                                                  | Status        |
 |--------|-------------------------------------------------------|---------------|
-| 1      | THERAPY-tdh — conversation lifecycle (CRUD + audit)   | Shipped       |
-| 2      | THERAPY-r3c — context bundler + manifest              | Shipped       |
-| 3      | THERAPY-5x5 — streaming turn service + gateway + resolver | Shipped (PR pablo#159) |
-| 3b     | LlmUsageMeter (THERAPY-bhv follow-up)                 | In progress (branch chat-phase3b-llm-usage-meter) |
-| 4a     | THERAPY-q3e2 — this design doc                        | In progress   |
-| 4      | THERAPY-q3z — ChatPanel baseline (§13.1–§13.3, §13.8–§13.12) | Open    |
-| 4c     | THERAPY-0s44 — trust-affordance bundle (§13.4 + §13.6 + §13.7 + dev mount) | Open |
-| 4d     | THERAPY-4wg3 — caller-supplied starter prompts (§13.5) | Open         |
-| 5      | THERAPY-fbv9 — retention sweep + invariant check + PHI-in-logs test | Open |
-| 6      | THERAPY-468a — operations docs + `.env.example` + release notes | Open  |
+| 1      | Conversation lifecycle (CRUD + audit)                 | Shipped       |
+| 2      | Context bundler + manifest                            | Shipped       |
+| 3      | Streaming turn service + gateway + resolver           | Shipped       |
+| 3b     | LlmUsageMeter                                         | In progress   |
+| 4a     | This design doc                                       | In progress   |
+| 4      | ChatPanel baseline (§13.1–§13.3, §13.8–§13.12)        | Open          |
+| 4c     | Trust-affordance bundle (§13.4 + §13.6 + §13.7 + dev mount) | Open     |
+| 4d     | Caller-supplied starter prompts (§13.5)               | Open          |
+| 5      | Retention sweep + invariant check + PHI-in-logs test  | Open          |
+| 6      | Operations docs + `.env.example` + release notes      | Open          |
 
 ### §17.1 Phase 4 scope split
 
-The Phase-4 frontend work is split across three implementation beads on top of
-Bead 4a (this doc) to keep PRs reviewable:
+The Phase-4 frontend work is split across three implementation tasks on top of
+Phase 4a (this doc) to keep PRs reviewable:
 
-- **THERAPY-q3z (Bead 4).** Baseline `ChatPanel.tsx`: §13.1 prop API, §13.2
+- **Phase 4.** Baseline `ChatPanel.tsx`: §13.1 prop API, §13.2
   source chip rail, §13.3 per-message manifest disclosure, §13.8 error
   states, §13.9–§13.12 bubble/composer/archive/SSE. **No** briefing card,
   starter prompts, system-prompt view, scope footer, or dev mount.
-- **THERAPY-0s44 (Bead 4c).** Trust-affordance bundle: §13.4 briefing card,
+- **Phase 4c.** Trust-affordance bundle: §13.4 briefing card,
   §13.6 system-prompt view, §13.7 scope footer, plus a NODE_ENV-gated
   `/dev/chat` route for SSE/manifest dogfooding before a real caller
   integrates.
-- **THERAPY-4wg3 (Bead 4d).** Caller-supplied starter prompts: §13.5
+- **Phase 4d.** Caller-supplied starter prompts: §13.5
   `starterPrompts` prop + empty-state chip row.
 
 The split is mechanical (one feature per PR) — there is no architectural
@@ -1235,8 +1236,8 @@ doesn't re-litigate from scratch.
 
 - **Supervisor / shared access.** Today a conversation is owned by exactly
   one user. Multi-user access (a supervisor reviewing a trainee's chats,
-  practice-wide consult threads) is a SaaS concern; OSS will not implement
-  it unilaterally.
+  practice-wide consult threads) is configured per deployment; OSS core will
+  not implement it unilaterally.
 - **Retention policy specifics.** Phase 5 will pick concrete numbers
   (e.g. 90 days inactive → archive; 180 days archived → purge). Until then,
   retention is "whatever the operator's manual lifecycle calls do."

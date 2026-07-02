@@ -7,8 +7,8 @@ eval cases) so:
 - Production and the Braintrust eval harness send the model the same prompt
   by construction; drift is impossible.
 - Prompt iteration is a backend deploy, not a frontend rebuild.
-- A downstream consumer (e.g. ``pablo-saas``) can register a provider-aware,
-  proprietary prompt via :func:`register_provider` during its bootstrap
+- A downstream consumer can register a provider-aware, proprietary
+  prompt via :func:`register_provider` during its bootstrap
   without forking the OSS module.
 - The frontend never sees the prompt text — it requests a conversation
   from the backend and the backend resolves the right prompt server-side
@@ -19,8 +19,8 @@ The OSS default is a baseline-safety prompt. It explicitly tells the model:
 1. Use only the provided chart context (don't draw on general clinical
    knowledge to fill gaps).
 2. If the chart is empty for the requested sections, say so explicitly —
-   do not describe a generic patient. (This is the safety floor for
-   pablo-saas THERAPY-fr6y.)
+   do not describe a generic patient. (This is a safety floor
+   motivated by a downstream production incident.)
 3. Cite specific chart sources in bracketed names so a citation-manifest
    verifier can audit each claim.
 

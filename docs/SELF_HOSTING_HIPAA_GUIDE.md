@@ -75,7 +75,7 @@ HIPAA requires that only authorized individuals can access PHI.
 | OAuth tokens | AES-256 encrypted (you generate the key) | We manage the key |
 
 **What you need to do:**
-- Ensure `ENFORCE_HTTPS=true` (this is the default)
+- Ensure `ENVIRONMENT=production` (or `staging`) — HTTPS is enforced automatically in those environments; there is no separate `ENFORCE_HTTPS` flag
 - Generate an encryption key for Google Calendar OAuth tokens if using scheduling: `openssl rand -base64 32`
 - Store secrets in GCP Secret Manager (the setup script handles this)
 
@@ -117,7 +117,14 @@ HIPAA requires audit trails for PHI access.
 | DDoS protection | Cloud Run built-in | Same + Cloud Armor |
 | Firewall rules | You configure if needed | We manage |
 
-Cloud Run provides a good security baseline. For additional protection, consider enabling Cloud Armor.
+Cloud Run provides a good security baseline. If you self-host, consider these hardening steps:
+
+- **Cloud Armor** in front of your load balancer for WAF rules, per-IP rate limiting, and DDoS / L7 protection.
+- **Restrict Cloud SQL to a private IP** (Serverless VPC connector) so the database is never reachable from the public internet.
+- **Least-privilege service accounts** — grant each Cloud Run service only the IAM roles it needs; don't run on the default Compute service account.
+- **Keep all secrets in Secret Manager** (never in `.env` files or built images), and rotate your AI / transcription provider keys periodically.
+- **Enable project-level Cloud Audit Logs** in addition to Pablo's app-level audit trail, so infrastructure access is recorded independently.
+- **Patch promptly** — pull and redeploy new releases as they ship (see §7).
 
 ## 7. Staying Up to Date
 

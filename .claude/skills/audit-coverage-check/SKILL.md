@@ -29,9 +29,10 @@ surfaces so they can't drift:
 - the `PostToolUse` hook in `.claude/settings.json`, which runs it on every
   edit to a route file and feeds violations straight back to the agent.
 
-The engine auto-detects route roots (`backend/app/routes/` in the OSS engine,
-`backend/saas/**/` in the SaaS overlay), resolves each handler's full mounted
-path (router prefix + decorator path), and is **fail-closed**: EVERY handler
+The engine auto-detects route roots (`backend/app/routes/` in the OSS engine; a
+downstream deployment may register additional route roots), resolves each
+handler's full mounted path (router prefix + decorator path), and is
+**fail-closed**: EVERY handler
 must either inject+call the tenant `AuditService` OR be explicitly classified.
 A route at an unrecognized path is a violation, not a silent pass. It also flags
 the `_audit` / `_http_request` underscore bypass. Note the tenant `AuditService`

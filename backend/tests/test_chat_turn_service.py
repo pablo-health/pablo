@@ -534,7 +534,7 @@ class TestMetering:
 
 
 # ---------------------------------------------------------------------------
-# Prompt composition — empty-chart marker (pablo-saas THERAPY-fr6y)
+# Prompt composition — empty-chart marker
 # ---------------------------------------------------------------------------
 
 
@@ -544,8 +544,8 @@ class TestComposeSystemPromptEmptyChartMarker:
 
     Without this, the model receives only the caller prompt and a
     question, and confabulates a plausible patient from training-data
-    priors — see pablo-saas THERAPY-fr6y for the prod incident where a
-    fresh patient chart produced a fabricated 45-year-old depression
+    priors — see the downstream production incident where a fresh
+    patient chart produced a fabricated 45-year-old depression
     exemplar instead of a refusal.
     """
 
