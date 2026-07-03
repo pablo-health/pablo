@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+from ..reliability import LLM_JOB, LLM_REQUEST, Idempotency, call_with_retry
 from .llm_provider import LLMProvider, strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .vertex_client import anthropic_vertex_client, vertex_genai_client
@@ -176,10 +177,14 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
-                response = client.models.generate_content(
-                    model=normalized_model,
-                    contents=user_prompt,
-                    config=config,
+                response = call_with_retry(
+                    lambda: client.models.generate_content(
+                        model=normalized_model,
+                        contents=user_prompt,
+                        config=config,
+                    ),
+                    policy=LLM_REQUEST,
+                    idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
                 logger.exception("Gemini structured completion failed")
@@ -289,20 +294,24 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
-                response = client.messages.create(
-                    model=normalized_model,
-                    max_tokens=max_output_tokens,
-                    temperature=temperature,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system_prompt,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
-                    tools=[tool],
-                    tool_choice={"type": "tool", "name": self._TOOL_NAME},
-                    messages=[{"role": "user", "content": user_prompt}],
+                response = call_with_retry(
+                    lambda: client.messages.create(
+                        model=normalized_model,
+                        max_tokens=max_output_tokens,
+                        temperature=temperature,
+                        system=[
+                            {
+                                "type": "text",
+                                "text": system_prompt,
+                                "cache_control": {"type": "ephemeral"},
+                            }
+                        ],
+                        tools=[tool],
+                        tool_choice={"type": "tool", "name": self._TOOL_NAME},
+                        messages=[{"role": "user", "content": user_prompt}],
+                    ),
+                    policy=LLM_REQUEST,
+                    idempotency=Idempotency.SAFE,
                 )
             except Exception as exc:
                 logger.exception("Anthropic structured completion failed")
@@ -453,7 +462,11 @@ class MistralStructuredLLMGateway(StructuredLLMGateway):
 
         with llm_span(LLMSpanRequest(operation="structured", model=normalized_model)) as span:
             try:
-                data = self._do_request(url, payload)
+                data = call_with_retry(
+                    lambda: self._do_request(url, payload),
+                    policy=LLM_JOB,
+                    idempotency=Idempotency.SAFE,
+                )
             except Exception as exc:
                 logger.exception("Mistral structured completion failed")
                 raise RuntimeError(f"Structured LLM call failed: {exc}") from exc

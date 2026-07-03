@@ -11,6 +11,7 @@ import struct
 from abc import ABC, abstractmethod
 from typing import Any
 
+from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .vertex_client import vertex_genai_client
 
@@ -92,10 +93,14 @@ class GoogleEmbeddingService(EmbeddingService):
 
             client = self._get_client()
             with llm_span(LLMSpanRequest(operation="embedding", model=self.model_name)) as span:
-                response = client.models.embed_content(
-                    model=self.model_name,
-                    contents=texts,
-                    config=types.EmbedContentConfig(output_dimensionality=768),
+                response = call_with_retry(
+                    lambda: client.models.embed_content(
+                        model=self.model_name,
+                        contents=texts,
+                        config=types.EmbedContentConfig(output_dimensionality=768),
+                    ),
+                    policy=LLM_REQUEST,
+                    idempotency=Idempotency.SAFE,
                 )
                 prompt_tokens, completion_tokens, total_tokens = usage_tokens(
                     getattr(response, "metadata", None)

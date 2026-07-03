@@ -27,6 +27,7 @@ from app.repositories import (
 from app.services import LlmUsageMeter
 from app.services.chat_context_bundler import SOURCE_KEY_PASTED_TEXT, ContextBundle
 from app.services.chat_llm_gateway import (
+    ChatLLMGateway,
     FakeChatLLMGateway,
     StreamEvent,
     UserAssistantTurn,
@@ -36,6 +37,7 @@ from app.services.chat_turn_service import (
     TurnConcurrencyError,
     TurnContext,
     _compose_system_prompt,
+    _StreamOutcome,
 )
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace
@@ -46,6 +48,10 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 CONVERSATION_ID = "conv-turn-1"
 PATIENT_ID = "patient-turn-1"
 OWNER_USER_ID = "user-turn-1"
+
+
+async def _no_sleep(_seconds: float) -> None:
+    """Retry-backoff stand-in so retry tests don't sleep for real."""
 
 
 def _make_conversation() -> ChatConversation:
@@ -291,7 +297,7 @@ class TestErrorPaths:
         notes_repo: InMemoryNotesRepository,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("app.services.chat_turn_service.RETRY_BACKOFF_SECONDS", 0)
+        monkeypatch.setattr("app.services.chat_turn_service._retry_sleep", _no_sleep)
         service, gateway = _make_service(
             chat_repo,
             notes_repo,
@@ -330,7 +336,7 @@ class TestErrorPaths:
         notes_repo: InMemoryNotesRepository,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("app.services.chat_turn_service.RETRY_BACKOFF_SECONDS", 0)
+        monkeypatch.setattr("app.services.chat_turn_service._retry_sleep", _no_sleep)
         service, gateway = _make_service(
             chat_repo,
             notes_repo,
@@ -363,6 +369,73 @@ class TestErrorPaths:
         assert events[0].data["error"] == "empty_message"
         assert chat_repo.list_messages(CONVERSATION_ID) == []
         assert gateway.calls == []
+
+
+class _HangingChatGateway(ChatLLMGateway):
+    """Yields one delta, then hangs until cancelled.
+
+    Models a client disconnect mid-stream: the gateway's underlying
+    call never resolves on its own, so the only thing that can end it
+    is the caller closing the generator (which must cancel whatever is
+    still consuming this stream).
+    """
+
+    async def stream_completion(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        prior_turns: list[UserAssistantTurn],
+        new_user_text: str,
+        max_output_tokens: int,
+        temperature: float = 0.4,
+    ):
+        yield StreamEvent(delta="first")
+        await asyncio.Event().wait()
+        yield StreamEvent(finish_reason="stop")  # pragma: no cover — unreachable
+
+
+class TestClientDisconnect:
+    def test_stream_with_retry_cancels_drive_task_on_early_close(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        """Regression: closing the turn generator early (a client
+        disconnect) must cancel the in-flight retry-drive task rather
+        than leave it — and the gateway stream it's still consuming —
+        running server-side with nothing left to read its output.
+        """
+        service = ChatTurnService(
+            chat_repo=chat_repo,
+            notes_repo=notes_repo,
+            gateway=_HangingChatGateway(),
+        )
+
+        async def _impl() -> None:
+            outcome = _StreamOutcome()
+            before = asyncio.all_tasks()
+            gen = service._stream_with_retry(
+                _make_context(),
+                system_prompt="sys",
+                prior_turns=[],
+                user_text="hi",
+                outcome=outcome,
+            )
+            first = await gen.__anext__()
+            assert first.data["text"] == "first"
+
+            new_tasks = asyncio.all_tasks() - before
+            assert len(new_tasks) == 1
+            drive_task = next(iter(new_tasks))
+            assert not drive_task.done()
+
+            await gen.aclose()
+            await asyncio.sleep(0)  # let the cancellation fully land
+
+            assert drive_task.cancelled()
+
+        asyncio.run(_impl())
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +536,7 @@ class TestMetering:
         notes_repo: InMemoryNotesRepository,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("app.services.chat_turn_service.RETRY_BACKOFF_SECONDS", 0)
+        monkeypatch.setattr("app.services.chat_turn_service._retry_sleep", _no_sleep)
         meter, repo = _make_meter()
         service, _ = _make_service(
             chat_repo,

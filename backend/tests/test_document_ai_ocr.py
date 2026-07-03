@@ -212,8 +212,8 @@ class TestExtract:
 
 @pytest.fixture(autouse=True)
 def _no_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Skip the 2s backoff so retry tests run in milliseconds."""
-    monkeypatch.setattr(ocr_module, "_RETRY_BACKOFF_SECONDS", 0)
+    """Skip the retry backoff so retry tests run in milliseconds."""
+    monkeypatch.setattr(ocr_module, "_retry_sleep", lambda _seconds: None)
 
 
 class TestErrorHandling:

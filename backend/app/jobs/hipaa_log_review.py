@@ -436,6 +436,11 @@ def _ask_model(
         logger.exception("google-genai is required for the HIPAA log review.")
         raise
 
+    from ..reliability import LLM_JOB, Idempotency, call_with_retry  # noqa: PLC0415
+    from ..services.vertex_client import (  # noqa: PLC0415
+        DEFAULT_VERTEX_TIMEOUT_SECONDS,
+        seconds_to_genai_timeout_ms,
+    )
     from ..settings import get_settings  # noqa: PLC0415
 
     project = os.environ.get("GCP_PROJECT_ID") or os.environ["GOOGLE_CLOUD_PROJECT"]
@@ -448,7 +453,12 @@ def _ask_model(
     # emitting the report; size generously so the narrative isn't truncated.
     max_output_tokens = int(os.environ.get("HIPAA_REVIEW_MAX_OUTPUT_TOKENS", "8192"))
 
-    client = genai.Client(vertexai=True, project=project, location=location)
+    http_options = types.HttpOptions(
+        timeout=seconds_to_genai_timeout_ms(DEFAULT_VERTEX_TIMEOUT_SECONDS)
+    )
+    client = genai.Client(
+        vertexai=True, project=project, location=location, http_options=http_options
+    )
     user_content = (
         f"Review the following audit log entries:\n\n```json\n{json.dumps(payload, indent=2)}\n```"
     )
@@ -457,10 +467,14 @@ def _ask_model(
         temperature=0.3,
         max_output_tokens=max_output_tokens,
     )
-    resp = client.models.generate_content(
-        model=model,
-        contents=user_content,
-        config=config,
+    resp = call_with_retry(
+        lambda: client.models.generate_content(
+            model=model,
+            contents=user_content,
+            config=config,
+        ),
+        policy=LLM_JOB,
+        idempotency=Idempotency.SAFE,
     )
     _log_token_usage(resp, review_mode=review_mode, tenant_schema=tenant_schema)
     report = (resp.text or "").strip()

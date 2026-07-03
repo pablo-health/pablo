@@ -259,6 +259,10 @@ ignore = [
     "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
     "PLC0415",  # Allow lazy imports for optional ML libraries (spacy, sentence_transformers, etc.)
 ]
+"backend/app/reliability/**/*.py" = [
+    "PLR0913",  # call_with_retry/acall_with_retry's arg count is the approved public API shape
+    "PLC0415",  # Lazy, guarded SDK imports (httpx/anthropic/google.api_core) — same idiom as services/**
+]
 "backend/plugins/**/*.py" = [
     "PLR0912",  # Allow many branches in plugin processing logic
 ]
@@ -315,6 +319,7 @@ module = [
     "google.auth.*",
     "google.genai.*",
     "google.oauth2.*",
+    "google.rpc.*",
     "firebase_admin.*",
     "redis.*",
     "reportlab.*",
