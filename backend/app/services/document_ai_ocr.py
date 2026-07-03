@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ..reliability import HTTP_REQUEST, Idempotency, RetryExhaustedError, call_with_retry
+
 if TYPE_CHECKING:
     from ..settings import Settings
 
@@ -32,8 +34,8 @@ _AVG_CONFIDENCE_LOW_THRESHOLD = 0.5
 _LOW_CONFIDENCE_PAGE_FRACTION_THRESHOLD = 0.25
 _PAGE_CONFIDENCE_LOW_THRESHOLD = 0.5
 
-# Exposed as constants so tests can monkeypatch.
-_RETRY_BACKOFF_SECONDS = 2.0
+# Test seam: monkeypatched to a no-op so retry tests don't sleep for real.
+_retry_sleep = time.sleep
 
 # Per-call deadline. SDK default is 300s with internal retries; 60s
 # lets auth and quota failures surface in seconds.
@@ -166,15 +168,16 @@ def _count_pdf_pages(pdf_bytes: bytes) -> int:
 
 
 def _call_with_one_retry(fn: Any, request: Any) -> Any:
-    """Call ``fn(request)`` with one retry on transient errors.
+    """Call ``fn(request)`` through the shared retry engine.
 
-    Transient = ServiceUnavailable / DeadlineExceeded / RetryError →
-    sleep + retry once. Anything else → log + return ``None``.
+    Transient = ServiceUnavailable / DeadlineExceeded / RetryError (the
+    default classifier's read on these gax exception types) → retry
+    once via ``HTTP_REQUEST``. Anything else → log + return ``None``.
     ``retry=None`` disables the SDK's own 300s retry loop so we own
     the policy.
     """
     try:
-        from google.api_core import exceptions as gax_exceptions
+        import google.api_core  # noqa: F401  — import guard only
     except ImportError:
         try:
             return fn(request=request)
@@ -182,11 +185,6 @@ def _call_with_one_retry(fn: Any, request: Any) -> Any:
             logger.exception("document_ai call failed")
             return None
 
-    transient = (
-        gax_exceptions.ServiceUnavailable,
-        gax_exceptions.DeadlineExceeded,
-        gax_exceptions.RetryError,
-    )
     call_kwargs = {
         "request": request,
         "timeout": _PROCESS_TIMEOUT_SECONDS,
@@ -194,15 +192,18 @@ def _call_with_one_retry(fn: Any, request: Any) -> Any:
     }
 
     try:
-        return fn(**call_kwargs)
-    except transient as exc:
-        logger.warning("document_ai transient error: %s; retrying once", exc)
-        time.sleep(_RETRY_BACKOFF_SECONDS)
-        try:
-            return fn(**call_kwargs)
-        except Exception:
-            logger.exception("document_ai retry failed")
-            return None
+        return call_with_retry(
+            lambda: fn(**call_kwargs),
+            policy=HTTP_REQUEST,
+            idempotency=Idempotency.SAFE,
+            on_retry=lambda _attempt, exc, _delay: logger.warning(
+                "document_ai transient error: %s; retrying once", exc
+            ),
+            sleep=_retry_sleep,
+        )
+    except RetryExhaustedError:
+        logger.exception("document_ai retry failed")
+        return None
     except Exception:
         logger.exception("document_ai permanent error")
         return None

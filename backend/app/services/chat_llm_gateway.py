@@ -35,6 +35,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
+from ..reliability import LLM_REQUEST, Idempotency, acall_with_retry
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span
 from .vertex_client import vertex_genai_client
@@ -43,6 +44,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
 
 logger = logging.getLogger(__name__)
+
+# Test seam: monkeypatched to a no-op so retry tests don't sleep for real.
+_retry_sleep = asyncio.sleep
 
 
 # ---------------------------------------------------------------------------
@@ -228,12 +232,28 @@ class GeminiChatLLMGateway(ChatLLMGateway):
             output_token_total = 0
             final_reason: FinishReason | None = None
             try:
-                stream = await client.aio.models.generate_content_stream(
-                    model=model,
-                    contents=contents,
-                    config=config,
+                # ``generate_content_stream`` itself only parses the config and
+                # returns an async generator — the actual request happens
+                # lazily on first iteration. Retrying just the `await` would
+                # never catch a connect failure, so the retryable unit is
+                # "establish the stream and pull the first chunk"; anything
+                # after that has already surfaced deltas to the caller and is
+                # not retried here (``ChatTurnService`` owns the whole-
+                # generation retry for that case).
+                stream, leading_chunks = await acall_with_retry(
+                    lambda: _open_stream(client, model, contents, config),
+                    policy=LLM_REQUEST,
+                    idempotency=Idempotency.SAFE,
+                    sleep=_retry_sleep,
                 )
-                async for chunk in stream:
+
+                async def _all_chunks() -> AsyncIterator[Any]:
+                    for chunk in leading_chunks:
+                        yield chunk
+                    async for chunk in stream:
+                        yield chunk
+
+                async for chunk in _all_chunks():
                     delta_text = getattr(chunk, "text", None) or ""
                     if delta_text:
                         yield StreamEvent(delta=delta_text)
@@ -264,6 +284,31 @@ class GeminiChatLLMGateway(ChatLLMGateway):
                 finish_reason=final_reason,
                 output_tokens=output_token_total or None,
             )
+
+
+async def _open_stream(
+    client: Any, model: str, contents: list[Any], config: Any
+) -> tuple[AsyncIterator[Any], list[Any]]:
+    """Establish the stream and eagerly pull its first chunk.
+
+    ``generate_content_stream`` returns an async generator without
+    performing any I/O; the request only fires on the first
+    ``__anext__``. Bundling that first pull in here is what makes
+    wrapping this call in the retry engine meaningful — a connect
+    failure would otherwise only ever surface later, at the plain
+    ``async for`` in the caller, past the point where retrying is safe.
+    Returns ``(stream, [])`` when the model produced an empty response.
+    """
+    stream = await client.aio.models.generate_content_stream(
+        model=model,
+        contents=contents,
+        config=config,
+    )
+    try:
+        first_chunk = await stream.__anext__()
+    except StopAsyncIteration:
+        return stream, []
+    return stream, [first_chunk]
 
 
 def _build_contents(

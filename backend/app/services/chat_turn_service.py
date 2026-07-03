@@ -24,13 +24,15 @@ token counts are safe to log; everything else stays on the
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, Literal
 
 from ..models import ChatMessage, QuotaStatus
+from ..reliability import Idempotency, RetryExhaustedError, RetryPolicy, acall_with_retry
 from ..utcnow import utc_now
 from .chat_context_bundler import (
     ContextBundle,
@@ -104,10 +106,20 @@ class TurnContext:
 # Tuning constants
 # ---------------------------------------------------------------------------
 
-# Per design doc §8: one retry on transient error with 1s backoff.
+# Per design doc §8: one retry on transient error. Attempt count and backoff
+# shape come from the shared reliability policy (see
+# ``backend/app/reliability/retry.py``) rather than living here.
+# ``deadline`` is deliberately left unset: the live-first-attempt streaming
+# in ``_stream_with_retry`` runs the engine's retry loop concurrently with a
+# queue drain so deltas reach the client as they arrive, and that bridge
+# isn't safe to compose with the engine's per-attempt ``asyncio.timeout``
+# wrapping. The per-attempt bound instead comes from the gateway's own
+# transport timeout (``vertex_client``'s ``HttpOptions``).
 RETRYABLE_ERROR_CODES = frozenset({"timeout", "service_unavailable", "llm_error"})
-RETRY_BACKOFF_SECONDS = 1.0
-MAX_GATEWAY_ATTEMPTS = 2  # initial attempt + 1 retry on transient error
+CHAT_TURN_RETRY_POLICY = RetryPolicy(max_attempts=2, base_delay=0.5, max_delay=4.0)
+
+# Test seam: monkeypatched to a no-op so retry tests don't sleep for real.
+_retry_sleep = asyncio.sleep
 
 # Output-token cap per design doc §11.7. Downstream consumers can
 # override per ``caller_feature_key`` once tier-aware quotas land in
@@ -146,6 +158,34 @@ class TurnConcurrencyError(Exception):
     the same conversation get a clean 409 instead of interleaved
     sequence numbers.
     """
+
+
+class _TransientChatError(Exception):
+    """Internal vehicle for the retry engine's classification.
+
+    Wraps a terminal :class:`StreamEvent` whose ``error_code`` was
+    judged retryable (:func:`_is_retryable`). Not part of the module's
+    public surface — it never escapes :meth:`ChatTurnService._stream_with_retry`.
+    """
+
+    def __init__(self, event: StreamEvent) -> None:
+        super().__init__(event.error_code or "llm_error")
+        self.event = event
+
+
+@dataclass
+class _StreamOutcome:
+    """Mutable out-parameter :meth:`ChatTurnService._stream_with_retry` fills in.
+
+    A plain return value doesn't work here because the method is an
+    async generator (it yields live ``TurnStreamEvent`` deltas as they
+    arrive) — the terminal state has to travel back to the caller some
+    other way once the generator is exhausted.
+    """
+
+    buffer: list[str] = field(default_factory=list)
+    final_event: StreamEvent | None = None
+    retried: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -370,44 +410,21 @@ class ChatTurnService:
 
         release_db_connection()
 
-        # Stream from the gateway with one transient-error retry.
-        attempt_buffers: list[str] = []
-        final_event: StreamEvent | None = None
-        attempts = 0
-        retried = False
-        while attempts < MAX_GATEWAY_ATTEMPTS:
-            attempts += 1
-            buffer: list[str] = []
-            transient_failure = False
-            async for event in self._gateway.stream_completion(
-                model=context.model,
-                system_prompt=system_prompt,
-                prior_turns=prior_turns,
-                new_user_text=user_text,
-                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-            ):
-                if event.delta:
-                    buffer.append(event.delta)
-                    if not retried:
-                        # On the first attempt, stream deltas directly
-                        # to the client. On retry we suppress because
-                        # the client already saw deltas (which we now
-                        # need to send the *retry's* output instead);
-                        # the simpler contract is to only stream the
-                        # final attempt's text.
-                        yield TurnStreamEvent(kind="delta", data={"text": event.delta})
-                if event.finish_reason is not None:
-                    final_event = event
-                    if event.finish_reason == "error" and _is_retryable(event.error_code):
-                        transient_failure = True
-                    break
-            attempt_buffers = buffer
-            if not transient_failure:
-                break
-            # Discard the partial first-attempt buffer and try again.
-            retried = True
-            await asyncio.sleep(RETRY_BACKOFF_SECONDS)
-            attempt_buffers = []
+        # Stream from the gateway through the shared retry engine, preserving
+        # the first-attempt-streams-live / retry-replays-at-the-end contract
+        # (see ``_stream_with_retry``).
+        outcome = _StreamOutcome()
+        async for turn_event in self._stream_with_retry(
+            context,
+            system_prompt=system_prompt,
+            prior_turns=prior_turns,
+            user_text=user_text,
+            outcome=outcome,
+        ):
+            yield turn_event
+        attempt_buffers = outcome.buffer
+        final_event = outcome.final_event
+        retried = outcome.retried
 
         # Persist final state on the assistant row.
         full_text = "".join(attempt_buffers)[:MAX_CONTENT_CHARS]
@@ -487,6 +504,111 @@ class ChatTurnService:
                 "finish_reason": final_event.finish_reason,
             },
         )
+
+    # ------------------------------------------------------------------
+    # Gateway retry
+    # ------------------------------------------------------------------
+
+    async def _stream_with_retry(
+        self,
+        context: TurnContext,
+        *,
+        system_prompt: str,
+        prior_turns: list[UserAssistantTurn],
+        user_text: str,
+        outcome: _StreamOutcome,
+    ) -> AsyncIterator[TurnStreamEvent]:
+        """Run one gateway stream through the shared retry engine.
+
+        Preserves the pre-existing contract: the winning first attempt's
+        deltas stream live as they arrive; if that attempt fails
+        transiently, its partial output is discarded and a retry runs
+        silently, with the caller replaying its full text in one batch
+        once this generator is exhausted (see the ``retried`` flag on
+        ``outcome``, checked by the caller after draining us).
+
+        Bridged through a queue because ``acall_with_retry`` awaits its
+        thunk to completion before returning — there's no way to
+        surface an in-progress attempt's deltas through its return
+        value, so the attempt runs as a background task that pushes
+        each delta onto ``live_queue`` while this generator drains it.
+        """
+        live_queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
+        attempt_count = 0
+
+        async def _one_attempt() -> StreamEvent | None:
+            nonlocal attempt_count
+            attempt_count += 1
+            is_first_attempt = attempt_count == 1
+            buffer: list[str] = []
+            final: StreamEvent | None = None
+            async for event in self._gateway.stream_completion(
+                model=context.model,
+                system_prompt=system_prompt,
+                prior_turns=prior_turns,
+                new_user_text=user_text,
+                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+            ):
+                if event.delta:
+                    buffer.append(event.delta)
+                    if is_first_attempt:
+                        await live_queue.put(event)
+                if event.finish_reason is not None:
+                    final = event
+                    break
+            outcome.buffer = buffer
+            if (
+                final is not None
+                and final.finish_reason == "error"
+                and _is_retryable(final.error_code)
+            ):
+                raise _TransientChatError(final)
+            return final
+
+        async def _drive() -> StreamEvent | None:
+            try:
+                return await acall_with_retry(
+                    _one_attempt,
+                    policy=CHAT_TURN_RETRY_POLICY,
+                    idempotency=Idempotency.SAFE,
+                    retryable=lambda exc: isinstance(exc, _TransientChatError),
+                    sleep=_retry_sleep,
+                )
+            except RetryExhaustedError as exc:
+                if isinstance(exc.last_exc, _TransientChatError):
+                    # Mirror the pre-existing loop's behavior: once every
+                    # attempt has failed there's no further attempt to
+                    # replay it against, so the last (failed) attempt's
+                    # partial buffer is discarded rather than persisted —
+                    # the caller falls back to "[no output]".
+                    outcome.buffer = []
+                    return exc.last_exc.event
+                raise
+            finally:
+                # Unblock the queue-drain loop below even on an
+                # unexpected (non-_TransientChatError) exception.
+                await live_queue.put(None)
+
+        drive_task = asyncio.create_task(_drive())
+        try:
+            while True:
+                item = await live_queue.get()
+                if item is None:
+                    break
+                yield TurnStreamEvent(kind="delta", data={"text": item.delta})
+            outcome.final_event = await drive_task
+            outcome.retried = attempt_count > 1
+        finally:
+            # A client disconnect closes this generator early (Starlette
+            # calls aclose(), which throws GeneratorExit in at the `yield`
+            # above). Without this, the drive task — and the gateway's
+            # underlying HTTP stream it's still consuming — would keep
+            # running server-side with nothing left to read its output,
+            # and its eventual result/exception would go unretrieved.
+            if not drive_task.done():
+                drive_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await drive_task
 
     # ------------------------------------------------------------------
     # Instrumentation hook
@@ -645,10 +767,10 @@ def _estimate_input_tokens(
 
 
 __all__ = [
+    "CHAT_TURN_RETRY_POLICY",
     "DEFAULT_MAX_OUTPUT_TOKENS",
     "MAX_CONTENT_CHARS",
     "RETRYABLE_ERROR_CODES",
-    "RETRY_BACKOFF_SECONDS",
     "ChatTurnService",
     "TurnConcurrencyError",
     "TurnContext",

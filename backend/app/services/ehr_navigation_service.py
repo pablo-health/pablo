@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from ..models.ehr_route import GoalNavigationRequest, GoalNavigationResponse
+from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
 from .vertex_client import vertex_genai_client
 
@@ -151,16 +152,20 @@ class GeminiEhrNavigationService(EhrNavigationService):
 
             client = self._get_client()
             with llm_span(LLMSpanRequest(operation="ehr_navigation", model=self.model)) as span:
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        response_mime_type="application/json",
-                        response_schema=response_schema,
-                        temperature=0.1,
-                        max_output_tokens=2048,
+                response = call_with_retry(
+                    lambda: client.models.generate_content(
+                        model=self.model,
+                        contents=user_prompt,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            response_mime_type="application/json",
+                            response_schema=response_schema,
+                            temperature=0.1,
+                            max_output_tokens=2048,
+                        ),
                     ),
+                    policy=LLM_REQUEST,
+                    idempotency=Idempotency.SAFE,
                 )
                 prompt_tokens, completion_tokens, total_tokens = usage_tokens(
                     getattr(response, "usage_metadata", None)

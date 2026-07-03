@@ -21,6 +21,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..reliability import LLM_REQUEST, Idempotency, call_with_retry
 from .llm_json import extract_json_object
 from .llm_provider import strip_provider_prefix
 from .llm_telemetry import LLMSpanRequest, llm_span, usage_tokens
@@ -271,7 +272,13 @@ class GeminiAgentLLMGateway(AgentLLMGateway):
     @staticmethod
     def _generate(client: Any, model: str, contents: list[Any], config: Any) -> Any:
         try:
-            return client.models.generate_content(model=model, contents=contents, config=config)
+            return call_with_retry(
+                lambda: client.models.generate_content(
+                    model=model, contents=contents, config=config
+                ),
+                policy=LLM_REQUEST,
+                idempotency=Idempotency.SAFE,
+            )
         except Exception as exc:
             logger.exception("agent generate_content failed")
             raise RuntimeError(f"Agent LLM call failed: {exc}") from exc
