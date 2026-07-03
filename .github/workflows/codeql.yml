@@ -45,3 +45,19 @@ jobs:
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+
+  # File a tracking issue when the scheduled (weekly) run fails, so a broken
+  # cron doesn't just sit red until someone happens to check the Actions tab.
+  notify-failure:
+    name: Notify on scheduled failure
+    needs: [analyze]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/notify-scheduled-failure
+        with:
+          workflow: "CodeQL"
