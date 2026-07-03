@@ -1,0 +1,19 @@
+name: Notify scheduled failure
+description: Open or bump a deduped tracking issue when a scheduled run fails.
+inputs:
+  workflow: {description: Workflow name (dedupe key), required: true}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TITLE: "[scheduled-failure] ${{ inputs.workflow }}"
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        existing=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number' || true)
+        if [[ -n "$existing" ]]; then
+          gh issue comment "$existing" --body "Failed again: $RUN_URL ($(date -u +%FT%TZ))"
+        else
+          gh issue create --title "$TITLE" --body "Scheduled workflow **${{ inputs.workflow }}** failed. Latest run: $RUN_URL" --label "scheduled-failure"
+        fi
