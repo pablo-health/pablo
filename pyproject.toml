@@ -1,6 +1,6 @@
 [project]
 name = "pablo"
-version = "0.9.0"
+version = "1.0.0"
 description = "Therapy session management platform with AI-powered SOAP note generation"
 authors = [{name = "Kurt Niemi", email = "kurt@pablo.health"}]
 readme = "README.md"
