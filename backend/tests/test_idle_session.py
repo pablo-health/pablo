@@ -10,7 +10,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from app.auth.idle_session import check_and_touch
+from app.auth.idle_session import SessionPeek, check_and_touch, peek
 from app.auth.service import enforce_idle_session, get_current_user_no_mfa
 from fastapi import HTTPException, status
 
@@ -173,6 +173,109 @@ class TestNoMfaPathEnforcesIdle:
         assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc.value.detail["error"]["code"] == "IDLE_TIMEOUT"  # type: ignore[index]
         resolve.assert_not_called()
+
+
+class TestPeek:
+    """peek() is a pure read: it reports liveness and never writes.
+
+    Every branch asserts no set/delete/pipeline calls — a peek that
+    touched would keep every polling tab's session alive forever.
+    """
+
+    def _assert_pure_read(self, redis: MagicMock) -> None:
+        redis.set.assert_not_called()
+        redis.delete.assert_not_called()
+        redis.pipeline.assert_not_called()
+
+    def test_dev_mode_reports_unenforced(self) -> None:
+        redis = MagicMock()
+        rc_patch, set_patch = _patch_deps(redis, is_development=True)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+        assert result == SessionPeek(enforced=False, active=True, seconds_remaining=None)
+        redis.exists.assert_not_called()
+
+    def test_redis_unavailable_reports_unenforced(self) -> None:
+        rc_patch, set_patch = _patch_deps(None)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+        assert result == SessionPeek(enforced=False, active=True, seconds_remaining=None)
+
+    def test_active_session_reports_ttl_without_refreshing(self) -> None:
+        redis = MagicMock()
+        redis.exists.return_value = 0  # revoked absent
+        redis.ttl.return_value = 424
+
+        rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+
+        assert result == SessionPeek(enforced=True, active=True, seconds_remaining=424)
+        redis.ttl.assert_called_once_with(_ACTIVITY_KEY)
+        self._assert_pure_read(redis)
+
+    def test_idle_elapsed_reports_inactive_without_tombstoning(self) -> None:
+        redis = MagicMock()
+        # revoked absent, activity TTL gone, marker still present.
+        redis.exists.side_effect = [0, 1]
+        redis.ttl.return_value = -2
+
+        rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+
+        assert result == SessionPeek(enforced=True, active=False, seconds_remaining=0)
+        self._assert_pure_read(redis)
+
+    def test_revoked_session_reports_inactive(self) -> None:
+        redis = MagicMock()
+        redis.exists.return_value = 1  # revoked present
+
+        rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+
+        assert result == SessionPeek(enforced=True, active=False, seconds_remaining=0)
+        redis.exists.assert_called_once_with(_REVOKED_KEY)
+        self._assert_pure_read(redis)
+
+    def test_unseen_session_reports_full_window_without_seeding(self) -> None:
+        redis = MagicMock()
+        # revoked absent, no activity TTL, marker absent → not yet seeded.
+        redis.exists.side_effect = [0, 0]
+        redis.ttl.return_value = -2
+
+        rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+
+        assert result == SessionPeek(enforced=True, active=True, seconds_remaining=900)
+        self._assert_pure_read(redis)
+
+    def test_missing_identifiers_reject(self) -> None:
+        redis = MagicMock()
+        rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch, pytest.raises(HTTPException) as exc:
+            peek({"uid": "x"})
+        assert exc.value.detail["error"]["code"] == "INVALID_TOKEN"  # type: ignore[index]
+
+    def test_redis_failure_fails_closed_by_default(self) -> None:
+        redis = MagicMock()
+        redis.exists.side_effect = RuntimeError("redis went away")
+
+        rc_patch, set_patch = _patch_deps(redis)
+        with rc_patch, set_patch, pytest.raises(HTTPException) as exc:
+            peek(_TOKEN)
+        assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    def test_redis_failure_reports_unenforced_when_fail_open(self) -> None:
+        redis = MagicMock()
+        redis.exists.side_effect = RuntimeError("redis went away")
+
+        rc_patch, set_patch = _patch_deps(redis, fail_open=True)
+        with rc_patch, set_patch:
+            result = peek(_TOKEN)
+        assert result == SessionPeek(enforced=False, active=True, seconds_remaining=None)
 
 
 class TestEnforceIdleSessionWrapper:

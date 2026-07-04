@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 from app.auth.route_security import truly_public
 from app.auth.service import (
     get_current_user_no_mfa,
+    get_session_peek_claims,
     require_cloud_tasks_invoker,
     require_mfa,
     require_pentest_runner,
@@ -58,7 +59,9 @@ if TYPE_CHECKING:
 # than one service-account dependency).
 _MARKERS: dict[str, tuple] = {
     "mfa-required": (require_mfa,),
-    "pre-mfa-onboarding": (get_current_user_no_mfa,),
+    # get_session_peek_claims resolves the bearer to a verified user
+    # (no MFA, no idle touch) — the DPoP middleware can bind a proof.
+    "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims),
     "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
     "truly-public": (truly_public,),
 }

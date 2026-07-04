@@ -17,6 +17,7 @@
 
 import { type NextRequest, NextResponse } from "next/server"
 import { auth } from "./config"
+import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 
 const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
@@ -98,8 +99,11 @@ const handleProtected = auth((request) => {
   const isAuthenticated = !!session && !session.error
 
   if (isAuthenticated) {
-    // Authenticated user on /login → redirect to dashboard.
-    if (pathname === "/login") {
+    // Authenticated user on /login → redirect to dashboard. "Authenticated"
+    // here means the cookie verifies — the backend session may still be
+    // dead (idle-timed-out); a forced-logout arrival must render /login
+    // or it loops back into the dead session.
+    if (pathname === "/login" && !isForcedLogoutArrival(request.nextUrl.searchParams)) {
       const dashboardUrl = new URL("/dashboard", request.url)
       return addSecurityHeaders(NextResponse.redirect(dashboardUrl))
     }

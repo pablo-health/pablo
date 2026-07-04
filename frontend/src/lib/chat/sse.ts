@@ -21,7 +21,13 @@
  *   \n
  */
 
-import { TOKEN_REFRESH_RETRY_CODES, buildApiUrl, getAuthHeader } from "@/lib/api/client"
+import {
+  TERMINAL_AUTH_CODES,
+  TOKEN_REFRESH_RETRY_CODES,
+  buildApiUrl,
+  getAuthHeader,
+  handleTerminalAuthLogout,
+} from "@/lib/api/client"
 
 import type {
   ChatStreamCallbacks,
@@ -83,6 +89,12 @@ export async function streamChatMessages(
     if (isRetryableTokenError(firstBody)) {
       response = await doFetch(true)
     } else {
+      // A dead session (idle timeout, revoked/disabled) must drive the
+      // same clean sign-out + /login flow as apiClient — the chat panel's
+      // inline error alone strands the user on a session the backend has
+      // tombstoned (a token refresh can't revive it). onError still fires
+      // so the panel renders its notice while the redirect happens.
+      bootIfTerminalAuth(firstBody)
       callbacks.onError({
         error: mapHttpStatusToErrorCode(response.status),
         message: firstBody,
@@ -92,14 +104,18 @@ export async function streamChatMessages(
   }
 
   if (!response.ok) {
-    // Pre-stream HTTP errors (404 / 409 / 422). Surface as an onError
-    // call so the panel renders the same error notice machinery
+    // Pre-stream HTTP errors (404 / 409 / 422), or a 401 that survived
+    // the token-refresh retry above (terminal — boot). Surface as an
+    // onError call so the panel renders the same error notice machinery
     // regardless of whether the failure happened before or during the
     // stream.
-    const errorCode = mapHttpStatusToErrorCode(response.status)
+    const message = await safeReadText(response)
+    if (response.status === 401) {
+      bootIfTerminalAuth(message)
+    }
     callbacks.onError({
-      error: errorCode,
-      message: await safeReadText(response),
+      error: mapHttpStatusToErrorCode(response.status),
+      message,
     })
     return
   }
@@ -205,6 +221,24 @@ function isRetryableTokenError(body: string): boolean {
     return TOKEN_REFRESH_RETRY_CODES.has(data?.error?.code ?? "")
   } catch {
     return false
+  }
+}
+
+/**
+ * Route an unrecoverable 401 body through the shared forced-logout flow.
+ * IDLE_TIMEOUT and the terminal token codes boot; anything else (e.g. an
+ * unparseable body) falls through to the caller's generic error handling.
+ */
+function bootIfTerminalAuth(body: string): void {
+  try {
+    const code = (JSON.parse(body) as { error?: { code?: string } })?.error?.code ?? ""
+    if (code === "IDLE_TIMEOUT") {
+      handleTerminalAuthLogout("idle_timeout")
+    } else if (TERMINAL_AUTH_CODES.has(code)) {
+      handleTerminalAuthLogout("session_expired")
+    }
+  } catch {
+    // Unparseable body — not a recognizable terminal auth error.
   }
 }
 

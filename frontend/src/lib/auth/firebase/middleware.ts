@@ -9,6 +9,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { authMiddleware, redirectToLogin, redirectToHome } from "next-firebase-auth-edge"
 import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
+import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 
 const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
@@ -54,10 +55,13 @@ export default async function firebaseAuthMiddleware(request: NextRequest) {
     ...authConfig,
 
     handleValidToken: async (_tokens, headers) => {
-      const { pathname } = request.nextUrl
+      const { pathname, searchParams } = request.nextUrl
 
-      // Authenticated user on /login → redirect to dashboard
-      if (pathname === "/login") {
+      // Authenticated user on /login → redirect to dashboard. "Valid"
+      // here means the cookie verifies — the backend session may still be
+      // dead (idle-timed-out); a forced-logout arrival must render /login
+      // or it loops back into the dead session.
+      if (pathname === "/login" && !isForcedLogoutArrival(searchParams)) {
         return addSecurityHeaders(redirectToHome(request, { path: "/dashboard" }))
       }
 

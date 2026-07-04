@@ -31,8 +31,12 @@ let terminalAuthLogoutInFlight = false
  * Re-entry guarded so a burst of parallel 401s (a single dashboard load fires
  * several requests at once) yields ONE sign-out + redirect, not many. ``reason``
  * is surfaced on the login screen.
+ *
+ * Exported so every surface that detects a dead session — the chat SSE
+ * consumer, blob downloads, and the IdleTimeout controller's server peek —
+ * drives the identical sign-out flow instead of growing its own.
  */
-function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expired") {
+export function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expired") {
   if (terminalAuthLogoutInFlight) return
   terminalAuthLogoutInFlight = true
   void (async () => {
@@ -374,8 +378,18 @@ export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
         // Non-JSON error body — fall through to the generic message.
       }
     }
+    const errorCode = errorData?.error?.code || "UNKNOWN_ERROR"
+    // Same unrecoverable-401 boot as apiClient — a dead session must not
+    // strand the user on a page where downloads silently fail.
+    if (response.status === 401 && typeof window !== "undefined") {
+      if (errorCode === "IDLE_TIMEOUT") {
+        handleTerminalAuthLogout("idle_timeout")
+      } else if (!token && TERMINAL_AUTH_CODES.has(errorCode)) {
+        handleTerminalAuthLogout("session_expired")
+      }
+    }
     throw new ApiError(
-      errorData?.error?.code || "UNKNOWN_ERROR",
+      errorCode,
       errorData?.error?.message ||
         `API request failed with status ${response.status}`,
       errorData?.error?.details,

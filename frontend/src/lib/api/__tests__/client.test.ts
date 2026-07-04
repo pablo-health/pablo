@@ -150,3 +150,40 @@ describe("apiClient terminal-auth handling", () => {
     expect(signOut).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("getBlob terminal-auth handling", () => {
+  it("redirects with reason=idle_timeout on an idle 401", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err401("IDLE_TIMEOUT")))
+
+    await expect(client.getBlob("/api/download")).rejects.toMatchObject({
+      code: "IDLE_TIMEOUT",
+    })
+    await vi.waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith("/login?reason=idle_timeout"),
+    )
+  })
+
+  it("boots to /login?reason=session_expired on a terminal 401", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err401("TOKEN_REVOKED")))
+
+    await expect(client.getBlob("/api/download")).rejects.toMatchObject({
+      code: "TOKEN_REVOKED",
+    })
+    await vi.waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith("/login?reason=session_expired"),
+    )
+  })
+
+  it("does NOT auto-redirect for terminal codes when the caller supplied its own token", async () => {
+    const client = await freshClient()
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err401("TOKEN_REVOKED")))
+
+    await expect(client.getBlob("/api/download", "caller-token")).rejects.toMatchObject({
+      code: "TOKEN_REVOKED",
+    })
+    await Promise.resolve()
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+})

@@ -123,6 +123,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # auth.py / ext_auth.py — auth tokens and boolean checks only
         ("post", "/api/auth/native/code"),  # mints a short-lived native auth code
         ("post", "/api/auth/native/exchange"),  # exchanges code for auth tokens
+        ("get", "/api/auth/session"),  # caller's own idle-session liveness, no PHI
+        ("post", "/api/auth/session/touch"),  # refreshes caller's own idle heartbeat, no PHI
         ("post", "/api/ext/auth/check-allowlist"),  # allowlist membership check
         ("post", "/api/ext/auth/check-status"),  # account disabled-status check
         # passkey.py — WebAuthn ceremonies: authenticator metadata + token mint, no PHI

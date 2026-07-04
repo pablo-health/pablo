@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/layout/Sidebar"
 import { Header } from "@/components/layout/Header"
 import { redirect } from "next/navigation"
 import { mockUser } from "@/lib/mockData"
+import { ApiError } from "@/lib/api/client"
 import { getBAAStatus } from "@/lib/api/users"
 import { getCachedUserStatus } from "@/lib/api/users.server"
 import { getServerSession } from "@/lib/auth/server"
@@ -70,6 +71,20 @@ export default async function DashboardLayout({
     } catch (error) {
       if (error && typeof error === "object" && "digest" in error) throw error
       console.error("Failed to check user status — blocking access:", error)
+      // A dead session (backend idle timeout / revoked token) must land on
+      // /login carrying a reason: the auth cookie is still cryptographically
+      // valid at this point (an RSC redirect can't clear it), and without
+      // the reason param the middleware's "authenticated user on /login"
+      // handling bounces the request straight back to /dashboard — an
+      // endless valid-cookie/dead-session loop that looks like a logged-in
+      // page. The login screen clears the stale client session itself.
+      if (error instanceof ApiError && error.status === 401) {
+        redirect(
+          error.code === "IDLE_TIMEOUT"
+            ? "/login?reason=idle_timeout"
+            : "/login?reason=session_expired",
+        )
+      }
       redirect("/login")
     }
 

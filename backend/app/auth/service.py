@@ -604,6 +604,29 @@ def get_current_user_no_mfa(
     return _resolve_user(decoded_token, user_repo, allowlist_repo, identity_repo, request)
 
 
+def get_session_peek_claims(
+    request: Request,
+    auth_credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict[str, Any]:
+    """Verified token claims WITHOUT the idle-session touch or user resolution.
+
+    Exists solely for the session-liveness endpoints (/api/auth/session):
+    the read-only peek must be able to ask "is this session still alive?"
+    without the act of asking refreshing the idle clock — a peek that
+    touched would keep every open tab's session alive forever. Also skips
+    MFA and user/allowlist resolution: the endpoints report only the
+    caller's own session state (no PHI, no user data), and the idle
+    controller mounts on pre-MFA onboarding screens too.
+
+    Do NOT use for anything that returns user data or accepts user
+    actions — those need ``get_current_user`` / ``get_current_user_no_mfa``.
+    Registered as a pre-MFA posture marker in
+    ``tests/test_route_mfa_guardrails.py``.
+    """
+    token = auth_credentials.credentials
+    return _verify_request_identity(request, token).claims
+
+
 def _resolve_user(
     decoded_token: dict[str, Any],
     user_repo: UserRepository,

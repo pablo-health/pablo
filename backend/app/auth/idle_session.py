@@ -46,6 +46,7 @@ separate to avoid a circular import between service.py and this module.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -85,6 +86,46 @@ def _idle_timeout_exc() -> HTTPException:
     )
 
 
+@dataclass(frozen=True)
+class SessionPeek:
+    """Result of a read-only liveness check for one session.
+
+    ``enforced`` is False when the idle control is off (dev mode or no
+    Redis) — the client falls back to its local activity clock.
+    ``seconds_remaining`` is None when unknown (enforcement off).
+    """
+
+    enforced: bool
+    active: bool
+    seconds_remaining: int | None
+
+
+def _session_identifiers(decoded_token: dict[str, Any]) -> tuple[str, int]:
+    """Extract (subject, auth_time) or raise 401 INVALID_TOKEN.
+
+    Subject is the provider's stable user id: Firebase puts it in `uid`,
+    OIDC issuers (e.g. Keycloak) in `sub`. `auth_time` anchors the marker
+    to one authentication event and is stable across token refreshes, so
+    the idle clock survives refresh — we keep requiring it as the freshness
+    anchor. Firebase always carries it; OIDC interactive (auth-code) flows
+    do too. A token missing either fails closed.
+    """
+    subject = decoded_token.get("uid") or decoded_token.get("sub")
+    auth_time = decoded_token.get("auth_time")
+    if not subject or not isinstance(auth_time, int):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "INVALID_TOKEN",
+                    "message": "Token missing session identifiers",
+                    "details": {},
+                }
+            },
+        )
+    return str(subject), auth_time
+
+
 def check_and_touch(decoded_token: dict[str, Any]) -> None:
     """Enforce the idle window for this token's session.
 
@@ -100,25 +141,7 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
     if redis is None:
         return
 
-    # Subject is the provider's stable user id: Firebase puts it in `uid`,
-    # OIDC issuers (e.g. Keycloak) in `sub`. `auth_time` anchors the marker
-    # to one authentication event and is stable across token refreshes, so
-    # the idle clock survives refresh — we keep requiring it as the freshness
-    # anchor. Firebase always carries it; OIDC interactive (auth-code) flows
-    # do too. A token missing either fails closed.
-    subject = decoded_token.get("uid") or decoded_token.get("sub")
-    auth_time = decoded_token.get("auth_time")
-    if not subject or not isinstance(auth_time, int):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": {
-                    "code": "INVALID_TOKEN",
-                    "message": "Token missing session identifiers",
-                    "details": {},
-                }
-            },
-        )
+    subject, auth_time = _session_identifiers(decoded_token)
 
     marker_key = _session_marker_key(str(subject), auth_time)
     activity_key = _activity_key(str(subject), auth_time)
@@ -169,6 +192,72 @@ def check_and_touch(decoded_token: dict[str, Any]) -> None:
             )
             return
         logger.error("Idle session check failed; failing closed (503): %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": {
+                    "code": "IDLE_CHECK_UNAVAILABLE",
+                    "message": "Session service temporarily unavailable. Please retry.",
+                    "details": {},
+                }
+            },
+        ) from exc
+
+
+def _peek_remaining_seconds(redis: Any, subject: str, auth_time: int, idle_ttl: int) -> int:
+    """Seconds left in the idle window for this session; 0 when dead."""
+    if redis.exists(_revoked_key(subject, auth_time)):
+        return 0
+
+    ttl = redis.ttl(_activity_key(subject, auth_time))
+    if ttl > 0:
+        return int(ttl)
+
+    if redis.exists(_session_marker_key(subject, auth_time)):
+        # Marker present, activity expired → idle window has elapsed.
+        return 0
+
+    # No keys at all: a session that hasn't made its first enforced
+    # request yet (or Redis was flushed). check_and_touch will seed
+    # the keys and allow it, so report the full window.
+    return idle_ttl
+
+
+def peek(decoded_token: dict[str, Any]) -> SessionPeek:
+    """Read-only liveness check: report the session's idle state WITHOUT
+    refreshing the activity heartbeat.
+
+    This is what lets the frontend ask "is this session still alive?"
+    (on dashboard entry, tab restore, and on a poll) without the act of
+    asking keeping every open tab's session alive forever. Pure read:
+    no keys are created, refreshed, or tombstoned — an idle-elapsed
+    session reported here as inactive is burned by ``check_and_touch``
+    on its next real request (or expires with its marker TTL).
+
+    ``seconds_remaining`` is the activity key's TTL — the time left
+    before the session idles out absent further requests.
+    """
+    settings = get_settings()
+    redis = None if settings.is_development else get_redis_client()
+    if redis is None:
+        return SessionPeek(enforced=False, active=True, seconds_remaining=None)
+
+    subject, auth_time = _session_identifiers(decoded_token)
+
+    try:
+        remaining = _peek_remaining_seconds(
+            redis, subject, auth_time, settings.idle_timeout_seconds
+        )
+        return SessionPeek(enforced=True, active=remaining > 0, seconds_remaining=remaining)
+    except Exception as exc:
+        # Mirror check_and_touch's error posture, without inventing a new
+        # failure mode for a read-only endpoint: fail open reports
+        # unenforced (client falls back to its local clock), fail closed
+        # surfaces the same 503 as the enforcing path.
+        if settings.idle_session_fail_open:
+            logger.error("Idle session peek failed; reporting unenforced: %s", exc)
+            return SessionPeek(enforced=False, active=True, seconds_remaining=None)
+        logger.error("Idle session peek failed; failing closed (503): %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
