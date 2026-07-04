@@ -1,11 +1,16 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Pre-auth endpoints for native app code exchange (RFC 8252).
+"""Auth-adjacent endpoints: native app code exchange (RFC 8252) and
+session liveness.
 
-These endpoints do NOT require authentication — they run before the user has a JWT.
+The native code-exchange endpoints do NOT require authentication — they
+run before the user has a JWT. The session-liveness endpoints require a
+verified token but deliberately skip MFA and the idle-session touch
+(see ``get_session_peek_claims``).
 """
 
 import logging
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, Request
@@ -13,9 +18,11 @@ from firebase_admin import auth as firebase_auth
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, UnauthorizedError
+from ..auth import idle_session
 from ..auth.firebase_init import initialize_firebase_app
 from ..auth.providers import second_factor_satisfied
 from ..auth.route_security import truly_public
+from ..auth.service import get_session_peek_claims
 from ..models.companion_device import CompanionEnrollment
 from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
@@ -158,6 +165,62 @@ def exchange_native_code(
         id_token=entry.id_token,
         refresh_token=entry.refresh_token,
     )
+
+
+# --- Session liveness ---
+
+
+class SessionStatusResponse(BaseModel):
+    """Idle-session liveness for the caller's own session.
+
+    ``enforced`` False means the server-side idle control is off (dev
+    mode / no Redis) and the client should fall back to its local
+    activity clock. ``seconds_remaining`` is time left before the
+    session idles out absent further authenticated requests.
+    """
+
+    enforced: bool
+    active: bool
+    seconds_remaining: int | None = None
+
+
+def _session_status(peeked: idle_session.SessionPeek) -> SessionStatusResponse:
+    return SessionStatusResponse(
+        enforced=peeked.enforced,
+        active=peeked.active,
+        seconds_remaining=peeked.seconds_remaining,
+    )
+
+
+@router.get("/session", response_model=SessionStatusResponse)
+def get_session_status(
+    claims: dict[str, Any] = Depends(get_session_peek_claims),
+) -> SessionStatusResponse:
+    """Read-only session liveness check.
+
+    Deliberately does NOT refresh the idle heartbeat — the frontend idle
+    controller calls this on dashboard entry, tab restore, and on a
+    poll, and the act of checking must not keep the session alive.
+    """
+    return _session_status(idle_session.peek(claims))
+
+
+@router.post("/session/touch", response_model=SessionStatusResponse)
+def touch_session(
+    claims: dict[str, Any] = Depends(get_session_peek_claims),
+) -> SessionStatusResponse:
+    """Explicit keep-alive: refresh the idle heartbeat and report the
+    resulting session state.
+
+    Backs the idle-warning dialog's "Stay Signed In" button and the
+    frontend's activity-driven keep-alive, so locally-active users
+    (e.g. typing a long note with no API traffic) don't idle out
+    server-side. Raises 401 IDLE_TIMEOUT if the session already
+    expired — staying signed in past the window requires a fresh
+    sign-in, same as any other request.
+    """
+    idle_session.check_and_touch(claims)
+    return _session_status(idle_session.peek(claims))
 
 
 def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnrollment) -> None:
