@@ -1,0 +1,61 @@
+name: Tag Release
+
+# Cut a release from an already-merged commit: create the vX.Y.Z tag and
+# its GitHub Release, then dispatch the Release workflow on the new tag so
+# it publishes the :vX.Y.Z and :latest images. The explicit dispatch is
+# required because a tag created with GITHUB_TOKEN does not fire the
+# tag-push trigger on its own (Actions recursion guard).
+#
+# Release notes: if docs/releases/<tag>.md exists at the tagged commit's
+# ref, it becomes the release body; otherwise notes are auto-generated.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to create (e.g. v1.0.0)"
+        required: true
+        type: string
+      sha:
+        description: "Commit SHA to tag (defaults to the head of the branch this run targets)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: tag-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  tag-and-release:
+    name: Create tag + GitHub Release
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      TARGET_SHA: ${{ inputs.sha }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate tag format
+        run: echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'
+
+      - name: Create GitHub Release (creates the tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TARGET="${TARGET_SHA:-$GITHUB_SHA}"
+          NOTES_FILE="docs/releases/${TAG}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            gh release create "$TAG" --target "$TARGET" --title "$TAG" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" --target "$TARGET" --title "$TAG" --generate-notes
+          fi
+
+      - name: Dispatch image build on the new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --ref "$TAG"
