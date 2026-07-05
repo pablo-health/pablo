@@ -270,6 +270,20 @@ class TestSubmitDualChannel:
         assert body["audio_url"].startswith("https://cdn.example/upload-")
 
     @pytest.mark.anyio
+    async def test_submit_transcript_uses_configured_speech_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings(assemblyai_speech_model="nano"))
+
+        await service.submit_dual_channel(therapist_audio=_SILENCE_PCM, client_audio=_SILENCE_PCM)
+
+        submit_call = next(c for c in calls if c.url.path.endswith("/transcript"))
+        body: dict[str, Any] = json.loads(submit_call.content)
+        assert body["speech_model"] == "nano"
+
+    @pytest.mark.anyio
     async def test_upload_http_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(500, json={"error": "boom"}, request=request)

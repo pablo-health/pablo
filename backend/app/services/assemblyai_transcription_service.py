@@ -195,6 +195,7 @@ class AssemblyAiTranscriptionService:
 
     def __init__(self, settings: Settings) -> None:
         self._api_key = settings.assemblyai_api_key.get_secret_value()
+        self._speech_model = settings.assemblyai_speech_model
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": self._api_key}
@@ -216,7 +217,7 @@ class AssemblyAiTranscriptionService:
             json={
                 "audio_url": audio_url,
                 "language_code": "en",
-                "speech_model": "best",
+                "speech_model": self._speech_model,
             },
             timeout=30,
         )
