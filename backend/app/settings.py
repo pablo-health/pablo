@@ -923,6 +923,10 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="AssemblyAI API key (used when transcription_provider='assemblyai')",
     )
+    assemblyai_speech_model: str = Field(
+        default="best",
+        description="AssemblyAI speech model, e.g. best, nano, slam-1.",
+    )
 
     # Calendar Auto-Sync (Cloud Scheduler + Cloud Tasks)
     calendar_auto_sync_enabled: bool = Field(
