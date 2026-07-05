@@ -42,6 +42,7 @@ from ..models import (
 )
 from ..models.note import Note
 from ..models.session import TherapySession
+from ..rate_limit import get_audio_upload_limiter
 from ..repositories import (
     NotesRepository,
     PatientRepository,
@@ -905,6 +906,10 @@ async def upload_audio(
 
     Practice tier users get priority processing; Solo tier uses standard queue.
     """
+    # Per-user burst guard: each upload spawns a transcription job, so cap how
+    # fast a single caller can trigger them (per-minute + per-hour). Raises 429.
+    get_audio_upload_limiter().check(user.id)
+
     settings = get_settings()
     if not settings.transcription_enabled:
         raise HTTPException(

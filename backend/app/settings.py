@@ -771,6 +771,32 @@ class Settings(BaseSettings):
         description="Gemini model for EHR navigation LLM fallback",
     )
 
+    # Per-user burst rate limits. These guard the expensive LLM- and
+    # transcription-backed endpoints against a single authenticated caller
+    # driving unbounded compute spend. They are per-deployment abuse
+    # protection, not usage quotas — the defaults sit well above normal
+    # interactive use.
+    chat_rate_per_min: int = Field(
+        default=20,
+        ge=1,
+        description="Max chat-send calls per user per minute",
+    )
+    chat_rate_per_hour: int = Field(
+        default=300,
+        ge=1,
+        description="Max chat-send calls per user per hour",
+    )
+    upload_rate_per_min: int = Field(
+        default=20,
+        ge=1,
+        description="Max audio-upload calls per user per minute",
+    )
+    upload_rate_per_hour: int = Field(
+        default=300,
+        ge=1,
+        description="Max audio-upload calls per user per hour",
+    )
+
     # Patient-context chat primitive (THERAPY-bhv).
     # When false, all /api/chat/* routes return 404 and the frontend
     # ChatPanel is not mounted. The migration runs unconditionally so

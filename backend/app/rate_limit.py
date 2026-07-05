@@ -113,6 +113,27 @@ class RedisSlidingWindow:
             self._redis.delete(rkey)
 
 
+class CompositeLimiter:
+    """Enforces several sliding windows at once (e.g. per-minute + per-hour).
+
+    ``check`` runs each window in turn; the first one to breach raises
+    ``429`` and short-circuits. This lets a single logical limit combine a
+    tight burst window with a looser sustained-rate window so a caller can
+    neither spike nor grind against an endpoint.
+    """
+
+    def __init__(self, limiters: list[RateLimiter]) -> None:
+        self._limiters = limiters
+
+    def check(self, key: str) -> None:
+        for limiter in self._limiters:
+            limiter.check(key)
+
+    def reset(self) -> None:
+        for limiter in self._limiters:
+            limiter.reset()
+
+
 def _create_limiter(max_requests: int, window_seconds: int) -> RateLimiter:
     """Create the appropriate limiter based on settings."""
     from .redis_client import get_redis_client  # noqa: PLC0415
@@ -179,6 +200,58 @@ def get_ehr_navigate_limiter() -> RateLimiter:
         )
         logger.info("EHR navigate rate limiter: %s", type(_ehr_navigate_limiter).__name__)
     return _ehr_navigate_limiter
+
+
+# Chat send: per-user burst limit (per-minute + per-hour sliding windows).
+_chat_send_limiter: RateLimiter | None = None
+
+
+def get_chat_send_limiter() -> RateLimiter:
+    """Get the per-user burst rate limiter for the chat-send endpoint.
+
+    Combines a per-minute and a per-hour window so a single authenticated
+    caller cannot drive unbounded LLM spend by hammering the endpoint. This
+    is per-deployment abuse protection, not a usage quota.
+    """
+    global _chat_send_limiter  # noqa: PLW0603
+    if _chat_send_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _chat_send_limiter = CompositeLimiter(
+            [
+                _create_limiter(max_requests=settings.chat_rate_per_min, window_seconds=60),
+                _create_limiter(max_requests=settings.chat_rate_per_hour, window_seconds=3_600),
+            ]
+        )
+        logger.info("Chat send rate limiter: %s", type(_chat_send_limiter).__name__)
+    return _chat_send_limiter
+
+
+# Audio upload: per-user burst limit (per-minute + per-hour sliding windows).
+_audio_upload_limiter: RateLimiter | None = None
+
+
+def get_audio_upload_limiter() -> RateLimiter:
+    """Get the per-user burst rate limiter for the audio-upload endpoint.
+
+    Combines a per-minute and a per-hour window so a single authenticated
+    caller cannot drive unbounded transcription spend by hammering the
+    endpoint. This is per-deployment abuse protection, not a usage quota.
+    """
+    global _audio_upload_limiter  # noqa: PLW0603
+    if _audio_upload_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _audio_upload_limiter = CompositeLimiter(
+            [
+                _create_limiter(max_requests=settings.upload_rate_per_min, window_seconds=60),
+                _create_limiter(max_requests=settings.upload_rate_per_hour, window_seconds=3_600),
+            ]
+        )
+        logger.info("Audio upload rate limiter: %s", type(_audio_upload_limiter).__name__)
+    return _audio_upload_limiter
 
 
 def reset_preauth_limiter() -> None:
