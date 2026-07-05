@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from app.models import SessionSource, SessionStatus, TherapySession, Transcript
 from app.models.audit import AuditAction
 from app.repositories import InMemoryTherapySessionRepository  # noqa: TC002 — runtime fixture type
 from app.services import AuditService  # noqa: TC002 — runtime fixture type
+from fastapi import HTTPException, status
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
 # A clinician who is NOT the test's authenticated user (conftest's mock_user).
@@ -208,3 +210,34 @@ class TestUploadTranscriptAsync:
         )
 
         assert resp.status_code == 400, resp.text
+
+
+class TestUploadAudioRateLimit:
+    def test_rate_limit_exceeded_returns_429(
+        self,
+        client: TestClient,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A caller over the per-user burst limit gets 429 before transcription."""
+        session = _seed_session(
+            mock_session_repo, owner=mock_user_id, status=SessionStatus.RECORDING_COMPLETE
+        )
+
+        def raise_429(key: str) -> None:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please try again later.",
+            )
+
+        with patch("app.routes.sessions.get_audio_upload_limiter") as mock_limiter:
+            mock_limiter.return_value.check.side_effect = raise_429
+            resp = client.post(
+                f"/api/sessions/{session.id}/upload-audio",
+                files={
+                    "therapist_audio": ("t.wav", b"RIFFdata", "audio/wav"),
+                    "client_audio": ("c.wav", b"RIFFdata", "audio/wav"),
+                },
+            )
+
+        assert resp.status_code == 429

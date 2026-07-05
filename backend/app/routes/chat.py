@@ -49,6 +49,7 @@ from ..models import (
     User,
 )
 from ..models.audit import ResourceType
+from ..rate_limit import get_chat_send_limiter
 from ..repositories import (
     ChatRepository,
     LlmUsageRepository,
@@ -566,6 +567,10 @@ async def send_message(
     clinician resuming a chat sees the chart through their own grants,
     not the original owner's.
     """
+    # Per-user burst guard: a chat turn drives an LLM call, so cap how fast a
+    # single caller can trigger them (per-minute + per-hour). Raises 429.
+    get_chat_send_limiter().check(user.id)
+
     conv = _authorize_conversation(conversation_id, user, chat_service)
     if conv.archived_at is not None:
         raise HTTPException(status_code=409, detail="Conversation is archived")

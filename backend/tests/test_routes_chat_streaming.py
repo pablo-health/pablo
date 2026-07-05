@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from app.auth.service import (
     get_current_user_id,
@@ -25,6 +26,7 @@ from app.models import Patient, QuotaStatus, User
 from app.routes.chat import get_chat_llm_gateway, get_llm_usage_meter
 from app.services.chat_llm_gateway import FakeChatLLMGateway, StreamEvent
 from app.services.chat_model_resolver import get_chat_model_resolver
+from fastapi import HTTPException, status
 
 from ._streaming_body_guard import assert_no_db_checkouts
 
@@ -322,3 +324,28 @@ class TestSendMessage:
             json={"content": ""},
         )
         assert response.status_code == 422
+
+    def test_rate_limit_exceeded_returns_429(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A caller over the per-user burst limit gets 429 before the LLM call."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        conversation_id = _create_conversation(client, patient.id)
+
+        def raise_429(key: str) -> None:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests. Please try again later.",
+            )
+
+        with patch("app.routes.chat.get_chat_send_limiter") as mock_limiter:
+            mock_limiter.return_value.check.side_effect = raise_429
+            response = client.post(
+                f"/api/chat/conversations/{conversation_id}/messages",
+                json={"content": "ping"},
+            )
+
+        assert response.status_code == 429
