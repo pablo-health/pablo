@@ -104,7 +104,12 @@ class PatientOwnedStore:
         return True
 
     def _dir(self, vault_id: str) -> Path:
-        return self._root / _safe_id(vault_id)
+        directory = (self._root / _safe_id(vault_id)).resolve()
+        # Defence in depth: the sanitised id must resolve to a direct child of
+        # the store root — never the root itself or anything outside it.
+        if directory.parent != self._root.resolve():
+            raise ValueError(f"unsafe vault id resolved outside the store: {vault_id!r}")
+        return directory
 
 
 class PatientOwnedSink:
@@ -179,4 +184,10 @@ def record_payload(record: ImportedRecord) -> bytes:
 
 
 def _safe_id(vault_id: str) -> str:
-    return _UNSAFE_ID.sub("_", vault_id) or uuid4().hex
+    cleaned = _UNSAFE_ID.sub("_", vault_id)
+    # Every char left by _UNSAFE_ID is filesystem-legal, but "." and ".." are
+    # still path-significant (parent/current dir). A vault id that is all dots
+    # would escape or alias the store root, so fall back to a random id.
+    if cleaned.strip(".") == "":
+        return uuid4().hex
+    return cleaned
