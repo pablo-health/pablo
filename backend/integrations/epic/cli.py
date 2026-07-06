@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=tuple(PROFILES),
         default=DEFAULT_PROFILE,
-        help=f"Import breadth: minimal | clinical | full (default: {DEFAULT_PROFILE}).",
+        help=f"Import breadth: minimal | clinical | full | oncology (default: {DEFAULT_PROFILE}).",
     )
     parser.add_argument("--client-id", help="OAuth2 client id of your registered Epic app.")
     parser.add_argument("--fhir-base-url", help="FHIR R4 base URL (defaults to Epic's sandbox).")

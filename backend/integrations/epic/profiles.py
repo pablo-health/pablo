@@ -18,6 +18,11 @@ _BASE_PATIENT_SCOPES = ("openid", "fhirUser", "offline_access")
 _CORE_RESOURCES = ("Patient", "Condition", "MedicationRequest")
 _CLINICAL_RESOURCES = ("AllergyIntolerance", "Observation", "Immunization", "Encounter")
 _FULL_RESOURCES = ("Procedure", "DiagnosticReport", "DocumentReference")
+# Treatment-plan resources that matter for cancer and other active-treatment
+# care: the plan/protocol, the medications actually administered (infusions,
+# not just community prescriptions), and outstanding orders (biopsies,
+# restaging, referrals).
+_ONCOLOGY_RESOURCES = ("CarePlan", "MedicationAdministration", "ServiceRequest")
 
 
 @dataclass(frozen=True)
@@ -73,5 +78,19 @@ FULL = ImportProfile(
     ),
 )
 
-PROFILES: dict[str, ImportProfile] = {p.name: p for p in (MINIMAL, CLINICAL, FULL)}
+ONCOLOGY = ImportProfile(
+    name="oncology",
+    resources=(*_CORE_RESOURCES, *_CLINICAL_RESOURCES, *_FULL_RESOURCES, *_ONCOLOGY_RESOURCES),
+    queries=(
+        *_CLINICAL_QUERIES,
+        ResourceQuery("Procedure", "Procedure", {}),
+        ResourceQuery("DiagnosticReport", "DiagnosticReport", {}),
+        ResourceQuery("DocumentReference", "DocumentReference", {}),
+        ResourceQuery("CarePlan", "CarePlan", {}),
+        ResourceQuery("MedicationAdministration", "MedicationAdministration", {}),
+        ResourceQuery("ServiceRequest", "ServiceRequest", {}),
+    ),
+)
+
+PROFILES: dict[str, ImportProfile] = {p.name: p for p in (MINIMAL, CLINICAL, FULL, ONCOLOGY)}
 DEFAULT_PROFILE = "full"
