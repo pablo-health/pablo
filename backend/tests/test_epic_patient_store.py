@@ -139,3 +139,25 @@ def test_cmek_envelope_wraps_dek_and_round_trips(tmp_path: Path) -> None:
 
     payload = json.loads(load_payload(store, provider, "pat-9") or b"{}")
     assert payload["patient"]["last_name"] == "Byron"
+
+
+def test_dot_vault_ids_cannot_escape_the_store_root(tmp_path: Path) -> None:
+    store = PatientOwnedStore(tmp_path)
+    # A FHIR Patient.id of "." or ".." is filesystem-legal but path-significant;
+    # it must never resolve to the store root or its parent.
+    for probe in ("..", ".", "..."):
+        directory = store._dir(probe)
+        assert directory.parent == tmp_path.resolve()
+        assert directory != tmp_path.resolve()
+
+    # And writing a record whose FHIR Patient.id is ".." lands inside the
+    # store, not in its parent.
+    before = set(tmp_path.parent.iterdir())
+    dotted = ImportedRecord(
+        patient=MappedPatient("..", "Ada", "Byron", "1815-12-10", None, None, "female", "MRN-9"),
+        medications=(),
+        conditions=(),
+    )
+    PatientOwnedSink(store, LocalKeyProvider(generate_key())).write(dotted)
+    assert set(tmp_path.parent.iterdir()) == before  # nothing new escaped the root
+    assert list(tmp_path.iterdir())  # something was written, inside the root
