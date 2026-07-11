@@ -122,6 +122,32 @@ describe("IdleTimeout (server-enforced mode)", () => {
     expect(screen.queryByText("Session Expiring")).toBeNull()
   })
 
+  it("flips to an expired dialog with a working Sign In once the countdown hits 0", async () => {
+    // Alive on mount (1s left), then the confirming peeks can't land — the
+    // clock runs past 0 but stays inside the 30s grace window, so the dialog
+    // holds at 0:00 instead of booting.
+    getSessionStatus.mockResolvedValueOnce(sessionStatus(1))
+    getSessionStatus.mockRejectedValue(new Error("network"))
+
+    await renderAndSettleMount()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500)
+    })
+
+    expect(screen.getByText("Session Expired")).toBeTruthy()
+    expect(screen.queryByText("Stay Signed In")).toBeNull()
+
+    fireEvent.click(screen.getByText("Sign In"))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    // Routes to /login through the local sign-out path; never tries to
+    // "keep alive" a dead session.
+    expect(routerPush).toHaveBeenCalledWith("/login?reason=idle_timeout")
+    expect(touchSession).not.toHaveBeenCalled()
+  })
+
   it("keeps a locally-active user alive server-side via the throttled touch", async () => {
     getSessionStatus.mockResolvedValue(sessionStatus(900))
     touchSession.mockResolvedValue(sessionStatus(900))

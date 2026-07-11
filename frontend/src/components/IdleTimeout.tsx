@@ -235,32 +235,50 @@ export function IdleTimeout() {
 
   if (secondsLeft === null) return null
 
+  // Once the countdown hits 0 the backend session is gone (or about to be
+  // confirmed dead by the arbiter peek / expiry grace). "Stay Signed In" can
+  // no longer keep it alive, so switch the dialog to an expired state whose
+  // button routes to /login instead of leaving the user stuck at 0:00.
+  const isExpired = secondsLeft <= 0
   const minutes = Math.floor(secondsLeft / 60)
   const secs = secondsLeft % 60
 
   return (
-    <Dialog open onOpenChange={(open) => !open && handleStaySignedIn()}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (open) return
+        if (isExpired) void performLocalSignOut()
+        else handleStaySignedIn()
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         onInteractOutside={(e) => e.preventDefault()}
         className="sm:max-w-md"
       >
         <DialogHeader>
-          <DialogTitle>Session Expiring</DialogTitle>
+          <DialogTitle>{isExpired ? "Session Expired" : "Session Expiring"}</DialogTitle>
           <DialogDescription>
-            You will be signed out in{" "}
-            <span className="font-mono font-semibold text-neutral-900">
-              {minutes}:{secs.toString().padStart(2, "0")}
-            </span>{" "}
-            due to inactivity.
+            {isExpired ? (
+              "Your session has expired due to inactivity. Sign in again to continue."
+            ) : (
+              <>
+                You will be signed out in{" "}
+                <span className="font-mono font-semibold text-neutral-900">
+                  {minutes}:{secs.toString().padStart(2, "0")}
+                </span>{" "}
+                due to inactivity.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <button
-            onClick={handleStaySignedIn}
+            onClick={isExpired ? () => void performLocalSignOut() : handleStaySignedIn}
             className="w-full bg-primary-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
           >
-            Stay Signed In
+            {isExpired ? "Sign In" : "Stay Signed In"}
           </button>
         </DialogFooter>
       </DialogContent>
