@@ -16,12 +16,13 @@ a :class:`FileStorageProvider` and never touch a cloud SDK directly.
 
 Semantics shared by both backends:
 
-* ``make_upload_url`` returns a presigned PUT URL bound to a single
-  object name + content type. GCS additionally enforces ``max_bytes``
-  at PUT time via ``x-goog-content-length-range``; S3 presigned PUTs
-  cannot carry a length-range condition (that is a presigned-POST-only
-  feature), so on S3 the size cap is enforced by the caller's
-  finalize-time ``fetch_metadata`` re-check instead.
+* ``make_upload_target`` returns an :class:`UploadTarget` bound to a
+  single object name + content type, with ``max_bytes`` enforced by the
+  storage service at upload time. GCS uses a signed PUT URL with an
+  ``x-goog-content-length-range`` header; S3 uses a presigned POST
+  (multipart form) because only POST policies can carry a
+  ``content-length-range`` condition. The client dispatches on
+  ``UploadTarget.method``.
 * ``fetch_metadata`` returns ``(size_bytes, content_type)`` or ``None``
   when the object does not exist.
 * ``delete`` is idempotent — an already-missing object is a success.
@@ -30,7 +31,8 @@ Semantics shared by both backends:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,11 +40,25 @@ if TYPE_CHECKING:
     from ..settings import Settings
 
 
+@dataclass(frozen=True)
+class UploadTarget:
+    """How the browser must upload: bare PUT (GCS) or form POST (S3).
+
+    ``fields`` are the signed policy form fields for the POST method —
+    the client sends them as ``multipart/form-data`` entries ahead of
+    the file part. Empty for PUT.
+    """
+
+    url: str
+    method: Literal["PUT", "POST"]
+    fields: dict[str, str] = field(default_factory=dict)
+
+
 class FileStorageProvider(ABC):
     """Object-storage operations needed by the file upload/download surfaces."""
 
     @abstractmethod
-    def make_upload_url(
+    def make_upload_target(
         self,
         *,
         bucket: str,
@@ -50,8 +66,8 @@ class FileStorageProvider(ABC):
         content_type: str,
         max_bytes: int,
         ttl_seconds: int,
-    ) -> str:
-        """Presigned PUT URL for a browser-direct upload."""
+    ) -> UploadTarget:
+        """Presigned target for a browser-direct upload."""
 
     @abstractmethod
     def make_download_url(
@@ -100,7 +116,7 @@ class GcsFileStorage(FileStorageProvider):
 
         return storage.Client()
 
-    def make_upload_url(
+    def make_upload_target(
         self,
         *,
         bucket: str,
@@ -108,10 +124,10 @@ class GcsFileStorage(FileStorageProvider):
         content_type: str,
         max_bytes: int,
         ttl_seconds: int,
-    ) -> str:
+    ) -> UploadTarget:
         from .signed_upload import make_upload_url
 
-        return make_upload_url(
+        url = make_upload_url(
             client=self._client(),
             bucket=bucket,
             object_name=object_name,
@@ -119,6 +135,7 @@ class GcsFileStorage(FileStorageProvider):
             max_bytes=max_bytes,
             ttl_seconds=ttl_seconds,
         )
+        return UploadTarget(url=url, method="PUT")
 
     def make_download_url(
         self,
@@ -205,25 +222,29 @@ class S3FileStorage(FileStorageProvider):
             config=Config(signature_version="s3v4"),
         )
 
-    def make_upload_url(
+    def make_upload_target(
         self,
         *,
         bucket: str,
         object_name: str,
         content_type: str,
-        max_bytes: int,  # noqa: ARG002 — enforced at finalize; see module docstring
+        max_bytes: int,
         ttl_seconds: int,
-    ) -> str:
-        url: str = self._client().generate_presigned_url(
-            "put_object",
-            Params={
-                "Bucket": bucket,
-                "Key": object_name,
-                "ContentType": content_type,
-            },
+    ) -> UploadTarget:
+        # Presigned POST rather than PUT: only POST policies can carry a
+        # content-length-range condition, which is what enforces
+        # max_bytes at S3 (parity with GCS's signed size-range header).
+        post = self._client().generate_presigned_post(
+            Bucket=bucket,
+            Key=object_name,
+            Fields={"Content-Type": content_type},
+            Conditions=[
+                {"Content-Type": content_type},
+                ["content-length-range", 0, max_bytes],
+            ],
             ExpiresIn=ttl_seconds,
         )
-        return url
+        return UploadTarget(url=post["url"], method="POST", fields=dict(post["fields"]))
 
     def make_download_url(
         self,

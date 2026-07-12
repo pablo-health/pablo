@@ -8,6 +8,7 @@ Thin HTTP handlers that delegate business logic to SessionService.
 
 import logging
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
 from google.api_core.exceptions import AlreadyExists
@@ -1066,6 +1067,10 @@ def _audio_signed_object_name(session_id: str, channel: str) -> str:
 
 class _AudioUploadChannel(BaseModel):
     upload_url: str
+    # "PUT" = bare body PUT (GCS); "POST" = multipart/form-data POST
+    # with upload_fields ahead of the file part (S3 presigned POST).
+    upload_method: Literal["PUT", "POST"] = "PUT"
+    upload_fields: dict[str, str] = {}
     gcs_path: str
 
 
@@ -1131,14 +1136,14 @@ def init_audio_upload(
     content_type = "application/octet-stream"
     therapist_path = _audio_signed_object_name(session_id, "therapist")
     client_path = _audio_signed_object_name(session_id, "client")
-    therapist_url = storage.make_upload_url(
+    therapist_target = storage.make_upload_target(
         bucket=bucket,
         object_name=therapist_path,
         content_type=content_type,
         max_bytes=_MAX_AUDIO_SIZE,
         ttl_seconds=settings.patient_documents_upload_url_ttl_seconds,
     )
-    client_url = storage.make_upload_url(
+    client_target = storage.make_upload_target(
         bucket=bucket,
         object_name=client_path,
         content_type=content_type,
@@ -1156,8 +1161,18 @@ def init_audio_upload(
 
     return _AudioInitResponse(
         session_id=session_id,
-        therapist=_AudioUploadChannel(upload_url=therapist_url, gcs_path=therapist_path),
-        client=_AudioUploadChannel(upload_url=client_url, gcs_path=client_path),
+        therapist=_AudioUploadChannel(
+            upload_url=therapist_target.url,
+            upload_method=therapist_target.method,
+            upload_fields=therapist_target.fields,
+            gcs_path=therapist_path,
+        ),
+        client=_AudioUploadChannel(
+            upload_url=client_target.url,
+            upload_method=client_target.method,
+            upload_fields=client_target.fields,
+            gcs_path=client_path,
+        ),
         required_content_type=content_type,
         max_bytes=_MAX_AUDIO_SIZE,
     )

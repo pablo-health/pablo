@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from ..repositories import PatientDocumentRepository
     from ..settings import Settings
     from .document_ai_ocr import DocumentAiOcrClient
-    from .file_storage import FileStorageProvider
+    from .file_storage import FileStorageProvider, UploadTarget
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class UploadNotCompleteError(PatientDocumentError):
 @dataclass(frozen=True)
 class InitUploadResult:
     document: PatientDocument
-    upload_url: str
+    upload: UploadTarget
     required_content_type: str
     max_bytes: int
 
@@ -210,7 +210,7 @@ class PatientDocumentsService:
         object_name = self._object_name(document_id, category)
         bucket = self._bucket()
 
-        upload_url = self._storage().make_upload_url(
+        upload = self._storage().make_upload_target(
             bucket=bucket,
             object_name=object_name,
             content_type=mime_type,
@@ -233,7 +233,7 @@ class PatientDocumentsService:
 
         return InitUploadResult(
             document=document,
-            upload_url=upload_url,
+            upload=upload,
             required_content_type=mime_type,
             max_bytes=max_bytes,
         )

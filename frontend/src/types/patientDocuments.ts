@@ -71,6 +71,13 @@ export interface InitUploadRequest {
 export interface InitUploadResponse {
   document_id: string
   upload_url: string
+  /**
+   * "PUT" = bare body PUT to upload_url (GCS signed URL).
+   * "POST" = multipart/form-data POST with upload_fields ahead of the
+   * file part (S3 presigned POST).
+   */
+  upload_method: "PUT" | "POST"
+  upload_fields: Record<string, string>
   required_content_type: string
   max_bytes: number
   required_size_header: string

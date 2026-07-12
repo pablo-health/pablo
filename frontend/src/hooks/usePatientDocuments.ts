@@ -70,6 +70,8 @@ export function useUploadPatientDocument(
         file,
         init.max_bytes,
         init.required_content_type,
+        init.upload_method,
+        init.upload_fields,
       )
       setStage("finalize")
       const finalized = await finalizePatientDocumentUpload(

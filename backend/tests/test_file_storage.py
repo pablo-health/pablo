@@ -10,6 +10,8 @@ local computation — no network).
 
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlparse
@@ -85,10 +87,10 @@ def gcs_storage(fake_gcs: _FakeGcsClient) -> GcsFileStorage:
 
 
 class TestGcsFileStorage:
-    def test_upload_and_download_urls_delegate_to_signed_url(
+    def test_upload_target_is_bare_put_and_download_delegates(
         self, gcs_storage: GcsFileStorage
     ) -> None:
-        up = gcs_storage.make_upload_url(
+        up = gcs_storage.make_upload_target(
             bucket="b",
             object_name="t/doc-1",
             content_type="application/pdf",
@@ -96,7 +98,9 @@ class TestGcsFileStorage:
             ttl_seconds=300,
         )
         down = gcs_storage.make_download_url(bucket="b", object_name="t/doc-1", ttl_seconds=300)
-        assert "t/doc-1" in up
+        assert "t/doc-1" in up.url
+        assert up.method == "PUT"
+        assert up.fields == {}
         assert "t/doc-1" in down
 
     def test_fetch_metadata_missing_returns_none(self, gcs_storage: GcsFileStorage) -> None:
@@ -143,25 +147,26 @@ def s3_storage() -> S3FileStorage:
 
 
 class TestS3FileStorage:
-    def test_upload_url_is_sigv4_put_bound_to_key_and_content_type(
+    def test_upload_target_is_presigned_post_with_size_and_type_policy(
         self, s3_storage: S3FileStorage
     ) -> None:
-        url = s3_storage.make_upload_url(
+        target = s3_storage.make_upload_target(
             bucket="pablo-docs",
             object_name="tenant-A/chart/doc-1",
             content_type="application/pdf",
             max_bytes=100,
             ttl_seconds=300,
         )
-        parsed = urlparse(url)
-        query = parse_qs(parsed.query)
-        assert "pablo-docs" in parsed.netloc + parsed.path
-        assert parsed.path.endswith("/tenant-A/chart/doc-1")
-        assert query["X-Amz-Expires"] == ["300"]
-        assert "X-Amz-Signature" in query
-        # Content-Type is a signed header — a PUT with a different type
-        # fails the signature check at S3.
-        assert "content-type" in query["X-Amz-SignedHeaders"][0]
+        assert target.method == "POST"
+        assert "pablo-docs" in target.url
+        assert target.fields["key"] == "tenant-A/chart/doc-1"
+        assert target.fields["Content-Type"] == "application/pdf"
+        assert "x-amz-signature" in target.fields
+        # The signed policy document is what S3 enforces at upload time —
+        # it must carry both the content-type match and the size range.
+        policy = json.loads(base64.b64decode(target.fields["policy"]))
+        assert ["content-length-range", 0, 100] in policy["conditions"]
+        assert {"Content-Type": "application/pdf"} in policy["conditions"]
 
     def test_download_url_carries_response_disposition(self, s3_storage: S3FileStorage) -> None:
         url = s3_storage.make_download_url(

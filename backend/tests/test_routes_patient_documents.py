@@ -221,6 +221,8 @@ class TestInit:
         body = _init_upload(documents_client, "patient-1")
         assert body["document_id"]
         assert body["upload_url"].startswith("https://fake.googleusercontent.example/")
+        assert body["upload_method"] == "PUT"
+        assert body["upload_fields"] == {}
         assert body["required_content_type"] == "application/pdf"
         assert body["max_bytes"] == 25 * 1024 * 1024
         assert body["required_size_header"] == "x-goog-content-length-range"

@@ -186,7 +186,9 @@ class TestInitUploadValidation:
             mime_type="application/pdf",
             size_bytes=1234,
         )
-        assert result.upload_url.startswith("https://fake.googleusercontent.example/")
+        assert result.upload.url.startswith("https://fake.googleusercontent.example/")
+        assert result.upload.method == "PUT"
+        assert result.upload.fields == {}
         # Per-tenant prefix is reflected in the object name.
         assert result.document.gcs_path.startswith("tenant-A/")
         # Placeholder row exists but is pre-finalize.
