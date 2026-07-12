@@ -103,6 +103,17 @@ optional = true
 faker = "^40.23.0"
 
 
+# AWS S3 file storage provider (FILE_STORAGE_PROVIDER=s3) — optional so
+# GCP-managed deployments don't carry boto3. See
+# backend/app/services/file_storage.py.
+# Enable with: poetry install --with aws
+[tool.poetry.group.aws]
+optional = true
+
+[tool.poetry.group.aws.dependencies]
+boto3 = ">=1.35.0"
+
+
 # Cloud SQL Python connector — optional transport for GCP-managed deployments.
 # Only needed when DB_USE_CLOUD_SQL_CONNECTOR=true.  psycopg2-binary is
 # already a core dependency so no extras are needed.
@@ -128,6 +139,8 @@ pyyaml = ">=6.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
+# S3FileStorage tests presign offline against a real boto3 client.
+boto3 = ">=1.35.0"
 pytest-cov = "^7.0.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
@@ -315,6 +328,8 @@ disallow_untyped_defs = false
 module = [
     "fastapi.*",
     "pydantic.*",
+    "boto3.*",
+    "botocore.*",
     "google.cloud.*",
     "google.auth.*",
     "google.genai.*",

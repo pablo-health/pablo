@@ -33,6 +33,7 @@ from app.routes.patient_documents import (
     get_patient_repository as docs_route_patient_repo,
 )
 from app.services import AuditService, PatientDocumentsService, get_audit_service
+from app.services.file_storage import GcsFileStorage
 from app.settings import Settings
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 from google.cloud.exceptions import NotFound
@@ -171,7 +172,7 @@ def documents_client(
     service = PatientDocumentsService(
         repo=doc_repo,
         settings=documents_settings,
-        storage_client_factory=lambda: fake_gcs,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
         tenant_id="tenant-A",
     )
     app.dependency_overrides[docs_route_doc_repo] = lambda: doc_repo

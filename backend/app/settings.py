@@ -636,7 +636,37 @@ class Settings(BaseSettings):
     )
     transcription_audio_bucket: str = Field(
         default="pablo-audio",
-        description="GCS bucket for encrypted audio uploads",
+        description=(
+            "Bucket for encrypted audio uploads, on the provider selected by file_storage_provider."
+        ),
+    )
+    # Object-storage provider for file upload/download surfaces (patient
+    # documents, signed-URL session audio, hard-purge blob deletes).
+    # Bucket-name settings (patient_documents_gcs_bucket,
+    # transcription_audio_bucket) name a bucket on whichever provider is
+    # selected here.
+    file_storage_provider: Literal["gcs", "s3"] = Field(
+        default="gcs",
+        description=(
+            "Object-storage backend for file uploads/downloads. "
+            "'gcs' = Google Cloud Storage (default, managed deployments). "
+            "'s3' = AWS S3 or S3-compatible (MinIO/LocalStack); requires "
+            "`poetry install --with aws` and boto3-discoverable credentials."
+        ),
+    )
+    aws_region: str | None = Field(
+        default=None,
+        description=(
+            "AWS region for the S3 file storage provider. Leave unset to "
+            "use boto3's default resolution (AWS_DEFAULT_REGION, profile)."
+        ),
+    )
+    aws_s3_endpoint_url: str | None = Field(
+        default=None,
+        description=(
+            "Custom S3 endpoint for S3-compatible stores (MinIO, "
+            "LocalStack). Leave unset for AWS S3."
+        ),
     )
     # Compliance document storage (license copies, insurance declarations,
     # etc.). Accepts either a ``gs://<bucket>[/prefix]`` value (GCS) or an
@@ -665,9 +695,10 @@ class Settings(BaseSettings):
     patient_documents_gcs_bucket: str | None = Field(
         default=None,
         description=(
-            "GCS bucket for clinician-uploaded patient documents (PDFs, "
-            "PNG/JPEG scans). Per-tenant prefix: "
-            "gs://<bucket>/<tenant_id>/<uuid>. Leave unset to disable "
+            "Bucket for clinician-uploaded patient documents (PDFs, "
+            "PNG/JPEG scans), on the provider selected by "
+            "file_storage_provider. Per-tenant prefix: "
+            "<bucket>/<tenant_id>/<uuid>. Leave unset to disable "
             "the patient_documents API surface."
         ),
     )

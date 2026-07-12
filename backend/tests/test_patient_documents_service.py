@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from app.models import DocumentCategory
 from app.repositories import InMemoryPatientDocumentRepository
+from app.services.file_storage import GcsFileStorage
 from app.services.patient_documents_service import (
     FileTooLargeError,
     PatientDocumentsService,
@@ -114,7 +115,7 @@ def service(
     return PatientDocumentsService(
         repo=repo,
         settings=settings,
-        storage_client_factory=lambda: fake_gcs,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
         tenant_id="tenant-A",
     )
 
@@ -651,7 +652,7 @@ def _service_with_ocr(
     return PatientDocumentsService(
         repo=repo,
         settings=settings,
-        storage_client_factory=lambda: fake_gcs,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
         tenant_id="tenant-A",
         ocr_client=ocr,  # type: ignore[arg-type]
     )

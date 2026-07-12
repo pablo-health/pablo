@@ -205,31 +205,26 @@ def _audio_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[
     return objects
 
 
-def _resolve_audio_bucket() -> Any:
-    """Return the GCS Bucket holding session audio. Patched in unit tests."""
-    from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
-
+def _resolve_audio_storage() -> tuple[Any, str]:
+    """Return (storage provider, bucket name) for session audio. Patched in unit tests."""
+    from ..services.file_storage import file_storage_from_settings  # noqa: PLC0415
     from ..settings import get_settings  # noqa: PLC0415
 
     settings = get_settings()
-    return storage.Client().bucket(settings.transcription_audio_bucket)
+    return file_storage_from_settings(settings), settings.transcription_audio_bucket
 
 
 def _delete_audio_blobs(objects: list[str]) -> None:
-    """Delete GCS blobs for the given object names. Idempotent on missing.
+    """Delete storage objects for the given names.
 
-    Raises on any non-404 GCS failure so the caller's transaction rolls back.
+    Provider deletes are idempotent on missing objects; any other storage
+    failure raises so the caller's transaction rolls back.
     """
     if not objects:
         return
-    from google.api_core.exceptions import NotFound  # noqa: PLC0415
-
-    bucket = _resolve_audio_bucket()
+    storage, bucket = _resolve_audio_storage()
     for object_name in objects:
-        try:
-            bucket.blob(object_name).delete()
-        except NotFound:
-            logger.info("hard_purge_audio_blob_already_gone object=%s", object_name)
+        storage.delete(bucket=bucket, object_name=object_name)
 
 
 def _document_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[str]:
@@ -259,47 +254,43 @@ def _document_objects_for_patient(conn: Any, schema: str, patient_id: str) -> li
     return objects
 
 
-def _resolve_documents_bucket() -> Any | None:
-    """Return the GCS Bucket holding patient documents, or None if unconfigured.
+def _resolve_documents_storage() -> tuple[Any, str] | None:
+    """Return (storage provider, bucket name) for patient documents, or None.
 
     Patched in unit tests. Self-hosted deployments without the documents
     feature leave ``patient_documents_gcs_bucket`` unset.
     """
-    from google.cloud import storage  # type: ignore[attr-defined]  # noqa: PLC0415
-
+    from ..services.file_storage import file_storage_from_settings  # noqa: PLC0415
     from ..settings import get_settings  # noqa: PLC0415
 
     settings = get_settings()
     bucket_name = settings.patient_documents_gcs_bucket
     if not bucket_name:
         return None
-    return storage.Client().bucket(bucket_name)
+    return file_storage_from_settings(settings), bucket_name
 
 
 def _delete_document_blobs(objects: list[str]) -> None:
-    """Delete patient-document GCS blobs. Idempotent on missing.
+    """Delete patient-document storage objects.
 
-    Raises on any non-404 GCS failure so the caller's transaction rolls back.
-    If documents exist but no bucket is configured, logs loudly rather than
-    silently leaving PHI blobs behind.
+    Provider deletes are idempotent on missing objects; any other storage
+    failure raises so the caller's transaction rolls back. If documents
+    exist but no bucket is configured, logs loudly rather than silently
+    leaving PHI blobs behind.
     """
     if not objects:
         return
-    from google.api_core.exceptions import NotFound  # noqa: PLC0415
-
-    bucket = _resolve_documents_bucket()
-    if bucket is None:
+    resolved = _resolve_documents_storage()
+    if resolved is None:
         logger.error(
             "hard_purge_document_blobs_orphaned count=%s "
             "(patient_documents_gcs_bucket not configured)",
             len(objects),
         )
         return
+    storage, bucket = resolved
     for object_name in objects:
-        try:
-            bucket.blob(object_name).delete()
-        except NotFound:
-            logger.info("hard_purge_document_blob_already_gone object=%s", object_name)
+        storage.delete(bucket=bucket, object_name=object_name)
 
 
 def run(argv: list[str] | None = None) -> int:
