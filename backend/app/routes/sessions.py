@@ -8,7 +8,6 @@ Thin HTTP handlers that delegate business logic to SessionService.
 
 import logging
 from datetime import datetime
-from typing import Literal
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
 from google.api_core.exceptions import AlreadyExists
@@ -76,6 +75,7 @@ from ..services import (
     get_audit_service,
 )
 from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
+from ..services.file_storage import UploadTarget
 from ..services.note_import_service import (
     DocumentTextExtractionError,
     NoteImportService,
@@ -1066,11 +1066,9 @@ def _audio_signed_object_name(session_id: str, channel: str) -> str:
 
 
 class _AudioUploadChannel(BaseModel):
-    upload_url: str
-    # "PUT" = bare body PUT (GCS); "POST" = multipart/form-data POST
-    # with upload_fields ahead of the file part (S3 presigned POST).
-    upload_method: Literal["PUT", "POST"] = "PUT"
-    upload_fields: dict[str, str] = {}
+    # Self-describing upload recipe (url/method/headers/fields); the
+    # client executes it without knowing which provider is configured.
+    upload: UploadTarget
     gcs_path: str
 
 
@@ -1078,7 +1076,7 @@ class _AudioInitResponse(BaseModel):
     session_id: str
     therapist: _AudioUploadChannel
     client: _AudioUploadChannel
-    required_content_type: str
+    # For client-side pre-flight UX only; the storage layer enforces.
     max_bytes: int
 
 
@@ -1161,19 +1159,8 @@ def init_audio_upload(
 
     return _AudioInitResponse(
         session_id=session_id,
-        therapist=_AudioUploadChannel(
-            upload_url=therapist_target.url,
-            upload_method=therapist_target.method,
-            upload_fields=therapist_target.fields,
-            gcs_path=therapist_path,
-        ),
-        client=_AudioUploadChannel(
-            upload_url=client_target.url,
-            upload_method=client_target.method,
-            upload_fields=client_target.fields,
-            gcs_path=client_path,
-        ),
-        required_content_type=content_type,
+        therapist=_AudioUploadChannel(upload=therapist_target, gcs_path=therapist_path),
+        client=_AudioUploadChannel(upload=client_target, gcs_path=client_path),
         max_bytes=_MAX_AUDIO_SIZE,
     )
 

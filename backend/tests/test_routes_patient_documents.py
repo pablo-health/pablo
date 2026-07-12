@@ -220,12 +220,16 @@ class TestInit:
     def test_returns_signed_url_and_document_id(self, documents_client: TestClient) -> None:
         body = _init_upload(documents_client, "patient-1")
         assert body["document_id"]
-        assert body["upload_url"].startswith("https://fake.googleusercontent.example/")
-        assert body["upload_method"] == "PUT"
-        assert body["upload_fields"] == {}
-        assert body["required_content_type"] == "application/pdf"
+        upload = body["upload"]
+        assert upload["url"].startswith("https://fake.googleusercontent.example/")
+        assert upload["method"] == "PUT"
+        # GCS target carries the signed constraints as request headers.
+        assert upload["headers"] == {
+            "Content-Type": "application/pdf",
+            "x-goog-content-length-range": f"0,{25 * 1024 * 1024}",
+        }
+        assert upload["fields"] == {}
         assert body["max_bytes"] == 25 * 1024 * 1024
-        assert body["required_size_header"] == "x-goog-content-length-range"
 
     def test_rejects_unsupported_mime(self, documents_client: TestClient) -> None:
         response = documents_client.post(

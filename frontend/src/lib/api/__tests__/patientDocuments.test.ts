@@ -1,19 +1,20 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * uploadFileToSignedUrl dispatches on the provider's upload method:
- * bare PUT for GCS signed URLs, multipart form POST for S3 presigned
- * POST policies. Both shapes hit fetch directly (no apiClient).
+ * uploadFileToStorage executes the backend-provided UploadTarget recipe
+ * verbatim: bare PUT with the target's headers (GCS signed URL), or
+ * multipart form POST with the target's policy fields (S3 presigned
+ * POST). Both shapes hit fetch directly (no apiClient).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { uploadFileToSignedUrl } from "../patientDocuments"
+import { uploadFileToStorage } from "../patientDocuments"
 
 const file = new File(["%PDF-1.7 body"], "report.pdf", {
   type: "application/pdf",
 })
 
-describe("uploadFileToSignedUrl", () => {
+describe("uploadFileToStorage", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn())
   })
@@ -22,14 +23,20 @@ describe("uploadFileToSignedUrl", () => {
     vi.unstubAllGlobals()
   })
 
-  it("defaults to a bare PUT with the signed size-range header (GCS)", async () => {
+  it("executes a PUT target with the provider-signed headers (GCS)", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }))
 
-    await uploadFileToSignedUrl(
-      "https://storage.example/signed",
+    await uploadFileToStorage(
+      {
+        url: "https://storage.example/signed",
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/pdf",
+          "x-goog-content-length-range": "0,100",
+        },
+        fields: {},
+      },
       file,
-      100,
-      "application/pdf",
     )
 
     expect(fetch).toHaveBeenCalledWith("https://storage.example/signed", {
@@ -42,16 +49,17 @@ describe("uploadFileToSignedUrl", () => {
     })
   })
 
-  it("sends a form POST with policy fields first and file last (S3)", async () => {
+  it("executes a POST target as a form with policy fields first, file last (S3)", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }))
 
-    await uploadFileToSignedUrl(
-      "https://pablo-docs.s3.example",
+    await uploadFileToStorage(
+      {
+        url: "https://pablo-docs.s3.example",
+        method: "POST",
+        headers: {},
+        fields: { key: "tenant-A/chart/doc-1", policy: "b64policy" },
+      },
       file,
-      100,
-      "application/pdf",
-      "POST",
-      { key: "tenant-A/chart/doc-1", policy: "b64policy" },
     )
 
     const [url, init] = vi.mocked(fetch).mock.calls[0]
@@ -72,13 +80,14 @@ describe("uploadFileToSignedUrl", () => {
     )
 
     await expect(
-      uploadFileToSignedUrl(
-        "https://pablo-docs.s3.example",
+      uploadFileToStorage(
+        {
+          url: "https://pablo-docs.s3.example",
+          method: "POST",
+          headers: {},
+          fields: {},
+        },
         file,
-        100,
-        "application/pdf",
-        "POST",
-        {},
       ),
     ).rejects.toThrow("Storage upload failed (400): EntityTooLarge")
   })

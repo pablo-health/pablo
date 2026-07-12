@@ -59,6 +59,7 @@ from ..services import (
     UploadNotCompleteError,
     get_audit_service,
 )
+from ..services.file_storage import UploadTarget  # noqa: TC001 — pydantic resolves at runtime
 from ..settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -149,19 +150,13 @@ class InitUploadRequest(BaseModel):
 
 class InitUploadResponse(BaseModel):
     document_id: str
-    upload_url: str
-    # How the browser uploads: "PUT" = bare body PUT to upload_url
-    # (GCS); "POST" = multipart/form-data POST with upload_fields as
-    # the leading form entries and the file last (S3 presigned POST).
-    upload_method: Literal["PUT", "POST"] = "PUT"
-    upload_fields: dict[str, str] = {}
-    required_content_type: str
+    # Self-describing upload recipe: PUT the raw body with `headers`
+    # attached (GCS), or POST multipart/form-data with `fields` ahead
+    # of the file part (S3). The client executes it without knowing
+    # which storage provider is configured.
+    upload: UploadTarget
+    # For client-side pre-flight UX only; the storage layer enforces.
     max_bytes: int
-
-    # Surfaced so the client can ergonomically attach the same header
-    # the URL was signed against. Only meaningful for the PUT method
-    # (the POST policy carries the size condition in its signed fields).
-    required_size_header: str = "x-goog-content-length-range"
 
 
 class PatientDocumentResponse(BaseModel):
@@ -285,10 +280,7 @@ def init_document_upload(
 
     return InitUploadResponse(
         document_id=result.document.id,
-        upload_url=result.upload.url,
-        upload_method=result.upload.method,
-        upload_fields=result.upload.fields,
-        required_content_type=result.required_content_type,
+        upload=result.upload,
         max_bytes=result.max_bytes,
     )
 

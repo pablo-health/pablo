@@ -42,15 +42,23 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class UploadTarget:
-    """How the browser must upload: bare PUT (GCS) or form POST (S3).
+    """Self-describing recipe for a browser-direct upload.
 
-    ``fields`` are the signed policy form fields for the POST method —
-    the client sends them as ``multipart/form-data`` entries ahead of
-    the file part. Empty for PUT.
+    The provider fully specifies the request; the client executes it
+    without knowing which backend produced it:
+
+    * ``method="PUT"`` (GCS): send the file as the raw body with
+      ``headers`` attached — they carry the signed Content-Type and
+      size-range constraints. ``fields`` is empty.
+    * ``method="POST"`` (S3): send ``multipart/form-data`` with
+      ``fields`` (the signed policy) as the leading form entries and
+      the file as the last part. ``headers`` is empty — the browser
+      sets the multipart boundary itself.
     """
 
     url: str
     method: Literal["PUT", "POST"]
+    headers: dict[str, str] = field(default_factory=dict)
     fields: dict[str, str] = field(default_factory=dict)
 
 
@@ -135,7 +143,16 @@ class GcsFileStorage(FileStorageProvider):
             max_bytes=max_bytes,
             ttl_seconds=ttl_seconds,
         )
-        return UploadTarget(url=url, method="PUT")
+        # Mirrors what the URL was signed against — GCS rejects a PUT
+        # whose headers don't match the signature.
+        return UploadTarget(
+            url=url,
+            method="PUT",
+            headers={
+                "Content-Type": content_type,
+                "x-goog-content-length-range": f"0,{max_bytes}",
+            },
+        )
 
     def make_download_url(
         self,

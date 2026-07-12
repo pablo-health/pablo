@@ -111,8 +111,11 @@ class UploadNotCompleteError(PatientDocumentError):
 @dataclass(frozen=True)
 class InitUploadResult:
     document: PatientDocument
+    # Self-describing upload recipe (url/method/headers/fields); the
+    # signed content-type and size constraints live inside it.
     upload: UploadTarget
-    required_content_type: str
+    # Surfaced for client-side pre-flight UX (reject an oversized file
+    # before uploading); enforcement happens at the storage layer.
     max_bytes: int
 
 
@@ -234,7 +237,6 @@ class PatientDocumentsService:
         return InitUploadResult(
             document=document,
             upload=upload,
-            required_content_type=mime_type,
             max_bytes=max_bytes,
         )
 

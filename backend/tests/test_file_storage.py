@@ -100,6 +100,12 @@ class TestGcsFileStorage:
         down = gcs_storage.make_download_url(bucket="b", object_name="t/doc-1", ttl_seconds=300)
         assert "t/doc-1" in up.url
         assert up.method == "PUT"
+        # The headers mirror what the URL was signed against; the client
+        # attaches them verbatim.
+        assert up.headers == {
+            "Content-Type": "application/pdf",
+            "x-goog-content-length-range": "0,100",
+        }
         assert up.fields == {}
         assert "t/doc-1" in down
 
@@ -158,6 +164,7 @@ class TestS3FileStorage:
             ttl_seconds=300,
         )
         assert target.method == "POST"
+        assert target.headers == {}
         assert "pablo-docs" in target.url
         assert target.fields["key"] == "tenant-A/chart/doc-1"
         assert target.fields["Content-Type"] == "application/pdf"

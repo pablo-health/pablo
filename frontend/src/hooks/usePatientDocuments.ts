@@ -9,7 +9,7 @@ import {
   finalizePatientDocumentUpload,
   initPatientDocumentUpload,
   listPatientDocuments,
-  uploadFileToSignedUrl,
+  uploadFileToStorage,
 } from "@/lib/api/patientDocuments"
 import { queryKeys } from "@/lib/api/queryKeys"
 import type {
@@ -34,9 +34,9 @@ export function usePatientDocuments(
 /**
  * Two-step signed-URL upload as a single mutation.
  *
- * Tracks the in-flight stage so a long-running PUT can show progress
- * UX. Init failures surface the backend error envelope (size, mime);
- * the GCS PUT step throws a plain Error.
+ * Tracks the in-flight stage so a long-running upload can show
+ * progress UX. Init failures surface the backend error envelope
+ * (size, mime); the storage upload step throws a plain Error.
  */
 export type UploadStage = "idle" | "init" | "uploading" | "finalize" | "done"
 
@@ -65,14 +65,7 @@ export function useUploadPatientDocument(
         token,
       )
       setStage("uploading")
-      await uploadFileToSignedUrl(
-        init.upload_url,
-        file,
-        init.max_bytes,
-        init.required_content_type,
-        init.upload_method,
-        init.upload_fields,
-      )
+      await uploadFileToStorage(init.upload, file)
       setStage("finalize")
       const finalized = await finalizePatientDocumentUpload(
         init.document_id,
