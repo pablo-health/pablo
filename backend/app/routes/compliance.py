@@ -183,7 +183,10 @@ def get_compliance_documents_storage(
     Tests override this via ``app.dependency_overrides`` to swap in an
     in-memory backend without touching the filesystem or a cloud bucket.
     """
-    return ComplianceStorageBackend(settings.compliance_documents_storage_root)
+    return ComplianceStorageBackend(
+        settings.compliance_documents_storage_root,
+        settings=settings,
+    )
 
 
 StorageDep = Annotated[ComplianceStorageBackend, Depends(get_compliance_documents_storage)]
