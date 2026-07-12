@@ -68,12 +68,28 @@ export interface InitUploadRequest {
   category?: DocumentCategory
 }
 
+/**
+ * Self-describing recipe for a browser-direct upload, produced by the
+ * backend's configured storage provider. The client executes it as-is:
+ *
+ * - method "PUT" (GCS): raw-body PUT with `headers` attached (they carry
+ *   the signed content-type and size-range constraints); `fields` empty.
+ * - method "POST" (S3): multipart/form-data POST with `fields` (the
+ *   signed policy) as the leading form entries and the file last;
+ *   `headers` empty — the browser sets the multipart boundary.
+ */
+export interface UploadTarget {
+  url: string
+  method: "PUT" | "POST"
+  headers: Record<string, string>
+  fields: Record<string, string>
+}
+
 export interface InitUploadResponse {
   document_id: string
-  upload_url: string
-  required_content_type: string
+  upload: UploadTarget
+  /** For pre-flight UX only; the storage layer enforces the cap. */
   max_bytes: number
-  required_size_header: string
 }
 
 export interface DeleteDocumentResponse {

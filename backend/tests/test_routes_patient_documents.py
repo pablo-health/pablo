@@ -33,6 +33,7 @@ from app.routes.patient_documents import (
     get_patient_repository as docs_route_patient_repo,
 )
 from app.services import AuditService, PatientDocumentsService, get_audit_service
+from app.services.file_storage import GcsFileStorage
 from app.settings import Settings
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 from google.cloud.exceptions import NotFound
@@ -171,7 +172,7 @@ def documents_client(
     service = PatientDocumentsService(
         repo=doc_repo,
         settings=documents_settings,
-        storage_client_factory=lambda: fake_gcs,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
         tenant_id="tenant-A",
     )
     app.dependency_overrides[docs_route_doc_repo] = lambda: doc_repo
@@ -219,10 +220,16 @@ class TestInit:
     def test_returns_signed_url_and_document_id(self, documents_client: TestClient) -> None:
         body = _init_upload(documents_client, "patient-1")
         assert body["document_id"]
-        assert body["upload_url"].startswith("https://fake.googleusercontent.example/")
-        assert body["required_content_type"] == "application/pdf"
+        upload = body["upload"]
+        assert upload["url"].startswith("https://fake.googleusercontent.example/")
+        assert upload["method"] == "PUT"
+        # GCS target carries the signed constraints as request headers.
+        assert upload["headers"] == {
+            "Content-Type": "application/pdf",
+            "x-goog-content-length-range": f"0,{25 * 1024 * 1024}",
+        }
+        assert upload["fields"] == {}
         assert body["max_bytes"] == 25 * 1024 * 1024
-        assert body["required_size_header"] == "x-goog-content-length-range"
 
     def test_rejects_unsupported_mime(self, documents_client: TestClient) -> None:
         response = documents_client.post(

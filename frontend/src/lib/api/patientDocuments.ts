@@ -5,13 +5,13 @@
  *
  * Two-phase signed-URL upload:
  *
- *   1. POST /api/patients/{id}/documents/init  -> {upload_url, document_id}
- *   2. PUT {upload_url} (browser -> GCS direct, no backend buffer)
+ *   1. POST /api/patients/{id}/documents/init -> {document_id, upload}
+ *   2. Execute the `upload` recipe (browser -> storage direct, no
+ *      backend buffer; PUT or form-POST per the configured provider)
  *   3. POST /api/documents/{document_id}/finalize -> verified + extracted
  *
- * The browser PUT step is _not_ a backend call, so it doesn't go through
- * apiClient. It needs the exact Content-Type the URL was signed with and
- * the `x-goog-content-length-range` header that mirrors the size cap.
+ * The browser upload step is _not_ a backend call, so it doesn't go
+ * through apiClient. See uploadFileToStorage.
  */
 
 import { del, get, post } from "./client"
@@ -22,6 +22,7 @@ import type {
   InitUploadResponse,
   PatientDocumentListResponse,
   PatientDocumentResponse,
+  UploadTarget,
 } from "@/types/patientDocuments"
 
 export async function initPatientDocumentUpload(
@@ -72,30 +73,37 @@ export async function deletePatientDocument(
 }
 
 /**
- * Browser-direct GCS upload via the signed PUT URL.
+ * Browser-direct upload: execute the target's recipe verbatim.
  *
- * Throws if the PUT response status isn't 2xx. The `x-goog-content-length-range`
- * header value mirrors what the backend signed: GCS enforces both bounds
- * so a tampered Content-Type or oversize body is rejected at GCS, not in
- * our backend.
+ * The backend's storage provider fully specifies the request (see
+ * UploadTarget) — the signed content-type/size constraints ride in
+ * `headers` (PUT) or `fields` (POST), so the storage service rejects
+ * anything tampered or oversized. Throws if the status isn't 2xx.
  */
-export async function uploadFileToSignedUrl(
-  signedUrl: string,
+export async function uploadFileToStorage(
+  target: UploadTarget,
   file: File,
-  maxBytes: number,
-  contentType: string,
 ): Promise<void> {
-  const response = await fetch(signedUrl, {
-    method: "PUT",
-    headers: {
-      "Content-Type": contentType,
-      "x-goog-content-length-range": `0,${maxBytes}`,
-    },
-    body: file,
-  })
+  let response: Response
+  if (target.method === "POST") {
+    const form = new FormData()
+    for (const [name, value] of Object.entries(target.fields)) {
+      form.append(name, value)
+    }
+    // The file part must come last — S3 ignores form entries after it.
+    form.append("file", file)
+    // No explicit headers: the browser sets the multipart boundary.
+    response = await fetch(target.url, { method: "POST", body: form })
+  } else {
+    response = await fetch(target.url, {
+      method: "PUT",
+      headers: target.headers,
+      body: file,
+    })
+  }
   if (!response.ok) {
     const detail = await response.text().catch(() => "")
-    throw new Error(`GCS upload failed (${response.status}): ${detail}`)
+    throw new Error(`Storage upload failed (${response.status}): ${detail}`)
   }
 }
 

@@ -6,7 +6,7 @@ Two-phase signed-URL upload + PyMuPDF text extraction. The service
 layer owns:
 
 * Mime/size validation at init time so an obviously-bad request fails
-  before a GCS object is reserved.
+  before a storage object is reserved.
 * Defense-in-depth re-validation at finalize time (the signed URL
   already enforces size+content-type at GCS, but we cross-check the
   blob metadata in case the constraint was tampered or GCS behavior
@@ -25,18 +25,17 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from ..models import DocumentCategory, PatientDocument
 from ..repositories.patient_document import FinalizedExtraction
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from ..repositories import PatientDocumentRepository
     from ..settings import Settings
     from .document_ai_ocr import DocumentAiOcrClient
+    from .file_storage import FileStorageProvider, UploadTarget
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +105,17 @@ class DocumentsBucketNotConfiguredError(PatientDocumentError):
 
 
 class UploadNotCompleteError(PatientDocumentError):
-    """Finalize was called but the GCS object isn't there yet."""
+    """Finalize was called but the storage object isn't there yet."""
 
 
 @dataclass(frozen=True)
 class InitUploadResult:
     document: PatientDocument
-    upload_url: str
-    required_content_type: str
+    # Self-describing upload recipe (url/method/headers/fields); the
+    # signed content-type and size constraints live inside it.
+    upload: UploadTarget
+    # Surfaced for client-side pre-flight UX (reject an oversized file
+    # before uploading); enforcement happens at the storage layer.
     max_bytes: int
 
 
@@ -125,13 +127,13 @@ class PatientDocumentsService:
         *,
         repo: PatientDocumentRepository,
         settings: Settings,
-        storage_client_factory: Callable[[], Any] | None = None,
+        storage: FileStorageProvider | None = None,
         tenant_id: str | None = None,
         ocr_client: DocumentAiOcrClient | None = None,
     ) -> None:
         self._repo = repo
         self._settings = settings
-        self._storage_client_factory = storage_client_factory
+        self._storage_provider = storage
         self._tenant_id = tenant_id
         # None = OCR fallback disabled. When set, the client's own
         # is_configured check short-circuits if no processor id.
@@ -139,13 +141,13 @@ class PatientDocumentsService:
 
     # --- storage plumbing --------------------------------------------
 
-    def _storage_client(self) -> Any:
-        """Lazy GCS client construction. Tests inject a fake factory."""
-        if self._storage_client_factory is not None:
-            return self._storage_client_factory()
-        from google.cloud import storage  # type: ignore[attr-defined]
+    def _storage(self) -> FileStorageProvider:
+        """Lazy provider construction. Tests inject a fake provider."""
+        if self._storage_provider is None:
+            from .file_storage import file_storage_from_settings
 
-        return storage.Client()
+            self._storage_provider = file_storage_from_settings(self._settings)
+        return self._storage_provider
 
     def _bucket(self) -> str:
         bucket = self._settings.patient_documents_gcs_bucket
@@ -207,15 +209,11 @@ class PatientDocumentsService:
         if size_bytes <= 0:
             raise FileTooLargeError(size_bytes, max_bytes)
 
-        from .signed_upload import make_upload_url
-
         document_id = str(uuid.uuid4())
         object_name = self._object_name(document_id, category)
         bucket = self._bucket()
 
-        client = self._storage_client()
-        upload_url = make_upload_url(
-            client=client,
+        upload = self._storage().make_upload_target(
             bucket=bucket,
             object_name=object_name,
             content_type=mime_type,
@@ -238,8 +236,7 @@ class PatientDocumentsService:
 
         return InitUploadResult(
             document=document,
-            upload_url=upload_url,
-            required_content_type=mime_type,
+            upload=upload,
             max_bytes=max_bytes,
         )
 
@@ -249,33 +246,30 @@ class PatientDocumentsService:
         document_id: str,
         user_id: str,
     ) -> PatientDocument:
-        """Verify the GCS object and run PyMuPDF text extraction.
+        """Verify the uploaded object and run PyMuPDF text extraction.
 
         Returns the updated PatientDocument with ``finalized_at`` set.
         Raises if:
 
         * the document doesn't exist or belongs to another user
-        * the GCS object isn't there yet (browser never uploaded)
+        * the storage object isn't there yet (browser never uploaded)
         * the blob is bigger than the configured cap or carries a
           mime type outside the whitelist (signed-URL bypass attempt)
         """
-        from .signed_upload import download_blob_bytes, fetch_blob_metadata
-
         document = self._repo.get(document_id, user_id)
         if document is None:
             return _raise_not_found()
         if document.finalized_at is not None:
             return document  # idempotent: re-finalize is a no-op
 
-        client = self._storage_client()
+        storage = self._storage()
         bucket = self._bucket()
-        metadata = fetch_blob_metadata(
-            client=client,
+        metadata = storage.fetch_metadata(
             bucket=bucket,
             object_name=document.gcs_path,
         )
         if metadata is None:
-            raise UploadNotCompleteError("GCS object not found")
+            raise UploadNotCompleteError("storage object not found")
         size_bytes, content_type = metadata
         max_bytes = self._settings.patient_documents_max_bytes
         if size_bytes > max_bytes:
@@ -290,8 +284,7 @@ class PatientDocumentsService:
         extraction_metadata: dict[str, object] | None = None
 
         if document.mime_type == "application/pdf":
-            raw = download_blob_bytes(
-                client=client,
+            raw = storage.download_bytes(
                 bucket=bucket,
                 object_name=document.gcs_path,
             )
@@ -355,15 +348,12 @@ class PatientDocumentsService:
         *,
         disposition: Literal["attachment", "inline"] = "attachment",
     ) -> tuple[PatientDocument, str] | None:
-        from .signed_upload import make_download_url
-
         document = self.get(document_id, user_id)
         if document is None:
             return None
         # inline lets the in-app viewer render PDFs/images in-page;
         # attachment forces a download with a friendly filename.
-        url = make_download_url(
-            client=self._storage_client(),
+        url = self._storage().make_download_url(
             bucket=self._bucket(),
             object_name=document.gcs_path,
             ttl_seconds=self._settings.patient_documents_download_url_ttl_seconds,

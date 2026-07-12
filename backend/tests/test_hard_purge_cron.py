@@ -5,11 +5,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from app.jobs import hard_purge_cron
-from google.api_core.exceptions import NotFound
 
 
 def test_run_exits_zero_when_no_stub_writer_registered() -> None:
@@ -107,44 +106,38 @@ def test_audio_objects_for_patient_parses_single_and_stereo_paths() -> None:
 
 
 def test_delete_audio_blobs_noop_when_empty() -> None:
-    with patch("app.jobs.hard_purge_cron._resolve_audio_bucket") as resolver:
+    with patch("app.jobs.hard_purge_cron._resolve_audio_storage") as resolver:
         hard_purge_cron._delete_audio_blobs([])
         resolver.assert_not_called()
 
 
-def test_delete_audio_blobs_invokes_blob_delete_per_object() -> None:
-    bucket = MagicMock()
-    blob_a = MagicMock()
-    blob_b = MagicMock()
-    bucket.blob.side_effect = [blob_a, blob_b]
-    with patch("app.jobs.hard_purge_cron._resolve_audio_bucket", return_value=bucket):
+def test_delete_audio_blobs_invokes_provider_delete_per_object() -> None:
+    storage = MagicMock()
+    with patch(
+        "app.jobs.hard_purge_cron._resolve_audio_storage",
+        return_value=(storage, "audio-bucket"),
+    ):
         hard_purge_cron._delete_audio_blobs(["obj-a.wav", "obj-b.wav"])
-    assert bucket.blob.call_args_list == [(("obj-a.wav",),), (("obj-b.wav",),)]
-    blob_a.delete.assert_called_once_with()
-    blob_b.delete.assert_called_once_with()
+    assert storage.delete.call_args_list == [
+        call(bucket="audio-bucket", object_name="obj-a.wav"),
+        call(bucket="audio-bucket", object_name="obj-b.wav"),
+    ]
 
 
-def test_delete_audio_blobs_swallows_not_found() -> None:
-    """A blob that's already gone is treated as success (idempotent retries)."""
-    bucket = MagicMock()
-    blob_missing = MagicMock()
-    blob_missing.delete.side_effect = NotFound("gone")
-    blob_present = MagicMock()
-    bucket.blob.side_effect = [blob_missing, blob_present]
-    with patch("app.jobs.hard_purge_cron._resolve_audio_bucket", return_value=bucket):
-        hard_purge_cron._delete_audio_blobs(["missing.wav", "present.wav"])
-    blob_present.delete.assert_called_once_with()
+def test_delete_audio_blobs_propagates_errors() -> None:
+    """Storage failures must surface so the surrounding txn rolls back.
 
-
-def test_delete_audio_blobs_propagates_other_errors() -> None:
-    """Non-404 GCS failures must surface so the surrounding txn rolls back."""
-    bucket = MagicMock()
-    blob = MagicMock()
-    blob.delete.side_effect = RuntimeError("gcs timeout")
-    bucket.blob.return_value = blob
+    (Already-gone objects never raise — provider deletes are idempotent;
+    see test_file_storage.py.)
+    """
+    storage = MagicMock()
+    storage.delete.side_effect = RuntimeError("storage timeout")
     with (
-        patch("app.jobs.hard_purge_cron._resolve_audio_bucket", return_value=bucket),
-        pytest.raises(RuntimeError, match="gcs timeout"),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_audio_storage",
+            return_value=(storage, "audio-bucket"),
+        ),
+        pytest.raises(RuntimeError, match="storage timeout"),
     ):
         hard_purge_cron._delete_audio_blobs(["obj.wav"])
 
@@ -183,48 +176,39 @@ def test_document_objects_for_patient_collects_gcs_paths() -> None:
 
 
 def test_delete_document_blobs_noop_when_empty() -> None:
-    with patch("app.jobs.hard_purge_cron._resolve_documents_bucket") as resolver:
+    with patch("app.jobs.hard_purge_cron._resolve_documents_storage") as resolver:
         hard_purge_cron._delete_document_blobs([])
         resolver.assert_not_called()
 
 
-def test_delete_document_blobs_invokes_blob_delete_per_object() -> None:
-    bucket = MagicMock()
-    blob_a = MagicMock()
-    blob_b = MagicMock()
-    bucket.blob.side_effect = [blob_a, blob_b]
-    with patch("app.jobs.hard_purge_cron._resolve_documents_bucket", return_value=bucket):
+def test_delete_document_blobs_invokes_provider_delete_per_object() -> None:
+    storage = MagicMock()
+    with patch(
+        "app.jobs.hard_purge_cron._resolve_documents_storage",
+        return_value=(storage, "docs-bucket"),
+    ):
         hard_purge_cron._delete_document_blobs(["docs/a.pdf", "docs/b.pdf"])
-    assert bucket.blob.call_args_list == [(("docs/a.pdf",),), (("docs/b.pdf",),)]
-    blob_a.delete.assert_called_once_with()
-    blob_b.delete.assert_called_once_with()
+    assert storage.delete.call_args_list == [
+        call(bucket="docs-bucket", object_name="docs/a.pdf"),
+        call(bucket="docs-bucket", object_name="docs/b.pdf"),
+    ]
 
 
 def test_delete_document_blobs_logs_when_bucket_unconfigured() -> None:
     """Documents present but no bucket configured must not silently drop them
     nor raise — it logs loudly and returns (orphan visibility)."""
-    with patch("app.jobs.hard_purge_cron._resolve_documents_bucket", return_value=None):
+    with patch("app.jobs.hard_purge_cron._resolve_documents_storage", return_value=None):
         hard_purge_cron._delete_document_blobs(["docs/orphan.pdf"])  # no raise
 
 
-def test_delete_document_blobs_swallows_not_found() -> None:
-    bucket = MagicMock()
-    blob_missing = MagicMock()
-    blob_missing.delete.side_effect = NotFound("gone")
-    blob_present = MagicMock()
-    bucket.blob.side_effect = [blob_missing, blob_present]
-    with patch("app.jobs.hard_purge_cron._resolve_documents_bucket", return_value=bucket):
-        hard_purge_cron._delete_document_blobs(["missing.pdf", "present.pdf"])
-    blob_present.delete.assert_called_once_with()
-
-
-def test_delete_document_blobs_propagates_other_errors() -> None:
-    bucket = MagicMock()
-    blob = MagicMock()
-    blob.delete.side_effect = RuntimeError("gcs timeout")
-    bucket.blob.return_value = blob
+def test_delete_document_blobs_propagates_errors() -> None:
+    storage = MagicMock()
+    storage.delete.side_effect = RuntimeError("storage timeout")
     with (
-        patch("app.jobs.hard_purge_cron._resolve_documents_bucket", return_value=bucket),
-        pytest.raises(RuntimeError, match="gcs timeout"),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_documents_storage",
+            return_value=(storage, "docs-bucket"),
+        ),
+        pytest.raises(RuntimeError, match="storage timeout"),
     ):
         hard_purge_cron._delete_document_blobs(["docs/x.pdf"])

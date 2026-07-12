@@ -75,6 +75,7 @@ from ..services import (
     get_audit_service,
 )
 from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
+from ..services.file_storage import UploadTarget
 from ..services.note_import_service import (
     DocumentTextExtractionError,
     NoteImportService,
@@ -1065,7 +1066,9 @@ def _audio_signed_object_name(session_id: str, channel: str) -> str:
 
 
 class _AudioUploadChannel(BaseModel):
-    upload_url: str
+    # Self-describing upload recipe (url/method/headers/fields); the
+    # client executes it without knowing which provider is configured.
+    upload: UploadTarget
     gcs_path: str
 
 
@@ -1073,7 +1076,7 @@ class _AudioInitResponse(BaseModel):
     session_id: str
     therapist: _AudioUploadChannel
     client: _AudioUploadChannel
-    required_content_type: str
+    # For client-side pre-flight UX only; the storage layer enforces.
     max_bytes: int
 
 
@@ -1125,24 +1128,20 @@ def init_audio_upload(
     if not bucket:
         raise ServerError("Transcription audio bucket is not configured")
 
-    from google.cloud import storage  # type: ignore[attr-defined]
+    from ..services.file_storage import file_storage_from_settings
 
-    from ..services.signed_upload import make_upload_url
-
-    client = storage.Client()
+    storage = file_storage_from_settings(settings)
     content_type = "application/octet-stream"
     therapist_path = _audio_signed_object_name(session_id, "therapist")
     client_path = _audio_signed_object_name(session_id, "client")
-    therapist_url = make_upload_url(
-        client=client,
+    therapist_target = storage.make_upload_target(
         bucket=bucket,
         object_name=therapist_path,
         content_type=content_type,
         max_bytes=_MAX_AUDIO_SIZE,
         ttl_seconds=settings.patient_documents_upload_url_ttl_seconds,
     )
-    client_url = make_upload_url(
-        client=client,
+    client_target = storage.make_upload_target(
         bucket=bucket,
         object_name=client_path,
         content_type=content_type,
@@ -1160,9 +1159,8 @@ def init_audio_upload(
 
     return _AudioInitResponse(
         session_id=session_id,
-        therapist=_AudioUploadChannel(upload_url=therapist_url, gcs_path=therapist_path),
-        client=_AudioUploadChannel(upload_url=client_url, gcs_path=client_path),
-        required_content_type=content_type,
+        therapist=_AudioUploadChannel(upload=therapist_target, gcs_path=therapist_path),
+        client=_AudioUploadChannel(upload=client_target, gcs_path=client_path),
         max_bytes=_MAX_AUDIO_SIZE,
     )
 
@@ -1175,10 +1173,10 @@ def finalize_audio_upload(
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> _AudioFinalizeResponse:
-    """Verify both channel blobs landed in GCS, then enqueue Whisper.
+    """Verify both channel blobs landed in object storage, then enqueue Whisper.
 
     Idempotent on retry: the size/exists check is read-only against
-    GCS, and ``enqueue_transcription`` is the same as the multipart
+    storage, and ``enqueue_transcription`` is the same as the multipart
     endpoint calls — the queue worker dedupes by ``session_id``.
     """
     settings = get_settings()
@@ -1208,24 +1206,14 @@ def finalize_audio_upload(
     if not bucket:
         raise ServerError("Transcription audio bucket is not configured")
 
-    from google.cloud import storage  # type: ignore[attr-defined]
-    from google.cloud.exceptions import NotFound
+    from ..services.file_storage import file_storage_from_settings
 
-    from ..services.signed_upload import fetch_blob_metadata
-
-    storage_client = storage.Client()
+    storage = file_storage_from_settings(settings)
     therapist_path = _audio_signed_object_name(session_id, "therapist")
     client_path = _audio_signed_object_name(session_id, "client")
 
     for label, path in (("therapist", therapist_path), ("client", client_path)):
-        try:
-            meta = fetch_blob_metadata(client=storage_client, bucket=bucket, object_name=path)
-        except NotFound as exc:
-            raise BadRequestError(
-                f"{label} audio upload not complete",
-                {"channel": label},
-                code="UPLOAD_NOT_COMPLETE",
-            ) from exc
+        meta = storage.fetch_metadata(bucket=bucket, object_name=path)
         if meta is None:
             raise BadRequestError(
                 f"{label} audio upload not complete",

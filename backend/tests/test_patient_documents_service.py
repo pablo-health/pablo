@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from app.models import DocumentCategory
 from app.repositories import InMemoryPatientDocumentRepository
+from app.services.file_storage import GcsFileStorage
 from app.services.patient_documents_service import (
     FileTooLargeError,
     PatientDocumentsService,
@@ -114,7 +115,7 @@ def service(
     return PatientDocumentsService(
         repo=repo,
         settings=settings,
-        storage_client_factory=lambda: fake_gcs,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
         tenant_id="tenant-A",
     )
 
@@ -185,7 +186,9 @@ class TestInitUploadValidation:
             mime_type="application/pdf",
             size_bytes=1234,
         )
-        assert result.upload_url.startswith("https://fake.googleusercontent.example/")
+        assert result.upload.url.startswith("https://fake.googleusercontent.example/")
+        assert result.upload.method == "PUT"
+        assert result.upload.fields == {}
         # Per-tenant prefix is reflected in the object name.
         assert result.document.gcs_path.startswith("tenant-A/")
         # Placeholder row exists but is pre-finalize.
@@ -651,7 +654,7 @@ def _service_with_ocr(
     return PatientDocumentsService(
         repo=repo,
         settings=settings,
-        storage_client_factory=lambda: fake_gcs,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
         tenant_id="tenant-A",
         ocr_client=ocr,  # type: ignore[arg-type]
     )

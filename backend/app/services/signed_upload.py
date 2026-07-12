@@ -2,17 +2,13 @@
 
 """V4 signed PUT/GET URLs for browser-direct GCS uploads.
 
-Used by both ``patient_documents_service`` and the additive
-``/upload-audio/init|finalize`` endpoints. Keeps the signature
-generation in one place — every caller passes the same headers and
-``x-goog-content-length-range`` constraint so a forged sign attempt
-gets rejected at GCS, not at our backend.
-
-This module deliberately does NOT abstract the storage backend
-(GCS vs S3 vs local) — per CLAUDE.md guardrails, that abstraction is
-YAGNI until a self-hoster files an issue for a non-GCS backend. The
-function exists to consolidate the signed-URL recipe, not to hide
-GCS.
+This is the GCS implementation detail behind
+``file_storage.GcsFileStorage`` — callers should hold a
+``FileStorageProvider`` (which also has an S3 backend for AWS
+deployments) rather than importing these functions directly. Keeps
+the signature generation in one place — every caller passes the same
+headers and ``x-goog-content-length-range`` constraint so a forged
+sign attempt gets rejected at GCS, not at our backend.
 """
 
 from __future__ import annotations
