@@ -124,6 +124,15 @@ class AuditAction(StrEnum):
     SESSION_NOTES_QUALITY_REVIEW_OPT_OUT = "session_notes_quality_review_opt_out"
     SESSION_NOTES_QUALITY_REVIEW_PURGE_REQUESTED = "session_notes_quality_review_purge_requested"
 
+    # Per-user opt-in for quality review of email-reply drafting (the inbound
+    # message plus the AI-drafted reply the clinician then edits). Separate from
+    # chat and session-notes above because email correspondence is a distinct
+    # surface a clinician may allow independently. Same no-PHI payload rule —
+    # `changes` carries the bare new state, e.g. ``{"opt_in": true}``.
+    INBOX_QUALITY_REVIEW_OPT_IN = "inbox_quality_review_opt_in"
+    INBOX_QUALITY_REVIEW_OPT_OUT = "inbox_quality_review_opt_out"
+    INBOX_QUALITY_REVIEW_PURGE_REQUESTED = "inbox_quality_review_purge_requested"
+
     # Onboarding milestones. Recorded regardless of whether PHI has been
     # touched — these are compliance events (BAA is a legal agreement, MFA
     # is a security control, security guide is a HIPAA § 164.308(a)(5)

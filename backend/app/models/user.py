@@ -178,6 +178,9 @@ class User:
     session_notes_quality_review_opt_in_at: datetime | None = None
     session_notes_quality_review_opt_out_at: datetime | None = None
     quality_review_consent_prompted_at: datetime | None = None
+    inbox_quality_review_opt_in: bool = False
+    inbox_quality_review_opt_in_at: datetime | None = None
+    inbox_quality_review_opt_out_at: datetime | None = None
 
     @property
     def is_admin(self) -> bool:
