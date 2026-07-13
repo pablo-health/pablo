@@ -2,13 +2,17 @@
 
 """Pluggable object-storage providers for file upload/download.
 
-One interface, two backends:
+One interface, three backends:
 
 * :class:`GcsFileStorage` — Google Cloud Storage (managed deployments).
   Delegates to the V4 signed-URL recipe in ``signed_upload.py``.
 * :class:`S3FileStorage` — AWS S3 (or any S3-compatible endpoint such as
   MinIO / LocalStack via ``aws_s3_endpoint_url``). Requires the optional
   ``aws`` dependency group: ``poetry install --with aws``.
+* :class:`LocalFileStorage` — local filesystem (self-hosted deployments;
+  e.g. an EFS/NFS mount). Server-side byte ops only — it cannot mint
+  browser-direct upload/download URLs, so it serves proxied surfaces
+  like compliance documents, not the signed-URL surfaces.
 
 Selection is a configuration change (``FILE_STORAGE_PROVIDER=gcs|s3``),
 not a code change — see :func:`file_storage_from_settings`. Callers hold
@@ -32,6 +36,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -100,6 +105,17 @@ class FileStorageProvider(ABC):
     @abstractmethod
     def download_bytes(self, *, bucket: str, object_name: str) -> bytes:
         """Download an object's bytes for in-process work (e.g. text extraction)."""
+
+    @abstractmethod
+    def upload_bytes(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        data: bytes,
+        content_type: str,
+    ) -> None:
+        """Server-side write for proxied uploads (no presigned round-trip)."""
 
     @abstractmethod
     def delete(self, *, bucket: str, object_name: str) -> None:
@@ -194,6 +210,17 @@ class GcsFileStorage(FileStorageProvider):
             bucket=bucket,
             object_name=object_name,
         )
+
+    def upload_bytes(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        data: bytes,
+        content_type: str,
+    ) -> None:
+        blob = self._client().bucket(bucket).blob(object_name)
+        blob.upload_from_string(data, content_type=content_type)
 
     def delete(self, *, bucket: str, object_name: str) -> None:
         from .signed_upload import delete_blob
@@ -303,10 +330,88 @@ class S3FileStorage(FileStorageProvider):
         data: bytes = body.read()
         return data
 
+    def upload_bytes(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        data: bytes,
+        content_type: str,
+    ) -> None:
+        self._client().put_object(
+            Bucket=bucket,
+            Key=object_name,
+            Body=data,
+            ContentType=content_type,
+        )
+
     def delete(self, *, bucket: str, object_name: str) -> None:
         # S3 DeleteObject is already idempotent — deleting a missing key
         # returns 204, matching the GCS backend's swallow-NotFound behavior.
         self._client().delete_object(Bucket=bucket, Key=object_name)
+
+
+class LocalFileStorage(FileStorageProvider):
+    """Local-filesystem backend (self-hosted deployments; e.g. an EFS mount).
+
+    ``bucket`` is an absolute base directory and ``object_name`` a relative
+    path beneath it. Only the server-side byte ops are supported: minting
+    browser-direct URLs requires a cloud signing service, and the surfaces
+    that need those (patient documents, session audio) are configured with
+    a cloud provider via ``file_storage_provider``.
+    """
+
+    def make_upload_target(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        content_type: str,
+        max_bytes: int,
+        ttl_seconds: int,
+    ) -> UploadTarget:
+        raise NotImplementedError("local file storage cannot mint browser-direct upload URLs")
+
+    def make_download_url(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        ttl_seconds: int,
+        response_disposition: str | None = None,
+    ) -> str:
+        raise NotImplementedError("local file storage cannot mint browser-direct download URLs")
+
+    def fetch_metadata(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+    ) -> tuple[int, str | None] | None:
+        path = Path(bucket) / object_name
+        if not path.is_file():
+            return None
+        # The local filesystem keeps no content-type metadata.
+        return path.stat().st_size, None
+
+    def download_bytes(self, *, bucket: str, object_name: str) -> bytes:
+        return (Path(bucket) / object_name).read_bytes()
+
+    def upload_bytes(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        data: bytes,
+        content_type: str,
+    ) -> None:
+        _ = content_type  # no content-type metadata on a plain filesystem
+        dest = Path(bucket) / object_name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+
+    def delete(self, *, bucket: str, object_name: str) -> None:
+        (Path(bucket) / object_name).unlink(missing_ok=True)
 
 
 def file_storage_from_settings(settings: Settings) -> FileStorageProvider:

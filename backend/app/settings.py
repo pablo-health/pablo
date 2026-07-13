@@ -669,17 +669,19 @@ class Settings(BaseSettings):
         ),
     )
     # Compliance document storage (license copies, insurance declarations,
-    # etc.). Accepts either a ``gs://<bucket>[/prefix]`` value (GCS) or an
-    # absolute local directory path (self-hosted deployments without a cloud
-    # bucket). When unset, the /api/compliance/{id}/documents surface returns
-    # 503 with a clear configuration message.
+    # etc.). Accepts ``gs://<bucket>[/prefix]`` (GCS), ``s3://<bucket>[/prefix]``
+    # (AWS S3 / S3-compatible), or an absolute local directory path (self-hosted
+    # deployments; e.g. an EFS mount). When unset, the
+    # /api/compliance/{id}/documents surface returns 503 with a clear
+    # configuration message.
     compliance_documents_storage_root: str | None = Field(
         default=None,
         description=(
             "Storage root for clinician-uploaded compliance evidence documents. "
-            "Use ``gs://<bucket>[/prefix]`` for GCS or an absolute local "
-            "directory path for self-hosted deployments. Leave unset to disable "
-            "the compliance-document upload surface."
+            "Use ``gs://<bucket>[/prefix]`` for GCS, ``s3://<bucket>[/prefix]`` "
+            "for AWS S3, or an absolute local directory path (e.g. an EFS "
+            "mount) for self-hosted deployments. Leave unset to disable the "
+            "compliance-document upload surface."
         ),
     )
     # Maximum size for a single compliance document upload.

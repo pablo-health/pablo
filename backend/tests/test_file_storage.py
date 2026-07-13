@@ -20,6 +20,7 @@ import boto3
 import pytest
 from app.services.file_storage import (
     GcsFileStorage,
+    LocalFileStorage,
     S3FileStorage,
     file_storage_from_settings,
 )
@@ -133,6 +134,16 @@ class TestGcsFileStorage:
         gcs_storage.delete(bucket="b", object_name="t/doc-1")
         assert gcs_storage.fetch_metadata(bucket="b", object_name="t/doc-1") is None
 
+    def test_upload_bytes_writes_blob_with_content_type(
+        self, gcs_storage: GcsFileStorage, fake_gcs: _FakeGcsClient
+    ) -> None:
+        gcs_storage.upload_bytes(
+            bucket="b", object_name="t/lic.pdf", data=b"pdf", content_type="application/pdf"
+        )
+        blob = fake_gcs.bucket("b").blob("t/lic.pdf")
+        assert blob.download_as_bytes() == b"pdf"
+        assert blob.content_type == "application/pdf"
+
 
 # ---- S3 ---------------------------------------------------------------
 
@@ -223,6 +234,51 @@ class TestS3FileStorage:
         storage = S3FileStorage(client_factory=lambda: client)
         storage.delete(bucket="b", object_name="k")
         client.delete_object.assert_called_once_with(Bucket="b", Key="k")
+
+    def test_upload_bytes_calls_put_object(self) -> None:
+        client = MagicMock()
+        storage = S3FileStorage(client_factory=lambda: client)
+        storage.upload_bytes(
+            bucket="b", object_name="t/lic.pdf", data=b"pdf", content_type="application/pdf"
+        )
+        client.put_object.assert_called_once_with(
+            Bucket="b", Key="t/lic.pdf", Body=b"pdf", ContentType="application/pdf"
+        )
+
+
+# ---- local filesystem ---------------------------------------------------
+
+
+class TestLocalFileStorage:
+    def test_byte_ops_round_trip(self, tmp_path: Any) -> None:
+        storage = LocalFileStorage()
+        base = str(tmp_path)
+        storage.upload_bytes(
+            bucket=base, object_name="tenant/lic.pdf", data=b"pdf", content_type="application/pdf"
+        )
+        assert storage.download_bytes(bucket=base, object_name="tenant/lic.pdf") == b"pdf"
+        # No content-type metadata on a plain filesystem.
+        assert storage.fetch_metadata(bucket=base, object_name="tenant/lic.pdf") == (3, None)
+
+    def test_fetch_metadata_missing_returns_none(self, tmp_path: Any) -> None:
+        assert LocalFileStorage().fetch_metadata(bucket=str(tmp_path), object_name="nope") is None
+
+    def test_delete_is_idempotent(self, tmp_path: Any) -> None:
+        storage = LocalFileStorage()
+        base = str(tmp_path)
+        storage.upload_bytes(bucket=base, object_name="a.pdf", data=b"x", content_type="text/x")
+        storage.delete(bucket=base, object_name="a.pdf")
+        storage.delete(bucket=base, object_name="a.pdf")  # already gone — no raise
+        assert storage.fetch_metadata(bucket=base, object_name="a.pdf") is None
+
+    def test_presigned_operations_are_unsupported(self) -> None:
+        storage = LocalFileStorage()
+        with pytest.raises(NotImplementedError):
+            storage.make_upload_target(
+                bucket="/x", object_name="k", content_type="a/b", max_bytes=1, ttl_seconds=1
+            )
+        with pytest.raises(NotImplementedError):
+            storage.make_download_url(bucket="/x", object_name="k", ttl_seconds=1)
 
 
 # ---- settings factory ---------------------------------------------------
