@@ -174,7 +174,7 @@ class PlatformUserRow(PlatformBase):
         DateTime(timezone=True)
     )
     inbox_quality_review_opt_in: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
+        Boolean, nullable=False, default=False, server_default="false"
     )
     inbox_quality_review_opt_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     inbox_quality_review_opt_out_at: Mapped[datetime | None] = mapped_column(
