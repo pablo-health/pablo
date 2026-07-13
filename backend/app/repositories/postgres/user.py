@@ -105,6 +105,9 @@ def _row_to_user(row: PlatformUserRow) -> User:
         session_notes_quality_review_opt_in_at=row.session_notes_quality_review_opt_in_at,
         session_notes_quality_review_opt_out_at=row.session_notes_quality_review_opt_out_at,
         quality_review_consent_prompted_at=row.quality_review_consent_prompted_at,
+        inbox_quality_review_opt_in=row.inbox_quality_review_opt_in,
+        inbox_quality_review_opt_in_at=row.inbox_quality_review_opt_in_at,
+        inbox_quality_review_opt_out_at=row.inbox_quality_review_opt_out_at,
         profile_basics_completed_at=row.profile_basics_completed_at,
     )
 
@@ -132,4 +135,7 @@ def _user_to_row(user: User, row: PlatformUserRow) -> None:
     row.session_notes_quality_review_opt_in_at = user.session_notes_quality_review_opt_in_at
     row.session_notes_quality_review_opt_out_at = user.session_notes_quality_review_opt_out_at
     row.quality_review_consent_prompted_at = user.quality_review_consent_prompted_at
+    row.inbox_quality_review_opt_in = user.inbox_quality_review_opt_in
+    row.inbox_quality_review_opt_in_at = user.inbox_quality_review_opt_in_at
+    row.inbox_quality_review_opt_out_at = user.inbox_quality_review_opt_out_at
     row.profile_basics_completed_at = user.profile_basics_completed_at
