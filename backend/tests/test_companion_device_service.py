@@ -9,6 +9,7 @@ from app.models.companion_device import CompanionEnrollment
 from app.repositories.companion_device import InMemoryCompanionDeviceRepository
 from app.services.companion_device_service import (
     CompanionDeviceService,
+    DeviceOwnershipConflictError,
     InvalidDeviceJWKError,
     compute_jkt,
     validate_device_jwk,
@@ -156,3 +157,32 @@ class TestEnroll:
         )
         with pytest.raises(InvalidDeviceJWKError):
             service.enroll("user-1", bad)
+
+    def test_cross_user_install_id_is_rejected(
+        self, service: CompanionDeviceService, payload: CompanionEnrollment
+    ) -> None:
+        """install_id → user ownership is immutable (trust-on-first-use).
+
+        A second user submitting the first user's install_id must be rejected
+        and must NOT rebind the stored key: otherwise a stolen bearer token for
+        the first user, plus a proof signed by the attacker's own key, would
+        verify — defeating proof-of-possession.
+        """
+        service.enroll("user-1", payload)
+        attacker = payload.model_copy(
+            update={
+                "device_public_key_jwk": {
+                    "kty": "EC",
+                    "crv": "P-256",
+                    "x": "AAAAOJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                    "y": "BBBBzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                }
+            }
+        )
+        with pytest.raises(DeviceOwnershipConflictError):
+            service.enroll("user-2", attacker)
+        # The stored device still belongs to user-1 with the original key.
+        stored = service._repo.get(payload.install_id)
+        assert stored is not None
+        assert stored.user_id == "user-1"
+        assert stored.device_public_key_jwk == payload.device_public_key_jwk

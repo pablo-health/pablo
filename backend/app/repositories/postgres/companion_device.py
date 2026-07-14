@@ -49,8 +49,14 @@ class PostgresCompanionDeviceRepository(CompanionDeviceRepository):
                     "os_version": device.os_version,
                     "hostname_hash": device.hostname_hash,
                     "last_seen": device.last_seen,
-                    "revoked_at": None,
                 },
+                # install_id → user_id ownership is immutable (trust-on-first-
+                # use): only the enrolling owner may update the row, so a second
+                # user submitting the same install_id can't rebind the stored
+                # key. Do NOT reset revoked_at here — a re-enrollment must not
+                # silently un-revoke a device; reactivation is a separate,
+                # explicit action.
+                where=(CompanionDeviceRow.user_id == device.user_id),
             )
         )
         self._session.execute(stmt)
