@@ -28,6 +28,7 @@ from ..rate_limit import require_rate_limit
 from ..repositories import get_identity_repository
 from ..services.auth_code_store import create_auth_code, exchange_auth_code
 from ..services.companion_device_service import (
+    DeviceOwnershipConflictError,
     InvalidDeviceJWKError,
     get_companion_device_service,
 )
@@ -243,6 +244,11 @@ def _enroll_companion_device(firebase_uid: str | None, enrollment: CompanionEnro
             "companion_enrollment_rejected reason=invalid_jwk install_id=%s detail=%s",
             enrollment.install_id,
             err,
+        )
+    except DeviceOwnershipConflictError:
+        logger.warning(
+            "companion_enrollment_rejected reason=ownership_conflict install_id=%s",
+            enrollment.install_id,
         )
     except Exception:
         logger.exception("companion_enrollment_failed install_id=%s", enrollment.install_id)
