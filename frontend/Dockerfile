@@ -5,8 +5,10 @@ FROM node:24-slim
 
 WORKDIR /app
 
-# Install dependencies first (for better caching)
+# Install dependencies first (for better caching). patches/ must land
+# before `npm ci` so the patch-package postinstall hook can apply them.
 COPY package.json package-lock.json ./
+COPY patches ./patches
 
 RUN npm ci
 
