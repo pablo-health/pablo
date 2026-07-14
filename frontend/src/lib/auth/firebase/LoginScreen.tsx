@@ -242,9 +242,19 @@ export function FirebaseLoginScreen() {
 
   const finishLogin = async (credential: UserCredential, method: AuthMethod) => {
     const idToken = await credential.user.getIdToken()
+    // Send the refresh token so the server can seed the session cookie
+    // directly, without minting a service-account-signed custom token to
+    // exchange for one. That SA-signing path needs the GCP metadata server,
+    // which isn't reachable on non-GCP hosts (e.g. AWS); the server verifies
+    // the idToken and confirms this refresh token resolves to the same uid
+    // before trusting it.
+    const refreshToken = credential.user.refreshToken
     await fetch("/api/login", {
       method: "POST",
-      headers: { Authorization: `Bearer ${idToken}` },
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "X-Refresh-Token": refreshToken,
+      },
     })
     rememberAuthMethod(method)
     router.push("/dashboard")

@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage"
+    "test:coverage": "vitest --coverage",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@fullcalendar/core": "^6.1.21",
@@ -62,6 +63,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@vitejs/plugin-react": "^6.0.3",
     "happy-dom": "^20.10.6",
+    "patch-package": "^8.0.1",
     "postcss": "^8.5.12",
     "postcss-load-config": "^6.0.1",
     "tailwindcss": "^4.1.18",

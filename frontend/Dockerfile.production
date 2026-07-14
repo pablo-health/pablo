@@ -7,8 +7,10 @@ FROM node:24-slim AS builder
 
 WORKDIR /app
 
-# Copy dependency files
+# Copy dependency files (patches/ must land before `npm ci` so the
+# patch-package postinstall hook can apply them during install).
 COPY package.json package-lock.json ./
+COPY patches ./patches
 
 # Install dependencies
 RUN npm ci
