@@ -154,9 +154,12 @@ def _canonical_htu(request: Request, trusted_hosts: frozenset[str]) -> str:
     ``backend_base_url``/``app_url`` plus the ``DPOP_TRUSTED_HOSTS``
     override). For an untrusted or absent forwarded host we fall back to
     the raw request host, which the client cannot forge (it is the
-    connection's actual ``Host``/authority). The scheme is only upgraded
-    from the forwarded header once we've decided to trust the host, so a
-    spoofed ``X-Forwarded-Proto`` alone can't shift the comparison either.
+    connection's actual ``Host``/authority) — and behind Google Cloud's
+    load balancer, which preserves the original ``Host`` rather than
+    adding ``X-Forwarded-Host``, that raw host *is* the public host the
+    client signed. The scheme is upgraded from ``X-Forwarded-Proto`` only
+    once the resolved host is trusted, so a spoofed ``X-Forwarded-Proto``
+    alone can't shift the comparison either.
 
     Availability note: the companion signs proofs against the API host it
     talks to. That public host MUST be in the trusted set, otherwise we
@@ -166,14 +169,26 @@ def _canonical_htu(request: Request, trusted_hosts: frozenset[str]) -> str:
     the host in ``DPOP_TRUSTED_HOSTS``) to the public API host before
     enabling ``ENABLE_DPOP_VALIDATION``.
     """
+    # Resolve the host: an explicit forwarded host if we trust it, otherwise the
+    # connection's own Host/authority. Behind Google Cloud's external load
+    # balancer there is no X-Forwarded-Host — it preserves the original Host — so
+    # the fallback is the public host the client signed, not an internal one, and
+    # the client cannot forge it behind the sealed load balancer.
     forwarded_host = request.headers.get("x-forwarded-host")
     candidate = forwarded_host.split(",")[0].strip() if forwarded_host else ""
-    if candidate and candidate.lower() in trusted_hosts:
-        host = candidate
+    host = candidate if candidate and candidate.lower() in trusted_hosts else request.url.netloc
+
+    # Lift the scheme from X-Forwarded-Proto only once the resolved host is
+    # trusted, so a spoofed proto on an untrusted host can't shift the
+    # comparison. Behind the TLS terminator the raw ASGI scheme is http, so a
+    # trusted host without this upgrade would never match the https the client
+    # signed — this covers the load-balancer case above, where the trusted host
+    # arrives as the preserved Host rather than X-Forwarded-Host (Cloud Run
+    # still sets X-Forwarded-Proto: https on the request reaching the container).
+    if host.lower() in trusted_hosts:
         forwarded_proto = request.headers.get("x-forwarded-proto")
         scheme = forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme
     else:
-        host = request.url.netloc
         scheme = request.url.scheme
     return urlunsplit((scheme, host, request.url.path, "", ""))
 
@@ -182,6 +197,18 @@ def _normalize_htu(value: str) -> str:
     """Drop query + fragment from a claimed ``htu`` for comparison."""
     parts = urlsplit(value)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _origin(value: str) -> str:
+    """The ``scheme://host`` of a URL, for rejection diagnostics.
+
+    Drops the path and query: the path can carry patient identifiers
+    (``/api/patients/{id}/...``), the origin cannot. Logging the origins of a
+    mismatch surfaces the common scheme/host misconfiguration (e.g. ``http``
+    vs ``https`` behind a proxy) without putting a request path in the logs.
+    """
+    parts = urlsplit(value)
+    return f"{parts.scheme}://{parts.netloc}" if parts.netloc else "?"
 
 
 def verify_dpop_proof(
@@ -226,8 +253,12 @@ def verify_dpop_proof(
         raise DPoPValidationError("htm mismatch")
 
     claimed_htu = claims.get("htu")
-    if not isinstance(claimed_htu, str) or _normalize_htu(claimed_htu) != htu:
-        raise DPoPValidationError("htu mismatch")
+    if not isinstance(claimed_htu, str):
+        raise DPoPValidationError("htu mismatch (proof htu missing or non-string)")
+    if _normalize_htu(claimed_htu) != htu:
+        raise DPoPValidationError(
+            f"htu mismatch (proof={_origin(claimed_htu)} request={_origin(htu)})"
+        )
 
     iat = claims.get("iat")
     if not isinstance(iat, (int, float)) or abs(ts - float(iat)) > _IAT_WINDOW_SECONDS:

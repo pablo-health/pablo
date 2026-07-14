@@ -403,10 +403,12 @@ def test_spoofed_forwarded_host_falls_back_to_request_host(keypair) -> None:
     The header is client-controlled; if the middleware honored it an
     attacker could pick the host half of the htu and replay a proof signed
     for an arbitrary host. With ``evil.example`` untrusted, the middleware
-    canonicalizes against the real request host (``testserver``):
+    ignores it and canonicalizes against the real request host
+    (``testserver``); since ``testserver`` is a configured (trusted) host,
+    the ``https`` from X-Forwarded-Proto is honored for the scheme:
 
-    - a proof signed for the spoofed host → 401 (host mismatch),
-    - a proof signed for the real request host → 200.
+    - a proof signed for the spoofed host → 401 (host not shifted),
+    - a proof signed for ``https://testserver`` (real host) → 200.
     """
     public_jwk, signing_key = keypair
     client, _ = _build_app(enable=True, devices={INSTALL_ID: _make_device(public_jwk)})
@@ -424,7 +426,7 @@ def test_spoofed_forwarded_host_falls_back_to_request_host(keypair) -> None:
     )
     _assert_invalid_proof(resp)
 
-    real_proof = _sign_proof(signing_key, htm="POST", htu="http://testserver/api/sessions/s1")
+    real_proof = _sign_proof(signing_key, htm="POST", htu="https://testserver/api/sessions/s1")
     resp = client.post(
         "/api/sessions/s1",
         headers={
@@ -456,6 +458,33 @@ def test_trusted_forwarded_host_is_honored(keypair) -> None:
             DPOP_HEADER: proof,
             "X-Forwarded-Host": "app.pablo.health",
             "X-Forwarded-Proto": "https",
+        },
+    )
+    assert resp.status_code == 200
+
+
+def test_preserved_host_without_forwarded_host_is_honored(keypair) -> None:
+    """Behind Google Cloud's external load balancer the original Host header is
+    preserved and NO X-Forwarded-Host is sent. The middleware must canonicalize
+    against that preserved public host, with X-Forwarded-Proto (which Cloud Run
+    does set) supplying the https scheme — otherwise every enrolled-companion
+    request 401s on a scheme mismatch (http reconstructed vs https signed)."""
+    public_jwk, signing_key = keypair
+    client, _ = _build_app(
+        enable=True,
+        devices={INSTALL_ID: _make_device(public_jwk)},
+        dpop_trusted_hosts="app.pablo.health",
+    )
+    proof = _sign_proof(signing_key, htm="POST", htu="https://app.pablo.health/api/sessions/s1")
+    resp = client.post(
+        "/api/sessions/s1",
+        headers={
+            "Authorization": "Bearer t",
+            INSTALL_ID_HEADER: INSTALL_ID,
+            DPOP_HEADER: proof,
+            "Host": "app.pablo.health",
+            "X-Forwarded-Proto": "https",
+            # No X-Forwarded-Host — the GCP external LB preserves Host instead.
         },
     )
     assert resp.status_code == 200
