@@ -1,0 +1,54 @@
+{
+  "generated_at": "2026-07-15T05:16:08.563562+00:00",
+  "gen_model": "settings.ai_model",
+  "judge_model": "gemini-3.5-flash",
+  "n_cases": 2,
+  "n_passed": 1,
+  "all_passed": false,
+  "cases": [
+    {
+      "id": "note-faith-013",
+      "tier": 2,
+      "passed": false,
+      "judge_passes": false,
+      "gen_seconds": 41.6,
+      "generated_chars": 11526,
+      "hallucinated_facts": [
+        {
+          "claim": "The client disclosed a history of occupational trauma, including physical and sexual assault by clients...",
+          "where": "subjective",
+          "why_unsupported": "The client explicitly denied sexual assault in the transcript. She mentioned physical assaults (being choked, slapped, and held down), but did not state she was sexually assaulted."
+        }
+      ],
+      "missing_facts": [
+        {
+          "fact": "The client has a maternal aunt with bipolar disorder who has been hospitalized and is on medication.",
+          "criticality": "high",
+          "why_critical": "A family history of bipolar disorder is a highly significant genetic risk factor that strongly guides the differential diagnosis between Bipolar Disorder, Borderline Personality Disorder, and Substance-Induced Mood Disorder."
+        }
+      ],
+      "critical_failures": [
+        "high-criticality omission: The client has a maternal aunt with bipolar disorder who has been hospitalized and is on medication."
+      ],
+      "judge_notes": "The generated SOAP note failed the audit due to a high-criticality omission and a hallucination. It omitted the client's family history of bipolar disorder (maternal aunt), which is a crucial diagnostic indicator. Additionally, it hallucinated that the client disclosed a history of 'sexual assault,' whereas the transcript only supports physical assault (choking, slapping, being held down) and does not mention sexual assault."
+    },
+    {
+      "id": "note-faith-014",
+      "tier": 2,
+      "passed": true,
+      "judge_passes": true,
+      "gen_seconds": 45.6,
+      "generated_chars": 11727,
+      "hallucinated_facts": [],
+      "missing_facts": [
+        {
+          "fact": "The specific date of the upcoming trauma anniversary is April 10th, 2020 (four-year mark), and it involved the deaths of his comrades Quigley and Dalton.",
+          "criticality": "medium",
+          "why_critical": "The upcoming anniversary is the primary trigger for the client's acute symptom exacerbation. Knowing the exact date and the specific losses (Quigley and Dalton) is clinically important for structuring the memorial ritual and tracking the timeline of his distress."
+        }
+      ],
+      "critical_failures": [],
+      "judge_notes": "The generated SOAP note is exceptionally accurate and adheres strictly to all audit directives. It correctly frames the client's passive suicidal thoughts without escalating them to active ideation, accurately represents the medication discussion as a pending decision rather than an active prescription, and correctly notes the self-reported reduction in alcohol use without over-diagnosing. No hallucinations were detected. The only minor omission is the specific date of the anniversary (April 10th) and the names of his deceased comrades, which is of medium criticality for tracking the trauma history."
+    }
+  ]
+}

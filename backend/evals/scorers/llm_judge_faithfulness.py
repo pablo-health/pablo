@@ -44,12 +44,41 @@ logger = logging.getLogger(__name__)
 # `gemini-3.5-pro` when it ships. Never use Gemini 2.5.
 _DEFAULT_JUDGE_MODEL = "gemini-3.5-flash"
 
-# Permissive schema — the judge's expected shape has fixed top-level
-# keys but variable-length arrays of free-form objects underneath, and
-# Gemini's response_schema can't express "object with these specific
-# property shapes" without rejecting the lists. The model is told the
-# exact shape in the prompt; we validate after.
-_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {"type": "object"}
+# Require the four verdict keys. A bare ``{"type": "object"}`` is satisfied
+# by ``{}`` — and Gemini-3.5-flash *does* return an empty object on a large
+# audit input (28k transcript + 10k SOAP), silently defaulting every verdict
+# to fail. Naming the fields + ``required`` forces the model to populate them;
+# array items stay loosely typed (the prompt fixes their inner shape).
+_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "hallucinated_facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string"},
+                    "where": {"type": "string"},
+                    "why_unsupported": {"type": "string"},
+                },
+            },
+        },
+        "missing_facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string"},
+                    "criticality": {"type": "string"},
+                    "why_critical": {"type": "string"},
+                },
+            },
+        },
+        "passes": {"type": "boolean"},
+        "judge_notes": {"type": "string"},
+    },
+    "required": ["hallucinated_facts", "missing_facts", "passes", "judge_notes"],
+}
 
 
 _JUDGE_SYSTEM_PROMPT = """\
@@ -68,10 +97,10 @@ _JUDGE_USER_TEMPLATE = """\
 
 ## GENERATED SOAP NOTE
 {generated_soap}
-{reference_block}
+{reference_block}{directives_block}
 ## TASK
 
-Compare the GENERATED SOAP NOTE against the TRANSCRIPT (and the REFERENCE SOAP if provided). Return JSON with this exact shape:
+Compare the GENERATED SOAP NOTE against the TRANSCRIPT (and the REFERENCE SOAP if provided).{directives_hint} Return JSON with this exact shape:
 
 {{
   "hallucinated_facts": [
@@ -91,6 +120,21 @@ _REFERENCE_BLOCK_TEMPLATE = """
 ## REFERENCE SOAP (for completeness comparison)
 {reference_soap}
 """
+
+
+# Case-specific audit directives (the dataset's ``judge_directives``): the
+# exact, known failure modes for this transcript — e.g. "do not escalate
+# passive SI to active", "do not invent a medication". Injected so the judge
+# checks these named traps explicitly rather than relying on generic auditing.
+_DIRECTIVES_BLOCK_TEMPLATE = """
+## AUDIT DIRECTIVES (case-specific — treat any violation as a hallucination)
+{directives}
+"""
+
+_DIRECTIVES_HINT = (
+    " Pay particular attention to the AUDIT DIRECTIVES — each names a known"
+    " failure mode for this transcript; a note that violates one is unfaithful."
+)
 
 
 @dataclass
@@ -117,6 +161,7 @@ def score(
     transcript: str,
     generated_soap: str,
     reference_soap: str | None = None,
+    directives: list[str] | None = None,
     model: str | None = None,
     gateway: StructuredLLMGateway | None = None,
 ) -> JudgeVerdict:
@@ -126,6 +171,11 @@ def score(
     or a flat formatted text — the judge handles both because the
     prompt frames it as "the SOAP note." For the spike, fixtures are
     JSON with four section keys.
+
+    ``directives`` are the case's ``judge_directives`` — the named,
+    known failure modes for this transcript (SI-escalation, fabricated
+    meds, etc.). When provided they're injected so the judge audits each
+    one explicitly; a violation counts as a hallucination.
 
     ``model`` defaults to ``_DEFAULT_JUDGE_MODEL`` (gemini-3.5-flash)
     when not specified. ``gateway`` is injectable for tests; production
@@ -140,10 +190,17 @@ def score(
     reference_block = (
         _REFERENCE_BLOCK_TEMPLATE.format(reference_soap=reference_soap) if reference_soap else ""
     )
+    directives_block = (
+        _DIRECTIVES_BLOCK_TEMPLATE.format(directives="\n".join(f"- {d}" for d in directives))
+        if directives
+        else ""
+    )
     user_prompt = _JUDGE_USER_TEMPLATE.format(
         transcript=transcript,
         generated_soap=generated_soap,
         reference_block=reference_block,
+        directives_block=directives_block,
+        directives_hint=_DIRECTIVES_HINT if directives else "",
     )
 
     gw = gateway or get_default_structured_llm_gateway()
