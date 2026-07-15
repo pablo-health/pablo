@@ -37,12 +37,62 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from ..settings import Settings
+
+# Read granularity for streaming uploads. 1 MiB is a whole multiple of GCS's
+# 256 KiB resumable-chunk requirement, so it doubles as the GCS resumable
+# ``chunk_size``. Streaming in fixed chunks keeps a large audio file (a long
+# session runs to hundreds of MB per channel) off the heap — the whole point
+# of ``upload_stream`` versus reading the body into a single ``bytes``.
+_STREAM_CHUNK_SIZE = 1024 * 1024
+
+
+class FileTooLargeError(Exception):
+    """Raised by ``upload_stream`` when the source exceeds ``max_bytes``.
+
+    Carries the cap so callers can turn it into a 413 with a useful message.
+    """
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max_bytes
+        super().__init__(f"upload exceeds maximum of {max_bytes} bytes")
+
+
+class _CappedReader:
+    """Wrap a binary file object, raising once cumulative reads exceed a cap.
+
+    Passes ``seek``/``tell`` through so a storage SDK that probes the stream
+    size (GCS) still works; the running byte count is what actually enforces
+    the limit, so an oversized stream is rejected mid-transfer rather than
+    after it has all landed. Deliberately minimal — only the surface the
+    upload SDKs touch.
+    """
+
+    def __init__(self, fileobj: BinaryIO, max_bytes: int) -> None:
+        self._fileobj = fileobj
+        self._max_bytes = max_bytes
+        self._read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._fileobj.read(size)
+        self._read += len(chunk)
+        if self._read > self._max_bytes:
+            raise FileTooLargeError(self._max_bytes)
+        return chunk
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._fileobj.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._fileobj.tell()
+
+    def seekable(self) -> bool:
+        return getattr(self._fileobj, "seekable", lambda: False)()
 
 
 @dataclass(frozen=True)
@@ -116,6 +166,24 @@ class FileStorageProvider(ABC):
         content_type: str,
     ) -> None:
         """Server-side write for proxied uploads (no presigned round-trip)."""
+
+    @abstractmethod
+    def upload_stream(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        fileobj: BinaryIO,
+        content_type: str,
+        max_bytes: int,
+    ) -> None:
+        """Stream a file object to storage in bounded chunks.
+
+        Never materializes the whole source in memory — for a large upload
+        (long-session audio) that is the difference between flat and
+        hundreds-of-MB heap. Enforces ``max_bytes``, raising
+        :class:`FileTooLargeError` when the source is larger.
+        """
 
     @abstractmethod
     def delete(self, *, bucket: str, object_name: str) -> None:
@@ -221,6 +289,25 @@ class GcsFileStorage(FileStorageProvider):
     ) -> None:
         blob = self._client().bucket(bucket).blob(object_name)
         blob.upload_from_string(data, content_type=content_type)
+
+    def upload_stream(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        fileobj: BinaryIO,
+        content_type: str,
+        max_bytes: int,
+    ) -> None:
+        blob = self._client().bucket(bucket).blob(object_name)
+        # A resumable upload streams the source in ``chunk_size`` pieces
+        # instead of buffering it whole, so heap stays flat regardless of
+        # file size. The capped reader rejects an oversized stream mid-flight.
+        blob.chunk_size = _STREAM_CHUNK_SIZE
+        blob.upload_from_file(
+            _CappedReader(fileobj, max_bytes),
+            content_type=content_type,
+        )
 
     def delete(self, *, bucket: str, object_name: str) -> None:
         from .signed_upload import delete_blob
@@ -345,6 +432,25 @@ class S3FileStorage(FileStorageProvider):
             ContentType=content_type,
         )
 
+    def upload_stream(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        fileobj: BinaryIO,
+        content_type: str,
+        max_bytes: int,
+    ) -> None:
+        # ``upload_fileobj`` runs a managed multipart transfer that pulls the
+        # source in parts via ``read`` — the capped reader bounds it and
+        # rejects an oversized stream.
+        self._client().upload_fileobj(
+            _CappedReader(fileobj, max_bytes),
+            bucket,
+            object_name,
+            ExtraArgs={"ContentType": content_type},
+        )
+
     def delete(self, *, bucket: str, object_name: str) -> None:
         # S3 DeleteObject is already idempotent — deleting a missing key
         # returns 204, matching the GCS backend's swallow-NotFound behavior.
@@ -409,6 +515,32 @@ class LocalFileStorage(FileStorageProvider):
         dest = Path(bucket) / object_name
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
+
+    def upload_stream(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        fileobj: BinaryIO,
+        content_type: str,
+        max_bytes: int,
+    ) -> None:
+        _ = content_type  # no content-type metadata on a plain filesystem
+        dest = Path(bucket) / object_name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        total = 0
+        with dest.open("wb") as out:
+            while True:
+                chunk = fileobj.read(_STREAM_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    # Leave no partial file behind on rejection.
+                    out.close()
+                    dest.unlink(missing_ok=True)
+                    raise FileTooLargeError(max_bytes)
+                out.write(chunk)
 
     def delete(self, *, bucket: str, object_name: str) -> None:
         (Path(bucket) / object_name).unlink(missing_ok=True)

@@ -9,9 +9,20 @@ Thin HTTP handlers that delegate business logic to SessionService.
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
 from ..auth.service import (
@@ -74,8 +85,7 @@ from ..services import (
     SOAPGenerationFailedError,
     get_audit_service,
 )
-from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
-from ..services.file_storage import UploadTarget
+from ..services.file_storage import FileTooLargeError, UploadTarget
 from ..services.note_import_service import (
     DocumentTextExtractionError,
     NoteImportService,
@@ -864,6 +874,49 @@ async def _read_bounded(upload: UploadFile, label: str) -> bytes:
     return b"".join(chunks)
 
 
+def _audio_multipart_object_name(session_id: str, channel: str) -> str:
+    """Per-session object name for a multipart-streamed channel.
+
+    Kept separate from the ``signed/`` prefix the direct-to-GCS path uses so
+    the two transports never collide on an object name.
+    """
+    return f"audio/{session_id}/{channel}.pcm"
+
+
+async def _stream_audio_to_storage(
+    upload: UploadFile,
+    label: str,
+    *,
+    bucket: str,
+    object_name: str,
+) -> None:
+    """Stream one channel's ``UploadFile`` straight to object storage.
+
+    ``UploadFile`` already spools past ~1 MiB to a temp file, so the bytes are
+    never held whole in heap — the win over ``_read_bounded`` (which joins
+    every chunk into one ``bytes``) that would OOM under concurrent long
+    sessions. The blocking storage write runs in a worker thread so it doesn't
+    stall the event loop.
+    """
+    from ..services.file_storage import file_storage_from_settings
+
+    storage = file_storage_from_settings(get_settings())
+    try:
+        await run_in_threadpool(
+            storage.upload_stream,
+            bucket=bucket,
+            object_name=object_name,
+            fileobj=upload.file,
+            content_type=upload.content_type or "application/octet-stream",
+            max_bytes=_MAX_AUDIO_SIZE,
+        )
+    except FileTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"{label} too large. Max {_MAX_AUDIO_SIZE // (1024 * 1024)} MB.",
+        ) from exc
+
+
 def _revert_transcribing_and_raise(
     session: TherapySession,
     session_repo: TherapySessionRepository,
@@ -888,24 +941,98 @@ def _revert_transcribing_and_raise(
     ) from None
 
 
+async def _stream_and_submit_assemblyai(
+    *,
+    session: TherapySession,
+    session_repo: TherapySessionRepository,
+    session_id: str,
+    therapist_audio: UploadFile,
+    client_audio: UploadFile,
+    user: User,
+    http_request: Request,
+    audit: AuditService,
+) -> dict[str, str]:
+    """Stream both channels to object storage and enqueue the submit worker.
+
+    Keeps the bytes off the heap (streamed, never buffered whole) and the
+    multi-second VAD-split + provider submit off this request thread — the
+    Cloud Task worker does that against ``audio_gcs_path``.
+    """
+    settings = get_settings()
+    bucket = settings.transcription_audio_bucket
+    if not bucket:
+        raise ServerError("Transcription audio bucket is not configured")
+
+    therapist_object = _audio_multipart_object_name(session_id, "therapist")
+    client_object = _audio_multipart_object_name(session_id, "client")
+    await _stream_audio_to_storage(
+        therapist_audio, "therapist_audio", bucket=bucket, object_name=therapist_object
+    )
+    await _stream_audio_to_storage(
+        client_audio, "client_audio", bucket=bucket, object_name=client_object
+    )
+
+    session.status = SessionStatus.TRANSCRIBING
+    session.updated_at = utc_now()
+    session.audio_gcs_path = f"{therapist_object},{client_object}"
+    # "submitting" is the pre-submit marker; the submit worker overwrites it
+    # with the provider job ids. Persisted so a retry is idempotent.
+    session.transcription_job_metadata = {"provider": "assemblyai", "state": "submitting"}
+    session_repo.update(session)
+
+    try:
+        enqueue(
+            settings.transcription_task_queue,
+            "/api/internal/assemblyai-submit",
+            {"session_id": session_id, "user_id": user.id},
+            dedup_key=f"aai-submit-{session_id}",
+        )
+    except AlreadyExists:
+        # A submit task for this session is already queued (double-submit or a
+        # retry inside the dedup window) — the worker reads the latest audio
+        # path, so there's nothing to do. Don't revert.
+        logger.info("assemblyai-submit already enqueued for session %s (dedup)", session_id)
+    except Exception:
+        _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
+
+    audit.log_session_action(
+        AuditAction.SESSION_AUDIO_UPLOADED,
+        user,
+        http_request,
+        session,
+        changes={"provider": "assemblyai", "channels": 2},
+    )
+    return {
+        "id": session.id,
+        "status": session.status,
+        "provider": "assemblyai",
+        "message": "Audio uploaded (2 channels). Transcription queued (AssemblyAI).",
+    }
+
+
 @router.post("/api/sessions/{session_id}/upload-audio")
 async def upload_audio(
     session_id: str,
     therapist_audio: UploadFile,
     client_audio: UploadFile,
     http_request: Request,
+    response: Response,
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
-    """Upload dual-channel audio for server-side Whisper transcription.
+    """Upload dual-channel audio for server-side transcription.
 
     Accepts two audio files (therapist mic + client system audio), matching
     the companion app's AudioCaptureKit channel split. Each channel is
     transcribed separately with speaker labels, then merged by timestamp.
 
-    Practice tier users get priority processing; Solo tier uses standard queue.
+    For AssemblyAI the bytes are streamed straight to object storage and the
+    provider submit runs on a Cloud Task, so a long session neither holds the
+    request thread nor buffers hundreds of MB per channel in heap; the route
+    answers 202. Practice tier users get priority processing; Solo tier uses
+    the standard queue.
     """
     # Per-user burst guard: each upload spawns a transcription job, so cap how
     # fast a single caller can trigger them (per-minute + per-hour). Raises 429.
@@ -941,62 +1068,27 @@ async def upload_audio(
                 detail=f"Unsupported audio type for {label}: {f.content_type}",
             )
 
+    if settings.transcription_provider == "assemblyai":
+        result = await _stream_and_submit_assemblyai(
+            session=session,
+            session_repo=session_repo,
+            session_id=session_id,
+            therapist_audio=therapist_audio,
+            client_audio=client_audio,
+            user=user,
+            http_request=http_request,
+            audit=audit,
+        )
+        response.status_code = status.HTTP_202_ACCEPTED
+        return result
+
+    # Whisper: buffer + upload to GCS, submit GCP Batch job
     therapist_data = await _read_bounded(therapist_audio, "therapist_audio")
     client_data = await _read_bounded(client_audio, "client_audio")
 
-    # Transition to transcribing
     session.status = SessionStatus.TRANSCRIBING
     session.updated_at = utc_now()
 
-    if settings.transcription_provider == "assemblyai":
-        # AssemblyAI: upload + submit (fast), then enqueue Cloud Task for polling.
-        # This survives Cloud Run instance restarts — no more in-process polling.
-        aai_service = AssemblyAiTranscriptionService(settings)
-        job_metadata = await aai_service.submit_dual_channel(
-            therapist_audio=therapist_data,
-            client_audio=client_data,
-        )
-
-        # Store job metadata so the polling Cloud Task knows which jobs to check
-        session.transcription_job_metadata = {
-            "provider": "assemblyai",
-            "jobs": job_metadata,
-        }
-        session_repo.update(session)
-
-        # Enqueue Cloud Task to poll for results (HIPAA: no schema_name in payload).
-        from ..services.cloud_tasks_service import enqueue_cloud_task
-
-        try:
-            enqueue_cloud_task(
-                queue_name=settings.transcription_task_queue,
-                endpoint_path="/api/internal/transcription-poll",
-                payload={"session_id": session_id, "user_id": user.id},
-            )
-        except Exception as _enqueue_exc:
-            from google.api_core.exceptions import AlreadyExists
-
-            if isinstance(_enqueue_exc, AlreadyExists):
-                # Named-task dedup: task already enqueued and running — no revert.
-                logger.info("Transcription task already enqueued (dedup); skipping revert")
-            else:
-                _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
-
-        audit.log_session_action(
-            AuditAction.SESSION_AUDIO_UPLOADED,
-            user,
-            http_request,
-            session,
-            changes={"provider": "assemblyai", "channels": 2},
-        )
-        return {
-            "id": session.id,
-            "status": session.status,
-            "provider": "assemblyai",
-            "message": "Audio uploaded (2 channels). Transcription queued (AssemblyAI).",
-        }
-
-    # Whisper: upload to GCS, submit GCP Batch job
     queue_service: TranscriptionQueueService
     if settings.is_development:
         queue_service = MockTranscriptionQueueService()
@@ -1048,11 +1140,11 @@ async def upload_audio(
 # directly. The multipart endpoint stays so existing companion
 # builds keep working; migrating is its own bead.
 #
-# Scope: Whisper provider only. AssemblyAI's VAD region splitting
-# operates on raw bytes and isn't a natural fit for browser-direct
-# upload — that path stays on multipart until we land a follow-up
-# that uses AssemblyAI's ``audio_url`` parameter against a signed
-# GCS GET URL.
+# Both providers are supported: finalize records the object paths and
+# dispatches. Whisper submits a GCP Batch job; AssemblyAI hands off to the
+# same submit worker the multipart path uses — that worker downloads the
+# objects and runs the VAD split server-side, so browser-direct and
+# multipart converge on one transport-agnostic completion path.
 
 
 def _audio_signed_object_name(session_id: str, channel: str) -> str:
@@ -1110,15 +1202,6 @@ def init_audio_upload(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Server-side transcription is not enabled.",
         )
-    if settings.transcription_provider != "whisper":
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=(
-                "Signed-URL audio upload only supports the whisper provider "
-                "in v1; use POST /api/sessions/{id}/upload-audio for "
-                "assemblyai."
-            ),
-        )
 
     session = session_repo.get(session_id, user.id)
     if not session:
@@ -1154,7 +1237,11 @@ def init_audio_upload(
         user,
         http_request,
         session,
-        changes={"provider": "whisper", "channels": 2, "transport": "signed_url"},
+        changes={
+            "provider": settings.transcription_provider,
+            "channels": 2,
+            "transport": "signed_url",
+        },
     )
 
     return _AudioInitResponse(
@@ -1169,22 +1256,23 @@ def init_audio_upload(
 def finalize_audio_upload(
     session_id: str,
     http_request: Request,
+    response: Response,
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> _AudioFinalizeResponse:
-    """Verify both channel blobs landed in object storage, then enqueue Whisper.
+    """Verify both channel blobs landed in object storage, then start transcription.
 
-    Idempotent on retry: the size/exists check is read-only against
-    storage, and ``enqueue_transcription`` is the same as the multipart
-    endpoint calls — the queue worker dedupes by ``session_id``.
+    Provider-agnostic: the browser uploaded both channels directly to object
+    storage via the signed URLs, so this only records the object paths and
+    dispatches. Whisper submits a GCP Batch job; AssemblyAI hands off to the
+    same submit worker the multipart path uses (it just reads
+    ``audio_gcs_path``), so both transports converge there.
+
+    Idempotent on retry: the size/exists check is read-only against storage,
+    and both hand-offs dedupe by ``session_id``.
     """
     settings = get_settings()
-    if settings.transcription_provider != "whisper":
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Signed-URL audio finalize only supports the whisper provider in v1.",
-        )
 
     session = session_repo.get(session_id, user.id)
     if not session:
@@ -1224,6 +1312,41 @@ def finalize_audio_upload(
     session.status = SessionStatus.TRANSCRIBING
     session.updated_at = utc_now()
     session.audio_gcs_path = f"{therapist_path},{client_path}"
+
+    if settings.transcription_provider == "assemblyai":
+        # "submitting" is the pre-submit marker; the submit worker overwrites
+        # it with the provider job ids. Persisted so a retry is idempotent.
+        session.transcription_job_metadata = {"provider": "assemblyai", "state": "submitting"}
+        try:
+            enqueue(
+                settings.transcription_task_queue,
+                "/api/internal/assemblyai-submit",
+                {"session_id": session_id, "user_id": user.id},
+                dedup_key=f"aai-submit-{session_id}",
+            )
+        except AlreadyExists:
+            logger.info("assemblyai-submit already enqueued for session %s (dedup)", session_id)
+        except Exception:
+            _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
+
+        session_repo.update(session)
+        audit.log_session_action(
+            AuditAction.SESSION_AUDIO_UPLOADED,
+            user,
+            http_request,
+            session,
+            changes={"provider": "assemblyai", "channels": 2, "transport": "signed_url"},
+        )
+        response.status_code = status.HTTP_202_ACCEPTED
+        return _AudioFinalizeResponse(
+            id=session.id,
+            status=session.status,
+            provider="assemblyai",
+            queue="",
+            message=(
+                "Audio uploaded via signed URL (2 channels). Transcription queued (AssemblyAI)."
+            ),
+        )
 
     queue_service: TranscriptionQueueService = (
         MockTranscriptionQueueService() if settings.is_development else TranscriptionQueueService()

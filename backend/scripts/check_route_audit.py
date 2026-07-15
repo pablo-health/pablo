@@ -92,6 +92,11 @@ HTTP_METHODS: frozenset[str] = frozenset({"get", "post", "patch", "put", "delete
 AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
         ("get", "/api/appointments"),  # list_appointments — calendar metadata
+        # internal_transcription.py — the transcript-upload audit is emitted
+        # inside process_transcription_result (the single completion funnel),
+        # not on the route signature; both handlers delegate to it.
+        ("post", "/api/internal/transcription-complete"),  # audited in helper
+        ("post", "/api/internal/transcription-poll"),  # delegates to the audited helper
     }
 )
 
@@ -109,6 +114,11 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
 # Keyed by (method, mounted-path) — i.e. router prefix + decorator arg.
 AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
+        # internal_transcription.py — Cloud Tasks worker that hands audio already
+        # audited at upload (SESSION_AUDIO_UPLOADED) to the transcription
+        # provider; discloses nothing to a user. The transcript that results is
+        # audited on the completion path.
+        ("post", "/api/internal/assemblyai-submit"),  # provider submit worker, no disclosure
         # admin.py — operates on therapist accounts / invitees, never patient data
         ("get", "/api/admin/users"),  # admin lists therapist accounts
         ("patch", "/api/admin/users/{user_id}/disable"),  # disables a therapist account
