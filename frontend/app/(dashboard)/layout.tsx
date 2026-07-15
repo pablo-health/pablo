@@ -8,6 +8,8 @@ import { ApiError } from "@/lib/api/client"
 import { getBAAStatus } from "@/lib/api/users"
 import { getCachedUserStatus } from "@/lib/api/users.server"
 import { getServerSession } from "@/lib/auth/server"
+import { getOnboardingSurface } from "@/lib/onboarding/surface"
+import { firstIncompleteRequiredStep } from "@/lib/onboarding/types"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
@@ -61,6 +63,15 @@ export default async function DashboardLayout({
       // Disabled users cannot access the platform
       if (userStatus.status === "disabled") {
         redirect("/login?error=account_disabled")
+      }
+
+      // Onboarding gate — route to the active surface's first incomplete
+      // required step before the MFA safety-net below. For the default
+      // surface this only fires when passkeys are enabled (its sole
+      // required step); otherwise the surface is empty and vanilla
+      // deployments fall straight through to /mfa-enrollment.
+      if (firstIncompleteRequiredStep(getOnboardingSurface(), userStatus) !== null) {
+        redirect("/onboarding")
       }
 
       // MFA not enrolled → redirect to enrollment page
