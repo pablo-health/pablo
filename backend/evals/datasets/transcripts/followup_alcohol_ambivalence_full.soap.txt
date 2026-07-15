@@ -1,0 +1,170 @@
+SOAP NOTE - Psychotherapy Session
+Client: Bogus Bramwell, 34
+Date: June 18, 2024
+Session #: Follow-up (alcohol-use focus, early treatment)
+Duration: 22 minutes
+Therapist: Dr. Apocryphal Ashby, Psy.D.
+
+SUBJECTIVE:
+Client is a 34-year-old male, employed as a night-shift operations
+manager, presenting for follow-up focused on alcohol use, which he
+self-identified as a concern. Completed partial self-monitoring from
+last session (5 of 7 days logged): 4 beers per weeknight (5 on one
+occasion with brother), estimated 7-8 on Saturday (cookout,
+unlogged). Pattern consistent with prior self-report. Client
+calculated monthly totals (~130 beers, ~$400/month) and reported the
+written numbers "looked different" than the lived experience —
+increased discrepancy awareness.
+
+History/course: escalation over past 12-18 months coinciding with
+promotion to night-shift schedule (drinking as post-shift
+"off switch") and a move to a socially drink-oriented neighborhood;
+prior baseline ~2 beers a few nights weekly. Beverage almost
+exclusively beer; rare whiskey (~monthly); no wine.
+
+Systematic use assessment this session:
+- Tolerance: endorsed ("two beers used to do the whole job... four is
+  the working dose").
+- Use in larger amounts than intended: endorsed, weekends
+  primarily; weeknights regimented at four.
+- Prior cut-down attempt: one (Dry January this year, discontinued at
+  9 days by social opportunity, not by withdrawal or craving).
+- Withdrawal: denied — no shakes, sweats, morning sickness during the
+  9-day abstinence; reported improved sleep by end of that week.
+  Denies morning drinking (aversive to him).
+- Craving: denied; describes use as "habit-shaped, not
+  craving-shaped" (contextual/routinized, no pull when engaged
+  elsewhere).
+- Occupational impact: denied; never drinks before/during shifts;
+  "exceeds expectations" review in March.
+- Hazardous use: denies driving after drinking (consistent
+  rideshare use, reinforced by partner); no legal history (see
+  clarification below).
+- Interpersonal: partner (Dahlia) expressed sadness at loss of shared
+  weekend-morning hikes (client too groggy); client emphasized this
+  was a single calm remark, explicitly not an ultimatum or threat to
+  leave; client reports he also misses the hikes.
+- Activities reduced: gym attendance down from 3x/week to ~1x/week
+  (evening use and morning grogginess); ~12 lb weight gain over a
+  year.
+- Sleep: rapid sleep onset but recurrent ~4am awakening with poor
+  sleep thereafter; client independently connected this to alcohol's
+  rebound effect.
+
+Clarification of legal history (correcting a therapist misstatement
+in session): The therapist misattributed a DUI to the client; the
+client immediately corrected the record. Client has NO DUI, no
+arrests, and no legal involvement (sole record: a 2019 parking
+ticket). The DUI belongs to a coworker (Rennick, late April). The
+client was separately stopped the same weekend for a broken taillight
+while sober and received only a verbal/fix-it warning; the emotional
+salience of that stop ("a preview, not a memory") was a motivator for
+seeking treatment. Therapist acknowledged and corrected the error in
+session.
+
+Family history: father with severe alcohol use (described as
+12-beers-nightly by the end), died at 61 with alcohol-related liver
+involvement; client reports an intrusive comparison thought when
+reaching for a fifth beer. To be explored in a future session.
+
+Motivation/stance: Client is explicitly ambivalent ("two guys...
+doing nothing wins the tie"). He stated in plain words that he is NOT
+committing to quitting and declined to frame abstinence as a goal.
+Treatment options were reviewed as a menu: client declined AA
+(secular preference, anticipates disengagement), declined medication
+(naltrexone mentioned by therapist as a physician-managed option —
+"not now," possibly later; no referral made), expressed genuine
+interest in SMART Recovery.
+
+Mood screening: reports overall stable mood; work stress described
+as engaging rather than distressing; fatigue from fragmented sleep.
+Denied depression ("tiredness, not darkness"). Denied suicidal
+ideation of any kind on direct screening; denied thoughts of
+self-harm.
+
+OBJECTIVE:
+Client attended telehealth session on time, appropriately dressed and
+groomed. Alert, engaged, humorous; established rapport evident.
+Speech normal in rate and tone. Mood euthymic by report and
+presentation; affect full range and congruent. Thought process
+linear, self-reflective, and notably data-oriented. No evidence of
+intoxication, withdrawal, psychosis, or mood episode. Insight
+developing and genuine (spontaneously identified tolerance drift,
+sleep rebound, and discrepancy between self-image and logged data).
+Judgment intact, including firm in-session self-advocacy (immediate
+correction of the therapist's factual error). Denied SI/HI.
+
+ASSESSMENT:
+34-year-old male with escalating, habitual alcohol use (~28-31
+standard drinks/week) in the context of night-shift work and social
+environment, presenting in a contemplation-to-early-preparation stage
+of change with genuine, well-articulated ambivalence. Screening this
+session is consistent with hazardous/at-risk drinking; endorsed
+features to date (tolerance, episodic use beyond intention, one brief
+unsuccessful Dry January abstinence attempt, some activity reduction) would
+support at most a provisional mild alcohol use disorder, pending
+continued assessment — notably, client denies withdrawal, craving,
+occupational impairment, drinking-and-driving, and morning use, and
+sustained a 9-day abstinence without physical symptoms. No confirmed
+AUD diagnosis is assigned at this time; diagnostic clarification to
+continue alongside the behavioral experiment. Elevated risk context:
+strong paternal history of severe alcohol use disorder with early
+alcohol-related death; alcohol-fragmented sleep (4am awakenings)
+affecting daytime function. Protective factors: stable employment
+with strong performance, supportive partner, engaged sibling
+relationship, strict no-driving-after-drinking practice, high
+self-monitoring capacity, treatment engagement. Mood screening
+unremarkable; no safety concerns. No legal involvement (therapist
+misstatement corrected on the record; see Subjective).
+
+PLAN:
+1. Two-week behavioral experiment, client-authored and explicitly
+   framed as data-gathering, not a quit attempt:
+   - Two alcohol-free nights weekly (Tuesday and Wednesday, client's
+     choice).
+   - Complete 7-day drink log (count and context), weekends included.
+   - Sleep metrics on dry nights: sleep-onset time, presence/absence
+     of ~4am awakening, next-morning 1-10 rating.
+   - Stimulus-substitution planning completed in session: client
+     identified 9pm replacement options (Tuesday disc-golf league
+     with brother, or substitute beverage in a familiar glass;
+     shower-then-tea routine post-shift Wednesdays) and will commit
+     one to writing before the first dry night; an unpleasant first
+     dry night reframed in advance as data, not failure.
+2. Attend ONE SMART Recovery meeting (Tuesday, community center on
+   Alder, or online) as an evaluative trial only — no membership or
+   ongoing commitment agreed; client to report impressions.
+3. Abstinence explicitly NOT a treatment goal at this time, per
+   client's stated position; therapist affirmed the no-pressure
+   frame. Goal-setting to be revisited based on experiment data.
+4. Medication (e.g., naltrexone via physician): declined for now;
+   client open to revisiting later if other approaches insufficient.
+   No referral placed.
+5. AA: declined; alternative (SMART) substituted per client
+   preference.
+6. Client plans to inform partner of the experiment on his own
+   terms.
+7. Future session agenda: father's alcohol history and its meaning
+   for the client; review of experiment data.
+8. Next appointment: two weeks, same time.
+
+Clinical Impressions:
+- Hazardous/at-risk alcohol use, escalating over 12-18 months;
+  R/O alcohol use disorder, mild (provisional; assessment ongoing —
+  no confirmed AUD diagnosis at this time)
+- Alcohol-related sleep-maintenance disruption (early-morning
+  awakenings)
+- Stage of change: contemplation, moving toward preparation
+
+Risk Assessment:
+Suicidal Ideation: Denied on direct screening; none reported
+Homicidal Ideation: None reported
+Self-Harm: None reported
+Withdrawal Risk: Low — no withdrawal history, no morning drinking,
+  prior 9-day abstinence without physical symptoms
+Driving Risk: Low — consistent rideshare use after drinking; no
+  DUI or legal history (client record clarified in session)
+Current Safety: No concerns
+
+Therapist Signature: Dr. Apocryphal Ashby, Psy.D.
+Date: June 18, 2024

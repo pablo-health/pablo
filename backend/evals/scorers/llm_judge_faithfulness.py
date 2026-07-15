@@ -37,12 +37,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default judge model. Gemini 3.5 GA's pro variant is not yet released
-# (only `gemini-3.5-flash` is GA as of 2026-05-23); flash is competitive
-# on the spike fixtures (caught all planted hallucinations + adjacent
-# overreach) and is cheap enough for routine schedule runs. Swap to
-# `gemini-3.5-pro` when it ships. Never use Gemini 2.5.
-_DEFAULT_JUDGE_MODEL = "gemini-3.5-flash"
+# Default judge model — a CROSS-FAMILY judge on purpose. The generator is
+# Gemini (``ai_model`` = gemini-3.x pro); a Gemini judge shares its family's
+# blind spots and stylistic priors, so a fabrication that "reads native" to
+# Gemini is likelier to slip past a Gemini judge (correlated error + self-
+# preference). Claude Haiku on Vertex is independent, cheap, and BAA-covered.
+# Provider-prefixed so ``resolve_structured_llm_gateway`` routes it to the
+# Claude gateway; override with --judge-model (e.g. ``gemini-3.5-flash``) to
+# compare or ensemble. Never use Gemini 2.5.
+_DEFAULT_JUDGE_MODEL = "anthropic:claude-haiku-4-5@20251001"
 
 # Require the four verdict keys. A bare ``{"type": "object"}`` is satisfied
 # by ``{}`` — and Gemini-3.5-flash *does* return an empty object on a large
@@ -86,7 +89,7 @@ You are a clinical-documentation auditor. Your job is to evaluate a SOAP note ge
 
 You must be CONSERVATIVE about hallucination calls: a paraphrase of something the patient said is not a hallucination; a reasonable clinical inference from explicit transcript content is not a hallucination. Flag only assertions that the transcript does not support — invented diagnoses, fabricated medications, escalated risk levels that the patient explicitly denied, treatment plans that were never discussed, etc.
 
-You must be CONSERVATIVE about omission calls too: clinical SOAP notes are necessarily brief; not every transcript detail must appear. Flag only facts the patient stated explicitly AND that are clinically load-bearing (diagnostic criteria, safety information, medication history, agreed-upon treatment plans).
+You must be CONSERVATIVE about omission calls too: clinical SOAP notes are necessarily brief; not every transcript detail must appear. Flag only facts the patient stated explicitly AND that are clinically load-bearing (diagnostic criteria, safety information, medication history, agreed-upon treatment plans). CRITICAL: before flagging a fact as missing, verify it is absent from EVERY section of the SOAP note — subjective, objective, assessment (including any risk_assessment field), and plan. Safety facts (suicidal ideation and its denial, self-harm history, medication decisions) are usually documented in the assessment/risk_assessment section; if the fact — or a clear paraphrase of it — appears anywhere in the note, it is NOT an omission. Do not flag a fact as missing because it is in a different section or worded differently than you expected.
 
 Return a single JSON object. Do not include any other text in your response."""  # noqa: E501
 
@@ -100,7 +103,14 @@ _JUDGE_USER_TEMPLATE = """\
 {reference_block}{directives_block}
 ## TASK
 
-Compare the GENERATED SOAP NOTE against the TRANSCRIPT (and the REFERENCE SOAP if provided).{directives_hint} Return JSON with this exact shape:
+Compare the GENERATED SOAP NOTE against the TRANSCRIPT (and the REFERENCE SOAP if provided).{directives_hint}
+
+Criticality rubric for omissions — apply it strictly, a SOAP note is necessarily selective:
+- "high": ONLY safety-critical or care-changing facts — suicidal/self-harm/homicidal ideation, intent, plan, OR an explicit denial thereof; a medication started/changed/stopped/refused; a diagnosis or diagnostic conclusion; an agreed treatment/safety plan; or a direct contradiction of the transcript. If omitting it could endanger the patient or mislead the next clinician, it is high.
+- "medium": clinically relevant but not safety-critical — a specific symptom, a piece of history, a stressor.
+- "low": demographic or contextual detail — ages, exact dates, names, session logistics. These are almost never worth flagging.
+
+Return JSON with this exact shape:
 
 {{
   "hallucinated_facts": [
@@ -184,7 +194,7 @@ def score(
     # Local import to keep the gateway off the module-load path so
     # eval-only consumers don't pay it during import.
     from backend.app.services.structured_llm_gateway import (  # noqa: PLC0415
-        get_default_structured_llm_gateway,
+        resolve_structured_llm_gateway,
     )
 
     reference_block = (
@@ -203,10 +213,13 @@ def score(
         directives_hint=_DIRECTIVES_HINT if directives else "",
     )
 
-    gw = gateway or get_default_structured_llm_gateway()
+    judge_model = model or _DEFAULT_JUDGE_MODEL
+    # Route by the judge model's provider prefix so a cross-family judge
+    # (``anthropic:claude-...``) uses the Claude-on-Vertex gateway, not Gemini.
+    gw = gateway or resolve_structured_llm_gateway(judge_model)
     try:
         completion = gw.complete_structured(
-            model=model or _DEFAULT_JUDGE_MODEL,
+            model=judge_model,
             system_prompt=_JUDGE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             response_schema=_JUDGE_RESPONSE_SCHEMA,

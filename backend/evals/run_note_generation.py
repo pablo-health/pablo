@@ -127,21 +127,37 @@ def _generate_soap(case: dict[str, Any], model: str | None) -> str:
     return json.dumps(note.content, indent=2)
 
 
-def _critical_failures(verdict: JudgeVerdict) -> list[str]:
-    """The subset of findings that trip the risk-critical gate.
+def _hard_failures(verdict: JudgeVerdict) -> list[str]:
+    """The findings that trip the hard gate: HALLUCINATIONS (fabrication).
 
-    Any hallucination located in the Assessment (where risk/diagnosis lives) and
-    any high-criticality omission are the failures we refuse to ship past — they
-    are the SI-escalation / fabricated-med / invented-dx class the directives target.
+    A fabricated fact — an invented diagnosis, a med that was never prescribed,
+    an escalation of denied suicidal ideation — is the dangerous, ship-blocking
+    failure, and it's what the judge detects reliably. Assessment-located
+    hallucinations are the worst (risk/diagnosis), so they're labeled as such.
+
+    Omissions are deliberately NOT gated here: on long notes the judge's
+    omission *recall* is noisy (it flags safety facts as missing that are
+    actually documented in the risk_assessment section), so a high-criticality
+    omission is surfaced as *advisory* (see ``_advisory_omissions``) for human
+    review, not an automatic fail. The gate protects against the pipeline
+    starting to invent things — exactly the regression a thinking-budget change
+    could introduce.
     """
     failures: list[str] = []
     for h in verdict.hallucinated_facts:
-        if str(h.get("where", "")).lower() == "assessment":
-            failures.append(f"assessment hallucination: {str(h.get('claim', ''))[:120]}")
-    for m in verdict.missing_facts:
-        if str(m.get("criticality", "")).lower() == "high":
-            failures.append(f"high-criticality omission: {str(m.get('fact', ''))[:120]}")
+        where = str(h.get("where", "")).lower()
+        label = "ASSESSMENT hallucination" if where == "assessment" else f"hallucination ({where})"
+        failures.append(f"{label}: {str(h.get('claim', ''))[:120]}")
     return failures
+
+
+def _advisory_omissions(verdict: JudgeVerdict) -> list[str]:
+    """High-criticality omissions — reported for review, not gated (see above)."""
+    return [
+        f"high-crit omission: {str(m.get('fact', ''))[:120]}"
+        for m in verdict.missing_facts
+        if str(m.get("criticality", "")).lower() == "high"
+    ]
 
 
 def _score_case(case: dict[str, Any], model: str | None, judge_model: str | None) -> dict[str, Any]:
@@ -171,22 +187,21 @@ def _score_case(case: dict[str, Any], model: str | None, judge_model: str | None
         directives=directives,
         model=judge_model,
     )
-    critical = _critical_failures(verdict)
-    passed = verdict.passes and not critical
+    hard = _hard_failures(verdict)
+    advisory = _advisory_omissions(verdict)
+    passed = not hard  # gate on fabrication; omissions are advisory only
 
     status = "PASS" if passed else "FAIL"
     print(
         f"  [{status}] hallucinations={len(verdict.hallucinated_facts)} "
-        f"missing={len(verdict.missing_facts)} critical={len(critical)}"
+        f"(gate) | missing={len(verdict.missing_facts)} advisory-high={len(advisory)}"
     )
-    for c in critical:
+    for c in hard:
         print(f"    !! {c}")
-    if not verdict.passes and not critical:
-        # Failed the judge's own pass bit without tripping our critical gate —
-        # surface why so a reviewer can see the non-critical misses.
-        print(f"    judge: {verdict.judge_notes[:200]}")
-        if not verdict.judge_notes:
-            print(f"    judge raw: {verdict.raw_response[:400]!r}")
+    for a in advisory:
+        print(f"    ~ {a}")
+    if verdict.raw_response == "{}" or (not verdict.judge_notes and not verdict.hallucinated_facts):
+        print(f"    judge raw: {verdict.raw_response[:300]!r}")
 
     return {
         "id": case_id,
@@ -197,7 +212,8 @@ def _score_case(case: dict[str, Any], model: str | None, judge_model: str | None
         "generated_chars": len(generated_soap),
         "hallucinated_facts": verdict.hallucinated_facts,
         "missing_facts": verdict.missing_facts,
-        "critical_failures": critical,
+        "hard_failures": hard,
+        "advisory_omissions": advisory,
         "judge_notes": verdict.judge_notes,
     }
 
@@ -248,8 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"SUMMARY: {n_passed}/{len(results)} passed")
     for r in results:
         print(
-            f"  [{'PASS' if r['passed'] else 'FAIL'}] {r['id']}"
-            f" ({r['gen_seconds']}s, {len(r['critical_failures'])} critical)"
+            f"  [{'PASS' if r['passed'] else 'FAIL'}] {r['id']} ({r['gen_seconds']}s, "
+            f"{len(r['hard_failures'])} halluc, {len(r['advisory_omissions'])} adv-omit)"
         )
     print("=" * 60)
 

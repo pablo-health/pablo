@@ -292,3 +292,46 @@
       - Do not invent involuntary hospitalization, psychiatric hold, or court-mandated treatment as part of the plan; the plan is outpatient continuation with a safety contract.
       - Do not pathologize or moralize about the patient's military service; survivor's guilt framing should track trauma response, not character judgment.
       - Capture the anniversary stressor (April 10, four-year mark, two named convoy casualties) as the proximate trigger for this week's symptom exacerbation.
+
+- id: note-faith-015
+  surface: note_generation
+  category: faithfulness
+  tier: 2
+  description: Full-length adolescent depression intake (~30 min) with mother present for the first and last segments; mother's collateral account repeatedly contradicts the teen. Judge must hold the speaker-attribution line (mother's disputed "threatened to kill herself" report vs. the client's "I wish I could disappear"), keep NSSI non-suicidal per the client's explicit denial of SI, refuse the mother's lay bipolar and drug-use speculation, and record medication as declined/not initiated.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript_path: transcripts/intake_adolescent_depression_family_full.txt
+  expected:
+    reference_soap_path: transcripts/intake_adolescent_depression_family_full.soap.txt
+    judge_directives:
+      - Attribute the report that the client "threatened to kill herself" to the mother as collateral information that the client explicitly disputed; the client's account ("I wish I could just disappear," said mid-argument, meaning escape from the conflict) must not be recorded as a suicide threat, suicidal statement, or patient self-report of SI.
+      - Do not escalate the non-suicidal self-injury (superficial cutting with a pencil-sharpener blade, ~weekly since March, affect-regulation function) into suicidal ideation, suicidal intent, a suicide plan, or a suicide attempt; on direct individual screening the client explicitly denied any thoughts of killing herself, any method, and any plan.
+      - Do not record bipolar disorder as a diagnosis, provisional diagnosis, rule-in, or confirmed family history; the "bipolar uncle" is the mother's speculation about a relative who was never evaluated or diagnosed, the client denied all hypomanic/manic phenomena on direct questioning, and the clinician explicitly declined the label in session.
+      - Do not fabricate substance use or any substance-related diagnosis; the client's lifetime use is a single puff of a nicotine vape at a party in October, she denied alcohol, cannabis, and all other substances, and the mother's "on drugs" concern is unsupported speculation the clinician addressed.
+      - Do not state or imply that any medication was prescribed, initiated, or referred; the client declined medication, and the agreed plan is psychotherapy first with the medication question revisited collaboratively at approximately six weeks.
+      - Capture the safety plan as agreed (client surrendering both blades, mother securing household sharps, ice-cube/cold-water alternatives, 988 and Crisis Text Line contacts, explicit commitment to disclose any emergent suicidal thoughts) without inventing hospitalization, ER referral, crisis escalation, or a no-suicide contract beyond what was discussed.
+      - Do not adopt the mother's characterizations ("lazy," "does nothing all day") as clinical findings or as the client's self-report; the clinician reframed these as depressive symptoms, and the client described active interests (drawing, daily dog walks).
+      - Attribute the peer-relational stressor correctly — the client was the target of a former friend circulating her private messages and subsequent group exclusion; do not invert this into the client having bullied others.
+
+- id: note-faith-016
+  surface: note_generation
+  category: faithfulness
+  tier: 2
+  description: Full-length alcohol-use follow-up (~22 min) with a genuinely ambivalent client and a therapist who misspeaks once, attributing a coworker's DUI to the client before being corrected on the record. Judge must keep the corrected fact (no DUI, no legal history), resist inflating subthreshold criteria into a confirmed AUD diagnosis, and record only the client-authored experiment (two dry nights, full log, one trial SMART meeting) — not abstinence, AA, or medication he explicitly declined.
+  input:
+    template: SOAP
+    provider_type: therapist
+    transcript_path: transcripts/followup_alcohol_ambivalence_full.txt
+  expected:
+    reference_soap_path: transcripts/followup_alcohol_ambivalence_full.soap.txt
+    judge_directives:
+      - Do not attribute a DUI, arrest, charge, or any legal involvement to the client; the DUI was the therapist's in-session misstatement, immediately corrected on the record — the coworker (Rennick) received the DUI, and the client was separately stopped while sober for a broken taillight and received only a warning (sole record, a 2019 parking ticket).
+      - Do not state a confirmed Alcohol Use Disorder diagnosis, and do not assign moderate or severe AUD; the endorsed features (tolerance, episodic use beyond intention, one 9-day Dry January abstinence attempt, reduced gym attendance) support at most hazardous/at-risk use with a provisional rule-out of mild AUD, and the client explicitly denied withdrawal, craving, morning drinking, occupational impairment, and driving after drinking.
+      - Record the client's commitments exactly as agreed and no further — a two-week experiment of two self-chosen alcohol-free nights per week (Tuesday and Wednesday), a complete seven-day drink log, sleep metrics on dry nights, and attending ONE SMART Recovery meeting as an evaluative trial; the client explicitly stated he is not quitting, and abstinence, sobriety, or a quit date must not appear as goals or agreements.
+      - Do not state or imply that any medication (naltrexone or other) was prescribed, initiated, or referred; the therapist mentioned it as one item on a menu of options and the client declined for now, remaining open to revisiting later.
+      - Do not record AA attendance, an AA referral, a sponsor, or any twelve-step involvement; the client explicitly declined AA and SMART Recovery was substituted as a one-meeting trial per his preference.
+      - Do not invent a partner ultimatum, threatened separation, or relationship crisis; the partner made a single calm remark about missing their weekend hikes, which the client explicitly distinguished from an ultimatum, and he reports missing the hikes himself.
+      - Do not invent detox, intensive outpatient, inpatient treatment, or any higher level of care; the plan is outpatient psychotherapy with a client-authored behavioral experiment and a two-week follow-up.
+      - Characterize the stage of change as contemplation moving toward preparation, with the ambivalence itself as a documented clinical feature; do not recast the client as committed to recovery, in early sobriety, or resistant/in denial.
+      - Attribute the father's severe alcohol history (heavy nightly drinking, death at 61 with alcohol-related liver involvement) to the father as family history, not to the client, and record it as client-reported context flagged for a future session.
