@@ -489,6 +489,19 @@ class TestParseAttributionResponse:
         assert claims["subjective.chief_complaint"].source_segment_ids == [0, 3]
         assert claims["plan.next_session"].source_segment_ids == [5]
 
+    def test_parse_structured_attributions_array(self) -> None:
+        # The structured-output shape the attribution schema now pins down:
+        # a bare {"type": "object"} schema made the model return {} on a long
+        # transcript (zero grounding); the explicit array shape is reliable.
+        claims = {
+            "subjective.chief_complaint": SOAPSentence(text="Anxiety."),
+            "plan.next_session": SOAPSentence(text="One week."),
+        }
+        response = '{"attributions": [{"claim": 1, "segments": [0, 3]}, {"claim": 2, "segments": [5]}]}'
+        parse_attribution_response(response, claims)
+        assert claims["subjective.chief_complaint"].source_segment_ids == [0, 3]
+        assert claims["plan.next_session"].source_segment_ids == [5]
+
     def test_parse_response_with_code_block(self) -> None:
         claims = {
             "subjective.chief_complaint": SOAPSentence(text="Anxiety."),

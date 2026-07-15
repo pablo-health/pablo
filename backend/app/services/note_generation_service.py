@@ -59,11 +59,29 @@ _DEFAULT_GENERATION_PROMPT_SYSTEM = (
     "inferred from the transcript, return an empty string (or empty list "
     "for list-shaped fields)."
 )
-_SOAP_ATTRIBUTION_SCHEMA: dict[str, Any] = {"type": "object"}
-"""Permissive schema for Call-2. The response is a map of arbitrary
-claim numbers → arrays of segment ids; the registered SDK schema isn't
-expressive enough to constrain that shape, so we accept any object and
-let :func:`parse_attribution_response` validate."""
+_SOAP_ATTRIBUTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "attributions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "integer"},
+                    "segments": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["claim", "segments"],
+            },
+        }
+    },
+    "required": ["attributions"],
+}
+"""Structured schema for Call-2. A map of arbitrary claim-number keys →
+segment-id arrays can't be constrained by the SDK's controlled-generation
+schema, and a bare ``{"type": "object"}`` makes the model return ``{}`` on a
+long transcript (silent all-fail). So the response is an explicit list of
+``{claim, segments}`` objects — a shape the schema can pin down —
+which :func:`parse_attribution_response` normalizes back into the map."""
 
 
 @dataclass
