@@ -17,6 +17,8 @@ def initialize_firebase_app() -> firebase_admin.App:
 
     Credential strategy:
     - Emulator (FIREBASE_AUTH_EMULATOR_HOST set): no credentials needed
+    - Workload Identity Federation (firebase_workload_identity): keyless creds
+      for non-GCP hosts (e.g. AWS) that have no Application Default Credentials
     - Otherwise: Application Default Credentials (ADC)
 
     Note: Pablo's multi-tenancy is resolved from the user's email to a
@@ -33,6 +35,22 @@ def initialize_firebase_app() -> firebase_admin.App:
     if os.environ.get("FIREBASE_AUTH_EMULATOR_HOST"):
         # Emulator doesn't need real credentials
         return firebase_admin.initialize_app(options=options)
+
+    if settings.firebase_workload_identity:
+        # Non-GCP hosts (AWS) have no ADC — federate the runtime's cloud
+        # identity to impersonate a service account instead.
+        from .firebase_wif import WorkloadIdentityCredential  # noqa: PLC0415
+
+        wif_cred = WorkloadIdentityCredential(
+            audience=settings.firebase_wif_audience,
+            sa_impersonation_url=settings.firebase_wif_sa_impersonation_url,
+            project_id=project_id,
+        )
+        # external_account creds aren't a Signing type, so custom-token minting
+        # (passkeys) needs an explicit serviceAccountId — that routes signing
+        # through IAM signBlob using the WIF credential.
+        options["serviceAccountId"] = wif_cred.service_account_email
+        return firebase_admin.initialize_app(wif_cred, options)
 
     cred = credentials.ApplicationDefault()
     return firebase_admin.initialize_app(cred, options)

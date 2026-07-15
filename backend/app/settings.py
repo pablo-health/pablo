@@ -577,6 +577,25 @@ class Settings(BaseSettings):
         description="Firebase project ID for token verification (falls back to gcp_project_id)",
     )
 
+    # Keyless Firebase Admin credentials for hosts without Application Default
+    # Credentials (e.g. running on AWS, not GCP). When enabled, the Firebase
+    # Admin SDK authenticates via Workload Identity Federation instead of ADC —
+    # the runtime's cloud identity is federated to impersonate a service
+    # account, so token verification AND custom-token signing (passkeys) work
+    # without a static key. Default off; GCP deployments keep using ADC.
+    firebase_workload_identity: bool = Field(
+        default=False,
+        description="Use Workload Identity Federation for Firebase Admin creds (non-GCP hosts)",
+    )
+    firebase_wif_audience: str = Field(
+        default="",
+        description="WIF provider audience (//iam.googleapis.com/projects/.../providers/...)",
+    )
+    firebase_wif_sa_impersonation_url: str = Field(
+        default="",
+        description="IAM Credentials generateAccessToken URL for the impersonated service account",
+    )
+
     # Upload Settings
     max_upload_mb: int = Field(
         default=30,
