@@ -188,7 +188,7 @@ class RegistryNoteGenerationService(NoteGenerationService):
         system_prompt: str,
         user_prompt: str,
         response_schema: dict[str, Any],
-        temperature: float = 0.2,
+        temperature: float | None = None,
     ) -> StructuredCompletion:
         """Run a structured note completion, retrying once if truncated.
 
@@ -200,7 +200,12 @@ class RegistryNoteGenerationService(NoteGenerationService):
         failure (or a second truncation) raises ``ValueError`` so the caller's
         SOAP-generation-failed path runs — preserving the existing log line.
         """
-        base_budget = get_settings().note_max_output_tokens
+        settings = get_settings()
+        base_budget = settings.note_max_output_tokens
+        # A clinical note is faithful extraction, not creative writing — default
+        # to the (deterministic) configured note temperature unless a caller
+        # overrides it explicitly.
+        temp = temperature if temperature is not None else settings.note_generation_temperature
         budgets = (base_budget, base_budget * 2)
         last_truncation: StructuredOutputTruncatedError | None = None
         for budget in budgets:
@@ -211,7 +216,8 @@ class RegistryNoteGenerationService(NoteGenerationService):
                     user_prompt=user_prompt,
                     response_schema=response_schema,
                     max_output_tokens=budget,
-                    temperature=temperature,
+                    temperature=temp,
+                    thinking_budget=settings.note_thinking_budget,
                 )
             except StructuredOutputTruncatedError as exc:
                 last_truncation = exc

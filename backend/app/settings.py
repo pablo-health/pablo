@@ -918,6 +918,32 @@ class Settings(BaseSettings):
             "this value. Tune per-deployment via NOTE_MAX_OUTPUT_TOKENS."
         ),
     )
+    note_generation_temperature: float = Field(
+        default=0.0,
+        description=(
+            "Sampling temperature for structured note (SOAP) generation. A "
+            "clinical note is faithful extraction, not creative writing: the "
+            "same transcript should yield the same note, and any sampling "
+            "variance is a chance to draw an unfaithful note (e.g. inflating a "
+            "diagnosis). Default 0.0 for reproducibility; source attribution is "
+            "already deterministic. Tune via NOTE_GENERATION_TEMPERATURE."
+        ),
+    )
+    note_thinking_budget: int | None = Field(
+        default=None,
+        description=(
+            "Reasoning-token cap for SOAP (Call-1) generation. None uses the "
+            "model's default dynamic thinking, which on a reasoning model (e.g. "
+            "gemini-3.x pro) can spend 40-100s deliberating on a task the small, "
+            "flat SOAP schema does not require — the dominant latency cost. A "
+            "cap looks tempting but a faithfulness-eval sweep found it both "
+            "DEGRADES faithfulness (the model needs the reasoning to resist "
+            "inflating a diagnosis on adversarial transcripts) AND does not "
+            "reduce latency (a low cap triggers a truncation retry, doubling "
+            "it). Left uncapped by default; validate against the note-generation "
+            "faithfulness eval before changing. Tune via NOTE_THINKING_BUDGET."
+        ),
+    )
     note_source_attribution_max_output_tokens: int = Field(
         default=32768,
         description=(
