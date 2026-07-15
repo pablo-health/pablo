@@ -41,6 +41,14 @@ from .vertex_client import anthropic_vertex_client, vertex_genai_client
 
 logger = logging.getLogger(__name__)
 
+# Structured generation runs off the request thread (a Cloud Tasks worker, well
+# inside the 300s request budget), and a reasoning model working a real
+# multi-turn transcript into a full SOAP note routinely spends more than the
+# 60s default client read timeout — long enough to trip an httpcore.ReadTimeout
+# and fail the note. Give these one-shot structured calls a generous read
+# timeout so genuine generation completes instead of timing out.
+_STRUCTURED_LLM_TIMEOUT_SECONDS = 180.0
+
 # Mistral publisher models on Vertex are reached via the regional rawPredict
 # endpoint (no global endpoint); default to us-central1, overridable.
 _MISTRAL_VERTEX_REGION = os.environ.get("MISTRAL_VERTEX_REGION", "us-central1")
@@ -131,7 +139,7 @@ class GeminiStructuredLLMGateway(StructuredLLMGateway):
     def _get_client(self) -> Any:
         """Lazily build the Vertex client (shared factory)."""
         if self._client is None:
-            self._client = vertex_genai_client()
+            self._client = vertex_genai_client(timeout_seconds=_STRUCTURED_LLM_TIMEOUT_SECONDS)
         return self._client
 
     def complete_structured(
@@ -260,7 +268,7 @@ class AnthropicStructuredLLMGateway(StructuredLLMGateway):
 
     def _get_client(self) -> Any:
         if self._client is None:
-            self._client = anthropic_vertex_client()
+            self._client = anthropic_vertex_client(timeout_seconds=_STRUCTURED_LLM_TIMEOUT_SECONDS)
         return self._client
 
     def complete_structured(
