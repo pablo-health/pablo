@@ -3,6 +3,7 @@
 """Source attribution service for linking SOAP claims to transcript segments."""
 
 import json
+from typing import Any
 
 from ..models import (
     SOAPNote,
@@ -110,8 +111,9 @@ Transcript:
 Claims:
 {claims_text}
 
-Return ONLY valid JSON mapping claim number (as string) to array of segment indices:
-{{"1": [0, 3], "2": [1, 8], ...}}"""
+Return ONLY valid JSON with an "attributions" array, one entry per claim, \
+each giving the claim number and its supporting segment indices:
+{{"attributions": [{{"claim": 1, "segments": [0, 3]}}, {{"claim": 2, "segments": [1, 8]}}]}}"""
 
 
 def parse_attribution_response(
@@ -130,8 +132,22 @@ def parse_attribution_response(
         return
 
     try:
-        mapping: dict[str, list[int | str]] = json.loads(json_str)
+        parsed: Any = json.loads(json_str)
     except (json.JSONDecodeError, ValueError):
+        return
+
+    # Preferred shape (structured output): {"attributions": [{"claim": n,
+    # "segments": [...]}, ...]}. Normalize it into the legacy claim→segments
+    # map. Fall back to the bare map form for backward compatibility.
+    mapping: dict[str, list[int | str]]
+    if isinstance(parsed, dict) and isinstance(parsed.get("attributions"), list):
+        mapping = {}
+        for entry in parsed["attributions"]:
+            if isinstance(entry, dict) and "claim" in entry and "segments" in entry:
+                mapping[str(entry["claim"])] = entry["segments"]
+    elif isinstance(parsed, dict):
+        mapping = parsed
+    else:
         return
 
     key_list = list(claims.keys())
