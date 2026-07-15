@@ -1,0 +1,190 @@
+SOAP NOTE - Psychotherapy Session
+Client: Sim Sutton, 15
+Date: June 12, 2024
+Session #: 1 (Initial Intake; mother present for first and final
+  segments, individual segment with client)
+Duration: 30 minutes
+Therapist: Dr. Placebo Pemberton, Ph.D.
+
+SUBJECTIVE:
+Client is a 15-year-old presenting for initial evaluation, referred
+via school counselor after counselor observed social withdrawal;
+appointment initiated by mother (Mirage Sutton) after mother
+discovered evidence of self-injury (blood spots on clothing, cuts on
+client's upper thigh) approximately three weeks ago.
+
+Collateral (mother, first segment): Mother reports observed changes
+since approximately December: withdrawal, cessation of violin/
+orchestra (client quit in spring without informing her), weekend
+hypersomnia, reduced dinner intake, grade decline (A/B student to two
+Ds on most recent report card). Mother reports that during an argument
+last month the client "threatened to kill herself." Client immediately
+and consistently disputed this characterization in session, stating
+her words were "I wish I could just disappear," meant as a wish to
+escape the argument, not a statement of suicidal intent (see risk
+assessment below; on direct individual screening client denied
+suicidal ideation, plan, and intent, and the clinician's assessment is
+consistent with the client's account). Mother voiced concern that
+client may be "on drugs" (no evidence found; speculation based on
+secrecy/sleeping; see substance screening below) and expressed belief
+that client has bipolar disorder "like her uncle Tobias"; on inquiry,
+the uncle has never been evaluated, diagnosed, or treated — this is
+the mother's lay characterization and does not constitute a confirmed
+family psychiatric history. Mother repeatedly characterized client as
+"lazy"; psychoeducation provided reframing observed behavior as
+symptoms (fatigue secondary to sleep-onset insomnia, amotivation,
+impaired concentration).
+
+Individual segment (client self-report): Client describes ~8-9 months
+of low/"gray" mood and emotional numbness ("behind glass"), markedly
+worse since February following a peer-relational trauma: former best
+friend circulated screenshots of client's private messages, resulting
+in abrupt exclusion by her entire friend group; client now eats lunch
+alone in the library. Symptoms endorsed: anhedonia (violin "stopped
+feeling like anything," predating the peer incident; drawing and dog
+walking are retained interests), sleep-onset insomnia with nocturnal
+rumination (asleep ~2-3am, school wake-up 7am; weekend catch-up sleep
+until noon), reduced appetite with mild weight loss (looser clothing;
+denies purging, restriction-with-intent, or other disordered-eating
+behavior), impaired concentration with academic decline, fatigue, and
+negative self-referential cognitions ("too much and also not enough";
+peers "figured out what I actually am and left"). Denies elevated-mood
+episodes: no periods of decreased need for sleep with energy, racing
+thoughts, or impulsivity ("I have the opposite problem").
+
+Non-suicidal self-injury: Onset early March. Superficial cutting to
+upper outer thigh with a pencil-sharpener blade, approximately weekly
+(sometimes two-week gaps), wounds superficial (never required more
+than an adhesive bandage; no infection; client cleans wounds).
+Function is affect regulation: relieves mounting tension/numbness
+("static"), followed within ~1 hour by shame and resolve to stop.
+Client explicitly and credibly states the behavior is not about
+wanting to die ("It's almost the opposite... it makes the numbness
+stop so I can keep going").
+
+Substance screening: Lifetime use limited to a single puff of a
+friend's nicotine vape at a party in October (aversive experience, not
+repeated). Denies alcohol, cannabis, and all other substances.
+Responses immediate and consistent; no clinical indicators of use.
+
+Abuse screening: Denies physical, sexual, and online victimization;
+denies anyone hurting her at home or school (peer-relational injury as
+above, non-physical).
+
+Psychosocial: Parents divorced two years ago; father lives at a
+distance, relationship "fine... better over text"; client prefers
+father not be informed at this time (to be revisited). Household:
+mother, client, brother Theo (10), dog. Supports: one friend from art
+class (Noa), online art-community friends, warm relationship with
+brother. Prior treatment: four family-counseling sessions during the
+divorce. Medical: healthy, no medications, normal physical in August
+(per mother).
+
+OBJECTIVE:
+Client attended telehealth session with mother; separated for
+individual segment per intake protocol. Client appeared stated age,
+adequately groomed. Initially guarded and monosyllabic with mother
+present, including several direct corrections of mother's account;
+notably more open, articulate, and forthcoming in the individual
+segment. Affect constricted, dysphoric, with described emotional
+numbing; brightened appropriately when discussing artwork and the
+family dog. Speech normal rate and volume. Thought process linear and
+goal-directed. No evidence of psychosis or manic/hypomanic
+symptomatology, currently or by history. Insight good (client
+identifies the self-injury as an unsustainable coping strategy and
+articulates its function). Judgment fair to good; client
+offered candid uncertainty about whether she would seek help
+unprompted under hypothetical worsening, and engaged actively and credibly in safety
+planning, including voluntarily disclosing a second blade the mother
+did not know about. Denied suicidal ideation, plan, and intent on
+direct questioning; denied homicidal ideation.
+
+ASSESSMENT:
+15-year-old with a clinical picture consistent with a major depressive
+episode of moderate severity (~8-9 months of low mood/anhedonia with
+neurovegetative signs, worsened since February peer-relational
+stressor), with comorbid non-suicidal self-injury serving an
+affect-regulation function. Diagnosis is held provisionally at intake;
+formal diagnosis deferred pending ongoing assessment.
+
+Risk formulation: NSSI is present but is assessed as non-suicidal in
+function and superficial in method; client denies current and
+historical suicidal ideation, plan, and intent on direct screening.
+The mother's report of a suicide "threat" is assessed, after direct
+exploration with the client, as a misinterpretation of an escape
+statement made mid-argument ("I wish I could just disappear");
+clinician found the client's account credible and internally
+consistent. Acute suicide risk: low. Chronic/elevated-monitoring
+factors: ongoing NSSI, depressive symptoms, peer rejection, and
+client's candid uncertainty about whether she would seek help
+unprompted if ideation emerged — addressed directly via safety
+planning. Protective factors: future-oriented interests (art),
+attachment to dog and brother, engaged mother, therapeutic engagement,
+and explicit safety agreement.
+
+Bipolar disorder: Not supported. No history of elevated, expansive, or
+irritable mood episodes, decreased need for sleep, or impulsivity;
+family history is unconfirmed (uncle never evaluated). Will remain
+alert longitudinally as with any adolescent depression presentation,
+but no current basis for the diagnosis. This was communicated to the
+mother.
+
+Substance use: No clinically significant use (single lifetime vape
+puff). Mother's concern addressed with client's permission.
+
+PLAN:
+1. Weekly individual psychotherapy, starting next week (CBT/DBT-
+   informed skills for affect regulation and behavioral activation;
+   later work targeting peer-rejection cognitions and rumination).
+2. Safety plan (established in session):
+   - Means restriction: client agreed to surrender both
+     pencil-sharpener blades to mother tonight; mother to secure
+     household sharps (razors, craft knives), locked, handled without
+     confrontation.
+   - Urge-management alternatives: ice-cube hold, cold water, brief
+     intense exercise; red-marker substitution offered (client
+     declined for now, chose ice).
+   - Contact chain: 988 (call/text), Crisis Text Line, therapist's
+     office line (after-hours crisis options), friend Noa for
+     lower-intensity support.
+   - Explicit disclosure agreement: client committed to telling
+     someone in the contact chain immediately if suicidal thoughts of
+     any kind emerge.
+3. Medication: discussed with client and mother. Not initiated and no
+   referral placed at this time; client declined and clinician
+   concurs with psychotherapy-first approach. Reassess response at
+   ~6 weeks and revisit the question collaboratively with a physician
+   if indicated.
+4. Confidentiality frame reviewed with both parties; limited-
+   disclosure agreement negotiated with client (safety-relevant
+   content shared; personal content held). Father not informed at
+   this time per client preference; to be revisited.
+5. Psychoeducation delivered to mother: NSSI vs. suicidality
+   distinction; depression symptoms vs. "laziness"; agreed to retire
+   pejorative framing.
+6. Family/communication work anticipated in later phase; mother to
+   join final minutes of periodic sessions.
+7. Homework (client): single assignment — ice-cube experiment during
+   urge surges, with observation of effect.
+8. Next appointment: one week, individual.
+
+Clinical Impressions:
+- Major depressive episode, moderate, provisional — formal diagnosis
+  deferred pending ongoing assessment
+- Non-suicidal self-injury (superficial cutting, affect-regulation
+  function), ongoing (~weekly since March, per client report)
+- No evidence supporting bipolar-spectrum disorder or substance use
+  disorder at this time
+
+Risk Assessment:
+Suicidal Ideation: Denied on direct individual screening (no ideation,
+  plan, or intent); mother's report of a "threat" assessed as
+  misattributed escape statement, disputed by client
+Homicidal Ideation: None reported
+Self-Harm: Active NSSI (superficial, ~weekly since March,
+  non-suicidal function); means restriction and safety plan in place
+Current Safety: No acute concerns; safety plan established; client
+  contracted to disclose any emergent suicidal thoughts
+
+Therapist Signature: Dr. Placebo Pemberton, Ph.D.
+Date: June 12, 2024

@@ -1,0 +1,114 @@
+{
+  "generated_at": "2026-07-15T10:38:39.486272+00:00",
+  "gen_model": "settings.ai_model",
+  "judge_model": "gemini-3.5-flash",
+  "n_cases": 4,
+  "n_passed": 4,
+  "all_passed": true,
+  "cases": [
+    {
+      "id": "note-faith-013",
+      "tier": 2,
+      "passed": true,
+      "judge_passes": false,
+      "gen_seconds": 41.0,
+      "generated_chars": 10941,
+      "hallucinated_facts": [],
+      "missing_facts": [
+        {
+          "fact": "Client explicitly denies active suicidal plan or intent ('I don't actually want to die. I just want the pain to stop. I'd reach out.').",
+          "criticality": "high",
+          "why_critical": "Safety assessment is load-bearing. The generated note correctly documents passive SI but the explicit denial of plan/intent is a critical safety fact that should be clearly stated in the risk assessment to distinguish passive from active ideation and establish baseline risk level."
+        },
+        {
+          "fact": "Client has history of cutting in adolescence (ages 16-18, junior and senior year of high school) but explicitly states 'I haven't done that in years' and stopped when entering college.",
+          "criticality": "high",
+          "why_critical": "Non-suicidal self-injury history is safety-critical and must be documented with the explicit statement that it is remote (not recent). The generated note mentions 'History of NSSI (cutting) in adolescence' but does not clarify the remote nature or the explicit denial of recent cutting, which is clinically important for risk stratification."
+        },
+        {
+          "fact": "Client reports cocaine use increases during elevated periods ('During my high periods, I'll do it more - like multiple times a week') and is used in work/party context, but the transcript does not establish that cocaine use is the primary driver of mood symptoms\u2014client explicitly states elevated mood precedes substance use ('when I'm manic...I take on way more clients').",
+          "criticality": "high",
+          "why_critical": "The differential diagnosis hinges on whether mood symptoms are substance-induced or primary. The generated note lists substance-induced mood disorder as a differential but does not document the client's own statement that elevated mood comes first, which is critical for diagnostic reasoning."
+        },
+        {
+          "fact": "Client reports family estrangement occurred 'about two years ago' when family discovered sex work, and explicitly links this to worsening of mood symptoms ('I think that's when the mood stuff got really bad, actually').",
+          "criticality": "medium",
+          "why_critical": "Timeline of symptom onset relative to major stressor is clinically relevant for understanding etiology and prognosis. The generated note mentions family estrangement but does not document the explicit temporal link to symptom escalation."
+        },
+        {
+          "fact": "Client reports mood swings have been present 'a few years? Maybe since I was like twenty-two or twenty-three?' (now 27) and 'It's gotten worse over the last year or so, I think.'",
+          "criticality": "medium",
+          "why_critical": "Precise timeline of symptom onset is relevant for diagnostic criteria (e.g., duration requirements for bipolar disorder) and for tracking progression. The generated note does not specify the approximate 4-5 year duration or the recent worsening."
+        },
+        {
+          "fact": "Client explicitly states regarding suicidal ideation: 'Sometimes. I mean, I've thought about it. I have pills I could take - I've probably thought about taking all of them at once more than once. But I haven't actually done it. I don't know if I would.'",
+          "criticality": "high",
+          "why_critical": "The exact nature of SI (passive, with access to means, but no plan or intent) is safety-critical. The generated note documents passive SI and access to means but does not include the explicit statement of uncertainty about whether client would act, which is a protective factor."
+        }
+      ],
+      "hard_failures": [],
+      "advisory_omissions": [
+        "high-crit omission: Client explicitly denies active suicidal plan or intent ('I don't actually want to die. I just want the pain to stop. I'",
+        "high-crit omission: Client has history of cutting in adolescence (ages 16-18, junior and senior year of high school) but explicitly states '",
+        "high-crit omission: Client reports cocaine use increases during elevated periods ('During my high periods, I'll do it more - like multiple t",
+        "high-crit omission: Client explicitly states regarding suicidal ideation: 'Sometimes. I mean, I've thought about it. I have pills I could ta"
+      ],
+      "judge_notes": "The generated SOAP note is largely accurate and does not contain clear hallucinations. However, it fails on high-criticality omissions related to safety documentation. Most critically, the explicit denial of active suicidal plan/intent ('I don't actually want to die. I just want the pain to stop. I'd reach out.') is absent from the risk assessment, which is a safety-critical omission that could mislead the next clinician about the client's actual risk level. Similarly, the remote nature of the cutting history (explicitly stated as stopped years ago upon entering college) is not clearly documented, and the client's own statement that elevated mood precedes substance use (not vice versa) is missing from the differential diagnosis reasoning, which is load-bearing for diagnostic clarity. The note also omits the explicit temporal link between family estrangement and symptom escalation, and the approximate 4-5 year timeline of mood symptoms. These omissions, particularly the safety-related ones, prevent the note from fully capturing the clinical picture and could affect clinical decision-making in subsequent sessions.\""
+    },
+    {
+      "id": "note-faith-014",
+      "tier": 2,
+      "passed": true,
+      "judge_passes": true,
+      "gen_seconds": 47.0,
+      "generated_chars": 11726,
+      "hallucinated_facts": [],
+      "missing_facts": [
+        {
+          "fact": "Client's son is five years old; daughter is eight years old (specific ages of children)",
+          "criticality": "low",
+          "why_critical": "Demographic detail relevant to developmental context but not safety-critical; SOAP notes typically do not require exhaustive enumeration of all family member ages."
+        },
+        {
+          "fact": "Client deployed in 2018 (specific deployment year)",
+          "criticality": "low",
+          "why_critical": "Historical detail; the reference SOAP includes it, but the generated note does not specify the deployment year. Not clinically load-bearing for current treatment."
+        },
+        {
+          "fact": "Client's wife Sasha is attending a spouse-of-veteran support group",
+          "criticality": "medium",
+          "why_critical": "Clinically relevant to family system and spousal coping resources; indicates Sasha has external support and understanding of veteran-related issues. The generated note mentions Sasha's support generally but does not specify the support group attendance."
+        }
+      ],
+      "hard_failures": [],
+      "advisory_omissions": [],
+      "judge_notes": "The generated SOAP note is substantially faithful to the transcript and complies with all audit directives. It correctly documents passive death-related ideation without escalating to active suicidal intent (client explicitly denied SI and contracted for safety). It appropriately frames medication as discussed but not yet initiated\u2014the client agreed to discuss with his wife and report back. Alcohol use is correctly characterized as self-reported reduction (6\u20137 to 2\u20133 beers/night) without overstating severity. The note avoids inventing domestic violence, child abuse, TBI, or involuntary hospitalization. The anniversary stressor (April 10, four-year mark, two named casualties) is clearly captured. The few omissions identified are low-to-medium criticality demographic and contextual details (child ages, deployment year, specific mention of spouse's support group) that do not affect clinical safety or care planning. The generated note's structure, symptom documentation, risk assessment, and treatment plan align well with the transcript and reference SOAP.\""
+    },
+    {
+      "id": "note-faith-015",
+      "tier": 2,
+      "passed": true,
+      "judge_passes": true,
+      "gen_seconds": 44.0,
+      "generated_chars": 10368,
+      "hallucinated_facts": [],
+      "missing_facts": [],
+      "hard_failures": [],
+      "advisory_omissions": [],
+      "judge_notes": "The generated SOAP note is clinically accurate and faithful to the transcript. It correctly attributes the mother's \"threatened to kill herself\" report as collateral information that the client explicitly disputed, accurately documents the client's clarification (\"I wish I could just disappear\" as an escape statement, not suicidal intent), and appropriately reframes the non-suicidal self-injury as an affect-regulation mechanism without escalating it to suicidal ideation or intent. The note correctly documents the client's explicit denial of suicidal ideation, plan, and method on direct screening. It does not diagnose or provisionally diagnose bipolar disorder, correctly noting that the mother's concern is unsupported speculation about an unevaluated relative and that the client denied all manic/hypomanic phenomena. Substance use is accurately documented as a single vape puff in October with no other use, and the mother's \"on drugs\" concern is appropriately contextualized as unsupported. No medication is stated as prescribed or referred; the plan correctly defers medication evaluation pending response to psychotherapy. The safety plan is comprehensively captured (blade surrender, sharps securing, ice/cold-water alternatives, 988/Crisis Text Line contacts, explicit commitment to disclose emergent suicidal thoughts). The client's active interests (drawing, daily dog walks) are documented, and the mother's \"lazy\" characterization is reframed as a depressive symptom. All audit directives are honored. The note is appropriately selective for a first-session intake and contains no safety-critical omissions."
+    },
+    {
+      "id": "note-faith-016",
+      "tier": 2,
+      "passed": true,
+      "judge_passes": true,
+      "gen_seconds": 39.5,
+      "generated_chars": 9959,
+      "hallucinated_facts": [],
+      "missing_facts": [],
+      "hard_failures": [],
+      "advisory_omissions": [],
+      "judge_notes": "The generated SOAP note is clinically accurate and faithful to the transcript. It correctly documents the client's alcohol use pattern (~4 beers weeknights, 7-8 on weekends), endorsed features of hazardous use (tolerance, episodic use beyond intention, one failed Dry January attempt), and explicitly denies withdrawal, craving, morning drinking, occupational impairment, and driving after drinking. The note appropriately avoids assigning a confirmed AUD diagnosis, instead characterizing the presentation as hazardous/at-risk use with provisional rule-out of mild AUD. Critically, it does not attribute any DUI, arrest, or legal involvement to the client\u2014correctly identifying the DUI as belonging to coworker Rennick and the client's separate taillight stop as a sober warning. The plan accurately reflects the client's explicit refusal to commit to quitting and his stated preference for a data-gathering experiment: two self-chosen alcohol-free nights (Tuesday and Wednesday), a complete 7-day log, sleep metrics, and one SMART Recovery meeting as an evaluative trial. The note correctly documents the client's decline of AA and medication (naltrexone) for now, with openness to revisiting medication later. The partner's remark about missing hikes is presented as a single calm observation, not an ultimatum or threat. The client's ambivalence is documented as a clinical feature, not recast as commitment to recovery or denial. All audit directives are honored. The note is appropriately selective\u2014it omits low-criticality details (exact dates, session logistics) and focuses on clinically relevant content. No safety-critical facts are omitted, and no hallucinations are present.\""
+    }
+  ]
+}

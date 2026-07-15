@@ -37,19 +37,51 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Default judge model. Gemini 3.5 GA's pro variant is not yet released
-# (only `gemini-3.5-flash` is GA as of 2026-05-23); flash is competitive
-# on the spike fixtures (caught all planted hallucinations + adjacent
-# overreach) and is cheap enough for routine schedule runs. Swap to
-# `gemini-3.5-pro` when it ships. Never use Gemini 2.5.
-_DEFAULT_JUDGE_MODEL = "gemini-3.5-flash"
+# Default judge model — a CROSS-FAMILY judge on purpose. The generator is
+# Gemini (``ai_model`` = gemini-3.x pro); a Gemini judge shares its family's
+# blind spots and stylistic priors, so a fabrication that "reads native" to
+# Gemini is likelier to slip past a Gemini judge (correlated error + self-
+# preference). Claude Haiku on Vertex is independent, cheap, and BAA-covered.
+# Provider-prefixed so ``resolve_structured_llm_gateway`` routes it to the
+# Claude gateway; override with --judge-model (e.g. ``gemini-3.5-flash``) to
+# compare or ensemble. Never use Gemini 2.5.
+_DEFAULT_JUDGE_MODEL = "anthropic:claude-haiku-4-5@20251001"
 
-# Permissive schema — the judge's expected shape has fixed top-level
-# keys but variable-length arrays of free-form objects underneath, and
-# Gemini's response_schema can't express "object with these specific
-# property shapes" without rejecting the lists. The model is told the
-# exact shape in the prompt; we validate after.
-_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {"type": "object"}
+# Require the four verdict keys. A bare ``{"type": "object"}`` is satisfied
+# by ``{}`` — and Gemini-3.5-flash *does* return an empty object on a large
+# audit input (28k transcript + 10k SOAP), silently defaulting every verdict
+# to fail. Naming the fields + ``required`` forces the model to populate them;
+# array items stay loosely typed (the prompt fixes their inner shape).
+_JUDGE_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "hallucinated_facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string"},
+                    "where": {"type": "string"},
+                    "why_unsupported": {"type": "string"},
+                },
+            },
+        },
+        "missing_facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string"},
+                    "criticality": {"type": "string"},
+                    "why_critical": {"type": "string"},
+                },
+            },
+        },
+        "passes": {"type": "boolean"},
+        "judge_notes": {"type": "string"},
+    },
+    "required": ["hallucinated_facts", "missing_facts", "passes", "judge_notes"],
+}
 
 
 _JUDGE_SYSTEM_PROMPT = """\
@@ -57,7 +89,7 @@ You are a clinical-documentation auditor. Your job is to evaluate a SOAP note ge
 
 You must be CONSERVATIVE about hallucination calls: a paraphrase of something the patient said is not a hallucination; a reasonable clinical inference from explicit transcript content is not a hallucination. Flag only assertions that the transcript does not support — invented diagnoses, fabricated medications, escalated risk levels that the patient explicitly denied, treatment plans that were never discussed, etc.
 
-You must be CONSERVATIVE about omission calls too: clinical SOAP notes are necessarily brief; not every transcript detail must appear. Flag only facts the patient stated explicitly AND that are clinically load-bearing (diagnostic criteria, safety information, medication history, agreed-upon treatment plans).
+You must be CONSERVATIVE about omission calls too: clinical SOAP notes are necessarily brief; not every transcript detail must appear. Flag only facts the patient stated explicitly AND that are clinically load-bearing (diagnostic criteria, safety information, medication history, agreed-upon treatment plans). CRITICAL: before flagging a fact as missing, verify it is absent from EVERY section of the SOAP note — subjective, objective, assessment (including any risk_assessment field), and plan. Safety facts (suicidal ideation and its denial, self-harm history, medication decisions) are usually documented in the assessment/risk_assessment section; if the fact — or a clear paraphrase of it — appears anywhere in the note, it is NOT an omission. Do not flag a fact as missing because it is in a different section or worded differently than you expected.
 
 Return a single JSON object. Do not include any other text in your response."""  # noqa: E501
 
@@ -68,10 +100,17 @@ _JUDGE_USER_TEMPLATE = """\
 
 ## GENERATED SOAP NOTE
 {generated_soap}
-{reference_block}
+{reference_block}{directives_block}
 ## TASK
 
-Compare the GENERATED SOAP NOTE against the TRANSCRIPT (and the REFERENCE SOAP if provided). Return JSON with this exact shape:
+Compare the GENERATED SOAP NOTE against the TRANSCRIPT (and the REFERENCE SOAP if provided).{directives_hint}
+
+Criticality rubric for omissions — apply it strictly, a SOAP note is necessarily selective:
+- "high": ONLY safety-critical or care-changing facts — suicidal/self-harm/homicidal ideation, intent, plan, OR an explicit denial thereof; a medication started/changed/stopped/refused; a diagnosis or diagnostic conclusion; an agreed treatment/safety plan; or a direct contradiction of the transcript. If omitting it could endanger the patient or mislead the next clinician, it is high.
+- "medium": clinically relevant but not safety-critical — a specific symptom, a piece of history, a stressor.
+- "low": demographic or contextual detail — ages, exact dates, names, session logistics. These are almost never worth flagging.
+
+Return JSON with this exact shape:
 
 {{
   "hallucinated_facts": [
@@ -91,6 +130,21 @@ _REFERENCE_BLOCK_TEMPLATE = """
 ## REFERENCE SOAP (for completeness comparison)
 {reference_soap}
 """
+
+
+# Case-specific audit directives (the dataset's ``judge_directives``): the
+# exact, known failure modes for this transcript — e.g. "do not escalate
+# passive SI to active", "do not invent a medication". Injected so the judge
+# checks these named traps explicitly rather than relying on generic auditing.
+_DIRECTIVES_BLOCK_TEMPLATE = """
+## AUDIT DIRECTIVES (case-specific — treat any violation as a hallucination)
+{directives}
+"""
+
+_DIRECTIVES_HINT = (
+    " Pay particular attention to the AUDIT DIRECTIVES — each names a known"
+    " failure mode for this transcript; a note that violates one is unfaithful."
+)
 
 
 @dataclass
@@ -117,6 +171,7 @@ def score(
     transcript: str,
     generated_soap: str,
     reference_soap: str | None = None,
+    directives: list[str] | None = None,
     model: str | None = None,
     gateway: StructuredLLMGateway | None = None,
 ) -> JudgeVerdict:
@@ -127,6 +182,11 @@ def score(
     prompt frames it as "the SOAP note." For the spike, fixtures are
     JSON with four section keys.
 
+    ``directives`` are the case's ``judge_directives`` — the named,
+    known failure modes for this transcript (SI-escalation, fabricated
+    meds, etc.). When provided they're injected so the judge audits each
+    one explicitly; a violation counts as a hallucination.
+
     ``model`` defaults to ``_DEFAULT_JUDGE_MODEL`` (gemini-3.5-flash)
     when not specified. ``gateway`` is injectable for tests; production
     callers leave it ``None`` to use the process-wide singleton.
@@ -134,22 +194,32 @@ def score(
     # Local import to keep the gateway off the module-load path so
     # eval-only consumers don't pay it during import.
     from backend.app.services.structured_llm_gateway import (  # noqa: PLC0415
-        get_default_structured_llm_gateway,
+        resolve_structured_llm_gateway,
     )
 
     reference_block = (
         _REFERENCE_BLOCK_TEMPLATE.format(reference_soap=reference_soap) if reference_soap else ""
     )
+    directives_block = (
+        _DIRECTIVES_BLOCK_TEMPLATE.format(directives="\n".join(f"- {d}" for d in directives))
+        if directives
+        else ""
+    )
     user_prompt = _JUDGE_USER_TEMPLATE.format(
         transcript=transcript,
         generated_soap=generated_soap,
         reference_block=reference_block,
+        directives_block=directives_block,
+        directives_hint=_DIRECTIVES_HINT if directives else "",
     )
 
-    gw = gateway or get_default_structured_llm_gateway()
+    judge_model = model or _DEFAULT_JUDGE_MODEL
+    # Route by the judge model's provider prefix so a cross-family judge
+    # (``anthropic:claude-...``) uses the Claude-on-Vertex gateway, not Gemini.
+    gw = gateway or resolve_structured_llm_gateway(judge_model)
     try:
         completion = gw.complete_structured(
-            model=model or _DEFAULT_JUDGE_MODEL,
+            model=judge_model,
             system_prompt=_JUDGE_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             response_schema=_JUDGE_RESPONSE_SCHEMA,
