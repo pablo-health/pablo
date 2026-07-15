@@ -497,7 +497,10 @@ class TestParseAttributionResponse:
             "subjective.chief_complaint": SOAPSentence(text="Anxiety."),
             "plan.next_session": SOAPSentence(text="One week."),
         }
-        response = '{"attributions": [{"claim": 1, "segments": [0, 3]}, {"claim": 2, "segments": [5]}]}'
+        response = (
+            '{"attributions": [{"claim": 1, "segments": [0, 3]}, '
+            '{"claim": 2, "segments": [5]}]}'
+        )
         parse_attribution_response(response, claims)
         assert claims["subjective.chief_complaint"].source_segment_ids == [0, 3]
         assert claims["plan.next_session"].source_segment_ids == [5]
