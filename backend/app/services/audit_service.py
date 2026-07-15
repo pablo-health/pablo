@@ -127,14 +127,20 @@ class AuditService:
         self,
         action: AuditAction,
         user: User,
-        request: Request,
+        request: Request | None,
         resource_type: ResourceType,
         resource_id: str,
         patient: Patient | None = None,
         session: TherapySession | None = None,
         changes: dict[str, Any] | None = None,
     ) -> AuditLogEntry:
-        """Log an audit event."""
+        """Log an audit event.
+
+        ``request`` is optional so off-request paths (service-to-service
+        completion callbacks, Cloud Tasks workers) can audit without a live
+        HTTP request; ``extract_request_context`` treats ``None`` as
+        no-ip/no-user-agent.
+        """
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
@@ -172,7 +178,7 @@ class AuditService:
         self,
         action: AuditAction,
         user: User,
-        request: Request,
+        request: Request | None,
         session: TherapySession,
         patient: Patient | None = None,
         changes: dict[str, Any] | None = None,
