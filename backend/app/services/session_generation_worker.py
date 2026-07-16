@@ -62,7 +62,11 @@ def resolve_tenant_schema_for_user(user_id: str) -> str | None:
 
 
 def run_soap_generation_job(
-    *, session_id: str, user_id: str, session_service: SessionService
+    *,
+    session_id: str,
+    user_id: str,
+    session_service: SessionService,
+    transient_is_terminal: bool = False,
 ) -> tuple[TherapySession, Patient, Note]:
     """Scope the request session to the job's tenant, then generate the note.
 
@@ -86,6 +90,10 @@ def run_soap_generation_job(
     arm_current_user_id(session, user_id)
 
     logger.info("soap_generation_job start session=%s schema=%s", session_id, schema)
-    result = session_service.generate_session_note(session_id=session_id, user_id=user_id)
+    result = session_service.generate_session_note(
+        session_id=session_id,
+        user_id=user_id,
+        transient_is_terminal=transient_is_terminal,
+    )
     logger.info("soap_generation_job done session=%s", session_id)
     return result

@@ -34,7 +34,10 @@ from ..models import (
 from ..notes import get_default_registry
 from ..repositories import PatientRepository, TherapySessionRepository
 from ..utcnow import utc_now
-from .note_generation_service import NoteGenerationService
+from .note_generation_service import (
+    NoteGenerationService,
+    TransientNoteGenerationError,
+)
 from .note_service import (
     NoteNotFinalizedError,
     NoteNotFoundError,
@@ -79,10 +82,22 @@ class InvalidSessionStatusError(BadRequestError):
 
 
 class SOAPGenerationFailedError(ServerError):
-    """Raised when SOAP generation fails."""
+    """Raised when SOAP generation fails deterministically (won't succeed on retry)."""
 
     code = "SOAP_GENERATION_FAILED"
     default_message = "Failed to generate SOAP note. Please try again."
+
+
+class TransientSOAPGenerationError(ServerError):
+    """Raised when SOAP generation fails for a transient, retryable reason.
+
+    The session is deliberately left in its pre-generation status (not marked
+    ``failed``) so the job can be retried and complete from the same
+    already-persisted transcript.
+    """
+
+    code = "SOAP_GENERATION_TRANSIENT"
+    default_message = "Note generation is temporarily unavailable; retrying."
 
 
 class InvalidStatusTransitionError(BadRequestError):
@@ -286,6 +301,8 @@ class SessionService:
         self,
         session_id: str,
         user_id: str,
+        *,
+        transient_is_terminal: bool = False,
     ) -> tuple[TherapySession, Patient, Note]:
         """Generate the SOAP note for an already-persisted ``PROCESSING`` session.
 
@@ -341,6 +358,29 @@ class SessionService:
             session.status = SessionStatus.PENDING_REVIEW
             session.processing_completed_at = _now()
             session = self.session_repo.update(session)
+
+        except TransientNoteGenerationError as e:
+            # A retryable provider failure (e.g. 429). Unless this is the final
+            # attempt, leave the session in its pre-generation status so a retry
+            # can complete from the same persisted transcript, and signal the
+            # caller to ask the queue to retry rather than marking it failed.
+            if not transient_is_terminal:
+                logger.warning(
+                    "Note generation transiently failed for session %s; leaving for retry",
+                    session.id,
+                )
+                _commit_intermediate(user_id)
+                raise TransientSOAPGenerationError from e
+            logger.warning(
+                "Note generation transiently failed for session %s on the final "
+                "attempt; marking failed",
+                session.id,
+            )
+            session.status = SessionStatus.FAILED
+            session.error = "SOAP generation failed (temporarily unavailable; retries exhausted)"
+            self.session_repo.update(session)
+            _commit_intermediate(user_id)
+            raise SOAPGenerationFailedError from e
 
         except Exception as e:
             logger.exception("Note generation failed for session %s", session.id)
