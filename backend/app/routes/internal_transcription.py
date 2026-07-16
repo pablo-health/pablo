@@ -5,9 +5,10 @@
 Covers the AssemblyAI batch-transcription lifecycle once audio is in object
 storage:
 
-  * ``POST /api/internal/assemblyai-submit`` — split each channel with the
-    energy VAD, upload the speech regions to AssemblyAI, and record the job
-    ids. Runs on a Cloud Task so the multi-second submit never sits on the
+  * ``POST /api/internal/assemblyai-submit`` — reduce each channel to a
+    single speech-only file with the energy VAD, stage it in object storage,
+    and submit one AssemblyAI job per channel (fetched via a presigned GET).
+    Runs on a Cloud Task so the multi-second submit never sits on the
     upload request thread.
   * ``POST /api/internal/transcription-poll`` — poll the submitted jobs;
     re-enqueue until every one is done, then merge and hand off.
@@ -64,6 +65,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["internal"])
+
+# How long AssemblyAI's fetch of the staged speech-only audio has before the
+# presigned GET expires. Fetches start within seconds of submit; an hour
+# covers provider-side retries without leaving a long-lived URL around.
+_SPEECH_AUDIO_URL_TTL_SECONDS = 3600
 
 
 class TranscriptionCompleteRequest(BaseModel):
@@ -380,6 +386,28 @@ def assemblyai_submit(
         bucket = settings.transcription_audio_bucket
         storage = file_storage_from_settings(settings)
 
+        # The prepared speech-only audio is staged back into the bucket and
+        # handed to AssemblyAI as a presigned GET, so the (potentially large)
+        # audio never has to be pushed through this process a second time.
+        speech_objects = {
+            "Therapist": f"{therapist_object}.speech.wav",
+            "Client": f"{client_object}.speech.wav",
+        }
+
+        def _stage_speech_audio(speaker: str, wav_bytes: bytes) -> str:
+            object_name = speech_objects[speaker]
+            storage.upload_bytes(
+                bucket=bucket,
+                object_name=object_name,
+                data=wav_bytes,
+                content_type="audio/wav",
+            )
+            return storage.make_download_url(
+                bucket=bucket,
+                object_name=object_name,
+                ttl_seconds=_SPEECH_AUDIO_URL_TTL_SECONDS,
+            )
+
         try:
             therapist_bytes = storage.download_bytes(bucket=bucket, object_name=therapist_object)
             client_bytes = storage.download_bytes(bucket=bucket, object_name=client_object)
@@ -388,6 +416,7 @@ def assemblyai_submit(
                 service.submit_dual_channel(
                     therapist_audio=therapist_bytes,
                     client_audio=client_bytes,
+                    audio_url_factory=_stage_speech_audio,
                 )
             )
         except Exception as exc:

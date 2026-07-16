@@ -50,6 +50,12 @@ pymupdf = "^1.24.0"
 # ENABLE_EMBEDDING_VERIFICATION env var.
 onnxruntime = ">=1.27.0"
 
+# Vectorized audio processing (VAD + channel downmix) for session
+# transcription — a 50-minute channel is ~144M samples, which pure-Python
+# sample loops cannot handle. Already present transitively via onnxruntime;
+# pinned explicitly because app code imports it directly.
+numpy = ">=2.1"
+
 # iCal calendar feed parsing
 icalendar = "^7.2.0"
 

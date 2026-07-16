@@ -62,6 +62,17 @@ class TestAssemblyAiSubmitWorker:
         service.submit_dual_channel.assert_awaited_once()
         # Both channel objects were downloaded from storage.
         assert fake_storage.download_bytes.call_count == 2
+        # The staging factory writes the prepared speech audio next to the
+        # original object and hands back a presigned GET for AssemblyAI.
+        factory = service.submit_dual_channel.await_args.kwargs["audio_url_factory"]
+        fake_storage.make_download_url.return_value = "https://signed.example/speech"
+        assert factory("Therapist", b"wav-bytes") == "https://signed.example/speech"
+        fake_storage.upload_bytes.assert_called_once_with(
+            bucket="bucket",
+            object_name="audio/s1/therapist.pcm.speech.wav",
+            data=b"wav-bytes",
+            content_type="audio/wav",
+        )
         # Provider job ids replaced the "submitting" marker.
         assert session_row.transcription_job_metadata == {"provider": "assemblyai", "jobs": [_JOB]}
         # Poll was queued.
