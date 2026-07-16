@@ -27,10 +27,10 @@ from app.services import assemblyai_transcription_service
 from app.services.assemblyai_transcription_service import (
     AssemblyAiTranscriptionService,
     _ensure_wav,
-    _extract_speech_regions,
     _format_timestamp,
     _merge_close_regions,
     _merge_segments,
+    _prepare_speech_audio,
     _words_to_utterances,
 )
 from app.settings import Settings
@@ -187,51 +187,57 @@ class TestMergeCloseRegions:
         assert _merge_close_regions([(0, 50)], gap_samples=10) == [(0, 50)]
 
 
-# --- _extract_speech_regions -----------------------------------------------
+# --- _prepare_speech_audio ---------------------------------------------------
 
 
-class TestExtractSpeechRegions:
-    def test_malformed_bytes_return_single_passthrough_region(self) -> None:
-        regions = _extract_speech_regions(b"not a wav file")
+class TestPrepareSpeechAudio:
+    def test_corrupt_riff_passes_through_with_identity_map(self) -> None:
+        corrupt = b"RIFF" + b"\x00" * 10  # RIFF magic but not a parseable WAV
 
-        assert len(regions) == 1
-        assert regions[0].wav_data == b"not a wav file"
-        assert regions[0].original_offset == 0.0
+        speech_wav, offset_map = _prepare_speech_audio(corrupt)
 
-    def test_stereo_wav_returns_single_passthrough_region(self) -> None:
+        assert speech_wav == corrupt
+        assert offset_map == [[0.0, 0.0]]
+
+    def test_stereo_wav_passes_through_with_identity_map(self) -> None:
         stereo_wav = _make_stereo_wav([100, 100, 200, 200])
 
-        regions = _extract_speech_regions(stereo_wav)
+        speech_wav, offset_map = _prepare_speech_audio(stereo_wav)
 
-        assert len(regions) == 1
-        assert regions[0].wav_data == stereo_wav
-        assert regions[0].original_offset == 0.0
+        assert speech_wav == stereo_wav
+        assert offset_map == [[0.0, 0.0]]
 
-    def test_silence_only_audio_returns_single_passthrough_region(self) -> None:
+    def test_silence_only_audio_passes_through_whole(self) -> None:
         silent_wav = _make_mono_wav([0] * 200, framerate=1000)
 
-        regions = _extract_speech_regions(silent_wav, threshold=500, min_silence_ms=500)
+        speech_wav, offset_map = _prepare_speech_audio(
+            silent_wav, threshold=500, min_silence_ms=500
+        )
 
-        assert len(regions) == 1
-        assert regions[0].original_offset == 0.0
+        assert speech_wav == silent_wav
+        assert offset_map == [[0.0, 0.0]]
 
-    def test_splits_two_speech_bursts_separated_by_long_silence(self) -> None:
+    def test_concatenates_bursts_with_gap_and_offset_map(self) -> None:
         framerate = 1000
         burst = [2000] * 100  # well above threshold=500
         silence = [0] * 2000  # long enough to survive region-merge padding
         samples = burst + silence + burst
         wav_bytes = _make_mono_wav(samples, framerate=framerate)
 
-        regions = _extract_speech_regions(wav_bytes, threshold=500, min_silence_ms=500)
+        speech_wav, offset_map = _prepare_speech_audio(wav_bytes, threshold=500, min_silence_ms=500)
 
-        assert len(regions) == 2
-        assert regions[0].original_offset == 0.0
-        assert regions[1].original_offset == pytest.approx(1.95)
-        for region in regions:
-            with wave.open(io.BytesIO(region.wav_data), "rb") as wf:
-                assert wf.getnchannels() == 1
-                assert wf.getsampwidth() == 2
-                assert wf.getframerate() == framerate
+        # Region 1: samples 0-750 (burst + silence window + padding).
+        # Region 2: samples 1950-2200 (padding before the second burst,
+        # clamped to the end of the signal). Concatenated with a 0.5s gap:
+        # region 2 starts at 0.75 + 0.5 = 1.25s in the speech-only file and
+        # at 1.95s in the original recording.
+        assert offset_map == [[0.0, 0.0], [1.25, 1.95]]
+        with wave.open(io.BytesIO(speech_wav), "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getsampwidth() == 2
+            assert wf.getframerate() == framerate
+            # 0.75s region + 0.5s gap + 0.25s region
+            assert wf.getnframes() == 1500
 
 
 # --- submit phase (AssemblyAiTranscriptionService) --------------------------
@@ -274,7 +280,8 @@ class TestSubmitDualChannel:
         assert len(jobs) == 2
         assert {job["speaker"] for job in jobs} == {"Therapist", "Client"}
         for job in jobs:
-            assert job["original_offset"] == 0.0
+            # Silence-only audio passes through whole, so the map is identity.
+            assert job["offset_map"] == [[0.0, 0.0]]
             assert job["transcript_id"].startswith("transcript-")
 
         upload_calls = [c for c in calls if c.url.path.endswith("/upload")]
@@ -328,6 +335,40 @@ class TestSubmitDualChannel:
         submit_call = next(c for c in calls if c.url.path.endswith("/transcript"))
         body: dict[str, Any] = json.loads(submit_call.content)
         assert body["speech_model"] == "nano"
+
+    @pytest.mark.anyio
+    async def test_audio_url_factory_bypasses_provider_upload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings())
+        staged: list[tuple[str, bytes]] = []
+
+        def factory(speaker: str, wav_bytes: bytes) -> str:
+            staged.append((speaker, wav_bytes))
+            return f"https://storage.example/{speaker.lower()}"
+
+        jobs = await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM,
+            client_audio=_SILENCE_PCM,
+            audio_url_factory=factory,
+        )
+
+        # The factory received the prepared (WAV-wrapped) audio per channel...
+        assert [speaker for speaker, _ in staged] == ["Therapist", "Client"]
+        for _, wav_bytes in staged:
+            assert wav_bytes[:4] == b"RIFF"
+        # ...and its URLs were submitted instead of AssemblyAI /upload ones.
+        assert all(not c.url.path.endswith("/upload") for c in calls)
+        submitted_urls = {
+            json.loads(c.content)["audio_url"] for c in calls if c.url.path.endswith("/transcript")
+        }
+        assert submitted_urls == {
+            "https://storage.example/therapist",
+            "https://storage.example/client",
+        }
+        assert len(jobs) == 2
 
     @pytest.mark.anyio
     async def test_upload_http_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -437,48 +478,75 @@ class TestCheckJobStatus:
 # --- process_completed_jobs / merge utilities -------------------------------
 
 
-class TestProcessCompletedJobs:
-    def test_merges_words_into_utterances_with_speaker_and_offset(self) -> None:
-        jobs_with_results = [
-            (
-                {"speaker": "Therapist", "original_offset": 0.0},
-                {
-                    "words": [
-                        {"start": 0, "end": 500, "text": "Hello"},
-                        {"start": 500, "end": 1000, "text": "there."},
-                    ]
-                },
-            ),
-            (
-                {"speaker": "Client", "original_offset": 2.0},
-                {"words": [{"start": 0, "end": 400, "text": "Hi."}]},
-            ),
+class TestParseResult:
+    def test_offset_map_remaps_words_back_to_original_timeline(self) -> None:
+        job_meta = {
+            "transcript_id": "t1",
+            "speaker": "Therapist",
+            # Region 1 sat at 10s in the original recording; region 2 starts
+            # at 5s in the concatenated file and sat at 100s originally.
+            "offset_map": [[0.0, 10.0], [5.0, 100.0]],
+        }
+        result = {
+            "words": [
+                {"start": 1000, "end": 1500, "text": "Early."},
+                {"start": 6000, "end": 6500, "text": "Late."},
+            ]
+        }
+
+        utterances = AssemblyAiTranscriptionService.parse_result(job_meta, result)
+
+        assert utterances == [
+            {"start": 11.0, "end": 11.5, "speaker": "Therapist", "text": "Early."},
+            {"start": 101.0, "end": 101.5, "speaker": "Therapist", "text": "Late."},
         ]
 
-        transcript = AssemblyAiTranscriptionService.process_completed_jobs(jobs_with_results)
+    def test_legacy_original_offset_still_applies(self) -> None:
+        job_meta = {"speaker": "Client", "original_offset": 2.0}
+        result = {"words": [{"start": 0, "end": 400, "text": "Hi."}]}
 
-        assert transcript == ("[00:00:00]\nTherapist: Hello there.\n[00:00:02]\nClient: Hi.")
+        utterances = AssemblyAiTranscriptionService.parse_result(job_meta, result)
+
+        assert utterances == [{"start": 2.0, "end": 2.4, "speaker": "Client", "text": "Hi."}]
 
     def test_falls_back_to_text_when_no_words(self) -> None:
-        jobs_with_results = [
-            (
-                {"speaker": "Therapist", "original_offset": 5.0},
-                {"words": [], "text": "  Fallback text.  "},
-            )
+        job_meta = {"speaker": "Therapist", "original_offset": 5.0}
+        result = {"words": [], "text": "  Fallback text.  "}
+
+        utterances = AssemblyAiTranscriptionService.parse_result(job_meta, result)
+
+        assert utterances == [
+            {"start": 5.0, "end": 5.0, "speaker": "Therapist", "text": "Fallback text."}
         ]
 
-        transcript = AssemblyAiTranscriptionService.process_completed_jobs(jobs_with_results)
+    def test_no_words_and_blank_text_yield_nothing(self) -> None:
+        job_meta = {"speaker": "Therapist", "original_offset": 0.0}
+        result = {"words": [], "text": "   "}
 
-        assert transcript == "[00:00:05]\nTherapist: Fallback text."
+        assert AssemblyAiTranscriptionService.parse_result(job_meta, result) == []
 
-    def test_skips_job_with_no_words_and_blank_text(self) -> None:
-        jobs_with_results = [
-            ({"speaker": "Therapist", "original_offset": 0.0}, {"words": [], "text": "   "})
+
+class TestMergeUtterances:
+    def test_merges_channels_sorted_by_start_time(self) -> None:
+        jobs = [
+            {
+                "speaker": "Client",
+                "utterances": [{"start": 2.0, "end": 2.4, "speaker": "Client", "text": "Hi."}],
+            },
+            {
+                "speaker": "Therapist",
+                "utterances": [
+                    {"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "Hello there."}
+                ],
+            },
         ]
 
-        transcript = AssemblyAiTranscriptionService.process_completed_jobs(jobs_with_results)
+        transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
 
-        assert transcript == ""
+        assert transcript == "[00:00:00]\nTherapist: Hello there.\n[00:00:02]\nClient: Hi."
+
+    def test_jobs_without_utterances_contribute_nothing(self) -> None:
+        assert AssemblyAiTranscriptionService.merge_utterances([{"speaker": "Therapist"}]) == ""
 
 
 class TestWordsToUtterances:

@@ -7,20 +7,26 @@ Submits audio to AssemblyAI's async transcription API, polls for completion,
 and posts the merged transcript back to the internal callback endpoint.
 
 Each channel is pre-processed with a simple energy-based VAD (similar to
-Whisper's vad_filter) that splits audio into individual speech regions.
-Each region is transcribed independently, preserving the original timestamps.
-This both reduces billable duration and ensures reliable recognition of
-synthetic voices and accented speech that long-silence files can confuse.
+Whisper's vad_filter), and the detected speech regions are concatenated into
+a single speech-only file per channel, with an offset map recording where
+each region sat in the original timeline. A session therefore submits
+exactly one AssemblyAI job per channel no matter how long it ran or how
+choppy the speech was; word timestamps are mapped back through the offset
+map when results are merged. This keeps billable duration down, avoids the
+long-silence recognition failures that motivated the VAD, and keeps the
+submit/poll cost independent of session length.
 """
 
+import bisect
 import io
 import logging
-import struct
 import wave
-from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 
 import httpx
+import numpy as np
+import numpy.typing as npt
 
 from ..middleware.outbound import tracing_async_client
 from ..settings import Settings
@@ -30,12 +36,19 @@ logger = logging.getLogger(__name__)
 _JsonDict = dict[str, Any]
 
 ASSEMBLYAI_API_BASE = "https://api.assemblyai.com/v2"
-_POLL_INTERVAL_SECONDS = 5
-_POLL_TIMEOUT_SECONDS = 1800  # 30 min
 _SAMPLE_WIDTH_16BIT = 2
 # Default PCM format from companion app (AudioCaptureKit)
 _DEFAULT_PCM_SAMPLE_RATE = 48000
 _DEFAULT_PCM_CHANNELS = 2
+# VAD shape: loudness is reduced to one value per frame, regions closer than
+# the merge gap collapse together, and each region keeps a little padding so
+# soft leading/trailing phonemes survive the cut.
+_VAD_FRAME_SECONDS = 0.01
+_REGION_PAD_SECONDS = 0.15
+_REGION_MERGE_GAP_SECONDS = 0.5
+# Silence inserted between concatenated regions so words can't bleed across
+# a region boundary in the transcription.
+_CONCAT_GAP_SECONDS = 0.5
 
 
 def _ensure_wav(audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS) -> bytes:
@@ -63,31 +76,25 @@ def _ensure_wav(audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS) -> b
     if n_channels < 1:
         raise ValueError(f"n_channels must be >= 1, got {n_channels}")
 
-    bytes_per_sample = _SAMPLE_WIDTH_16BIT
-    frame_size = n_channels * bytes_per_sample
-
     # Trim to whole frames
+    frame_size = n_channels * _SAMPLE_WIDTH_16BIT
     n_frames = len(audio_data) // frame_size
     trimmed = audio_data[: n_frames * frame_size]
 
     if n_channels == 1:
-        mono = trimmed
+        mono_bytes = trimmed
     else:
-        samples = struct.unpack(f"<{n_frames * n_channels}h", trimmed)
-        mono = struct.pack(
-            f"<{n_frames}h",
-            *(
-                sum(samples[i : i + n_channels]) // n_channels
-                for i in range(0, len(samples), n_channels)
-            ),
-        )
+        channels = np.frombuffer(trimmed, dtype="<i2").reshape(-1, n_channels)
+        # int32 sum before the divide: full-scale int16 samples overflow.
+        mono = (channels.astype(np.int32).sum(axis=1) // n_channels).astype("<i2")
+        mono_bytes = mono.tobytes()
 
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(bytes_per_sample)
+        wf.setsampwidth(_SAMPLE_WIDTH_16BIT)
         wf.setframerate(_DEFAULT_PCM_SAMPLE_RATE)
-        wf.writeframes(mono)
+        wf.writeframes(mono_bytes)
 
     duration = n_frames / _DEFAULT_PCM_SAMPLE_RATE
     logger.info(
@@ -96,15 +103,7 @@ def _ensure_wav(audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS) -> b
     return buf.getvalue()
 
 
-# --- VAD: split audio into speech regions ---
-
-
-@dataclass
-class _SpeechRegion:
-    """A speech region extracted from audio with its original time offset."""
-
-    wav_data: bytes
-    original_offset: float  # seconds into the original audio where this region starts
+# --- VAD: find and concatenate speech regions ---
 
 
 def _merge_close_regions(regions: list[tuple[int, int]], gap_samples: int) -> list[tuple[int, int]]:
@@ -118,84 +117,122 @@ def _merge_close_regions(regions: list[tuple[int, int]], gap_samples: int) -> li
     return merged
 
 
-def _extract_speech_regions(
+def _speech_intervals(
+    samples: npt.NDArray[np.int16],
+    sample_rate: int,
+    threshold: int,
+    min_silence_ms: int,
+) -> list[tuple[int, int]]:
+    """Find (start, end) sample intervals that contain speech.
+
+    Vectorized energy VAD: the signal is reduced to a coarse per-frame
+    loudness envelope, then speech runs are the stretches of loud frames
+    separated by more than the silence window. A frame is loud iff any
+    sample in it clears the threshold, so boundaries are conservative to
+    within one frame — well inside the region padding.
+    """
+    n = int(samples.size)
+    if n == 0:
+        return []
+
+    frame = max(1, int(sample_rate * _VAD_FRAME_SECONDS))
+    n_frames = -(-n // frame)  # ceil: the tail becomes a final short frame
+    # int32 working copy: abs(-32768) overflows int16.
+    magnitudes = np.zeros(n_frames * frame, dtype=np.int32)
+    magnitudes[:n] = samples
+    np.abs(magnitudes, out=magnitudes)
+    envelope = magnitudes.reshape(n_frames, frame).max(axis=1)
+
+    loud = np.flatnonzero(envelope > threshold)
+    if loud.size == 0:
+        return []
+
+    min_silence_samples = sample_rate * min_silence_ms // 1000
+    pad_samples = int(sample_rate * _REGION_PAD_SECONDS)
+
+    # A region break wherever the silent stretch between consecutive loud
+    # frames exceeds the window — the vectorized form of counting silent
+    # samples until the count clears min_silence.
+    breaks = np.flatnonzero((np.diff(loud) - 1) * frame > min_silence_samples)
+    starts = loud[np.concatenate(([0], breaks + 1))] * frame
+    ends = (loud[np.concatenate((breaks, [loud.size - 1]))] + 1) * frame
+
+    # Regions extend into the silence that closed them, plus padding on both
+    # sides; the final region is clamped to the end of the signal.
+    starts = np.maximum(starts - pad_samples, 0)
+    ends = np.minimum(ends + min_silence_samples + pad_samples, n)
+
+    return _merge_close_regions(
+        list(zip(starts.tolist(), ends.tolist(), strict=True)),
+        int(sample_rate * _REGION_MERGE_GAP_SECONDS),
+    )
+
+
+def _prepare_speech_audio(
     audio_data: bytes,
     threshold: int = 500,
     min_silence_ms: int = 500,
-) -> list[_SpeechRegion]:
-    """Extract individual speech regions from WAV audio using energy-based VAD.
+    *,
+    n_channels: int = _DEFAULT_PCM_CHANNELS,
+) -> tuple[bytes, list[list[float]]]:
+    """Reduce one channel to a single speech-only WAV plus an offset map.
 
-    Returns a list of WAV chunks, each with its original time offset.
-    If the audio isn't 16-bit mono WAV, returns a single region with the
-    original audio (passthrough).
+    Runs the VAD, then concatenates the speech regions — separated by short
+    silence gaps so words can't bleed across a boundary — into one WAV. The
+    offset map records, per region, where it starts in the concatenated file
+    and where it started in the original recording:
+    ``[[concat_start_sec, original_start_sec], ...]``. Word timestamps from
+    the transcription are mapped back through it in ``parse_result``.
+
+    Audio the VAD can't analyze (not 16-bit mono, corrupt, or all silence)
+    passes through whole with an identity map. ``n_channels`` describes a
+    headerless raw-PCM payload's layout — see :func:`_ensure_wav`.
     """
+    wav_data = _ensure_wav(audio_data, n_channels)
+    identity: tuple[bytes, list[list[float]]] = (wav_data, [[0.0, 0.0]])
     try:
-        with wave.open(io.BytesIO(audio_data), "rb") as wf:
+        with wave.open(io.BytesIO(wav_data), "rb") as wf:
             sample_rate = wf.getframerate()
             if wf.getsampwidth() != _SAMPLE_WIDTH_16BIT or wf.getnchannels() != 1:
-                return [_SpeechRegion(wav_data=audio_data, original_offset=0.0)]
-            n_frames = wf.getnframes()
-            raw = wf.readframes(n_frames)
+                return identity
+            raw = wf.readframes(wf.getnframes())
     except Exception:
-        return [_SpeechRegion(wav_data=audio_data, original_offset=0.0)]
+        return identity
 
-    samples = struct.unpack(f"<{n_frames}h", raw)
-    min_silence_samples = int(sample_rate * min_silence_ms / 1000)
-    pad_samples = int(sample_rate * 0.15)
+    samples: npt.NDArray[np.int16] = np.frombuffer(raw, dtype="<i2")
+    intervals = _speech_intervals(samples, sample_rate, threshold, min_silence_ms)
+    if not intervals:
+        return identity
 
-    # Find raw speech regions
-    in_speech = False
-    speech_start = 0
-    silence_count = 0
-    raw_regions: list[tuple[int, int]] = []
+    gap = np.zeros(int(sample_rate * _CONCAT_GAP_SECONDS), dtype="<i2")
+    pieces: list[npt.NDArray[np.int16]] = []
+    offset_map: list[list[float]] = []
+    concat_pos = 0
+    for start, end in intervals:
+        if pieces:
+            pieces.append(gap)
+            concat_pos += gap.size
+        offset_map.append([concat_pos / sample_rate, start / sample_rate])
+        pieces.append(samples[start:end])
+        concat_pos += end - start
 
-    for i, s in enumerate(samples):
-        if abs(s) > threshold:
-            silence_count = 0
-            if not in_speech:
-                in_speech = True
-                speech_start = max(0, i - pad_samples)
-        else:
-            silence_count += 1
-            if in_speech and silence_count > min_silence_samples:
-                in_speech = False
-                raw_regions.append((speech_start, min(i + pad_samples, n_frames)))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(_SAMPLE_WIDTH_16BIT)
+        wf.setframerate(sample_rate)
+        wf.writeframes(np.concatenate(pieces).tobytes())
 
-    if in_speech:
-        raw_regions.append((speech_start, n_frames))
-
-    if not raw_regions:
-        return [_SpeechRegion(wav_data=audio_data, original_offset=0.0)]
-
-    merged = _merge_close_regions(raw_regions, int(sample_rate * 0.5))
-
-    # Convert each region to a standalone WAV
-    regions: list[_SpeechRegion] = []
-    original_duration = n_frames / sample_rate
-    speech_duration = 0.0
-
-    for start, end in merged:
-        region_samples = samples[start:end]
-        pcm = struct.pack(f"<{len(region_samples)}h", *region_samples)
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(_SAMPLE_WIDTH_16BIT)
-            wf.setframerate(sample_rate)
-            wf.writeframes(pcm)
-        offset = start / sample_rate
-        regions.append(_SpeechRegion(wav_data=buf.getvalue(), original_offset=offset))
-        speech_duration += (end - start) / sample_rate
-
-    saved_pct = (1 - speech_duration / original_duration) * 100 if original_duration > 0 else 0
+    original_duration = samples.size / sample_rate
+    speech_duration = concat_pos / sample_rate
     logger.info(
-        "VAD: %.1fs audio → %d regions (%.1fs speech, %.0f%% silence removed)",
+        "VAD: %.1fs audio → %d regions concatenated to %.1fs (%.0f%% trimmed)",
         original_duration,
-        len(regions),
+        len(intervals),
         speech_duration,
-        saved_pct,
+        (1 - speech_duration / original_duration) * 100 if original_duration else 0.0,
     )
-    return regions
+    return buf.getvalue(), offset_map
 
 
 # --- AssemblyAI service ---
@@ -205,11 +242,13 @@ class AssemblyAiTranscriptionService:
     """Batch transcription via AssemblyAI's async API.
 
     Two-phase flow for Cloud Tasks resilience:
-    1. Submit: VAD split → upload regions → submit to AssemblyAI → return job metadata
-    2. Poll:   Check each transcript_id → merge when all complete → process result
+    1. Submit: VAD → concatenate speech per channel → one job per channel
+    2. Poll:   check each transcript_id → remap timestamps + merge when done
 
-    The submit phase runs in the request context (fast, seconds).
-    The poll phase runs as a Cloud Task with automatic retries.
+    The prepared audio reaches AssemblyAI either through its /upload
+    endpoint or — when the caller passes ``audio_url_factory`` — via a URL
+    AssemblyAI fetches itself (e.g. a presigned object-storage GET), which
+    keeps the upload bandwidth out of this process.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -245,56 +284,48 @@ class AssemblyAiTranscriptionService:
         logger.info("Submitted AssemblyAI job: id=%s", data["id"])
         return data["id"]  # type: ignore[no-any-return]
 
-    async def _submit_channel_regions(
-        self, client: httpx.AsyncClient, audio_data: bytes, speaker: str, n_channels: int
-    ) -> list[_JsonDict]:
-        """VAD split + upload + submit for one channel. Returns job metadata per region.
-
-        ``n_channels`` describes this part's raw-PCM layout and is only consulted for
-        headerless payloads from older clients -- see :func:`_ensure_wav`.
-        """
-        wav_data = _ensure_wav(audio_data, n_channels)
-        regions = _extract_speech_regions(wav_data)
-
-        jobs: list[_JsonDict] = []
-        for region in regions:
-            upload_url = await self._upload_audio(client, region.wav_data)
-            transcript_id = await self._submit_transcription(client, upload_url)
-            jobs.append(
-                {
-                    "transcript_id": transcript_id,
-                    "speaker": speaker,
-                    "original_offset": region.original_offset,
-                }
-            )
-
-        logger.info("Channel %s: submitted %d regions to AssemblyAI", speaker, len(jobs))
-        return jobs
-
     async def submit_dual_channel(
         self,
         therapist_audio: bytes,
         client_audio: bytes,
+        *,
+        audio_url_factory: Callable[[str, bytes], str] | None = None,
     ) -> list[_JsonDict]:
-        """Upload and submit both channels. Returns job metadata for Cloud Task polling.
+        """Prepare and submit both channels — one AssemblyAI job each.
 
-        This is the fast phase — runs in the request context. Returns a list of
-        dicts with {transcript_id, speaker, original_offset} for each region.
+        ``audio_url_factory(speaker, wav_bytes)`` returns a URL AssemblyAI
+        can fetch the prepared speech-only audio from; when omitted the
+        bytes are pushed through AssemblyAI's /upload endpoint. Returns job
+        metadata ``[{transcript_id, speaker, offset_map}, ...]`` for the
+        polling Cloud Task.
         """
+        jobs: list[_JsonDict] = []
         async with tracing_async_client() as client:
             # The two parts have different layouts: the companion captures the
-            # therapist from the mic as mono and the client from system loopback as
-            # stereo. Only headerless payloads from older builds depend on this.
-            therapist_jobs = await self._submit_channel_regions(
-                client, therapist_audio, "Therapist", n_channels=1
+            # therapist from the mic as mono and the client from system
+            # loopback as stereo. Only headerless payloads from older builds
+            # depend on the channel count.
+            channels = (
+                ("Therapist", therapist_audio, 1),
+                ("Client", client_audio, 2),
             )
-            client_jobs = await self._submit_channel_regions(
-                client, client_audio, "Client", n_channels=2
-            )
+            for speaker, audio, n_channels in channels:
+                speech_wav, offset_map = _prepare_speech_audio(audio, n_channels=n_channels)
+                if audio_url_factory is not None:
+                    audio_url = audio_url_factory(speaker, speech_wav)
+                else:
+                    audio_url = await self._upload_audio(client, speech_wav)
+                transcript_id = await self._submit_transcription(client, audio_url)
+                jobs.append(
+                    {
+                        "transcript_id": transcript_id,
+                        "speaker": speaker,
+                        "offset_map": offset_map,
+                    }
+                )
 
-        all_jobs = therapist_jobs + client_jobs
-        logger.info("Submitted %d AssemblyAI jobs for dual-channel transcription", len(all_jobs))
-        return all_jobs
+        logger.info("Submitted %d AssemblyAI jobs (one per channel)", len(jobs))
+        return jobs
 
     @staticmethod
     def check_job_status(api_key: str, transcript_id: str) -> tuple[str, _JsonDict | None]:
@@ -316,44 +347,57 @@ class AssemblyAiTranscriptionService:
         return ("processing", None)
 
     @staticmethod
-    def process_completed_jobs(jobs_with_results: list[tuple[_JsonDict, _JsonDict]]) -> str:
-        """Merge completed AssemblyAI results into a VTT-format transcript.
+    def parse_result(job_meta: _JsonDict, result: _JsonDict) -> list[_JsonDict]:
+        """Turn one job's AssemblyAI result into utterances on the original timeline.
 
-        Args:
-            jobs_with_results: list of (job_metadata, assemblyai_result) tuples.
+        Concatenated jobs carry an ``offset_map`` and each word's timestamp
+        is mapped back through it; legacy per-region jobs carry a single
+        constant ``original_offset``.
         """
-        all_utterances: list[_JsonDict] = []
-        for job_meta, result in jobs_with_results:
-            speaker = job_meta["speaker"]
-            offset = job_meta["original_offset"]
-            words = result.get("words", [])
-            if not words:
-                text = result.get("text", "").strip()
-                if text:
-                    all_utterances.append(
-                        {
-                            "start": offset,
-                            "end": offset,
-                            "speaker": speaker,
-                            "text": text,
-                        }
-                    )
-                continue
-            all_utterances.extend(
-                _words_to_utterances(
-                    [
-                        {
-                            "start": offset + w["start"] / 1000,
-                            "end": offset + w["end"] / 1000,
-                            "speaker": speaker,
-                            "text": w["text"],
-                        }
-                        for w in words
-                    ],
-                    speaker,
-                )
-            )
-        return _merge_segments(all_utterances)
+        speaker = job_meta["speaker"]
+        offset_map: list[list[float]] | None = job_meta.get("offset_map")
+        if offset_map:
+            concat_starts = [entry[0] for entry in offset_map]
+
+            def to_original(seconds: float) -> float:
+                i = max(bisect.bisect_right(concat_starts, seconds) - 1, 0)
+                concat_start, original_start = offset_map[i]
+                return original_start + (seconds - concat_start)
+        else:
+            base = float(job_meta.get("original_offset", 0.0))
+
+            def to_original(seconds: float) -> float:
+                return base + seconds
+
+        words = result.get("words", [])
+        if not words:
+            text = (result.get("text") or "").strip()
+            if not text:
+                return []
+            start = to_original(0.0)
+            return [{"start": start, "end": start, "speaker": speaker, "text": text}]
+
+        return _words_to_utterances(
+            [
+                {
+                    "start": to_original(w["start"] / 1000),
+                    "end": to_original(w["end"] / 1000),
+                    "speaker": speaker,
+                    "text": w["text"],
+                }
+                for w in words
+            ],
+            speaker,
+        )
+
+    @staticmethod
+    def merge_utterances(jobs: list[_JsonDict]) -> str:
+        """Merge per-job utterance lists into the canonical transcript text.
+
+        ``jobs`` is the persisted job metadata after the poller attached each
+        completed job's parsed utterances (see ``parse_result``).
+        """
+        return _merge_segments([u for job in jobs for u in job.get("utterances", [])])
 
 
 # --- Utilities ---

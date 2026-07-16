@@ -13,6 +13,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -63,6 +64,7 @@ def enqueue_cloud_task(
     *,
     service_account_prefix: str = "cloud-tasks-invoker",
     task_name: str | None = None,
+    schedule_delay_seconds: int = 0,
 ) -> None:
     """Enqueue an authenticated Cloud Task targeting an internal API endpoint.
 
@@ -77,6 +79,10 @@ def enqueue_cloud_task(
             the queue deduplicates against it within its retention window (~1 hour).
             Cloud Tasks raises ``409 AlreadyExists`` on a duplicate; this function
             does not swallow it (the caller decides). Must match ``[A-Za-z0-9_-]+``.
+        schedule_delay_seconds: Deliver the task this many seconds from now
+            instead of immediately. Lets a self-re-enqueueing worker (the
+            transcription poller) pace its cycles rather than hot-loop at the
+            queue's dispatch rate.
     """
     settings = get_settings()
     trace_headers = _trace_propagation_headers()
@@ -113,8 +119,16 @@ def enqueue_cloud_task(
         else None
     )
 
+    # proto-plus converts the datetime to a protobuf Timestamp.
+    schedule_time = (
+        datetime.now(tz=UTC) + timedelta(seconds=schedule_delay_seconds)
+        if schedule_delay_seconds > 0
+        else None
+    )
+
     task = tasks_v2.Task(
         name=task_resource_name,
+        schedule_time=schedule_time,
         http_request=tasks_v2.HttpRequest(
             http_method=tasks_v2.HttpMethod.POST,
             url=f"{backend_url}{endpoint_path}",

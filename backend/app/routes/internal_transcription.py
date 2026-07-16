@@ -5,9 +5,10 @@
 Covers the AssemblyAI batch-transcription lifecycle once audio is in object
 storage:
 
-  * ``POST /api/internal/assemblyai-submit`` — split each channel with the
-    energy VAD, upload the speech regions to AssemblyAI, and record the job
-    ids. Runs on a Cloud Task so the multi-second submit never sits on the
+  * ``POST /api/internal/assemblyai-submit`` — reduce each channel to a
+    single speech-only file with the energy VAD, stage it in object storage,
+    and submit one AssemblyAI job per channel (fetched via a presigned GET).
+    Runs on a Cloud Task so the multi-second submit never sits on the
     upload request thread.
   * ``POST /api/internal/transcription-poll`` — poll the submitted jobs;
     re-enqueue until every one is done, then merge and hand off.
@@ -64,6 +65,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["internal"])
+
+# How long AssemblyAI's fetch of the staged speech-only audio has before the
+# presigned GET expires. Fetches start within seconds of submit; an hour
+# covers provider-side retries without leaving a long-lived URL around.
+_SPEECH_AUDIO_URL_TTL_SECONDS = 3600
 
 
 class TranscriptionCompleteRequest(BaseModel):
@@ -380,6 +386,28 @@ def assemblyai_submit(
         bucket = settings.transcription_audio_bucket
         storage = file_storage_from_settings(settings)
 
+        # The prepared speech-only audio is staged back into the bucket and
+        # handed to AssemblyAI as a presigned GET, so the (potentially large)
+        # audio never has to be pushed through this process a second time.
+        speech_objects = {
+            "Therapist": f"{therapist_object}.speech.wav",
+            "Client": f"{client_object}.speech.wav",
+        }
+
+        def _stage_speech_audio(speaker: str, wav_bytes: bytes) -> str:
+            object_name = speech_objects[speaker]
+            storage.upload_bytes(
+                bucket=bucket,
+                object_name=object_name,
+                data=wav_bytes,
+                content_type="audio/wav",
+            )
+            return storage.make_download_url(
+                bucket=bucket,
+                object_name=object_name,
+                ttl_seconds=_SPEECH_AUDIO_URL_TTL_SECONDS,
+            )
+
         try:
             therapist_bytes = storage.download_bytes(bucket=bucket, object_name=therapist_object)
             client_bytes = storage.download_bytes(bucket=bucket, object_name=client_object)
@@ -388,6 +416,7 @@ def assemblyai_submit(
                 service.submit_dual_channel(
                     therapist_audio=therapist_bytes,
                     client_audio=client_bytes,
+                    audio_url_factory=_stage_speech_audio,
                 )
             )
         except Exception as exc:
@@ -421,22 +450,11 @@ def _enqueue_poll(session_id: str, user_id: str) -> None:
     )
 
 
-def _poll_assemblyai_jobs(
-    api_key: str,
-    jobs: list[dict],
-) -> tuple[list[tuple[dict, dict]], bool, str | None]:
-    """Poll all AssemblyAI jobs. Returns (completed_results, all_complete, error_msg)."""
-    completed: list[tuple[dict, dict]] = []
-    for job in jobs:
-        job_status, result = AssemblyAiTranscriptionService.check_job_status(
-            api_key, job["transcript_id"]
-        )
-        if job_status == "error":
-            error_msg = result.get("error", "unknown") if result else "unknown"
-            return (completed, False, f"AssemblyAI job {job['transcript_id']}: {error_msg}")
-        if job_status == "completed" and result is not None:
-            completed.append((job, result))
-    return (completed, len(completed) == len(jobs), None)
+# Poll pacing: cycles are spaced so a long transcription doesn't hot-loop the
+# queue, and capped so a job the provider never finishes becomes a visible
+# failure instead of a session stuck in TRANSCRIBING forever.
+_POLL_CYCLE_DELAY_SECONDS = 15
+_MAX_POLL_CYCLES = 240  # x 15s = ~60 minutes of polling
 
 
 @router.post("/api/internal/transcription-poll")
@@ -444,7 +462,13 @@ def transcription_poll(
     request: TranscriptionPollRequest,
     _invoker: None = Depends(require_cloud_tasks_invoker),
 ) -> dict[str, str]:
-    """Poll AssemblyAI for transcription completion (called by Cloud Tasks)."""
+    """Poll AssemblyAI for transcription completion (called by Cloud Tasks).
+
+    Each completed job's parsed utterances are persisted into the session's
+    job metadata the first time they're seen, so later cycles only hit the
+    provider for jobs still pending — a cycle's cost can't grow with how
+    much has already finished.
+    """
     settings = get_settings()
     schema_name = _resolve_schema_for_user(request.user_id)
 
@@ -475,9 +499,29 @@ def transcription_poll(
             )
 
         api_key = settings.assemblyai_api_key.get_secret_value()
-        completed_results, all_complete, error_msg = _poll_assemblyai_jobs(
-            api_key, job_metadata["jobs"]
-        )
+        jobs = job_metadata["jobs"]
+        error_msg: str | None = None
+        for job in jobs:
+            if "utterances" in job:
+                continue  # fetched on an earlier cycle
+            job_status, result = AssemblyAiTranscriptionService.check_job_status(
+                api_key, job["transcript_id"]
+            )
+            if job_status == "error":
+                error_detail = result.get("error", "unknown") if result else "unknown"
+                error_msg = f"AssemblyAI job {job['transcript_id']}: {error_detail}"
+                break
+            if job_status == "completed" and result is not None:
+                job["utterances"] = AssemblyAiTranscriptionService.parse_result(job, result)
+
+        poll_cycles = int(job_metadata.get("poll_cycles", 0)) + 1
+        # New top-level dict so the ORM sees the JSON column change; the
+        # mutated jobs list rides along inside it.
+        session_row.transcription_job_metadata = {
+            **job_metadata,
+            "jobs": jobs,
+            "poll_cycles": poll_cycles,
+        }
 
         if error_msg:
             logger.error("Transcription poll failed: session=%s %s", request.session_id, error_msg)
@@ -486,22 +530,45 @@ def transcription_poll(
             db.commit()
             return {"status": "error", "detail": error_msg}
 
-        if not all_complete:
+        pending = sum(1 for job in jobs if "utterances" not in job)
+        if pending:
+            total = len(jobs)
+            if poll_cycles >= _MAX_POLL_CYCLES:
+                logger.error(
+                    "Transcription poll budget exhausted: session=%s %d/%d complete "
+                    "after %d cycles",
+                    request.session_id,
+                    total - pending,
+                    total,
+                    poll_cycles,
+                )
+                session_row.status = "failed"
+                session_row.error = "Transcription timed out. Please retry the upload."
+                db.commit()
+                return {"status": "error", "detail": "poll budget exhausted"}
+
+            # Commit the fetched utterances before re-enqueueing: if the
+            # enqueue fails and Cloud Tasks retries this cycle, the retry
+            # skips everything already fetched.
+            db.commit()
             enqueue_cloud_task(
                 queue_name=settings.transcription_task_queue,
                 endpoint_path="/api/internal/transcription-poll",
                 payload={"session_id": request.session_id, "user_id": request.user_id},
+                schedule_delay_seconds=_POLL_CYCLE_DELAY_SECONDS,
             )
-            total = len(job_metadata["jobs"])
             logger.info(
-                "Transcription poll: %d/%d complete, re-enqueued: session=%s",
-                len(completed_results),
+                "Transcription poll: %d/%d complete, next cycle in %ds: session=%s",
+                total - pending,
                 total,
+                _POLL_CYCLE_DELAY_SECONDS,
                 request.session_id,
             )
-            return {"status": "polling", "detail": f"{len(completed_results)}/{total} complete"}
+            return {"status": "polling", "detail": f"{total - pending}/{total} complete"}
 
-    transcript = AssemblyAiTranscriptionService.process_completed_jobs(completed_results)
+        db.commit()
+
+    transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
 
     try:
         return process_transcription_result(
