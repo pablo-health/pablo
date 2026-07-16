@@ -53,7 +53,10 @@ from ..services import (
     SOAPGenerationFailedError,
     get_audit_service,
 )
-from ..services.assemblyai_transcription_service import AssemblyAiTranscriptionService
+from ..services.assemblyai_transcription_service import (
+    AssemblyAiTranscriptionService,
+    sniff_audio_container,
+)
 from ..services.cloud_tasks_service import enqueue_cloud_task
 from ..services.file_storage import file_storage_from_settings
 from ..services.session_service import SessionService
@@ -386,21 +389,20 @@ def assemblyai_submit(
         bucket = settings.transcription_audio_bucket
         storage = file_storage_from_settings(settings)
 
-        # The prepared speech-only audio is staged back into the bucket and
-        # handed to AssemblyAI as a presigned GET, so the (potentially large)
-        # audio never has to be pushed through this process a second time.
-        speech_objects = {
-            "Therapist": f"{therapist_object}.speech.wav",
-            "Client": f"{client_object}.speech.wav",
-        }
+        # The prepared audio is staged back into the bucket and handed to
+        # AssemblyAI as a presigned GET, so the (potentially large) audio never
+        # has to be pushed through this process a second time. The extension +
+        # content-type follow the prepared bytes (WAV or AAC).
+        base_objects = {"Therapist": therapist_object, "Client": client_object}
 
-        def _stage_speech_audio(speaker: str, wav_bytes: bytes) -> str:
-            object_name = speech_objects[speaker]
+        def _stage_prepared_audio(speaker: str, prepared_bytes: bytes) -> str:
+            ext, content_type = sniff_audio_container(prepared_bytes)
+            object_name = f"{base_objects[speaker]}.speech.{ext}"
             storage.upload_bytes(
                 bucket=bucket,
                 object_name=object_name,
-                data=wav_bytes,
-                content_type="audio/wav",
+                data=prepared_bytes,
+                content_type=content_type,
             )
             return storage.make_download_url(
                 bucket=bucket,
@@ -416,7 +418,7 @@ def assemblyai_submit(
                 service.submit_dual_channel(
                     therapist_audio=therapist_bytes,
                     client_audio=client_bytes,
-                    audio_url_factory=_stage_speech_audio,
+                    audio_url_factory=_stage_prepared_audio,
                 )
             )
         except Exception as exc:

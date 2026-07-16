@@ -1031,6 +1031,17 @@ class Settings(BaseSettings):
         default="best",
         description="AssemblyAI speech model, e.g. best, nano, slam-1.",
     )
+    assemblyai_vad_enabled: bool = Field(
+        default=False,
+        description=(
+            "Pre-trim each channel to speech-only regions before submitting "
+            "(one job/channel, timestamps remapped). Requires decodable PCM/WAV; "
+            "compressed uploads are always submitted whole. Off by default: the "
+            "whole file is submitted per channel, which keeps the submit path "
+            "simple. Turn on to trade a small recognition/cost win for that "
+            "complexity once volume warrants it."
+        ),
+    )
 
     # Calendar Auto-Sync (Cloud Scheduler + Cloud Tasks)
     calendar_auto_sync_enabled: bool = Field(

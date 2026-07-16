@@ -28,10 +28,13 @@ from app.services.assemblyai_transcription_service import (
     AssemblyAiTranscriptionService,
     _ensure_wav,
     _format_timestamp,
+    _is_adts_aac,
     _merge_close_regions,
     _merge_segments,
     _prepare_speech_audio,
+    _prepare_whole_audio,
     _words_to_utterances,
+    sniff_audio_container,
 )
 from app.settings import Settings
 
@@ -264,6 +267,47 @@ def _channel_handler(
     return handler
 
 
+# --- whole-file submission (AAC / no-VAD) ------------------------------
+
+# Minimal fake ADTS AAC: 0xFF 0xF1 sync + layer/no-CRC, then arbitrary payload.
+_FAKE_AAC = b"\xff\xf1" + bytes(64)
+
+
+class TestSniffAudioContainer:
+    def test_riff_is_wav(self) -> None:
+        assert sniff_audio_container(_make_mono_wav([0, 0, 0])) == ("wav", "audio/wav")
+
+    def test_adts_is_aac(self) -> None:
+        assert sniff_audio_container(_FAKE_AAC) == ("aac", "audio/aac")
+
+    def test_unknown_defaults_to_wav(self) -> None:
+        assert sniff_audio_container(b"\x01\x02\x03\x04") == ("wav", "audio/wav")
+
+    def test_adts_sync_detection(self) -> None:
+        assert _is_adts_aac(_FAKE_AAC)
+        assert not _is_adts_aac(_make_mono_wav([0, 0]))
+        assert not _is_adts_aac(b"\xff\x0f")  # sync high byte only, wrong low nibble
+
+
+class TestPrepareWholeAudio:
+    def test_aac_passes_through_untouched_with_identity_map(self) -> None:
+        prepared, offset_map = _prepare_whole_audio(_FAKE_AAC)
+        assert prepared == _FAKE_AAC
+        assert offset_map == [[0.0, 0.0]]
+
+    def test_wav_passes_through_untouched(self) -> None:
+        wav = _make_mono_wav([1, 2, 3])
+        prepared, offset_map = _prepare_whole_audio(wav)
+        assert prepared == wav
+        assert offset_map == [[0.0, 0.0]]
+
+    def test_raw_pcm_is_wrapped_to_wav(self) -> None:
+        raw = struct.pack("<4h", 1, 2, 3, 4)
+        prepared, offset_map = _prepare_whole_audio(raw, n_channels=1)
+        assert prepared[:4] == b"RIFF"
+        assert offset_map == [[0.0, 0.0]]
+
+
 class TestSubmitDualChannel:
     @pytest.mark.anyio
     async def test_submits_both_channels_with_expected_metadata(
@@ -288,6 +332,24 @@ class TestSubmitDualChannel:
         submit_calls = [c for c in calls if c.url.path.endswith("/transcript")]
         assert len(upload_calls) == 2
         assert len(submit_calls) == 2
+
+    @pytest.mark.anyio
+    async def test_aac_is_submitted_whole_even_with_vad_enabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # VAD can't run on compressed audio (no decode step), so an AAC payload
+        # is uploaded byte-for-byte with an identity offset map regardless of
+        # the flag.
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings(assemblyai_vad_enabled=True))
+
+        jobs = await service.submit_dual_channel(therapist_audio=_FAKE_AAC, client_audio=_FAKE_AAC)
+
+        assert all(job["offset_map"] == [[0.0, 0.0]] for job in jobs)
+        upload_calls = [c for c in calls if c.url.path.endswith("/upload")]
+        assert len(upload_calls) == 2
+        assert all(c.content == _FAKE_AAC for c in upload_calls)
 
     @pytest.mark.anyio
     async def test_upload_call_uses_hardcoded_300s_timeout_and_api_key(

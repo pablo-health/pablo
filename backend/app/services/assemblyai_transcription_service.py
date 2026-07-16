@@ -103,6 +103,53 @@ def _ensure_wav(audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS) -> b
     return buf.getvalue()
 
 
+# ADTS AAC frame sync: a 12-bit syncword (0xFFF) followed by a zero layer
+# field — byte 0 == 0xFF and (byte 1 & 0xF6) == 0xF0.
+_ADTS_SYNC_BYTE0 = 0xFF
+_ADTS_BYTE1_LAYER_MASK = 0xF6
+_ADTS_BYTE1_LAYER_MATCH = 0xF0
+_ADTS_MIN_BYTES = 2
+
+
+def _is_adts_aac(audio_data: bytes) -> bool:
+    """True if the payload begins with an ADTS AAC frame sync."""
+    return (
+        len(audio_data) >= _ADTS_MIN_BYTES
+        and audio_data[0] == _ADTS_SYNC_BYTE0
+        and (audio_data[1] & _ADTS_BYTE1_LAYER_MASK) == _ADTS_BYTE1_LAYER_MATCH
+    )
+
+
+def sniff_audio_container(audio_data: bytes) -> tuple[str, str]:
+    """Best-effort ``(extension, mime_type)`` for a prepared audio payload.
+
+    Names and content-types the object handed to AssemblyAI. AssemblyAI decodes
+    by content regardless, but is fed accurate metadata anyway. Anything not
+    recognized as a self-describing container is treated as WAV (raw PCM is
+    wrapped to WAV before staging).
+    """
+    if audio_data[:4] == b"RIFF":
+        return "wav", "audio/wav"
+    if _is_adts_aac(audio_data):
+        return "aac", "audio/aac"
+    return "wav", "audio/wav"
+
+
+def _prepare_whole_audio(
+    audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS
+) -> tuple[bytes, list[list[float]]]:
+    """Prepare a channel for whole-file submission (no VAD).
+
+    Self-describing containers (WAV, ADTS AAC) are submitted as-is; legacy
+    headerless raw PCM is wrapped to WAV. The offset map is the identity
+    ``[[0.0, 0.0]]`` — the submitted timeline is the original timeline, so the
+    poller's per-word timestamp remap is a no-op.
+    """
+    if audio_data[:4] == b"RIFF" or _is_adts_aac(audio_data):
+        return audio_data, [[0.0, 0.0]]
+    return _ensure_wav(audio_data, n_channels), [[0.0, 0.0]]
+
+
 # --- VAD: find and concatenate speech regions ---
 
 
@@ -254,6 +301,7 @@ class AssemblyAiTranscriptionService:
     def __init__(self, settings: Settings) -> None:
         self._api_key = settings.assemblyai_api_key.get_secret_value()
         self._speech_model = settings.assemblyai_speech_model
+        self._vad_enabled = settings.assemblyai_vad_enabled
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": self._api_key}
@@ -310,11 +358,18 @@ class AssemblyAiTranscriptionService:
                 ("Client", client_audio, 2),
             )
             for speaker, audio, n_channels in channels:
-                speech_wav, offset_map = _prepare_speech_audio(audio, n_channels=n_channels)
-                if audio_url_factory is not None:
-                    audio_url = audio_url_factory(speaker, speech_wav)
+                # VAD needs decodable PCM samples; compressed uploads (AAC) are
+                # always submitted whole. So the speech-only path runs only when
+                # VAD is enabled AND the payload isn't already a compressed
+                # container — otherwise the whole file goes with an identity map.
+                if self._vad_enabled and not _is_adts_aac(audio):
+                    prepared, offset_map = _prepare_speech_audio(audio, n_channels=n_channels)
                 else:
-                    audio_url = await self._upload_audio(client, speech_wav)
+                    prepared, offset_map = _prepare_whole_audio(audio, n_channels=n_channels)
+                if audio_url_factory is not None:
+                    audio_url = audio_url_factory(speaker, prepared)
+                else:
+                    audio_url = await self._upload_audio(client, prepared)
                 transcript_id = await self._submit_transcription(client, audio_url)
                 jobs.append(
                     {
