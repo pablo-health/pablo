@@ -158,7 +158,7 @@ class TestEnsureWav:
         assert _ensure_wav(existing_wav, n_channels=2) == existing_wav
 
     def test_rejects_nonsense_channel_count(self) -> None:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="n_channels must be >= 1"):
             _ensure_wav(struct.pack("<2h", 1, 2), n_channels=0)
 
     def test_trims_trailing_partial_frame(self) -> None:
