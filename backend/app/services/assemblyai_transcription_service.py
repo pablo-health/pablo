@@ -360,16 +360,13 @@ class AssemblyAiTranscriptionService:
         )
 
     @staticmethod
-    def process_completed_jobs(jobs_with_results: list[tuple[_JsonDict, _JsonDict]]) -> str:
-        """Merge completed AssemblyAI results into the canonical transcript text.
+    def merge_utterances(jobs: list[_JsonDict]) -> str:
+        """Merge per-job utterance lists into the canonical transcript text.
 
-        Args:
-            jobs_with_results: list of (job_metadata, assemblyai_result) tuples.
+        ``jobs`` is the persisted job metadata after the poller attached each
+        completed job's parsed utterances (see ``parse_result``).
         """
-        all_utterances: list[_JsonDict] = []
-        for job_meta, result in jobs_with_results:
-            all_utterances.extend(AssemblyAiTranscriptionService.parse_result(job_meta, result))
-        return _merge_segments(all_utterances)
+        return _merge_segments([u for job in jobs for u in job.get("utterances", [])])
 
 
 # --- Utilities ---

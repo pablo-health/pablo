@@ -450,22 +450,11 @@ def _enqueue_poll(session_id: str, user_id: str) -> None:
     )
 
 
-def _poll_assemblyai_jobs(
-    api_key: str,
-    jobs: list[dict],
-) -> tuple[list[tuple[dict, dict]], bool, str | None]:
-    """Poll all AssemblyAI jobs. Returns (completed_results, all_complete, error_msg)."""
-    completed: list[tuple[dict, dict]] = []
-    for job in jobs:
-        job_status, result = AssemblyAiTranscriptionService.check_job_status(
-            api_key, job["transcript_id"]
-        )
-        if job_status == "error":
-            error_msg = result.get("error", "unknown") if result else "unknown"
-            return (completed, False, f"AssemblyAI job {job['transcript_id']}: {error_msg}")
-        if job_status == "completed" and result is not None:
-            completed.append((job, result))
-    return (completed, len(completed) == len(jobs), None)
+# Poll pacing: cycles are spaced so a long transcription doesn't hot-loop the
+# queue, and capped so a job the provider never finishes becomes a visible
+# failure instead of a session stuck in TRANSCRIBING forever.
+_POLL_CYCLE_DELAY_SECONDS = 15
+_MAX_POLL_CYCLES = 240  # x 15s = ~60 minutes of polling
 
 
 @router.post("/api/internal/transcription-poll")
@@ -473,7 +462,13 @@ def transcription_poll(
     request: TranscriptionPollRequest,
     _invoker: None = Depends(require_cloud_tasks_invoker),
 ) -> dict[str, str]:
-    """Poll AssemblyAI for transcription completion (called by Cloud Tasks)."""
+    """Poll AssemblyAI for transcription completion (called by Cloud Tasks).
+
+    Each completed job's parsed utterances are persisted into the session's
+    job metadata the first time they're seen, so later cycles only hit the
+    provider for jobs still pending — a cycle's cost can't grow with how
+    much has already finished.
+    """
     settings = get_settings()
     schema_name = _resolve_schema_for_user(request.user_id)
 
@@ -504,9 +499,29 @@ def transcription_poll(
             )
 
         api_key = settings.assemblyai_api_key.get_secret_value()
-        completed_results, all_complete, error_msg = _poll_assemblyai_jobs(
-            api_key, job_metadata["jobs"]
-        )
+        jobs = job_metadata["jobs"]
+        error_msg: str | None = None
+        for job in jobs:
+            if "utterances" in job:
+                continue  # fetched on an earlier cycle
+            job_status, result = AssemblyAiTranscriptionService.check_job_status(
+                api_key, job["transcript_id"]
+            )
+            if job_status == "error":
+                error_detail = result.get("error", "unknown") if result else "unknown"
+                error_msg = f"AssemblyAI job {job['transcript_id']}: {error_detail}"
+                break
+            if job_status == "completed" and result is not None:
+                job["utterances"] = AssemblyAiTranscriptionService.parse_result(job, result)
+
+        poll_cycles = int(job_metadata.get("poll_cycles", 0)) + 1
+        # New top-level dict so the ORM sees the JSON column change; the
+        # mutated jobs list rides along inside it.
+        session_row.transcription_job_metadata = {
+            **job_metadata,
+            "jobs": jobs,
+            "poll_cycles": poll_cycles,
+        }
 
         if error_msg:
             logger.error("Transcription poll failed: session=%s %s", request.session_id, error_msg)
@@ -515,22 +530,45 @@ def transcription_poll(
             db.commit()
             return {"status": "error", "detail": error_msg}
 
-        if not all_complete:
+        pending = sum(1 for job in jobs if "utterances" not in job)
+        if pending:
+            total = len(jobs)
+            if poll_cycles >= _MAX_POLL_CYCLES:
+                logger.error(
+                    "Transcription poll budget exhausted: session=%s %d/%d complete "
+                    "after %d cycles",
+                    request.session_id,
+                    total - pending,
+                    total,
+                    poll_cycles,
+                )
+                session_row.status = "failed"
+                session_row.error = "Transcription timed out. Please retry the upload."
+                db.commit()
+                return {"status": "error", "detail": "poll budget exhausted"}
+
+            # Commit the fetched utterances before re-enqueueing: if the
+            # enqueue fails and Cloud Tasks retries this cycle, the retry
+            # skips everything already fetched.
+            db.commit()
             enqueue_cloud_task(
                 queue_name=settings.transcription_task_queue,
                 endpoint_path="/api/internal/transcription-poll",
                 payload={"session_id": request.session_id, "user_id": request.user_id},
+                schedule_delay_seconds=_POLL_CYCLE_DELAY_SECONDS,
             )
-            total = len(job_metadata["jobs"])
             logger.info(
-                "Transcription poll: %d/%d complete, re-enqueued: session=%s",
-                len(completed_results),
+                "Transcription poll: %d/%d complete, next cycle in %ds: session=%s",
+                total - pending,
                 total,
+                _POLL_CYCLE_DELAY_SECONDS,
                 request.session_id,
             )
-            return {"status": "polling", "detail": f"{len(completed_results)}/{total} complete"}
+            return {"status": "polling", "detail": f"{total - pending}/{total} complete"}
 
-    transcript = AssemblyAiTranscriptionService.process_completed_jobs(completed_results)
+        db.commit()
+
+    transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
 
     try:
         return process_transcription_result(

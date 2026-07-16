@@ -164,7 +164,9 @@ class TestPrepareSpeechAudio:
     def test_silence_only_audio_passes_through_whole(self) -> None:
         silent_wav = _make_mono_wav([0] * 200, framerate=1000)
 
-        speech_wav, offset_map = _prepare_speech_audio(silent_wav, threshold=500, min_silence_ms=500)
+        speech_wav, offset_map = _prepare_speech_audio(
+            silent_wav, threshold=500, min_silence_ms=500
+        )
 
         assert speech_wav == silent_wav
         assert offset_map == [[0.0, 0.0]]
@@ -314,9 +316,7 @@ class TestSubmitDualChannel:
         # ...and its URLs were submitted instead of AssemblyAI /upload ones.
         assert all(not c.url.path.endswith("/upload") for c in calls)
         submitted_urls = {
-            json.loads(c.content)["audio_url"]
-            for c in calls
-            if c.url.path.endswith("/transcript")
+            json.loads(c.content)["audio_url"] for c in calls if c.url.path.endswith("/transcript")
         }
         assert submitted_urls == {
             "https://storage.example/therapist",
@@ -463,49 +463,44 @@ class TestParseResult:
 
         assert utterances == [{"start": 2.0, "end": 2.4, "speaker": "Client", "text": "Hi."}]
 
-
-class TestProcessCompletedJobs:
-    def test_merges_words_into_utterances_with_speaker_and_offset(self) -> None:
-        jobs_with_results = [
-            (
-                {"speaker": "Therapist", "original_offset": 0.0},
-                {
-                    "words": [
-                        {"start": 0, "end": 500, "text": "Hello"},
-                        {"start": 500, "end": 1000, "text": "there."},
-                    ]
-                },
-            ),
-            (
-                {"speaker": "Client", "original_offset": 2.0},
-                {"words": [{"start": 0, "end": 400, "text": "Hi."}]},
-            ),
-        ]
-
-        transcript = AssemblyAiTranscriptionService.process_completed_jobs(jobs_with_results)
-
-        assert transcript == ("[00:00:00]\nTherapist: Hello there.\n[00:00:02]\nClient: Hi.")
-
     def test_falls_back_to_text_when_no_words(self) -> None:
-        jobs_with_results = [
-            (
-                {"speaker": "Therapist", "original_offset": 5.0},
-                {"words": [], "text": "  Fallback text.  "},
-            )
+        job_meta = {"speaker": "Therapist", "original_offset": 5.0}
+        result = {"words": [], "text": "  Fallback text.  "}
+
+        utterances = AssemblyAiTranscriptionService.parse_result(job_meta, result)
+
+        assert utterances == [
+            {"start": 5.0, "end": 5.0, "speaker": "Therapist", "text": "Fallback text."}
         ]
 
-        transcript = AssemblyAiTranscriptionService.process_completed_jobs(jobs_with_results)
+    def test_no_words_and_blank_text_yield_nothing(self) -> None:
+        job_meta = {"speaker": "Therapist", "original_offset": 0.0}
+        result = {"words": [], "text": "   "}
 
-        assert transcript == "[00:00:05]\nTherapist: Fallback text."
+        assert AssemblyAiTranscriptionService.parse_result(job_meta, result) == []
 
-    def test_skips_job_with_no_words_and_blank_text(self) -> None:
-        jobs_with_results = [
-            ({"speaker": "Therapist", "original_offset": 0.0}, {"words": [], "text": "   "})
+
+class TestMergeUtterances:
+    def test_merges_channels_sorted_by_start_time(self) -> None:
+        jobs = [
+            {
+                "speaker": "Client",
+                "utterances": [{"start": 2.0, "end": 2.4, "speaker": "Client", "text": "Hi."}],
+            },
+            {
+                "speaker": "Therapist",
+                "utterances": [
+                    {"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "Hello there."}
+                ],
+            },
         ]
 
-        transcript = AssemblyAiTranscriptionService.process_completed_jobs(jobs_with_results)
+        transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
 
-        assert transcript == ""
+        assert transcript == "[00:00:00]\nTherapist: Hello there.\n[00:00:02]\nClient: Hi."
+
+    def test_jobs_without_utterances_contribute_nothing(self) -> None:
+        assert AssemblyAiTranscriptionService.merge_utterances([{"speaker": "Therapist"}]) == ""
 
 
 class TestWordsToUtterances:
