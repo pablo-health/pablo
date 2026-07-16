@@ -51,35 +51,55 @@ _REGION_MERGE_GAP_SECONDS = 0.5
 _CONCAT_GAP_SECONDS = 0.5
 
 
-def _ensure_wav(audio_data: bytes) -> bytes:
+def _ensure_wav(audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS) -> bytes:
     """Wrap raw PCM in a WAV header if needed.
 
-    The companion app sends raw 48kHz/16-bit/stereo PCM with no header.
-    AssemblyAI and the VAD both need a recognizable WAV container.
-    Stereo is downmixed to mono since each channel is a separate speaker.
+    Older companion builds send raw headerless PCM, so the format has to be
+    supplied out of band -- and it is not the same for both parts: the therapist
+    sidecar is mono, the client sidecar is stereo. Guessing stereo for a mono part
+    halves its frame count and interleaves adjacent samples into "channels",
+    mangling the waveform into something that transcribes to nothing. Callers must
+    therefore pass the channel count of the part they hold rather than rely on the
+    default.
+
+    Current builds send self-describing WAV and return at the RIFF check below,
+    never reaching the guess.
+
+    Multi-channel input is downmixed to mono: each part carries one speaker, so
+    the channels are duplicates or a stereo image of the same voice, not separate
+    people.
     """
-    # Already a WAV? Return as-is.
+    # Already a WAV? Return as-is -- the payload describes itself, so don't guess.
     if audio_data[:4] == b"RIFF":
         return audio_data
 
-    # Raw PCM → mono WAV. Trim to whole frames first.
-    frame_size = _DEFAULT_PCM_CHANNELS * _SAMPLE_WIDTH_16BIT
+    if n_channels < 1:
+        raise ValueError(f"n_channels must be >= 1, got {n_channels}")
+
+    # Trim to whole frames
+    frame_size = n_channels * _SAMPLE_WIDTH_16BIT
     n_frames = len(audio_data) // frame_size
     trimmed = audio_data[: n_frames * frame_size]
 
-    channels = np.frombuffer(trimmed, dtype="<i2").reshape(-1, _DEFAULT_PCM_CHANNELS)
-    # int32 sum before the divide: two full-scale int16 samples overflow.
-    mono = (channels.astype(np.int32).sum(axis=1) // _DEFAULT_PCM_CHANNELS).astype("<i2")
+    if n_channels == 1:
+        mono_bytes = trimmed
+    else:
+        channels = np.frombuffer(trimmed, dtype="<i2").reshape(-1, n_channels)
+        # int32 sum before the divide: full-scale int16 samples overflow.
+        mono = (channels.astype(np.int32).sum(axis=1) // n_channels).astype("<i2")
+        mono_bytes = mono.tobytes()
 
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(_SAMPLE_WIDTH_16BIT)
         wf.setframerate(_DEFAULT_PCM_SAMPLE_RATE)
-        wf.writeframes(mono.tobytes())
+        wf.writeframes(mono_bytes)
 
     duration = n_frames / _DEFAULT_PCM_SAMPLE_RATE
-    logger.info("Wrapped raw PCM as WAV: %.1fs, %d frames, stereo→mono", duration, n_frames)
+    logger.info(
+        "Wrapped raw PCM as WAV: %.1fs, %d frames, %dch→mono", duration, n_frames, n_channels
+    )
     return buf.getvalue()
 
 
@@ -152,6 +172,8 @@ def _prepare_speech_audio(
     audio_data: bytes,
     threshold: int = 500,
     min_silence_ms: int = 500,
+    *,
+    n_channels: int = _DEFAULT_PCM_CHANNELS,
 ) -> tuple[bytes, list[list[float]]]:
     """Reduce one channel to a single speech-only WAV plus an offset map.
 
@@ -163,9 +185,10 @@ def _prepare_speech_audio(
     the transcription are mapped back through it in ``parse_result``.
 
     Audio the VAD can't analyze (not 16-bit mono, corrupt, or all silence)
-    passes through whole with an identity map.
+    passes through whole with an identity map. ``n_channels`` describes a
+    headerless raw-PCM payload's layout — see :func:`_ensure_wav`.
     """
-    wav_data = _ensure_wav(audio_data)
+    wav_data = _ensure_wav(audio_data, n_channels)
     identity: tuple[bytes, list[list[float]]] = (wav_data, [[0.0, 0.0]])
     try:
         with wave.open(io.BytesIO(wav_data), "rb") as wf:
@@ -278,8 +301,16 @@ class AssemblyAiTranscriptionService:
         """
         jobs: list[_JsonDict] = []
         async with tracing_async_client() as client:
-            for speaker, audio in (("Therapist", therapist_audio), ("Client", client_audio)):
-                speech_wav, offset_map = _prepare_speech_audio(audio)
+            # The two parts have different layouts: the companion captures the
+            # therapist from the mic as mono and the client from system
+            # loopback as stereo. Only headerless payloads from older builds
+            # depend on the channel count.
+            channels = (
+                ("Therapist", therapist_audio, 1),
+                ("Client", client_audio, 2),
+            )
+            for speaker, audio, n_channels in channels:
+                speech_wav, offset_map = _prepare_speech_audio(audio, n_channels=n_channels)
                 if audio_url_factory is not None:
                     audio_url = audio_url_factory(speaker, speech_wav)
                 else:
