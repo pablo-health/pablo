@@ -38,19 +38,31 @@ _DEFAULT_PCM_SAMPLE_RATE = 48000
 _DEFAULT_PCM_CHANNELS = 2
 
 
-def _ensure_wav(audio_data: bytes) -> bytes:
+def _ensure_wav(audio_data: bytes, n_channels: int = _DEFAULT_PCM_CHANNELS) -> bytes:
     """Wrap raw PCM in a WAV header if needed.
 
-    The companion app sends raw 48kHz/16-bit/stereo PCM with no header.
-    AssemblyAI and the VAD both need a recognizable WAV container.
-    Stereo is downmixed to mono since each channel is a separate speaker.
+    Older companion builds send raw headerless PCM, so the format has to be
+    supplied out of band -- and it is not the same for both parts: the therapist
+    sidecar is mono, the client sidecar is stereo. Guessing stereo for a mono part
+    halves its frame count and interleaves adjacent samples into "channels",
+    mangling the waveform into something that transcribes to nothing. Callers must
+    therefore pass the channel count of the part they hold rather than rely on the
+    default.
+
+    Current builds send self-describing WAV and return at the RIFF check below,
+    never reaching the guess.
+
+    Multi-channel input is downmixed to mono: each part carries one speaker, so
+    the channels are duplicates or a stereo image of the same voice, not separate
+    people.
     """
-    # Already a WAV? Return as-is.
+    # Already a WAV? Return as-is -- the payload describes itself, so don't guess.
     if audio_data[:4] == b"RIFF":
         return audio_data
 
-    # Raw PCM → mono WAV
-    n_channels = _DEFAULT_PCM_CHANNELS
+    if n_channels < 1:
+        raise ValueError(f"n_channels must be >= 1, got {n_channels}")
+
     bytes_per_sample = _SAMPLE_WIDTH_16BIT
     frame_size = n_channels * bytes_per_sample
 
@@ -58,12 +70,17 @@ def _ensure_wav(audio_data: bytes) -> bytes:
     n_frames = len(audio_data) // frame_size
     trimmed = audio_data[: n_frames * frame_size]
 
-    # Downmix stereo to mono by averaging channels
-    samples = struct.unpack(f"<{n_frames * n_channels}h", trimmed)
-    mono = struct.pack(
-        f"<{n_frames}h",
-        *((samples[i] + samples[i + 1]) // 2 for i in range(0, len(samples), n_channels)),
-    )
+    if n_channels == 1:
+        mono = trimmed
+    else:
+        samples = struct.unpack(f"<{n_frames * n_channels}h", trimmed)
+        mono = struct.pack(
+            f"<{n_frames}h",
+            *(
+                sum(samples[i : i + n_channels]) // n_channels
+                for i in range(0, len(samples), n_channels)
+            ),
+        )
 
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
@@ -73,7 +90,9 @@ def _ensure_wav(audio_data: bytes) -> bytes:
         wf.writeframes(mono)
 
     duration = n_frames / _DEFAULT_PCM_SAMPLE_RATE
-    logger.info("Wrapped raw PCM as WAV: %.1fs, %d frames, stereo→mono", duration, n_frames)
+    logger.info(
+        "Wrapped raw PCM as WAV: %.1fs, %d frames, %dch→mono", duration, n_frames, n_channels
+    )
     return buf.getvalue()
 
 
@@ -227,10 +246,14 @@ class AssemblyAiTranscriptionService:
         return data["id"]  # type: ignore[no-any-return]
 
     async def _submit_channel_regions(
-        self, client: httpx.AsyncClient, audio_data: bytes, speaker: str
+        self, client: httpx.AsyncClient, audio_data: bytes, speaker: str, n_channels: int
     ) -> list[_JsonDict]:
-        """VAD split + upload + submit for one channel. Returns job metadata per region."""
-        wav_data = _ensure_wav(audio_data)
+        """VAD split + upload + submit for one channel. Returns job metadata per region.
+
+        ``n_channels`` describes this part's raw-PCM layout and is only consulted for
+        headerless payloads from older clients -- see :func:`_ensure_wav`.
+        """
+        wav_data = _ensure_wav(audio_data, n_channels)
         regions = _extract_speech_regions(wav_data)
 
         jobs: list[_JsonDict] = []
@@ -259,10 +282,15 @@ class AssemblyAiTranscriptionService:
         dicts with {transcript_id, speaker, original_offset} for each region.
         """
         async with tracing_async_client() as client:
+            # The two parts have different layouts: the companion captures the
+            # therapist from the mic as mono and the client from system loopback as
+            # stereo. Only headerless payloads from older builds depend on this.
             therapist_jobs = await self._submit_channel_regions(
-                client, therapist_audio, "Therapist"
+                client, therapist_audio, "Therapist", n_channels=1
             )
-            client_jobs = await self._submit_channel_regions(client, client_audio, "Client")
+            client_jobs = await self._submit_channel_regions(
+                client, client_audio, "Client", n_channels=2
+            )
 
         all_jobs = therapist_jobs + client_jobs
         logger.info("Submitted %d AssemblyAI jobs for dual-channel transcription", len(all_jobs))

@@ -115,6 +115,52 @@ class TestEnsureWav:
         (sample,) = struct.unpack("<1h", frames)
         assert sample == 200
 
+    def test_mono_pcm_is_preserved_sample_for_sample(self) -> None:
+        # The therapist sidecar is mono. Wrapping it as stereo halves the frame
+        # count and averages adjacent (unrelated) samples into one, which mangles
+        # the waveform into something that transcribes to nothing -- and the SOAP
+        # then comes back as unanchored "not described in the transcript"
+        # placeholders. Every sample must survive untouched.
+        raw_pcm = struct.pack("<4h", 100, 300, -200, 400)
+        wrapped = _ensure_wav(raw_pcm, n_channels=1)
+
+        with wave.open(io.BytesIO(wrapped), "rb") as wf:
+            assert wf.getnchannels() == 1
+            assert wf.getnframes() == 4
+            frames = wf.readframes(wf.getnframes())
+        assert struct.unpack("<4h", frames) == (100, 300, -200, 400)
+
+    def test_mono_pcm_wrapped_as_stereo_is_the_corruption_this_guards(self) -> None:
+        # Pins the old behavior as wrong rather than merely different: the same
+        # mono bytes read as stereo lose half their frames and average pairs that
+        # were never a stereo image of anything.
+        raw_pcm = struct.pack("<4h", 100, 300, -200, 400)
+
+        as_stereo = _ensure_wav(raw_pcm, n_channels=2)
+        with wave.open(io.BytesIO(as_stereo), "rb") as wf:
+            assert wf.getnframes() == 2  # half the real frames
+            frames = wf.readframes(wf.getnframes())
+        assert struct.unpack("<2h", frames) == (200, 100)  # neighbours averaged
+
+    def test_multichannel_downmix_averages_every_channel(self) -> None:
+        # One 4-channel frame: the fold must span all channels, not just the first pair.
+        raw_pcm = struct.pack("<4h", 100, 200, 300, 400)
+        wrapped = _ensure_wav(raw_pcm, n_channels=4)
+
+        with wave.open(io.BytesIO(wrapped), "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+        assert struct.unpack("<1h", frames) == (250,)
+
+    def test_riff_payload_ignores_the_declared_channel_count(self) -> None:
+        # A self-describing payload must never be re-interpreted: current clients
+        # send WAV, and the declared count is only a fallback for headerless PCM.
+        existing_wav = _make_mono_wav([0, 100, -100], framerate=8000)
+        assert _ensure_wav(existing_wav, n_channels=2) == existing_wav
+
+    def test_rejects_nonsense_channel_count(self) -> None:
+        with pytest.raises(ValueError, match="n_channels must be >= 1"):
+            _ensure_wav(struct.pack("<2h", 1, 2), n_channels=0)
+
     def test_trims_trailing_partial_frame(self) -> None:
         # 2 full stereo frames (8 bytes) plus 2 stray bytes (partial frame).
         raw_pcm = struct.pack("<4h", 10, 20, 30, 40) + b"\x01\x02"
