@@ -83,6 +83,7 @@ from ..services import (
     SessionNotFoundError,
     SessionService,
     SOAPGenerationFailedError,
+    TransientSOAPGenerationError,
     get_audit_service,
 )
 from ..services.file_storage import FileTooLargeError, UploadTarget
@@ -287,6 +288,22 @@ class GenerateSoapJob(BaseModel):
     user_id: str
 
 
+def _is_final_soap_attempt(request: Request) -> bool:
+    """Whether this is the last Cloud Tasks delivery for a SOAP job.
+
+    Cloud Tasks stamps ``X-CloudTasks-TaskRetryCount`` (0 on the first attempt).
+    Compared against ``soap_generation_max_attempts`` so the worker can fail the
+    session permanently only once the queue has exhausted its retries — before
+    that, a transient failure returns 5xx and the queue retries with backoff.
+    """
+    raw = request.headers.get("X-CloudTasks-TaskRetryCount")
+    try:
+        retry_count = int(raw) if raw is not None else 0
+    except ValueError:
+        retry_count = 0
+    return retry_count >= get_settings().soap_generation_max_attempts - 1
+
+
 @router.post("/api/internal/jobs/generate-soap", status_code=status.HTTP_200_OK)
 def generate_soap_job(
     payload: GenerateSoapJob,
@@ -307,17 +324,19 @@ def generate_soap_job(
     schema is in scope. The actor is the owning clinician; the request context
     is the Cloud Tasks delivery (system-initiated), which is recorded honestly.
 
-    Always answers ``200`` once the job is accounted for — including the
-    non-retryable outcomes (unknown tenant, vanished session) and a recorded
-    generation failure (the session is durably marked ``failed``). Returning
-    ``200`` stops Cloud Tasks from retrying a job that can't succeed; only an
-    unexpected ``5xx`` triggers the queue's retry/backoff.
+    Answers ``200`` once the job is accounted for — a success, the non-retryable
+    outcomes (unknown tenant, vanished session), and a recorded *deterministic*
+    generation failure (the session is durably marked ``failed``). A ``200`` tells
+    Cloud Tasks the job is done. A *transient* failure (e.g. an LLM 429) instead
+    returns ``503`` so the queue retries with backoff, until the final attempt —
+    at which point it is recorded as ``failed`` and answered ``200``.
     """
     try:
         session, patient, note = run_soap_generation_job(
             session_id=payload.session_id,
             user_id=payload.user_id,
             session_service=session_service,
+            transient_is_terminal=_is_final_soap_attempt(http_request),
         )
     except UnknownTenantError:
         logger.warning(
@@ -331,6 +350,18 @@ def generate_soap_job(
             payload.session_id,
         )
         return {"status": "not_found"}
+    except TransientSOAPGenerationError as exc:
+        # Retryable provider failure (e.g. 429), not the final attempt. The
+        # session is left in its pre-generation status; answer 5xx so Cloud
+        # Tasks retries this same job with backoff.
+        logger.warning(
+            "generate-soap job: transient failure for session %s — retrying via queue",
+            payload.session_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Note generation temporarily unavailable; retrying.",
+        ) from exc
     except SOAPGenerationFailedError:
         # Session already marked FAILED + committed inside the service. Don't
         # 5xx — a deterministic generation failure must not loop the queue.

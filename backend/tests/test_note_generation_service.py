@@ -22,7 +22,9 @@ from app.services.note_generation_service import (
     GeneratedNote,
     MockNoteGenerationService,
     RegistryNoteGenerationService,
+    TransientNoteGenerationError,
     _coerce_content_to_soap_note,
+    _is_transient_llm_error,
 )
 from app.services.structured_llm_gateway import (
     FakeStructuredLLMGateway,
@@ -724,3 +726,78 @@ class TestRegistryGeneration:
             "assessment": {"clinical_findings": "Engaged and oriented."},
             "plan": {"next_steps": ["Continue weekly cadence."]},
         }
+
+
+class TestTransientLLMDetection:
+    """The transient-vs-deterministic discrimination that lets a rate-limited
+    note-gen retry instead of failing the session."""
+
+    def test_429_in_message_is_transient(self) -> None:
+        assert _is_transient_llm_error(
+            RuntimeError("Structured LLM call failed: 429 RESOURCE_EXHAUSTED")
+        )
+
+    def test_transient_marker_via_chained_cause(self) -> None:
+        # The gateway flattens the provider error into a RuntimeError but chains
+        # the original 429 via ``from exc`` — detection must walk the chain.
+        wrapper = ValueError("Note generation failed: ...")
+        wrapper.__cause__ = RuntimeError("Too Many Requests")
+        assert _is_transient_llm_error(wrapper)
+
+    def test_code_attribute_is_transient(self) -> None:
+        class RateLimitedError(Exception):
+            code = 429
+
+        assert _is_transient_llm_error(RateLimitedError())
+
+    def test_deterministic_errors_are_not_transient(self) -> None:
+        assert not _is_transient_llm_error(ValueError("LLM returned invalid JSON: boom"))
+        assert not _is_transient_llm_error(
+            RuntimeError("Structured LLM call failed: schema mismatch")
+        )
+
+
+class TestGenerateNoteTransientHandling:
+    """A transient gateway failure surfaces as ``TransientNoteGenerationError``;
+    a deterministic one stays a plain ``ValueError``."""
+
+    _TXN = Transcript(format="txt", content="[00:00] Therapist: How was your week?")
+    _WHEN = datetime.fromisoformat("2024-06-01T00:00:00+00:00")
+
+    @pytest.fixture
+    def isolated_registry(self) -> NoteTypeRegistry:
+        reg = NoteTypeRegistry()
+        register_builtin_note_types(reg)
+        return reg
+
+    @pytest.fixture
+    def patient(self) -> Patient:
+        return Patient(
+            id="p1",
+            first_name="Jane",
+            last_name="Doe",
+            created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            updated_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+            diagnosis="Adjustment disorder",
+        )
+
+    def test_transient_gateway_error_raises_transient(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        gateway = FakeStructuredLLMGateway(
+            responses=[RuntimeError("Structured LLM call failed: 429 RESOURCE_EXHAUSTED")]
+        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
+        with pytest.raises(TransientNoteGenerationError):
+            service.generate_note("narrative", self._TXN, patient, self._WHEN)
+
+    def test_deterministic_gateway_error_is_not_transient(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        gateway = FakeStructuredLLMGateway(
+            responses=[RuntimeError("Structured LLM call failed: schema mismatch")]
+        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
+        with pytest.raises(ValueError, match="Note generation failed") as exc_info:
+            service.generate_note("narrative", self._TXN, patient, self._WHEN)
+        assert not isinstance(exc_info.value, TransientNoteGenerationError)

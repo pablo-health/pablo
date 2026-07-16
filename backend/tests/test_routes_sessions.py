@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.models import SessionSource, SessionStatus, TherapySession, Transcript
 from app.models.audit import AuditAction
 from app.repositories import InMemoryTherapySessionRepository  # noqa: TC002 — runtime fixture type
+from app.routes.sessions import _is_final_soap_attempt
 from app.services import AuditService  # noqa: TC002 — runtime fixture type
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
@@ -241,3 +243,26 @@ class TestUploadAudioRateLimit:
             )
 
         assert resp.status_code == 429
+
+
+class TestIsFinalSoapAttempt:
+    """The Cloud Tasks retry-count gate that decides whether a transient SOAP
+    failure gets one more retry or is recorded as terminal."""
+
+    @staticmethod
+    def _request(retry_count: str | None) -> object:
+        headers = {} if retry_count is None else {"X-CloudTasks-TaskRetryCount": retry_count}
+        return SimpleNamespace(headers=headers)
+
+    def test_early_attempts_are_not_final(self) -> None:
+        # Default soap_generation_max_attempts is 5 → final at retry_count >= 4.
+        assert not _is_final_soap_attempt(self._request("0"))
+        assert not _is_final_soap_attempt(self._request("3"))
+
+    def test_last_attempt_is_final(self) -> None:
+        assert _is_final_soap_attempt(self._request("4"))
+        assert _is_final_soap_attempt(self._request("5"))
+
+    def test_missing_or_garbage_header_defaults_to_first_attempt(self) -> None:
+        assert not _is_final_soap_attempt(self._request(None))
+        assert not _is_final_soap_attempt(self._request("not-a-number"))

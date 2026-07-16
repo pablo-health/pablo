@@ -51,6 +51,46 @@ from .structured_llm_gateway import (
 logger = logging.getLogger(__name__)
 
 
+class TransientNoteGenerationError(Exception):
+    """LLM note generation failed for a transient, retryable reason.
+
+    Distinguishes a provider rate-limit / resource-exhausted / temporary
+    outage (worth retrying — the same transcript would likely succeed later)
+    from a deterministic failure (bad prompt, invalid JSON) that never will.
+    The caller uses this to let Cloud Tasks retry instead of marking the
+    session permanently ``failed``.
+    """
+
+
+# Substrings that mark a transient provider failure anywhere in the error
+# chain. The gateway flattens the provider exception into a RuntimeError but
+# chains the original via ``from exc``, so the raw 429/RESOURCE_EXHAUSTED text
+# survives on ``__cause__``.
+_TRANSIENT_LLM_MARKERS = (
+    "429",
+    "RESOURCE_EXHAUSTED",
+    "TOO MANY REQUESTS",
+    "RATE LIMIT",
+    "503",
+    "UNAVAILABLE",
+)
+
+
+def _is_transient_llm_error(exc: BaseException) -> bool:
+    """True if the error (or anything it chains) looks transient/retryable."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        code = getattr(cur, "code", None) or getattr(cur, "status_code", None)
+        if code in (429, 503):
+            return True
+        if any(marker in str(cur).upper() for marker in _TRANSIENT_LLM_MARKERS):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 SOAP_KEY = "soap"
 _DEFAULT_GENERATION_PROMPT_SYSTEM = (
     "You are a clinical documentation assistant. Populate the requested "
@@ -249,6 +289,10 @@ class RegistryNoteGenerationService(NoteGenerationService):
                 continue
             except Exception as exc:
                 logger.exception("LLM generation failed for note_type=%s", note_key)
+                if _is_transient_llm_error(exc):
+                    # Retryable (e.g. provider 429). Surface it as such so the
+                    # job can be retried instead of failing the session.
+                    raise TransientNoteGenerationError(str(exc)) from exc
                 raise ValueError(f"Note generation failed: {exc}") from exc
 
         logger.error(

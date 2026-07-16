@@ -799,6 +799,17 @@ class Settings(BaseSettings):
             "saturating the request threadpool under concurrent uploads."
         ),
     )
+    soap_generation_max_attempts: int = Field(
+        default=5,
+        description=(
+            "Total delivery attempts for a SOAP-generation job before a "
+            "transient failure (e.g. an LLM 429) is treated as terminal and the "
+            "session is marked failed. Must match the pablo-soap-generation "
+            "queue's maxAttempts: the worker reads the Cloud Tasks retry-count "
+            "header and, on any attempt before the last, returns 5xx so the "
+            "queue retries with backoff instead of failing the session."
+        ),
+    )
 
     # NLI Model Settings
     nli_model_path: str = Field(

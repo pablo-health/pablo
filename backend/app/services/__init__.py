@@ -69,6 +69,7 @@ from .session_service import (
     SessionService,
     SessionServiceError,
     SOAPGenerationFailedError,
+    TransientSOAPGenerationError,
 )
 from .source_attribution_service import (
     build_attribution_prompt,
@@ -131,6 +132,7 @@ __all__ = [
     "StreamEvent",
     "StructuredCompletion",
     "StructuredLLMGateway",
+    "TransientSOAPGenerationError",
     "TurnConcurrencyError",
     "TurnContext",
     "TurnStreamEvent",
