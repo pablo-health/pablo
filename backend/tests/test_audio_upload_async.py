@@ -107,6 +107,52 @@ class TestUploadAudioAssemblyAiAsync:
             "state": "submitting",
         }
 
+    def test_finalize_commits_the_audio_path_before_dispatching_the_worker(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        """The submit worker must never be dispatched before the row is committed.
+
+        The worker is a separate request that re-reads the session to find
+        ``audio_gcs_path``. ``update()`` only flushes — the commit lands when this
+        request ends — so enqueueing first races the worker, and the loser reads an
+        empty path, logs "has no dual-channel audio path", and marks the session
+        FAILED. The audio is uploaded and the note never arrives.
+
+        Observed in the wild on dev: two identical harness runs minutes apart, one
+        reached "SOAP generation queued", the other died at submit.
+
+        The sibling test above asserts only the end state, which is identical
+        whether the enqueue happens before or after the write — which is how this
+        shipped. This pins the ordering instead.
+        """
+        session = _seed_recording_complete(mock_session_repo, mock_user_id)
+        fake_storage = MagicMock()
+        fake_storage.fetch_metadata.return_value = (1024, "application/octet-stream")
+
+        # One parent records the interleaving of both calls.
+        recorder = MagicMock()
+
+        with (
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+            patch("app.routes.sessions.release_db_connection", recorder.commit),
+            patch("app.routes.sessions.enqueue", recorder.enqueue),
+        ):
+            resp = client.post(  # type: ignore[attr-defined]
+                f"/api/sessions/{session.id}/upload-audio/finalize",
+            )
+
+        assert resp.status_code == 202, resp.text
+        order = [name for name, _, _ in recorder.mock_calls]
+        assert "commit" in order, "the transaction must be committed before the worker runs"
+        assert "enqueue" in order
+        assert order.index("commit") < order.index("enqueue"), (
+            f"worker dispatched before the audio path was committed: {order}"
+        )
+
 
 class TestSignedUrlAssemblyAi:
     def test_init_mints_targets_for_assemblyai(

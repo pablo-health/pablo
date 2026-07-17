@@ -1009,7 +1009,14 @@ async def _stream_and_submit_assemblyai(
     # "submitting" is the pre-submit marker; the submit worker overwrites it
     # with the provider job ids. Persisted so a retry is idempotent.
     session.transcription_job_metadata = {"provider": "assemblyai", "state": "submitting"}
+
+    # Commit, not just flush, before the worker is dispatched: it is a separate
+    # request and cannot see this row until the transaction lands. `update()`
+    # only flushes and the commit happens at request end, so flushing here is not
+    # enough on its own — the same race the signed-URL path below actually loses
+    # in the wild. This path merely loses it less often.
     session_repo.update(session)
+    release_db_connection()
 
     try:
         enqueue(
@@ -1348,6 +1355,24 @@ def finalize_audio_upload(
         # "submitting" is the pre-submit marker; the submit worker overwrites
         # it with the provider job ids. Persisted so a retry is idempotent.
         session.transcription_job_metadata = {"provider": "assemblyai", "state": "submitting"}
+
+        # Commit BEFORE enqueueing. The submit worker is a separate request that
+        # re-reads this row, so it can only see `audio_gcs_path` once this
+        # transaction has committed — and `update()` only flushes; the commit
+        # lands when the request ends, which is after the task may already have
+        # been dispatched. Enqueueing first therefore races the worker, and the
+        # loser reads an empty path, logs "has no dual-channel audio path", and
+        # marks the session FAILED.
+        #
+        # Not theoretical: two identical harness runs minutes apart, one reached
+        # "SOAP generation queued" and the other died at submit. This is also the
+        # transport the app actually uses (#102 moved to signed URLs to avoid the
+        # load balancer's request-size limit) — the multipart path below flushes
+        # before enqueueing and is what every test exercises, which is why the
+        # race lives where nothing covers it.
+        session_repo.update(session)
+        release_db_connection()
+
         try:
             enqueue(
                 settings.transcription_task_queue,
@@ -1358,9 +1383,10 @@ def finalize_audio_upload(
         except AlreadyExists:
             logger.info("assemblyai-submit already enqueued for session %s (dedup)", session_id)
         except Exception:
+            # The row is already committed as TRANSCRIBING, so the revert has to
+            # persist too — it re-reads, sets RECORDING_COMPLETE and flushes,
+            # and the request's own commit finishes it.
             _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
-
-        session_repo.update(session)
         audit.log_session_action(
             AuditAction.SESSION_AUDIO_UPLOADED,
             user,
