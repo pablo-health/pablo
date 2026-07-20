@@ -887,6 +887,55 @@ _ALLOWED_AUDIO_TYPES = {
     "application/octet-stream",
 }
 
+# Bytes to peek for the magic-byte sniff. 'ftyp' lives at offset 4 in MP4/M4A,
+# so we need at least 12; 16 leaves headroom without buffering the payload.
+_AUDIO_SNIFF_BYTES = 16
+
+# 11-bit MPEG audio frame sync: 0xFF followed by the top 3 bits of the next
+# byte set. Matched against the first two header bytes read big-endian.
+_MP3_FRAME_SYNC_MASK = 0xFFE0
+
+
+def _has_audio_container_signature(header: bytes) -> bool:
+    """Whether ``header`` begins with a recognised audio-container signature.
+
+    Covers the container formats accepted by Content-Type. Raw PCM (uploaded
+    as ``application/octet-stream``) is headerless and deliberately excluded —
+    callers skip the sniff for that transport.
+    """
+    return (
+        (header[:4] == b"RIFF" and header[8:12] == b"WAVE")  # WAV
+        or header[:3] == b"ID3"  # MP3 with an ID3 tag
+        or int.from_bytes(header[:2], "big") & _MP3_FRAME_SYNC_MASK == _MP3_FRAME_SYNC_MASK  # MP3
+        or header[:4] == b"OggS"  # Ogg
+        or header[:4] == b"fLaC"  # FLAC
+        or header[4:8] == b"ftyp"  # MP4 / M4A
+        or header[:4] == b"\x1a\x45\xdf\xa3"  # WebM / Matroska (EBML)
+    )
+
+
+async def _reject_if_not_audio(upload: UploadFile, label: str) -> None:
+    """Reject an upload whose bytes don't match its declared audio container.
+
+    The Content-Type allowlist is a cheap first pass a client controls; the
+    byte sniff is the authoritative check. Non-audio mislabelled as ``audio/*``
+    is rejected synchronously here instead of failing minutes later in the
+    transcription worker and orphaning the session. The header is peeked and
+    the stream rewound so the full payload still reaches storage untouched.
+    Raw PCM (``application/octet-stream``) has no signature and is passed
+    through.
+    """
+    content_type = upload.content_type
+    if not content_type or content_type == "application/octet-stream":
+        return
+    header = await upload.read(_AUDIO_SNIFF_BYTES)
+    await upload.seek(0)
+    if not _has_audio_container_signature(header):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"{label} does not contain valid audio data.",
+        )
+
 
 async def _read_bounded(upload: UploadFile, label: str) -> bytes:
     chunks: list[bytes] = []
@@ -1105,6 +1154,7 @@ async def upload_audio(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail=f"Unsupported audio type for {label}: {f.content_type}",
             )
+        await _reject_if_not_audio(f, label)
 
     if settings.transcription_provider == "assemblyai":
         result = await _stream_and_submit_assemblyai(
