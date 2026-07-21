@@ -13,8 +13,8 @@ packages = [{include = "backend"}]
 [tool.poetry.dependencies]
 
 # Web Framework
-fastapi = ">=0.138.1"
-uvicorn = {extras = ["standard"], version = "^0.49.0"}
+fastapi = ">=0.139.0"
+uvicorn = {extras = ["standard"], version = "^0.51.0"}
 pydantic = "^2.13.4"
 pydantic-settings = "^2.14.2"
 
@@ -25,7 +25,7 @@ python-dotenv = "^1.2.2"
 google-cloud-secret-manager = "^2.29.0"
 
 # Firebase Admin SDK (for verifying Firebase ID tokens)
-firebase-admin = "^7.4.0"
+firebase-admin = "^7.5.0"
 pyjwt = {extras = ["crypto"], version = ">=2.13.0"}
 
 # PostgreSQL (schema-per-practice multi-tenancy)
@@ -43,7 +43,7 @@ reportlab = "^4.5.1"
 # Native-text PDFs pass through fitz.open(stream=...) → page.get_text().
 # Scanned PDFs return <100 chars and get OCR'd by a follow-up bead
 # (ak6m.2.3) — fitz is sufficient for v1.
-pymupdf = "^1.24.0"
+pymupdf = "^1.28.0"
 
 # NLI Verification — onnxruntime only; sentence-transformers (+ torch)
 # moved to optional nli group since verification is gated by
@@ -54,7 +54,7 @@ onnxruntime = ">=1.27.0"
 # transcription — a 50-minute channel is ~144M samples, which pure-Python
 # sample loops cannot handle. Already present transitively via onnxruntime;
 # pinned explicitly because app code imports it directly.
-numpy = ">=2.1"
+numpy = ">=2.5.1"
 
 # iCal calendar feed parsing
 icalendar = "^7.2.0"
@@ -67,7 +67,7 @@ aiohttp = ">=3.14.1"
 
 email-validator = "^2.3.0"
 python-multipart = ">=0.0.32"
-google-cloud-storage = "^3.12.0"
+google-cloud-storage = "^3.13.0"
 google-cloud-tasks = "^2.23.0"
 google-cloud-batch = "^0.22.0"
 # Document AI OCR fallback for scanned patient PDFs (THERAPY-ak6m.2.3).
@@ -76,7 +76,7 @@ google-cloud-batch = "^0.22.0"
 google-cloud-documentai = "^3.15.0"
 # Audit log dual-write to Cloud Logging for tamper-evident HIPAA retention.
 # See backend/app/services/audit_cloud_logging.py.
-google-cloud-logging = "^3.16.0"
+google-cloud-logging = "^3.16.1"
 
 # Vertex Gemini SDK — used by ChatLLMGateway, StructuredLLMGateway,
 # EhrNavigationService, and EmbeddingService. Imported lazily inside
@@ -84,13 +84,13 @@ google-cloud-logging = "^3.16.0"
 # startup — it will fail the first Gemini call. Was previously
 # transitive via meeting-transcription's optional google extra;
 # THERAPY-71d5 dropped meeting-transcription, so pin explicitly.
-google-genai = "^2.10.0"
+google-genai = "^2.12.0"
 
 # Claude on Vertex AI — the Anthropic structured-output gateway provider
 # (backend/app/services/structured_llm_gateway.py). The "vertex" extra pulls the
 # google-auth bits the AnthropicVertex client needs; the public Anthropic API is
 # never used.
-anthropic = {version = "^0.75.0", extras = ["vertex"]}
+anthropic = {version = "^0.116.0", extras = ["vertex"]}
 
 # TOTP generation — pentest identity bootstrap (backend/app/jobs/pentest_identity.py)
 # creates ephemeral MFA-enrolled Firebase users for the automated pentest.
@@ -106,7 +106,7 @@ webauthn = "^2.5.0"
 optional = true
 
 [tool.poetry.group.pii.dependencies]
-faker = "^40.23.0"
+faker = "^40.31.0"
 
 
 # AWS S3 file storage provider (FILE_STORAGE_PROVIDER=s3) — optional so
@@ -117,7 +117,7 @@ faker = "^40.23.0"
 optional = true
 
 [tool.poetry.group.aws.dependencies]
-boto3 = ">=1.35.0"
+boto3 = ">=1.43.49"
 
 
 # Cloud SQL Python connector — optional transport for GCP-managed deployments.
@@ -128,7 +128,7 @@ boto3 = ">=1.35.0"
 optional = true
 
 [tool.poetry.group.cloudsql.dependencies]
-cloud-sql-python-connector = ">=1.12.0"
+cloud-sql-python-connector = ">=1.20.4"
 
 
 # Eval harness (THERAPY-t0dj). Optional so OSS self-hosters who don't
@@ -138,26 +138,26 @@ cloud-sql-python-connector = ">=1.12.0"
 optional = true
 
 [tool.poetry.group.evals.dependencies]
-braintrust = ">=0.25.0"
-openai = ">=2.44.0"
+braintrust = ">=0.27.0"
+openai = ">=2.45.0"
 pyyaml = ">=6.0"
 
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 # S3FileStorage tests presign offline against a real boto3 client.
-boto3 = ">=1.35.0"
+boto3 = ">=1.43.49"
 pytest-cov = "^7.0.0"
 pytest-mock = "^3.12.0"
 httpx = "^0.28.1"
-ruff = "^0.15.20"
-mypy = "^2.1.0"
+ruff = "^0.15.21"
+mypy = "^2.3.0"
 types-redis = "^4.6.0"
 # Was pulled in transitively by meeting-transcription before that dep
 # was dropped (THERAPY-71d5); declare explicitly so mypy keeps its
 # dateutil stubs.
 types-python-dateutil = "^2.9.0"
-mcp = "^1.28.0"
+mcp = "^1.28.1"
 testcontainers = {version = "^4.13.0", extras = ["postgres"]}
 
 [build-system]
