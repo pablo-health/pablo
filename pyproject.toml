@@ -37,7 +37,7 @@ psycopg2-binary = "^2.9.12"
 redis = "^8.0.1"
 
 # PDF Generation
-reportlab = "^4.5.1"
+reportlab = "^5.0.0"
 
 # PDF text extraction (patient document upload, THERAPY-ak6m.2).
 # Native-text PDFs pass through fitz.open(stream=...) → page.get_text().
