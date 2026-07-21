@@ -23,7 +23,18 @@ vi.mock("@/lib/firebaseAuthRecovery", () => ({ clearFirebaseAuthStorage }))
 vi.mock("@/lib/firebase", () => ({ getFirebaseAuth: vi.fn(), initFirebase: vi.fn() }))
 vi.mock("@/lib/config", () => ({ useConfig: vi.fn() }))
 
-import { clearStaleSession, firebaseSignOut, syncAuthTick, withTimeout } from "../client"
+import { onAuthStateChanged } from "firebase/auth"
+
+import { getFirebaseAuth } from "@/lib/firebase"
+
+import {
+  clearStaleSession,
+  firebaseSignOut,
+  getFirebaseIdToken,
+  resolveCurrentUser,
+  syncAuthTick,
+  withTimeout,
+} from "../client"
 
 describe("withTimeout", () => {
   it("resolves with the value when the promise settles in time", async () => {
@@ -177,5 +188,131 @@ describe("syncAuthTick", () => {
     expect(setUser).toHaveBeenCalledWith(null)
     expect(global.fetch).toHaveBeenCalledWith("/api/logout")
     expect(clearFirebaseAuthStorage).not.toHaveBeenCalled()
+  })
+})
+
+// resolveCurrentUser is the guard that keeps an authenticated request from
+// racing Firebase's session restore. authStateReady() resolves on the first
+// listener tick, but the restored currentUser can land a beat later (post-MFA
+// re-sign-in, or a hard navigation that reinits the SDK before IndexedDB is
+// observed — pablo#307). Reading currentUser eagerly there yields null and the
+// request goes out unauthenticated. These pin the wait so a refactor can't
+// quietly reintroduce the eager read.
+describe("resolveCurrentUser", () => {
+  const fakeUser = () => ({ uid: "u1", email: "u@x" }) as unknown as User
+
+  const fakeAuth = (over: Partial<Auth>): Auth =>
+    ({
+      authStateReady: vi.fn().mockResolvedValue(undefined),
+      currentUser: null,
+      ...over,
+    }) as unknown as Auth
+
+  beforeEach(() => {
+    vi.mocked(onAuthStateChanged).mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("returns currentUser once auth state is ready, without waiting on the listener", async () => {
+    const user = fakeUser()
+    const auth = fakeAuth({ currentUser: user })
+
+    await expect(resolveCurrentUser(auth)).resolves.toBe(user)
+    expect(onAuthStateChanged).not.toHaveBeenCalled()
+  })
+
+  it("waits for the listener to deliver a restored user when currentUser is null at the ready tick", async () => {
+    const user = fakeUser()
+    const unsubscribe = vi.fn()
+    // The SDK fires the listener asynchronously; mirror that so the callback
+    // doesn't run before `unsubscribe` is bound in the implementation.
+    vi.mocked(onAuthStateChanged).mockImplementation((_auth, next) => {
+      queueMicrotask(() => (next as (u: User | null) => void)(user))
+      return unsubscribe
+    })
+
+    await expect(resolveCurrentUser(fakeAuth({ currentUser: null }))).resolves.toBe(user)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  })
+
+  it("resolves null when the restore window elapses with no user (genuinely signed out)", async () => {
+    const unsubscribe = vi.fn()
+    vi.mocked(onAuthStateChanged).mockImplementation(() => unsubscribe)
+
+    vi.useFakeTimers()
+    try {
+      const pending = resolveCurrentUser(fakeAuth({ currentUser: null }))
+      const assertion = expect(pending).resolves.toBeNull()
+      await vi.advanceTimersByTimeAsync(1500)
+      await assertion
+      expect(unsubscribe).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// getFirebaseIdToken is what the API client's Authorization header ultimately
+// resolves through. It must surface a token only once a user is resolved (never
+// a header-less request mid-restore) and resolve null cleanly for a genuinely
+// signed-out caller (the legitimate public-endpoint path).
+describe("getFirebaseIdToken", () => {
+  const fakeUser = (getIdToken: (force?: boolean) => Promise<string>) =>
+    ({ uid: "u1", email: "u@x", getIdToken }) as unknown as User
+
+  const fakeAuth = (over: Partial<Auth>): Auth =>
+    ({
+      authStateReady: vi.fn().mockResolvedValue(undefined),
+      currentUser: null,
+      ...over,
+    }) as unknown as Auth
+
+  beforeEach(() => {
+    vi.mocked(onAuthStateChanged).mockReset()
+    vi.mocked(getFirebaseAuth).mockReset()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("returns the token only after the restore resolves a user — never null mid-transition", async () => {
+    const user = fakeUser(() => Promise.resolve("id-token"))
+    // currentUser is null at the ready tick and only arrives via the listener,
+    // so a token here proves the header waited for the restore instead of
+    // going out empty.
+    vi.mocked(onAuthStateChanged).mockImplementation((_auth, next) => {
+      queueMicrotask(() => (next as (u: User | null) => void)(user))
+      return vi.fn()
+    })
+    vi.mocked(getFirebaseAuth).mockReturnValue(fakeAuth({ currentUser: null }))
+
+    await expect(getFirebaseIdToken()).resolves.toBe("id-token")
+  })
+
+  it("returns null when no user is signed in, leaving the public-endpoint path intact", async () => {
+    vi.mocked(onAuthStateChanged).mockImplementation(() => vi.fn())
+    vi.mocked(getFirebaseAuth).mockReturnValue(fakeAuth({ currentUser: null }))
+
+    vi.useFakeTimers()
+    try {
+      const pending = getFirebaseIdToken()
+      const assertion = expect(pending).resolves.toBeNull()
+      await vi.advanceTimersByTimeAsync(1500)
+      await assertion
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("forces a fresh token past the SDK cache when asked", async () => {
+    const getIdToken = vi.fn().mockResolvedValue("fresh-token")
+    vi.mocked(getFirebaseAuth).mockReturnValue(fakeAuth({ currentUser: fakeUser(getIdToken) }))
+
+    await expect(getFirebaseIdToken(true)).resolves.toBe("fresh-token")
+    expect(getIdToken).toHaveBeenCalledWith(true)
   })
 })

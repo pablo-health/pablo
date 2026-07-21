@@ -49,7 +49,10 @@ from app.services.note_generation_service import (
 )
 from app.settings import Settings
 
-_AUDIO = b"\x00\x01" * 1024  # arbitrary non-empty payload; never transcribed
+# Minimal WAV signature (RIFF....WAVE) + filler. The bytes are never
+# transcribed, but the upload boundary now sniffs container Content-Types, so a
+# payload declared audio/wav must actually start with a WAV header.
+_AUDIO = b"RIFF\x24\x00\x00\x00WAVE" + b"\x00\x01" * 1024
 
 
 def _seed_patient(patient_repo: InMemoryPatientRepository, user_id: str) -> Patient:
@@ -171,6 +174,35 @@ def test_upload_audio_rejects_unsupported_media_type(
         )
 
     assert resp.status_code == 415, resp.text
+
+
+def test_upload_audio_rejects_non_audio_mislabeled_as_audio(
+    client,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_repo: InMemoryPatientRepository,
+    mock_user_id: str,
+) -> None:
+    """A payload whose Content-Type claims a container format but whose bytes
+    aren't that container is rejected synchronously at the upload boundary,
+    not enqueued to fail later in the transcription worker."""
+    patient = _seed_patient(mock_repo, mock_user_id)
+    session = _seed_session(
+        mock_session_repo, mock_user_id, patient.id, SessionStatus.RECORDING_COMPLETE
+    )
+
+    with patch("app.routes.sessions.get_settings", return_value=_transcription_settings()):
+        resp = client.post(
+            f"/api/sessions/{session.id}/upload-audio",
+            files={
+                "therapist_audio": ("therapist.wav", b"this is not audio at all", "audio/wav"),
+                "client_audio": ("client.wav", _AUDIO, "audio/wav"),
+            },
+        )
+
+    assert resp.status_code == 415, resp.text
+    # Rejected at the boundary: the session never advanced to transcribing.
+    updated = mock_session_repo.get(session.id, mock_user_id)
+    assert updated.status == SessionStatus.RECORDING_COMPLETE
 
 
 def test_upload_audio_returns_501_when_transcription_disabled(
