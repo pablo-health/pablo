@@ -176,6 +176,9 @@ class PasskeyService:
             revoked_at=None,
         )
         self._credentials.add(credential_record)
+        # credential_id/user_id are non-secret WebAuthn identifiers, not credentials;
+        # the private key never reaches the server and minted tokens are never logged.
+        # nosemgrep: python-logger-credential-disclosure
         logger.info(
             "passkey_enrolled user_id=%s credential_id=%s fmt=%s aaguid=%s "
             "device_type=%s backed_up=%s attested=%s",
@@ -253,6 +256,9 @@ class PasskeyService:
                 require_user_verification=True,
             )
         except Exception as err:
+            # credential_id is a non-secret WebAuthn identifier, not a credential;
+            # the private key never reaches the server and minted tokens are never logged.
+            # nosemgrep: python-logger-credential-disclosure
             logger.warning(
                 "passkey_assertion_rejected credential_id=%s reason=%s", credential_id, err
             )
@@ -263,6 +269,9 @@ class PasskeyService:
         # that don't keep a counter (most platform authenticators).
         new_count = verification.new_sign_count
         if new_count <= stored.sign_count and not (new_count == 0 and stored.sign_count == 0):
+            # credential_id is a non-secret WebAuthn identifier, not a credential;
+            # the private key never reaches the server and minted tokens are never logged.
+            # nosemgrep: python-logger-credential-disclosure
             logger.warning(
                 "passkey_clone_suspected credential_id=%s stored=%d new=%d",
                 credential_id,
@@ -289,6 +298,9 @@ class PasskeyService:
             hardware=stored.is_hardware_authenticator,
             attested=stored.attestation_verified,
         )
+        # credential_id/user_id are non-secret WebAuthn identifiers, not credentials;
+        # the private key never reaches the server and minted tokens are never logged.
+        # nosemgrep: python-logger-credential-disclosure
         logger.info(
             "passkey_assertion_ok user_id=%s credential_id=%s hw=%s att=%s",
             stored.user_id,
@@ -349,6 +361,9 @@ class PasskeyService:
 
         revoked = self._credentials.revoke(credential_id, user_id=user_id)
         if revoked:
+            # credential_id/user_id are non-secret WebAuthn identifiers, not credentials;
+            # the private key never reaches the server and minted tokens are never logged.
+            # nosemgrep: python-logger-credential-disclosure
             logger.info("passkey_revoked user_id=%s credential_id=%s", user_id, credential_id)
         return revoked
 
