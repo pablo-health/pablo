@@ -1,0 +1,36 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""Unit tests for the Postgres patient repository's input guarding.
+
+``patients.id`` is a uuid column, so a lookup by a non-uuid string would
+raise a ``DataError`` at the SQL layer — surfacing to the caller as a 500.
+A malformed id simply means "no such patient", so the repository resolves
+it to a miss before issuing any query. A ``MagicMock`` session stands in
+for a live database, mirroring ``TestPostgresNotesRepositoryMapping``.
+"""
+
+from __future__ import annotations
+
+import uuid
+from unittest.mock import MagicMock
+
+from app.repositories.postgres.patient import PostgresPatientRepository
+
+
+def test_get_with_non_uuid_id_returns_none_without_querying() -> None:
+    """A malformed patient id short-circuits to ``None`` and never queries."""
+    session = MagicMock()
+    repo = PostgresPatientRepository(session)
+
+    assert repo.get("not-a-uuid", "user-1") is None
+    session.execute.assert_not_called()
+
+
+def test_get_with_valid_uuid_id_issues_query() -> None:
+    """A syntactically valid uuid passes the guard and reaches the query."""
+    session = MagicMock()
+    session.execute.return_value.scalars.return_value.one_or_none.return_value = None
+    repo = PostgresPatientRepository(session)
+
+    assert repo.get(str(uuid.uuid4()), "user-1") is None
+    session.execute.assert_called_once()

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -217,14 +218,19 @@ def create_appointment(
 
 @router.get("/api/appointments", response_model=AppointmentListResponse)
 def list_appointments(
-    start: str = Query(..., description="Range start (ISO 8601)"),
-    end: str = Query(..., description="Range end (ISO 8601)"),
+    start: datetime = Query(..., description="Range start (ISO 8601)"),
+    end: datetime = Query(..., description="Range end (ISO 8601)"),
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
 ) -> AppointmentListResponse:
-    """List appointments in a date range."""
-    appointments = service.list_appointments(user.id, start, end)
+    """List appointments in a date range.
+
+    ``start``/``end`` are parsed and validated as ISO 8601 at the request
+    layer, so a malformed value is rejected with a 422 instead of reaching
+    the service and surfacing as a 500.
+    """
+    appointments = service.list_appointments(user.id, start.isoformat(), end.isoformat())
     return AppointmentListResponse(
         data=[_to_response(a) for a in appointments],
         total=len(appointments),
