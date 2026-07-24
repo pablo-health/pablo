@@ -1085,6 +1085,6 @@ class TestUserHasTotpFactor:
     def test_raises_lookup_error_when_user_missing(self) -> None:
         """Identity Toolkit returning an empty users array for an
         authenticated principal is a server-side invariant violation."""
-        payload = {"users": []}
+        payload: dict[str, Any] = {"users": []}
         with self._patch_auth_and_post(payload), pytest.raises(LookupError):
             _user_has_totp_factor("fb-uid-missing")

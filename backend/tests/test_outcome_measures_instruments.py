@@ -74,7 +74,7 @@ class TestValidateItemScores:
         defn = get_instrument("phq9")
         assert defn is not None
         with pytest.raises(InstrumentValidationError, match="must be an integer"):
-            validate_item_scores(defn, {"1": "2"})  # type: ignore[arg-type]
+            validate_item_scores(defn, {"1": "2"})  # type: ignore[dict-item]
 
 
 class TestComputeTotal:

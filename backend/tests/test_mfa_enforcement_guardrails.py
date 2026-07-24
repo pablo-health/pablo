@@ -35,7 +35,7 @@ def test_no_route_depends_on_get_current_user_id() -> None:
     offenders = [
         f"  {method:6s} {route.path}  (handler: {route.endpoint.__qualname__})"
         for _path, route in iter_api_routes(app)
-        for method in route.methods
+        for method in (route.methods or ())
         if method != "HEAD" and _has_dependency(route.dependant, get_current_user_id)
     ]
     assert not offenders, (

@@ -309,6 +309,7 @@ class TestMockNoteGenerationService:
         result = mock_service.generate_note(
             "soap", transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
         )
+        assert result.soap_note is not None
         narrative = result.soap_note.to_narrative()
 
         assert "**Chief Complaint:**" in narrative["subjective"]
@@ -346,6 +347,7 @@ class TestMockNoteGenerationService:
         result = mock_service.generate_note(
             "soap", transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
         )
+        assert result.soap_note is not None
         narrative = result.soap_note.to_narrative()
 
         assert "PTSD" in narrative["subjective"]
@@ -364,6 +366,7 @@ class TestMockNoteGenerationService:
         result = mock_service.generate_note(
             "soap", transcript, patient, datetime.fromisoformat("2024-06-01T00:00:00+00:00")
         )
+        assert result.soap_note is not None
         narrative = result.soap_note.to_narrative()
 
         assert "**Risk Assessment:**" in narrative["assessment"]

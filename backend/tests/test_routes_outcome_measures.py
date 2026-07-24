@@ -259,7 +259,8 @@ class TestListOutcomeMeasures:
             json=body,
         )
         assert resp.status_code == 201, resp.text
-        return resp.json()
+        data: dict[str, Any] = resp.json()
+        return data
 
     def test_list_returns_all_measures(self, client_with_repo: TestClient) -> None:
         self._create(client_with_repo)
@@ -318,7 +319,8 @@ class TestGetOutcomeMeasure:
             json=_phq9_body(),
         )
         assert resp.status_code == 201
-        return resp.json()
+        data: dict[str, Any] = resp.json()
+        return data
 
     def test_get_returns_measure(self, client_with_repo: TestClient) -> None:
         created = self._create(client_with_repo)

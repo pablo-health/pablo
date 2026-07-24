@@ -221,7 +221,8 @@ class TestCompanionDeviceEnrollment:
             },
         )
         assert resp.status_code == 200
-        return resp.json()["code"]
+        code: str = resp.json()["code"]
+        return code
 
     def test_exchange_with_enrollment_persists_device(self, client: TestClient) -> None:
         code = self._create_code(client)

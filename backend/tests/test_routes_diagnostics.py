@@ -159,7 +159,8 @@ class TestListGetDelete:
             body["determined_icd10"] = "T01.1"
         resp = client.post(f"/api/patients/{_PATIENT_ID}/diagnostic-assessments", json=body)
         assert resp.status_code == 201, resp.text
-        return resp.json()
+        data: dict[Any, Any] = resp.json()
+        return data
 
     def test_list_returns_all(self, client_with_repo: TestClient) -> None:
         self._create(client_with_repo)

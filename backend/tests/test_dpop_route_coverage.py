@@ -128,7 +128,7 @@ def _iter_routes():
     # each route's full path template (router prefixes included), so the keys
     # below match the real mounted paths rather than router-relative ones.
     for path, route in iter_api_routes(app):
-        for method in route.methods:
+        for method in route.methods or ():
             if method == "HEAD":
                 continue
             yield route, method, path

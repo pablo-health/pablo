@@ -369,10 +369,12 @@ class TestReadAuditCoalescing:
         monkeypatch.setenv("AUDIT_READ_COALESCE_SECONDS", "0")
 
         calls: list[int] = []
-        monkeypatch.setattr(
-            "app.redis_client.get_redis_client",
-            lambda: calls.append(1) or _FakeRedis(),
-        )
+
+        def _fake_client() -> _FakeRedis:
+            calls.append(1)
+            return _FakeRedis()
+
+        monkeypatch.setattr("app.redis_client.get_redis_client", _fake_client)
 
         for _ in range(3):
             audit_service.log_patient_action(

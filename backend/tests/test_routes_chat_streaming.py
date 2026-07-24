@@ -49,7 +49,8 @@ def _seed_patient(patient_repo, *, user_id: str, patient_id: str = "patient-stre
         created_at=now,
         updated_at=now,
     )
-    return patient_repo.create(patient, user_id)
+    created: Patient = patient_repo.create(patient, user_id)
+    return created
 
 
 def _create_conversation(client: TestClient, patient_id: str) -> str:
@@ -64,7 +65,8 @@ def _create_conversation(client: TestClient, patient_id: str) -> str:
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+    conversation_id: str = response.json()["id"]
+    return conversation_id
 
 
 def _parse_sse(body: bytes) -> list[tuple[str, dict]]:
