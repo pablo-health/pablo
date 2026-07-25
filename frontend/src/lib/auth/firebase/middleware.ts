@@ -18,8 +18,8 @@ const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollm
 const CSP_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' https://apis.google.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com data:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
   "img-src 'self' https: data:",
   `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${process.env.API_URL || ""} wss://*.firebaseio.com`.replace(/\s+/g, " ").trim(),
   "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com",
