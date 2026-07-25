@@ -261,8 +261,13 @@ jobs:
           npm_config_fetch_retries: 5
           npm_config_fetch_retry_mintimeout: 20000
 
+      # Audit what ships. Build and lint tooling is not part of the running
+      # application, and advisories in that tree (a DoS in eslint's config
+      # globbing, say) would otherwise block product changes while npm's only
+      # suggested remedy is a --force major downgrade of the linter.
+      # Dependabot still opens PRs for dev dependencies.
       - name: Audit npm dependencies
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=high --omit=dev
 
       - name: Type check
         run: npx tsc --noEmit
