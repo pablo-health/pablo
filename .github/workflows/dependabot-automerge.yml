@@ -1,0 +1,56 @@
+# Auto-merge safe Dependabot updates.
+#
+# Enables GitHub auto-merge (squash) on Dependabot PRs that bump patch or
+# minor versions only. Enabling auto-merge does NOT bypass CI: GitHub merges
+# the PR only after the branch's required status checks pass. Major version
+# bumps are never auto-merged — they get a comment and wait for a human.
+# For grouped Dependabot PRs, fetch-metadata reports the highest update
+# type in the group, so a group containing any major bump is skipped too.
+#
+# Security: this workflow runs on pull_request_target, i.e. in the
+# base-branch context with a write token. It must NEVER check out or
+# execute any code from the PR head — no actions/checkout, no builds, no
+# scripts from the PR. It only reads Dependabot commit metadata and calls
+# the GitHub API. Keep it that way.
+
+name: Dependabot auto-merge
+
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Enable auto-merge for safe updates
+    runs-on: ubuntu-latest
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch/minor updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note that major updates need manual review
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-major' &&
+          github.event.action == 'opened'
+        run: >-
+          gh pr comment "$PR_URL" --body
+          "Major version bump — not auto-merged; needs manual review."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
