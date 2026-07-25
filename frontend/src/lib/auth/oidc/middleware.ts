@@ -48,8 +48,8 @@ const keycloakOrigin = (() => {
 const CSP_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com data:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
   "img-src 'self' https: data:",
   `connect-src 'self' ${process.env.API_URL || ""} ${keycloakOrigin}`.replace(/\s+/g, " ").trim(),
   `frame-src 'self' ${keycloakOrigin}`.replace(/\s+/g, " ").trim(),

@@ -5,6 +5,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Update poetry.lock rather than widening the pyproject constraints.
+    # A constraint-range PR ("update fastapi requirement from >=0.138.1 to
+    # >=0.140.0") reports no version metadata at all — update-type is null
+    # and previous-version/new-version are empty — so the auto-merge
+    # workflow cannot tell a patch from a major and skips the PR silently.
+    # Lock-file updates carry real versions, so they classify correctly.
+    # Widening a constraint to admit a new major stays a deliberate manual
+    # change; security advisories still open their own PRs.
+    versioning-strategy: lockfile-only
     labels:
       - dependencies
       - python
