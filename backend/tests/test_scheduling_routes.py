@@ -160,3 +160,30 @@ def test_patch_appointment_invalid_status_rejected(client: TestClient) -> None:
 
     assert response.status_code == 422, response.text
     scheduling_svc.update_appointment.assert_not_called()
+
+
+def test_list_appointments_rejects_malformed_range(client: TestClient) -> None:
+    """Garbage start/end query params are rejected at the request layer (422),
+    never reaching the service to surface as an unhandled 500."""
+    scheduling_svc = MagicMock()
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+
+    response = client.get("/api/appointments", params={"start": "garbage", "end": "nope"})
+
+    assert response.status_code == 422, response.text
+    scheduling_svc.list_appointments.assert_not_called()
+
+
+def test_list_appointments_accepts_iso_range(client: TestClient) -> None:
+    """A valid ISO 8601 range reaches the service and returns 200."""
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [_real_appointment()]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    scheduling_svc.list_appointments.assert_called_once()

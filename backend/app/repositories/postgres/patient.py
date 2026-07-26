@@ -11,6 +11,7 @@ on a column of the patient row — see migration ``9dea1edf7fe0``.
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,15 @@ _HAS_PATIENT_ACCESS_SQL = text("SELECT has_patient_access(:pid, :uid)").bindpara
     bindparam("pid", type_=Uuid(as_uuid=False)),
     bindparam("uid", type_=String()),
 )
+
+
+def _is_uuid(value: str) -> bool:
+    """True iff ``value`` is a syntactically valid UUID string."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _live_grant_filter(user_id: str) -> tuple:
@@ -72,6 +82,12 @@ class PostgresPatientRepository(PatientRepository):
         indistinguishable from a missing row at the SQL layer (no
         existence oracle).
         """
+        # ``patients.id`` is a uuid column; a caller can hand us any raw path
+        # segment. Postgres would reject a non-uuid comparison with a DataError
+        # (surfacing as a 500) — but a malformed id simply means "no such
+        # patient", so short-circuit to a miss before touching the database.
+        if not _is_uuid(patient_id):
+            return None
         row = (
             self._session.execute(
                 select(PatientRow)
