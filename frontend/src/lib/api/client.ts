@@ -20,6 +20,35 @@ export type ApiErrorInterceptor = (
   response: Response,
 ) => Promise<Record<string, unknown> | null>
 
+/**
+ * Observe every response (successful or not) after the fetch resolves and
+ * before its body is parsed. Receives a `response.clone()`, so an interceptor
+ * may read the body without stealing it from the request path. Return value is
+ * ignored — this is an observation hook (maintenance-mode banners, telemetry),
+ * not a place to mutate the response. Anything thrown is swallowed: observing a
+ * response must never break the request it rode in on.
+ */
+export type ApiResponseInterceptor = (
+  response: Response,
+) => void | Promise<void>
+
+const apiResponseInterceptors: ApiResponseInterceptor[] = []
+
+/**
+ * Register a response observer without forking the client. A deployment that
+ * needs to react to response shapes — surface a maintenance banner, emit
+ * telemetry — registers here instead of copying `apiClient`, so it can't drift
+ * from upstream fixes. Returns a disposer that removes the interceptor again
+ * (handy for tests and for teardown of short-lived observers).
+ */
+export function registerResponseInterceptor(fn: ApiResponseInterceptor): () => void {
+  apiResponseInterceptors.push(fn)
+  return () => {
+    const i = apiResponseInterceptors.indexOf(fn)
+    if (i !== -1) apiResponseInterceptors.splice(i, 1)
+  }
+}
+
 let terminalAuthLogoutInFlight = false
 
 /**
@@ -220,6 +249,18 @@ export async function apiClient<T>(
       const retryCode = (await peekErrorCode(response)) ?? ""
       if (TOKEN_REFRESH_RETRY_CODES.has(retryCode)) {
         response = await doFetch(true)
+      }
+    }
+
+    // Response observers run on every response, before the body is consumed
+    // below. Each gets a clone so it can read the body without stealing it from
+    // the request path, and a throwing observer is swallowed — observation must
+    // never break the request. Empty by default.
+    for (const interceptor of apiResponseInterceptors) {
+      try {
+        await interceptor(response.clone())
+      } catch {
+        // An observer must not break the request path.
       }
     }
 
