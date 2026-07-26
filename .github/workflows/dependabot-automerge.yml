@@ -25,8 +25,18 @@ jobs:
   automerge:
     name: Enable auto-merge for safe updates
     runs-on: ubuntu-latest
+    # Gate on the PR AUTHOR, not github.actor. github.actor is whoever
+    # triggered this event, so on a Dependabot PR that someone updated —
+    # `gh pr update-branch`, a rebase from the UI, a label change — the
+    # actor is that person and the whole job silently skips, leaving the
+    # PR un-armed with a green checkmark beside it. Reading
+    # pull_request.user.login gates on who opened the PR, which is what
+    # the condition means.
+    #
+    # Safe under pull_request_target because this job never checks out or
+    # executes PR code — it reads commit metadata and calls the API.
     if: >-
-      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
     steps:
       - name: Fetch Dependabot metadata
