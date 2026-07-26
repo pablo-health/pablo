@@ -121,16 +121,22 @@ def _rs(rs_id: str, effective: date) -> Ruleset:
     return Ruleset(id=rs_id, version=rs_id, effective_date=effective, items=[])
 
 
+def _active(rulesets: list[Ruleset], on: date) -> Ruleset:
+    active = select_active_ruleset(rulesets, on)
+    assert active is not None
+    return active
+
+
 def test_select_active_picks_latest_effective_on_or_before() -> None:
     rulesets = [
         _rs("old", date(2025, 1, 1)),
         _rs("mid", date(2026, 1, 1)),
         _rs("new", date(2026, 6, 1)),
     ]
-    assert select_active_ruleset(rulesets, date(2026, 3, 15)).id == "mid"
+    assert _active(rulesets, date(2026, 3, 15)).id == "mid"
     # Exactly on the effective date counts as in force.
-    assert select_active_ruleset(rulesets, date(2026, 6, 1)).id == "new"
-    assert select_active_ruleset(rulesets, date(2026, 1, 1)).id == "mid"
+    assert _active(rulesets, date(2026, 6, 1)).id == "new"
+    assert _active(rulesets, date(2026, 1, 1)).id == "mid"
 
 
 def test_select_active_returns_none_before_any_effective() -> None:
@@ -144,7 +150,7 @@ def test_select_active_handles_unordered_input() -> None:
         _rs("old", date(2025, 1, 1)),
         _rs("mid", date(2026, 1, 1)),
     ]
-    assert select_active_ruleset(rulesets, date(2026, 6, 30)).id == "new"
+    assert _active(rulesets, date(2026, 6, 30)).id == "new"
 
 
 def test_select_active_empty_list() -> None:

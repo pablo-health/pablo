@@ -50,7 +50,8 @@ class _FakeIPTypes:
 
     def __getitem__(self, key: str) -> str:
         try:
-            return getattr(self, key)
+            value: str = getattr(self, key)
+            return value
         except AttributeError:
             raise KeyError(key)  # noqa: B904
 

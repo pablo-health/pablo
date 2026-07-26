@@ -31,7 +31,8 @@ def _seed_recording_complete(repo: object, owner: str) -> TherapySession:
         transcript=Transcript(format="txt", content=""),
         created_at=datetime.now(UTC),
     )
-    return repo.create(session)  # type: ignore[attr-defined]
+    created: TherapySession = repo.create(session)  # type: ignore[attr-defined]
+    return created
 
 
 def _assemblyai_settings(**overrides: object) -> types.SimpleNamespace:

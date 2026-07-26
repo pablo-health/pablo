@@ -166,7 +166,8 @@ def _get_summary(client) -> dict:
         },
     )
     assert resp.status_code == 200, resp.text
-    return resp.json()
+    data: dict = resp.json()
+    return data
 
 
 def test_counts_reflect_full_set_not_a_page(seeded_client) -> None:

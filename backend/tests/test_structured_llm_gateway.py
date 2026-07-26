@@ -11,6 +11,7 @@ exceptions, falls back to ``default_response``, and records calls.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -24,6 +25,10 @@ from backend.app.services.structured_llm_gateway import (
     _to_gemini_schema,
     resolve_structured_llm_gateway,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Any
 
 
 class TestFakeStructuredLLMGateway:
@@ -117,7 +122,7 @@ class _StubType:
 class _StubSchema:
     """Captures kwargs so we can assert on translated shape."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
 
 
@@ -303,7 +308,7 @@ class TestAnthropicStructuredLLMGateway:
 
 
 class TestMistralStructuredLLMGateway:
-    def _ok_response(self, captured: dict, verdict: str = "block") -> dict:
+    def _ok_response(self, captured: dict, verdict: str = "block") -> Callable[[str, dict], dict]:
         def request(url: str, payload: dict) -> dict:
             captured["url"] = url
             captured["payload"] = payload

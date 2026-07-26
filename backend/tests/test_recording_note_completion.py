@@ -150,7 +150,9 @@ def test_upload_audio_accepts_dual_channel_and_parks_in_transcribing(
     body = resp.json()
     assert body["status"] == SessionStatus.TRANSCRIBING
     assert body["provider"] == "whisper"
-    assert mock_session_repo.get(session.id, mock_user_id).status == SessionStatus.TRANSCRIBING
+    refreshed = mock_session_repo.get(session.id, mock_user_id)
+    assert refreshed is not None
+    assert refreshed.status == SessionStatus.TRANSCRIBING
 
 
 def test_upload_audio_rejects_unsupported_media_type(
@@ -202,6 +204,7 @@ def test_upload_audio_rejects_non_audio_mislabeled_as_audio(
     assert resp.status_code == 415, resp.text
     # Rejected at the boundary: the session never advanced to transcribing.
     updated = mock_session_repo.get(session.id, mock_user_id)
+    assert updated is not None
     assert updated.status == SessionStatus.RECORDING_COMPLETE
 
 
@@ -268,9 +271,9 @@ def test_upload_audio_enqueue_failure_reverts_to_recording_complete(
         )
 
     assert resp.status_code >= 500, resp.text
-    assert (
-        mock_session_repo.get(session.id, mock_user_id).status == SessionStatus.RECORDING_COMPLETE
-    )
+    final = mock_session_repo.get(session.id, mock_user_id)
+    assert final is not None
+    assert final.status == SessionStatus.RECORDING_COMPLETE
 
 
 # --- Stage 2: transcription completion → SOAP → pending_review ----------

@@ -96,7 +96,7 @@ def _iter_api_routes():
     from ``GET``) are skipped so a single endpoint counts once, not twice.
     """
     for _path, route in iter_api_routes(app):
-        for method in route.methods:
+        for method in route.methods or ():
             if method == "HEAD":
                 continue
             yield route, method

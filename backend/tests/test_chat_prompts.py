@@ -10,12 +10,17 @@ guidance that downstream consumers depend on.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from app.prompts import chat as chat_prompts
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 
 @pytest.fixture(autouse=True)
-def _reset_provider() -> None:
+def _reset_provider() -> Iterator[None]:
     """Ensure each test starts with a clean registry slot."""
     chat_prompts.reset_provider()
     yield

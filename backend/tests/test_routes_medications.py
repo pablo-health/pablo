@@ -95,7 +95,8 @@ def _create_med(
         json=_med_body(**overrides),
     )
     assert resp.status_code == 201, resp.text
-    return resp.json()
+    data: dict[str, Any] = resp.json()
+    return data
 
 
 # ---------------------------------------------------------------------------
