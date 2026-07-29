@@ -17,9 +17,15 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.models import SessionSource, SessionStatus, TherapySession, Transcript
+from app.main import app
+from app.models import Patient, SessionSource, SessionStatus, TherapySession, Transcript
 from app.models.audit import AuditAction
-from app.repositories import InMemoryTherapySessionRepository  # noqa: TC002 — runtime fixture type
+from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
+from app.repositories import (  # noqa: TC002 — runtime fixture types
+    InMemoryNotesRepository,
+    InMemoryPatientRepository,
+    InMemoryTherapySessionRepository,
+)
 from app.routes.sessions import _is_final_soap_attempt
 from app.services import AuditService  # noqa: TC002 — runtime fixture type
 from fastapi import HTTPException, status
@@ -266,3 +272,131 @@ class TestIsFinalSoapAttempt:
     def test_missing_or_garbage_header_defaults_to_first_attempt(self) -> None:
         assert not _is_final_soap_attempt(self._request(None))
         assert not _is_final_soap_attempt(self._request("not-a-number"))
+
+
+class _DenyAllNoteTypes(NoteTypeAuthorizer):
+    """Deployment-style authorizer that locks every note type."""
+
+    def is_allowed(self, user: object, note_type: str) -> bool:
+        return False
+
+
+class TestScheduleSession:
+    """POST /api/sessions/schedule — note_type plumbing at the route layer.
+
+    The service-level wiring (default, persistence, unknown-type rejection)
+    is covered in test_start_session_from_appointment.TestNoteTypeWiring;
+    these pin the HTTP contract: the 400 error shape for an unknown type
+    and the authorizer 403 for a type the caller's deployment has locked
+    (the same gate /api/appointments/{id}/start-session applies).
+    """
+
+    @staticmethod
+    def _seed_patient(repo: InMemoryPatientRepository, user_id: str) -> Patient:
+        now = datetime.now(UTC)
+        patient = Patient(
+            id=str(uuid.uuid4()),
+            first_name="Jane",
+            last_name="Smith",
+            created_at=now,
+            updated_at=now,
+        )
+        return repo.create(patient, user_id)
+
+    @staticmethod
+    def _payload(patient_id: str, **extra: object) -> dict[str, object]:
+        return {
+            "patient_id": patient_id,
+            "scheduled_at": "2026-02-04T10:00:00Z",
+            **extra,
+        }
+
+    def test_schedule_with_note_type_pre_creates_note(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = self._seed_patient(mock_repo, mock_user_id)
+
+        resp = client.post(
+            "/api/sessions/schedule",
+            json=self._payload(patient.id, note_type="narrative"),
+        )
+
+        assert resp.status_code == 201, resp.text
+        note = mock_notes_repo.get_by_session_id(resp.json()["id"])
+        assert note is not None
+        assert note.note_type == "narrative"
+
+    def test_schedule_without_note_type_defaults_to_soap(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = self._seed_patient(mock_repo, mock_user_id)
+
+        resp = client.post("/api/sessions/schedule", json=self._payload(patient.id))
+
+        assert resp.status_code == 201, resp.text
+        note = mock_notes_repo.get_by_session_id(resp.json()["id"])
+        assert note is not None
+        assert note.note_type == "soap"
+
+    def test_schedule_unknown_note_type_returns_400(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = self._seed_patient(mock_repo, mock_user_id)
+
+        resp = client.post(
+            "/api/sessions/schedule",
+            json=self._payload(patient.id, note_type="not-a-real-type"),
+        )
+
+        assert resp.status_code == 400, resp.text
+        assert "INVALID_NOTE_TYPE" in resp.text
+
+    def test_schedule_locked_note_type_returns_403(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """A deployment-injected authorizer that locks the requested type
+        must reject at the route (403), mirroring the appointment
+        start-session gate — before any session or note is created."""
+        patient = self._seed_patient(mock_repo, mock_user_id)
+        app.dependency_overrides[get_note_type_authorizer] = _DenyAllNoteTypes
+        try:
+            resp = client.post(
+                "/api/sessions/schedule",
+                json=self._payload(patient.id, note_type="narrative"),
+            )
+        finally:
+            app.dependency_overrides.pop(get_note_type_authorizer, None)
+
+        assert resp.status_code == 403, resp.text
+
+    def test_schedule_omitted_note_type_bypasses_authorizer(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """No explicit note_type → the default applies without an authorizer
+        check (parity with the appointment route's rule that falling back
+        to the default is always allowed)."""
+        patient = self._seed_patient(mock_repo, mock_user_id)
+        app.dependency_overrides[get_note_type_authorizer] = _DenyAllNoteTypes
+        try:
+            resp = client.post("/api/sessions/schedule", json=self._payload(patient.id))
+        finally:
+            app.dependency_overrides.pop(get_note_type_authorizer, None)
+
+        assert resp.status_code == 201, resp.text
