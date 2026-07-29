@@ -53,6 +53,7 @@ from ..models import (
 )
 from ..models.note import Note
 from ..models.session import TherapySession
+from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
 from ..rate_limit import get_audio_upload_limiter
 from ..repositories import (
     NotesRepository,
@@ -730,9 +731,18 @@ def schedule_session(
     user: User = Depends(require_baa_acceptance),
     session_service: SessionService = Depends(get_session_service),
     audit: AuditService = Depends(get_audit_service),
+    authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
 ) -> SessionResponse:
     """Create a scheduled session (pre-recording)."""
     _gate_trial_session(user.email)
+    # Authorize an explicitly requested note type — same gate as
+    # /api/appointments/{id}/start-session; falling back to the default
+    # is always allowed.
+    if request.note_type is not None and not authorizer.is_allowed(user, request.note_type):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Note type {request.note_type!r} not allowed for this subscription",
+        )
     try:
         session, patient = session_service.schedule_session(user.id, request)
     except PatientNotFoundError as e:
