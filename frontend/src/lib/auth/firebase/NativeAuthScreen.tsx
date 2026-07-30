@@ -9,11 +9,12 @@
  * handed back to the native app via its custom-scheme redirect.
  */
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
 import {
   signInWithPopup,
   signInWithEmailAndPassword,
+  signInWithCustomToken,
   sendPasswordResetEmail,
   createUserWithEmailAndPassword,
   sendEmailVerification,
@@ -22,8 +23,15 @@ import {
   type MultiFactorError,
   type MultiFactorResolver,
 } from "firebase/auth"
+import {
+  startAuthentication,
+  browserSupportsWebAuthn,
+  WebAuthnError,
+} from "@simplewebauthn/browser"
+import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
+import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
   AuthCard,
@@ -34,8 +42,10 @@ import {
   AuthHeader,
   AuthInput,
   AuthLinkButton,
+  AuthOutlineButton,
   AuthPrimaryButton,
   MfaChallengeScreen,
+  RecoveryCodeScreen,
   VerifyEmailScreen,
 } from "@/components/auth"
 
@@ -53,6 +63,17 @@ export function FirebaseNativeAuthScreen() {
   const [verificationSent, setVerificationSent] = useState(false)
   const [redirecting, setRedirecting] = useState(false)
   const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
+  const [showRecoveryCode, setShowRecoveryCode] = useState(false)
+
+  // Only offer passkey sign-in where the browser can actually run the
+  // ceremony — resolved client-side after mount to avoid an SSR mismatch.
+  // Mirrors the `/login` surface; without it a clinician whose second factor
+  // is a passkey has no way to satisfy it here and gets pushed into
+  // authenticator-app enrollment they don't need.
+  const [passkeySupported, setPasskeySupported] = useState(false)
+  useEffect(() => {
+    setPasskeySupported(config.passkeysEnabled && browserSupportsWebAuthn())
+  }, [config.passkeysEnabled])
 
   // Validate redirect_uri
   const redirectUri = searchParams.get("redirect_uri")
@@ -218,6 +239,27 @@ export function FirebaseNativeAuthScreen() {
     }
   }
 
+  const handlePasskeyLogin = async () => {
+    setError("")
+    setLoading(true)
+    try {
+      const options = await beginAuthentication()
+      const assertion = await startAuthentication({ optionsJSON: options })
+      const { custom_token } = await finishAuthentication(assertion)
+      // The custom token carries the verified passkey factor (pablo_amr), so
+      // the session it mints is already second-factor satisfied — the native
+      // code exchange accepts it without a further challenge.
+      const credential = await signInWithCustomToken(getFirebaseAuth(), custom_token)
+      await redirectToApp(credential.user)
+    } catch (err) {
+      // User dismissed the platform prompt — leave the form untouched.
+      if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
+      setError("Passkey sign-in failed. Try again, or use your email and password.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleForgotPassword = async () => {
     if (!email) {
       setError("Enter your email address first, then click Forgot password")
@@ -241,6 +283,19 @@ export function FirebaseNativeAuthScreen() {
         onCancel={() => {
           setMfaResolver(null)
           setError("")
+        }}
+      />
+    )
+  }
+
+  if (showRecoveryCode) {
+    return (
+      <RecoveryCodeScreen
+        initialEmail={email}
+        onSuccess={(credential) => redirectToApp(credential.user)}
+        onCancel={() => {
+          setError("")
+          setShowRecoveryCode(false)
         }}
       />
     )
@@ -332,6 +387,31 @@ export function FirebaseNativeAuthScreen() {
         <AuthDivider />
 
         <AuthGoogleButton onClick={handleGoogleLogin} />
+
+        {!isSignUp && passkeySupported && (
+          <div className="space-y-2">
+            <AuthOutlineButton
+              type="button"
+              onClick={handlePasskeyLogin}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Fingerprint className="h-5 w-5" />
+              Sign in with a passkey
+            </AuthOutlineButton>
+            <div className="text-center">
+              <AuthLinkButton
+                size="sm"
+                onClick={() => {
+                  setError("")
+                  setShowRecoveryCode(true)
+                }}
+              >
+                Lost your passkey? Use a recovery code
+              </AuthLinkButton>
+            </div>
+          </div>
+        )}
 
         <p className="mt-6 text-center text-sm text-neutral-500">
           By signing in, you agree to our{" "}
