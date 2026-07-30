@@ -26,7 +26,12 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from app.db import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA
+from app.db import (
+    DEFAULT_PRACTICE_SCHEMA,
+    PLATFORM_SCHEMA,
+    _current_tenant_schema,
+    set_tenant_schema,
+)
 from app.db.models import Base, NoteRow, PatientRow, TherapySessionRow
 from app.db.platform_models import PlatformBase
 from app.models import Patient, User
@@ -48,19 +53,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
-pytestmark = pytest.mark.skip(
-    reason=(
-        "THERAPY-o1zh: pre-existing breakage. TRUNCATE FK fix landed in "
-        "pablo#252 (patient_documents added to the wipe list). Deeper rot "
-        "remains: every test seeds patient/session/note ids as plain "
-        "strings (``patient-1``, ``session-1``, etc.) but the columns "
-        "are now ``uuid``. Re-enabling requires replacing every hardcoded "
-        "id with ``str(uuid.uuid4())`` plus matching assertion casts. "
-        "Exposed when pablo CI switched to ``make test-integration``."
-    ),
-)
-
-
 # ─── Fixtures ────────────────────────────────────────────────────────────
 
 
@@ -76,6 +68,30 @@ def engine() -> Iterator[Engine]:
         )
         PlatformBase.metadata.create_all(conn)
         Base.metadata.create_all(conn)
+        # ``close_chart``/``reopen_chart`` gate on the ``has_patient_access``
+        # SQL function, which normally ships via the provisioned tenant
+        # template (``app/db/tenant_template.sql``) rather than the ORM
+        # metadata ``create_all`` materializes here — so it must be created
+        # explicitly for this lighter-weight fixture.
+        conn.execute(
+            text(
+                f"""
+                CREATE OR REPLACE FUNCTION
+                    {DEFAULT_PRACTICE_SCHEMA}.has_patient_access(
+                        p_patient_id uuid, p_user_id character varying
+                    ) RETURNS boolean
+                    LANGUAGE sql STABLE
+                    AS $$
+                        SELECT EXISTS (
+                            SELECT 1 FROM {DEFAULT_PRACTICE_SCHEMA}.patient_clinicians
+                            WHERE patient_id = p_patient_id
+                              AND user_id::text = p_user_id
+                              AND (expires_at IS NULL OR expires_at > now())
+                        );
+                    $$
+                """  # noqa: S608 — fixed schema constant, not user input
+            )
+        )
     yield eng
     eng.dispose()
 
@@ -84,12 +100,10 @@ def engine() -> Iterator[Engine]:
 def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
-    session.execute(text("SET search_path = practice, platform, public"))
-    # Wipe everything we touch so row counts are deterministic. Single
-    # TRUNCATE with all tables listed so the cross-table FK from
-    # patient_clinicians → patients (added in migration 777b846ab944)
-    # doesn't block the wipe — TRUNCATE needs every FK-related table
-    # in the same statement or an explicit CASCADE.
+    set_tenant_schema(session)
+    # Wipe everything we touch so row counts are deterministic. CASCADE so
+    # new FK-referencing tables (e.g. prescribing_encounters → patients)
+    # don't have to be hand-added here every time one lands.
     # audit_logs is append-only: arm the purge GUC so the BEFORE TRUNCATE
     # trigger allows this authorized fixture reset.
     session.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
@@ -101,13 +115,15 @@ def pg_session(engine: Engine) -> Iterator[Session]:
             "practice.patient_clinicians, "
             "practice.patient_documents, "
             "practice.therapy_sessions, "
-            "practice.patients"
+            "practice.patients "
+            "CASCADE"
         )
     )
     session.commit()
     try:
         yield session
     finally:
+        _current_tenant_schema.set(None)
         session.rollback()
         session.close()
 
@@ -115,7 +131,7 @@ def pg_session(engine: Engine) -> Iterator[Session]:
 # ─── Builders ────────────────────────────────────────────────────────────
 
 
-_USER_ID = "test-user-1"
+_USER_ID = "99999999-9999-4999-8999-999999999999"
 _NOW = datetime(2026, 5, 5, 12, 0, tzinfo=UTC)
 
 
@@ -138,7 +154,7 @@ def _build_request() -> MagicMock:
     return request
 
 
-def _seed_patient(pg: Session, patient_id: str = "patient-1") -> Patient:
+def _seed_patient(pg: Session, patient_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") -> Patient:
     patient = Patient(
         id=patient_id,
         first_name="Jane",
@@ -152,8 +168,8 @@ def _seed_patient(pg: Session, patient_id: str = "patient-1") -> Patient:
 
 def _seed_session(
     pg: Session,
-    session_id: str = "session-1",
-    patient_id: str = "patient-1",
+    session_id: str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    patient_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     *,
     transcript_text: str = "session transcript content",
 ) -> TherapySession:
@@ -173,9 +189,9 @@ def _seed_session(
 
 def _seed_note(
     pg: Session,
-    note_id: str = "note-1",
-    patient_id: str = "patient-1",
-    session_id: str | None = "session-1",
+    note_id: str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    patient_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    session_id: str | None = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
 ) -> Note:
     note = Note(
         id=note_id,
@@ -186,7 +202,7 @@ def _seed_note(
         created_at=_NOW,
         updated_at=_NOW,
     )
-    PostgresNotesRepository(pg).add(note)
+    PostgresNotesRepository(pg).add(note, _USER_ID)
     return note
 
 
@@ -208,15 +224,15 @@ class TestPatientSoftDeleteCascade:
         pg_session.commit()
 
         # All three rows still on disk (not physically deleted).
-        assert pg_session.get(PatientRow, "patient-1") is not None
-        assert pg_session.get(TherapySessionRow, "session-1") is not None
-        assert pg_session.get(NoteRow, "note-1") is not None
+        assert pg_session.get(PatientRow, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") is not None
+        assert pg_session.get(TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") is not None
+        assert pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc") is not None
 
         # And all three carry ``deleted_at``.
         for row in (
-            pg_session.get(PatientRow, "patient-1"),
-            pg_session.get(TherapySessionRow, "session-1"),
-            pg_session.get(NoteRow, "note-1"),
+            pg_session.get(PatientRow, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            pg_session.get(TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+            pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
         ):
             assert row is not None
             assert row.deleted_at is not None
@@ -230,13 +246,13 @@ class TestPatientSoftDeleteCascade:
         delete_result = repo.delete(patient.id, _USER_ID)
         assert delete_result is True
         pg_session.commit()
-        first_stamp = pg_session.get(PatientRow, "patient-1").deleted_at
+        first_stamp = pg_session.get(PatientRow, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").deleted_at
 
         # Second call returns False and does not bump the stamp.
         deleted_again = repo.delete(patient.id, _USER_ID)
         assert deleted_again is False
         pg_session.commit()
-        second_stamp = pg_session.get(PatientRow, "patient-1").deleted_at
+        second_stamp = pg_session.get(PatientRow, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").deleted_at
         assert first_stamp == second_stamp
 
 
@@ -254,7 +270,7 @@ class TestTherapySessionSoftDelete:
         assert deleted is True
         pg_session.commit()
 
-        row = pg_session.get(TherapySessionRow, "session-1")
+        row = pg_session.get(TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
         assert row is not None
         assert row.deleted_at is not None
 
@@ -267,10 +283,10 @@ class TestNoteSoftDelete:
         pg_session.commit()
 
         repo = PostgresNotesRepository(pg_session)
-        repo.delete("note-1")
+        repo.delete("cccccccc-cccc-4ccc-8ccc-cccccccccccc", _USER_ID)
         pg_session.commit()
 
-        row = pg_session.get(NoteRow, "note-1")
+        row = pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
         assert row is not None
         assert row.deleted_at is not None
 
@@ -303,7 +319,7 @@ class TestReadPathsFilterSoftDeleted:
         pg_session.commit()
 
         s_repo = PostgresTherapySessionRepository(pg_session)
-        before = s_repo.list_by_patient("patient-1", _USER_ID)
+        before = s_repo.list_by_patient("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID)
         assert len(before) == 1
         assert before[0].transcript.content == "visible-only-while-live"
 
@@ -311,7 +327,7 @@ class TestReadPathsFilterSoftDeleted:
         pg_session.commit()
 
         assert s_repo.get(session_obj.id, _USER_ID) is None
-        assert s_repo.list_by_patient("patient-1", _USER_ID) == []
+        assert s_repo.list_by_patient("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID) == []
         listed_user, total_user = s_repo.list_by_user(_USER_ID)
         assert listed_user == []
         assert total_user == 0
@@ -323,16 +339,18 @@ class TestReadPathsFilterSoftDeleted:
         pg_session.commit()
 
         n_repo = PostgresNotesRepository(pg_session)
-        assert n_repo.get("note-1") is not None
-        assert n_repo.get_by_session_id("session-1") is not None
-        assert len(n_repo.list_by_patient("patient-1")) == 1
+        assert n_repo.get("cccccccc-cccc-4ccc-8ccc-cccccccccccc", _USER_ID) is not None
+        assert (
+            n_repo.get_by_session_id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", _USER_ID) is not None
+        )
+        assert len(n_repo.list_by_patient("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID)) == 1
 
-        n_repo.delete("note-1")
+        n_repo.delete("cccccccc-cccc-4ccc-8ccc-cccccccccccc", _USER_ID)
         pg_session.commit()
 
-        assert n_repo.get("note-1") is None
-        assert n_repo.get_by_session_id("session-1") is None
-        assert n_repo.list_by_patient("patient-1") == []
+        assert n_repo.get("cccccccc-cccc-4ccc-8ccc-cccccccccccc", _USER_ID) is None
+        assert n_repo.get_by_session_id("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", _USER_ID) is None
+        assert n_repo.list_by_patient("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID) == []
 
 
 # ─── 4. Atomicity: audit + soft-delete share the same transaction ────────
@@ -407,9 +425,9 @@ class TestRecentlyDeletedListing:
     def test_lists_only_in_window_soft_deleted(self, pg_session: Session) -> None:
         """``list_recently_deleted`` returns soft-deletes inside the 30-day
         window and excludes both live patients and past-window tombstones."""
-        live = _seed_patient(pg_session, "patient-live")
-        recent = _seed_patient(pg_session, "patient-recent")
-        old = _seed_patient(pg_session, "patient-old")
+        live = _seed_patient(pg_session, "dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+        recent = _seed_patient(pg_session, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+        old = _seed_patient(pg_session, "ffffffff-ffff-4fff-8fff-ffffffffffff")
         pg_session.commit()
 
         repo = PostgresPatientRepository(pg_session)
@@ -452,9 +470,9 @@ class TestPatientRestore:
         pg_session.commit()
 
         for row in (
-            pg_session.get(PatientRow, "patient-1"),
-            pg_session.get(TherapySessionRow, "session-1"),
-            pg_session.get(NoteRow, "note-1"),
+            pg_session.get(PatientRow, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            pg_session.get(TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+            pg_session.get(NoteRow, "cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
         ):
             assert row is not None
             assert row.deleted_at is None
@@ -476,12 +494,12 @@ class TestPatientRestore:
         original_number = session_obj.session_number
 
         repo = PostgresPatientRepository(pg_session)
-        repo.delete("patient-1", _USER_ID)
+        repo.delete("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID)
         pg_session.commit()
-        repo.restore("patient-1", _USER_ID, window_days=30)
+        repo.restore("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID, window_days=30)
         pg_session.commit()
 
-        row = pg_session.get(TherapySessionRow, "session-1")
+        row = pg_session.get(TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
         assert row is not None
         assert row.session_number == original_number
 
@@ -524,29 +542,31 @@ class TestPatientRestore:
         """
         _seed_patient(pg_session)
         # Two sessions: one we'll delete on its own first.
-        old = _seed_session(pg_session, session_id="session-1")
-        _seed_session(pg_session, session_id="session-2")
+        old = _seed_session(pg_session, session_id="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        _seed_session(pg_session, session_id="11111111-2222-4333-8444-555555555555")
         pg_session.commit()
 
         s_repo = PostgresTherapySessionRepository(pg_session)
         s_repo.delete(old.id, _USER_ID)
         pg_session.commit()
-        old_stamp = pg_session.get(TherapySessionRow, "session-1").deleted_at
+        old_stamp = pg_session.get(
+            TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        ).deleted_at
         assert old_stamp is not None
 
         p_repo = PostgresPatientRepository(pg_session)
-        p_repo.delete("patient-1", _USER_ID)
+        p_repo.delete("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID)
         pg_session.commit()
 
-        p_repo.restore("patient-1", _USER_ID, window_days=30)
+        p_repo.restore("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", _USER_ID, window_days=30)
         pg_session.commit()
 
         # session-2 was cascaded with the patient's stamp — now restored.
-        s2 = pg_session.get(TherapySessionRow, "session-2")
+        s2 = pg_session.get(TherapySessionRow, "11111111-2222-4333-8444-555555555555")
         assert s2 is not None
         assert s2.deleted_at is None
         # session-1 had its own earlier stamp — stays soft-deleted.
-        s1 = pg_session.get(TherapySessionRow, "session-1")
+        s1 = pg_session.get(TherapySessionRow, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
         assert s1 is not None
         assert s1.deleted_at == old_stamp
 
