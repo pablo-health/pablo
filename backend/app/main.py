@@ -85,6 +85,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # No-op unless a collector endpoint is configured (see settings).
     init_llm_tracing(settings)
 
+    # app_url defaults to http://localhost:3000 so a local checkout works with
+    # no .env. Outside development that default is silently wrong: the launch
+    # router builds the companion handoff as "{app_url}/launch/{intent_id}",
+    # so an unset APP_URL hands the desktop app a link to the therapist's own
+    # machine and Start Session does nothing. It also drives the Stripe portal
+    # return_url. Nothing failed loudly, so this went unnoticed in a deployed
+    # environment — hence the startup check.
+    if not settings.is_development and "localhost" in settings.app_url:
+        logger.error(
+            "APP_URL is unset or points at localhost (%s). Companion launch "
+            "links and Stripe billing return URLs are broken in this "
+            "environment. Set APP_URL to the public frontend origin "
+            "(e.g. https://app.pablo.health).",
+            settings.app_url,
+        )
+
     task = None
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
         from .background_sync import calendar_sync_loop
