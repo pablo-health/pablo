@@ -34,3 +34,39 @@ def test_get_with_valid_uuid_id_issues_query() -> None:
 
     assert repo.get(str(uuid.uuid4()), "user-1") is None
     session.execute.assert_called_once()
+
+
+def test_delete_with_non_uuid_id_returns_false_without_querying() -> None:
+    """A malformed patient id short-circuits to ``False`` and never queries."""
+    session = MagicMock()
+    repo = PostgresPatientRepository(session)
+
+    assert repo.delete("not-a-uuid", "user-1") is False
+    session.get.assert_not_called()
+
+
+def test_restore_with_non_uuid_id_returns_none_without_querying() -> None:
+    """A malformed patient id short-circuits to ``None`` and never queries."""
+    session = MagicMock()
+    repo = PostgresPatientRepository(session)
+
+    assert repo.restore("not-a-uuid", "user-1") is None
+    session.get.assert_not_called()
+
+
+def test_close_chart_with_non_uuid_id_returns_none_without_querying() -> None:
+    """A malformed patient id short-circuits to ``None`` and never queries."""
+    session = MagicMock()
+    repo = PostgresPatientRepository(session)
+
+    assert repo.close_chart("not-a-uuid", "user-1", None) is None
+    session.get.assert_not_called()
+
+
+def test_reopen_chart_with_non_uuid_id_returns_none_without_querying() -> None:
+    """A malformed patient id short-circuits to ``None`` and never queries."""
+    session = MagicMock()
+    repo = PostgresPatientRepository(session)
+
+    assert repo.reopen_chart("not-a-uuid", "user-1") is None
+    session.get.assert_not_called()
