@@ -13,12 +13,14 @@ import pytest
 from app.models import Patient, SOAPNote, Transcript
 from app.notes import NoteTypeRegistry, register_builtin_note_types
 from app.notes.builtin import NARRATIVE_DEFINITION
+from app.notes.prompts.soap import SOAP_SYSTEM_PROMPT
 from app.notes.registry import (
     NoteFieldDef,
     NoteSectionDef,
     NoteTypeDefinition,
 )
 from app.services.note_generation_service import (
+    _DEFAULT_GENERATION_PROMPT_SYSTEM,
     GeneratedNote,
     MockNoteGenerationService,
     RegistryNoteGenerationService,
@@ -432,6 +434,8 @@ class TestRegistryGeneration:
         assert len(gateway.calls) == 1
         call = gateway.calls[0]
         assert "narrative summary of the session" in call["user_prompt"].lower()
+        # Narrative has no system_prompt override, so it falls back to the shared default.
+        assert call["system_prompt"] == _DEFAULT_GENERATION_PROMPT_SYSTEM
         # Schema reflects the registry shape (section → field).
         assert call["response_schema"]["properties"]["note"]["properties"]["body"] == {
             "type": "string"
@@ -496,6 +500,7 @@ class TestRegistryGeneration:
         # First call used the SOAP-specific prompt (hand-tuned).
         soap_call = gateway.calls[0]
         assert "SOAP Note Structure" in soap_call["user_prompt"]
+        assert soap_call["system_prompt"] == SOAP_SYSTEM_PROMPT
         # Second call is Call-2 source attribution.
         attribution_call = gateway.calls[1]
         assert "claim" in attribution_call["user_prompt"].lower()
@@ -729,6 +734,98 @@ class TestRegistryGeneration:
             "assessment": {"clinical_findings": "Engaged and oriented."},
             "plan": {"next_steps": ["Continue weekly cadence."]},
         }
+
+    def test_custom_system_prompt_used_with_auto_built_user_prompt(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """A definition with its own system_prompt but no prompt_builder
+        still gets the auto-synthesized user prompt — only the system
+        prompt changes."""
+        review_type = NoteTypeDefinition(
+            key="case_review_test",
+            label="Case Review (test)",
+            description="Practice-level review, not a clinical session note.",
+            context="practice",
+            system_prompt="You are summarizing a clinical supervision case review.",
+            sections=(
+                NoteSectionDef(
+                    key="summary",
+                    label="Summary",
+                    fields=(
+                        NoteFieldDef(
+                            key="body",
+                            label="Body",
+                            kind="text",
+                            ai_hint="Summary of the case review discussion.",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        isolated_registry.register(review_type)
+        gateway = FakeStructuredLLMGateway(
+            responses=[StructuredCompletion(data={"summary": {"body": "Reviewed case."}})]
+        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
+
+        result = service.generate_note(
+            "case_review_test",
+            Transcript(format="txt", content="[00:00] Supervisor: Let's review the case."),
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        assert result.content == {"summary": {"body": "Reviewed case."}}
+        call = gateway.calls[0]
+        assert call["system_prompt"] == "You are summarizing a clinical supervision case review."
+        # User prompt is still auto-built from the field's ai_hint.
+        assert "summary of the case review discussion" in call["user_prompt"].lower()
+
+    def test_custom_system_prompt_used_with_prompt_builder(
+        self, isolated_registry: NoteTypeRegistry, patient: Patient
+    ) -> None:
+        """A definition that sets both prompt_builder and system_prompt gets
+        its own user prompt AND its own system prompt."""
+
+        def _custom_builder(
+            definition: NoteTypeDefinition,
+            transcript: Transcript,
+            patient: Patient,
+            session_date: datetime,
+        ) -> str:
+            return "Hand-tuned user prompt for the case review."
+
+        review_type = NoteTypeDefinition(
+            key="case_review_builder_test",
+            label="Case Review Builder (test)",
+            description="Practice-level review with a custom prompt builder.",
+            context="practice",
+            system_prompt="You are summarizing a clinical supervision case review.",
+            prompt_builder=_custom_builder,
+            sections=(
+                NoteSectionDef(
+                    key="summary",
+                    label="Summary",
+                    fields=(NoteFieldDef(key="body", label="Body", kind="text"),),
+                ),
+            ),
+        )
+        isolated_registry.register(review_type)
+        gateway = FakeStructuredLLMGateway(
+            responses=[StructuredCompletion(data={"summary": {"body": "Reviewed case."}})]
+        )
+        service = RegistryNoteGenerationService(registry=isolated_registry, llm_gateway=gateway)
+
+        service.generate_note(
+            "case_review_builder_test",
+            Transcript(format="txt", content="[00:00] Supervisor: Let's review the case."),
+            patient,
+            datetime.fromisoformat("2024-06-01T00:00:00+00:00"),
+        )
+
+        call = gateway.calls[0]
+        assert call["system_prompt"] == "You are summarizing a clinical supervision case review."
+        assert call["user_prompt"] == "Hand-tuned user prompt for the case review."
 
 
 class TestTransientLLMDetection:

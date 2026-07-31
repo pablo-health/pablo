@@ -105,6 +105,14 @@ class NoteTypeDefinition:
     Opt-in per note type — DAP/BIRP/etc start with the default and
     graduate to a custom builder if/when prompt nuance requires it.
     """
+    system_prompt: str | None = field(default=None, compare=False)
+    """If set, used as the system prompt instead of the shared default.
+
+    The default system prompt frames every transcript as a therapy
+    session. Note types with a different shape (a practice-level review,
+    say) can override it here instead of fighting that framing from
+    inside the user prompt.
+    """
 
     def section_keys(self) -> list[str]:
         return [s.key for s in self.sections]

@@ -173,6 +173,26 @@ class TestBuiltinDefinitions:
                 for f in section.fields:
                     assert f.label, f"{definition.key}.{section.key}.{f.key} missing label"
 
+    def test_builtins_do_not_set_system_prompt(self) -> None:
+        assert SOAP_DEFINITION.system_prompt is None
+        assert NARRATIVE_DEFINITION.system_prompt is None
+
+
+class TestSystemPrompt:
+    def test_defaults_to_none(self) -> None:
+        assert _tiny_type().system_prompt is None
+
+    def test_can_be_set(self) -> None:
+        prompt = "You are a clinical supervisor summarizing a case review."
+        definition = NoteTypeDefinition(
+            key="review",
+            label="Case Review",
+            description="For tests.",
+            sections=(),
+            system_prompt=prompt,
+        )
+        assert definition.system_prompt == prompt
+
 
 class TestDefaultRegistry:
     def test_default_registry_is_singleton(self) -> None:
