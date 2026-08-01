@@ -170,8 +170,8 @@ def test_launch_url_uses_app_url_when_no_launch_host_configured(
 ) -> None:
     """Single-host deployments keep app_url — the default must not change."""
     settings = launch.get_settings()
-    monkeypatch.setattr(settings, "app_url", "https://example.test", raising=False)
-    monkeypatch.setattr(settings, "companion_launch_url", "", raising=False)
+    monkeypatch.setattr(settings, "app_url", "https://example.test")
+    monkeypatch.setattr(settings, "companion_launch_url", "")
 
     body = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
     assert body["launch_url"].startswith("https://example.test/launch/")
@@ -187,10 +187,8 @@ def test_launch_url_prefers_the_configured_launch_host(
     hostnames differ.
     """
     settings = launch.get_settings()
-    monkeypatch.setattr(settings, "app_url", "https://example.test", raising=False)
-    monkeypatch.setattr(
-        settings, "companion_launch_url", "https://launch.example.test", raising=False
-    )
+    monkeypatch.setattr(settings, "app_url", "https://example.test")
+    monkeypatch.setattr(settings, "companion_launch_url", "https://launch.example.test")
 
     body = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
     assert body["launch_url"].startswith("https://launch.example.test/launch/")
@@ -202,9 +200,7 @@ def test_launch_url_tolerates_a_trailing_slash_on_the_launch_host(
 ) -> None:
     """Operators set this by hand; a trailing slash must not double up."""
     settings = launch.get_settings()
-    monkeypatch.setattr(
-        settings, "companion_launch_url", "https://launch.example.test/", raising=False
-    )
+    monkeypatch.setattr(settings, "companion_launch_url", "https://launch.example.test/")
 
     body = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
     assert "//launch/" not in body["launch_url"]
