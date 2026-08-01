@@ -250,13 +250,19 @@ def test_session_to_export_dict_with_no_note(export_service, mock_sessions):
     assert session_dict["finalized_at"] is None
 
 
-def test_multi_tenant_security(export_service, mock_patient_repo, mock_session_repo):
+def test_multi_tenant_security(
+    export_service, mock_patient_repo, mock_session_repo, mock_notes_repo
+):
     """Test that export enforces multi-tenant security."""
     export_service.get_patient_export_data("patient-123", "user-456", "json")
 
-    # Verify user_id is passed to both repositories
+    # Verify user_id is passed to every repository call, including notes —
+    # a regression that fetches notes via an unscoped call (e.g. dropping
+    # user_id, or a lookup keyed only on session_id) would leak another
+    # clinician's notes into the export.
     mock_patient_repo.get.assert_called_once_with("patient-123", "user-456")
     mock_session_repo.list_by_patient.assert_called_once_with("patient-123", "user-456")
+    mock_notes_repo.list_by_patient.assert_called_once_with("patient-123", "user-456")
 
 
 # Avoid unused-fixture warnings.

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -212,3 +213,133 @@ def test_delete_document_blobs_propagates_errors() -> None:
         pytest.raises(RuntimeError, match="storage timeout"),
     ):
         hard_purge_cron._delete_document_blobs(["docs/x.pdf"])
+
+
+# ─── purge ordering: blob deletes must precede the row deletes that ────────
+# ─── reference them ─────────────────────────────────────────────────────────
+
+
+class _RecordingResult:
+    """Stand-in for a SQLAlchemy CursorResult, backed by canned rows."""
+
+    def __init__(
+        self,
+        rows: list[tuple[Any, ...]] | None = None,
+        mapping: dict[str, Any] | None = None,
+    ) -> None:
+        self._rows = rows or []
+        self._mapping = mapping
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self._rows
+
+    def mappings(self) -> _RecordingResult:
+        return self
+
+    def first(self) -> dict[str, Any] | None:
+        return self._mapping
+
+
+class _RecordingConn:
+    """Fake connection that answers the real queries ``run()`` issues and
+    appends every ``DELETE FROM`` it executes to a shared, order-preserving
+    event log — the same log storage deletes below append to."""
+
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    def __enter__(self) -> _RecordingConn:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def execute(self, stmt: Any, params: dict[str, Any] | None = None) -> _RecordingResult:
+        sql = str(stmt)
+        if "SET search_path" in sql:
+            return _RecordingResult()
+        if "SELECT id, first_name" in sql:
+            return _RecordingResult(
+                mapping={
+                    "id": "pt-1",
+                    "first_name": "Pat",
+                    "last_name": "Doe",
+                    "date_of_birth": None,
+                }
+            )
+        if "SELECT audio_gcs_path" in sql:
+            return _RecordingResult(rows=[("2026/01/01/sess-1/audio.wav",)])
+        if "SELECT gcs_path FROM patient_documents" in sql:
+            return _RecordingResult(rows=[("docs/pt-1/intake.pdf",)])
+        if sql.startswith("INSERT INTO audit_logs"):
+            return _RecordingResult()
+        if sql.startswith("DELETE FROM"):
+            table = sql.split()[2]
+            self._events.append(f"row_delete:{table}")
+            return _RecordingResult()
+        raise AssertionError(f"unexpected SQL in purge-ordering test: {sql!r}")
+
+
+class _RecordingStorage:
+    def __init__(self, events: list[str], label: str) -> None:
+        self._events = events
+        self._label = label
+
+    def delete(self, *, bucket: str, object_name: str) -> None:
+        self._events.append(f"blob_delete:{self._label}:{object_name}")
+
+
+def test_hard_purge_cron_deletes_blobs_before_referencing_rows() -> None:
+    """Exercise ``run()`` against the REAL ``_delete_*`` functions with a fake
+    connection/storage pair that records call order, rather than mocking the
+    delete functions out. A future reordering inside ``run()`` — e.g. running
+    ``_delete_clinical_rows`` before the blob deletes — must fail this test,
+    since a GCS failure after the row delete would leave an audit entry
+    claiming a deletion that left orphaned blobs behind."""
+    events: list[str] = []
+    fake_conn = _RecordingConn(events)
+
+    class _FakeEngine:
+        def connect(self) -> _RecordingConn:
+            return fake_conn
+
+        def begin(self) -> _RecordingConn:
+            return fake_conn
+
+    stub_writer = MagicMock()
+    stub_writer.is_supported.return_value = True
+    stub_writer.stub_row_exists.return_value = True
+
+    with (
+        patch(
+            "app.jobs.hard_purge_cron.get_compliance_retention_stub_writer",
+            return_value=stub_writer,
+        ),
+        patch("app.jobs.hard_purge_cron.get_engine", return_value=_FakeEngine()),
+        patch(
+            "app.jobs.hard_purge_cron.list_active_practice_registry",
+            return_value=[("practice_one", "practice-1")],
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._fetch_purgeable_patient_ids",
+            return_value=["pt-1"],
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_audio_storage",
+            return_value=(_RecordingStorage(events, "audio"), "audio-bucket"),
+        ),
+        patch(
+            "app.jobs.hard_purge_cron._resolve_documents_storage",
+            return_value=(_RecordingStorage(events, "docs"), "docs-bucket"),
+        ),
+    ):
+        rc = hard_purge_cron.run([])
+
+    assert rc == 0
+    blob_indices = [i for i, e in enumerate(events) if e.startswith("blob_delete:")]
+    row_indices = [i for i, e in enumerate(events) if e.startswith("row_delete:")]
+    assert blob_indices, f"expected blob deletes to run, got: {events}"
+    assert row_indices, f"expected row deletes to run, got: {events}"
+    assert max(blob_indices) < min(row_indices), (
+        f"blob deletes must all precede row deletes, got order: {events}"
+    )
