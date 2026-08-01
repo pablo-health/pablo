@@ -165,6 +165,48 @@ def test_issue_intent_returns_opaque_id_and_launch_url(launch_client: TestClient
     assert "appt-1" not in body["launch_url"]
 
 
+def test_launch_url_uses_app_url_when_no_launch_host_configured(
+    launch_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Single-host deployments keep app_url — the default must not change."""
+    settings = launch.get_settings()
+    monkeypatch.setattr(settings, "app_url", "https://example.test")
+    monkeypatch.setattr(settings, "companion_launch_url", "")
+
+    body = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    assert body["launch_url"].startswith("https://example.test/launch/")
+
+
+def test_launch_url_prefers_the_configured_launch_host(
+    launch_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A configured handoff host wins, so the link leaves the serving host.
+
+    A browser follows a link to the host it is already on as ordinary
+    navigation, so the handoff only reaches the desktop app when the two
+    hostnames differ.
+    """
+    settings = launch.get_settings()
+    monkeypatch.setattr(settings, "app_url", "https://example.test")
+    monkeypatch.setattr(settings, "companion_launch_url", "https://launch.example.test")
+
+    body = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    assert body["launch_url"].startswith("https://launch.example.test/launch/")
+    assert "//example.test/" not in body["launch_url"]
+
+
+def test_launch_url_tolerates_a_trailing_slash_on_the_launch_host(
+    launch_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Operators set this by hand; a trailing slash must not double up."""
+    settings = launch.get_settings()
+    monkeypatch.setattr(settings, "companion_launch_url", "https://launch.example.test/")
+
+    body = launch_client.post("/api/launch/intent", json={"appointment_id": "appt-1"}).json()
+    assert "//launch/" not in body["launch_url"]
+    assert body["launch_url"].startswith("https://launch.example.test/launch/")
+
+
 def test_issue_intent_unknown_appointment_404(launch_client: TestClient) -> None:
     resp = launch_client.post("/api/launch/intent", json={"appointment_id": "nope"})
     assert resp.status_code == 404

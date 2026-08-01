@@ -112,7 +112,13 @@ def create_intent(
 
     intent_id = create_launch_intent(user_id=user.id, appointment_id=appointment.id)
     settings = get_settings()
-    launch_url = f"{settings.app_url}/launch/{intent_id}"
+    # A browser follows a link to the host it is already on as ordinary
+    # navigation, so a handoff link on app_url never reaches the desktop app
+    # when the hand-off starts from a page this deployment serves. Deployments
+    # that publish a separate host for handoffs point companion_launch_url at
+    # it; single-host deployments leave it unset and keep app_url.
+    base = settings.companion_launch_url or settings.app_url
+    launch_url = f"{base.rstrip('/')}/launch/{intent_id}"
     return CreateLaunchIntentResponse(
         intent_id=intent_id,
         launch_url=launch_url,

@@ -231,6 +231,23 @@ class Settings(BaseSettings):
         default="http://localhost:3000",
         description="Frontend app URL (used as return_url for Stripe portal)",
     )
+    companion_launch_url: str = Field(
+        default="",
+        description=(
+            "Base URL for the companion handoff links the app hands out at "
+            "POST /api/launch/intent. Falls back to app_url when unset, which "
+            "is the right default for a single-host deployment.\n\n"
+            "Set this to a DIFFERENT host than app_url when the handoff is "
+            "started from a page the app itself serves. A browser treats a "
+            "link to the host it is already on as ordinary navigation and "
+            "follows it in the tab, so a same-host link never reaches the "
+            "desktop app — it has to be a distinct hostname (for example a "
+            "'launch.' subdomain) that also serves the association file at "
+            "/.well-known/apple-app-site-association. Leave it empty unless "
+            "that hostname exists and resolves; a host without DNS or a "
+            "certificate yields a dead link."
+        ),
+    )
     dpop_trusted_hosts: str = Field(
         default="",
         description=(
