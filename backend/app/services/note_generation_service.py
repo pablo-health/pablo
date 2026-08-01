@@ -218,16 +218,17 @@ class RegistryNoteGenerationService(NoteGenerationService):
         patient: Patient,
         session_date: datetime,
     ) -> dict[str, Any]:
+        if definition.system_prompt is not None:
+            system_prompt = definition.system_prompt
+        elif definition.key == SOAP_KEY:
+            system_prompt = SOAP_SYSTEM_PROMPT
+        else:
+            system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
+
         if definition.prompt_builder is not None:
             user_prompt = definition.prompt_builder(definition, transcript, patient, session_date)
-            system_prompt = (
-                SOAP_SYSTEM_PROMPT
-                if definition.key == SOAP_KEY
-                else _DEFAULT_GENERATION_PROMPT_SYSTEM
-            )
         else:
             user_prompt = _build_registry_user_prompt(definition, transcript, patient, session_date)
-            system_prompt = _DEFAULT_GENERATION_PROMPT_SYSTEM
 
         schema = _build_registry_response_schema(definition)
         completion = self._complete_structured_with_retry(

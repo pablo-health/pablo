@@ -198,6 +198,32 @@ class TestGetNoteType:
         [field] = section["fields"]
         assert field["kind"] == "text"
 
+    def test_system_prompt_not_serialized(self) -> None:
+        """system_prompt is server-side generation config, not catalog data —
+        it must never appear in the API response, even when a definition sets it."""
+        definition = _sample_type("with_system_prompt")
+        registry = _registry_with(
+            NoteTypeDefinition(
+                key=definition.key,
+                label=definition.label,
+                description=definition.description,
+                tier=definition.tier,
+                context=definition.context,
+                sections=definition.sections,
+                system_prompt="You are a clinical supervisor. Do not include this in the API.",
+            )
+        )
+        app.dependency_overrides[get_registry] = lambda: registry
+        try:
+            list_response = TestClient(app).get("/api/note-types")
+            single_response = TestClient(app).get("/api/note-types/with_system_prompt")
+        finally:
+            app.dependency_overrides.pop(get_registry, None)
+
+        assert "system_prompt" not in single_response.json()
+        for entry in list_response.json()["note_types"]:
+            assert "system_prompt" not in entry
+
 
 class TestIsLockedField:
     """Per-type gating: the route asks the authorizer per-type.
