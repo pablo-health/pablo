@@ -14,11 +14,6 @@
     "postinstall": "patch-package"
   },
   "dependencies": {
-    "@fullcalendar/core": "^6.1.21",
-    "@fullcalendar/daygrid": "^6.1.21",
-    "@fullcalendar/interaction": "^6.1.21",
-    "@fullcalendar/react": "^6.1.21",
-    "@fullcalendar/timegrid": "^6.1.21",
     "@hookform/resolvers": "^5.5.7",
     "@radix-ui/react-checkbox": "^1.3.11",
     "@radix-ui/react-dialog": "^1.1.23",
