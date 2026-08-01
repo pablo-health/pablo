@@ -280,6 +280,8 @@ class PostgresPatientRepository(PatientRepository):
         no grant — in all three cases the caller's invariant ("nothing
         live visible with this id") is satisfied without further work.
         """
+        if not _is_uuid(patient_id):
+            return False
         row = self._session.get(PatientRow, patient_id)
         if row is None or row.deleted_at is not None:
             return False
@@ -335,6 +337,8 @@ class PostgresPatientRepository(PatientRepository):
 
     def restore(self, patient_id: str, user_id: str, *, window_days: int = 30) -> Patient | None:
         """Reverse a soft-delete by clearing ``deleted_at``."""
+        if not _is_uuid(patient_id):
+            return None
         row = self._session.get(PatientRow, patient_id)
         if row is None or row.deleted_at is None:
             return None
@@ -374,6 +378,8 @@ class PostgresPatientRepository(PatientRepository):
         self, patient_id: str, user_id: str, closure_reason: str | None
     ) -> Patient | None:
         """Stamp ``chart_closed_at`` and store the closure reason (THERAPY-hek)."""
+        if not _is_uuid(patient_id):
+            return None
         row = self._session.get(PatientRow, patient_id)
         if row is None or row.deleted_at is not None:
             return None
@@ -388,6 +394,8 @@ class PostgresPatientRepository(PatientRepository):
 
     def reopen_chart(self, patient_id: str, user_id: str) -> Patient | None:
         """Clear chart closure fields (THERAPY-hek)."""
+        if not _is_uuid(patient_id):
+            return None
         row = self._session.get(PatientRow, patient_id)
         if row is None or row.deleted_at is not None:
             return None
