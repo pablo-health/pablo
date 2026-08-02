@@ -248,6 +248,12 @@ const baseQueryKeys = {
         status ?? null,
       ] as const,
   },
+
+  // Availability rule query keys
+  availabilityRules: {
+    all: ["availabilityRules"] as const,
+    list: () => [...baseQueryKeys.availabilityRules.all, "list"] as const,
+  },
 } as const
 
 export const queryKeys = mergeQueryKeys(baseQueryKeys, queryKeyExtensions)
