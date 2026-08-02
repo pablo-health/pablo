@@ -137,6 +137,12 @@ const baseQueryKeys = {
       [...baseQueryKeys.appointments.details(), appointmentId] as const,
   },
 
+  // Availability rule query keys
+  availability: {
+    all: ["availability"] as const,
+    rules: () => [...baseQueryKeys.availability.all, "rules"] as const,
+  },
+
   // User query keys
   user: {
     all: ["user"] as const,
