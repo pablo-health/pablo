@@ -137,6 +137,12 @@ const baseQueryKeys = {
       [...baseQueryKeys.appointments.details(), appointmentId] as const,
   },
 
+  // Availability rule query keys
+  availability: {
+    all: ["availability"] as const,
+    rules: () => [...baseQueryKeys.availability.all, "rules"] as const,
+  },
+
   // User query keys
   user: {
     all: ["user"] as const,
@@ -241,6 +247,12 @@ const baseQueryKeys = {
         ...baseQueryKeys.medications.byPatientAll(patientId),
         status ?? null,
       ] as const,
+  },
+
+  // Availability rule query keys
+  availabilityRules: {
+    all: ["availabilityRules"] as const,
+    list: () => [...baseQueryKeys.availabilityRules.all, "list"] as const,
   },
 } as const
 

@@ -14,10 +14,11 @@ import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
 import { PasskeySettings } from "@/components/settings/PasskeySettings"
+import { AvailabilitySettings } from "@/components/settings/AvailabilitySettings"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 import { ThemeFlavorNote } from "@/components/theme/ThemeFlavorNote"
-import { AlertCircle, Archive, Calendar, Check, Clock, Mic, Palette, Settings2, ShieldCheck, User } from "lucide-react"
+import { AlertCircle, Archive, Calendar, CalendarClock, Check, Clock, Mic, Palette, Settings2, ShieldCheck, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
 import { useConfig } from "@/lib/config"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
@@ -132,6 +133,14 @@ export default function SettingsPage() {
           onSave={handleSave}
           isSaving={saveMutation.isPending}
         />
+      </SettingsSection>
+
+      <SettingsSection
+        icon={CalendarClock}
+        title="My availability"
+        description="Rules that control when appointments can be booked, like blocked days or a max per day."
+      >
+        <AvailabilitySettings />
       </SettingsSection>
 
       {isEnabled("session_defaults") && (
