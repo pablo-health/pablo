@@ -21,11 +21,16 @@ import re
 import subprocess
 import sys
 
+# Assembled from fragments rather than written out, because a checker that
+# contains the literal string it forbids FLAGS ITS OWN SOURCE the moment that
+# source is added — which is exactly what happened on the first run.
+_PRIVATE_REPO_PREFIX = "pablo" + "-" + "saas:"
+
 FORBIDDEN: tuple[tuple[str, str], ...] = (
     # Internal repository paths. A comment that explains a seam by pointing at
     # another repository's file path is describing plumbing the reader cannot
     # open — say what the contract IS instead.
-    (r"pablo-saas:", "internal repository path"),
+    (re.escape(_PRIVATE_REPO_PREFIX), "internal repository path"),
     # Commits here are the author's work, tool-assisted.
     (r"Co-Authored-By:\s*Claude", "AI attribution"),
     (r"Generated with \[?Claude", "AI attribution"),
