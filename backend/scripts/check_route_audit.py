@@ -420,6 +420,16 @@ def _exempt_config_violations() -> list[str]:
     return out
 
 
+def iter_route_paths(paths: list[Path] | None = None) -> list[tuple[str, str]]:
+    """Return sorted (method, mounted_path) pairs for every route handler.
+
+    Same AST walk ``find_violations`` uses, exposed for callers that just want
+    the route table (e.g. the pentest context pack) without the audit checks.
+    """
+    files = _route_files(paths)
+    return sorted({(method, path) for path, method, _func, _file in _iter_route_handlers(files)})
+
+
 def find_violations(paths: list[Path] | None = None) -> list[str]:
     files = _route_files(paths)
     if not files:
