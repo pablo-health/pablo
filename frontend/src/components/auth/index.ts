@@ -10,6 +10,11 @@ export { AuthDivider } from "./AuthDivider"
 export { AuthFeedback } from "./AuthFeedback"
 export { AuthFooter } from "./AuthFooter"
 export { AuthLinkButton } from "./AuthLinkButton"
+export {
+  CredentialBlock,
+  type AuthMethod,
+  type CredentialBlockProps,
+} from "./CredentialBlock"
 export { MfaChallengeScreen } from "./MfaChallengeScreen"
 export { RecoveryCodeScreen } from "./RecoveryCodeScreen"
 export { VerifyEmailScreen } from "./VerifyEmailScreen"
