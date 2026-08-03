@@ -94,6 +94,30 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def list_overlapping(
+        self,
+        user_id: str,
+        start: str | datetime,
+        end: str | datetime,
+        *,
+        exclude_appointment_id: str | None = None,
+    ) -> list[Appointment]:
+        """List non-cancelled appointments on ``user_id``'s calendar that
+        overlap ``[start, end)`` — the "my calendar" slice, matching
+        :meth:`list_by_range`'s ownership filter rather than
+        ``patient_clinicians``.
+        """
+        query = select(AppointmentRow).where(
+            AppointmentRow.user_id == user_id,
+            AppointmentRow.status != "cancelled",
+            AppointmentRow.start_at < end,
+            AppointmentRow.end_at > start,
+        )
+        if exclude_appointment_id is not None:
+            query = query.where(AppointmentRow.id != exclude_appointment_id)
+        rows = self._session.execute(query.order_by(AppointmentRow.start_at)).scalars().all()
+        return [_row_to_appointment(r) for r in rows]
+
     def list_by_patient(self, user_id: str, patient_id: str) -> list[Appointment]:
         """List all appointments for a patient that ``user_id`` can see.
 

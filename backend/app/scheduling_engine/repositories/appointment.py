@@ -38,6 +38,27 @@ class AppointmentRepository(ABC):
     ) -> list[Appointment]:
         """List appointments for a specific patient."""
 
+    @abstractmethod
+    def list_overlapping(
+        self,
+        user_id: str,
+        start: str | datetime,
+        end: str | datetime,
+        *,
+        exclude_appointment_id: str | None = None,
+    ) -> list[Appointment]:
+        """List non-cancelled appointments on ``user_id``'s calendar that
+        overlap the half-open interval ``[start, end)``.
+
+        Unlike :meth:`list_by_range`, this also matches appointments that
+        start before ``start`` and end inside the window — the case a
+        proposed-slot collision check needs to catch. Back-to-back
+        appointments (one ends exactly when the other starts) do not
+        overlap. Pass ``exclude_appointment_id`` when checking a
+        reschedule so the appointment being moved doesn't collide with
+        itself.
+        """
+
     def count_by_range(
         self,
         user_id: str,
@@ -172,6 +193,36 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             return []
         return sorted(
             [a for a in self._appointments.values() if a.patient_id == patient_id],
+            key=lambda a: a.start_at,
+        )
+
+    def list_overlapping(
+        self,
+        user_id: str,
+        start: str | datetime,
+        end: str | datetime,
+        *,
+        exclude_appointment_id: str | None = None,
+    ) -> list[Appointment]:
+        """My-calendar slice — filtered by appointment ownership, not patient access."""
+        start_dt = (
+            start
+            if isinstance(start, datetime)
+            else datetime.fromisoformat(start.replace("Z", "+00:00"))
+        )
+        end_dt = (
+            end if isinstance(end, datetime) else datetime.fromisoformat(end.replace("Z", "+00:00"))
+        )
+        return sorted(
+            [
+                a
+                for a in self._appointments.values()
+                if a.user_id == user_id
+                and a.status != "cancelled"
+                and a.id != exclude_appointment_id
+                and a.start_at < end_dt
+                and a.end_at > start_dt
+            ],
             key=lambda a: a.start_at,
         )
 
