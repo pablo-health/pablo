@@ -3,64 +3,33 @@
 "use client"
 
 /**
- * Firebase implementation of the `/login` surface — email/password +
- * Google sign-in, sign-up, password reset, email verification, and the
- * TOTP challenge. Rendered through `getAuthSurfaces().LoginScreen`; the
- * `/login` route is a thin shell that picks this per the active provider.
+ * Firebase implementation of the `/login` surface. Credential acquisition
+ * (email/password, Google, passkey, MFA, verification) lives in the shared
+ * `CredentialBlock`; this host owns what comes after a credential resolves —
+ * seeding the session cookie and routing to the dashboard — plus the branded
+ * chrome, forced-logout notices, and the setup-token prefill. Rendered
+ * through `getAuthSurfaces().LoginScreen`; the `/login` route is a thin
+ * shell that picks this per the active provider.
  */
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import {
-  signInWithPopup,
-  signInWithRedirect,
-  signInWithEmailAndPassword,
-  signInWithCustomToken,
-  sendPasswordResetEmail,
-  createUserWithEmailAndPassword,
-  sendEmailVerification,
-  GoogleAuthProvider,
-  getMultiFactorResolver,
-  type MultiFactorError,
-  type MultiFactorResolver,
-  type UserCredential,
-} from "firebase/auth"
-import {
-  startAuthentication,
-  browserSupportsWebAuthn,
-  WebAuthnError,
-} from "@simplewebauthn/browser"
-import { Fingerprint } from "lucide-react"
+import type { UserCredential } from "firebase/auth"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { clearStaleSession } from "./client"
 import { useAuth } from "@/lib/auth-context"
-import { useConfig } from "@/lib/config"
-import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
-import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import {
-  clearFirebaseAuthStorage,
   consumeRecoveryNotice,
   installAuthRecovery,
 } from "@/lib/firebaseAuthRecovery"
 import {
   AuthCard,
-  AuthDivider,
-  AuthFeedback,
   AuthFooter,
-  AuthGoogleButton,
   AuthHeader,
-  AuthInput,
-  AuthLinkButton,
-  AuthOutlineButton,
-  AuthPrimaryButton,
-  MfaChallengeScreen,
-  RecoveryCodeScreen,
-  VerifyEmailScreen,
+  CredentialBlock,
 } from "@/components/auth"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
-
-type LoginStep = "sign-in" | "mfa" | "recovery-code" | "verify-email"
 
 function getUrlParam(name: string): string {
   if (typeof window === "undefined") return ""
@@ -68,119 +37,57 @@ function getUrlParam(name: string): string {
   return params.get(name) || ""
 }
 
-// "google" = Google sign-in; "email" = the email/password form; "passkey" =
-// WebAuthn sign-in. The tag is just which button to flag, not a credential —
-// keep it free of any password/secret value so it stays safe to persist in
-// the clear.
-type AuthMethod = "google" | "email" | "passkey"
-
-// Remember how this device last signed in so we can surface a "Last used"
-// hint on the matching button. We store only the method tag — never the
-// email or password — so a shared workstation reveals nothing about who has
-// an account here.
-const LAST_AUTH_METHOD_KEY = "pablo:lastAuthMethod"
-
-function readLastAuthMethod(): AuthMethod | null {
-  if (typeof window === "undefined") return null
-  try {
-    const v = window.localStorage.getItem(LAST_AUTH_METHOD_KEY)
-    return v === "google" || v === "email" || v === "passkey" ? v : null
-  } catch {
-    return null
-  }
-}
-
-function rememberAuthMethod(method: AuthMethod): void {
-  try {
-    window.localStorage.setItem(LAST_AUTH_METHOD_KEY, method)
-  } catch {
-    // localStorage blocked (private mode / cookies off) — the hint is
-    // best-effort, so a failure here is fine to swallow.
-  }
-}
-
-function LastUsedPill() {
-  return (
-    <span className="pointer-events-none absolute -top-2 right-3 rounded-full bg-primary-600 px-2 py-0.5 text-[11px] font-semibold text-white shadow-sm ring-2 ring-card">
-      Last used
-    </span>
-  )
-}
-
 export function FirebaseLoginScreen() {
   const router = useRouter()
   const { user, loading: authLoading } = useAuth()
-  const { passkeysEnabled } = useConfig()
 
   const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [resetSent, setResetSent] = useState(false)
-  const [resendSent, setResendSent] = useState(false)
   const [isSignUp, setIsSignUp] = useState(false)
-  const [verifyEmailError, setVerifyEmailError] = useState("")
-
-  const [step, setStep] = useState<LoginStep>("sign-in")
-  const [mfaResolver, setMfaResolver] = useState<MultiFactorResolver | null>(null)
-
-  // "Last used" hint, and the method that kicked off an in-progress MFA
-  // challenge (so we record the right one once the challenge resolves).
-  const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
-  const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
-
-  // Only offer passkey sign-in where the browser can actually run the
-  // ceremony — resolved client-side after mount to avoid an SSR mismatch.
-  const [passkeySupported, setPasskeySupported] = useState(false)
 
   // Whether this mount was reached via a forced logout — an idle timeout, or a
   // session whose token expired/was revoked. Captured synchronously (before the
   // effect below strips the param) so the "already authenticated → /dashboard"
   // redirect can't bounce a restored-but-stale session straight back into the
   // 401 loop.
-  const forcedLogoutReason = useRef(getUrlParam("reason"))
-  const cameFromForcedLogout = useRef(
-    forcedLogoutReason.current === "idle_timeout" ||
-      forcedLogoutReason.current === "session_expired",
-  )
+  const [forcedLogoutReason] = useState(() => getUrlParam("reason"))
+  const cameFromForcedLogout =
+    forcedLogoutReason === "idle_timeout" ||
+    forcedLogoutReason === "session_expired"
 
-  // Show a notice when we arrived here from a forced logout.
+  // Message surfaced in the credential block's error slot. Seeded with the
+  // forced-logout notice, which is knowable at first render.
+  const [notice, setNotice] = useState(() => {
+    if (!cameFromForcedLogout) return ""
+    return forcedLogoutReason === "idle_timeout"
+      ? "You were signed out due to inactivity."
+      : "Your session expired. Please sign in again."
+  })
+
+  // Clean up after a forced logout: strip the reason param and clear the
+  // stale session.
   useEffect(() => {
-    if (!cameFromForcedLogout.current) return
-    setError(
-      forcedLogoutReason.current === "idle_timeout"
-        ? "You were signed out due to inactivity."
-        : "Your session expired. Please sign in again.",
-    )
+    if (!cameFromForcedLogout) return
     window.history.replaceState({}, "", "/login")
     // Backstop: the logout path already wipes the persisted session, but clear
     // again here in case that raced or was bypassed. Otherwise a session the
     // SDK re-hydrates on this page would auto-redirect to the dashboard and
     // re-trip the same 401. Forces a fresh sign-in.
     void clearStaleSession(getFirebaseAuth())
-  }, [])
+  }, [cameFromForcedLogout])
 
   // Arm the Firebase Auth stuck-state recovery and surface a one-line
   // notice if the last attempt was auto-recovered. THERAPY-n1n6.
   useEffect(() => {
     installAuthRecovery()
+    // The recovery flag is a consume-once external read (it clears on read),
+    // so it can't move into a render-time initializer.
     if (consumeRecoveryNotice()) {
-      setError(
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setNotice(
         "We cleared a stuck sign-in state from a previous attempt. Please try signing in again."
       )
     }
   }, [])
-
-  // Surface the method this device signed in with last.
-  useEffect(() => {
-    setLastMethod(readLastAuthMethod())
-  }, [])
-
-  // Detect WebAuthn support client-side (the API is undefined during SSR).
-  useEffect(() => {
-    setPasskeySupported(passkeysEnabled && browserSupportsWebAuthn())
-  }, [passkeysEnabled])
 
   // Exchange setup token from marketing signup to pre-fill email
   useEffect(() => {
@@ -217,30 +124,17 @@ export function FirebaseLoginScreen() {
   }, [])
 
   // Redirect to dashboard when already authenticated (but not during signup
-  // flow, and not when we arrived here from a forced logout — that session is
-  // stale and being cleared; bouncing back would re-enter the 401 loop).
-  // A genuine re-login navigates via finishLogin(), not this effect.
+  // flow — including its verify-email step, which keeps isSignUp true — and
+  // not when we arrived here from a forced logout: that session is stale and
+  // being cleared; bouncing back would re-enter the 401 loop). A genuine
+  // re-login navigates via finishLogin(), not this effect.
   useEffect(() => {
-    if (
-      user &&
-      !authLoading &&
-      step !== "verify-email" &&
-      !isSignUp &&
-      !cameFromForcedLogout.current
-    ) {
+    if (user && !authLoading && !isSignUp && !cameFromForcedLogout) {
       router.push("/dashboard")
     }
-  }, [user, authLoading, router, step, isSignUp])
+  }, [user, authLoading, router, isSignUp, cameFromForcedLogout])
 
-  const handleMfaRequired = (err: MultiFactorError, method: AuthMethod) => {
-    setPendingMethod(method)
-    const resolver = getMultiFactorResolver(getFirebaseAuth(), err)
-    setMfaResolver(resolver)
-    setStep("mfa")
-    setError("")
-  }
-
-  const finishLogin = async (credential: UserCredential, method: AuthMethod) => {
+  const finishLogin = async (credential: UserCredential) => {
     const idToken = await credential.user.getIdToken()
     // Send the refresh token so the server can seed the session cookie
     // directly, without minting a service-account-signed custom token to
@@ -256,358 +150,51 @@ export function FirebaseLoginScreen() {
         "X-Refresh-Token": refreshToken,
       },
     })
-    rememberAuthMethod(method)
     router.push("/dashboard")
   }
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
-
-    try {
-      const credential = await signInWithEmailAndPassword(getFirebaseAuth(), email, password)
-      await finishLogin(credential, "email")
-    } catch (err) {
-      const outcome = firebaseAuthErrorOutcome(err, "sign-in")
-      if (outcome.kind === "mfa-required") {
-        handleMfaRequired(err as MultiFactorError, "email")
-      } else if (outcome.kind === "message") {
-        setError(outcome.message)
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleEmailSignUp = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.")
-      return
-    }
-
-    setLoading(true)
-
-    try {
-      const credential = await createUserWithEmailAndPassword(
-        getFirebaseAuth(),
-        email,
-        password
-      )
-      await sendEmailVerification(credential.user, {
-        url: `${window.location.origin}/login`,
-      })
-      setStep("verify-email")
-    } catch (err) {
-      const outcome = firebaseAuthErrorOutcome(err, "sign-up")
-      if (outcome.kind === "message") setError(outcome.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleGoogleLogin = async () => {
-    setError("")
-    const auth = getFirebaseAuth()
-    const provider = new GoogleAuthProvider()
-
-    try {
-      const result = await signInWithPopup(auth, provider)
-      await finishLogin(result, "google")
-    } catch (err) {
-      const outcome = firebaseAuthErrorOutcome(err, "google")
-      if (outcome.kind === "mfa-required") {
-        handleMfaRequired(err as MultiFactorError, "google")
-      } else if (outcome.kind === "popup-blocked") {
-        console.log("Popup blocked, falling back to redirect")
-        await signInWithRedirect(auth, provider)
-      } else if (outcome.kind === "message") {
-        setError(outcome.message)
-      }
-    }
-  }
-
-  const handlePasskeyLogin = async () => {
-    setError("")
-    setLoading(true)
-    try {
-      const options = await beginAuthentication()
-      const assertion = await startAuthentication({ optionsJSON: options })
-      const { custom_token } = await finishAuthentication(assertion)
-      // The custom token carries the verified passkey factor (pablo_amr);
-      // signing in with it yields an MFA-satisfied session in one step.
-      const credential = await signInWithCustomToken(getFirebaseAuth(), custom_token)
-      await finishLogin(credential, "passkey")
-    } catch (err) {
-      // User dismissed the platform prompt — leave the form untouched.
-      if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
-      setError("Passkey sign-in failed. Try again, or use your email and password.")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleAuthReset = async () => {
-    await clearFirebaseAuthStorage()
-    window.location.reload()
-  }
-
-  const handleForgotPassword = async () => {
-    if (!email) {
-      setError("Enter your email address first, then click Forgot password")
-      return
-    }
-    setError("")
-    try {
-      await sendPasswordResetEmail(getFirebaseAuth(), email)
-      setResetSent(true)
-    } catch {
-      // Don't reveal whether email exists (security)
-      setResetSent(true)
-    }
-  }
-
-  if (step === "mfa" && mfaResolver) {
-    return (
-      <MfaChallengeScreen
-        resolver={mfaResolver}
-        onSuccess={(credential) => finishLogin(credential, pendingMethod)}
-        onCancel={() => {
-          setMfaResolver(null)
-          setError("")
-          setStep("sign-in")
-        }}
-      />
-    )
-  }
-
-  if (step === "recovery-code") {
-    return (
-      <RecoveryCodeScreen
-        initialEmail={email}
-        onSuccess={(credential) => finishLogin(credential, "passkey")}
-        onCancel={() => {
-          setError("")
-          setStep("sign-in")
-        }}
-      />
-    )
-  }
-
-  if (step === "verify-email") {
-    const handleResendVerification = async () => {
-      const auth = getFirebaseAuth()
-      if (!auth.currentUser) {
-        setVerifyEmailError("Session expired. Please sign up again.")
-        return
-      }
-      try {
-        await sendEmailVerification(auth.currentUser, {
-          url: `${window.location.origin}/login`,
-        })
-        setResendSent(true)
-      } catch (err) {
-        console.error("sendEmailVerification failed:", err)
-        const outcome = firebaseAuthErrorOutcome(err, "verify-email")
-        if (outcome.kind === "message") setVerifyEmailError(outcome.message)
-      }
-    }
-
-    return (
-      <VerifyEmailScreen
-        email={email}
-        error={verifyEmailError}
-        resent={resendSent}
-        onResend={handleResendVerification}
-        onBack={() => {
-          setIsSignUp(false)
-          setResendSent(false)
-          setVerifyEmailError("")
-          setError("")
-          setStep("sign-in")
-        }}
-      />
-    )
-  }
-
   return (
-    <AuthCard brandPanel={<LoginBrandPanel />}>
-      <div className="mb-6 flex flex-col items-center gap-2 lg:hidden">
-        <div className="flex items-center gap-2.5">
-          <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
-          <span className="font-display text-2xl font-bold text-primary-600">Pablo</span>
-        </div>
-        <span className="text-xs text-neutral-500">AI documentation for mental health clinicians</span>
-      </div>
-
-      <AuthHeader
-        title={isSignUp ? "Create your account" : "Welcome back"}
-        titleSize="4xl"
-        titleColor="foreground"
-      />
-
-      <div className="mt-8 space-y-4">
-        <div className="relative">
-          <AuthGoogleButton onClick={handleGoogleLogin} />
-          {!isSignUp && lastMethod === "google" && <LastUsedPill />}
-        </div>
-
-        {!isSignUp && passkeySupported && (
-          <div className="space-y-2">
-            <div className="relative">
-              <AuthOutlineButton
-                type="button"
-                onClick={handlePasskeyLogin}
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Fingerprint className="h-5 w-5" />
-                Sign in with a passkey
-              </AuthOutlineButton>
-              {lastMethod === "passkey" && <LastUsedPill />}
+    <CredentialBlock
+      onCredential={finishLogin}
+      email={email}
+      onEmailChange={setEmail}
+      showLastUsed
+      showAuthReset
+      notice={notice}
+      signUp={isSignUp}
+      onSignUpChange={setIsSignUp}
+      renderShell={(form) => (
+        <AuthCard brandPanel={<LoginBrandPanel />}>
+          <div className="mb-6 flex flex-col items-center gap-2 lg:hidden">
+            <div className="flex items-center gap-2.5">
+              <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
+              <span className="font-display text-2xl font-bold text-primary-600">Pablo</span>
             </div>
-            <div className="text-center">
-              <AuthLinkButton
-                size="sm"
-                onClick={() => {
-                  setError("")
-                  setStep("recovery-code")
-                }}
-              >
-                Lost your passkey? Use a recovery code
-              </AuthLinkButton>
-            </div>
+            <span className="text-xs text-neutral-500">AI documentation for mental health clinicians</span>
           </div>
-        )}
 
-        <AuthDivider />
-
-        <form
-          onSubmit={isSignUp ? handleEmailSignUp : handleEmailLogin}
-          className="space-y-4"
-        >
-          <AuthInput
-            id="email"
-            label="Email"
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            required
+          <AuthHeader
+            title={isSignUp ? "Create your account" : "Welcome back"}
+            titleSize="4xl"
+            titleColor="foreground"
           />
 
-          <AuthInput
-            id="password"
-            label={isSignUp ? "Create Password" : "Password"}
-            type="password"
-            autoComplete={isSignUp ? "new-password" : "current-password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={isSignUp ? "Min 15 characters" : "Password"}
-            required
-            minLength={isSignUp ? 15 : undefined}
-          />
+          {form}
 
-          {isSignUp && (
-            <AuthInput
-              id="confirmPassword"
-              label="Confirm Password"
-              type="password"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter your password"
-              required
-              minLength={15}
-            />
-          )}
+          <AuthFooter />
 
-          {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
-
-          {resetSent && (
-            <AuthFeedback variant="success">
-              If that email exists, a password reset link has been sent.
-            </AuthFeedback>
-          )}
-
-          <div className="relative">
-            <AuthPrimaryButton type="submit" disabled={loading}>
-              {loading
-                ? isSignUp
-                  ? "Creating account..."
-                  : "Signing in..."
-                : isSignUp
-                  ? "Create Account"
-                  : "Sign In"}
-            </AuthPrimaryButton>
-            {!isSignUp && lastMethod === "email" && <LastUsedPill />}
-          </div>
-
-          <div className="flex items-center justify-between text-sm">
-            {!isSignUp && (
-              <AuthLinkButton onClick={handleForgotPassword}>
-                Forgot password?
-              </AuthLinkButton>
-            )}
-            <AuthLinkButton
-              onClick={() => {
-                setIsSignUp(!isSignUp)
-                setError("")
-                setConfirmPassword("")
-              }}
-            >
-              {isSignUp ? "Already have an account?" : "Create account"}
-            </AuthLinkButton>
-          </div>
-
-          {!isSignUp && (
-            <div className="text-center">
-              <AuthLinkButton size="sm" onClick={handleAuthReset}>
-                Having trouble signing in?
-              </AuthLinkButton>
+          {/* Brand panel (with the theme picker) is hidden on mobile, so offer it here. */}
+          <div className="mt-6 flex justify-center lg:hidden">
+            <div className="flex flex-col items-center gap-2">
+              <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-neutral-500">
+                Theme
+              </span>
+              <ThemeSwitcher />
             </div>
-          )}
-        </form>
-
-        <p className="mt-6 text-center text-sm text-neutral-500">
-          By signing in, you agree to our{" "}
-          <a
-            href="https://pablo.health/terms"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline hover:text-neutral-700"
-          >
-            Terms of Service
-          </a>{" "}
-          and{" "}
-          <a
-            href="https://pablo.health/privacy/product"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline hover:text-neutral-700"
-          >
-            Privacy Policy
-          </a>
-          .
-        </p>
-      </div>
-
-      <AuthFooter />
-
-      {/* Brand panel (with the theme picker) is hidden on mobile, so offer it here. */}
-      <div className="mt-6 flex justify-center lg:hidden">
-        <div className="flex flex-col items-center gap-2">
-          <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-neutral-500">
-            Theme
-          </span>
-          <ThemeSwitcher />
-        </div>
-      </div>
-    </AuthCard>
+          </div>
+        </AuthCard>
+      )}
+    />
   )
 }
 
