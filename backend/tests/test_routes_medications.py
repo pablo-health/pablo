@@ -221,7 +221,7 @@ class TestUpdateMedication:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["status"] == "discontinued"
-        assert body["stopped_at"] == date.today().isoformat()
+        assert body["stopped_at"] == utc_now().date().isoformat()
 
     def test_update_status_to_discontinued_with_explicit_stopped_at(
         self, client_with_repo: TestClient
