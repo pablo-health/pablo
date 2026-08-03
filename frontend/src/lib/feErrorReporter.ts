@@ -90,7 +90,7 @@ export interface FrontendErrorEvent {
  * server-side scrubber; the two are intentionally redundant.
  */
 export function scrubString(value: string, maxLen: number): string {
-  const cleaned = value.replace(UUID_PATTERN, "{id}").replace(//g, "")
+  const cleaned = value.replace(UUID_PATTERN, "{id}").replace(/\u0000/g, "")
   return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen)}...[truncated]` : cleaned
 }
 
