@@ -134,6 +134,10 @@ def _seed_appointment(  # noqa: PLR0913 — seeding helper with independent star
             duration_minutes=int((end - start).total_seconds() // 60),
             status=status,
             session_type="individual",
+            # Migration-built appointments tables have NOT NULL audit
+            # columns with no server default — stamp them explicitly.
+            created_at=_NOW,
+            updated_at=_NOW,
         )
     )
     return appointment_id
