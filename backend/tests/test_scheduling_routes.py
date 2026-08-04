@@ -8,12 +8,22 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
+import pytest
 from app.main import app
 from app.models import Patient, SessionStatus
 from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
-from app.routes.scheduling import _get_session_service, get_scheduling_service
+from app.routes.scheduling import (
+    _get_session_service,
+    get_availability_rule_repository,
+    get_scheduling_service,
+)
 from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.availability_rule import (
+    InMemoryAvailabilityRuleRepository,
+)
+from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 
 if TYPE_CHECKING:
@@ -81,6 +91,44 @@ def _patient() -> Patient:
 def _wire_scheduling_overrides(*, scheduling_svc: MagicMock, session_svc: MagicMock) -> None:
     app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
     app.dependency_overrides[_get_session_service] = lambda: session_svc
+
+
+def _create_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "patient_id": "patient-1",
+        "title": "Weekly check-in",
+        "start_at": "2026-04-15T14:00:00Z",
+        "end_at": "2026-04-15T14:50:00Z",
+        "duration_minutes": 50,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.fixture
+def appt_repo() -> InMemoryAppointmentRepository:
+    return InMemoryAppointmentRepository()
+
+
+@pytest.fixture
+def rule_repo() -> InMemoryAvailabilityRuleRepository:
+    return InMemoryAvailabilityRuleRepository()
+
+
+@pytest.fixture
+def write_client(
+    client: TestClient,
+    appt_repo: InMemoryAppointmentRepository,
+    rule_repo: InMemoryAvailabilityRuleRepository,
+) -> TestClient:
+    """A ``client`` wired to the real SchedulingService over in-memory repos,
+    rather than a MagicMock. The tests using this fixture exercise the
+    write path's actual validation (or lack of it) instead of asserting
+    on canned mock returns.
+    """
+    app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo)
+    app.dependency_overrides[get_availability_rule_repository] = lambda: rule_repo
+    return client
 
 
 def test_start_session_default_authorizer_allows_explicit_note_type(
@@ -187,3 +235,140 @@ def test_list_appointments_accepts_iso_range(client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     scheduling_svc.list_appointments.assert_called_once()
+
+
+# --- Write-path characterization: real SchedulingService, in-memory repos ---
+#
+# The tests below run the real SchedulingService instead of a MagicMock so
+# they exercise its actual validation. That service (see
+# app/scheduling_engine/services/scheduling.py) only checks patient_id,
+# start_at/end_at presence, and duration_minutes — it never consults
+# AvailabilityEngine or AppointmentRepository.list_overlapping. The three
+# "ignores_*" tests below pin down that gap as it exists today so a follow-up
+# that wires in real conflict checking has a baseline to flip.
+
+
+def test_create_appointment_happy_path(write_client: TestClient) -> None:
+    """A well-formed request creates and returns the appointment."""
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["patient_id"] == "patient-1"
+    assert body["duration_minutes"] == 50
+    assert body["status"] == "confirmed"
+
+
+def test_create_appointment_ignores_blocked_day_rule(write_client: TestClient) -> None:
+    """KNOWN HOLE: create_appointment never calls AvailabilityEngine, so a
+    hard-enforcement rule blocking this day of week has no effect on the
+    write path. Follow-up: route creation through
+    AvailabilityEngine.check_conflicts (or an equivalent check) and reject
+    hard conflicts before persisting.
+    """
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_day_of_week",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2},  # 2026-04-15 is a Wednesday
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+
+
+def test_create_appointment_ignores_overlap(write_client: TestClient) -> None:
+    """KNOWN HOLE: create_appointment never calls
+    AppointmentRepository.list_overlapping, so a second appointment on the
+    same calendar slot is accepted instead of rejected. Follow-up: check
+    for overlap before persisting and surface a 409/400 on collision.
+    """
+    first = write_client.post("/api/appointments", json=_create_payload())
+    assert first.status_code == 201, first.text
+
+    second = write_client.post("/api/appointments", json=_create_payload(patient_id="patient-2"))
+
+    assert second.status_code == 201, second.text
+
+
+def test_create_appointment_accepts_end_before_start(write_client: TestClient) -> None:
+    """KNOWN HOLE: create_appointment never checks that end_at is after
+    start_at, so an inverted range is persisted as-is. Follow-up: reject
+    end_at <= start_at with a 400 (InvalidAppointmentError).
+    """
+    response = write_client.post(
+        "/api/appointments",
+        json=_create_payload(
+            start_at="2026-04-15T14:00:00Z",
+            end_at="2026-04-15T13:00:00Z",
+        ),
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["end_at"] < body["start_at"]
+
+
+def test_update_appointment_ignores_overlap(write_client: TestClient) -> None:
+    """KNOWN HOLE: update_appointment (like create_appointment) never checks
+    AppointmentRepository.list_overlapping, so rescheduling one appointment
+    on top of another is accepted instead of rejected. Follow-up: apply the
+    same overlap check on the update path, excluding the appointment being
+    moved.
+    """
+    first = write_client.post("/api/appointments", json=_create_payload())
+    assert first.status_code == 201, first.text
+
+    second = write_client.post(
+        "/api/appointments",
+        json=_create_payload(
+            patient_id="patient-2",
+            start_at="2026-04-15T16:00:00Z",
+            end_at="2026-04-15T16:50:00Z",
+        ),
+    )
+    assert second.status_code == 201, second.text
+    second_id = second.json()["id"]
+
+    response = write_client.patch(
+        f"/api/appointments/{second_id}",
+        json={"start_at": "2026-04-15T14:00:00Z", "end_at": "2026-04-15T14:50:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["start_at"] == "2026-04-15T14:00:00Z"
+
+
+def test_create_recurring_series_creates_all_occurrences(write_client: TestClient) -> None:
+    """A recurring request fans out into one appointment per occurrence,
+    sharing a recurring_appointment_id."""
+    response = write_client.post(
+        "/api/appointments/recurring",
+        json={
+            "patient_id": "patient-1",
+            "title": "Weekly check-in",
+            "start_at": "2026-04-15T14:00:00Z",
+            "end_at": "2026-04-15T14:50:00Z",
+            "duration_minutes": 50,
+            "frequency": "weekly",
+            "timezone": "UTC",
+            "count": 4,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["total"] == 4
+    occurrences = body["data"]
+    assert len(occurrences) == 4
+    assert len({occ["id"] for occ in occurrences}) == 4
+    master_id = occurrences[0]["id"]
+    assert all(occ["recurring_appointment_id"] == master_id for occ in occurrences)
+    assert [occ["recurrence_index"] for occ in occurrences] == [0, 1, 2, 3]
+    starts = [occ["start_at"] for occ in occurrences]
+    assert starts == sorted(starts)
