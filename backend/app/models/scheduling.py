@@ -176,6 +176,10 @@ class CheckConflictsResponse(BaseModel):
 
     conflicts: list[ConflictResponse]
     has_hard_conflicts: bool
+    # False when the practice has no availability rules at all — booking stays
+    # permissive either way, but this distinguishes "nothing to check against"
+    # from "checked and clear".
+    configured: bool
 
 
 class TimeSlotResponse(BaseModel):
@@ -192,6 +196,11 @@ class FreeSlotsResponse(BaseModel):
     duration_minutes: int
     slots: list[TimeSlotResponse]
     total: int
+    # False when the practice has no availability rules at all — an empty
+    # slots list otherwise reads identically whether nothing is set up or
+    # the day is simply full. False here means "point the caller at
+    # availability settings", not "fully booked".
+    configured: bool
 
 
 # --- Google Calendar models ---

@@ -12,8 +12,15 @@ from app.main import app
 from app.models import Patient, SessionStatus
 from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
-from app.routes.scheduling import _get_session_service, get_scheduling_service
+from app.routes.scheduling import (
+    _get_session_service,
+    get_availability_rule_repository,
+    get_scheduling_service,
+)
 from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.repositories.availability_rule import (
+    InMemoryAvailabilityRuleRepository,
+)
 from app.services import get_audit_service
 
 if TYPE_CHECKING:
@@ -187,3 +194,42 @@ def test_list_appointments_accepts_iso_range(client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     scheduling_svc.list_appointments.assert_called_once()
+
+
+def test_check_conflicts_permissive_when_unconfigured(client: TestClient) -> None:
+    """A practice with no availability rules gets neither conflicts nor a
+    hard block — booking must stay permissive until rules are set up."""
+    app.dependency_overrides[get_availability_rule_repository] = InMemoryAvailabilityRuleRepository
+
+    response = client.post(
+        "/api/availability/check",
+        json={"start_at": "2026-04-15T14:00:00Z", "end_at": "2026-04-15T14:50:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["conflicts"] == []
+    assert body["has_hard_conflicts"] is False
+    assert body["configured"] is False
+
+
+def test_create_appointment_succeeds_with_no_availability_rules(client: TestClient) -> None:
+    """Booking isn't gated on availability configuration — a practice that
+    hasn't set up any rules yet can still be scheduled into."""
+    app.dependency_overrides[get_availability_rule_repository] = InMemoryAvailabilityRuleRepository
+    scheduling_svc = MagicMock()
+    scheduling_svc.create_appointment.return_value = _real_appointment()
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+
+    response = client.post(
+        "/api/appointments",
+        json={
+            "patient_id": "patient-1",
+            "title": "Weekly check-in",
+            "start_at": "2026-04-15T14:00:00Z",
+            "end_at": "2026-04-15T14:50:00Z",
+            "duration_minutes": 50,
+        },
+    )
+
+    assert response.status_code == 201, response.text
