@@ -237,6 +237,45 @@ def test_list_appointments_accepts_iso_range(client: TestClient) -> None:
     scheduling_svc.list_appointments.assert_called_once()
 
 
+def test_check_conflicts_permissive_when_unconfigured(client: TestClient) -> None:
+    """A practice with no availability rules gets neither conflicts nor a
+    hard block — booking must stay permissive until rules are set up."""
+    app.dependency_overrides[get_availability_rule_repository] = InMemoryAvailabilityRuleRepository
+
+    response = client.post(
+        "/api/availability/check",
+        json={"start_at": "2026-04-15T14:00:00Z", "end_at": "2026-04-15T14:50:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["conflicts"] == []
+    assert body["has_hard_conflicts"] is False
+    assert body["configured"] is False
+
+
+def test_create_appointment_succeeds_with_no_availability_rules(client: TestClient) -> None:
+    """Booking isn't gated on availability configuration — a practice that
+    hasn't set up any rules yet can still be scheduled into."""
+    app.dependency_overrides[get_availability_rule_repository] = InMemoryAvailabilityRuleRepository
+    scheduling_svc = MagicMock()
+    scheduling_svc.create_appointment.return_value = _real_appointment()
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+
+    response = client.post(
+        "/api/appointments",
+        json={
+            "patient_id": "patient-1",
+            "title": "Weekly check-in",
+            "start_at": "2026-04-15T14:00:00Z",
+            "end_at": "2026-04-15T14:50:00Z",
+            "duration_minutes": 50,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+
+
 # --- Write-path characterization: real SchedulingService, in-memory repos ---
 #
 # The tests below run the real SchedulingService instead of a MagicMock so

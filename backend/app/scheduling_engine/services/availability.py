@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from ..models.availability import RuleType
-from ..models.conflict import Conflict, TimeSlot
+from ..models.conflict import Conflict, ConflictCheckResult, FreeSlotsResult, TimeSlot
 
 if TYPE_CHECKING:
     from ..models.appointment import Appointment
@@ -47,8 +47,16 @@ class AvailabilityEngine:
 
     def check_conflicts(
         self, user_id: str, start_at: str | datetime, end_at: str | datetime
-    ) -> list[Conflict]:
-        """Check all availability rules for conflicts with a proposed time."""
+    ) -> ConflictCheckResult:
+        """Check all availability rules for conflicts with a proposed time.
+
+        A user with zero rules is NOT CONFIGURED — ``configured`` is False,
+        and ``conflicts`` is (necessarily) empty because there is nothing to
+        check against. That is a permissive, not an approving, result: the
+        caller should still let the booking through, but can use
+        ``configured`` to show that availability hasn't been set up rather
+        than treating the empty list as "checked and clear".
+        """
         rules = self._rule_repo.list_by_user(user_id)
         proposed_start = start_at if isinstance(start_at, datetime) else _parse_iso(start_at)
         proposed_end = end_at if isinstance(end_at, datetime) else _parse_iso(end_at)
@@ -59,18 +67,27 @@ class AvailabilityEngine:
             if conflict:
                 conflicts.append(conflict)
 
-        return conflicts
+        return ConflictCheckResult(configured=bool(rules), conflicts=conflicts)
 
-    def get_free_slots(self, user_id: str, date_str: str, duration_minutes: int) -> list[TimeSlot]:
-        """Compute available time slots for a given date and duration."""
+    def get_free_slots(self, user_id: str, date_str: str, duration_minutes: int) -> FreeSlotsResult:
+        """Compute available time slots for a given date and duration.
+
+        A user with zero rules is NOT CONFIGURED — ``configured`` is False,
+        distinct from a configured user whose rules simply leave no openings
+        on this date. Both cases produce an empty ``slots`` list, so callers
+        must check ``configured`` to tell "set up your availability" apart
+        from "this day is full".
+        """
         rules = self._rule_repo.list_by_user(user_id)
+        if not rules:
+            return FreeSlotsResult(configured=False, slots=[])
 
         working_ranges = self._get_working_hours(rules, date_str)
         if not working_ranges:
-            return []
+            return FreeSlotsResult(configured=True, slots=[])
 
         if self._is_date_blocked(rules, date_str):
-            return []
+            return FreeSlotsResult(configured=True, slots=[])
 
         blocked_minutes = self._get_blocked_minutes(rules)
 
@@ -86,7 +103,7 @@ class AvailabilityEngine:
 
         max_per_day = self._get_max_per_day(rules)
         if max_per_day is not None and len(active) >= max_per_day:
-            return []
+            return FreeSlotsResult(configured=True, slots=[])
 
         slots: list[TimeSlot] = []
         remaining_capacity = max_per_day - len(active) if max_per_day is not None else None
@@ -107,12 +124,12 @@ class AvailabilityEngine:
                     if remaining_capacity is not None:
                         remaining_capacity -= 1
                         if remaining_capacity <= 0:
-                            return slots
+                            return FreeSlotsResult(configured=True, slots=slots)
                     minute += duration_minutes
                 else:
                     minute += 1
 
-        return slots
+        return FreeSlotsResult(configured=True, slots=slots)
 
     def _check_rule(
         self,
