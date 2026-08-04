@@ -126,6 +126,5 @@ class TestCrossTenantIdorCollector:
         assert artifact.status == "error"
         assert artifact.summary["verdict"] == "ERROR"
         assert "synthetic network failure" in (artifact.error or "")
-        assert "DELETE /api/patients/<A-owned-id> (as A, cleanup) -> 204" in (
-            open(bundle_dir / artifact.path).read()  # noqa: PTH123, SIM115 — small test-only read
-        )
+        report_text = (bundle_dir / artifact.path).read_text(encoding="utf-8")
+        assert "DELETE /api/patients/<A-owned-id> (as A, cleanup) -> 204" in report_text
