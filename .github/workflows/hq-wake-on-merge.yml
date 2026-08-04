@@ -1,0 +1,96 @@
+# Tell the automation service a pull request closed, instead of making it ask.
+#
+# The service that manages this repository's automated branches learns about
+# GitHub by polling: it asks, on a timer, whether the pull requests it opened
+# have landed. That is correct but slow, and it means a merge sits unnoticed for
+# up to half an hour while the branch and its tracking record drift out of step.
+#
+# This posts a small notification the moment a pull request closes, so the next
+# reconciliation happens in seconds rather than at the next scheduled sweep.
+#
+# WHAT IS SENT: the pull request number, the repository slug, and a one-line
+# reason. Nothing else — no diff, no branch contents, no comment text. The
+# receiving service re-reads everything it acts on directly from GitHub, so this
+# is a hint about WHEN to look, never a source of truth about WHAT it found.
+#
+# WHY THAT MATTERS: a lost, duplicated, delayed or forged notification changes
+# only latency. The scheduled sweep still runs and still re-derives every fact
+# for itself, so this workflow cannot cause a wrong decision — only an earlier
+# correct one.
+#
+# A failure here never fails a merge that has already happened. Every step is
+# best-effort and the job exits successfully regardless, because the timer
+# remains the floor and the worst case is exactly today's behaviour.
+name: Notify automation on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  # A burst of merges only needs one notification: the receiver coalesces them
+  # into a single pass anyway, so extra calls are wasted work rather than extra
+  # coverage.
+  group: hq-wake-on-merge
+  cancel-in-progress: true
+
+jobs:
+  notify:
+    # Automated branches only. A human topic branch merging is not this
+    # service's business, and notifying on every pull request in the repository
+    # would turn a signal into noise.
+    if: startsWith(github.event.pull_request.head.ref, 'work/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post the notification
+        env:
+          ENDPOINT: ${{ secrets.HQ_WAKE_URL }}
+          TOKEN: ${{ secrets.HQ_WAKE_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          # Absent configuration is not a failure. A fork, or a repository that
+          # has not been given these secrets, simply does not notify — and the
+          # scheduled sweep covers it. Failing here would break merges for
+          # contributors who have no reason to know this exists.
+          if [ -z "${ENDPOINT:-}" ] || [ -z "${TOKEN:-}" ]; then
+            echo "notification not configured — the scheduled sweep still covers this"
+            exit 0
+          fi
+
+          # Ids and slugs only. `jq -n` builds the JSON so a value can never
+          # break out of the payload, and the numeric coercion means a malformed
+          # PR number fails here rather than travelling.
+          BODY="$(jq -nc \
+            --arg source "pr-merged" \
+            --arg repo "${GITHUB_REPOSITORY}" \
+            --argjson issue_number "${PR}" \
+            --arg reason "pr-${PR} closed (merged=${MERGED})" \
+            '{source: $source, repo: $repo, issue_number: $issue_number, reason: $reason}')"
+
+          CODE="$(curl -sS -o /tmp/wake-response -w '%{http_code}' \
+                    --max-time 20 --retry 2 --retry-connrefused \
+                    -X POST "${ENDPOINT}" \
+                    -H "Authorization: Bearer ${TOKEN}" \
+                    -H 'Content-Type: application/json' \
+                    -d "${BODY}" || echo 000)"
+
+          echo "notify: HTTP ${CODE}"
+          # Response bodies are ids and status only, never content, so echoing
+          # one is safe and is the only diagnostic available when this misfires.
+          head -c 300 /tmp/wake-response 2>/dev/null || true
+          echo
+
+          case "${CODE}" in
+            2*) echo "notified" ;;
+            *)  echo "notify failed (HTTP ${CODE}) — the scheduled sweep will pick this up" ;;
+          esac
+
+      # Stated explicitly rather than relied upon: this workflow must never be
+      # able to turn a successful merge into a red check.
+      - name: Never fail the merge
+        if: always()
+        run: exit 0
