@@ -18,9 +18,10 @@
 # for itself, so this workflow cannot cause a wrong decision — only an earlier
 # correct one.
 #
-# A failure here never fails a merge that has already happened. Every step is
-# best-effort and the job exits successfully regardless, because the timer
-# remains the floor and the worst case is exactly today's behaviour.
+# A failure here never fails a merge that has already happened. The notifying
+# step is marked `continue-on-error`, so anything it can hit — a missing tool, a
+# refused connection, a malformed payload — leaves the run green. The timer
+# remains the floor, so the worst case is exactly today's behaviour.
 name: Notify automation on merge
 
 on:
@@ -46,6 +47,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Post the notification
+        # The one guarantee this workflow makes: it cannot turn a merge that
+        # already happened into a red check. Stated here rather than at the end,
+        # because a trailing `exit 0` step does not undo an earlier step's
+        # failure — only this does. It covers the whole script, including the
+        # cases the script itself cannot catch, like jq or curl being missing.
+        continue-on-error: true
         env:
           ENDPOINT: ${{ secrets.HQ_WAKE_URL }}
           TOKEN: ${{ secrets.HQ_WAKE_TOKEN }}
@@ -64,8 +71,18 @@ jobs:
           # Ids and slugs only. `jq -n` builds the JSON so a value can never
           # break out of the payload, and the numeric coercion means a malformed
           # PR number fails here rather than travelling.
+          # A pull request can close without merging, and the two mean
+          # different things to the receiver — one reconciles a landed branch,
+          # the other retires an abandoned one. Saying which keeps downstream
+          # reasoning and metrics unambiguous.
+          if [ "${MERGED}" = "true" ]; then
+            SOURCE="pr-merged"
+          else
+            SOURCE="pr-closed"
+          fi
+
           BODY="$(jq -nc \
-            --arg source "pr-merged" \
+            --arg source "${SOURCE}" \
             --arg repo "${GITHUB_REPOSITORY}" \
             --argjson issue_number "${PR}" \
             --arg reason "pr-${PR} closed (merged=${MERGED})" \
@@ -88,9 +105,3 @@ jobs:
             2*) echo "notified" ;;
             *)  echo "notify failed (HTTP ${CODE}) — the scheduled sweep will pick this up" ;;
           esac
-
-      # Stated explicitly rather than relied upon: this workflow must never be
-      # able to turn a successful merge into a red check.
-      - name: Never fail the merge
-        if: always()
-        run: exit 0

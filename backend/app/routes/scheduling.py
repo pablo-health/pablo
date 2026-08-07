@@ -556,12 +556,13 @@ def get_free_slots(
     engine: AvailabilityEngine = Depends(get_availability_engine),
 ) -> FreeSlotsResponse:
     """Get available time slots for a given date."""
-    slots = engine.get_free_slots(ctx.user_id, date, duration)
+    result = engine.get_free_slots(ctx.user_id, date, duration)
     return FreeSlotsResponse(
         date=date,
         duration_minutes=duration,
-        slots=[TimeSlotResponse(start=s.start, end=s.end) for s in slots],
-        total=len(slots),
+        slots=[TimeSlotResponse(start=s.start, end=s.end) for s in result.slots],
+        total=len(result.slots),
+        configured=result.configured,
     )
 
 
@@ -572,19 +573,20 @@ def check_conflicts(
     engine: AvailabilityEngine = Depends(get_availability_engine),
 ) -> CheckConflictsResponse:
     """Check scheduling conflicts for a proposed time."""
-    conflicts = engine.check_conflicts(ctx.user_id, request.start_at, request.end_at)
+    result = engine.check_conflicts(ctx.user_id, request.start_at, request.end_at)
     conflict_responses = [
         ConflictResponse(
             rule_type=c.rule.rule_type,
             enforcement=c.enforcement,
             message=c.message,
         )
-        for c in conflicts
+        for c in result.conflicts
     ]
-    has_hard = any(c.enforcement == EnforcementLevel.HARD for c in conflicts)
+    has_hard = any(c.enforcement == EnforcementLevel.HARD for c in result.conflicts)
     return CheckConflictsResponse(
         conflicts=conflict_responses,
         has_hard_conflicts=has_hard,
+        configured=result.configured,
     )
 
 

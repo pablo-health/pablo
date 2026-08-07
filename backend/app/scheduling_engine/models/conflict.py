@@ -27,3 +27,33 @@ class Conflict:
     enforcement: str  # EnforcementLevel value
     message: str
     suggested_alternatives: list[TimeSlot] = field(default_factory=list)
+
+
+@dataclass
+class ConflictCheckResult:
+    """Result of checking a proposed time against a user's availability rules.
+
+    ``configured`` is False when the user has no availability rules at all —
+    a distinct state from "checked and found nothing wrong". Zero rules means
+    nothing has been asserted about availability, so ``conflicts`` is always
+    empty in that case; callers that need to tell "not configured" apart from
+    "configured and clear" should check ``configured`` rather than treating
+    an empty ``conflicts`` list as an answer either way.
+    """
+
+    configured: bool
+    conflicts: list[Conflict]
+
+
+@dataclass
+class FreeSlotsResult:
+    """Result of computing free slots for a date.
+
+    ``configured`` is False when the user has no availability rules at all,
+    which is why ``slots`` is empty — not because the day is fully booked.
+    Callers must check ``configured`` before treating an empty ``slots`` list
+    as "no openings"; otherwise "not set up yet" renders as "fully booked".
+    """
+
+    configured: bool
+    slots: list[TimeSlot]

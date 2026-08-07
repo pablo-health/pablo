@@ -86,7 +86,9 @@ class TestWorkingHoursConflict:
         rule_repo.create(
             _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
     def test_conflict_outside_hours(
@@ -95,7 +97,9 @@ class TestWorkingHoursConflict:
         rule_repo.create(
             _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T08:00:00Z", "2026-03-18T08:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T08:00:00Z", "2026-03-18T08:50:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "working hours" in conflicts[0].message.lower()
 
@@ -105,7 +109,9 @@ class TestWorkingHoursConflict:
         rule_repo.create(
             _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T16:30:00Z", "2026-03-18T17:20:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T16:30:00Z", "2026-03-18T17:20:00Z"
+        ).conflicts
         assert len(conflicts) == 1
 
     def test_no_conflict_different_day(
@@ -116,7 +122,9 @@ class TestWorkingHoursConflict:
             _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
         )
         # Thursday = weekday 3, no rule defined
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-19T10:00:00Z", "2026-03-19T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-19T10:00:00Z", "2026-03-19T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -126,7 +134,9 @@ class TestBlockDayOfWeek:
     ) -> None:
         # Block Sunday (6)
         rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 6}))
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "blocked" in conflicts[0].message.lower()
 
@@ -135,7 +145,9 @@ class TestBlockDayOfWeek:
     ) -> None:
         rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 6}))
         # Wednesday = 2, not blocked
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -145,7 +157,9 @@ class TestBlockTimeRange:
     ) -> None:
         # Block 12:00-13:00 (lunch)
         rule_repo.create(_rule(RuleType.BLOCK_TIME_RANGE, {"start": "12:00", "end": "13:00"}))
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "blocked time range" in conflicts[0].message.lower()
 
@@ -153,7 +167,9 @@ class TestBlockTimeRange:
         self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
     ) -> None:
         rule_repo.create(_rule(RuleType.BLOCK_TIME_RANGE, {"start": "12:00", "end": "13:00"}))
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
     def test_adjacent_not_overlapping(
@@ -161,7 +177,9 @@ class TestBlockTimeRange:
     ) -> None:
         rule_repo.create(_rule(RuleType.BLOCK_TIME_RANGE, {"start": "12:00", "end": "13:00"}))
         # Starts exactly when block ends — should NOT conflict
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T13:00:00Z", "2026-03-18T13:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T13:00:00Z", "2026-03-18T13:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -174,7 +192,9 @@ class TestMaxPerDay:
     ) -> None:
         rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 3}))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
     def test_at_max(
@@ -186,7 +206,9 @@ class TestMaxPerDay:
         rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 2}))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
         appt_repo.create(_appt("2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z", appt_id="a2"))
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T14:00:00Z", "2026-03-18T14:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T14:00:00Z", "2026-03-18T14:50:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "maximum" in conflicts[0].message.lower()
 
@@ -205,7 +227,9 @@ class TestMaxPerDay:
                 status=AppointmentStatus.CANCELLED,
             )
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -220,7 +244,9 @@ class TestBufferBefore:
         # Existing appointment ends at 10:50
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"))
         # New starts at 10:55 — only 5min gap, needs 15min buffer
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:55:00Z", "2026-03-18T11:45:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:55:00Z", "2026-03-18T11:45:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "buffer" in conflicts[0].message.lower()
 
@@ -233,7 +259,9 @@ class TestBufferBefore:
         rule_repo.create(_rule(RuleType.BUFFER_BEFORE, {"minutes": 10}))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"))
         # New starts at 11:05 — 15min gap, needs 10min buffer
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T11:05:00Z", "2026-03-18T11:55:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T11:05:00Z", "2026-03-18T11:55:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -248,7 +276,9 @@ class TestBufferAfter:
         # Existing appointment starts at 11:00
         appt_repo.create(_appt("2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z"))
         # New ends at 10:55 — only 5min gap before next, needs 15min buffer after
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:55:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:55:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "buffer" in conflicts[0].message.lower()
 
@@ -261,7 +291,9 @@ class TestBufferAfter:
         rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": 10}))
         appt_repo.create(_appt("2026-03-18T11:00:00Z", "2026-03-18T11:50:00Z"))
         # New ends at 10:45 — 15min gap, needs 10min buffer after
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T09:55:00Z", "2026-03-18T10:45:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T09:55:00Z", "2026-03-18T10:45:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -272,7 +304,9 @@ class TestBlockDateRange:
         rule_repo.create(
             _rule(RuleType.BLOCK_DATE_RANGE, {"start_date": "2026-03-20", "end_date": "2026-03-25"})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "blocked range" in conflicts[0].message.lower()
 
@@ -282,7 +316,9 @@ class TestBlockDateRange:
         rule_repo.create(
             _rule(RuleType.BLOCK_DATE_RANGE, {"start_date": "2026-03-20", "end_date": "2026-03-25"})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -293,7 +329,9 @@ class TestBlockSpecificDates:
         rule_repo.create(
             _rule(RuleType.BLOCK_SPECIFIC_DATES, {"dates": ["2026-03-18", "2026-03-25"]})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert "specifically blocked" in conflicts[0].message.lower()
 
@@ -303,7 +341,9 @@ class TestBlockSpecificDates:
         rule_repo.create(
             _rule(RuleType.BLOCK_SPECIFIC_DATES, {"dates": ["2026-03-18", "2026-03-25"]})
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-19T10:00:00Z", "2026-03-19T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-19T10:00:00Z", "2026-03-19T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
 
@@ -315,7 +355,7 @@ class TestFreeSlots:
         rule_repo.create(
             _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "12:00"})
         )
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 60)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 60).slots
         assert len(slots) == 3
         assert slots[0].start == "2026-03-18T09:00:00Z"
         assert slots[0].end == "2026-03-18T10:00:00Z"
@@ -332,7 +372,7 @@ class TestFreeSlots:
             _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "12:00"})
         )
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"))
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         # 09:00-09:50, gap during 10:00-10:50, then 10:50-11:40, 11:10 is too late for a 50
         starts = [s.start for s in slots]
         assert "2026-03-18T09:00:00Z" in starts
@@ -351,7 +391,7 @@ class TestFreeSlots:
             )
         )
         rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 2}, rule_id="r2"))
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 0
 
     def test_no_slots_on_blocked_date(
@@ -371,7 +411,7 @@ class TestFreeSlots:
                 rule_id="r2",
             )
         )
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 0
 
     def test_free_slots_with_blocked_time_range(
@@ -388,7 +428,7 @@ class TestFreeSlots:
         rule_repo.create(
             _rule(RuleType.BLOCK_TIME_RANGE, {"start": "12:00", "end": "13:00"}, rule_id="r2")
         )
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 60)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 60).slots
         # Should get 09:00-10:00, 10:00-11:00, 11:00-12:00 (not 12:00-13:00)
         assert len(slots) == 3
         starts = [s.start for s in slots]
@@ -410,7 +450,7 @@ class TestFreeSlots:
         rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 2}, rule_id="r2"))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
         # 1 existing appointment, max 2 => only 1 more slot returned
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 1
 
     def test_max_per_day_fully_booked(
@@ -428,12 +468,13 @@ class TestFreeSlots:
         )
         rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 1}, rule_id="r2"))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 0
 
-    def test_no_working_hours_returns_empty(self, engine: AvailabilityEngine) -> None:
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
-        assert len(slots) == 0
+    def test_no_rules_is_unconfigured_not_empty(self, engine: AvailabilityEngine) -> None:
+        result = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        assert result.configured is False
+        assert result.slots == []
 
     def test_free_slots_with_buffers(
         self,
@@ -452,7 +493,7 @@ class TestFreeSlots:
         rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": 10}, rule_id="r3"))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"))
         # With 10min buffer, blocked = 09:50-11:00
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         for s in slots:
             assert s.end <= "2026-03-18T09:50:00Z" or s.start >= "2026-03-18T11:00:00Z"
 
@@ -473,7 +514,7 @@ class TestFreeSlots:
                 rule_id="r2",
             )
         )
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 0
 
 
@@ -492,11 +533,15 @@ class TestMultipleRulesInteraction:
             _rule(RuleType.BLOCK_TIME_RANGE, {"start": "12:00", "end": "13:00"}, rule_id="r2")
         )
         # 09:00 within working hours and outside blocked range — no conflict
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T09:00:00Z", "2026-03-18T09:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T09:00:00Z", "2026-03-18T09:50:00Z"
+        ).conflicts
         assert len(conflicts) == 0
 
         # 12:30 within working hours but inside blocked range — 1 conflict
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert conflicts[0].rule.rule_type == RuleType.BLOCK_TIME_RANGE
 
@@ -512,7 +557,9 @@ class TestMultipleRulesInteraction:
             _rule(RuleType.BLOCK_SPECIFIC_DATES, {"dates": ["2026-03-22"]}, rule_id="r2")
         )
         # Sunday 2026-03-22 hits both rules
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-22T10:00:00Z", "2026-03-22T10:50:00Z"
+        ).conflicts
         assert len(conflicts) == 2
 
     def test_soft_enforcement_still_reported(
@@ -525,7 +572,9 @@ class TestMultipleRulesInteraction:
                 enforcement=EnforcementLevel.SOFT,
             )
         )
-        conflicts = engine.check_conflicts(USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z")
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T12:30:00Z", "2026-03-18T13:20:00Z"
+        ).conflicts
         assert len(conflicts) == 1
         assert conflicts[0].enforcement == EnforcementLevel.SOFT
 
@@ -547,9 +596,55 @@ class TestMultipleRulesInteraction:
                 rule_id="r2",
             )
         )
-        slots = engine.get_free_slots(USER_ID, "2026-03-18", 60)
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 60).slots
         starts = [s.start for s in slots]
         assert "2026-03-18T09:00:00Z" in starts
         assert "2026-03-18T13:00:00Z" in starts
         # 12:00-13:00 gap should not produce a slot
         assert "2026-03-18T12:00:00Z" not in starts
+
+
+class TestConfiguredSentinel:
+    """A practice's rule set is either not configured, or configured.
+
+    Zero rules means nothing has been asserted about availability — not
+    "closed" and not "open". ``get_free_slots`` and ``check_conflicts``
+    must agree on that: neither one may render an unconfigured practice
+    as unavailable.
+    """
+
+    def test_unconfigured_practice(self, engine: AvailabilityEngine) -> None:
+        slots_result = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        assert slots_result.configured is False
+        assert slots_result.slots == []
+
+        conflicts_result = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        )
+        assert conflicts_result.configured is False
+        assert conflicts_result.conflicts == []
+
+    def test_configured_practice_full_day(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        # Working hours are set, but the whole day is booked solid.
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "10:00"})
+        )
+        appt_repo.create(_appt("2026-03-18T09:00:00Z", "2026-03-18T10:00:00Z"))
+        slots_result = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        assert slots_result.configured is True
+        assert slots_result.slots == []
+
+    def test_configured_practice_with_openings(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "10:00"})
+        )
+        slots_result = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        assert slots_result.configured is True
+        assert len(slots_result.slots) == 1
