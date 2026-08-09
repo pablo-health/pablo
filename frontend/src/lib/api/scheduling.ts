@@ -10,6 +10,7 @@ import type {
   AppointmentListResponse,
   AppointmentResponse,
   CreateAppointmentRequest,
+  CreateRecurringAppointmentRequest,
   UpdateAppointmentRequest,
 } from "@/types/scheduling"
 import { apiClient, del, get, patch, post } from "./client"
@@ -65,6 +66,17 @@ export async function createAppointment(
   token?: string
 ): Promise<AppointmentResponse> {
   return post<AppointmentResponse>("/api/appointments", data, token)
+}
+
+/**
+ * Create a recurring appointment series. Returns every materialized
+ * occurrence created for the series.
+ */
+export async function createRecurringAppointment(
+  data: CreateRecurringAppointmentRequest,
+  token?: string
+): Promise<AppointmentListResponse> {
+  return post<AppointmentListResponse>("/api/appointments/recurring", data, token)
 }
 
 /**

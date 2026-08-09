@@ -1,12 +1,19 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi } from "vitest"
+import { afterEach, describe, it, expect, vi } from "vitest"
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AppointmentModal } from "../AppointmentModal"
 import type { UserPreferences } from "@/lib/api/users"
 import type { AppointmentResponse } from "@/types/scheduling"
+
+const { mockCreate, mockCreateRecurring, mockUpdate, mockCancel } = vi.hoisted(() => ({
+  mockCreate: vi.fn(),
+  mockCreateRecurring: vi.fn(),
+  mockUpdate: vi.fn(),
+  mockCancel: vi.fn(),
+}))
 
 vi.mock("@/hooks/usePatients", () => ({
   usePatientList: () => ({
@@ -20,9 +27,10 @@ vi.mock("@/hooks/usePatients", () => ({
 }))
 
 vi.mock("@/hooks/useAppointments", () => ({
-  useCreateAppointment: () => ({ mutate: vi.fn(), isPending: false }),
-  useUpdateAppointment: () => ({ mutate: vi.fn(), isPending: false }),
-  useCancelAppointment: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateAppointment: () => ({ mutate: mockCreate, isPending: false }),
+  useCreateRecurringAppointment: () => ({ mutate: mockCreateRecurring, isPending: false }),
+  useUpdateAppointment: () => ({ mutate: mockUpdate, isPending: false }),
+  useCancelAppointment: () => ({ mutate: mockCancel, isPending: false }),
 }))
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -90,6 +98,10 @@ function createWrapper() {
 }
 
 describe("AppointmentModal", () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
   it("renders the new-appointment header when no appointment provided", () => {
     render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
     expect(screen.getByText("New appointment")).toBeInTheDocument()
@@ -285,6 +297,61 @@ describe("AppointmentModal", () => {
       await user.click(trigger)
       await user.click(screen.getByRole("option", { name: /narrative/i }))
       expect(trigger).toHaveTextContent("Narrative")
+    })
+  })
+
+  describe("Recurrence (create mode only)", () => {
+    async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+    }
+
+    it("does not render a Repeats control in edit mode", () => {
+      render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+        wrapper: createWrapper(),
+      })
+      expect(screen.queryByRole("radiogroup", { name: /repeats/i })).not.toBeInTheDocument()
+    })
+
+    it("submits the legacy single-create payload when Repeats is left at None", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await selectPatient(user)
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect(mockCreateRecurring).not.toHaveBeenCalled()
+      const [payload] = mockCreate.mock.calls[0]
+      expect(payload).toMatchObject({ patient_id: "p1", session_type: "individual" })
+      expect(payload).not.toHaveProperty("frequency")
+    })
+
+    it("submits the recurring payload with an IANA timezone for a weekly repeat with a session count", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await selectPatient(user)
+
+      await user.click(screen.getByRole("radio", { name: "Weekly" }))
+      await user.type(screen.getByLabelText("Number of sessions"), "6")
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreateRecurring).toHaveBeenCalledTimes(1)
+      expect(mockCreate).not.toHaveBeenCalled()
+      const [payload] = mockCreateRecurring.mock.calls[0]
+      expect(payload).toMatchObject({
+        patient_id: "p1",
+        frequency: "weekly",
+        count: 6,
+        end_date: null,
+      })
+      expect(typeof payload.timezone).toBe("string")
+      expect(payload.timezone.length).toBeGreaterThan(0)
+    })
+
+    it("does not offer a Monthly option", () => {
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      expect(screen.queryByRole("radio", { name: /monthly/i })).not.toBeInTheDocument()
     })
   })
 })
