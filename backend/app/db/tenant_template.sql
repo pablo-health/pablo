@@ -395,8 +395,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     category character varying(32) DEFAULT 'chart'::character varying NOT NULL,
     extracted_via character varying(32),
     extraction_metadata jsonb,
+    extraction_status character varying(16),
     CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'consent'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
-    CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[]))))
+    CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[])))),
+    CONSTRAINT ck_patient_documents_extraction_status CHECK (((extraction_status IS NULL) OR ((extraction_status)::text = ANY ((ARRAY['pending'::character varying, 'complete'::character varying, 'failed'::character varying])::text[]))))
 );
 
 

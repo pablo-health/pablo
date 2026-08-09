@@ -51,11 +51,13 @@ from .patient_documents_service import (
     ALLOWED_MIME_TYPES as PATIENT_DOCUMENT_ALLOWED_MIME_TYPES,
 )
 from .patient_documents_service import (
+    DocumentExtractionFailedError,
     DocumentsBucketNotConfiguredError,
     FileTooLargeError,
     InitUploadResult,
     PatientDocumentError,
     PatientDocumentsService,
+    TransientDocumentExtractionError,
     UnsupportedMimeTypeError,
     UploadNotCompleteError,
 )
@@ -96,6 +98,7 @@ __all__ = [
     "ChatTurnService",
     "ContextBundle",
     "ContextOverflowError",
+    "DocumentExtractionFailedError",
     "DocumentsBucketNotConfiguredError",
     "EhrNavigationService",
     "ExportService",
@@ -132,6 +135,7 @@ __all__ = [
     "StreamEvent",
     "StructuredCompletion",
     "StructuredLLMGateway",
+    "TransientDocumentExtractionError",
     "TransientSOAPGenerationError",
     "TurnConcurrencyError",
     "TurnContext",

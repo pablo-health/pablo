@@ -33,6 +33,7 @@ function makeDoc(
     finalized_at: "2026-05-24T10:00:01Z",
     category: "chart",
     extracted_text: null,
+    extraction_status: "complete",
     text_extraction_failed: false,
     ...overrides,
   }

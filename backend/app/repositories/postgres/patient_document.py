@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import String, Uuid, bindparam, or_, select, text
 
 from ...db.models import PatientClinicianRow, PatientDocumentRow
-from ...models import DocumentCategory, PatientDocument
+from ...models import DocumentCategory, ExtractionStatus, PatientDocument
 from ..patient_document import FinalizedExtraction, PatientDocumentRepository
 
 _RESTRICTED_CATEGORIES = ("therapist_private", "psychotherapy_notes")
@@ -82,30 +82,59 @@ class PostgresPatientDocumentRepository(PatientDocumentRepository):
         self._session.flush()
         return _row_to_document(row)
 
-    def mark_finalized(
-        self,
-        document_id: str,
-        user_id: str,
-        *,
-        size_bytes: int,
-        extraction: FinalizedExtraction,
-        finalized_at: object,
-    ) -> PatientDocument | None:
-        # Finalize restricted to uploader — see abstract method docstring.
-        row = self._session.execute(
+    def _get_for_write(self, document_id: str, user_id: str) -> PatientDocumentRow | None:
+        # Restricted to uploader — see abstract method docstrings.
+        return self._session.execute(
             select(PatientDocumentRow).where(
                 PatientDocumentRow.id == document_id,
                 PatientDocumentRow.user_id == user_id,
                 PatientDocumentRow.deleted_at.is_(None),
             )
         ).scalar_one_or_none()
+
+    def mark_pending(
+        self,
+        document_id: str,
+        user_id: str,
+        *,
+        size_bytes: int,
+        finalized_at: object,
+    ) -> PatientDocument | None:
+        row = self._get_for_write(document_id, user_id)
         if row is None:
             return None
         row.size_bytes = size_bytes
+        row.finalized_at = finalized_at  # type: ignore[assignment]
+        row.extraction_status = "pending"
+        self._session.flush()
+        return _row_to_document(row)
+
+    def mark_extraction_complete(
+        self,
+        document_id: str,
+        user_id: str,
+        *,
+        extraction: FinalizedExtraction,
+    ) -> PatientDocument | None:
+        row = self._get_for_write(document_id, user_id)
+        if row is None:
+            return None
         row.extracted_text = extraction.text
         row.extracted_via = extraction.via
         row.extraction_metadata = extraction.metadata
-        row.finalized_at = finalized_at  # type: ignore[assignment]
+        row.extraction_status = "complete"
+        self._session.flush()
+        return _row_to_document(row)
+
+    def mark_extraction_failed(
+        self,
+        document_id: str,
+        user_id: str,
+    ) -> PatientDocument | None:
+        row = self._get_for_write(document_id, user_id)
+        if row is None:
+            return None
+        row.extraction_status = "failed"
         self._session.flush()
         return _row_to_document(row)
 
@@ -237,4 +266,10 @@ def _row_to_document(row: PatientDocumentRow) -> PatientDocument:
         created_at=row.created_at,
         finalized_at=finalized_at,
         deleted_at=deleted_at,
+        # NULL = extracted synchronously pre-worker-offload — read as COMPLETE.
+        extraction_status=(
+            ExtractionStatus(row.extraction_status)
+            if row.extraction_status is not None
+            else ExtractionStatus.COMPLETE
+        ),
     )

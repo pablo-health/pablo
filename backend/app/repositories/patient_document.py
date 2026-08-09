@@ -24,13 +24,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..models import ExtractionStatus
+
 if TYPE_CHECKING:
     from ..models import PatientDocument
 
 
 @dataclass(frozen=True)
 class FinalizedExtraction:
-    """Text + provenance + diagnostics passed to ``mark_finalized``."""
+    """Text + provenance + diagnostics passed to ``mark_extraction_complete``."""
 
     text: str | None
     via: str | None
@@ -55,21 +57,52 @@ class PatientDocumentRepository(ABC):
         """Insert a placeholder row in pre-finalize state."""
 
     @abstractmethod
-    def mark_finalized(
+    def mark_pending(
         self,
         document_id: str,
         user_id: str,
         *,
         size_bytes: int,
-        extraction: FinalizedExtraction,
         finalized_at: object,
     ) -> PatientDocument | None:
-        """Stamp ``finalized_at`` + size + extraction columns.
+        """Stamp ``finalized_at`` + size and set ``extraction_status='pending'``.
 
-        Finalize is restricted to the uploader regardless of
-        ``category`` — a co-treater cannot finalize someone else's
-        upload, because they don't know the placeholder ID until it
-        appears in the list (which only happens after finalize).
+        This is the cheap, synchronous half of finalize: the blob has been
+        verified but text extraction hasn't run yet — that happens off-
+        request via :meth:`mark_extraction_complete` /
+        :meth:`mark_extraction_failed`. Restricted to the uploader
+        regardless of ``category`` — a co-treater cannot finalize someone
+        else's upload, because they don't know the placeholder ID until it
+        appears in the list (which only happens after finalize). Returns
+        the updated row, or ``None`` if not accessible.
+        """
+
+    @abstractmethod
+    def mark_extraction_complete(
+        self,
+        document_id: str,
+        user_id: str,
+        *,
+        extraction: FinalizedExtraction,
+    ) -> PatientDocument | None:
+        """Stamp the extraction result and set ``extraction_status='complete'``.
+
+        Called by the finalize worker once GCS download + PyMuPDF + Document
+        AI have run. A ``None`` ``extraction.text`` is a valid, non-failure
+        outcome (scanned PDF, OCR unavailable). Returns the updated row, or
+        ``None`` if not accessible.
+        """
+
+    @abstractmethod
+    def mark_extraction_failed(
+        self,
+        document_id: str,
+        user_id: str,
+    ) -> PatientDocument | None:
+        """Set ``extraction_status='failed'`` after a non-retryable extraction error.
+
+        Used for a deterministic failure (e.g. a corrupt PDF PyMuPDF can't
+        open) or a transient failure on the queue's last delivery attempt.
         Returns the updated row, or ``None`` if not accessible.
         """
 
@@ -144,23 +177,47 @@ class InMemoryPatientDocumentRepository(PatientDocumentRepository):
         self._by_id[document.id] = document
         return document
 
-    def mark_finalized(
+    def mark_pending(
         self,
         document_id: str,
         user_id: str,
         *,
         size_bytes: int,
-        extraction: FinalizedExtraction,
         finalized_at: object,
     ) -> PatientDocument | None:
         doc = self._by_id.get(document_id)
         if doc is None or doc.user_id != user_id or doc.deleted_at is not None:
             return None
         doc.size_bytes = size_bytes
+        doc.finalized_at = finalized_at  # type: ignore[assignment]
+        doc.extraction_status = ExtractionStatus.PENDING
+        return doc
+
+    def mark_extraction_complete(
+        self,
+        document_id: str,
+        user_id: str,
+        *,
+        extraction: FinalizedExtraction,
+    ) -> PatientDocument | None:
+        doc = self._by_id.get(document_id)
+        if doc is None or doc.user_id != user_id or doc.deleted_at is not None:
+            return None
         doc.extracted_text = extraction.text
         doc.extracted_via = extraction.via
         doc.extraction_metadata = extraction.metadata
-        doc.finalized_at = finalized_at  # type: ignore[assignment]
+        doc.extraction_status = ExtractionStatus.COMPLETE
+        return doc
+
+    def mark_extraction_failed(
+        self,
+        document_id: str,
+        user_id: str,
+    ) -> PatientDocument | None:
+        doc = self._by_id.get(document_id)
+        if doc is None or doc.user_id != user_id or doc.deleted_at is not None:
+            return None
+        doc.extraction_status = ExtractionStatus.FAILED
         return doc
 
     def soft_delete(self, document_id: str, user_id: str, deleted_at: object) -> bool:
