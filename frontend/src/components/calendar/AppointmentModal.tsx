@@ -17,11 +17,16 @@ import { Textarea } from "@/components/ui/textarea"
 import { usePatientList } from "@/hooks/usePatients"
 import {
   useCreateAppointment,
+  useCreateRecurringAppointment,
   useUpdateAppointment,
   useCancelAppointment,
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
-import type { AppointmentResponse, SessionType } from "@/types/scheduling"
+import type {
+  AppointmentResponse,
+  RecurrenceFrequency,
+  SessionType,
+} from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
 import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
@@ -37,6 +42,14 @@ const SESSION_TYPE_LABELS: Record<string, string> = Object.fromEntries(
   SESSION_TYPES.map((s) => [s.value, s.label]),
 )
 const QUICK_LENGTHS = [45, 50, 30, 60, 90]
+
+type RepeatOption = "none" | Extract<RecurrenceFrequency, "weekly" | "biweekly">
+const REPEAT_OPTIONS: { value: RepeatOption; label: string }[] = [
+  { value: "none", label: "Doesn't repeat" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Every 2 weeks" },
+]
+type EndMode = "count" | "date"
 
 function buildTitle(patient: PatientResponse | undefined, sessionType: string): string {
   if (!patient) return ""
@@ -179,6 +192,7 @@ function AppointmentForm({
   const noteTypes = noteTypesData?.note_types ?? []
 
   const createMutation = useCreateAppointment()
+  const createRecurringMutation = useCreateRecurringAppointment()
   const updateMutation = useUpdateAppointment()
   const cancelMutation = useCancelAppointment()
 
@@ -203,6 +217,11 @@ function AppointmentForm({
   const [timeStr, setTimeStr] = useState(toTimeInput(start0))
   const [duration, setDuration] = useState(defaultDuration)
   const [sessionType, setSessionType] = useState(defaultSessionType)
+
+  const [repeat, setRepeat] = useState<RepeatOption>("none")
+  const [endMode, setEndMode] = useState<EndMode>("count")
+  const [occurrenceCount, setOccurrenceCount] = useState("")
+  const [seriesEndDate, setSeriesEndDate] = useState("")
 
   const [lengths, setLengths] = useState<number[]>(() => {
     const base = [...QUICK_LENGTHS]
@@ -251,7 +270,10 @@ function AppointmentForm({
   }
 
   const canSave = !!patientId
-  const isSubmitting = createMutation.isPending || updateMutation.isPending
+  const isSubmitting =
+    createMutation.isPending ||
+    createRecurringMutation.isPending ||
+    updateMutation.isPending
 
   const handleSubmit = () => {
     const payload = {
@@ -269,9 +291,23 @@ function AppointmentForm({
         { appointmentId: appointment.id, data: payload },
         { onSuccess: onClose },
       )
-    } else {
-      createMutation.mutate(payload, { onSuccess: onClose })
+      return
     }
+    if (repeat !== "none") {
+      const count = occurrenceCount.trim() ? parseInt(occurrenceCount, 10) : null
+      createRecurringMutation.mutate(
+        {
+          ...payload,
+          frequency: repeat,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          end_date: endMode === "date" && seriesEndDate ? seriesEndDate : null,
+          count: endMode === "count" && count ? count : null,
+        },
+        { onSuccess: onClose },
+      )
+      return
+    }
+    createMutation.mutate(payload, { onSuccess: onClose })
   }
 
   const handleCancelAppt = () => {
@@ -511,6 +547,104 @@ function AppointmentForm({
             })}
           </div>
         </div>
+
+        {/* Repeats — create mode only */}
+        {!isEditing && (
+          <div>
+            <FieldLabel>Repeats</FieldLabel>
+            <div
+              className="inline-flex gap-0.5 rounded-[10px] border p-[3px]"
+              role="radiogroup"
+              aria-label="Repeats"
+              style={{
+                borderColor: "var(--ed-field-border)",
+                backgroundColor: "var(--ed-field-bg)",
+              }}
+            >
+              {REPEAT_OPTIONS.map((opt) => {
+                const active = repeat === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setRepeat(opt.value)}
+                    className="cursor-pointer rounded-[7px] border-none px-3 py-[7px] text-[13px] font-semibold"
+                    style={{
+                      backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                      color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {repeat !== "none" && (
+              <div className="ed-fade-in mt-3 flex flex-col gap-2">
+                <div
+                  className="inline-flex gap-0.5 self-start rounded-[10px] border p-[3px]"
+                  role="radiogroup"
+                  aria-label="Ends"
+                  style={{
+                    borderColor: "var(--ed-field-border)",
+                    backgroundColor: "var(--ed-field-bg)",
+                  }}
+                >
+                  {(
+                    [
+                      { value: "count", label: "After N sessions" },
+                      { value: "date", label: "On date" },
+                    ] as { value: EndMode; label: string }[]
+                  ).map((opt) => {
+                    const active = endMode === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setEndMode(opt.value)}
+                        className="cursor-pointer rounded-[7px] border-none px-3 py-[7px] text-[13px] font-semibold"
+                        style={{
+                          backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                          color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                        }}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {endMode === "count" ? (
+                  <input
+                    type="number"
+                    min={1}
+                    max={104}
+                    value={occurrenceCount}
+                    onChange={(e) => setOccurrenceCount(e.target.value)}
+                    aria-label="Number of sessions"
+                    placeholder="Leave blank for 6 months"
+                    className={FIELD_CLASS}
+                    style={fieldStyle()}
+                  />
+                ) : (
+                  <input
+                    type="date"
+                    value={seriesEndDate}
+                    onChange={(e) => setSeriesEndDate(e.target.value)}
+                    aria-label="End date"
+                    className={FIELD_CLASS}
+                    style={fieldStyle()}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* More options */}
         <div className="pt-3.5" style={{ borderTop: "1px solid var(--ed-hairline)" }}>

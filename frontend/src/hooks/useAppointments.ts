@@ -3,13 +3,16 @@
 "use client"
 
 import type {
+  AppointmentListResponse,
   AppointmentResponse,
   CreateAppointmentRequest,
+  CreateRecurringAppointmentRequest,
   UpdateAppointmentRequest,
 } from "@/types/scheduling"
 import {
   cancelAppointment,
   createAppointment,
+  createRecurringAppointment,
   listAppointments,
   updateAppointment,
 } from "@/lib/api/scheduling"
@@ -28,6 +31,13 @@ export function useAppointmentList(start: string, end: string, token?: string) {
 export function useCreateAppointment(token?: string) {
   return useAuthMutation({
     mutationFn: (data: CreateAppointmentRequest) => createAppointment(data, token),
+    invalidateKeys: [queryKeys.appointments.all],
+  })
+}
+
+export function useCreateRecurringAppointment(token?: string) {
+  return useAuthMutation<AppointmentListResponse, CreateRecurringAppointmentRequest>({
+    mutationFn: (data) => createRecurringAppointment(data, token),
     invalidateKeys: [queryKeys.appointments.all],
   })
 }

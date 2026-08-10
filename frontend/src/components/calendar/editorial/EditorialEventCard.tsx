@@ -4,7 +4,7 @@
 
 import type { CSSProperties } from "react"
 import type { AppointmentResponse } from "@/types/scheduling"
-import { Video } from "lucide-react"
+import { Repeat, Video } from "lucide-react"
 import { format } from "date-fns"
 import { editorialStatusMeta } from "./status"
 
@@ -88,6 +88,9 @@ export function EditorialEventCard({
             </div>
           )}
         </div>
+        {appointment.recurring_appointment_id && showMeta && (
+          <Repeat className="mt-px h-3 w-3 shrink-0 opacity-60" aria-hidden />
+        )}
         {appointment.video_link && showMeta && (
           <Video className="mt-px h-3 w-3 shrink-0 opacity-60" aria-hidden />
         )}

@@ -112,6 +112,24 @@ describe("EditorialEventCard", () => {
     expect(document.querySelector("svg.lucide-video")).not.toBeInTheDocument()
   })
 
+  it("shows a repeats marker for an occurrence that belongs to a series", () => {
+    render(
+      <EditorialEventCard
+        appointment={appointment({ recurring_appointment_id: "series-1" })}
+        patientName="Jane Doe"
+        onClick={vi.fn()}
+      />,
+    )
+    expect(document.querySelector("svg.lucide-repeat")).toBeInTheDocument()
+  })
+
+  it("does not show a repeats marker for a non-recurring appointment", () => {
+    render(
+      <EditorialEventCard appointment={appointment()} patientName="Jane Doe" onClick={vi.fn()} />,
+    )
+    expect(document.querySelector("svg.lucide-repeat")).not.toBeInTheDocument()
+  })
+
   it("does not render a leading person/group or trailing status icon", () => {
     render(
       <EditorialEventCard

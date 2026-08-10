@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -19,8 +19,15 @@ vi.mock("@/hooks/usePatients", () => ({
   }),
 }))
 
+const createMutate = vi.fn()
+const createRecurringMutate = vi.fn()
+
 vi.mock("@/hooks/useAppointments", () => ({
-  useCreateAppointment: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateAppointment: () => ({ mutate: createMutate, isPending: false }),
+  useCreateRecurringAppointment: () => ({
+    mutate: createRecurringMutate,
+    isPending: false,
+  }),
   useUpdateAppointment: () => ({ mutate: vi.fn(), isPending: false }),
   useCancelAppointment: () => ({ mutate: vi.fn(), isPending: false }),
 }))
@@ -90,6 +97,11 @@ function createWrapper() {
 }
 
 describe("AppointmentModal", () => {
+  beforeEach(() => {
+    createMutate.mockClear()
+    createRecurringMutate.mockClear()
+  })
+
   it("renders the new-appointment header when no appointment provided", () => {
     render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
     expect(screen.getByText("New appointment")).toBeInTheDocument()
@@ -285,6 +297,56 @@ describe("AppointmentModal", () => {
       await user.click(trigger)
       await user.click(screen.getByRole("option", { name: /narrative/i }))
       expect(trigger).toHaveTextContent("Narrative")
+    })
+  })
+
+  describe("Recurring appointments", () => {
+    async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+    }
+
+    it("does not show the Repeats control in edit mode", () => {
+      render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+        wrapper: createWrapper(),
+      })
+      expect(screen.queryByRole("radiogroup", { name: /repeats/i })).not.toBeInTheDocument()
+    })
+
+    it("submits the legacy single-appointment payload when Repeats is left at Doesn't repeat", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await selectPatient(user)
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(createMutate).toHaveBeenCalledTimes(1)
+      expect(createRecurringMutate).not.toHaveBeenCalled()
+      const [payload] = createMutate.mock.calls[0]
+      expect(payload).toMatchObject({ patient_id: "p1" })
+      expect(payload).not.toHaveProperty("frequency")
+    })
+
+    it("submits the recurring-series payload with an IANA timezone when weekly + count is chosen", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await selectPatient(user)
+
+      const repeatsGroup = screen.getByRole("radiogroup", { name: /repeats/i })
+      await user.click(within(repeatsGroup).getByRole("radio", { name: "Weekly" }))
+      await user.type(screen.getByLabelText("Number of sessions"), "6")
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(createRecurringMutate).toHaveBeenCalledTimes(1)
+      expect(createMutate).not.toHaveBeenCalled()
+      const [payload] = createRecurringMutate.mock.calls[0]
+      expect(payload).toMatchObject({
+        patient_id: "p1",
+        frequency: "weekly",
+        count: 6,
+        end_date: null,
+      })
+      expect(payload.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone)
     })
   })
 })
