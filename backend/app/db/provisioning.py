@@ -33,33 +33,34 @@ logger = logging.getLogger(__name__)
 type PostProvisionHook = Callable[["Engine", str], None]
 
 # Hooks invoked after a *fresh* tenant schema has been built from
-# ``tenant_template.sql`` and stamped at the OSS alembic HEAD. The SaaS
-# overlay registers ``_apply_saas_tenant_template`` +
-# ``_stamp_saas_tenant_at_head`` here so every fresh-tenant code path
-# (signup provisioning, pentest provisioning, …) gets the SaaS-tenant
-# addendum applied atomically — without OSS importing from the
-# overlay.
+# ``tenant_template.sql`` and stamped at the OSS alembic HEAD. A
+# downstream deployment's overlay can register hooks here so every
+# fresh-tenant code path (signup provisioning, pentest provisioning,
+# …) gets its own per-tenant addendum applied atomically — without
+# OSS importing from the overlay.
 #
 # Convention: hooks fire only on the fresh-template branch of
 # :func:`create_practice_schema`. The legacy reconcile branch is used
 # by ``migrate_tenants.upgrade_tenant_schema`` for pre-template tenants
-# and skips hooks — the SaaS-tenant chain is applied to those tenants
-# separately by ``saas.bin.migrate``'s deploy-time fan-out.
+# and skips hooks — an overlay's own addendum chain is applied to
+# those tenants separately, by whatever deploy-time fan-out the
+# overlay runs.
 _post_provision_hooks: list[PostProvisionHook] = []
 
 
 def register_post_provision_hook(hook: PostProvisionHook) -> None:
     """Register a callback to run after a fresh tenant schema is built.
 
-    Called by ``saas.bootstrap`` during application startup so that
-    ``create_practice_schema`` callers (boot-time ``ensure_schemas``,
-    ``PentestTenantService.provision``, future provisioning paths)
-    automatically get the SaaS-tenant addendum applied without each
-    call site re-implementing the wrapping.
+    A downstream deployment's overlay registers this hook during
+    application startup so that ``create_practice_schema`` callers
+    (boot-time ``ensure_schemas``, ``PentestTenantService.provision``,
+    future provisioning paths) automatically get the overlay's own
+    per-tenant addendum applied without each call site re-implementing
+    the wrapping.
 
     Idempotent: appending the same hook twice would invoke it twice;
-    callers (e.g. ``saas.bootstrap.install``) are responsible for
-    guarding against re-registration on hot-reload.
+    the overlay's startup code is responsible for guarding against
+    re-registration on hot-reload.
     """
     _post_provision_hooks.append(hook)
 
@@ -102,17 +103,19 @@ def ensure_schemas(engine: Engine) -> None:
       fresh DB has every table the current ORM expects. ``create_all``
       is a no-op against tables that already exist; it does NOT alter
       column types on tables that exist with stale shapes.
-    * **Platform column evolution** — owned by the SaaS overlay's
-      ``backend/saas/db/alembic/`` chain (``alembic_version_saas``
-      bookkeeping). Historically lived in a runtime patch
-      (``_migrate_platform_columns``) that ran on every boot; absorbed
-      into the alembic chain in SaaS revision ``f7d2a3e8b194`` and
+    * **Platform column evolution** — owned by whatever deployment-level
+      alembic chain a downstream overlay chooses to run against the
+      platform schema (its own ``alembic_version`` bookkeeping).
+      Historically lived in a runtime patch
+      (``_migrate_platform_columns``) that ran on every boot; that
+      patch was absorbed into a deployment's own migration chain and
       removed from this file. OSS itself has no platform alembic
-      chain — only the SaaS overlay does — so installs without the
-      overlay rely on ``create_all`` matching the ORM shape.
+      chain, so a self-hosted install with no overlay migration chain
+      relies on ``create_all`` matching the ORM shape.
     * **Tenant column evolution** — owned by the OSS tenant chain
-      (``backend/alembic/``) and fanned out per-tenant by
-      ``saas.bin.migrate`` / ``app.db.migrate_tenants.fan_out``.
+      (``backend/alembic/``) and fanned out per-tenant by the
+      deployment's own migration entrypoint /
+      ``app.db.migrate_tenants.fan_out``.
 
     Concurrency: when Cloud Run starts multiple container instances
     simultaneously (deployment rollout + min-instance warm-up overlap),
@@ -135,17 +138,18 @@ def ensure_schemas(engine: Engine) -> None:
 
             PlatformBase.metadata.create_all(engine)
 
-            # Platform-schema column evolution lives in the SaaS overlay's
-            # alembic chain (``backend/saas/db/alembic/``), fanned out at
-            # deploy time via ``saas.bin.migrate``. The boot path used to
+            # Platform-schema column evolution lives in a downstream
+            # deployment's own alembic chain, fanned out at deploy time by
+            # that deployment's migration entrypoint. The boot path used to
             # run a runtime ``_migrate_platform_columns`` helper that
             # issued ~17 ALTER TABLE statements with bare-except savepoints;
-            # absorbed into SaaS revision ``f7d2a3e8b194`` and deleted.
+            # that logic was absorbed into a deployment migration chain and
+            # deleted here.
 
             # Pentest CHECK + immutability trigger on ``platform.practices``.
             # Declarative DB guards, not column evolution — kept here until
-            # they can move into the SaaS alembic chain alongside the
-            # ``is_pentest`` column itself.
+            # they can move into a deployment's own alembic chain alongside
+            # the ``is_pentest`` column itself.
             _ensure_pentest_tenant_guards(engine)
 
             # Create default practice schema and tables
@@ -153,9 +157,10 @@ def ensure_schemas(engine: Engine) -> None:
 
             # Per-tenant schema evolution belongs in the alembic chain
             # (``backend/alembic/versions/``), fanned out at deploy time
-            # via ``saas.bin.migrate`` / ``app.db.migrate_tenants``. The
-            # boot path historically iterated ``practice_*`` schemas and
-            # ran a runtime column-patch helper; that left freshly-
+            # via the deployment's own migration entrypoint /
+            # ``app.db.migrate_tenants``. The boot path historically
+            # iterated ``practice_*`` schemas and ran a runtime
+            # column-patch helper; that left freshly-
             # provisioned tenants broken until the next backend revision
             # restarted, and silently swallowed failures via savepoints.
             # Removed in b7de65c29385 — see that revision's docstring.
@@ -341,10 +346,10 @@ def _create_practice_schema_locked(engine: Engine, schema_name: str) -> None:
     else:
         _apply_tenant_template(engine, schema_name)
         _stamp_alembic_at_head(engine, schema_name)
-        # Hooks fire only on the fresh-template path. The SaaS overlay's
-        # hook (registered in ``saas.bootstrap``) lays down the SaaS-
-        # tenant addendum + stamps ``alembic_version_saas_tenant`` so
-        # the schema is at HEAD on both chains before any caller starts
+        # Hooks fire only on the fresh-template path. A downstream
+        # deployment's overlay hook lays down its own per-tenant
+        # addendum + stamps its own tenant-chain bookkeeping so the
+        # schema is at HEAD on both chains before any caller starts
         # using it.
         _run_post_provision_hooks(engine, schema_name)
 
