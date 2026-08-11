@@ -1,9 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Tests for pre-auth endpoints (native code exchange).
-
-SaaS-only tests (resolve-tenant, signup) are in test_saas_auth_routes.py.
-"""
+"""Tests for pre-auth endpoints (native code exchange)."""
 
 from collections.abc import Generator
 from typing import Any, ClassVar
