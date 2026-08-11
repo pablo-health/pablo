@@ -257,9 +257,9 @@ class TestTitleAndCredentials:
         mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
     ) -> None:
         """GET /me/status surfaces title/credentials from the
-        per-practice ClinicianProfile row, so the SaaS onboarding wizard
-        and the dashboard layout can render the formal name without a
-        second API call."""
+        per-practice ClinicianProfile row, so a downstream deployment's
+        onboarding wizard and the dashboard layout can render the formal
+        name without a second API call."""
         mock_user_repo.update(mock_user)
         mock_clinician_profile_repo.create(
             ClinicianProfile(
@@ -444,8 +444,9 @@ class TestOnboardingState:
     def test_user_status_includes_onboarding_state(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
-        """GET /api/users/me/status exposes onboarding_state so the
-        SaaS overlay can decide whether to show the resume banner."""
+        """GET /api/users/me/status exposes onboarding_state so a
+        downstream deployment's overlay can decide whether to show the
+        resume banner."""
         mock_user.onboarding_state = "later"
         mock_user_repo.update(mock_user)
 
@@ -461,8 +462,8 @@ class TestOnboardingState:
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
         """A row from before this column existed returns null, which
-        the SaaS overlay treats as 'already completed' (no banner,
-        no redirect)."""
+        a downstream deployment's overlay treats as 'already completed'
+        (no banner, no redirect)."""
         mock_user.onboarding_state = None
         mock_user_repo.update(mock_user)
 
@@ -477,9 +478,9 @@ class TestOnboardingState:
     def test_user_status_includes_baa_accepted_at(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
-        """GET /api/users/me/status exposes baa_accepted_at so the SaaS
-        onboarding wizard step registry can gate the BAA step
-        synchronously (no second API call)."""
+        """GET /api/users/me/status exposes baa_accepted_at so a
+        downstream deployment's onboarding wizard step registry can
+        sequence the BAA step synchronously (no second API call)."""
         ts = datetime(2026, 5, 19, 12, 0, 0, tzinfo=UTC)
         mock_user.baa_accepted_at = ts
         mock_user_repo.update(mock_user)
@@ -594,8 +595,9 @@ class TestSecurityGuideAcknowledgment:
     def test_user_status_includes_security_guide_fields(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
-        """GET /api/users/me/status exposes the guide fields so the
-        SaaS overlay can decide whether to redirect to the guide step."""
+        """GET /api/users/me/status exposes the guide fields so a
+        downstream deployment's overlay can decide whether to redirect
+        to the guide step."""
         mock_user.security_guide_acknowledged_at = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
         mock_user.security_guide_version = "2026-05-14"
         mock_user_repo.update(mock_user)

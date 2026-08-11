@@ -1152,10 +1152,20 @@ class Settings(BaseSettings):
 
     @property
     def is_prod_project(self) -> bool:
-        """True if running against the production GCP project."""
-        if self.environment == "production":
-            return True
-        return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))
+        """True if running against the production project.
+
+        Keys on the PROJECT id, not the environment string: a deployment may
+        deliberately run non-prod projects with ENVIRONMENT=production so
+        every code path behaves exactly as it will in production, and this
+        property's only consumers are the reserved test-identity bypasses —
+        which must be scoped by which project holds real data, not by how
+        the environment is labeled. A deployment with no project id at all
+        (self-hosted off GCP) falls back to the environment string, so
+        "production" still means no test bypasses there.
+        """
+        if self.gcp_project_id:
+            return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))
+        return self.environment == "production"
 
     @property
     def effective_firebase_project_id(self) -> str:
