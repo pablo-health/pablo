@@ -201,6 +201,19 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def get_by_google_event_id(
+        self,
+        user_id: str,
+        google_event_id: str,
+    ) -> Appointment | None:
+        row = self._session.execute(
+            select(AppointmentRow).where(
+                AppointmentRow.user_id == user_id,
+                AppointmentRow.google_event_id == google_event_id,
+            )
+        ).scalar_one_or_none()
+        return _row_to_appointment(row) if row else None
+
     def create(self, appointment: Appointment) -> Appointment:
         row = AppointmentRow()
         _appointment_to_row(appointment, row)

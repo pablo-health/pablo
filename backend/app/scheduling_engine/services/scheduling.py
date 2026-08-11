@@ -123,6 +123,8 @@ class SchedulingService:
             "notes",
             "status",
             "session_id",
+            "google_event_id",
+            "google_sync_status",
         }
         for field, value in updates.items():
             if field not in allowed_fields:

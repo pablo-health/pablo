@@ -69,6 +69,7 @@ def _run_sync_cycle() -> None:
             client_secret=settings.google_calendar_client_secret.get_secret_value(),
         ),
         reminder_service=ReminderService(appointment_repo),
+        appointment_repo=appointment_repo,
     )
 
     configs = ical_config_repo.list_all()
