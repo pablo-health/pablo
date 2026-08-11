@@ -47,7 +47,7 @@ export default async function OnboardingMFAPage() {
     <OnboardingStepShell
       stepId="mfa"
       title="Two-factor authentication is required"
-      description="It keeps your patients' records safe even if your password is ever stolen or phished. Link your authenticator app to finish — you'll enter a 6-digit code at sign-in."
+      description="It keeps your account safe even if your password is ever stolen or phished. Link your authenticator app to finish — you'll enter a 6-digit code at sign-in."
       noAside
     >
       <MFAEnrollmentForm returnTo="/onboarding" />
