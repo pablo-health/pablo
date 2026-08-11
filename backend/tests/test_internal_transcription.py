@@ -13,6 +13,7 @@ from __future__ import annotations
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 from app.routes import internal_transcription as it
 
 _JOB = {"transcript_id": "t1", "speaker": "Therapist", "original_offset": 0.0}
@@ -327,3 +328,89 @@ class TestTranscriptionPoll:
         assert session_row.status == "failed"
         assert "timed out" in session_row.error
         mock_enqueue.assert_not_called()
+
+    def test_provider_http_status_error_retries_next_cycle(self) -> None:
+        """A transient provider 5xx must not fail the session or bubble up as
+
+        a 500: the job stays pending and the existing re-enqueue path retries
+        it next cycle, exactly like the submit path already tolerates
+        provider failures.
+        """
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+        request = httpx.Request("GET", "https://api.assemblyai.com/v2/transcript/t1")
+        response = httpx.Response(503, request=request)
+        error = httpx.HTTPStatusError("Server error '503'", request=request, response=response)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(
+                it.AssemblyAiTranscriptionService,
+                "check_job_status",
+                side_effect=error,
+            ),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+            patch.object(it, "process_transcription_result") as mock_process,
+        ):
+            result = it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        assert result["status"] == "polling"
+        assert session_row.status == "transcribing"
+        assert session_row.error is None
+        mock_process.assert_not_called()
+        metadata = session_row.transcription_job_metadata
+        assert "utterances" not in metadata["jobs"][0]
+        assert metadata["poll_cycles"] == 1
+        mock_enqueue.assert_called_once()
+        assert (
+            mock_enqueue.call_args.kwargs["schedule_delay_seconds"] == it._POLL_CYCLE_DELAY_SECONDS
+        )
+
+    def test_provider_read_timeout_retries_next_cycle(self) -> None:
+        """Same tolerance as the 5xx case, for a network-level timeout."""
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+        request = httpx.Request("GET", "https://api.assemblyai.com/v2/transcript/t1")
+        error = httpx.ReadTimeout("timed out", request=request)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(
+                it.AssemblyAiTranscriptionService,
+                "check_job_status",
+                side_effect=error,
+            ),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+            patch.object(it, "process_transcription_result") as mock_process,
+        ):
+            result = it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        assert result["status"] == "polling"
+        assert session_row.status == "transcribing"
+        assert session_row.error is None
+        mock_process.assert_not_called()
+        metadata = session_row.transcription_job_metadata
+        assert "utterances" not in metadata["jobs"][0]
+        assert metadata["poll_cycles"] == 1
+        mock_enqueue.assert_called_once()
+        assert (
+            mock_enqueue.call_args.kwargs["schedule_delay_seconds"] == it._POLL_CYCLE_DELAY_SECONDS
+        )
