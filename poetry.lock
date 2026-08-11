@@ -319,18 +319,18 @@ files = [
 
 [[package]]
 name = "boto3"
-version = "1.43.59"
+version = "1.43.65"
 description = "The AWS SDK for Python"
 optional = false
 python-versions = ">=3.10"
 groups = ["aws", "dev"]
 files = [
-    {file = "boto3-1.43.59-py3-none-any.whl", hash = "sha256:58b9635deebf075c1c3d76df78df08eb2979c2a74283194676783a0bff3b4557"},
-    {file = "boto3-1.43.59.tar.gz", hash = "sha256:4e9b14f89adc1a533c89312e86d8e00455a6f15d398796d92f9191b06e56b401"},
+    {file = "boto3-1.43.65-py3-none-any.whl", hash = "sha256:a8217fb68cae3f8a7575eef395383b68b846d92d29b0e8f6e948e6e9e08dcc3f"},
+    {file = "boto3-1.43.65.tar.gz", hash = "sha256:f2331154aee1ae97ece48077d77f41d3bd5ea39eb4e3037030448b58695a3a79"},
 ]
 
 [package.dependencies]
-botocore = ">=1.43.59,<1.44.0"
+botocore = ">=1.43.65,<1.44.0"
 jmespath = ">=0.7.1,<2.0.0"
 s3transfer = ">=0.19.0,<0.20.0"
 
@@ -339,14 +339,14 @@ crt = ["botocore[crt] (>=1.21.0,<2.0a0)"]
 
 [[package]]
 name = "botocore"
-version = "1.43.59"
+version = "1.43.65"
 description = "Low-level, data-driven core of boto 3."
 optional = false
 python-versions = ">=3.10"
 groups = ["aws", "dev"]
 files = [
-    {file = "botocore-1.43.59-py3-none-any.whl", hash = "sha256:21393c35d23b19d7ba95cc4156b59f4013f80696d667997e1abd9d4e29651708"},
-    {file = "botocore-1.43.59.tar.gz", hash = "sha256:8016da69ecc1d705249a8ef13548d3c95eec87ac1cd26133a8bdfa73ca175be0"},
+    {file = "botocore-1.43.65-py3-none-any.whl", hash = "sha256:41a13d9a1954d786f90cdbba0be0953fe9b9389f240b5ff71340c4706ea40135"},
+    {file = "botocore-1.43.65.tar.gz", hash = "sha256:eea5440cf4b850d0f4de4f7eda418c325c87de6d8980873f8b636bb482b31d0f"},
 ]
 
 [package.dependencies]
@@ -1501,7 +1501,7 @@ google-cloud-audit-log = ">=0.3.2,<1.0.0"
 google-cloud-core = ">=2.0.0,<3.0.0"
 grpc-google-iam-v1 = ">=0.14.2,<1.0.0"
 grpcio = [
-    {version = ">=1.59.0,<2.0.0"},
+    {version = ">=1.59.0,<2.0.0", markers = "python_version < \"3.14\""},
     {version = ">=1.75.1,<2.0.0", markers = "python_version >= \"3.14\""},
 ]
 opentelemetry-api = ">=1.16.0"
@@ -1625,14 +1625,14 @@ files = [
 
 [[package]]
 name = "google-genai"
-version = "2.15.0"
+version = "2.16.0"
 description = "GenAI Python SDK"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "google_genai-2.15.0-py3-none-any.whl", hash = "sha256:f322a94c3c1ddb1b1cc536086708f5f8e13101347d062f63dcd7947b598c1d16"},
-    {file = "google_genai-2.15.0.tar.gz", hash = "sha256:ef71bdb79ce9931bca1cf0a393c8cfb606e1075b6100fcdde02b7b467db8235d"},
+    {file = "google_genai-2.16.0-py3-none-any.whl", hash = "sha256:f9eda6a7a3dd4491a0d2253c4bdd4536462d63838ed3f1b0e4fb9a0eb8f43331"},
+    {file = "google_genai-2.16.0.tar.gz", hash = "sha256:c4c2524926001b18073db927a5d75bb7c8be7b5fd13ab507d599f51fff2284c5"},
 ]
 
 [package.dependencies]
@@ -3078,14 +3078,14 @@ symbolic = ["sympy"]
 
 [[package]]
 name = "openai"
-version = "2.50.0"
+version = "2.53.0"
 description = "The official Python library for the openai API"
 optional = false
 python-versions = ">=3.10"
 groups = ["evals"]
 files = [
-    {file = "openai-2.50.0-py3-none-any.whl", hash = "sha256:90bdddcc5a2fa529b350fac9c5780d87e5c361dcc6090ab57b0d470b0d7af7fa"},
-    {file = "openai-2.50.0.tar.gz", hash = "sha256:5128f7caf4a6b01aefd6e7e93efe170a2c3427b8de286b9af5cdff3aa47e02c8"},
+    {file = "openai-2.53.0-py3-none-any.whl", hash = "sha256:c694ffc747a3c4d1663ef2b07b811315a476164ee5efa3a993967349ebca7618"},
+    {file = "openai-2.53.0.tar.gz", hash = "sha256:baf5802ad08980e1d9d561e1b996e800c8bcd14af5847c6d0e7a5cc59e4d4116"},
 ]
 
 [package.dependencies]
@@ -3108,14 +3108,14 @@ voice-helpers = ["numpy (>=2.0.2)", "sounddevice (>=0.5.1)"]
 
 [[package]]
 name = "openinference-semantic-conventions"
-version = "0.1.30"
+version = "0.1.31"
 description = "OpenInference Semantic Conventions"
 optional = false
-python-versions = "<3.15,>=3.9"
+python-versions = "<3.15,>=3.10"
 groups = ["main"]
 files = [
-    {file = "openinference_semantic_conventions-0.1.30-py3-none-any.whl", hash = "sha256:36d946d3f95f699b7c4b12324ae9c1f02d6c7750df11eece56aa159cff430b3d"},
-    {file = "openinference_semantic_conventions-0.1.30.tar.gz", hash = "sha256:81fece76e09c83789e35c393b8b30523481eeabf1008745b955631a53e3221d9"},
+    {file = "openinference_semantic_conventions-0.1.31-py3-none-any.whl", hash = "sha256:ae7eee916622dc9f64ea14cae26911c78653b1c0d7a62a56788934d5830f3472"},
+    {file = "openinference_semantic_conventions-0.1.31.tar.gz", hash = "sha256:39bed2e6edabb5b8dd983e22d3d4914e660ff1f8a49d7df8ceae938af5bb5836"},
 ]
 
 [[package]]
@@ -4179,14 +4179,14 @@ files = [
 
 [[package]]
 name = "redis"
-version = "8.0.1"
+version = "8.1.0"
 description = "Python client for Redis database and key-value store"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "redis-8.0.1-py3-none-any.whl", hash = "sha256:47daa35a058c23468d6437f17a8c76882cb316b838ef763036af99b96cedd743"},
-    {file = "redis-8.0.1.tar.gz", hash = "sha256:afc5a7a2f5a084f5b1880dec548dd45be17db7e43c82a30d84f952aefb05cfb0"},
+    {file = "redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb"},
+    {file = "redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25"},
 ]
 
 [package.extras]

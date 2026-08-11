@@ -86,8 +86,8 @@ class AuditAction(StrEnum):
 
     # Tenant invitations — minted by platform admins to onboard a new
     # owner without a marketing-checkout round-trip. Lives in OSS so
-    # the SaaS overlay can log via the type-safe AuditService API
-    # rather than persisting raw strings.
+    # a downstream deployment's overlay can log via the type-safe
+    # AuditService API rather than persisting raw strings.
     INVITATION_CREATED = "invitation_created"
     INVITATION_REISSUED = "invitation_reissued"
     INVITATION_REVOKED = "invitation_revoked"
