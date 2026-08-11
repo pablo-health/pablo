@@ -53,6 +53,22 @@ export interface CreateAppointmentRequest {
   notes?: string | null
 }
 
+export interface CreateRecurringAppointmentRequest {
+  patient_id: string
+  title: string
+  start_at: string
+  end_at: string
+  duration_minutes: number
+  session_type?: string
+  video_link?: string | null
+  video_platform?: string | null
+  notes?: string | null
+  frequency: RecurrenceFrequency
+  timezone: string
+  end_date?: string | null
+  count?: number | null
+}
+
 export interface UpdateAppointmentRequest {
   title?: string
   patient_id?: string
