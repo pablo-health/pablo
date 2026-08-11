@@ -84,7 +84,7 @@ frontend/
 │           ├── firebase/    # Client SDK, login/MFA screens, server helpers
 │           ├── middleware.ts
 │           └── provider.ts
-└── middleware.ts            # Route protection
+└── proxy.ts                 # Route protection
 ```
 
 ## HIPAA Compliance Notes

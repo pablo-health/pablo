@@ -30,8 +30,9 @@ The ledger is mutable only while the encounter is ``open``; both
 encounter via :func:`~app.prescribing.integrity.assert_encounter_mutable`,
 since corrections to a closed record are dated addenda, not edits.
 
-The ruleset is passed in by the caller (the SaaS overlay selects the curated
-state ruleset). This module — OSS — never reaches into the overlay to fetch it.
+The ruleset is passed in by the caller — a downstream deployment's overlay
+decides which state ruleset applies. This module — OSS — never reaches into
+the overlay to fetch it.
 
 Scope note: one evaluation covers one (encounter, prescription) pair, matching
 the engine's single-context shape and the singular ``prescription.*`` fact
