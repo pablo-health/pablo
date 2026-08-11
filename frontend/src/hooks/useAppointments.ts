@@ -7,12 +7,15 @@ import type {
   AppointmentResponse,
   CreateAppointmentRequest,
   CreateRecurringAppointmentRequest,
+  EditSeriesRequest,
   UpdateAppointmentRequest,
 } from "@/types/scheduling"
 import {
   cancelAppointment,
+  cancelAppointmentSeries,
   createAppointment,
   createRecurringAppointment,
+  editAppointmentSeries,
   listAppointments,
   updateAppointment,
 } from "@/lib/api/scheduling"
@@ -62,6 +65,24 @@ export function useUpdateAppointment(token?: string) {
 export function useCancelAppointment(token?: string) {
   return useAuthMutation({
     mutationFn: (appointmentId: string) => cancelAppointment(appointmentId, token),
+    invalidateKeys: [queryKeys.appointments.all],
+  })
+}
+
+export function useEditAppointmentSeries(token?: string) {
+  return useAuthMutation<
+    AppointmentListResponse,
+    { appointmentId: string; data: EditSeriesRequest }
+  >({
+    mutationFn: ({ appointmentId, data }) =>
+      editAppointmentSeries(appointmentId, data, token),
+    invalidateKeys: [queryKeys.appointments.all],
+  })
+}
+
+export function useCancelAppointmentSeries(token?: string) {
+  return useAuthMutation<AppointmentListResponse, string>({
+    mutationFn: (appointmentId) => cancelAppointmentSeries(appointmentId, token),
     invalidateKeys: [queryKeys.appointments.all],
   })
 }

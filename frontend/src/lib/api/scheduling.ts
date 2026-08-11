@@ -11,6 +11,7 @@ import type {
   AppointmentResponse,
   CreateAppointmentRequest,
   CreateRecurringAppointmentRequest,
+  EditSeriesRequest,
   UpdateAppointmentRequest,
 } from "@/types/scheduling"
 import { apiClient, del, get, patch, post } from "./client"
@@ -120,6 +121,36 @@ export async function cancelAppointment(
   token?: string
 ): Promise<AppointmentResponse> {
   return del<AppointmentResponse>(`/api/appointments/${appointmentId}`, token)
+}
+
+/**
+ * Edit all future occurrences of a recurring series, starting from the
+ * given appointment. Returns every occurrence that was updated.
+ */
+export async function editAppointmentSeries(
+  appointmentId: string,
+  data: EditSeriesRequest,
+  token?: string
+): Promise<AppointmentListResponse> {
+  return post<AppointmentListResponse>(
+    `/api/appointments/${appointmentId}/edit-series`,
+    data,
+    token
+  )
+}
+
+/**
+ * Cancel all future occurrences of a recurring series, starting from the
+ * given appointment. Returns every occurrence that was cancelled.
+ */
+export async function cancelAppointmentSeries(
+  appointmentId: string,
+  token?: string
+): Promise<AppointmentListResponse> {
+  return del<AppointmentListResponse>(
+    `/api/appointments/${appointmentId}/cancel-series`,
+    token
+  )
 }
 
 // --- iCal sync API ---

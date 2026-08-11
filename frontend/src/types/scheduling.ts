@@ -81,3 +81,16 @@ export interface UpdateAppointmentRequest {
   notes?: string | null
   status?: AppointmentStatus
 }
+
+/**
+ * Request to edit all future occurrences in a recurring series. The
+ * backend's edit-series endpoint only accepts this subset of fields —
+ * it does not carry start/end time, duration, or patient changes.
+ */
+export interface EditSeriesRequest {
+  title?: string
+  session_type?: string
+  video_link?: string | null
+  video_platform?: string | null
+  notes?: string | null
+}

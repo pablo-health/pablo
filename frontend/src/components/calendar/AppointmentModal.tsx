@@ -20,6 +20,8 @@ import {
   useCreateRecurringAppointment,
   useUpdateAppointment,
   useCancelAppointment,
+  useEditAppointmentSeries,
+  useCancelAppointmentSeries,
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
 import type {
@@ -51,6 +53,12 @@ const REPEAT_OPTIONS: { value: RepeatOption; label: string }[] = [
   { value: "biweekly", label: "Biweekly" },
 ]
 type SeriesEndMode = "count" | "date"
+
+type SeriesScope = "this" | "series"
+const SCOPE_OPTIONS: { value: SeriesScope; label: string }[] = [
+  { value: "this", label: "Just this session" },
+  { value: "series", label: "This and future sessions" },
+]
 
 function buildTitle(patient: PatientResponse | undefined, sessionType: string): string {
   if (!patient) return ""
@@ -196,8 +204,12 @@ function AppointmentForm({
   const createRecurringMutation = useCreateRecurringAppointment()
   const updateMutation = useUpdateAppointment()
   const cancelMutation = useCancelAppointment()
+  const editSeriesMutation = useEditAppointmentSeries()
+  const cancelSeriesMutation = useCancelAppointmentSeries()
 
   const isEditing = !!appointment
+  const isRecurring = !!appointment?.recurring_appointment_id
+  const [scope, setScope] = useState<SeriesScope>("this")
 
   const defaultDuration =
     appointment?.duration_minutes ?? preferences?.default_duration_minutes ?? 45
@@ -274,7 +286,8 @@ function AppointmentForm({
   const isSubmitting =
     createMutation.isPending ||
     createRecurringMutation.isPending ||
-    updateMutation.isPending
+    updateMutation.isPending ||
+    editSeriesMutation.isPending
 
   const handleSubmit = () => {
     const payload = {
@@ -288,6 +301,23 @@ function AppointmentForm({
       notes: notes || null,
     }
     if (isEditing && appointment) {
+      if (isRecurring && scope === "series") {
+        // The edit-series endpoint only accepts this subset of fields —
+        // it has no notion of a per-occurrence start/end time.
+        editSeriesMutation.mutate(
+          {
+            appointmentId: appointment.id,
+            data: {
+              title,
+              session_type: sessionType,
+              video_link: videoLink || null,
+              notes: notes || null,
+            },
+          },
+          { onSuccess: onClose },
+        )
+        return
+      }
       updateMutation.mutate(
         { appointmentId: appointment.id, data: payload },
         { onSuccess: onClose },
@@ -313,9 +343,12 @@ function AppointmentForm({
   }
 
   const handleCancelAppt = () => {
-    if (appointment) {
-      cancelMutation.mutate(appointment.id, { onSuccess: onClose })
+    if (!appointment) return
+    if (isRecurring && scope === "series") {
+      cancelSeriesMutation.mutate(appointment.id, { onSuccess: onClose })
+      return
     }
+    cancelMutation.mutate(appointment.id, { onSuccess: onClose })
   }
 
   const headerHint = `${formatDay(start)} · ${formatTime(start)}`
@@ -550,6 +583,42 @@ function AppointmentForm({
           </div>
         </div>
 
+        {/* Scope chooser — recurring appointments in edit mode only */}
+        {isEditing && isRecurring && (
+          <div>
+            <FieldLabel>Applies to</FieldLabel>
+            <div
+              className="inline-flex gap-0.5 rounded-[10px] border p-[3px]"
+              role="radiogroup"
+              aria-label="Applies to"
+              style={{
+                borderColor: "var(--ed-field-border)",
+                backgroundColor: "var(--ed-field-bg)",
+              }}
+            >
+              {SCOPE_OPTIONS.map((s) => {
+                const active = scope === s.value
+                return (
+                  <button
+                    key={s.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setScope(s.value)}
+                    className="cursor-pointer rounded-[7px] border-none px-4 py-[7px] text-[13.5px] font-semibold"
+                    style={{
+                      backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                      color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Repeats — create mode only */}
         {!isEditing && (
           <div>
@@ -724,7 +793,7 @@ function AppointmentForm({
           <button
             type="button"
             onClick={handleCancelAppt}
-            disabled={cancelMutation.isPending}
+            disabled={cancelMutation.isPending || cancelSeriesMutation.isPending}
             className="mr-auto cursor-pointer rounded-full border bg-transparent px-4 py-[9px] text-[13px] font-semibold disabled:opacity-50"
             style={{
               borderColor: "var(--ed-status-noshow-fg)",
