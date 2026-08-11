@@ -155,6 +155,59 @@ def get_availability_engine(
     return AvailabilityEngine(rule_repo, appt_repo)
 
 
+def get_google_calendar_service(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> GoogleCalendarService:
+    """Get Google Calendar service with injected dependencies."""
+    token_repo = _gcal_token_repo_factory()
+    appt_repo = _appt_repo_factory()
+    settings = get_settings()
+    return GoogleCalendarService(
+        token_repo=token_repo,
+        appointment_repo=appt_repo,
+        client_id=settings.google_calendar_client_id,
+        client_secret=settings.google_calendar_client_secret.get_secret_value(),
+    )
+
+
+def _sync_appointment_to_google(
+    service: SchedulingService,
+    gcal_service: GoogleCalendarService,
+    user: User,
+    appt: Appointment,
+) -> Appointment:
+    """Best-effort push of an appointment create/update to Google Calendar.
+
+    A Google failure never fails the appointment write — it's recorded as
+    google_sync_status='error' and swallowed. A user who isn't connected
+    gets no event and no status change: absence of sync isn't an error.
+    """
+    try:
+        event_id = gcal_service.push_appointment(user.id, appt)
+    except Exception:
+        logger.exception("Failed to push appointment to Google Calendar")
+        return service.update_appointment(appt.id, user.id, google_sync_status="error")
+    if event_id is None:
+        return appt
+    return service.update_appointment(
+        appt.id, user.id, google_event_id=event_id, google_sync_status="synced"
+    )
+
+
+def _push_cancellation_to_google(
+    gcal_service: GoogleCalendarService,
+    user: User,
+    appt: Appointment,
+) -> None:
+    """Best-effort delete of the linked Google Calendar event, if any."""
+    if not appt.google_event_id:
+        return
+    try:
+        gcal_service.delete_event(user.id, appt.google_event_id)
+    except Exception:
+        logger.exception("Failed to delete Google Calendar event")
+
+
 def _to_response(appt: Appointment) -> AppointmentResponse:
     return AppointmentResponse(
         id=appt.id,
@@ -197,6 +250,7 @@ def create_appointment(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     try:
@@ -213,6 +267,7 @@ def create_appointment(
         appt.id,
         patient_id=appt.patient_id,
     )
+    appt = _sync_appointment_to_google(service, gcal_service, user, appt)
     return _to_response(appt)
 
 
@@ -270,6 +325,7 @@ def update_appointment(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> AppointmentResponse:
     """Update an appointment."""
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
@@ -287,6 +343,7 @@ def update_appointment(
         patient_id=appt.patient_id,
         changes={"changed_fields": sorted(updates.keys())},
     )
+    appt = _sync_appointment_to_google(service, gcal_service, user, appt)
     return _to_response(appt)
 
 
@@ -301,6 +358,7 @@ def cancel_appointment(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> AppointmentResponse:
     """Cancel an appointment (soft delete — sets status to cancelled)."""
     try:
@@ -314,6 +372,7 @@ def cancel_appointment(
         appt.id,
         patient_id=appt.patient_id,
     )
+    _push_cancellation_to_google(gcal_service, user, appt)
     return _to_response(appt)
 
 
@@ -691,21 +750,6 @@ def delete_availability_rule(
 
 
 # --- Google Calendar endpoints ---
-
-
-def get_google_calendar_service(
-    _ctx: TenantContext = Depends(get_tenant_context),
-) -> GoogleCalendarService:
-    """Get Google Calendar service with injected dependencies."""
-    token_repo = _gcal_token_repo_factory()
-    appt_repo = _appt_repo_factory()
-    settings = get_settings()
-    return GoogleCalendarService(
-        token_repo=token_repo,
-        appointment_repo=appt_repo,
-        client_id=settings.google_calendar_client_id,
-        client_secret=settings.google_calendar_client_secret.get_secret_value(),
-    )
 
 
 @router.get(

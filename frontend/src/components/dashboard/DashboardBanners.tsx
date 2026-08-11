@@ -23,8 +23,8 @@ export function DashboardBanners() {
         href="/dashboard/sessions"
         message={
           notesPending === 1
-            ? "1 note awaiting your signature"
-            : `${notesPending} notes awaiting your signature`
+            ? "1 note awaiting your review"
+            : `${notesPending} notes awaiting your review`
         }
       />
     </div>

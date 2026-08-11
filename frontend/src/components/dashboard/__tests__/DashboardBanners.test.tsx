@@ -37,7 +37,7 @@ describe("DashboardBanners", () => {
     renderBanners()
 
     expect(
-      screen.getByText("1 note awaiting your signature"),
+      screen.getByText("1 note awaiting your review"),
     ).toBeInTheDocument()
   })
 

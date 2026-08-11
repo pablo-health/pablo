@@ -102,6 +102,9 @@ from app.routes.patients import (  # noqa: E402
     get_patient_repository,
     get_therapy_session_repository,
 )
+from app.routes.scheduling import (  # noqa: E402
+    get_google_calendar_service,
+)
 from app.routes.sessions import (  # noqa: E402
     get_notes_repository as get_sessions_notes_repository,
 )
@@ -359,6 +362,13 @@ def client(
     app.dependency_overrides[get_ehr_route_repository] = lambda: mock_ehr_route_repo
     app.dependency_overrides[get_ehr_prompt_repository] = lambda: mock_ehr_prompt_repo
     app.dependency_overrides[get_ehr_navigation_service] = lambda: mock_ehr_navigation_service
+    # Default to "no Google Calendar connected" so scheduling-route tests
+    # that don't care about Google sync stay deterministic and DB-free.
+    # Tests exercising the sync behavior override this per-test.
+    mock_gcal_service = MagicMock()
+    mock_gcal_service.push_appointment.return_value = None
+    mock_gcal_service.delete_event.return_value = False
+    app.dependency_overrides[get_google_calendar_service] = lambda: mock_gcal_service
 
     # Create client
     test_client = TestClient(app)
