@@ -8,11 +8,20 @@ import { AppointmentModal } from "../AppointmentModal"
 import type { UserPreferences } from "@/lib/api/users"
 import type { AppointmentResponse } from "@/types/scheduling"
 
-const { mockCreate, mockCreateRecurring, mockUpdate, mockCancel } = vi.hoisted(() => ({
+const {
+  mockCreate,
+  mockCreateRecurring,
+  mockUpdate,
+  mockCancel,
+  mockEditSeries,
+  mockCancelSeries,
+} = vi.hoisted(() => ({
   mockCreate: vi.fn(),
   mockCreateRecurring: vi.fn(),
   mockUpdate: vi.fn(),
   mockCancel: vi.fn(),
+  mockEditSeries: vi.fn(),
+  mockCancelSeries: vi.fn(),
 }))
 
 vi.mock("@/hooks/usePatients", () => ({
@@ -31,6 +40,8 @@ vi.mock("@/hooks/useAppointments", () => ({
   useCreateRecurringAppointment: () => ({ mutate: mockCreateRecurring, isPending: false }),
   useUpdateAppointment: () => ({ mutate: mockUpdate, isPending: false }),
   useCancelAppointment: () => ({ mutate: mockCancel, isPending: false }),
+  useEditAppointmentSeries: () => ({ mutate: mockEditSeries, isPending: false }),
+  useCancelAppointmentSeries: () => ({ mutate: mockCancelSeries, isPending: false }),
 }))
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -84,6 +95,12 @@ const baseAppointment: AppointmentResponse = {
   session_id: null,
   created_at: "2026-03-20T09:00:00Z",
   updated_at: null,
+}
+
+const recurringAppointment: AppointmentResponse = {
+  ...baseAppointment,
+  id: "a2",
+  recurring_appointment_id: "series-1",
 }
 
 function createWrapper() {
@@ -352,6 +369,75 @@ describe("AppointmentModal", () => {
     it("does not offer a Monthly option", () => {
       render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
       expect(screen.queryByRole("radio", { name: /monthly/i })).not.toBeInTheDocument()
+    })
+  })
+
+  describe("Recurring series scope (edit mode only)", () => {
+    it("does not render a scope chooser for a non-recurring appointment", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      expect(screen.queryByRole("radiogroup", { name: /applies to/i })).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockUpdate).toHaveBeenCalledTimes(1)
+      expect(mockEditSeries).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole("button", { name: /cancel appointment/i }))
+      expect(mockCancel).toHaveBeenCalledTimes(1)
+      expect(mockCancelSeries).not.toHaveBeenCalled()
+    })
+
+    it("saves this occurrence only via the existing PATCH when 'Just this session' is kept", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={recurringAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      const group = screen.getByRole("radiogroup", { name: /applies to/i })
+      expect(within(group).getByRole("radio", { name: /just this session/i })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      )
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockUpdate).toHaveBeenCalledTimes(1)
+      expect(mockUpdate.mock.calls[0][0]).toMatchObject({ appointmentId: "a2" })
+      expect(mockEditSeries).not.toHaveBeenCalled()
+    })
+
+    it("saves the whole series via edit-series when 'This and future sessions' is chosen", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={recurringAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      const group = screen.getByRole("radiogroup", { name: /applies to/i })
+      await user.click(within(group).getByRole("radio", { name: /this and future sessions/i }))
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockEditSeries).toHaveBeenCalledTimes(1)
+      expect(mockUpdate).not.toHaveBeenCalled()
+      const [args] = mockEditSeries.mock.calls[0]
+      expect(args).toMatchObject({ appointmentId: "a2" })
+    })
+
+    it("cancels the whole series via cancel-series when 'This and future sessions' is chosen", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={recurringAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      const group = screen.getByRole("radiogroup", { name: /applies to/i })
+      await user.click(within(group).getByRole("radio", { name: /this and future sessions/i }))
+      await user.click(screen.getByRole("button", { name: /cancel appointment/i }))
+
+      expect(mockCancelSeries).toHaveBeenCalledTimes(1)
+      expect(mockCancelSeries).toHaveBeenCalledWith("a2", expect.anything())
+      expect(mockCancel).not.toHaveBeenCalled()
     })
   })
 })
