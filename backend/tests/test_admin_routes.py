@@ -105,6 +105,3 @@ class TestRequireAdmin:
             detail = exc_info.value.detail
             assert isinstance(detail, dict)
             assert detail["error"]["code"] == "ADMIN_REQUIRED"
-
-
-# Export queue tests are in test_admin_export_queue.py (SaaS-only, excluded from OSS)
