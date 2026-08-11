@@ -1320,14 +1320,14 @@ def init_audio_upload(
         object_name=therapist_path,
         content_type=content_type,
         max_bytes=_MAX_AUDIO_SIZE,
-        ttl_seconds=settings.patient_documents_upload_url_ttl_seconds,
+        ttl_seconds=settings.transcription_audio_upload_url_ttl_seconds,
     )
     client_target = storage.make_upload_target(
         bucket=bucket,
         object_name=client_path,
         content_type=content_type,
         max_bytes=_MAX_AUDIO_SIZE,
-        ttl_seconds=settings.patient_documents_upload_url_ttl_seconds,
+        ttl_seconds=settings.transcription_audio_upload_url_ttl_seconds,
     )
 
     audit.log_session_action(
