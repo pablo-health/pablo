@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from app.main import app
@@ -142,14 +143,39 @@ def audit_repo() -> InMemoryAuditRepository:
     return InMemoryAuditRepository()
 
 
+@pytest.fixture(autouse=True)
+def mock_enqueue() -> Any:
+    """finalize now enqueues a Cloud Tasks job; ``documents_settings``
+    doesn't set ``environment="development"``, so without this the real
+    Cloud Tasks client would be constructed. Tests that need extraction
+    results call ``documents_service.run_finalize_extraction`` directly
+    (mirrors how ``generate_soap_job`` — the closest sibling worker — is
+    only exercised at the integration level, not this unit-test layer).
+    """
+    with patch("app.services.patient_documents_service.enqueue") as mock:
+        yield mock
+
+
+@pytest.fixture
+def documents_service(
+    doc_repo: InMemoryPatientDocumentRepository,
+    documents_settings: Settings,
+    fake_gcs: _FakeStorageClient,
+) -> PatientDocumentsService:
+    return PatientDocumentsService(
+        repo=doc_repo,
+        settings=documents_settings,
+        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
+        tenant_id="tenant-A",
+    )
+
+
 @pytest.fixture
 def documents_client(
     client: TestClient,
     mock_repo: InMemoryPatientRepository,
     mock_user_id: str,
-    doc_repo: InMemoryPatientDocumentRepository,
-    documents_settings: Settings,
-    fake_gcs: _FakeStorageClient,
+    documents_service: PatientDocumentsService,
     audit_repo: InMemoryAuditRepository,
 ) -> TestClient:
     # Patient under test
@@ -169,17 +195,28 @@ def documents_client(
     )
     mock_repo.create(patient, mock_user_id)
 
-    service = PatientDocumentsService(
-        repo=doc_repo,
-        settings=documents_settings,
-        storage=GcsFileStorage(client_factory=lambda: fake_gcs),
-        tenant_id="tenant-A",
-    )
-    app.dependency_overrides[docs_route_doc_repo] = lambda: doc_repo
+    app.dependency_overrides[docs_route_doc_repo] = lambda: documents_service._repo
     app.dependency_overrides[docs_route_patient_repo] = lambda: mock_repo
-    app.dependency_overrides[get_patient_documents_service] = lambda: service
+    app.dependency_overrides[get_patient_documents_service] = lambda: documents_service
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
     return client
+
+
+def _finalize_and_extract(
+    client: TestClient,
+    service: PatientDocumentsService,
+    document_id: str,
+    user_id: str,
+) -> None:
+    """Finalize over HTTP (cheap validation, enqueues), then run the
+    worker body directly — this test suite doesn't stand up the real
+    tenant-schema resolution the Cloud Tasks route needs (see
+    ``mock_enqueue``), so it drives extraction through the service the
+    same way the worker route would.
+    """
+    response = client.post(f"/api/documents/{document_id}/finalize")
+    assert response.status_code == 202, response.text
+    service.run_finalize_extraction(document_id=document_id, user_id=user_id)
 
 
 def _put_blob(
@@ -271,9 +308,44 @@ class TestInit:
 
 
 class TestFinalize:
-    def test_marks_finalized_and_extracts_text(
+    def test_returns_202_pending_and_enqueues(
         self,
         documents_client: TestClient,
+        fake_gcs: _FakeStorageClient,
+        doc_repo: InMemoryPatientDocumentRepository,
+        mock_user_id: str,
+        mock_enqueue: Any,
+    ) -> None:
+        init = _init_upload(documents_client, "patient-1")
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            doc_repo.get(init["document_id"], mock_user_id).gcs_path,  # type: ignore[union-attr]
+            _native_text_pdf_bytes(),
+            "application/pdf",
+        )
+        response = documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["finalized_at"] is not None
+        assert body["extraction_status"] == "pending"
+        assert body["extracted_text"] is None
+        # No GCS download / PyMuPDF on this request thread — nothing to
+        # extract yet, so no failure flag either.
+        assert body["text_extraction_failed"] is False
+        assert body["size_bytes"] > 0
+
+        mock_enqueue.assert_called_once_with(
+            "pablo-soap-generation",
+            "/api/internal/jobs/finalize-document",
+            {"document_id": init["document_id"], "user_id": mock_user_id},
+            dedup_key=init["document_id"],
+        )
+
+    def test_worker_marks_complete_with_extracted_text(
+        self,
+        documents_client: TestClient,
+        documents_service: PatientDocumentsService,
         fake_gcs: _FakeStorageClient,
         doc_repo: InMemoryPatientDocumentRepository,
         mock_user_id: str,
@@ -286,12 +358,16 @@ class TestFinalize:
             _native_text_pdf_bytes(),
             "application/pdf",
         )
-        response = documents_client.post(f"/api/documents/{init['document_id']}/finalize")
-        assert response.status_code == 200, response.text
+        _finalize_and_extract(
+            documents_client, documents_service, init["document_id"], mock_user_id
+        )
+
+        response = documents_client.get(f"/api/documents/{init['document_id']}")
+        assert response.status_code == 200
         body = response.json()
-        assert body["finalized_at"] is not None
+        assert body["extraction_status"] == "complete"
         assert body["text_extraction_failed"] is False
-        assert body["size_bytes"] > 0
+        assert "Fixture PDF for ak6m.2" in body["extracted_text"]
 
     def test_returns_400_when_blob_missing(self, documents_client: TestClient) -> None:
         init = _init_upload(documents_client, "patient-1")
@@ -341,6 +417,7 @@ class TestDocumentSurface:
     def test_get_returns_extracted_text(
         self,
         documents_client: TestClient,
+        documents_service: PatientDocumentsService,
         fake_gcs: _FakeStorageClient,
         doc_repo: InMemoryPatientDocumentRepository,
         mock_user_id: str,
@@ -353,7 +430,9 @@ class TestDocumentSurface:
             _native_text_pdf_bytes(),
             "application/pdf",
         )
-        documents_client.post(f"/api/documents/{init['document_id']}/finalize")
+        _finalize_and_extract(
+            documents_client, documents_service, init["document_id"], mock_user_id
+        )
 
         response = documents_client.get(f"/api/documents/{init['document_id']}")
         assert response.status_code == 200

@@ -38,6 +38,14 @@ export const DOCUMENT_CATEGORIES = [
 
 export type DocumentCategory = (typeof DOCUMENT_CATEGORIES)[number]
 
+/**
+ * Lifecycle of the off-request text-extraction job. `pending` right after
+ * finalize; the backend worker moves it to `complete` (extraction ran —
+ * `extracted_text` may still be null for a scanned PDF with no OCR
+ * available, which is not a failure) or `failed`.
+ */
+export type ExtractionStatus = "pending" | "complete" | "failed"
+
 export interface PatientDocumentResponse {
   id: string
   patient_id: string
@@ -48,6 +56,7 @@ export interface PatientDocumentResponse {
   finalized_at: string | null
   category: DocumentCategory
   extracted_text: string | null
+  extraction_status: ExtractionStatus
   text_extraction_failed: boolean
 }
 

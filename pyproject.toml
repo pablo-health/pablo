@@ -274,6 +274,11 @@ ignore = [
 "backend/app/auth/providers.py" = [
     "PLC0415",  # Lazy import of verify_firebase_token to avoid a circular import with service.py
 ]
+"backend/app/jobs/task_queue.py" = [
+    "PLC0415",  # Lazy import of cloud_tasks_service: services import this module, and
+                # app/services/__init__ imports the whole service layer eagerly, so a
+                # module-level import here is a cycle
+]
 "backend/app/services/**/*.py" = [
     "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
     "PLC0415",  # Allow lazy imports for optional ML libraries (spacy, sentence_transformers, etc.)

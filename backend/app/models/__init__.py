@@ -58,7 +58,7 @@ from .patient import (
     PatientResponse,
     UpdatePatientRequest,
 )
-from .patient_document import DocumentCategory, PatientDocument
+from .patient_document import DocumentCategory, ExtractionStatus, PatientDocument
 from .scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
@@ -162,6 +162,7 @@ __all__ = [
     "EhrRouteStepResponse",
     "EhrSystem",
     "ExportFormat",
+    "ExtractionStatus",
     "FinalizeNoteRequest",
     "FinalizeSessionRequest",
     "FreeSlotsResponse",

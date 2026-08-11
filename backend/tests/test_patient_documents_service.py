@@ -6,20 +6,36 @@ Exercises mime / size validation, the two-phase signed-URL upload
 contract, PyMuPDF text extraction (native-text vs scanned PDF), and
 soft-delete semantics. All GCS calls go through an in-memory fake so
 the tests never hit a real bucket.
+
+``finalize_upload`` only does cheap blob validation and enqueues a
+Cloud Tasks job; the actual GCS download + PyMuPDF + Document AI run
+in ``run_finalize_extraction`` (the worker body). Tests that assert on
+extraction results call both steps via ``_finalize_and_extract``;
+tests that only care about the cheap-validation contract call
+``finalize_upload`` alone. ``enqueue`` is mocked module-wide (an
+autouse fixture) since ``Settings`` in these tests doesn't set
+``environment="development"``, so the real Cloud Tasks client would
+otherwise be constructed.
 """
 
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import patch
 
 import pytest
-from app.models import DocumentCategory
+from app.db.models import PatientDocumentRow
+from app.models import DocumentCategory, ExtractionStatus
 from app.repositories import InMemoryPatientDocumentRepository
+from app.repositories.postgres.patient_document import _row_to_document
 from app.services.file_storage import GcsFileStorage
 from app.services.patient_documents_service import (
+    DocumentExtractionFailedError,
     FileTooLargeError,
     PatientDocumentsService,
+    TransientDocumentExtractionError,
     UnsupportedMimeTypeError,
     UploadNotCompleteError,
     _extract_pdf_text,
@@ -130,6 +146,35 @@ def _put_blob(
     fake_gcs.bucket(bucket).blob(object_name).upload_from_string(data, content_type=content_type)
 
 
+@pytest.fixture(autouse=True)
+def mock_enqueue() -> Any:
+    """Module-wide: finalize_upload enqueues a real Cloud Tasks job.
+
+    ``Settings`` in this module doesn't set ``environment="development"``,
+    so without this, ``enqueue`` would try to construct a real
+    ``CloudTasksClient``. Tests that care about the exact enqueue args
+    request this fixture directly.
+    """
+    with patch("app.services.patient_documents_service.enqueue") as mock:
+        yield mock
+
+
+def _finalize_and_extract(
+    service: PatientDocumentsService,
+    *,
+    document_id: str,
+    user_id: str,
+    transient_is_terminal: bool = False,
+) -> Any:
+    """Run both finalize halves: cheap validation, then worker extraction."""
+    service.finalize_upload(document_id=document_id, user_id=user_id)
+    return service.run_finalize_extraction(
+        document_id=document_id,
+        user_id=user_id,
+        transient_is_terminal=transient_is_terminal,
+    )
+
+
 # ---- init validation --------------------------------------------------
 
 
@@ -237,6 +282,37 @@ def _empty_pdf() -> bytes:
 
 
 class TestFinalize:
+    def test_finalize_upload_stamps_pending_and_enqueues(
+        self,
+        service: PatientDocumentsService,
+        fake_gcs: _FakeStorageClient,
+        mock_enqueue: Any,
+    ) -> None:
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="native.pdf",
+            mime_type="application/pdf",
+            size_bytes=2048,
+        )
+        pdf = _native_text_pdf()
+        _put_blob(fake_gcs, "pablo-docs-test", init.document.gcs_path, pdf, "application/pdf")
+
+        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        # The HTTP thread only does cheap validation — no extraction yet.
+        assert document.finalized_at is not None
+        assert document.extraction_status == ExtractionStatus.PENDING
+        assert document.extracted_text is None
+        assert document.size_bytes == len(pdf)
+
+        mock_enqueue.assert_called_once_with(
+            "pablo-soap-generation",  # document_finalize_task_queue default
+            "/api/internal/jobs/finalize-document",
+            {"document_id": init.document.id, "user_id": "user-1"},
+            dedup_key=init.document.id,
+        )
+
     def test_extracts_text_from_native_pdf(
         self,
         service: PatientDocumentsService,
@@ -252,9 +328,10 @@ class TestFinalize:
         pdf = _native_text_pdf()
         _put_blob(fake_gcs, "pablo-docs-test", init.document.gcs_path, pdf, "application/pdf")
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
 
         assert document.finalized_at is not None
+        assert document.extraction_status == ExtractionStatus.COMPLETE
         assert document.extracted_text is not None
         assert "Fixture PDF" in document.extracted_text
         assert document.size_bytes == len(pdf)
@@ -279,9 +356,10 @@ class TestFinalize:
             "application/pdf",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
 
         assert document.finalized_at is not None
+        assert document.extraction_status == ExtractionStatus.COMPLETE
         assert document.extracted_text is None
 
     def test_image_finalize_skips_extraction(
@@ -304,9 +382,120 @@ class TestFinalize:
             "image/png",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
         assert document.finalized_at is not None
+        assert document.extraction_status == ExtractionStatus.COMPLETE
         assert document.extracted_text is None
+
+    def test_worker_deterministic_failure_marks_failed(
+        self,
+        service: PatientDocumentsService,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        """A corrupt PDF fails PyMuPDF the same way on every retry."""
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="corrupt.pdf",
+            mime_type="application/pdf",
+            size_bytes=100,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            b"not a real pdf",
+            "application/pdf",
+        )
+        service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        with pytest.raises(DocumentExtractionFailedError):
+            service.run_finalize_extraction(document_id=init.document.id, user_id="user-1")
+
+        assert service._repo.get(init.document.id, "user-1").extraction_status == (
+            ExtractionStatus.FAILED
+        )
+
+    def test_worker_transient_failure_retries_until_final_attempt(
+        self,
+        service: PatientDocumentsService,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="native.pdf",
+            mime_type="application/pdf",
+            size_bytes=2048,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _native_text_pdf(),
+            "application/pdf",
+        )
+        service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        with (
+            patch.object(
+                service._storage(), "download_bytes", side_effect=TimeoutError("gcs blip")
+            ),
+            pytest.raises(TransientDocumentExtractionError),
+        ):
+            service.run_finalize_extraction(
+                document_id=init.document.id,
+                user_id="user-1",
+                transient_is_terminal=False,
+            )
+        # Not the final attempt — left pending for the queue to retry.
+        assert service._repo.get(init.document.id, "user-1").extraction_status == (
+            ExtractionStatus.PENDING
+        )
+
+        with (
+            patch.object(
+                service._storage(), "download_bytes", side_effect=TimeoutError("gcs blip")
+            ),
+            pytest.raises(DocumentExtractionFailedError),
+        ):
+            service.run_finalize_extraction(
+                document_id=init.document.id,
+                user_id="user-1",
+                transient_is_terminal=True,
+            )
+        assert service._repo.get(init.document.id, "user-1").extraction_status == (
+            ExtractionStatus.FAILED
+        )
+
+    def test_worker_is_idempotent_against_duplicate_delivery(
+        self,
+        service: PatientDocumentsService,
+        fake_gcs: _FakeStorageClient,
+    ) -> None:
+        init = service.init_upload(
+            patient_id="patient-1",
+            user_id="user-1",
+            filename="native.pdf",
+            mime_type="application/pdf",
+            size_bytes=2048,
+        )
+        _put_blob(
+            fake_gcs,
+            "pablo-docs-test",
+            init.document.gcs_path,
+            _native_text_pdf(),
+            "application/pdf",
+        )
+        service.finalize_upload(document_id=init.document.id, user_id="user-1")
+
+        first = service.run_finalize_extraction(document_id=init.document.id, user_id="user-1")
+        # A second Cloud Tasks delivery of the same job — no-op, not a
+        # second GCS download / re-extraction.
+        with patch.object(service._storage(), "download_bytes") as mock_download:
+            second = service.run_finalize_extraction(document_id=init.document.id, user_id="user-1")
+        mock_download.assert_not_called()
+        assert second.extracted_text == first.extracted_text
 
     def test_rejects_finalize_when_blob_missing(self, service: PatientDocumentsService) -> None:
         init = service.init_upload(
@@ -613,6 +802,35 @@ def test_extract_pdf_text_below_threshold_returns_none() -> None:
     assert _extract_pdf_text(_empty_pdf()) is None
 
 
+def test_postgres_row_with_null_extraction_status_reads_as_complete() -> None:
+    """A row finalized under the old synchronous path has no
+    extraction_status (NULL in Postgres, never backfilled). It must read
+    as COMPLETE, not PENDING — that doc was extracted years before the
+    worker offload existed and there's nothing left to enqueue for it.
+    """
+    row = PatientDocumentRow(
+        id="doc-1",
+        patient_id="patient-1",
+        user_id="user-1",
+        filename="legacy.pdf",
+        mime_type="application/pdf",
+        gcs_path="tenant-A/chart/doc-1",
+        extracted_text="already extracted long ago",
+        extracted_via="pymupdf",
+        extraction_metadata=None,
+        size_bytes=1024,
+        category="chart",
+        created_at=datetime.now(UTC),
+        finalized_at=datetime.now(UTC),
+        deleted_at=None,
+        extraction_status=None,
+    )
+
+    document = _row_to_document(row)
+
+    assert document.extraction_status == ExtractionStatus.COMPLETE
+
+
 # ---- OCR fallback (THERAPY-ak6m.2.3) ---------------------------------
 
 
@@ -684,7 +902,7 @@ class TestOcrFallback:
             "application/pdf",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
 
         assert document.extracted_via == "pymupdf"
         assert document.extraction_metadata is None
@@ -721,7 +939,7 @@ class TestOcrFallback:
             "application/pdf",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
 
         assert document.extracted_via == "document_ai"
         assert document.extracted_text is not None
@@ -759,7 +977,7 @@ class TestOcrFallback:
             "application/pdf",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
 
         assert document.extracted_via == "unavailable"
         assert document.extracted_text is None
@@ -790,7 +1008,7 @@ class TestOcrFallback:
             "application/pdf",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
 
         # No OCR client wired effectively → behaves like the pre-bead path
         assert document.extracted_via is None
@@ -820,6 +1038,6 @@ class TestOcrFallback:
             "image/png",
         )
 
-        document = service.finalize_upload(document_id=init.document.id, user_id="user-1")
+        document = _finalize_and_extract(service, document_id=init.document.id, user_id="user-1")
         assert document.extracted_via is None
         assert ocr.calls == []

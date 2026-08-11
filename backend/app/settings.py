@@ -840,6 +840,18 @@ class Settings(BaseSettings):
             "queue retries with backoff instead of failing the session."
         ),
     )
+    document_finalize_task_queue: str = Field(
+        default="pablo-soap-generation",
+        description=(
+            "Cloud Tasks queue for off-request patient-document finalize "
+            "(GCS download + PyMuPDF + Document AI). Deliberately reuses the "
+            "pablo-soap-generation queue rather than provisioning a dedicated "
+            "one — same IAM, same maxAttempts/maxConcurrentDispatches profile, "
+            "and this ships with zero new infra. Point this at a dedicated "
+            "queue later if the two workloads need different concurrency or "
+            "retry limits."
+        ),
+    )
 
     # NLI Model Settings
     nli_model_path: str = Field(

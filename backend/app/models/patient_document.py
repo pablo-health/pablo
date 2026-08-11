@@ -90,6 +90,28 @@ class DocumentCategory(StrEnum):
         )
 
 
+class ExtractionStatus(StrEnum):
+    """Lifecycle of the off-request text-extraction job.
+
+    ``finalize`` does the cheap blob validation inline and enqueues the
+    GCS download + PyMuPDF + Document AI work to a Cloud Tasks worker
+    rather than running it on the HTTP request thread. ``PENDING`` is
+    stamped the moment the job is enqueued; the worker
+    moves it to ``COMPLETE`` (extraction ran, text may still be
+    ``None`` for a scanned PDF with OCR unavailable — that is not a
+    failure) or ``FAILED`` (a deterministic extraction error, or a
+    transient error on the queue's last delivery attempt).
+
+    ``None`` on the row (pre-migration rows, finalized under the old
+    synchronous path) is treated as ``COMPLETE`` — those documents
+    already carry their final extraction result.
+    """
+
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 @dataclass
 class PatientDocument:
     id: str
@@ -108,3 +130,6 @@ class PatientDocument:
     # for the value set.
     extracted_via: str | None = None
     extraction_metadata: dict[str, object] | None = None
+    # Legacy rows (extracted synchronously, pre-THERAPY-ul6d) read as
+    # COMPLETE — see ExtractionStatus docstring.
+    extraction_status: ExtractionStatus = field(default=ExtractionStatus.COMPLETE)
