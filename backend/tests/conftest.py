@@ -7,7 +7,7 @@ import os
 # Set environment to development for all tests
 # CRITICAL: This must be set BEFORE importing app to ensure development mode
 os.environ["ENVIRONMENT"] = "development"
-# Enable SaaS features so admin/tenant routes are registered for tests
+# Run as a hosted edition so admin/tenant routes are registered for tests
 os.environ["PABLO_EDITION"] = "solo"
 # Mount the patient-context chat router for tests (THERAPY-bhv). Off by
 # default in production; flipping it here so tests can exercise the
