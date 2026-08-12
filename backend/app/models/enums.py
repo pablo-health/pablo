@@ -106,6 +106,23 @@ class OutcomeMeasureSource(StrEnum):
     INFERRED = "inferred"
 
 
+class PracticeEdition(StrEnum):
+    """What kind of operator a practice is, independent of which tables are empty.
+
+    Everything downstream of a practice today assumes ``THERAPIST``:
+    patients, appointments, notes, charts. ``PERSONAL`` marks a
+    non-clinical operator up front — no patients, no charts, no
+    clinical severity floors — so those surfaces can branch on a
+    declared fact instead of inferring one from empty tables.
+
+    ``THERAPIST`` is the default: every existing practice and every
+    new one that doesn't say otherwise is a clinical practice.
+    """
+
+    THERAPIST = "therapist"
+    PERSONAL = "personal"
+
+
 class ClinicianRole(StrEnum):
     """A clinician's relationship to a patient in `patient_clinicians`.
 
