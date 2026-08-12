@@ -412,9 +412,9 @@ class TestFinalize:
         with pytest.raises(DocumentExtractionFailedError):
             service.run_finalize_extraction(document_id=init.document.id, user_id="user-1")
 
-        assert service._repo.get(init.document.id, "user-1").extraction_status == (
-            ExtractionStatus.FAILED
-        )
+        stored = service._repo.get(init.document.id, "user-1")
+        assert stored is not None
+        assert stored.extraction_status == ExtractionStatus.FAILED
 
     def test_worker_transient_failure_retries_until_final_attempt(
         self,
@@ -449,9 +449,9 @@ class TestFinalize:
                 transient_is_terminal=False,
             )
         # Not the final attempt — left pending for the queue to retry.
-        assert service._repo.get(init.document.id, "user-1").extraction_status == (
-            ExtractionStatus.PENDING
-        )
+        stored = service._repo.get(init.document.id, "user-1")
+        assert stored is not None
+        assert stored.extraction_status == ExtractionStatus.PENDING
 
         with (
             patch.object(
@@ -464,9 +464,9 @@ class TestFinalize:
                 user_id="user-1",
                 transient_is_terminal=True,
             )
-        assert service._repo.get(init.document.id, "user-1").extraction_status == (
-            ExtractionStatus.FAILED
-        )
+        stored = service._repo.get(init.document.id, "user-1")
+        assert stored is not None
+        assert stored.extraction_status == ExtractionStatus.FAILED
 
     def test_worker_is_idempotent_against_duplicate_delivery(
         self,
