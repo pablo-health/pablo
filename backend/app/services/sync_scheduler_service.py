@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
     from ..repositories.ical_sync_config import ICalSyncConfigRepository
     from ..repositories.user import UserRepository
+    from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..services.google_calendar_service import GoogleCalendarService
     from ..services.ical_sync_service import ICalSyncService
     from ..services.reminder_service import ReminderService
@@ -61,6 +62,7 @@ class ExecuteSummary:
     ical_errors: int = 0
     google_synced: bool = False
     google_error: bool = False
+    google_changes_processed: int = 0
     reminders_sent: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -70,6 +72,7 @@ class ExecuteSummary:
             "ical_errors": self.ical_errors,
             "google_synced": self.google_synced,
             "google_error": self.google_error,
+            "google_changes_processed": self.google_changes_processed,
             "reminders_sent": self.reminders_sent,
         }
 
@@ -90,6 +93,7 @@ class SyncSchedulerService:
         ical_sync_service: ICalSyncService,
         google_calendar_service: GoogleCalendarService,
         reminder_service: ReminderService,
+        appointment_repo: AppointmentRepository,
     ) -> None:
         self._ical_config_repo = ical_config_repo
         self._google_token_repo = google_token_repo
@@ -97,6 +101,7 @@ class SyncSchedulerService:
         self._ical_sync_service = ical_sync_service
         self._google_calendar_service = google_calendar_service
         self._reminder_service = reminder_service
+        self._appointment_repo = appointment_repo
 
     def dispatch(self) -> DispatchSummary:
         """Fan out sync tasks to Cloud Tasks — one per eligible user.
@@ -179,8 +184,9 @@ class SyncSchedulerService:
         google_token = self._google_token_repo.get(user_id)
         if google_token:
             try:
-                self._google_calendar_service.sync_from_google(user_id)
+                changes = self._google_calendar_service.sync_from_google(user_id)
                 summary.google_synced = True
+                summary.google_changes_processed = self._record_external_changes(user_id, changes)
             except Exception:
                 logger.exception("Google Calendar sync failed for scheduled run")
                 summary.google_error = True
@@ -195,6 +201,27 @@ class SyncSchedulerService:
             logger.exception("Reminder check failed for scheduled run")
 
         return summary
+
+    def _record_external_changes(self, user_id: str, changes: list[dict[str, Any]]) -> int:
+        """Record drift for Google changes that reference a Pablo-owned appointment.
+
+        Pablo stays source of truth: this only flags the appointment for
+        review (google_sync_status='external_change') — it never rewrites
+        appointment fields from Google data. Changes with no matching
+        appointment (events Pablo never pushed) are ignored.
+        """
+        processed = 0
+        for change in changes:
+            google_event_id = change.get("google_event_id")
+            if not google_event_id:
+                continue
+            appointment = self._appointment_repo.get_by_google_event_id(user_id, google_event_id)
+            if appointment is None:
+                continue
+            appointment.google_sync_status = "external_change"
+            self._appointment_repo.update(appointment)
+            processed += 1
+        return processed
 
 
 @dataclass

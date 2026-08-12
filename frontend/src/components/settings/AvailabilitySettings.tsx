@@ -42,7 +42,7 @@ function dayLabel(day: unknown): string {
   return DAY_OPTIONS.find((d) => d.value === Number(day))?.label ?? "Unknown day"
 }
 
-const RULE_TYPE_LABELS: Record<RuleType, string> = {
+export const RULE_TYPE_LABELS: Record<RuleType, string> = {
   working_hours: "Working hours",
   block_day_of_week: "Block a day of the week",
   block_time_range: "Block a time range",
@@ -190,7 +190,7 @@ function validate(ruleType: RuleType, fields: ParamFields, dates: string[]): str
   }
 }
 
-function summarize(rule: AvailabilityRule): string {
+export function summarize(rule: AvailabilityRule): string {
   const p = rule.params
   switch (rule.rule_type) {
     case "working_hours":
@@ -440,7 +440,7 @@ function RuleParamsFields({
   }
 }
 
-interface RuleFormProps {
+export interface RuleFormProps {
   initialRule: AvailabilityRule | null
   onCancel: () => void
   onSubmit: (ruleType: RuleType, enforcement: EnforcementLevel, params: Record<string, unknown>) => void
@@ -448,7 +448,7 @@ interface RuleFormProps {
   submitError: string | null
 }
 
-function RuleForm({ initialRule, onCancel, onSubmit, isSaving, submitError }: RuleFormProps) {
+export function RuleForm({ initialRule, onCancel, onSubmit, isSaving, submitError }: RuleFormProps) {
   const [ruleType, setRuleType] = useState<RuleType>(initialRule?.rule_type ?? "working_hours")
   const [enforcement, setEnforcement] = useState<EnforcementLevel>(initialRule?.enforcement ?? "hard")
   const initialState = initialRule

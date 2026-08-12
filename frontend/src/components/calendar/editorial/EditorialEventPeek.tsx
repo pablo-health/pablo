@@ -4,7 +4,7 @@
 
 import { useEffect, useRef } from "react"
 import { format } from "date-fns"
-import { CalendarDays, User, Users, Video, X } from "lucide-react"
+import { CalendarDays, Repeat, User, Users, Video, X } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { editorialStatusMeta } from "./status"
 import { clampToViewport } from "./viewportClamp"
@@ -156,6 +156,11 @@ export function EditorialEventPeek({
           <PeekRow icon={<SessionIcon className="h-[15px] w-[15px]" />}>
             {sessionLabel} · {appointment.duration_minutes} min
           </PeekRow>
+          {appointment.recurring_appointment_id && (
+            <PeekRow icon={<Repeat className="h-[15px] w-[15px]" />}>
+              Part of a repeating series
+            </PeekRow>
+          )}
           {appointment.video_link && (
             <PeekRow icon={<Video className="h-[15px] w-[15px]" />}>
               {isWebLink ? (

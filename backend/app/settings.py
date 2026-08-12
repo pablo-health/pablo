@@ -676,6 +676,19 @@ class Settings(BaseSettings):
             "Bucket for encrypted audio uploads, on the provider selected by file_storage_provider."
         ),
     )
+    transcription_audio_upload_url_ttl_seconds: int = Field(
+        default=3600,
+        description=(
+            "V4 signed PUT URL lifetime for session-audio uploads. Sized for "
+            "multi-hundred-MB two-channel raw session recordings on slow "
+            "links (~864 MB observed for a 50-minute raw PCM session) — the "
+            "300s document-upload TTL expired mid-upload in the 2026-07-16 "
+            "e2e run. The PUT URL is still constrained to a single object "
+            "name + content type + max-bytes ceiling at sign time, so the "
+            "longer window only widens misuse of exactly one pre-named "
+            "object, nothing else."
+        ),
+    )
     # Object-storage provider for file upload/download surfaces (patient
     # documents, signed-URL session audio, hard-purge blob deletes).
     # Bucket-name settings (patient_documents_gcs_bucket,
@@ -1151,10 +1164,20 @@ class Settings(BaseSettings):
 
     @property
     def is_prod_project(self) -> bool:
-        """True if running against the production GCP project."""
-        if self.environment == "production":
-            return True
-        return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))
+        """True if running against the production project.
+
+        Keys on the PROJECT id, not the environment string: a deployment may
+        deliberately run non-prod projects with ENVIRONMENT=production so
+        every code path behaves exactly as it will in production, and this
+        property's only consumers are the reserved test-identity bypasses —
+        which must be scoped by which project holds real data, not by how
+        the environment is labeled. A deployment with no project id at all
+        (self-hosted off GCP) falls back to the environment string, so
+        "production" still means no test bypasses there.
+        """
+        if self.gcp_project_id:
+            return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))
+        return self.environment == "production"
 
     @property
     def effective_firebase_project_id(self) -> str:

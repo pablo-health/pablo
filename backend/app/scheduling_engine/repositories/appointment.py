@@ -105,6 +105,14 @@ class AppointmentRepository(ABC):
         """List all appointments synced from a specific iCal source."""
 
     @abstractmethod
+    def get_by_google_event_id(
+        self,
+        user_id: str,
+        google_event_id: str,
+    ) -> Appointment | None:
+        """Get the appointment (if any) synced to a given Google Calendar event."""
+
+    @abstractmethod
     def create(self, appointment: Appointment) -> Appointment:
         """Create a new appointment."""
 
@@ -259,6 +267,16 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             ],
             key=lambda a: a.start_at,
         )
+
+    def get_by_google_event_id(
+        self,
+        user_id: str,
+        google_event_id: str,
+    ) -> Appointment | None:
+        for a in self._appointments.values():
+            if a.user_id == user_id and a.google_event_id == google_event_id:
+                return a
+        return None
 
     def create(self, appointment: Appointment) -> Appointment:
         self._appointments[appointment.id] = appointment

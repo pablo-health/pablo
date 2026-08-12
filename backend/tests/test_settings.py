@@ -46,8 +46,19 @@ def test_is_prod_project_rejects_non_prod_variants(project_id: str) -> None:
     assert not _make(environment="staging", gcp_project_id=project_id).is_prod_project
 
 
-def test_is_prod_project_honors_environment_override() -> None:
-    assert _make(environment="production", gcp_project_id="legacy-cluster-a").is_prod_project
+def test_is_prod_project_keys_on_project_not_environment_label() -> None:
+    """A non-prod project may run ENVIRONMENT=production on purpose (so every
+    code path behaves as it will in production). That label must NOT make the
+    project count as prod — this property only gates the reserved
+    test-identity bypasses, which scope by which project holds real data."""
+    assert not _make(environment="production", gcp_project_id="pablohealth-dev").is_prod_project
+
+
+def test_is_prod_project_environment_fallback_without_project_id() -> None:
+    """Self-hosted off GCP (no project id): the environment string is the only
+    signal left, and "production" must still mean no test bypasses."""
+    assert _make(environment="production", gcp_project_id="").is_prod_project
+    assert not _make(environment="development", gcp_project_id="").is_prod_project
 
 
 def test_is_prod_project_default_is_false() -> None:

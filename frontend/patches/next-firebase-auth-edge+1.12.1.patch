@@ -1,32 +1,3 @@
-diff --git a/node_modules/next-firebase-auth-edge/browser/auth/credential.js b/node_modules/next-firebase-auth-edge/browser/auth/credential.js
-index da75457..a8e3060 100644
---- a/node_modules/next-firebase-auth-edge/browser/auth/credential.js
-+++ b/node_modules/next-firebase-auth-edge/browser/auth/credential.js
-@@ -124,6 +124,11 @@ export class ComputeEngineCredential {
-         if (this.projectId) {
-             return Promise.resolve(this.projectId);
-         }
-+        const explicit = getExplicitProjectId() || process.env.FIREBASE_PROJECT_ID;
-+        if (explicit) {
-+            this.projectId = explicit;
-+            return this.projectId;
-+        }
-         const url = `http://${GOOGLE_METADATA_SERVICE_HOST}${GOOGLE_METADATA_SERVICE_PROJECT_ID_PATH}`;
-         const request = this.buildRequest();
-         try {
-diff --git a/node_modules/next-firebase-auth-edge/browser/auth/index.js b/node_modules/next-firebase-auth-edge/browser/auth/index.js
-index 9b5560e..7335049 100644
---- a/node_modules/next-firebase-auth-edge/browser/auth/index.js
-+++ b/node_modules/next-firebase-auth-edge/browser/auth/index.js
-@@ -96,7 +96,7 @@ const refreshExpiredIdToken = async (refreshToken, options) => {
-             'Content-Type': 'application/x-www-form-urlencoded',
-             ...(options.referer ? { Referer: options.referer } : {})
-         },
--        body: `grant_type=refresh_token&refresh_token=${refreshToken}`
-+        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
-     });
-     if (!response.ok) {
-         const data = await response.json();
 diff --git a/node_modules/next-firebase-auth-edge/browser/next/cookies/index.js b/node_modules/next-firebase-auth-edge/browser/next/cookies/index.js
 index be336f5..d9af48e 100644
 --- a/node_modules/next-firebase-auth-edge/browser/next/cookies/index.js
@@ -92,35 +63,6 @@ index be336f5..d9af48e 100644
      debug('Successfully generated custom tokens');
      const decodedIdToken = mapJwtPayloadToDecodedIdToken(decodeJwt(customTokens.idToken));
      const metadata = await getMetadataInternal({ ...customTokens, decodedIdToken }, options);
-diff --git a/node_modules/next-firebase-auth-edge/esm/auth/credential.js b/node_modules/next-firebase-auth-edge/esm/auth/credential.js
-index f16e7d0..6272ef6 100644
---- a/node_modules/next-firebase-auth-edge/esm/auth/credential.js
-+++ b/node_modules/next-firebase-auth-edge/esm/auth/credential.js
-@@ -130,6 +130,11 @@ export class ComputeEngineCredential {
-         if (this.projectId) {
-             return Promise.resolve(this.projectId);
-         }
-+        const explicit = getExplicitProjectId() || process.env.FIREBASE_PROJECT_ID;
-+        if (explicit) {
-+            this.projectId = explicit;
-+            return this.projectId;
-+        }
-         const url = `http://${GOOGLE_METADATA_SERVICE_HOST}${GOOGLE_METADATA_SERVICE_PROJECT_ID_PATH}`;
-         const request = this.buildRequest();
-         try {
-diff --git a/node_modules/next-firebase-auth-edge/esm/auth/index.js b/node_modules/next-firebase-auth-edge/esm/auth/index.js
-index 9b5560e..7335049 100644
---- a/node_modules/next-firebase-auth-edge/esm/auth/index.js
-+++ b/node_modules/next-firebase-auth-edge/esm/auth/index.js
-@@ -96,7 +96,7 @@ const refreshExpiredIdToken = async (refreshToken, options) => {
-             'Content-Type': 'application/x-www-form-urlencoded',
-             ...(options.referer ? { Referer: options.referer } : {})
-         },
--        body: `grant_type=refresh_token&refresh_token=${refreshToken}`
-+        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
-     });
-     if (!response.ok) {
-         const data = await response.json();
 diff --git a/node_modules/next-firebase-auth-edge/esm/next/cookies/index.js b/node_modules/next-firebase-auth-edge/esm/next/cookies/index.js
 index be336f5..d9af48e 100644
 --- a/node_modules/next-firebase-auth-edge/esm/next/cookies/index.js
@@ -186,35 +128,6 @@ index be336f5..d9af48e 100644
      debug('Successfully generated custom tokens');
      const decodedIdToken = mapJwtPayloadToDecodedIdToken(decodeJwt(customTokens.idToken));
      const metadata = await getMetadataInternal({ ...customTokens, decodedIdToken }, options);
-diff --git a/node_modules/next-firebase-auth-edge/lib/auth/credential.js b/node_modules/next-firebase-auth-edge/lib/auth/credential.js
-index 50a83f7..7dfbd84 100644
---- a/node_modules/next-firebase-auth-edge/lib/auth/credential.js
-+++ b/node_modules/next-firebase-auth-edge/lib/auth/credential.js
-@@ -135,6 +135,11 @@ class ComputeEngineCredential {
-         if (this.projectId) {
-             return Promise.resolve(this.projectId);
-         }
-+        const explicit = getExplicitProjectId() || process.env.FIREBASE_PROJECT_ID;
-+        if (explicit) {
-+            this.projectId = explicit;
-+            return this.projectId;
-+        }
-         const url = `http://${GOOGLE_METADATA_SERVICE_HOST}${GOOGLE_METADATA_SERVICE_PROJECT_ID_PATH}`;
-         const request = this.buildRequest();
-         try {
-diff --git a/node_modules/next-firebase-auth-edge/lib/auth/index.js b/node_modules/next-firebase-auth-edge/lib/auth/index.js
-index 5e0e9d0..0e99376 100644
---- a/node_modules/next-firebase-auth-edge/lib/auth/index.js
-+++ b/node_modules/next-firebase-auth-edge/lib/auth/index.js
-@@ -118,7 +118,7 @@ const refreshExpiredIdToken = async (refreshToken, options) => {
-             'Content-Type': 'application/x-www-form-urlencoded',
-             ...(options.referer ? { Referer: options.referer } : {})
-         },
--        body: `grant_type=refresh_token&refresh_token=${refreshToken}`
-+        body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
-     });
-     if (!response.ok) {
-         const data = await response.json();
 diff --git a/node_modules/next-firebase-auth-edge/lib/next/cookies/index.js b/node_modules/next-firebase-auth-edge/lib/next/cookies/index.js
 index 4547893..0c00614 100644
 --- a/node_modules/next-firebase-auth-edge/lib/next/cookies/index.js

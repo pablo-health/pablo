@@ -4,8 +4,8 @@
 
 This is the single import point for all heavy-path callers (audio upload,
 SOAP generation, document finalize). It lives in the OSS ``app`` layer so
-both OSS and the SaaS overlay can import it (SaaS may import from ``app``,
-never the reverse).
+both OSS and a downstream deployment's overlay can import it (the overlay
+may import from ``app``, never the reverse).
 
 The current backend is Cloud Tasks via :func:`enqueue_cloud_task`. To swap
 to Pub/Sub later, replace the call inside :func:`enqueue` and update queue
