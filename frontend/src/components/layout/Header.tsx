@@ -52,11 +52,17 @@ export function Header({ user }: HeaderProps) {
             ) : (
               <UserCircle className="h-8 w-8 text-neutral-400" />
             )}
+            {/* Name only. The signed-in address used to sit under it on every
+                screen, which is a detail the account holder already knows and
+                everyone looking over their shoulder does not. Clinicians share
+                this window — with a patient on a call, with a supervisor, in a
+                recorded session — and a work address is the one identifier worth
+                not leaving on screen by default. It moves into the menu below,
+                one click away, which is where it is actually wanted. */}
             <div className="text-left">
               <div className="text-sm font-medium text-neutral-900">
                 {user.name || "User"}
               </div>
-              <div className="text-xs text-neutral-500">{user.email}</div>
             </div>
           </button>
 
@@ -67,6 +73,13 @@ export function Header({ user }: HeaderProps) {
                 onClick={() => setIsMenuOpen(false)}
               />
               <div className="absolute right-0 mt-2 w-52 bg-card rounded-lg shadow-lg border border-neutral-200 py-1 z-20 animate-in fade-in slide-in-from-top-2 duration-200">
+                {user.email ? (
+                  <div className="border-b border-neutral-200 px-4 pb-2 pt-1.5">
+                    <div className="truncate text-xs text-neutral-500" title={user.email}>
+                      {user.email}
+                    </div>
+                  </div>
+                ) : null}
                 <ThemeMenu />
                 <button
                   onClick={handleSignOut}
