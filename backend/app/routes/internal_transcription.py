@@ -39,6 +39,17 @@ from ..auth.service import _resolve_practice_from_email, require_cloud_tasks_inv
 from ..db import _request_session, arm_current_user_id, create_standalone_session
 from ..db.models import TherapySessionRow
 from ..db.platform_models import PlatformUserRow, PracticeRow
+
+# Optional billing extension point, mirroring the trial gate in
+# ``routes/sessions.py``. When a billing overlay is installed it registers
+# ``app.routes.subscription``; otherwise the import fails and metering
+# becomes a no-op, so OSS runs with no billing behaviour at all.
+try:
+    from ..routes.subscription import (  # type: ignore[import-not-found]
+        record_recorded_session,
+    )
+except ImportError:  # pragma: no cover -- no subscription overlay installed
+    record_recorded_session = None  # type: ignore[assignment]
 from ..models import SessionStatus, UploadTranscriptToSessionRequest
 from ..models.audit import AuditAction
 from ..repositories import (
@@ -133,6 +144,30 @@ def _resolve_schema_for_user(user_id: str) -> str | None:
             if practice:
                 return practice[1]
     return None
+
+
+def _meter_recorded_session(user_id: str, session_id: str) -> None:
+    """Report a successfully transcribed recording to the billing overlay.
+
+    No-op when no billing overlay is installed. This lives on the
+    transcription-completion path rather than in the upload route's trial
+    gate because only *recorded* sessions are billable — notes generated
+    from uploaded or pasted transcripts are unlimited, and metering them
+    would bill for something the pricing advertises as free.
+
+    Never raises: a billing outage must not fail a clinician's
+    transcription.
+    """
+    if record_recorded_session is None:
+        return
+    try:
+        with create_standalone_session() as tmp:
+            user_row = tmp.get(PlatformUserRow, user_id)
+            email = user_row.email if user_row else None
+        if email:
+            record_recorded_session(email, session_id, get_settings())
+    except Exception:
+        logger.exception("Could not meter recorded session %s", session_id)
 
 
 def _record_transcript_upload_audit(session: TherapySession, user_id: str) -> None:
@@ -261,6 +296,14 @@ def process_transcription_result(
 
             if standalone_db:
                 standalone_db.commit()
+
+            # Meter exactly here: this branch is the one place a recording
+            # is newly transcribed. The PENDING_REVIEW/FINALIZED early
+            # return and the PROCESSING branch above both skip it, so a
+            # duplicate poll or a retried callback cannot double-count —
+            # and the meter event carries the session id as Stripe's
+            # idempotency key as a second line of defence.
+            _meter_recorded_session(user_id, session_id)
 
         # Hand the multi-second SOAP generation to the durable shared worker.
         # It re-resolves the tenant schema from user_id (no schema/PHI in the
