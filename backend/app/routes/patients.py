@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
@@ -542,5 +543,9 @@ def export_patient_data(
             headers={"Content-Disposition": f'attachment; filename="{export_data["filename"]}"'},
         )
 
-    # Return JSON directly
-    return JSONResponse(content=export_data)
+    # Return JSON directly. Through the encoder, not raw: the export dict
+    # carries datetime objects straight off the models (patient timestamps,
+    # session dates), and JSONResponse's plain json.dumps refuses them —
+    # a 500 on the Right to Access endpoint. The unit tests didn't see it
+    # because they mock the export service with pre-stringified dates.
+    return JSONResponse(content=jsonable_encoder(export_data))
