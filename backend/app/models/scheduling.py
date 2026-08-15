@@ -203,6 +203,41 @@ class FreeSlotsResponse(BaseModel):
     configured: bool
 
 
+# --- Appointment type models ---
+
+
+class CreateAppointmentTypeRequest(BaseModel):
+    """Request to create an appointment type with an optional default fee."""
+
+    name: str = Field(min_length=1, max_length=100)
+    default_fee_cents: int | None = Field(None, ge=0)
+
+
+class UpdateAppointmentTypeRequest(BaseModel):
+    """Request to update an appointment type."""
+
+    name: str | None = Field(None, min_length=1, max_length=100)
+    default_fee_cents: int | None = Field(None, ge=0)
+
+
+class AppointmentTypeResponse(BaseModel):
+    """API response for an appointment type."""
+
+    id: str
+    user_id: str
+    name: str
+    default_fee_cents: int | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class AppointmentTypeListResponse(BaseModel):
+    """Response for a list of appointment types."""
+
+    data: list[AppointmentTypeResponse]
+    total: int
+
+
 # --- Google Calendar models ---
 
 

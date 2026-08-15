@@ -75,6 +75,17 @@ CREATE TABLE __TENANT_SCHEMA__.allowed_emails (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.appointment_types (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    name character varying(100) NOT NULL,
+    default_fee_cents integer,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.appointments (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -444,7 +455,9 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     phi_email_consent boolean,
     phi_email_consent_at timestamp with time zone,
     phi_email_consent_doc text,
-    phi_email_consent_by character varying(128)
+    phi_email_consent_by character varying(128),
+    rate_cents integer,
+    sliding_scale_note text
 );
 
 
@@ -623,6 +636,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.allowed_emails
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
+    ADD CONSTRAINT appointment_types_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
     ADD CONSTRAINT appointments_pkey PRIMARY KEY (id);
 
@@ -763,8 +781,17 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
+    ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
     ADD CONSTRAINT uq_prescribing_checklist_items_encounter_item UNIQUE (encounter_id, item_id);
+
+
+
+CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types USING btree (user_id);
 
 
 
