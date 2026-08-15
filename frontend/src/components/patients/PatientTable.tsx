@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { usePatientList, useDeletePatient } from "@/hooks/usePatients"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import type { PatientResponse } from "@/types/patients"
 import { PatientForm } from "./PatientForm"
 
@@ -42,6 +43,7 @@ function useDebounce<T>(value: T, delay: number): T {
 
 export function PatientTable() {
   const router = useRouter()
+  const { readOnly } = useReadOnlyMode()
   const [searchTerm, setSearchTerm] = useState("")
   const [formDialogOpen, setFormDialogOpen] = useState(false)
   const [formMode, setFormMode] = useState<"create" | "edit">("create")
@@ -146,9 +148,11 @@ export function PatientTable() {
               className="pl-10"
             />
           </div>
-          <Button onClick={handleAddPatient} className="btn-primary">
-            Add Patient
-          </Button>
+          {!readOnly && (
+            <Button onClick={handleAddPatient} className="btn-primary">
+              Add Patient
+            </Button>
+          )}
         </div>
 
         {/* Table */}
@@ -166,7 +170,9 @@ export function PatientTable() {
               <p className="text-neutral-500">
                 {searchTerm
                   ? "No patients found matching your search."
-                  : "No patients yet. Click \"Add Patient\" to get started."}
+                  : readOnly
+                    ? "No patients on file."
+                    : "No patients yet. Click \"Add Patient\" to get started."}
               </p>
             </div>
           ) : (
@@ -185,7 +191,9 @@ export function PatientTable() {
                     <TableHead>Status</TableHead>
                     <TableHead>Sessions</TableHead>
                     <TableHead>Next Session</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                    {!readOnly && (
+                      <TableHead className="text-right">Actions</TableHead>
+                    )}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -203,26 +211,28 @@ export function PatientTable() {
                       <TableCell>{getStatusBadge(patient.status)}</TableCell>
                       <TableCell>{patient.session_count}</TableCell>
                       <TableCell>{formatDate(patient.next_session_date)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Edit patient ${patient.first_name} ${patient.last_name}`}
-                            onClick={() => handleEditPatient(patient)}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Delete patient ${patient.first_name} ${patient.last_name}`}
-                            onClick={() => handleDeleteClick(patient)}
-                          >
-                            <Trash2 className="w-4 h-4 text-red-500" />
-                          </Button>
-                        </div>
-                      </TableCell>
+                      {!readOnly && (
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Edit patient ${patient.first_name} ${patient.last_name}`}
+                              onClick={() => handleEditPatient(patient)}
+                            >
+                              <Pencil className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              aria-label={`Delete patient ${patient.first_name} ${patient.last_name}`}
+                              onClick={() => handleDeleteClick(patient)}
+                            >
+                              <Trash2 className="w-4 h-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

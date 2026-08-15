@@ -9,7 +9,7 @@
  * to the backend, so the API client is mocked.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -102,5 +102,32 @@ describe("RecordOutcomeMeasureButton", () => {
     const [, body] = vi.mocked(api.createOutcomeMeasure).mock.calls[0]
     expect(body.total_score).toBe(14)
     expect(body.item_scores).toBeUndefined()
+  })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it("hides the Record score trigger when read-only", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      render(<RecordOutcomeMeasureButton patientId="p1" />, {
+        wrapper: createWrapper(),
+      })
+
+      expect(
+        screen.queryByRole("button", { name: /record score/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("shows the Record score trigger when the flag is unset", () => {
+      render(<RecordOutcomeMeasureButton patientId="p1" />, {
+        wrapper: createWrapper(),
+      })
+
+      expect(
+        screen.getByRole("button", { name: /record score/i }),
+      ).toBeInTheDocument()
+    })
   })
 })

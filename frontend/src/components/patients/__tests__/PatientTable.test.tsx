@@ -472,4 +472,65 @@ describe("PatientTable", () => {
       ).toBeDisabled()
     })
   })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it("hides the Add Patient button and the Actions column when read-only", async () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients,
+        total: 3,
+        page: 1,
+        page_size: 50,
+      })
+
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      await waitFor(() => {
+        expect(screen.getByText("Jane Doe")).toBeInTheDocument()
+      })
+
+      expect(
+        screen.queryByRole("button", { name: /^add patient$/i }),
+      ).not.toBeInTheDocument()
+      expect(screen.queryByText("Actions")).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole("button", { name: /edit patient jane doe/i }),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole("button", { name: /delete patient jane doe/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("shows the Add Patient button and per-row actions when the flag is unset", async () => {
+      const { Wrapper } = createWrapper()
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: mockPatients,
+        total: 3,
+        page: 1,
+        page_size: 50,
+      })
+
+      render(<PatientTable />, { wrapper: Wrapper })
+
+      await waitFor(() => {
+        expect(screen.getByText("Jane Doe")).toBeInTheDocument()
+      })
+
+      expect(
+        screen.getByRole("button", { name: /^add patient$/i }),
+      ).toBeInTheDocument()
+      expect(screen.getByText("Actions")).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: /edit patient jane doe/i }),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: /delete patient jane doe/i }),
+      ).toBeInTheDocument()
+    })
+  })
 })

@@ -10,7 +10,7 @@
  * is exercised separately in the evaluator unit test.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -214,5 +214,36 @@ describe("RecordDiagnosisButton — checklist evaluator_type", () => {
     const [, body] = vi.mocked(api.createDiagnosticAssessment).mock.calls[0]
     expect(body.instrument).toBe("mdd-checklist")
     expect(body.determined_icd10).toBe("F32.9")
+  })
+})
+
+describe("read-only deployment mode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.listDiagnosticDefinitions).mockResolvedValue({
+      data: [MDD, GAD],
+      total: 2,
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it("hides the Record diagnosis trigger when read-only", () => {
+    vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+    render(<RecordDiagnosisButton patientId="p1" />, { wrapper: createWrapper() })
+
+    expect(
+      screen.queryByRole("button", { name: /record diagnosis/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("shows the Record diagnosis trigger when the flag is unset", () => {
+    render(<RecordDiagnosisButton patientId="p1" />, { wrapper: createWrapper() })
+
+    expect(
+      screen.getByRole("button", { name: /record diagnosis/i }),
+    ).toBeInTheDocument()
   })
 })

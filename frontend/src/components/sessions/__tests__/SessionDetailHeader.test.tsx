@@ -4,7 +4,7 @@
  * Tests for SessionDetailHeader component
  */
 
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { SessionDetailHeader } from "../SessionDetailHeader"
 import type { SessionStatus } from "@/types/sessions"
@@ -187,6 +187,27 @@ describe("SessionDetailHeader", () => {
 
       expect(onSessionDateChange).not.toHaveBeenCalled()
       expect(screen.queryByLabelText("Session date and time")).not.toBeInTheDocument()
+    })
+  })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it("hides the edit session date affordance when read-only", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      render(<SessionDetailHeader {...defaultProps} editableSessionDate />)
+
+      expect(screen.queryByLabelText("Edit session date")).not.toBeInTheDocument()
+      expect(screen.getByText("January 15, 2024")).toBeInTheDocument()
+    })
+
+    it("shows the edit session date affordance when the flag is unset", () => {
+      render(<SessionDetailHeader {...defaultProps} editableSessionDate />)
+
+      expect(screen.getByLabelText("Edit session date")).toBeInTheDocument()
+      expect(screen.getByText("January 15, 2024")).toBeInTheDocument()
     })
   })
 })

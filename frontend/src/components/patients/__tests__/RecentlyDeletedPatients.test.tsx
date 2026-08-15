@@ -7,7 +7,7 @@
  * empty state, and the restore button -> API -> toast happy path.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -184,6 +184,65 @@ describe("RecentlyDeletedPatients", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/could not restore patient/i)).toBeInTheDocument()
+    })
+  })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it("hides the restore button and the Actions column when read-only", async () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      const { Wrapper } = createWrapper()
+      const deleted = buildSoftDeleted({
+        id: "p1",
+        first_name: "Jane",
+        last_name: "Doe",
+        daysAgo: 5,
+      })
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: [deleted],
+        total: 1,
+        page: 1,
+        page_size: 1,
+      })
+
+      render(<RecentlyDeletedPatients />, { wrapper: Wrapper })
+
+      await waitFor(() => {
+        expect(screen.getByText("Jane Doe")).toBeInTheDocument()
+      })
+      expect(screen.getByText(/2[45] days remaining/)).toBeInTheDocument()
+      expect(screen.queryByText("Actions")).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole("button", { name: /restore patient jane doe/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("shows the restore button when the flag is unset", async () => {
+      const { Wrapper } = createWrapper()
+      const deleted = buildSoftDeleted({
+        id: "p1",
+        first_name: "Jane",
+        last_name: "Doe",
+        daysAgo: 5,
+      })
+      vi.mocked(patientsApi.listPatients).mockResolvedValue({
+        data: [deleted],
+        total: 1,
+        page: 1,
+        page_size: 1,
+      })
+
+      render(<RecentlyDeletedPatients />, { wrapper: Wrapper })
+
+      await waitFor(() => {
+        expect(screen.getByText("Jane Doe")).toBeInTheDocument()
+      })
+      expect(
+        screen.getByRole("button", { name: /restore patient jane doe/i }),
+      ).toBeInTheDocument()
     })
   })
 })

@@ -35,6 +35,7 @@ import {
 import { UploadTranscriptDialog } from "@/components/sessions/UploadTranscriptDialog"
 import { ImportNotesDialog } from "@/components/sessions/ImportNotesDialog"
 import { useToast } from "@/components/ui/Toast"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
 import { useCreateStandaloneNote } from "@/hooks/useNotes"
 import type { NoteTypeSchema } from "@/types/noteTypes"
@@ -51,6 +52,11 @@ export function NewNoteButton({ patientId }: NewNoteButtonProps) {
   const { showToast } = useToast()
   const { data: catalog, isLoading } = useNoteTypes()
   const createNote = useCreateStandaloneNote()
+  const { readOnly } = useReadOnlyMode()
+
+  // Both on-ramps (transcript upload, blank note) and the import dialog hang
+  // off this button, so hiding it closes the whole note-authoring flow.
+  if (readOnly) return null
 
   const sessionTypes = (catalog?.note_types ?? []).filter(
     (t) => t.context === "session",

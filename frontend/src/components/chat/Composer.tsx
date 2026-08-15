@@ -15,6 +15,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { Send } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { Button } from "@/components/ui/button"
 
 interface ComposerProps {
@@ -38,6 +39,10 @@ export function Composer({
 }: ComposerProps) {
   const [value, setValue] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const { readOnly } = useReadOnlyMode()
+  // Asking a question writes a turn to the thread, so the composer closes —
+  // but the transcript above it stays readable and scrollable.
+  const inputDisabled = disabled || readOnly
 
   useEffect(() => {
     const el = textareaRef.current
@@ -56,7 +61,7 @@ export function Composer({
 
   function submit() {
     const trimmed = value.trim()
-    if (!trimmed || disabled) return
+    if (!trimmed || inputDisabled) return
     onSend(trimmed)
     setValue("")
   }
@@ -76,8 +81,8 @@ export function Composer({
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          disabled={disabled}
+          placeholder={readOnly ? "" : placeholder}
+          disabled={inputDisabled}
           maxLength={MAX_CONTENT_CHARS + 1000 /* allow visible overflow */}
           rows={1}
           aria-label="Message"
@@ -91,7 +96,7 @@ export function Composer({
           type="button"
           size="icon"
           onClick={submit}
-          disabled={disabled || value.trim().length === 0 || overChars}
+          disabled={inputDisabled || value.trim().length === 0 || overChars}
           aria-label="Send"
           className="shrink-0 self-end mb-0.5 bg-primary-500 hover:bg-primary-600 text-white"
         >
@@ -99,7 +104,12 @@ export function Composer({
         </Button>
       </div>
       <div className="flex items-center justify-between min-h-[14px]">
-        {showMeter ? (
+        {readOnly ? (
+          <span className="text-[10px] text-neutral-400">
+            This deployment is read-only — earlier conversations stay readable,
+            but new questions are turned off.
+          </span>
+        ) : showMeter ? (
           <div
             role="progressbar"
             aria-label="Context budget used"

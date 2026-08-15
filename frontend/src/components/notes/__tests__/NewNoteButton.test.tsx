@@ -7,7 +7,7 @@
  * pre-filled) and creating a blank note from a session note type.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 
 import { NewNoteButton } from "../NewNoteButton"
@@ -105,5 +105,31 @@ describe("NewNoteButton", () => {
         "/dashboard/patients/patient-1/notes/note-9",
       ),
     )
+  })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it("renders nothing, closing off the transcript-upload and import flows, when read-only", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      const { container } = render(<NewNoteButton patientId="patient-1" />)
+
+      expect(
+        screen.queryByRole("button", { name: /new note/i }),
+      ).not.toBeInTheDocument()
+      expect(screen.queryByTestId("transcript-dialog")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("import-dialog")).not.toBeInTheDocument()
+      expect(container).toBeEmptyDOMElement()
+    })
+
+    it("shows the New note button when the flag is unset", () => {
+      render(<NewNoteButton patientId="patient-1" />)
+
+      expect(
+        screen.getByRole("button", { name: /new note/i }),
+      ).toBeInTheDocument()
+    })
   })
 })
