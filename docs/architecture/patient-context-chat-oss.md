@@ -1190,6 +1190,15 @@ refactor.
     sources before high-priority ones; under-budget assemblies keep
     everything.
 
+The bundler itself does no patient scoping — it's a pure function over
+whatever a `NotesRepository` / `PatientDocumentRepository` hand it (see
+`chat_context_bundler.py`'s module docstring). The patient-boundary proof
+(cross-patient isolation, shared-clinician access, soft-delete bypass, and
+a structural check that the repos' compiled SQL still carries an explicit
+`patient_id` filter) is a Postgres/RLS concern one layer down, and lives in
+`backend/tests_integration/database/test_chat_context_bundler_scoping.py`
+— the unit fakes above can't exercise real RLS.
+
 ---
 
 ## §17. Phase plan
