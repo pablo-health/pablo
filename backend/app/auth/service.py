@@ -33,6 +33,12 @@ from .providers import (
     VerifiedIdentity,
     VerifierRegistry,
 )
+from .route_access import (
+    AccessIntent,
+    AccessLevel,
+    access_intent,
+    resolve_access_level,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -790,15 +796,27 @@ def get_current_user(
 
 
 def require_active_subscription(
+    request: Request,
     user: User = Depends(get_current_user),
 ) -> User:
-    """Verify the user's practice has an active (or trial/grace) subscription.
+    """Verify the user's practice may perform this request.
 
     No-op when subscription enforcement is disabled (the single-tenant
-    default).
+    default), and no-op when there is no subscription record yet — a
+    practice mid-provisioning is not a lapsed one.
+
+    Otherwise the subscription's access level decides (see
+    :mod:`app.auth.route_access`). Full access allows everything.
+    Read-only access allows read-intent routes and refuses the rest,
+    so a wound-down practice keeps view-and-export access to its
+    records indefinitely. No access refuses everything behind this
+    gate, which is what a subscription without an access level falls
+    back to — the behavior this gate has always had.
 
     Raises:
-        HTTPException: 403 if subscription is lapsed and no grace extension is active.
+        HTTPException: 403 ``SUBSCRIPTION_READONLY`` for a write under
+            read-only access; 403 ``SUBSCRIPTION_INACTIVE`` when the
+            subscription grants no access.
     """
     settings = get_settings()
     if not settings.is_saas:
@@ -811,9 +829,38 @@ def require_active_subscription(
         # No subscription record — might be mid-provisioning; let through
         return user
 
-    effective = sub.get("effective_status", sub.get("status"))
-    if effective in ("active", "trial"):
+    access = resolve_access_level(sub)
+    if access is AccessLevel.FULL:
         return user
+
+    if access is AccessLevel.READ_ONLY:
+        # Classify against the route's path *template*, so one entry in
+        # the override table covers every patient id. Falling back to
+        # the concrete path keeps this honest if a request ever reaches
+        # the gate without a matched route: it simply won't hit an
+        # override, and the method decides.
+        route = request.scope.get("route")
+        path_template = getattr(route, "path_format", request.url.path)
+        if access_intent(request.method, path_template) is AccessIntent.READ:
+            return user
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "SUBSCRIPTION_READONLY",
+                    "message": (
+                        "Your subscription has ended. Your records remain "
+                        "available to view and export."
+                    ),
+                    "details": {
+                        "status": sub.get("status"),
+                        "access_level": AccessLevel.READ_ONLY.value,
+                        "grace_extension_available": sub.get("grace_extension_available", False),
+                    },
+                }
+            },
+        )
 
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

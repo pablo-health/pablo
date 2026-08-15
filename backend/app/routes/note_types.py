@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ..api_errors import NotFoundError
+from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user
 from ..notes import (
     NoteFieldDef,
@@ -131,6 +132,7 @@ def list_note_types(
     registry: NoteTypeRegistry = Depends(get_registry),
     user: User = Depends(get_current_user),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    _: None = Depends(subscription_exempt),
 ) -> NoteTypeListResponse:
     """Return registered note types, sorted by key.
 
@@ -162,6 +164,7 @@ def get_note_type(
     registry: NoteTypeRegistry = Depends(get_registry),
     user: User = Depends(get_current_user),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
+    _: None = Depends(subscription_exempt),
 ) -> NoteTypeSchema:
     """Return a single note-type definition by key."""
     if not registry.has(key):
