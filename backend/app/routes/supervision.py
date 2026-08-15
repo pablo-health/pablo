@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ..api_errors import NotFoundError
+from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, get_tenant_context
 from ..models import User
 from ..repositories import get_supervision_repository
@@ -45,6 +46,7 @@ router = APIRouter(
 
 RepoDep = Annotated[PostgresSupervisionRepository, Depends(get_supervision_repository)]
 UserDep = Annotated[User, Depends(get_current_user)]
+SubscriptionExemptDep = Annotated[None, Depends(subscription_exempt)]
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +181,7 @@ def _hours_to_response(entry: SupervisionHours) -> SupervisionHoursResponse:
 def list_supervision_relationships(
     user: UserDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> list[SupervisionRelationshipResponse]:
     """List the caller's supervision relationships, oldest first."""
     return [_relationship_to_response(r) for r in repo.list_by_user(user.id)]
@@ -189,6 +192,7 @@ def create_supervision_relationship(
     payload: SupervisionRelationshipPayload,
     user: UserDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> SupervisionRelationshipResponse:
     """Create a supervision relationship.
 
@@ -235,6 +239,7 @@ def update_supervision_relationship(
     payload: SupervisionRelationshipPayload,
     user: UserDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> SupervisionRelationshipResponse:
     """Update an existing supervision relationship (full replace of editable fields)."""
     existing = repo.get(relationship_id, user.id)
@@ -263,6 +268,7 @@ def delete_supervision_relationship(
     relationship_id: str,
     user: UserDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> None:
     """Delete a supervision relationship and all its linked hour entries."""
     if not repo.delete(relationship_id, user.id):
@@ -279,6 +285,7 @@ def list_supervision_hours(
     relationship_id: str,
     user: UserDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> AccrualResponse:
     """List accrued-hour entries for a relationship and return the running total.
 
@@ -308,6 +315,7 @@ def add_supervision_hours(
     payload: SupervisionHoursPayload,
     user: UserDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> SupervisionHoursResponse:
     """Log an accrued-hours entry against a supervision relationship.
 

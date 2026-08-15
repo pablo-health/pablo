@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
+from ..auth.route_access import subscription_exempt
 from ..auth.service import get_current_user, get_tenant_context
 from ..compliance import (
     ComplianceTemplate,
@@ -172,6 +173,7 @@ DocRepoDep = Annotated[
     PostgresComplianceDocumentRepository, Depends(get_compliance_document_repository)
 ]
 UserDep = Annotated[User, Depends(get_current_user)]
+SubscriptionExemptDep = Annotated[None, Depends(subscription_exempt)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
@@ -209,6 +211,7 @@ def _doc_to_response(doc: ComplianceDocument) -> ComplianceDocumentResponse:
 @router.get("/templates", response_model=list[ComplianceTemplateResponse])
 def list_compliance_templates(
     user: UserDep,
+    _exempt: SubscriptionExemptDep,
 ) -> list[ComplianceTemplateResponse]:
     """Return the catalog of trackable items visible to this edition.
 
@@ -226,14 +229,16 @@ def list_compliance_templates(
 
 
 @router.get("", response_model=list[ComplianceItemResponse])
-def list_compliance_items(user: UserDep, repo: RepoDep) -> list[ComplianceItemResponse]:
+def list_compliance_items(
+    user: UserDep, repo: RepoDep, _exempt: SubscriptionExemptDep
+) -> list[ComplianceItemResponse]:
     """List the caller's compliance items, oldest first."""
     return [_to_response(i) for i in repo.list_by_user(user.id)]
 
 
 @router.post("", response_model=ComplianceItemResponse, status_code=201)
 def create_compliance_item(
-    payload: ComplianceItemPayload, user: UserDep, repo: RepoDep
+    payload: ComplianceItemPayload, user: UserDep, repo: RepoDep, _exempt: SubscriptionExemptDep
 ) -> ComplianceItemResponse:
     """Create a new compliance item for the caller."""
     _validate(payload, user)
@@ -254,7 +259,11 @@ def create_compliance_item(
 
 @router.put("/{item_id}", response_model=ComplianceItemResponse)
 def update_compliance_item(
-    item_id: str, payload: ComplianceItemPayload, user: UserDep, repo: RepoDep
+    item_id: str,
+    payload: ComplianceItemPayload,
+    user: UserDep,
+    repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> ComplianceItemResponse:
     """Update an existing compliance item (full replace of editable fields)."""
     _validate(payload, user)
@@ -270,7 +279,9 @@ def update_compliance_item(
 
 
 @router.post("/{item_id}/complete", response_model=ComplianceItemResponse)
-def complete_compliance_item(item_id: str, user: UserDep, repo: RepoDep) -> ComplianceItemResponse:
+def complete_compliance_item(
+    item_id: str, user: UserDep, repo: RepoDep, _exempt: SubscriptionExemptDep
+) -> ComplianceItemResponse:
     """Mark an item as completed (e.g. attestation done, training renewed)."""
     existing = repo.get(item_id, user.id)
     if existing is None:
@@ -282,7 +293,9 @@ def complete_compliance_item(item_id: str, user: UserDep, repo: RepoDep) -> Comp
 
 
 @router.delete("/{item_id}", status_code=204)
-def delete_compliance_item(item_id: str, user: UserDep, repo: RepoDep) -> None:
+def delete_compliance_item(
+    item_id: str, user: UserDep, repo: RepoDep, _exempt: SubscriptionExemptDep
+) -> None:
     if not repo.delete(item_id, user.id):
         raise NotFoundError("Compliance item not found")
 
@@ -317,6 +330,7 @@ async def upload_compliance_document(
     doc_repo: DocRepoDep,
     storage: StorageDep,
     settings: SettingsDep,
+    _exempt: SubscriptionExemptDep,
     description: Annotated[str | None, Form()] = None,
 ) -> ComplianceDocumentResponse:
     """Attach an evidence document to the caller's compliance item.
@@ -398,6 +412,7 @@ def list_compliance_documents(
     user: UserDep,
     repo: RepoDep,
     doc_repo: DocRepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> list[ComplianceDocumentResponse]:
     """List evidence documents attached to the caller's compliance item, newest first."""
     item = repo.get(item_id, user.id)
@@ -414,6 +429,7 @@ def download_compliance_document(
     storage: StorageDep,
     # item repo needed to verify the document's parent item belongs to the caller
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> StreamingResponse:
     """Stream the bytes of an evidence document.
 
@@ -461,6 +477,7 @@ def delete_compliance_document(
     doc_repo: DocRepoDep,
     storage: StorageDep,
     repo: RepoDep,
+    _exempt: SubscriptionExemptDep,
 ) -> None:
     """Delete an evidence document, removing the storage object and the DB row.
 

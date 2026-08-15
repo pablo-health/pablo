@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
+from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
 from ..auth.service import (
     TenantContext,
@@ -257,6 +258,7 @@ def record_mfa_enrollment(
 @router.get("/me")
 def get_current_user_profile(
     user: User = Depends(get_current_user),
+    _: None = Depends(subscription_exempt),
 ) -> User:
     """
     Get current user profile.
@@ -297,6 +299,7 @@ class CompanionDeviceItem(BaseModel):
 def list_my_devices(
     user: User = Depends(get_current_user),
     device_service: "CompanionDeviceService" = Depends(get_companion_device_service_dep),
+    _: None = Depends(subscription_exempt),
 ) -> list[CompanionDeviceItem]:
     """List the caller's enrolled (non-revoked) companion installs.
 
@@ -776,6 +779,7 @@ def get_current_baa(
 def get_preferences(
     user: User = Depends(get_current_user),
     user_repo: UserRepository = Depends(get_user_repository),
+    _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
     """Fetch user preferences. Returns defaults if never saved."""
     return user_repo.get_preferences(user.id)
@@ -786,6 +790,7 @@ def save_preferences(
     prefs: UserPreferences,
     user: User = Depends(get_current_user),
     user_repo: UserRepository = Depends(get_user_repository),
+    _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
     """Save user preferences (full replace)."""
     return user_repo.save_preferences(user.id, prefs)
@@ -796,6 +801,7 @@ def save_theme_preference(
     request: UpdateThemeRequest,
     user: User = Depends(get_current_user),
     user_repo: UserRepository = Depends(get_user_repository),
+    _: None = Depends(subscription_exempt),
 ) -> UserPreferences:
     """Update just the UI theme without round-tripping the full prefs blob."""
     prefs = user_repo.get_preferences(user.id)
@@ -834,6 +840,7 @@ def list_my_audit_log(
     user: User = Depends(get_current_user),
     _ctx: TenantContext = Depends(get_tenant_context),
     audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
 ) -> AuditLogResponse:
     """Return the caller's own audit rows, newest first."""
     entries = audit.list_for_user(user_id=user.id, since=since, limit=limit)
