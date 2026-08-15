@@ -454,6 +454,8 @@ def _row_to_patient(row: PatientRow) -> Patient:
         next_session_date=row.next_session_date,
         chart_closed_at=row.chart_closed_at,
         chart_closure_reason=row.chart_closure_reason,
+        rate_cents=row.rate_cents,
+        sliding_scale_note=row.sliding_scale_note,
     )
 
 
@@ -474,5 +476,7 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.next_session_date = patient.next_session_date
     row.chart_closed_at = patient.chart_closed_at
     row.chart_closure_reason = patient.chart_closure_reason
+    row.rate_cents = patient.rate_cents
+    row.sliding_scale_note = patient.sliding_scale_note
     row.created_at = patient.created_at
     row.updated_at = patient.updated_at

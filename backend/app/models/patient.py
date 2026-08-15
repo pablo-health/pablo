@@ -23,6 +23,8 @@ class CreatePatientRequest(BaseModel):
     status: str = Field("active")
     date_of_birth: str | None = None
     diagnosis: str | None = None
+    rate_cents: int | None = Field(None, ge=0)
+    sliding_scale_note: str | None = Field(None, max_length=2000)
 
     @field_validator("email")
     @classmethod
@@ -59,6 +61,8 @@ class UpdatePatientRequest(BaseModel):
     status: str | None = None
     date_of_birth: str | None = None
     diagnosis: str | None = None
+    rate_cents: int | None = Field(None, ge=0)
+    sliding_scale_note: str | None = Field(None, max_length=2000)
 
     @field_validator("email")
     @classmethod
@@ -104,6 +108,8 @@ class PatientResponse(BaseModel):
     status: str
     date_of_birth: str | None = None
     diagnosis: str | None = None
+    rate_cents: int | None = None
+    sliding_scale_note: str | None = None
     session_count: int
     last_session_date: datetime | None = None
     next_session_date: datetime | None = None
@@ -139,6 +145,8 @@ class PatientResponse(BaseModel):
             status=patient.status,
             date_of_birth=patient.date_of_birth,
             diagnosis=patient.diagnosis,
+            rate_cents=patient.rate_cents,
+            sliding_scale_note=patient.sliding_scale_note,
             session_count=patient.session_count,
             last_session_date=patient.last_session_date,
             next_session_date=patient.next_session_date,
@@ -245,6 +253,8 @@ class Patient:
     next_session_date: datetime | None = None
     chart_closed_at: datetime | None = None
     chart_closure_reason: str | None = None
+    rate_cents: int | None = None
+    sliding_scale_note: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""
@@ -286,6 +296,8 @@ class Patient:
             next_session_date=data.get("next_session_date"),
             chart_closed_at=data.get("chart_closed_at"),
             chart_closure_reason=data.get("chart_closure_reason"),
+            rate_cents=data.get("rate_cents"),
+            sliding_scale_note=data.get("sliding_scale_note"),
         )
 
     def to_dict(self) -> dict[str, Any]:

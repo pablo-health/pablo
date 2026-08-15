@@ -29,12 +29,15 @@ from ..models.enums import SessionSource, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
     AppointmentResponse,
+    AppointmentTypeListResponse,
+    AppointmentTypeResponse,
     AvailabilityRuleListResponse,
     AvailabilityRuleResponse,
     CheckConflictsRequest,
     CheckConflictsResponse,
     ConflictResponse,
     CreateAppointmentRequest,
+    CreateAppointmentTypeRequest,
     CreateAvailabilityRuleRequest,
     CreateRecurringAppointmentRequest,
     EditSeriesRequest,
@@ -44,6 +47,7 @@ from ..models.scheduling import (
     StartSessionFromAppointmentRequest,
     TimeSlotResponse,
     UpdateAppointmentRequest,
+    UpdateAppointmentTypeRequest,
     UpdateAvailabilityRuleRequest,
 )
 from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
@@ -54,6 +58,9 @@ from ..repositories import (
 )
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
+)
+from ..repositories import (
+    get_appointment_type_repository as _appt_type_repo_factory,
 )
 from ..repositories import (
     get_availability_rule_repository as _rule_repo_factory,
@@ -75,6 +82,7 @@ from ..scheduling_engine.exceptions import (
     InvalidAppointmentError,
     InvalidRecurrenceError,
 )
+from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
@@ -119,6 +127,7 @@ def _is_valid_gcal_redirect_uri(redirect_uri: str) -> bool:
 if TYPE_CHECKING:
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
 logger = logging.getLogger(__name__)
@@ -138,6 +147,13 @@ def get_availability_rule_repository(
 ) -> AvailabilityRuleRepository:
     """Get availability rule repository scoped to the tenant's database."""
     return _rule_repo_factory()
+
+
+def get_appointment_type_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> AppointmentTypeRepository:
+    """Get appointment type repository scoped to the tenant's database."""
+    return _appt_type_repo_factory()
 
 
 def get_scheduling_service(
@@ -747,6 +763,97 @@ def delete_availability_rule(
     deleted = rule_repo.delete(rule_id, ctx.user_id)
     if not deleted:
         raise NotFoundError(f"Rule not found: {rule_id}")
+
+
+# --- Appointment type endpoints ---
+
+
+def _appointment_type_to_response(appointment_type: AppointmentType) -> AppointmentTypeResponse:
+    return AppointmentTypeResponse(
+        id=appointment_type.id,
+        user_id=appointment_type.user_id,
+        name=appointment_type.name,
+        default_fee_cents=appointment_type.default_fee_cents,
+        created_at=appointment_type.created_at,
+        updated_at=appointment_type.updated_at,
+    )
+
+
+@router.get("/api/appointment-types", response_model=AppointmentTypeListResponse)
+def list_appointment_types(
+    ctx: TenantContext = Depends(get_tenant_context),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
+) -> AppointmentTypeListResponse:
+    """List all appointment types for the current user."""
+    types = type_repo.list_by_user(ctx.user_id)
+    return AppointmentTypeListResponse(
+        data=[_appointment_type_to_response(t) for t in types],
+        total=len(types),
+    )
+
+
+@router.post(
+    "/api/appointment-types",
+    response_model=AppointmentTypeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_appointment_type(
+    request: CreateAppointmentTypeRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
+) -> AppointmentTypeResponse:
+    """Create a new appointment type with an optional default fee."""
+    now = utc_now()
+    appointment_type = AppointmentType(
+        id=str(uuid.uuid4()),
+        user_id=ctx.user_id,
+        name=request.name,
+        default_fee_cents=request.default_fee_cents,
+        created_at=now,
+        updated_at=now,
+    )
+    created = type_repo.create(appointment_type)
+    return _appointment_type_to_response(created)
+
+
+@router.patch(
+    "/api/appointment-types/{appointment_type_id}",
+    response_model=AppointmentTypeResponse,
+)
+def update_appointment_type(
+    appointment_type_id: str,
+    request: UpdateAppointmentTypeRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
+) -> AppointmentTypeResponse:
+    """Update an existing appointment type."""
+    appointment_type = type_repo.get(appointment_type_id, ctx.user_id)
+    if not appointment_type:
+        raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
+
+    if request.name is not None:
+        appointment_type.name = request.name
+    if request.default_fee_cents is not None:
+        appointment_type.default_fee_cents = request.default_fee_cents
+
+    appointment_type.updated_at = utc_now()
+    updated = type_repo.update(appointment_type)
+    return _appointment_type_to_response(updated)
+
+
+@router.delete(
+    "/api/appointment-types/{appointment_type_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_appointment_type(
+    appointment_type_id: str,
+    ctx: TenantContext = Depends(get_tenant_context),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
+) -> None:
+    """Delete an appointment type."""
+    deleted = type_repo.delete(appointment_type_id, ctx.user_id)
+    if not deleted:
+        raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
 
 
 # --- Google Calendar endpoints ---

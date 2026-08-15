@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from ..diagnostics.definition_provider import DbDefinitionProvider
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
+    from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
     from .diagnostic_assessment import DiagnosticAssessmentRepository
     from .google_calendar_token import GoogleCalendarTokenRepository
@@ -164,6 +165,13 @@ def get_availability_rule_repository() -> AvailabilityRuleRepository:
     return PostgresAvailabilityRuleRepository(_get_pg_session())
 
 
+def get_appointment_type_repository() -> AppointmentTypeRepository:
+    """Get appointment type repository instance."""
+    from .postgres.appointment_type import PostgresAppointmentTypeRepository
+
+    return PostgresAppointmentTypeRepository(_get_pg_session())
+
+
 def get_google_calendar_token_repository() -> GoogleCalendarTokenRepository:
     """Get Google Calendar token repository instance."""
     from .postgres.google_calendar_token import (
@@ -288,6 +296,7 @@ __all__ = [
     "UserRepository",
     "get_allowlist_repository",
     "get_appointment_repository",
+    "get_appointment_type_repository",
     "get_availability_rule_repository",
     "get_chat_repository",
     "get_clinician_profile_repository",

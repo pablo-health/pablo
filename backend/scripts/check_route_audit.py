@@ -186,6 +186,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("delete", "/api/availability/rules/{rule_id}"),  # deletes an availability rule
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
+        ("post", "/api/appointment-types"),  # creates an appointment type
+        ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type
+        ("delete", "/api/appointment-types/{appointment_type_id}"),  # deletes an appointment type
         ("get", "/api/google-calendar/authorize"),  # OAuth start, returns auth URL
         ("get", "/api/google-calendar/callback"),  # OAuth token exchange, no events
         ("get", "/api/google-calendar/status"),  # calendar connection status
