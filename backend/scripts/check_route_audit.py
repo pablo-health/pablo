@@ -91,7 +91,6 @@ HTTP_METHODS: frozenset[str] = frozenset({"get", "post", "patch", "put", "delete
 # Keyed by (method, mounted-path) — i.e. router prefix + decorator arg.
 AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
-        ("get", "/api/appointments"),  # list_appointments — calendar metadata
         # internal_transcription.py — the transcript-upload audit is emitted
         # inside process_transcription_result (the single completion funnel),
         # not on the route signature; both handlers delegate to it.

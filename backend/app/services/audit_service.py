@@ -33,6 +33,11 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
         AuditAction.CHAT_CONVERSATION_VIEWED,
         AuditAction.CHAT_CONVERSATION_LIST_VIEWED,
         AuditAction.PATIENT_DOCUMENT_VIEWED,
+        # The calendar list audits one of these per appointment it returns
+        # (the payload carries the patient's display name), and refetches on
+        # every mutation — without coalescing a single busy calendar session
+        # would write the same rows dozens of times.
+        AuditAction.APPOINTMENT_VIEWED,
     }
 )
 _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)
