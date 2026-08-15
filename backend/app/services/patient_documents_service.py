@@ -11,9 +11,13 @@ layer owns:
   already enforces size+content-type at GCS, but we cross-check the
   blob metadata in case the constraint was tampered or GCS behavior
   shifts).
-* PyMuPDF text extraction — synchronous on finalize. Native-text PDFs
-  return their text body; scanned PDFs (PyMuPDF returns <100 chars)
-  store ``extracted_text=NULL`` and ak6m.2.3 will OCR them.
+* PyMuPDF text extraction — off-request. ``finalize_upload`` only
+  does the cheap blob validation and enqueues a Cloud Tasks job;
+  :meth:`PatientDocumentsService.run_finalize_extraction` is the
+  worker body that downloads the blob and runs PyMuPDF (native-text
+  PDFs return their text body; scanned PDFs — PyMuPDF returns <100
+  chars — fall back to Document AI OCR, or store
+  ``extracted_text=NULL`` if OCR isn't configured).
 
 Audit emission lives at the route layer (it needs the FastAPI Request
 for IP/UA) — service raises domain errors that the route translates
@@ -25,9 +29,12 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NoReturn
 
-from ..models import DocumentCategory, PatientDocument
+from google.api_core.exceptions import AlreadyExists
+
+from ..jobs.task_queue import enqueue
+from ..models import DocumentCategory, ExtractionStatus, PatientDocument
 from ..repositories.patient_document import FinalizedExtraction
 from ..utcnow import utc_now
 
@@ -106,6 +113,26 @@ class DocumentsBucketNotConfiguredError(PatientDocumentError):
 
 class UploadNotCompleteError(PatientDocumentError):
     """Finalize was called but the storage object isn't there yet."""
+
+
+class DocumentExtractionFailedError(PatientDocumentError):
+    """The finalize worker durably marked the document ``failed``.
+
+    Raised for a deterministic error (e.g. PyMuPDF can't open a corrupt
+    PDF — retrying would fail identically) or a transient error on the
+    queue's last delivery attempt. The row is already committed as
+    ``extraction_status='failed'`` by the time this is raised; the caller
+    should answer non-retryably (200), mirroring
+    ``SOAPGenerationFailedError``.
+    """
+
+
+class TransientDocumentExtractionError(PatientDocumentError):
+    """A transient extraction error on a non-final delivery attempt.
+
+    The document is left ``pending``; the caller should answer 5xx so
+    Cloud Tasks retries with backoff.
+    """
 
 
 @dataclass(frozen=True)
@@ -246,10 +273,16 @@ class PatientDocumentsService:
         document_id: str,
         user_id: str,
     ) -> PatientDocument:
-        """Verify the uploaded object and run PyMuPDF text extraction.
+        """Verify the uploaded object and enqueue off-request text extraction.
 
-        Returns the updated PatientDocument with ``finalized_at`` set.
-        Raises if:
+        Only the cheap, synchronous half of finalize runs here: the GCS
+        blob is checked against the same constraints the signed URL
+        enforced (defense-in-depth against a tampered or bypassed
+        upload). The heavy part — GCS download, PyMuPDF, Document AI —
+        runs on a Cloud Tasks worker; see :meth:`run_finalize_extraction`.
+
+        Returns the updated PatientDocument with ``finalized_at`` set and
+        ``extraction_status='pending'``. Raises if:
 
         * the document doesn't exist or belongs to another user
         * the storage object isn't there yet (browser never uploaded)
@@ -277,6 +310,62 @@ class PatientDocumentsService:
         if content_type and content_type not in ALLOWED_MIME_TYPES:
             raise UnsupportedMimeTypeError(content_type)
 
+        updated = self._repo.mark_pending(
+            document_id=document_id,
+            user_id=user_id,
+            size_bytes=size_bytes,
+            finalized_at=utc_now(),
+        )
+        if updated is None:
+            return _raise_not_found()
+
+        try:
+            enqueue(
+                self._settings.document_finalize_task_queue,
+                "/api/internal/jobs/finalize-document",
+                {"document_id": document_id, "user_id": user_id},
+                dedup_key=document_id,
+            )
+        except AlreadyExists:
+            # A finalize job for this document is already queued (double
+            # finalize, or a client retry inside the dedup window) — the
+            # worker will pick it up. Don't revert the pending row.
+            logger.info("finalize-document already enqueued for document %s (dedup)", document_id)
+
+        return updated
+
+    def run_finalize_extraction(
+        self,
+        *,
+        document_id: str,
+        user_id: str,
+        transient_is_terminal: bool = False,
+    ) -> PatientDocument:
+        """Worker body: download the blob and run PyMuPDF / Document AI.
+
+        Invoked off-request by the Cloud Tasks worker for a document
+        left ``pending`` by :meth:`finalize_upload`. Idempotent against
+        duplicate deliveries: if the row is no longer ``pending`` (an
+        earlier delivery already completed it), this is a no-op that
+        returns the current row.
+
+        Raises :class:`DocumentExtractionFailedError` once the row has
+        been durably marked ``failed`` — a deterministic PyMuPDF error,
+        or a transient error (e.g. a GCS hiccup) on ``transient_is_terminal``
+        (the queue's last delivery attempt). Raises
+        :class:`TransientDocumentExtractionError` for a transient error
+        on any earlier attempt, so the caller can answer 5xx and let the
+        queue retry with backoff. Document AI failures never raise —
+        :meth:`DocumentAiOcrClient.extract` already maps every failure
+        mode to ``None`` (extracted_via='unavailable'), which is a
+        successful completion with no text, not an extraction failure.
+        """
+        document = self._repo.get(document_id, user_id)
+        if document is None:
+            return _raise_not_found()
+        if document.extraction_status != ExtractionStatus.PENDING:
+            return document  # already processed by an earlier delivery
+
         # Text extraction is PDF-only. PNG/JPEG land in the bundle as
         # images and skip both PyMuPDF and the OCR fallback.
         extracted_text: str | None = None
@@ -284,11 +373,25 @@ class PatientDocumentsService:
         extraction_metadata: dict[str, object] | None = None
 
         if document.mime_type == "application/pdf":
-            raw = storage.download_bytes(
-                bucket=bucket,
-                object_name=document.gcs_path,
-            )
-            extracted_text = _extract_pdf_text(raw)
+            storage = self._storage()
+            bucket = self._bucket()
+            try:
+                raw = storage.download_bytes(
+                    bucket=bucket,
+                    object_name=document.gcs_path,
+                )
+            except Exception as exc:
+                if transient_is_terminal:
+                    self._mark_failed_or_raise_not_found(document_id, user_id, exc)
+                raise TransientDocumentExtractionError(str(exc)) from exc
+
+            try:
+                extracted_text = _extract_pdf_text(raw)
+            except Exception as exc:
+                # A corrupt/malformed PDF fails the same way on every retry —
+                # deterministic, so don't wait for the queue to exhaust attempts.
+                self._mark_failed_or_raise_not_found(document_id, user_id, exc)
+
             if extracted_text is not None:
                 extracted_via = "pymupdf"
             elif self._ocr is not None and self._ocr.is_configured:
@@ -311,24 +414,39 @@ class PatientDocumentsService:
                     extracted_via = "unavailable"
 
         # Best-effort document summary for the chat bundler's render-cap
-        # fallback. Soft: never blocks finalize (which is idempotent and
-        # would otherwise strand the doc finalized-without-summary).
+        # fallback. Soft: never blocks completion.
         extraction_metadata = _with_summary(extraction_metadata, extracted_text)
 
-        updated = self._repo.mark_finalized(
+        updated = self._repo.mark_extraction_complete(
             document_id=document_id,
             user_id=user_id,
-            size_bytes=size_bytes,
             extraction=FinalizedExtraction(
                 text=extracted_text,
                 via=extracted_via,
                 metadata=extraction_metadata,
             ),
-            finalized_at=utc_now(),
         )
         if updated is None:
             return _raise_not_found()
         return updated
+
+    def _mark_failed_or_raise_not_found(
+        self,
+        document_id: str,
+        user_id: str,
+        cause: Exception,
+    ) -> NoReturn:
+        """Durably mark ``failed`` then raise :class:`DocumentExtractionFailedError`.
+
+        Shared by both the deterministic-PyMuPDF-error and
+        exhausted-retries paths in :meth:`run_finalize_extraction`. Always
+        raises — either :class:`PatientDocumentError` (the row vanished)
+        or :class:`DocumentExtractionFailedError`.
+        """
+        failed = self._repo.mark_extraction_failed(document_id=document_id, user_id=user_id)
+        if failed is None:
+            _raise_not_found()
+        raise DocumentExtractionFailedError(str(cause)) from cause
 
     # --- reads --------------------------------------------------------
 
@@ -386,8 +504,9 @@ def _extract_pdf_text(data: bytes) -> str | None:
 
     Returns the joined text if the result is meaningfully long;
     ``None`` for scanned PDFs (treated as <100 chars). PyMuPDF
-    exceptions bubble — a malformed PDF that pyfitz can't open is a
-    client error worth surfacing.
+    exceptions bubble — a malformed PDF that pyfitz can't open fails the
+    same way on every retry, so the caller (``run_finalize_extraction``)
+    treats it as a deterministic, non-retryable extraction failure.
     """
     import fitz  # type: ignore[import-untyped]
 

@@ -92,13 +92,16 @@ from this therapy session transcript.
 Include relevant direct quotes from the client to support your observations.
 
 **OBJECTIVE** - What you observe:
-- Appearance: Observable presentation (grooming, dress, etc.)
-- Behavior: Observable behaviors during session (eye contact, posture,
-  engagement)
+- Appearance: Leave empty unless the transcript contains explicit verbal
+  evidence (for example, the client describes their own self-care). Never
+  infer appearance from assumptions.
+- Behavior: Engagement and participation as evident from the conversation
+  (responsiveness, pauses, topic changes)
 - Speech: Rate, tone, volume, coherence of speech
 - Thought process: Organization, logical flow, tangentiality
-- Affect observed: Your observation of emotional expression (congruent/
-  incongruent, range, appropriateness)
+- Affect observed: Emotional expression as inferable from speech content
+  and tone (congruent/incongruent, range, appropriateness). Hedge
+  inferences with "Based on session content, ..."
 
 **ASSESSMENT** - Your clinical interpretation:
 - Clinical impression: Overall formulation and understanding of client's presentation
@@ -126,6 +129,8 @@ including suicide risk, self-harm, and harm to others.
 5. Be thorough but concise
 6. Ensure all required fields are completed
 7. Base observations only on what is evident in the transcript
+8. Fields describing visual observation must be left empty rather than
+   guessed; hedge inferred observations with "Based on session content"
 """
 
 

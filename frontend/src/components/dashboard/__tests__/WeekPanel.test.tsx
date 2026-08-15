@@ -36,7 +36,7 @@ describe("WeekPanel", () => {
     renderPanel()
 
     const notesRow = screen
-      .getByText(/notes awaiting your signature/i)
+      .getByText(/notes awaiting your review/i)
       .closest("a")
     expect(notesRow).toHaveTextContent("1")
     expect(notesRow).toHaveAttribute("href", "/dashboard/sessions")
@@ -57,7 +57,7 @@ describe("WeekPanel", () => {
     renderPanel()
 
     const notesRow = screen
-      .getByText(/notes awaiting your signature/i)
+      .getByText(/notes awaiting your review/i)
       .closest("a")
     expect(notesRow).toHaveTextContent("—")
   })

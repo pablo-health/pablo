@@ -62,7 +62,7 @@ export default async function OnboardingPasskeyPage() {
     <OnboardingStepShell
       stepId="passkey"
       title="Set up a passkey"
-      description="Pablo requires a second factor on every account — it keeps your patients' records safe even if your password is ever stolen or phished. A passkey is the easiest way: use your device's fingerprint, face, or screen lock — no authenticator app, no codes to copy, and nothing to phish."
+      description="Pablo requires a second factor on every account — it keeps your account safe even if your password is ever stolen or phished. A passkey is the easiest way: use your device's fingerprint, face, or screen lock — no authenticator app, no codes to copy, and nothing to phish."
     >
       <OnboardingPasskeyForm showTotpFallback={hasTotpStep} />
     </OnboardingStepShell>

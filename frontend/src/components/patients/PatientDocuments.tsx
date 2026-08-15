@@ -2,7 +2,7 @@
 
 "use client"
 
-import { ChangeEvent, useRef, useState } from "react"
+import { ChangeEvent, useEffect, useRef, useState } from "react"
 import {
   AlertCircle,
   Download,
@@ -13,12 +13,16 @@ import {
   Trash2,
   Upload,
 } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
 
 import { ApiError } from "@/lib/api/client"
 import { getPatientDocumentDownloadUrl } from "@/lib/api/patientDocuments"
+import { queryKeys } from "@/lib/api/queryKeys"
 import { DocumentViewerSheet } from "@/components/patients/DocumentViewerSheet"
 import {
+  EXTRACTION_POLL_TIMEOUT_TICKS,
   useDeletePatientDocument,
+  usePatientDocument,
   usePatientDocuments,
   useUploadPatientDocument,
 } from "@/hooks/usePatientDocuments"
@@ -93,12 +97,44 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [viewerDoc, setViewerDoc] = useState<PatientDocumentResponse | null>(null)
   const [category, setCategory] = useState<DocumentCategory>("chart")
+  // Set once finalize returns a document still mid-extraction; cleared once
+  // usePatientDocument observes a terminal status below.
+  const [extractingDocumentId, setExtractingDocumentId] = useState<string | null>(null)
 
+  const queryClient = useQueryClient()
   const { data, isLoading, error: listError } = usePatientDocuments(patientId)
   const upload = useUploadPatientDocument(patientId)
   const remove = useDeletePatientDocument(patientId)
+  const extractingDocument = usePatientDocument(extractingDocumentId)
 
   const documents = data?.data ?? []
+
+  useEffect(() => {
+    if (!extractingDocumentId) return
+    const status = extractingDocument.data?.extraction_status
+    const reachedTerminalStatus = status !== undefined && status !== "pending"
+    // usePatientDocument's refetchInterval stops polling after
+    // EXTRACTION_POLL_TIMEOUT_TICKS, but the last-seen data is still
+    // "pending" — pollCount is how we tell "gave up" from "still
+    // waiting for the first poll".
+    const gaveUpPolling =
+      extractingDocument.pollCount > EXTRACTION_POLL_TIMEOUT_TICKS
+    if (!reachedTerminalStatus && !gaveUpPolling) return
+    // Extraction reached complete/failed (or timed out) — drop it and let
+    // the list re-fetch pick up the final extraction_status/text_extraction_failed.
+    setExtractingDocumentId(null)
+    if (patientId) {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.patientDocuments.byPatient(patientId),
+      })
+    }
+  }, [
+    extractingDocument.data,
+    extractingDocument.pollCount,
+    extractingDocumentId,
+    patientId,
+    queryClient,
+  ])
 
   const handleFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -107,6 +143,11 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
     upload.mutate(
       { file, category },
       {
+        onSuccess: (document) => {
+          if (document.extraction_status === "pending") {
+            setExtractingDocumentId(document.id)
+          }
+        },
         onError: (err) => {
           if (err instanceof ApiError) {
             setUploadError(err.message)
@@ -168,7 +209,10 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
       case "finalize":
         return "Extracting text…"
       default:
-        return null
+        // The finalize POST itself resolves quickly (202, pending); the
+        // heavy work runs on a worker and extractingDocumentId keeps this
+        // label up until usePatientDocument observes a terminal status.
+        return extractingDocumentId ? "Extracting text…" : null
     }
   })()
 
@@ -275,10 +319,16 @@ export function PatientDocuments({ patientId }: PatientDocumentsProps) {
                     {formatDate(doc.created_at)}
                     {categoryBadge(doc.category) && ` · ${categoryBadge(doc.category)}`}
                   </p>
+                  {doc.extraction_status === "pending" && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-600">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Extracting text…
+                    </span>
+                  )}
                   {doc.text_extraction_failed && (
                     <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-700">
                       <AlertCircle className="w-3 h-3" />
-                      OCR not yet supported — text extraction failed
+                      Text extraction failed
                     </span>
                   )}
                 </div>

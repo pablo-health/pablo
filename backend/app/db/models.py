@@ -883,12 +883,21 @@ class PatientDocumentRow(Base):
     )
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # NULL = extracted synchronously under the old finalize path (read as
+    # COMPLETE, see app.models.patient_document.ExtractionStatus). New rows
+    # get an explicit value: 'pending' the moment the finalize worker job is
+    # enqueued, then 'complete' or 'failed' once the worker finishes.
+    extraction_status: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         Index("ix_patient_documents_patient_deleted", "patient_id", "deleted_at"),
         CheckConstraint(
             "category IN ('chart', 'consent', 'therapist_private', 'psychotherapy_notes')",
             name="ck_patient_documents_category",
+        ),
+        CheckConstraint(
+            "extraction_status IS NULL OR extraction_status IN ('pending', 'complete', 'failed')",
+            name="ck_patient_documents_extraction_status",
         ),
         CheckConstraint(
             "extracted_via IS NULL OR extracted_via IN ('pymupdf', 'document_ai', 'unavailable')",

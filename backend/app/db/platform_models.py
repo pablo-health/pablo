@@ -17,6 +17,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -30,6 +31,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from ..models.enums import PracticeEdition
 from . import PLATFORM_SCHEMA
 
 
@@ -41,7 +43,6 @@ class PlatformBase(DeclarativeBase):
 
 class PracticeRow(PlatformBase):
     __tablename__ = "practices"
-    __table_args__ = {"schema": PLATFORM_SCHEMA}
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -94,6 +95,31 @@ class PracticeRow(PlatformBase):
     baa_practice_name: Mapped[str | None] = mapped_column(String(255))
     baa_business_address: Mapped[str | None] = mapped_column(String(500))
     baa_full_text: Mapped[str | None] = mapped_column(Text)
+    # What kind of operator this practice is — distinct from ``product``,
+    # which is the SKU (always "pablo" today). Everything downstream
+    # (patients, appointments, notes, charts) currently assumes
+    # THERAPIST; PERSONAL marks a non-clinical operator so those
+    # surfaces can branch on a declared fact instead of inferring one
+    # from empty tables. String + CHECK, not a native enum, so adding an
+    # edition later is a constraint swap, not an ``ALTER TYPE``. See
+    # :class:`app.models.enums.PracticeEdition` for the Python-side type.
+    edition: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=PracticeEdition.THERAPIST.value,
+        server_default=PracticeEdition.THERAPIST.value,
+    )
+
+    # PlatformBase annotates __table_args__ as the dict-only shape; the
+    # tuple form (needed for the CheckConstraint) trips mypy here, same
+    # as DiagnosticDefinitionRow below.
+    __table_args__ = (  # type: ignore[assignment]
+        CheckConstraint(
+            "edition IN ('therapist', 'personal')",
+            name="ck_practices_edition",
+        ),
+        {"schema": PLATFORM_SCHEMA},
+    )
 
 
 class EmailTenantMappingRow(PlatformBase):

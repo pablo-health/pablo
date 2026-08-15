@@ -17,11 +17,18 @@ import { Textarea } from "@/components/ui/textarea"
 import { usePatientList } from "@/hooks/usePatients"
 import {
   useCreateAppointment,
+  useCreateRecurringAppointment,
   useUpdateAppointment,
   useCancelAppointment,
+  useEditAppointmentSeries,
+  useCancelAppointmentSeries,
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
-import type { AppointmentResponse, SessionType } from "@/types/scheduling"
+import type {
+  AppointmentResponse,
+  RecurrenceFrequency,
+  SessionType,
+} from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
 import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
@@ -37,6 +44,21 @@ const SESSION_TYPE_LABELS: Record<string, string> = Object.fromEntries(
   SESSION_TYPES.map((s) => [s.value, s.label]),
 )
 const QUICK_LENGTHS = [45, 50, 30, 60, 90]
+
+// Monthly is supported by the backend but deliberately not exposed yet.
+type RepeatOption = "none" | Extract<RecurrenceFrequency, "weekly" | "biweekly">
+const REPEAT_OPTIONS: { value: RepeatOption; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Biweekly" },
+]
+type SeriesEndMode = "count" | "date"
+
+type SeriesScope = "this" | "series"
+const SCOPE_OPTIONS: { value: SeriesScope; label: string }[] = [
+  { value: "this", label: "Just this session" },
+  { value: "series", label: "This and future sessions" },
+]
 
 function buildTitle(patient: PatientResponse | undefined, sessionType: string): string {
   if (!patient) return ""
@@ -179,10 +201,15 @@ function AppointmentForm({
   const noteTypes = noteTypesData?.note_types ?? []
 
   const createMutation = useCreateAppointment()
+  const createRecurringMutation = useCreateRecurringAppointment()
   const updateMutation = useUpdateAppointment()
   const cancelMutation = useCancelAppointment()
+  const editSeriesMutation = useEditAppointmentSeries()
+  const cancelSeriesMutation = useCancelAppointmentSeries()
 
   const isEditing = !!appointment
+  const isRecurring = !!appointment?.recurring_appointment_id
+  const [scope, setScope] = useState<SeriesScope>("this")
 
   const defaultDuration =
     appointment?.duration_minutes ?? preferences?.default_duration_minutes ?? 45
@@ -203,6 +230,11 @@ function AppointmentForm({
   const [timeStr, setTimeStr] = useState(toTimeInput(start0))
   const [duration, setDuration] = useState(defaultDuration)
   const [sessionType, setSessionType] = useState(defaultSessionType)
+
+  const [repeat, setRepeat] = useState<RepeatOption>("none")
+  const [seriesEndMode, setSeriesEndMode] = useState<SeriesEndMode>("count")
+  const [seriesCount, setSeriesCount] = useState("")
+  const [seriesEndDate, setSeriesEndDate] = useState("")
 
   const [lengths, setLengths] = useState<number[]>(() => {
     const base = [...QUICK_LENGTHS]
@@ -251,7 +283,11 @@ function AppointmentForm({
   }
 
   const canSave = !!patientId
-  const isSubmitting = createMutation.isPending || updateMutation.isPending
+  const isSubmitting =
+    createMutation.isPending ||
+    createRecurringMutation.isPending ||
+    updateMutation.isPending ||
+    editSeriesMutation.isPending
 
   const handleSubmit = () => {
     const payload = {
@@ -265,19 +301,54 @@ function AppointmentForm({
       notes: notes || null,
     }
     if (isEditing && appointment) {
+      if (isRecurring && scope === "series") {
+        // The edit-series endpoint only accepts this subset of fields —
+        // it has no notion of a per-occurrence start/end time.
+        editSeriesMutation.mutate(
+          {
+            appointmentId: appointment.id,
+            data: {
+              title,
+              session_type: sessionType,
+              video_link: videoLink || null,
+              notes: notes || null,
+            },
+          },
+          { onSuccess: onClose },
+        )
+        return
+      }
       updateMutation.mutate(
         { appointmentId: appointment.id, data: payload },
         { onSuccess: onClose },
       )
-    } else {
-      createMutation.mutate(payload, { onSuccess: onClose })
+      return
     }
+    if (repeat !== "none") {
+      const count = seriesEndMode === "count" && seriesCount ? parseInt(seriesCount, 10) : null
+      const endDate = seriesEndMode === "date" && seriesEndDate ? seriesEndDate : null
+      createRecurringMutation.mutate(
+        {
+          ...payload,
+          frequency: repeat,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          count,
+          end_date: endDate,
+        },
+        { onSuccess: onClose },
+      )
+      return
+    }
+    createMutation.mutate(payload, { onSuccess: onClose })
   }
 
   const handleCancelAppt = () => {
-    if (appointment) {
-      cancelMutation.mutate(appointment.id, { onSuccess: onClose })
+    if (!appointment) return
+    if (isRecurring && scope === "series") {
+      cancelSeriesMutation.mutate(appointment.id, { onSuccess: onClose })
+      return
     }
+    cancelMutation.mutate(appointment.id, { onSuccess: onClose })
   }
 
   const headerHint = `${formatDay(start)} · ${formatTime(start)}`
@@ -512,6 +583,139 @@ function AppointmentForm({
           </div>
         </div>
 
+        {/* Scope chooser — recurring appointments in edit mode only */}
+        {isEditing && isRecurring && (
+          <div>
+            <FieldLabel>Applies to</FieldLabel>
+            <div
+              className="inline-flex gap-0.5 rounded-[10px] border p-[3px]"
+              role="radiogroup"
+              aria-label="Applies to"
+              style={{
+                borderColor: "var(--ed-field-border)",
+                backgroundColor: "var(--ed-field-bg)",
+              }}
+            >
+              {SCOPE_OPTIONS.map((s) => {
+                const active = scope === s.value
+                return (
+                  <button
+                    key={s.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setScope(s.value)}
+                    className="cursor-pointer rounded-[7px] border-none px-4 py-[7px] text-[13.5px] font-semibold"
+                    style={{
+                      backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                      color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Repeats — create mode only */}
+        {!isEditing && (
+          <div>
+            <FieldLabel>Repeats</FieldLabel>
+            <div
+              className="inline-flex gap-0.5 rounded-[10px] border p-[3px]"
+              role="radiogroup"
+              aria-label="Repeats"
+              style={{
+                borderColor: "var(--ed-field-border)",
+                backgroundColor: "var(--ed-field-bg)",
+              }}
+            >
+              {REPEAT_OPTIONS.map((r) => {
+                const active = repeat === r.value
+                return (
+                  <button
+                    key={r.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setRepeat(r.value)}
+                    className="cursor-pointer rounded-[7px] border-none px-4 py-[7px] text-[13.5px] font-semibold"
+                    style={{
+                      backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                      color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                    }}
+                  >
+                    {r.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {repeat !== "none" && (
+              <div className="ed-fade-in mt-3 flex flex-col gap-2">
+                <div
+                  className="inline-flex w-fit gap-0.5 rounded-[10px] border p-[3px]"
+                  role="radiogroup"
+                  aria-label="Ends"
+                  style={{
+                    borderColor: "var(--ed-field-border)",
+                    backgroundColor: "var(--ed-field-bg)",
+                  }}
+                >
+                  {(
+                    [
+                      { value: "count", label: "For N sessions" },
+                      { value: "date", label: "Until date" },
+                    ] as const
+                  ).map((o) => {
+                    const active = seriesEndMode === o.value
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setSeriesEndMode(o.value)}
+                        className="cursor-pointer rounded-[7px] border-none px-3 py-[6px] text-[12.5px] font-semibold"
+                        style={{
+                          backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                          color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                        }}
+                      >
+                        {o.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {seriesEndMode === "count" ? (
+                  <input
+                    type="number"
+                    min={1}
+                    max={104}
+                    value={seriesCount}
+                    onChange={(e) => setSeriesCount(e.target.value)}
+                    aria-label="Number of sessions"
+                    placeholder="Default: ~6 months"
+                    className={FIELD_CLASS}
+                    style={fieldStyle()}
+                  />
+                ) : (
+                  <input
+                    type="date"
+                    value={seriesEndDate}
+                    onChange={(e) => setSeriesEndDate(e.target.value)}
+                    aria-label="Repeat until"
+                    className={FIELD_CLASS}
+                    style={fieldStyle()}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* More options */}
         <div className="pt-3.5" style={{ borderTop: "1px solid var(--ed-hairline)" }}>
           <button
@@ -589,7 +793,7 @@ function AppointmentForm({
           <button
             type="button"
             onClick={handleCancelAppt}
-            disabled={cancelMutation.isPending}
+            disabled={cancelMutation.isPending || cancelSeriesMutation.isPending}
             className="mr-auto cursor-pointer rounded-full border bg-transparent px-4 py-[9px] text-[13px] font-semibold disabled:opacity-50"
             style={{
               borderColor: "var(--ed-status-noshow-fg)",
