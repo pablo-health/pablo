@@ -9,6 +9,7 @@ import {
   type EditorialView,
 } from "@/components/calendar/editorial"
 import { useTheme } from "@/components/theme/ThemeProvider"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import {
   getICalSyncStatus,
@@ -35,6 +36,7 @@ export default function CalendarPage() {
   const { loading: authLoading } = useAuth()
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
+  const { readOnly } = useReadOnlyMode()
   const saveMutation = useSavePreferences()
   const lastSavedView = useRef<string | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(false)
@@ -101,17 +103,22 @@ export default function CalendarPage() {
     }
   }, [])
 
+  // The appointment sheet is a write form (create, reschedule, delete), so the
+  // slot-click and event-edit paths into it close alongside the sidebar's
+  // "New appointment" button. The grid itself still reads normally.
   const handleSelectSlot = useCallback((start: string) => {
+    if (readOnly) return
     setSelectedAppointment(null)
     setDefaultStart(start)
     setModalOpen(true)
-  }, [])
+  }, [readOnly])
 
   const handleSelectAppointment = useCallback((appointment: AppointmentResponse) => {
+    if (readOnly) return
     setSelectedAppointment(appointment)
     setDefaultStart(undefined)
     setModalOpen(true)
-  }, [])
+  }, [readOnly])
 
   const handleClose = useCallback(() => {
     setModalOpen(false)

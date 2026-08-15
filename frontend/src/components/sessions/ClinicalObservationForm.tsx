@@ -8,8 +8,11 @@
  * psychomotor activity, etc.). Supports edit and read-only modes.
  */
 
+"use client"
+
 import type { ClinicalObservation } from "@/types/sessions"
 import { cn } from "@/lib/utils"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import {
   Select,
   SelectContent,
@@ -64,11 +67,13 @@ export function ClinicalObservationForm({
   readonly = false,
   className,
 }: ClinicalObservationFormProps) {
+  const { readOnly } = useReadOnlyMode()
+
   const update = (field: keyof ClinicalObservation, fieldValue: string) => {
     onChange({ ...value, [field]: fieldValue })
   }
 
-  if (readonly) {
+  if (readonly || readOnly) {
     return (
       <div className={cn("rounded-lg border border-teal-200 bg-teal-50/50 p-4", className)}>
         <h3 className="text-sm font-semibold text-teal-800 mb-3">

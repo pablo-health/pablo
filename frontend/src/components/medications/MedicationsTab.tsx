@@ -16,6 +16,7 @@ import { Pill, PencilLine, Ban, Trash2 } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/Toast"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePatientMedications, useDeleteMedication, useUpdateMedication } from "@/hooks/useMedications"
 import { MedicationModal } from "./MedicationModal"
 import type { Medication, MedicationStatus } from "@/types/medications"
@@ -53,6 +54,7 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
   const { showToast } = useToast()
   const deleteMedication = useDeleteMedication()
   const updateMedication = useUpdateMedication()
+  const { readOnly } = useReadOnlyMode()
 
   const [addOpen, setAddOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<Medication | null>(null)
@@ -129,9 +131,11 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
         <div className="flex flex-col items-center gap-3 py-8 text-center">
           <Pill className="h-8 w-8 text-neutral-300" />
           <p className="text-sm text-neutral-600">No medications recorded.</p>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            Add medication
-          </Button>
+          {!readOnly && (
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              Add medication
+            </Button>
+          )}
         </div>
         <MedicationModal
           patientId={patientId}
@@ -145,11 +149,13 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
   return (
     <>
       <div className="space-y-4">
-        <div className="flex justify-end">
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            Add medication
-          </Button>
-        </div>
+        {!readOnly && (
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => setAddOpen(true)}>
+              Add medication
+            </Button>
+          </div>
+        )}
 
         <ul className="space-y-2">
           {sorted.map((med) => {
@@ -195,42 +201,46 @@ export function MedicationsTab({ patientId }: MedicationsTabProps) {
                     {badge.label}
                   </span>
 
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Edit"
-                    onClick={() => setEditTarget(med)}
-                  >
-                    <PencilLine className="h-3.5 w-3.5" />
-                    <span className="sr-only">Edit {med.drug_name}</span>
-                  </Button>
+                  {!readOnly && (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Edit"
+                        onClick={() => setEditTarget(med)}
+                      >
+                        <PencilLine className="h-3.5 w-3.5" />
+                        <span className="sr-only">Edit {med.drug_name}</span>
+                      </Button>
 
-                  {med.status !== "discontinued" && (
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      title="Discontinue"
-                      disabled={isDiscontinuing}
-                      onClick={() => handleDiscontinue(med)}
-                    >
-                      <Ban className="h-3.5 w-3.5" />
-                      <span className="sr-only">
-                        Discontinue {med.drug_name}
-                      </span>
-                    </Button>
+                      {med.status !== "discontinued" && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Discontinue"
+                          disabled={isDiscontinuing}
+                          onClick={() => handleDiscontinue(med)}
+                        >
+                          <Ban className="h-3.5 w-3.5" />
+                          <span className="sr-only">
+                            Discontinue {med.drug_name}
+                          </span>
+                        </Button>
+                      )}
+
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Delete"
+                        disabled={isDeleting}
+                        onClick={() => handleDelete(med)}
+                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="sr-only">Delete {med.drug_name}</span>
+                      </Button>
+                    </>
                   )}
-
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    title="Delete"
-                    disabled={isDeleting}
-                    onClick={() => handleDelete(med)}
-                    className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span className="sr-only">Delete {med.drug_name}</span>
-                  </Button>
                 </span>
               </li>
             )

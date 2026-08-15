@@ -17,6 +17,7 @@
 
 import { Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useFinalizeSession } from "@/hooks/useSessions"
 import type { SessionStatus, SOAPNoteModel } from "@/types/sessions"
 
@@ -40,6 +41,7 @@ export function FinalizeButton({
   onSuccess,
 }: FinalizeButtonProps) {
   const finalizeMutation = useFinalizeSession()
+  const { readOnly } = useReadOnlyMode()
 
   const isDisabled =
     status !== "pending_review" || finalizeMutation.isPending
@@ -73,6 +75,10 @@ export function FinalizeButton({
       </Button>
     )
   }
+
+  // The "Finalized" badge above is a status indicator and stays; this is the
+  // action itself, so it goes.
+  if (readOnly) return null
 
   return (
     <Button

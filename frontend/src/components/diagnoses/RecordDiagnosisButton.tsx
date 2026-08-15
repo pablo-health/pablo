@@ -40,6 +40,7 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/Toast"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useCreateDiagnosis, useDiagnosticDefinitions } from "@/hooks/useDiagnoses"
 import { evaluateDefinition } from "@/lib/diagnostics/evaluate"
 import type { DiagnosticDefinition } from "@/types/diagnoses"
@@ -84,6 +85,9 @@ export function RecordDiagnosisButton({
   prominence = "lite",
 }: RecordDiagnosisButtonProps) {
   const [open, setOpen] = useState(false)
+  const { readOnly } = useReadOnlyMode()
+
+  if (readOnly) return null
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

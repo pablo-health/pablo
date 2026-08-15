@@ -4,7 +4,7 @@
  * ClinicalObservationForm Component Tests
  */
 
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import {
   ClinicalObservationForm,
@@ -319,5 +319,42 @@ describe("formatClinicalObservation", () => {
     const result = formatClinicalObservation(EMPTY_CLINICAL_OBSERVATION)
 
     expect(result).not.toContain("Attitude")
+  })
+})
+
+describe("read-only deployment mode", () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it("renders the read-only presentation when the deployment flag is set, even with readonly={false}", () => {
+    vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+
+    const { container } = render(
+      <ClinicalObservationForm
+        value={fullObservation}
+        onChange={vi.fn()}
+        readonly={false}
+      />
+    )
+
+    expect(screen.getByText("Clinician Observations")).toBeInTheDocument()
+    expect(screen.getByText("well-groomed")).toBeInTheDocument()
+    expect(container.querySelector("dl")).toBeInTheDocument()
+    expect(container.querySelector("fieldset")).not.toBeInTheDocument()
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
+  })
+
+  it("renders the editable form when the deployment flag is unset", () => {
+    const { container } = render(
+      <ClinicalObservationForm
+        value={fullObservation}
+        onChange={vi.fn()}
+        readonly={false}
+      />
+    )
+
+    expect(container.querySelector("fieldset")).toBeInTheDocument()
+    expect(container.querySelector("dl")).not.toBeInTheDocument()
+    expect(screen.getAllByRole("combobox").length).toBeGreaterThan(0)
   })
 })

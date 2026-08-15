@@ -14,6 +14,7 @@
 import { useState, useEffect } from "react"
 import { QualityRating } from "./QualityRating"
 import { useConfig } from "@/lib/config"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Textarea } from "@/components/ui/textarea"
@@ -45,7 +46,9 @@ export function QualityRatingWithFeedback({
   className,
 }: QualityRatingWithFeedbackProps) {
   const config = useConfig()
+  const { readOnly } = useReadOnlyMode()
   const [localValue, setLocalValue] = useState<RatingFeedback>(value)
+  const viewOnly = readonly || readOnly
 
   // Sync local state with prop changes
   useEffect(() => {
@@ -102,12 +105,12 @@ export function QualityRatingWithFeedback({
         <QualityRating
           value={localValue.rating}
           onChange={handleRatingChange}
-          readonly={readonly}
+          readonly={viewOnly}
         />
       </div>
 
       {/* Feedback UI - shown when rating < threshold */}
-      {showFeedbackUI && !readonly && (
+      {showFeedbackUI && !viewOnly && (
         <div className="mt-4 space-y-4 p-4 border border-neutral-200 rounded-md bg-neutral-50">
           <div>
             <Label className="text-sm font-medium text-neutral-900 mb-2 block">
