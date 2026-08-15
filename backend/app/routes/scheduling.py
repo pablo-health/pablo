@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -149,6 +150,16 @@ def get_availability_rule_repository(
     return _rule_repo_factory()
 
 
+def get_patient_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PatientRepository:
+    """Get patient repository scoped to the tenant's database.
+
+    Used to resolve patient display names onto appointment responses.
+    """
+    return _patient_repo_factory()
+
+
 def get_appointment_type_repository(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> AppointmentTypeRepository:
@@ -224,12 +235,34 @@ def _push_cancellation_to_google(
         logger.exception("Failed to delete Google Calendar event")
 
 
-def _to_response(appt: Appointment) -> AppointmentResponse:
+def _patient_name_map(
+    patient_repo: PatientRepository,
+    user_id: str,
+    appointments: Sequence[Appointment],
+) -> dict[str, str]:
+    """Display names for the appointments' patients, in one repository call.
+
+    Responses carry the name so clients can label events directly. The
+    calendar used to join appointments against its own patient list, whose
+    first page is all it fetches — in a practice with more patients than the
+    page size, every event whose patient sorted beyond that page rendered
+    with a fallback label (or none at all for imported appointments, which
+    have no title).
+    """
+    ids = list({a.patient_id for a in appointments})
+    if not ids:
+        return {}
+    patients = patient_repo.get_multiple(ids, user_id)
+    return {pid: f"{p.first_name} {p.last_name}" for pid, p in patients.items()}
+
+
+def _to_response(appt: Appointment, *, patient_name: str | None = None) -> AppointmentResponse:
     return AppointmentResponse(
         id=appt.id,
         user_id=appt.user_id,
         patient_id=appt.patient_id,
         title=appt.title,
+        patient_name=patient_name,
         start_at=appt.start_at,
         end_at=appt.end_at,
         duration_minutes=appt.duration_minutes,
@@ -267,6 +300,7 @@ def create_appointment(
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     try:
@@ -284,16 +318,22 @@ def create_appointment(
         patient_id=appt.patient_id,
     )
     appt = _sync_appointment_to_google(service, gcal_service, user, appt)
-    return _to_response(appt)
+    return _to_response(
+        appt,
+        patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+    )
 
 
 @router.get("/api/appointments", response_model=AppointmentListResponse)
 def list_appointments(
+    http_request: Request,
     start: datetime = Query(..., description="Range start (ISO 8601)"),
     end: datetime = Query(..., description="Range end (ISO 8601)"),
     _ctx: TenantContext = Depends(get_tenant_context),
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
 ) -> AppointmentListResponse:
     """List appointments in a date range.
 
@@ -302,8 +342,23 @@ def list_appointments(
     the service and surfacing as a 500.
     """
     appointments = service.list_appointments(user.id, start.isoformat(), end.isoformat())
+    names = _patient_name_map(patient_repo, user.id, appointments)
+    # The payload carries each patient's display name, which makes reading
+    # this list a per-record identifier read rather than bare calendar
+    # metadata — audit one appointment_viewed per row, mirroring the
+    # patients list. The read-coalescing gate collapses repeats of the same
+    # appointment within the window, so calendar refetches don't flood the
+    # log.
+    for a in appointments:
+        audit.log_appointment_action(
+            AuditAction.APPOINTMENT_VIEWED,
+            user,
+            http_request,
+            a.id,
+            patient_id=a.patient_id,
+        )
     return AppointmentListResponse(
-        data=[_to_response(a) for a in appointments],
+        data=[_to_response(a, patient_name=names.get(a.patient_id)) for a in appointments],
         total=len(appointments),
     )
 
@@ -316,6 +371,7 @@ def get_appointment(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentResponse:
     """Get a single appointment."""
     try:
@@ -329,7 +385,10 @@ def get_appointment(
         appt.id,
         patient_id=appt.patient_id,
     )
-    return _to_response(appt)
+    return _to_response(
+        appt,
+        patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+    )
 
 
 @router.patch("/api/appointments/{appointment_id}", response_model=AppointmentResponse)
@@ -342,6 +401,7 @@ def update_appointment(
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentResponse:
     """Update an appointment."""
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
@@ -360,7 +420,10 @@ def update_appointment(
         changes={"changed_fields": sorted(updates.keys())},
     )
     appt = _sync_appointment_to_google(service, gcal_service, user, appt)
-    return _to_response(appt)
+    return _to_response(
+        appt,
+        patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+    )
 
 
 @router.delete(
@@ -375,6 +438,7 @@ def cancel_appointment(
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentResponse:
     """Cancel an appointment (soft delete — sets status to cancelled)."""
     try:
@@ -389,7 +453,10 @@ def cancel_appointment(
         patient_id=appt.patient_id,
     )
     _push_cancellation_to_google(gcal_service, user, appt)
-    return _to_response(appt)
+    return _to_response(
+        appt,
+        patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+    )
 
 
 # --- Appointment → session link ---
@@ -398,7 +465,7 @@ def cancel_appointment(
 def _get_session_service(
     _ctx: TenantContext = Depends(get_tenant_context),
     session_repo: TherapySessionRepository = Depends(_session_repo_factory),
-    patient_repo: PatientRepository = Depends(_patient_repo_factory),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
     notes_repo: NotesRepository = Depends(_notes_repo_factory),
 ) -> SessionService:
     """Get session service for appointment→session linking.
@@ -509,6 +576,7 @@ def create_recurring_appointment(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentListResponse:
     """Create a recurring appointment series."""
     try:
@@ -533,8 +601,9 @@ def create_recurring_appointment(
         patient_id=appointments[0].patient_id if appointments else None,
         changes={"occurrence_count": len(appointments), "frequency": request.frequency},
     )
+    names = _patient_name_map(patient_repo, user.id, appointments)
     return AppointmentListResponse(
-        data=[_to_response(a) for a in appointments],
+        data=[_to_response(a, patient_name=names.get(a.patient_id)) for a in appointments],
         total=len(appointments),
     )
 
@@ -551,6 +620,7 @@ def edit_series(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentListResponse:
     """Edit all future occurrences in a recurring series."""
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
@@ -570,8 +640,9 @@ def edit_series(
             "occurrence_count": len(appointments),
         },
     )
+    names = _patient_name_map(patient_repo, user.id, appointments)
     return AppointmentListResponse(
-        data=[_to_response(a) for a in appointments],
+        data=[_to_response(a, patient_name=names.get(a.patient_id)) for a in appointments],
         total=len(appointments),
     )
 
@@ -587,6 +658,7 @@ def cancel_series(
     user: User = Depends(require_baa_acceptance),
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
 ) -> AppointmentListResponse:
     """Cancel all future occurrences in a recurring series."""
     try:
@@ -602,8 +674,9 @@ def cancel_series(
         appointment_id,
         changes={"occurrence_count": len(appointments)},
     )
+    names = _patient_name_map(patient_repo, user.id, appointments)
     return AppointmentListResponse(
-        data=[_to_response(a) for a in appointments],
+        data=[_to_response(a, patient_name=names.get(a.patient_id)) for a in appointments],
         total=len(appointments),
     )
 

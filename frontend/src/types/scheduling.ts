@@ -17,6 +17,9 @@ export interface AppointmentResponse {
   user_id: string
   patient_id: string
   title: string
+  /** Patient display name, resolved server-side. Optional so cached
+   * payloads from older servers still typecheck. */
+  patient_name?: string | null
   start_at: string
   end_at: string
   duration_minutes: number

@@ -88,6 +88,10 @@ class AppointmentResponse(BaseModel):
     user_id: str
     patient_id: str
     title: str
+    # Display name of the patient, resolved server-side so clients can label
+    # events without holding the full patient roster. None when the patient
+    # could not be resolved (e.g. no live grant for the caller).
+    patient_name: str | None = None
     start_at: datetime
     end_at: datetime
     duration_minutes: int

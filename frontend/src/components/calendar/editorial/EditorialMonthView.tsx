@@ -136,7 +136,7 @@ export function EditorialMonthView({
                   <MonthChip
                     key={appt.id}
                     appointment={appt}
-                    name={patientMap.get(appt.patient_id) ?? appt.title}
+                    name={appt.patient_name ?? patientMap.get(appt.patient_id) ?? appt.title}
                     onPeek={onPeek}
                     onEdit={onEdit}
                     onContextMenu={onContextMenu}

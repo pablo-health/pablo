@@ -19,6 +19,9 @@ from app.routes.scheduling import (
     get_google_calendar_service,
     get_scheduling_service,
 )
+from app.routes.scheduling import (
+    get_patient_repository as get_scheduling_patient_repository,
+)
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import (
@@ -236,6 +239,87 @@ def test_list_appointments_accepts_iso_range(client: TestClient) -> None:
 
     assert response.status_code == 200, response.text
     scheduling_svc.list_appointments.assert_called_once()
+
+
+def test_list_appointments_carries_patient_name(
+    client: TestClient, mock_repo: Any, mock_user_id: str
+) -> None:
+    """The list payload resolves each patient's display name server-side.
+
+    The calendar labels events from this field; before it existed the client
+    joined against its own patient list, whose first page is all it fetches,
+    so patients sorted past the page size rendered with no name.
+    """
+    mock_repo.create(_patient(), mock_user_id)
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [_real_appointment()]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    app.dependency_overrides[get_scheduling_patient_repository] = lambda: mock_repo
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["patient_name"] == "Jane Smith"
+
+
+def test_list_appointments_name_null_without_grant(client: TestClient) -> None:
+    """An appointment whose patient the caller has no live grant for still
+    lists, but with a null name — the lookup must not leak or error."""
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [_real_appointment()]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    # Repo deliberately NOT seeded with the patient — no live grant.
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["patient_name"] is None
+
+
+def test_list_appointments_audits_each_row(client: TestClient) -> None:
+    """Reading the list is a per-record identifier read (the payload carries
+    patient names), so each returned appointment writes an audit row."""
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [
+        _real_appointment(appt_id="appt-1"),
+        _real_appointment(appt_id="appt-2"),
+    ]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    audit = MagicMock()
+    app.dependency_overrides[get_audit_service] = lambda: audit
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert audit.log_appointment_action.call_count == 2
+    audited_ids = {call.args[3] for call in audit.log_appointment_action.call_args_list}
+    assert audited_ids == {"appt-1", "appt-2"}
+
+
+def test_create_appointment_carries_patient_name(
+    client: TestClient, mock_repo: Any, mock_user_id: str
+) -> None:
+    """The create response carries the name too, so the calendar can label
+    the event straight from the mutation result."""
+    mock_repo.create(_patient(), mock_user_id)
+    scheduling_svc = MagicMock()
+    scheduling_svc.create_appointment.return_value = _real_appointment()
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    app.dependency_overrides[get_scheduling_patient_repository] = lambda: mock_repo
+
+    response = client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    assert response.json()["patient_name"] == "Jane Smith"
 
 
 def test_check_conflicts_permissive_when_unconfigured(client: TestClient) -> None:
