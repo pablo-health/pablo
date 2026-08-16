@@ -7,6 +7,7 @@ import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { AwaitingReviewPanel } from "@/components/dashboard/AwaitingReviewPanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
 import { DashboardGreeting } from "@/components/dashboard/DashboardGreeting"
+import { OperationalPanels } from "@/components/dashboard/OperationalPanels"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
 
@@ -54,11 +55,13 @@ export default async function DashboardPage() {
         <>
           <DashboardBanners />
           <AwaitingReviewPanel />
-          <TodayPanel />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <WeekPanel />
-            <CompliancePanel />
-          </div>
+          <OperationalPanels>
+            <TodayPanel />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <WeekPanel />
+              <CompliancePanel />
+            </div>
+          </OperationalPanels>
         </>
       )}
     </div>
