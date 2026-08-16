@@ -195,7 +195,13 @@ function AppointmentForm({
   onClose: () => void
   preferences?: UserPreferences
 }) {
-  const { data: patientData } = usePatientList()
+  // The full first page of the roster, at the server's cap. The default
+  // page size (20) silently truncated the picker for any practice with
+  // more patients than that — they could not book the overflow patients
+  // from this modal at all. 100 raises the cliff rather than removing
+  // it; the real fix is a searchable picker driving the list endpoint's
+  // server-side search.
+  const { data: patientData } = usePatientList({ page_size: 100 })
   const patients = patientData?.data ?? []
   const { data: noteTypesData } = useNoteTypes()
   const noteTypes = noteTypesData?.note_types ?? []
