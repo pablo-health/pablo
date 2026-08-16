@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Check, ChevronRight, Plus, X } from "lucide-react"
 import {
@@ -60,10 +60,107 @@ const SCOPE_OPTIONS: { value: SeriesScope; label: string }[] = [
   { value: "series", label: "This and future sessions" },
 ]
 
-function buildTitle(patient: PatientResponse | undefined, sessionType: string): string {
-  if (!patient) return ""
+function buildTitle(patientName: string | undefined, sessionType: string): string {
+  if (!patientName) return ""
   const label = SESSION_TYPE_LABELS[sessionType] ?? sessionType
-  return `${patient.first_name} ${patient.last_name} — ${label}`
+  return `${patientName} — ${label}`
+}
+
+const PATIENT_SEARCH_DEBOUNCE_MS = 250
+
+function patientLabel(p: PatientResponse): string {
+  return `${p.last_name}, ${p.first_name}`
+}
+
+function PatientCombobox({
+  patients,
+  patientId,
+  fallbackLabel,
+  onSelect,
+  query,
+  onQueryChange,
+}: {
+  patients: PatientResponse[]
+  patientId: string
+  fallbackLabel: string
+  onSelect: (patient: PatientResponse) => void
+  query: string
+  onQueryChange: (query: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = patients.find((p) => p.id === patientId)
+  // While the field isn't focused, show the selected patient's name even if
+  // a search would no longer surface them (e.g. editing an appointment for
+  // someone outside the default roster page).
+  const displayValue = open ? query : selected ? patientLabel(selected) : fallbackLabel
+
+  return (
+    <div className="relative">
+      <input
+        id="patient"
+        role="combobox"
+        aria-label="Patient"
+        aria-required="true"
+        aria-expanded={open}
+        aria-controls="patient-listbox"
+        aria-autocomplete="list"
+        autoComplete="off"
+        placeholder="Select patient…"
+        className={FIELD_CLASS}
+        style={fieldStyle()}
+        value={displayValue}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onQueryChange(e.target.value)
+          setOpen(true)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false)
+        }}
+        onBlur={() => setOpen(false)}
+      />
+      {open && (
+        <ul
+          id="patient-listbox"
+          role="listbox"
+          aria-label="Patients"
+          className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-[10px] border py-1 shadow-lg"
+          style={{
+            backgroundColor: "var(--ed-canvas-elev)",
+            borderColor: "var(--ed-hairline-strong)",
+          }}
+        >
+          {patients.length === 0 ? (
+            <li className="px-3 py-2 text-[13px]" style={{ color: "var(--ed-ink-soft)" }}>
+              No patients found
+            </li>
+          ) : (
+            patients.map((p) => (
+              <li
+                key={p.id}
+                role="option"
+                aria-selected={p.id === patientId}
+                // Fires before the input's blur so the selection lands
+                // instead of being pre-empted by the dropdown closing.
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  onSelect(p)
+                  setOpen(false)
+                }}
+                className="cursor-pointer px-3 py-2 text-[13.5px]"
+                style={{
+                  color: "var(--ed-ink)",
+                  backgroundColor: p.id === patientId ? "var(--ed-field-bg)" : "transparent",
+                }}
+              >
+                {patientLabel(p)}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 function toDateInput(d: Date): string {
@@ -195,13 +292,23 @@ function AppointmentForm({
   onClose: () => void
   preferences?: UserPreferences
 }) {
-  // The full first page of the roster, at the server's cap. The default
-  // page size (20) silently truncated the picker for any practice with
-  // more patients than that — they could not book the overflow patients
-  // from this modal at all. 100 raises the cliff rather than removing
-  // it; the real fix is a searchable picker driving the list endpoint's
-  // server-side search.
-  const { data: patientData } = usePatientList({ page_size: 100 })
+  const [patientQuery, setPatientQuery] = useState(appointment?.patient_name ?? "")
+  const [debouncedPatientQuery, setDebouncedPatientQuery] = useState(patientQuery)
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedPatientQuery(patientQuery),
+      PATIENT_SEARCH_DEBOUNCE_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [patientQuery])
+  // With no search text, this is the roster's first page at the server's
+  // cap — unchanged for practices small enough not to need search. Typing
+  // hands the query to the endpoint's own server-side search instead of
+  // scanning a locally-truncated page.
+  const { data: patientData } = usePatientList({
+    page_size: 100,
+    search: debouncedPatientQuery || undefined,
+  })
   const patients = patientData?.data ?? []
   const { data: noteTypesData } = useNoteTypes()
   const noteTypes = noteTypesData?.note_types ?? []
@@ -267,10 +374,19 @@ function AppointmentForm({
 
   const newLenRef = useRef<HTMLInputElement>(null)
 
-  const patient = patients.find((p) => p.id === patientId)
+  // The list-driven name is authoritative when the patient is in the
+  // current (possibly search-filtered) results; otherwise fall back to the
+  // name captured at selection time (or, in edit mode, the server-resolved
+  // name on the appointment) so the title still renders correctly for a
+  // patient outside the active result set.
+  const [selectedPatientName, setSelectedPatientName] = useState(appointment?.patient_name ?? "")
+  const patientFromList = patients.find((p) => p.id === patientId)
+  const patientDisplayName = patientFromList
+    ? `${patientFromList.first_name} ${patientFromList.last_name}`
+    : selectedPatientName
   const start = fromInputs(dateStr, timeStr)
   const end = new Date(start.getTime() + duration * 60000)
-  const computedTitle = buildTitle(patient, sessionType)
+  const computedTitle = buildTitle(patientDisplayName || undefined, sessionType)
   // An empty/whitespace override means "no override" — the caption and the
   // submitted payload fall back to the auto title.
   const title = titleOverride?.trim() ? titleOverride : computedTitle
@@ -393,26 +509,21 @@ function AppointmentForm({
         {/* Patient */}
         <div>
           <FieldLabel>Patient</FieldLabel>
-          <Select value={patientId} onValueChange={setPatientId}>
-            <SelectTrigger
-              id="patient"
-              aria-label="Patient"
-              aria-required="true"
-              className="w-full"
-            >
-              <SelectValue placeholder="Select patient…" />
-            </SelectTrigger>
-            <SelectContent>
-              {patients.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.last_name}, {p.first_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <PatientCombobox
+            patients={patients}
+            patientId={patientId}
+            fallbackLabel={selectedPatientName}
+            query={patientQuery}
+            onQueryChange={setPatientQuery}
+            onSelect={(p) => {
+              setPatientId(p.id)
+              setSelectedPatientName(`${p.first_name} ${p.last_name}`)
+              setPatientQuery("")
+            }}
+          />
 
           {/* Auto title — subtle, editable caption */}
-          {patient && (
+          {patientDisplayName && (
             <div className="mt-2 flex items-center gap-2 text-[12.5px]">
               {editingTitle ? (
                 <Input

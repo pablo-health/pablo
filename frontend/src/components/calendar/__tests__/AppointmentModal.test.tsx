@@ -1,12 +1,13 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, describe, it, expect, vi } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AppointmentModal } from "../AppointmentModal"
 import type { UserPreferences } from "@/lib/api/users"
 import type { AppointmentResponse } from "@/types/scheduling"
+import type { PatientListParams } from "@/types/patients"
 
 const {
   mockCreate,
@@ -24,15 +25,22 @@ const {
   mockCancelSeries: vi.fn(),
 }))
 
+// p3 only turns up once a search is in flight, standing in for a patient
+// past the roster's default (unfiltered) first page.
+const ALL_PATIENTS = [
+  { id: "p1", first_name: "Jane", last_name: "Doe" },
+  { id: "p2", first_name: "John", last_name: "Smith" },
+  { id: "p3", first_name: "Priya", last_name: "Nguyen" },
+]
+
 vi.mock("@/hooks/usePatients", () => ({
-  usePatientList: () => ({
-    data: {
-      data: [
-        { id: "p1", first_name: "Jane", last_name: "Doe" },
-        { id: "p2", first_name: "John", last_name: "Smith" },
-      ],
-    },
-  }),
+  usePatientList: (params?: PatientListParams) => {
+    const search = params?.search?.toLowerCase()
+    const data = search
+      ? ALL_PATIENTS.filter((p) => `${p.first_name} ${p.last_name}`.toLowerCase().includes(search))
+      : ALL_PATIENTS.slice(0, 2)
+    return { data: { data } }
+  },
 }))
 
 vi.mock("@/hooks/useAppointments", () => ({
@@ -301,6 +309,27 @@ describe("AppointmentModal", () => {
 
       await user.click(screen.getByRole("button", { name: "reset" }))
       expect(screen.getByText("Jane Doe — Individual")).toBeInTheDocument()
+    })
+
+    it("finds and books a patient that only turns up via search, outside the first page", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      expect(screen.queryByRole("option", { name: /Nguyen, Priya/i })).not.toBeInTheDocument()
+
+      await user.type(patientTrigger, "priya")
+      await waitFor(() => {
+        expect(screen.getByRole("option", { name: /Nguyen, Priya/i })).toBeInTheDocument()
+      })
+      await user.click(screen.getByRole("option", { name: /Nguyen, Priya/i }))
+
+      expect(screen.getByText("Priya Nguyen — Individual")).toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect(mockCreate.mock.calls[0][0]).toMatchObject({ patient_id: "p3" })
     })
   })
 
