@@ -444,7 +444,7 @@ class TestSqlFilterPresence:
         notes_repo, docs_repo, session, s_tok, u_tok = _make_repos(engine, tenant_schema, clinician)
         captured: list[tuple[str, dict]] = []
 
-        def _capture(  # noqa: PLR0913, PLR0917 — fixed by SQLAlchemy's event signature
+        def _capture(  # noqa: PLR0913 — fixed by SQLAlchemy's event signature
             conn: object,
             cursor: object,
             statement: str,
