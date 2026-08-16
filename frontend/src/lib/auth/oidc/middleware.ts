@@ -18,6 +18,7 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { auth } from "./config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
+import { extraPublicPaths } from "@/lib/auth/public-paths"
 
 const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
@@ -28,6 +29,7 @@ const PUBLIC_PATHS = [
   "/mfa-enrollment",
   "/api/config",
   "/api/auth",
+  ...extraPublicPaths(),
 ]
 
 /**
