@@ -7,6 +7,7 @@ import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { AwaitingReviewPanel } from "@/components/dashboard/AwaitingReviewPanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
 import { DashboardGreeting } from "@/components/dashboard/DashboardGreeting"
+import { DashboardHomeSlot } from "@/components/dashboard/DashboardHomeSlot"
 import { OperationalPanels } from "@/components/dashboard/OperationalPanels"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
@@ -48,6 +49,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       <DashboardGreeting name={user?.name} />
+      <DashboardHomeSlot />
 
       {isPlatformAdmin ? (
         <PlatformAdminPanel />
