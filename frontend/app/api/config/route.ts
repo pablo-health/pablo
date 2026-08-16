@@ -23,5 +23,10 @@ export async function GET() {
     // Runtime toggle (no client rebuild) for the WebAuthn passkey UI, dark
     // until the egm.4 cutover. Set PASSKEYS_ENABLED=true on the container.
     passkeysEnabled: process.env.PASSKEYS_ENABLED === 'true',
+    // Where the app sends someone whose subscription has ended when they
+    // choose to start again. Deployment-specific (a hosted deployment
+    // points at its own reactivation/checkout page); empty means the UI
+    // falls back to whatever default it ships with.
+    resubscribeUrl: process.env.RESUBSCRIBE_URL || '',
   })
 }
