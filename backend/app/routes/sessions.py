@@ -117,6 +117,47 @@ except ImportError:  # pragma: no cover -- no subscription overlay installed
     TrialLimitReachedError = None  # type: ignore[assignment,misc]
     check_and_count_trial_session = None  # type: ignore[assignment]
 
+# Imported in its OWN try-block, not folded into the one above: a
+# ``from ... import a, b`` fails wholesale when any single name is missing,
+# so bundling this newer hook with the older ones would silently disable
+# the trial gate on a deployment whose overlay predates the recording
+# policy. Each block degrades independently.
+try:
+    from ..routes.subscription import (  # type: ignore[import-not-found]
+        RecordingNotEnabledError,
+        check_recording_allowed,
+    )
+except ImportError:  # pragma: no cover -- overlay absent or predates the hook
+    RecordingNotEnabledError = None  # type: ignore[assignment,misc]
+    check_recording_allowed = None  # type: ignore[assignment]
+
+
+def _gate_recording(user_email: str) -> None:
+    """Refuse audio uploads when the deployment's recording policy says no.
+
+    No-op when no policy hook is installed — recording stays available on
+    a plain deployment. Only the AUDIO path consults this; transcript
+    uploads and pasted notes are never policy-gated.
+    """
+    if check_recording_allowed is None:
+        return
+    settings = get_settings()
+    try:
+        check_recording_allowed(user_email, settings)
+    except Exception as exc:
+        if RecordingNotEnabledError is None or not isinstance(exc, RecordingNotEnabledError):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": {
+                    "code": "RECORDING_NOT_ENABLED",
+                    "message": "Session recording is not enabled for this practice.",
+                    "details": {},
+                }
+            },
+        ) from exc
+
 
 def _gate_trial_session(user_email: str) -> None:
     """Increment the trial-session counter and 402 if exhausted.
@@ -1131,6 +1172,10 @@ async def upload_audio(
     answers 202. Practice tier users get priority processing; Solo tier uses
     the standard queue.
     """
+    # Deployment recording policy first — a refused caller shouldn't burn
+    # rate-limit budget on a request that was never going to transcribe.
+    _gate_recording(user.email)
+
     # Per-user burst guard: each upload spawns a transcription job, so cap how
     # fast a single caller can trigger them (per-minute + per-hour). Raises 429.
     get_audio_upload_limiter().check(user.id)
