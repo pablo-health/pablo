@@ -82,6 +82,46 @@ is never trusted about availability. Bookings are refused more than
 60 days out or in the past. Patient reuse is by exact-email match among
 the owner's patients; anything else creates a fresh record.
 
+## Security posture — the email-reuse question
+
+The booking POST reuses an existing patient record when the booker's
+email exactly matches one of the owner's live patients. Two distinct
+questions hide in that design, with different answers:
+
+**Does it create an existence oracle?** No — by construction, and
+pinned by `test_booking_reveals_nothing_about_existing_patients`. The
+confirmation carries only link-derived fields (host, title, times,
+duration); status code, shape, and values are identical whether the
+email matched an existing chart or created a fresh record, and the
+reuse path never writes booker-supplied names onto the existing chart.
+An anonymous caller cannot learn from any response whether an email
+belongs to a patient. (A timing side channel between the two paths
+exists in principle — the create path does more writes — but it is
+noise-dominated over the network and further blunted by the IP rate
+limit.)
+
+**Can an unverified email attach writes to a real chart?** Yes, and
+this is the real limit of phase 1: anyone who knows a patient's email
+can create an appointment (with attacker-chosen note text) that lands
+on that patient's chart and the clinician's calendar, attributed to the
+real client. Nothing is disclosed to the attacker — it is an integrity
+problem, not a confidentiality one — but a clinician could mistake the
+spoofed booking for a genuine one. The same unverified-email property
+also allows slow-drip junk patient records (rate-limited, deletable,
+but real).
+
+This is acceptable while a deployment uses booking links for
+non-clinical intake — new-contact consultations, `personal`-edition
+practices — which is exactly the phase-1 scope the default-off flag
+protects. **Before positioning booking links as client self-scheduling
+against live charts, email verification must land**: either a
+confirmation link proves control of the address before the booking is
+attached (the natural companion to the outbound-email work below), or
+public bookings enter a pending state the clinician reconciles before
+they touch a chart — the same shape as the EHR import client-resolution
+flow. Until one of those exists, the design intent is: booking links
+book *time*, and chart identity stays therapist-confirmed.
+
 ## What phase 1 deliberately leaves out
 
 - **Email confirmation to the booker.** There is no outbound email

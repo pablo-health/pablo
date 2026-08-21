@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from app.api_errors import register_exception_handlers
 from app.main import app as real_app
-from app.models import User
+from app.models import Patient, User
 from app.models.booking_link import BookingLink
 from app.rate_limit import require_rate_limit
 from app.repositories import (
@@ -303,6 +303,58 @@ def test_repeat_booker_reuses_patient_record(
 
     _patients, total = public_client.patient_repo.list_by_user(OWNER_ID)
     assert total == 1
+
+
+def test_booking_reveals_nothing_about_existing_patients(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """No existence oracle: booking with an existing patient's email must be
+    indistinguishable from booking with a fresh one — the confirmation carries
+    only link-derived fields, and the existing chart is never modified by
+    attacker-supplied names."""
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+
+    fresh = public_client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:00:00Z",
+            "first_name": "New",
+            "last_name": "Person",
+            "email": "stranger@example.com",
+        },
+    )
+    reused = public_client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:30:00Z",
+            "first_name": "Wrong",
+            "last_name": "Name",
+            "email": "client@example.com",
+        },
+    )
+    assert fresh.status_code == reused.status_code == 201
+    # Identical shape, link-derived values only — nothing patient-derived.
+    expected_keys = {"host_name", "title", "start_at", "end_at", "duration_minutes"}
+    assert set(fresh.json()) == set(reused.json()) == expected_keys
+
+    unchanged = public_client.patient_repo.get(existing.id, OWNER_ID)
+    assert unchanged.first_name == "Realfirst"
+    assert unchanged.last_name == "Reallast"
 
 
 def test_booking_off_slot_time_is_refused(
