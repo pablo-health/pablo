@@ -427,7 +427,9 @@ def test_deactivate_and_delete_booking_link(
     patched = managed_client.patch(f"/api/booking-links/{link_id}", json={"is_active": False})
     assert patched.status_code == 200
     assert patched.json()["is_active"] is False
-    assert link_repo.get_by_slug("intro-call").is_active is False
+    stored = link_repo.get_by_slug("intro-call")
+    assert stored is not None
+    assert stored.is_active is False
 
     assert managed_client.delete(f"/api/booking-links/{link_id}").status_code == 204
     assert link_repo.get_by_slug("intro-call") is None
