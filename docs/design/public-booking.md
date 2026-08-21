@@ -162,16 +162,24 @@ once the previous one is being beaten:
    click — more expensive per booking than solving any CAPTCHA, and
    it protects the chart, which a CAPTCHA never does. Unconfirmed
    holds expire in minutes, bounding what a bot can fence off.
-3. **CAPTCHA seam (optional, evidence-driven).** A `CAPTCHA_PROVIDER`
-   setting (`none` default; Cloudflare Turnstile as the first
-   adapter) verified server-side as a dependency on the booking POST
-   only — browsing the card and slots stays free. The public link
-   card carries the site key so the page knows whether to render the
-   widget. The provider sees browser signals and a token, never form
-   contents, so nothing PHI-adjacent leaves the deployment. Off by
-   default everywhere (the engine hard-codes no vendor); a deployment
-   turns it on when its audit trail shows automated abuse surviving
-   rungs 1–2 — likely never, for a practice's booking page.
+3. **CAPTCHA seam.** A `CAPTCHA_PROVIDER` setting (`none` default;
+   Cloudflare Turnstile as the first adapter) verified server-side as
+   a dependency on the booking POST only — browsing the card and
+   slots stays free. The public link card carries the site key so the
+   page knows whether to render the widget. The provider sees browser
+   signals and a token, never form contents, so nothing PHI-adjacent
+   leaves the deployment. The engine defaults to `none` and
+   hard-codes no vendor; the *when* is a deployment decision with a
+   clear split. A single-practice deployment can reasonably wait for
+   evidence of abuse. A deployment hosting many clinical practices
+   should enable it at rollout, not after: the operators of such a
+   deployment — not the clinicians — hold the knob, waiting means
+   some practice's chart list absorbs the first spam wave, and once
+   rung 2 is live every bot booking also burns outbound confirmation
+   email (sender reputation and spend) even though nothing finalizes.
+   Screening before the hold keeps the confirmation machinery clean,
+   at the cost of a widget that stays invisible for nearly all real
+   bookers.
 
 ## What phase 1 deliberately leaves out
 
