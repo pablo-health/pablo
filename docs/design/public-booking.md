@@ -128,21 +128,8 @@ book *time*, and chart identity stays therapist-confirmed.
   sender in the engine yet (reminders log today). The confirmation
   screen offers a downloadable `.ics` instead; the clinician-side
   record and calendar sync are authoritative. When an email path
-  exists, confirmation + cancel/reschedule tokens hang off it.
-
-  *The seam, when it lands:* a small `EmailSender` protocol in
-  `backend/app/services/` — `send(to, subject, body)` — selected by an
-  `EMAIL_BACKEND` setting. Default backend is `none` (log-only,
-  matching today's reminder behavior, so a bare deployment never
-  silently fails); an `smtp` backend makes it work with whatever
-  provider a deployment already trusts, configured per-deployment.
-  Consumers, in order of need: booking confirmations, the appointment
-  reminder service (whose TODO this closes), and booking-email
-  verification tokens (see the security section). Message content
-  stays minimal — an appointment email already implies a care
-  relationship, so the deployment's mail provider must sit inside its
-  compliance boundary, and nothing clinical ever goes in a message
-  body.
+  exists, confirmation + cancel/reschedule tokens hang off it. The
+  seam it hangs off is specified in "The email seam" below.
 - **Booker-side cancel/reschedule.** Needs signed tokens, which want
   the email path above. Until then the clinician cancels in-app.
 - **Timezones.** The scheduling engine treats all times as
@@ -164,6 +151,77 @@ Owners manage links through authed CRUD at `/api/booking-links`
 (create, list, update copy/duration, activate/deactivate, delete). A
 dashboard management surface (Settings → Booking) is the natural next
 step; until it lands, links are managed via the API.
+
+## The email seam
+
+Not built; this is the contract for when it lands. It is deliberately
+one seam serving three consumers — booking confirmations, the
+appointment reminder service (which currently logs where it would
+send), and booking-email verification tokens (the security section's
+precondition for client self-scheduling) — so the first implementation
+pays off three times.
+
+### Protocol
+
+One protocol, one method, in `backend/app/services/email_sender.py`:
+
+```python
+@dataclass
+class OutboundEmail:
+    to: str
+    subject: str
+    text: str          # plain text first; HTML is a later, optional field
+    kind: str          # "booking_confirmation" | "appointment_reminder" | ...
+
+class EmailSender(Protocol):
+    def send(self, message: OutboundEmail) -> None: ...
+```
+
+`kind` exists for logging and tests, never for provider routing. A
+`get_email_sender()` factory mirrors the repository factories and is
+injected with `Depends()` like everything else; tests get an
+`InMemoryEmailSender` that captures messages, mirroring the in-memory
+repositories.
+
+### Backend selection
+
+`EMAIL_BACKEND` in settings picks the implementation:
+
+- **`none` (default)** — logs that a send *would* happen (`kind` only)
+  and succeeds. A bare deployment keeps today's behavior and never
+  half-works silently; features that *require* delivery (verification
+  tokens) must check the backend and refuse to arm rather than pretend.
+- **`smtp`** — `smtplib` with STARTTLS, configured per-deployment via
+  `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
+  (SecretStr), `SMTP_FROM`. SMTP-first because every provider speaks
+  it and the mail relationship — including any compliance agreement it
+  needs — stays the deployment's own. A practice's existing workplace
+  mailbox is typically already inside its compliance boundary and
+  works here unchanged.
+
+Further adapters are per-deployment decisions added behind the same
+protocol; the engine never hard-codes a vendor.
+
+### Failure and privacy semantics
+
+- **Sends are best-effort side effects.** A failed confirmation email
+  must never fail the booking — same posture as Google Calendar sync:
+  log, continue, the in-app record is authoritative. Reminders retry
+  naturally on the next scheduler tick (the `reminder_*_sent` flags
+  only flip on success). Verification sends are the exception: their
+  failure surfaces to the caller, since the flow cannot proceed
+  without them.
+- **The recipient address is PHI-adjacent** (a patient email on an
+  appointment implies a care relationship). Guardrail #5 applies: no
+  backend may log the address or body — the `none` backend logs `kind`
+  alone, and the `smtp` backend logs success/failure with no
+  addressee.
+- **Bodies stay minimal**: time, duration, host name, a manage link.
+  Nothing clinical, ever — regardless of what agreements the
+  deployment's provider has signed.
+- Confirmations send from a FastAPI background task after the response
+  commits, so a slow provider never holds the booking request (or its
+  DB connection) open.
 
 ## Future: per-practice domains
 
