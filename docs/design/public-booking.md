@@ -114,13 +114,37 @@ This is acceptable while a deployment uses booking links for
 non-clinical intake — new-contact consultations, `personal`-edition
 practices — which is exactly the phase-1 scope the default-off flag
 protects. **Before positioning booking links as client self-scheduling
-against live charts, email verification must land**: either a
-confirmation link proves control of the address before the booking is
-attached (the natural companion to the outbound-email work below), or
-public bookings enter a pending state the clinician reconciles before
-they touch a chart — the same shape as the EHR import client-resolution
-flow. Until one of those exists, the design intent is: booking links
-book *time*, and chart identity stays therapist-confirmed.
+against live charts, email confirmation must land**, with two layers
+that fail safe independently:
+
+1. **Per-link `require_email_confirmation`, born true, no UI.** A
+   column on `booking_links` whose `true` default is enforced at the
+   database layer on insert, and which is *deliberately absent* from
+   the management API schemas and any settings surface. Every link
+   ever created requires confirmation; relaxing a specific link is a
+   conscious per-deployment operator action (direct update by whoever
+   runs the database), not a preference a clinician can flip while
+   chasing booking conversion. When required, the booking POST places
+   a short-TTL hold on the slot (rate-limited, capped per IP, expiring
+   in minutes so spam holds can't fence off a calendar) and sends the
+   confirmation link via the email seam; the appointment finalizes on
+   click. The `none` email backend refuses to arm this path rather
+   than pretend (see "The email seam").
+
+2. **The chart invariant, independent of the flag.** An unverified
+   email never attaches a booking to an existing chart — a matched
+   email either completes confirmation or lands as a pending record
+   the clinician reconciles (the EHR-import client-resolution shape)
+   before it touches the chart. This holds even on links where
+   confirmation was operator-relaxed: relaxing the flag trades
+   "confirm to finalize" for "book instantly as a fresh or pending
+   record" — it can never reopen spoofed writes onto a real chart.
+   A `personal`-edition practice, which declares it holds no clinical
+   charts, is the one place attach-by-match may skip verification —
+   a rule keyed to a declared fact, not a toggle.
+
+Until those land, the design intent stands: booking links book *time*,
+and chart identity stays therapist-confirmed.
 
 ## What phase 1 deliberately leaves out
 
