@@ -129,6 +129,20 @@ book *time*, and chart identity stays therapist-confirmed.
   screen offers a downloadable `.ics` instead; the clinician-side
   record and calendar sync are authoritative. When an email path
   exists, confirmation + cancel/reschedule tokens hang off it.
+
+  *The seam, when it lands:* a small `EmailSender` protocol in
+  `backend/app/services/` — `send(to, subject, body)` — selected by an
+  `EMAIL_BACKEND` setting. Default backend is `none` (log-only,
+  matching today's reminder behavior, so a bare deployment never
+  silently fails); an `smtp` backend makes it work with whatever
+  provider a deployment already trusts, configured per-deployment.
+  Consumers, in order of need: booking confirmations, the appointment
+  reminder service (whose TODO this closes), and booking-email
+  verification tokens (see the security section). Message content
+  stays minimal — an appointment email already implies a care
+  relationship, so the deployment's mail provider must sit inside its
+  compliance boundary, and nothing clinical ever goes in a message
+  body.
 - **Booker-side cancel/reschedule.** Needs signed tokens, which want
   the email path above. Until then the clinician cancels in-app.
 - **Timezones.** The scheduling engine treats all times as
@@ -150,6 +164,34 @@ Owners manage links through authed CRUD at `/api/booking-links`
 (create, list, update copy/duration, activate/deactivate, delete). A
 dashboard management surface (Settings → Booking) is the natural next
 step; until it lands, links are managed via the API.
+
+## Future: per-practice domains
+
+Not built; recorded so phase-1 shapes stay compatible with serving
+booking pages under a practice's own domain
+(`book.sunrisecounseling.example/intro-call`) later.
+
+- **Host → practice resolution.** A platform mapping table (sibling of
+  `email_tenant_mappings`) resolves the request's Host header to a
+  practice *before* the slug lookup, inside
+  `get_public_booking_context` — the single seam every public endpoint
+  already passes through. The default host skips the lookup; nothing
+  outside that dependency changes.
+- **Slug scope.** `booking_links.slug` is globally unique today — the
+  strictest constraint, chosen because strict-to-loose is the easy
+  migration. When domains namespace links, it relaxes to
+  `UNIQUE(practice_id, slug)` via a constraint swap; existing rows
+  trivially satisfy the weaker constraint, so no data rewrite. On the
+  shared default host, practice-scoped links then need a two-segment
+  path (`/book/{practice}/{slug}`).
+- **Frontend.** The booker page is chrome-free and serves unchanged
+  under any host; middleware rewrites `book.example.com/{slug}` to
+  `/book/{slug}`. Per-practice branding is a token layer on the same
+  page, not a fork of it.
+- **Nothing bakes a domain in.** The confirmation response, audit
+  rows, and the appointment note reference the slug only, so links
+  survive a later domain move untouched. Certificates and DNS live in
+  deployment config, outside this repo.
 
 ## Rollout
 
