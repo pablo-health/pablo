@@ -103,6 +103,24 @@ class PostgresPatientRepository(PatientRepository):
         )
         return _row_to_patient(row) if row else None
 
+    def find_by_email(self, email: str, user_id: str) -> Patient | None:
+        row = (
+            self._session.execute(
+                select(PatientRow)
+                .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
+                .where(
+                    func.lower(PatientRow.email) == email.lower(),
+                    PatientRow.deleted_at.is_(None),
+                    *_live_grant_filter(user_id),
+                )
+                .order_by(PatientRow.created_at)
+                .limit(1)
+            )
+            .scalars()
+            .one_or_none()
+        )
+        return _row_to_patient(row) if row else None
+
     def get_last_name(self, patient_id: str, user_id: str) -> str | None:
         """Single-column variant of :meth:`get` — never selects the rest
         of the chart row, so it stays valid under column-scoped grants."""

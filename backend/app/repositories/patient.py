@@ -66,6 +66,15 @@ class PatientRepository(ABC):
         return {(uid, pid) for (uid, pid) in pairs if self.has_live_grant(pid, uid)}
 
     @abstractmethod
+    def find_by_email(self, email: str, user_id: str) -> Patient | None:
+        """First live patient of ``user_id`` with this email (case-insensitive).
+
+        Used by public booking to reuse an existing chart instead of
+        creating a duplicate when a known client books again. ``None``
+        when no match.
+        """
+
+    @abstractmethod
     def list_by_user(
         self,
         user_id: str,
@@ -220,6 +229,16 @@ class InMemoryPatientRepository(PatientRepository):
             and p.id not in self._deleted_at
             and self._can_access(p.id, user_id)
         }
+
+    def find_by_email(self, email: str, user_id: str) -> Patient | None:
+        matches = [
+            p
+            for p in self._patients.values()
+            if (p.email or "").lower() == email.lower()
+            and p.id not in self._deleted_at
+            and self._can_access(p.id, user_id)
+        ]
+        return min(matches, key=lambda p: p.created_at) if matches else None
 
     def list_by_user(
         self,

@@ -1,0 +1,122 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""PostgreSQL implementation of BookingLinkRepository."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, cast
+
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
+
+from ...db.platform_models import BookingLinkRow, PracticeRow
+from ...models.booking_link import BookingLink
+from ...utcnow import utc_now
+from ..booking_link import BookingLinkRepository, SlugTakenError
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import CursorResult
+    from sqlalchemy.orm import Session
+
+
+def _row_to_link(row: BookingLinkRow) -> BookingLink:
+    return BookingLink(
+        id=row.id,
+        slug=row.slug,
+        user_id=row.user_id,
+        practice_id=row.practice_id,
+        host_name=row.host_name,
+        title=row.title,
+        description=row.description,
+        duration_minutes=row.duration_minutes,
+        session_type=row.session_type,
+        is_active=row.is_active,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+class PostgresBookingLinkRepository(BookingLinkRepository):
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_by_slug(self, slug: str) -> BookingLink | None:
+        stmt = (
+            select(BookingLinkRow, PracticeRow.schema_name)
+            .outerjoin(PracticeRow, PracticeRow.id == BookingLinkRow.practice_id)
+            .where(BookingLinkRow.slug == slug)
+        )
+        result = self._session.execute(stmt).one_or_none()
+        if result is None:
+            return None
+        row, schema_name = result
+        link = _row_to_link(row)
+        link.practice_schema = schema_name
+        return link
+
+    def get(self, link_id: str, user_id: str) -> BookingLink | None:
+        stmt = select(BookingLinkRow).where(
+            BookingLinkRow.id == link_id, BookingLinkRow.user_id == user_id
+        )
+        row = self._session.execute(stmt).scalar_one_or_none()
+        return _row_to_link(row) if row else None
+
+    def list_by_user(self, user_id: str) -> list[BookingLink]:
+        stmt = (
+            select(BookingLinkRow)
+            .where(BookingLinkRow.user_id == user_id)
+            .order_by(BookingLinkRow.created_at.desc())
+        )
+        return [_row_to_link(row) for row in self._session.execute(stmt).scalars()]
+
+    def create(self, link: BookingLink) -> BookingLink:
+        self._session.add(
+            BookingLinkRow(
+                id=link.id,
+                slug=link.slug,
+                user_id=link.user_id,
+                practice_id=link.practice_id,
+                host_name=link.host_name,
+                title=link.title,
+                description=link.description,
+                duration_minutes=link.duration_minutes,
+                session_type=link.session_type,
+                is_active=link.is_active,
+                created_at=link.created_at,
+                updated_at=link.updated_at,
+            )
+        )
+        try:
+            self._session.flush()
+        except IntegrityError as e:
+            self._session.rollback()
+            raise SlugTakenError(link.slug) from e
+        return link
+
+    def update(self, link: BookingLink) -> BookingLink:
+        stmt = select(BookingLinkRow).where(
+            BookingLinkRow.id == link.id, BookingLinkRow.user_id == link.user_id
+        )
+        row = self._session.execute(stmt).scalar_one()
+        row.host_name = link.host_name
+        row.title = link.title
+        row.description = link.description
+        row.duration_minutes = link.duration_minutes
+        row.is_active = link.is_active
+        row.updated_at = utc_now()
+        self._session.flush()
+        return _row_to_link(row)
+
+    def delete(self, link_id: str, user_id: str) -> bool:
+        # cast: Session.execute is typed Result[Any]; a DELETE returns a
+        # CursorResult, which is what carries rowcount (same as appointment.py).
+        result = cast(
+            "CursorResult[Any]",
+            self._session.execute(
+                delete(BookingLinkRow).where(
+                    BookingLinkRow.id == link_id, BookingLinkRow.user_id == user_id
+                )
+            ),
+        )
+        self._session.flush()
+        return bool(result.rowcount)

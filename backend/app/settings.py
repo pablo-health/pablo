@@ -923,6 +923,13 @@ class Settings(BaseSettings):
         description="Mount POST /api/launch/intent + /api/launch/redeem.",
     )
 
+    # Public booking links (docs/design/public-booking.md). Off by default:
+    # a deployment opts in to exposing an unauthenticated booking surface.
+    public_booking_enabled: bool = Field(
+        default=False,
+        description="Mount the unauthenticated /api/public/booking-links/* endpoints.",
+    )
+
     # Companion device-binding proof enforcement (DPoP, RFC 9449-style).
     # When false the DPoP middleware is a hard no-op pass-through, so the
     # validation layer can ship dark while native companions add signing
