@@ -168,7 +168,8 @@ that fail safe independently:
    a rule keyed to a declared fact, not a toggle.
 
 Until those land, the design intent stands: booking links book *time*,
-and chart identity stays therapist-confirmed.
+and chart identity stays therapist-confirmed. Phase 2 is tracked as
+epic PABLO-e3a.
 
 ### The wound-down practice
 
@@ -201,7 +202,7 @@ nothing to enforce.
 Note this is a **subscription** gate, not a user-state gate. A
 deactivated or offboarded clinician whose subscription is still `FULL`
 keeps a live booking link; tying link availability to owner account
-state is separate work.
+state is separate work (PABLO-e3a.10).
 
 ### Anti-automation ladder
 
@@ -273,7 +274,7 @@ once the previous one is being beaten:
   engine-wide change and out of scope here.
 - **Multiple hosts / round-robin, intake forms, payments.** Not
   scheduling-engine concerns yet.
-- **Slug reuse after deletion.** `delete` is a hard `DELETE`, so a
+- **Slug reuse after deletion** (PABLO-e3a.5). `delete` is a hard `DELETE`, so a
   released slug is immediately re-registrable by *any* clinician on
   the deployment. A therapist who prints `/book/dr-smith` on a card,
   then deletes the link, hands whoever claims that slug next the
@@ -284,7 +285,7 @@ once the previous one is being beaten:
   claimed. Until then, treat deletion as *deactivation plus a
   released name*, and prefer `is_active: false` for any link that was
   ever published.
-- **Audit actor fidelity.** A public booking is logged as
+- **Audit actor fidelity** (PABLO-e3a.6). A public booking is logged as
   `PATIENT_CREATED` / `APPOINTMENT_CREATED` with the *link owner* as
   the actor, because `AuditService` has no representation for an
   anonymous booker. The trail therefore reads as though the clinician
