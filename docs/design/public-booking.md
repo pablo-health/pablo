@@ -146,6 +146,33 @@ that fail safe independently:
 Until those land, the design intent stands: booking links book *time*,
 and chart identity stays therapist-confirmed.
 
+### Anti-automation ladder
+
+Three rungs, deliberately in this order — each is only worth adding
+once the previous one is being beaten:
+
+1. **Per-IP rate limiting (shipped).** The pre-auth sliding-window
+   limiter runs before the slug even resolves. Sufficient for phase-1
+   scope: low-traffic links, no slot holds to exhaust, junk records
+   deletable and rate-bound. Its known limit: distributed clients
+   sidestep per-IP windows.
+2. **Email confirmation (phase 2, above).** The main bot deterrent
+   once links face real traffic: with `require_email_confirmation`
+   born true, every finalized booking costs a working inbox and a
+   click — more expensive per booking than solving any CAPTCHA, and
+   it protects the chart, which a CAPTCHA never does. Unconfirmed
+   holds expire in minutes, bounding what a bot can fence off.
+3. **CAPTCHA seam (optional, evidence-driven).** A `CAPTCHA_PROVIDER`
+   setting (`none` default; Cloudflare Turnstile as the first
+   adapter) verified server-side as a dependency on the booking POST
+   only — browsing the card and slots stays free. The public link
+   card carries the site key so the page knows whether to render the
+   widget. The provider sees browser signals and a token, never form
+   contents, so nothing PHI-adjacent leaves the deployment. Off by
+   default everywhere (the engine hard-codes no vendor); a deployment
+   turns it on when its audit trail shows automated abuse surviving
+   rungs 1–2 — likely never, for a practice's booking page.
+
 ## What phase 1 deliberately leaves out
 
 - **Email confirmation to the booker.** There is no outbound email
