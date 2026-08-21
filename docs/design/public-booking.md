@@ -170,16 +170,67 @@ that fail safe independently:
 Until those land, the design intent stands: booking links book *time*,
 and chart identity stays therapist-confirmed.
 
+### The wound-down practice
+
+A third question, separate from email: **may this practice still
+accept writes at all?**
+
+Every authed route sits behind `require_active_subscription`, which
+resolves the *caller's* practice and refuses write-intent routes under
+`READ_ONLY`. The public surface has no caller, so that gate cannot
+apply — and without a replacement, a practice wound down to read-only
+would keep accumulating new charts and appointments through a link it
+can no longer service, while its own clinician could not create the
+same appointment in-app.
+
+`_require_owner_may_accept_bookings` closes that: it resolves the
+*link owner's* access level and refuses the booking POST unless it is
+`FULL`. Reads stay open — the card and slots still serve, matching how
+read-intent routes behave everywhere else — so a lapsed practice's
+published URL does not go dark, it stops taking bookings. The refusal
+names no billing state; to a booker it is indistinguishable from any
+other reason a link stops accepting bookings.
+
+Two deliberate no-ops. `is_core` deployments return immediately —
+Pablo Core has no subscription concept to consult. And a build whose
+subscription module is absent entirely (a self-host that set
+`PABLO_EDITION` on the OSS image, and the OSS test harness) returns
+rather than 500-ing every booking: a deployment that bills nobody has
+nothing to enforce.
+
+Note this is a **subscription** gate, not a user-state gate. A
+deactivated or offboarded clinician whose subscription is still `FULL`
+keeps a live booking link; tying link availability to owner account
+state is separate work.
+
 ### Anti-automation ladder
 
 Three rungs, deliberately in this order — each is only worth adding
 once the previous one is being beaten:
 
-1. **Per-IP rate limiting (shipped).** The pre-auth sliding-window
-   limiter runs before the slug even resolves. Sufficient for phase-1
-   scope: low-traffic links, no slot holds to exhaust, junk records
-   deletable and rate-bound. Its known limit: distributed clients
-   sidestep per-IP windows.
+1. **Per-IP rate limiting (shipped).** Two sliding windows, both
+   running before the slug resolves: a loose **browse** window
+   (60/minute) covering the card and slots, and a tight **write**
+   window (10/hour) on the booking POST, which is the request that
+   actually costs something — a patient record and an appointment.
+
+   These are *not* the pre-auth limiter. Sharing that window with
+   login and signup was wrong in both directions: browsing the 14 days
+   the page shows is ~15 requests and would have exhausted a 10/60s
+   login budget, and booking traffic from one NAT'd address would have
+   locked out logins for everyone behind it. The two surfaces now hold
+   separate budgets.
+
+   Separation lives in the **key namespace**, not in holding distinct
+   limiter objects: `RedisSlidingWindow` keys purely on the string it
+   is handed, so two limiters passed the same bare IP silently share
+   one window. Public booking keys are prefixed
+   (`public-booking:` / `public-booking-write:`), and
+   `test_rate_limit.py` pins the independence.
+
+   Sufficient for phase-1 scope: low-traffic links, no slot holds to
+   exhaust, junk records deletable and rate-bound. Its known limit:
+   distributed clients sidestep per-IP windows.
 2. **Email confirmation (phase 2, above).** The main bot deterrent
    once links face real traffic: with `require_email_confirmation`
    born true, every finalized booking costs a working inbox and a
@@ -222,6 +273,27 @@ once the previous one is being beaten:
   engine-wide change and out of scope here.
 - **Multiple hosts / round-robin, intake forms, payments.** Not
   scheduling-engine concerns yet.
+- **Slug reuse after deletion.** `delete` is a hard `DELETE`, so a
+  released slug is immediately re-registrable by *any* clinician on
+  the deployment. A therapist who prints `/book/dr-smith` on a card,
+  then deletes the link, hands whoever claims that slug next the
+  still-circulating traffic — and with it the names and emails of the
+  original practice's clients, collected on a booking form that looks
+  legitimate. `RESERVED_SLUGS` guards app routes; nothing guards
+  reuse. The fix is a tombstone: soft-delete the row and keep the slug
+  claimed. Until then, treat deletion as *deactivation plus a
+  released name*, and prefer `is_active: false` for any link that was
+  ever published.
+- **Audit actor fidelity.** A public booking is logged as
+  `PATIENT_CREATED` / `APPOINTMENT_CREATED` with the *link owner* as
+  the actor, because `AuditService` has no representation for an
+  anonymous booker. The trail therefore reads as though the clinician
+  created that chart. `changes={"source": "public_booking"}` marks the
+  provenance, but the actor field itself is wrong — and it is wrong
+  precisely in the spoofed-booking case above, where the audit trail
+  is what a clinician would consult to work out where a chart came
+  from. Giving the audit trail a real anonymous-actor concept is the
+  fix.
 
 ## Frontend
 

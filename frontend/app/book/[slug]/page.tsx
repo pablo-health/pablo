@@ -158,6 +158,10 @@ export default function PublicBookingPage({
     queryKey: ["public-booking-slots", slug, selectedDate],
     queryFn: () => fetchJson(`/api/public/booking-links/${slug}/slots?date=${selectedDate}`),
     enabled: slug !== null && linkQuery.isSuccess && confirmation === null,
+    // No retries: the public surface is rate-limited per IP, and the default
+    // three retries turn a single 429 into four requests against the window
+    // that just refused us.
+    retry: false,
   })
 
   async function submitBooking(e: React.FormEvent) {
@@ -181,6 +185,17 @@ export default function PublicBookingPage({
         setSubmitError("That time was just taken. Please pick another slot.")
         setSelectedSlot(null)
         void slotsQuery.refetch()
+        return
+      }
+      if (resp.status === 403) {
+        setSubmitError(
+          "This practice isn't accepting online bookings right now. " +
+            "Please contact them directly.",
+        )
+        return
+      }
+      if (resp.status === 429) {
+        setSubmitError("Too many requests. Please wait a moment and try again.")
         return
       }
       if (!resp.ok) {

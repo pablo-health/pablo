@@ -31,7 +31,8 @@ if TYPE_CHECKING:
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
-from ..api_errors import BadRequestError, ConflictError, NotFoundError
+from ..api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from ..auth.route_access import AccessLevel, resolve_access_level
 from ..auth.route_security import truly_public
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models import Patient, User
@@ -43,7 +44,10 @@ from ..models.booking_link import (
     PublicBookingLinkResponse,
 )
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
-from ..rate_limit import require_rate_limit
+from ..rate_limit import (
+    require_public_booking_rate_limit,
+    require_public_booking_write_rate_limit,
+)
 from ..repositories import (
     get_appointment_repository,
     get_availability_rule_repository,
@@ -68,7 +72,7 @@ logger = logging.getLogger(__name__)
 # every request is IP-rate-limited before the slug even resolves.
 router = APIRouter(
     tags=["public-booking"],
-    dependencies=[Depends(truly_public), Depends(require_rate_limit)],
+    dependencies=[Depends(truly_public), Depends(require_public_booking_rate_limit)],
 )
 
 # How far ahead a public booker may look and book.
@@ -144,6 +148,53 @@ def get_public_gcal_service(
         client_id=settings.google_calendar_client_id,
         client_secret=settings.google_calendar_client_secret.get_secret_value(),
     )
+
+
+_BOOKING_CLOSED = (
+    "This practice isn't accepting online bookings right now. Please contact them directly."
+)
+
+
+def _require_owner_may_accept_bookings(owner: User) -> None:
+    """Refuse the booking write when the owner's practice may not write.
+
+    The public surface has no request identity, so the standard
+    ``require_active_subscription`` gate — which resolves the *caller* —
+    cannot apply here. Resolve the link's owner instead: a practice
+    wound down to read-only or no access keeps its card and slots
+    readable (matching how read-intent routes behave everywhere else),
+    but stops accumulating new charts and appointments through a link
+    it can no longer service.
+
+    The refusal names no billing state: to a booker this is
+    indistinguishable from any other reason a link stops taking
+    bookings.
+    """
+    settings = get_settings()
+    if not settings.is_saas:
+        return
+
+    try:
+        # SaaS-overlay-only module; the same late import
+        # require_active_subscription does.
+        from ..routes.subscription import (  # type: ignore[import-not-found]
+            _fetch_subscription,
+        )
+    except ImportError:
+        # A build with no subscription registry at all, configured for a
+        # hosted edition (a self-host that set PABLO_EDITION, and the OSS
+        # test harness). There is no subscription to read, so there is
+        # nothing to enforce — and 500-ing every booking would be a worse
+        # answer than letting a deployment that does not bill anyone book.
+        return
+
+    sub = _fetch_subscription(owner.email, settings)
+    if not sub:
+        # No subscription record — might be mid-provisioning; let through,
+        # matching require_active_subscription.
+        return
+    if resolve_access_level(sub) is not AccessLevel.FULL:
+        raise ForbiddenError(_BOOKING_CLOSED)
 
 
 def _parse_booking_date(value: str) -> date:
@@ -230,6 +281,7 @@ def _find_or_create_patient(
     "/api/public/booking-links/{slug}/bookings",
     response_model=PublicBookingConfirmation,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_public_booking_write_rate_limit)],
 )
 def create_public_booking(
     request: CreatePublicBookingRequest,
@@ -247,6 +299,8 @@ def create_public_booking(
     The requested start must exactly match a currently-free slot — the
     client is never trusted about availability.
     """
+    _require_owner_may_accept_bookings(ctx.owner)
+
     date_str = request.start_at[:10]
     _parse_booking_date(date_str)
 

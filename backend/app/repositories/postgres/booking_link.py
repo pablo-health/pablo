@@ -19,6 +19,12 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 
+# SQLSTATE 23505, unique_violation. ``booking_links`` carries exactly one
+# unique constraint besides the primary key (slug), and the primary key is
+# a freshly minted uuid4, so a 23505 here is a slug collision.
+_UNIQUE_VIOLATION = "23505"
+
+
 def _row_to_link(row: BookingLinkRow) -> BookingLink:
     return BookingLink(
         id=row.id,
@@ -70,26 +76,34 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
         return [_row_to_link(row) for row in self._session.execute(stmt).scalars()]
 
     def create(self, link: BookingLink) -> BookingLink:
-        self._session.add(
-            BookingLinkRow(
-                id=link.id,
-                slug=link.slug,
-                user_id=link.user_id,
-                practice_id=link.practice_id,
-                host_name=link.host_name,
-                title=link.title,
-                description=link.description,
-                duration_minutes=link.duration_minutes,
-                session_type=link.session_type,
-                is_active=link.is_active,
-                created_at=link.created_at,
-                updated_at=link.updated_at,
-            )
+        row = BookingLinkRow(
+            id=link.id,
+            slug=link.slug,
+            user_id=link.user_id,
+            practice_id=link.practice_id,
+            host_name=link.host_name,
+            title=link.title,
+            description=link.description,
+            duration_minutes=link.duration_minutes,
+            session_type=link.session_type,
+            is_active=link.is_active,
+            created_at=link.created_at,
+            updated_at=link.updated_at,
         )
+        # SAVEPOINT, not a bare flush: a slug collision must undo this INSERT
+        # and nothing else. Rolling back the request session here would
+        # discard unrelated work the caller had already staged, and a
+        # repository is not the right scope to make that decision.
         try:
-            self._session.flush()
+            with self._session.begin_nested():
+                self._session.add(row)
+                self._session.flush()
         except IntegrityError as e:
-            self._session.rollback()
+            if getattr(e.orig, "pgcode", None) != _UNIQUE_VIOLATION:
+                # A foreign-key or check violation is not a taken slug;
+                # reporting it as one would send the caller chasing a
+                # conflict that isn't there.
+                raise
             raise SlugTakenError(link.slug) from e
         return link
 

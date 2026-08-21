@@ -11,6 +11,8 @@ and use the standard ``client`` fixture.
 
 from __future__ import annotations
 
+import sys
+import types
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -21,7 +23,10 @@ from app.api_errors import register_exception_handlers
 from app.main import app as real_app
 from app.models import Patient, User
 from app.models.booking_link import BookingLink
-from app.rate_limit import require_rate_limit
+from app.rate_limit import (
+    require_public_booking_rate_limit,
+    require_public_booking_write_rate_limit,
+)
 from app.repositories import (
     get_booking_link_repository,
     get_patient_repository,
@@ -29,6 +34,7 @@ from app.repositories import (
 )
 from app.repositories.booking_link import InMemoryBookingLinkRepository
 from app.repositories.patient import InMemoryPatientRepository
+from app.routes import public_booking as public_booking_module
 from app.routes.booking_links import get_link_repository
 from app.routes.public_booking import (
     get_public_availability_engine,
@@ -152,9 +158,10 @@ def public_client(link_repo: InMemoryBookingLinkRepository) -> Any:
     app = FastAPI()
     register_exception_handlers(app)
     app.include_router(public_router)
-    # The pre-auth limiter is process-global; left live it trips 429s
+    # The booking limiters are process-global; left live they trip 429s
     # across tests. Rate limiting has its own tests in test_rate_limit.
-    app.dependency_overrides[require_rate_limit] = lambda: None
+    app.dependency_overrides[require_public_booking_rate_limit] = lambda: None
+    app.dependency_overrides[require_public_booking_write_rate_limit] = lambda: None
     app.dependency_overrides[get_booking_link_repository] = lambda: link_repo
     app.dependency_overrides[get_user_repository] = lambda: _FakeUserRepo({OWNER_ID: _owner()})
     app.dependency_overrides[get_public_availability_engine] = lambda: AvailabilityEngine(
@@ -434,3 +441,102 @@ def test_deactivate_and_delete_booking_link(
     assert managed_client.delete(f"/api/booking-links/{link_id}").status_code == 204
     assert link_repo.get_by_slug("intro-call") is None
     assert managed_client.delete(f"/api/booking-links/{link_id}").status_code == 404
+
+
+# ------------------------------------------- public: owner subscription gate
+
+
+class _FakeSaasSettings:
+    """Just enough Settings surface for the owner subscription gate."""
+
+    is_saas = True
+
+
+def _stub_subscription_module(monkeypatch: pytest.MonkeyPatch, sub: dict[str, Any] | None) -> None:
+    """Stand in for the SaaS-overlay-only ``app.routes.subscription``.
+
+    The gate imports it lazily and only under ``is_saas``, so OSS never
+    loads it; the stub lets the enforcing branch be exercised here.
+    """
+    module = types.ModuleType("app.routes.subscription")
+    module._fetch_subscription = lambda _email, _settings: sub  # type: ignore[attr-defined]  # stub module, no stub-file to declare against
+    monkeypatch.setitem(sys.modules, "app.routes.subscription", module)
+    monkeypatch.setattr(public_booking_module, "get_settings", _FakeSaasSettings)
+
+
+def test_booking_refused_when_owner_may_not_write(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wound-down practice stops accumulating charts through its link."""
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    link_repo.create(_link())
+    slot = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()[
+        "slots"
+    ][0]
+
+    _stub_subscription_module(monkeypatch, {"access_level": "read_only"})
+
+    resp = _book(public_client, "intro-call", slot["start"])
+    assert resp.status_code == 403
+    # Refused before any write: no chart, no appointment, no audit entry.
+    assert public_client.patient_repo.find_by_email("jane@example.com", OWNER_ID) is None
+    assert public_client.audit.calls == []
+
+
+def test_wound_down_practice_still_serves_card_and_slots(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Read-intent stays open, matching how READ_ONLY behaves elsewhere."""
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    link_repo.create(_link())
+
+    _stub_subscription_module(monkeypatch, {"access_level": "read_only"})
+
+    assert public_client.get("/api/public/booking-links/intro-call").status_code == 200
+    assert (
+        public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").status_code
+        == 200
+    )
+
+
+def test_booking_allowed_while_subscription_is_still_provisioning(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No subscription record is mid-provisioning, not lapsed."""
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    link_repo.create(_link())
+    slot = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()[
+        "slots"
+    ][0]
+
+    _stub_subscription_module(monkeypatch, None)
+
+    assert _book(public_client, "intro-call", slot["start"]).status_code == 201
+
+
+# ------------------------------------------------- management: owner scoping
+
+
+def test_another_users_link_is_invisible_to_the_caller(
+    managed_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """Every owner-facing route scopes by user_id, so a foreign id 404s."""
+    foreign = link_repo.create(_link(slug="someone-else", user_id="other-user-999"))
+
+    assert managed_client.get("/api/booking-links").json()["total"] == 0
+    assert (
+        managed_client.patch(
+            f"/api/booking-links/{foreign.id}", json={"title": "Hijacked"}
+        ).status_code
+        == 404
+    )
+    assert managed_client.delete(f"/api/booking-links/{foreign.id}").status_code == 404
+
+    # Untouched, and still resolvable on the public path by its real owner.
+    stored = link_repo.get_by_slug("someone-else")
+    assert stored is not None
+    assert stored.title == foreign.title
+    assert stored.user_id == "other-user-999"
