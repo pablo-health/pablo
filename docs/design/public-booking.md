@@ -125,11 +125,35 @@ that fail safe independently:
    conscious per-deployment operator action (direct update by whoever
    runs the database), not a preference a clinician can flip while
    chasing booking conversion. When required, the booking POST places
-   a short-TTL hold on the slot (rate-limited, capped per IP, expiring
-   in minutes so spam holds can't fence off a calendar) and sends the
-   confirmation link via the email seam; the appointment finalizes on
-   click. The `none` email backend refuses to arm this path rather
-   than pretend (see "The email seam").
+   a short-TTL hold on the slot (rate-limited, capped per IP) and
+   sends the confirmation link via the email seam; the appointment
+   finalizes on click. The `none` email backend refuses to arm this
+   path rather than pretend (see "The email seam").
+
+   *Hold semantics.* A hold **is** an appointment row with status
+   `pending_confirmation`, paired with a quarantined `pending`
+   patient record (invisible in chart lists). Because the slot engine
+   already treats every non-cancelled appointment as busy, a hold
+   participates in ALL scheduling rules with no engine change: the
+   slot leaves everyone else's list, buffers apply around it, and it
+   counts toward max-per-day. TTL is ~15 minutes: expiry flips the
+   row to cancelled (releasing the slot through the same path a
+   cancellation does) and sweeps the pending patient; confirm flips
+   it to confirmed, promotes the patient record, and triggers
+   calendar sync. An expired-hold click is not a dead end — if the
+   slot is still free, finalize anyway; only if someone else took it
+   does the booker see "pick another time." Spam holds consuming the
+   daily cap are bounded by the per-IP hold cap, the TTL, and the
+   CAPTCHA rung at multi-practice rollout.
+
+   *The write race.* Two submissions for the same slot in the same
+   instant beat any re-validate-then-insert sequence (a window that
+   exists, small, in phase 1 today). The backstop is a partial unique
+   index on `(user_id, start_at)` over non-cancelled appointments:
+   public bookings are grid-aligned to the link's duration, so the
+   same-slot race is always an exact-start collision — the loser's
+   insert fails and surfaces as the same 409 "just taken" response.
+   Ships with the confirmation work at the latest.
 
 2. **The chart invariant, independent of the flag.** An unverified
    email never attaches a booking to an existing chart — a matched
