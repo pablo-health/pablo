@@ -16,7 +16,11 @@ from app.notes import get_note_type_authorizer
 from app.routes.scheduling import (
     _get_session_service,
     get_availability_rule_repository,
+    get_google_calendar_service,
     get_scheduling_service,
+)
+from app.routes.scheduling import (
+    get_patient_repository as get_scheduling_patient_repository,
 )
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
@@ -237,6 +241,87 @@ def test_list_appointments_accepts_iso_range(client: TestClient) -> None:
     scheduling_svc.list_appointments.assert_called_once()
 
 
+def test_list_appointments_carries_patient_name(
+    client: TestClient, mock_repo: Any, mock_user_id: str
+) -> None:
+    """The list payload resolves each patient's display name server-side.
+
+    The calendar labels events from this field; before it existed the client
+    joined against its own patient list, whose first page is all it fetches,
+    so patients sorted past the page size rendered with no name.
+    """
+    mock_repo.create(_patient(), mock_user_id)
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [_real_appointment()]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    app.dependency_overrides[get_scheduling_patient_repository] = lambda: mock_repo
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["patient_name"] == "Jane Smith"
+
+
+def test_list_appointments_name_null_without_grant(client: TestClient) -> None:
+    """An appointment whose patient the caller has no live grant for still
+    lists, but with a null name — the lookup must not leak or error."""
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [_real_appointment()]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    # Repo deliberately NOT seeded with the patient — no live grant.
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"][0]["patient_name"] is None
+
+
+def test_list_appointments_audits_each_row(client: TestClient) -> None:
+    """Reading the list is a per-record identifier read (the payload carries
+    patient names), so each returned appointment writes an audit row."""
+    scheduling_svc = MagicMock()
+    scheduling_svc.list_appointments.return_value = [
+        _real_appointment(appt_id="appt-1"),
+        _real_appointment(appt_id="appt-2"),
+    ]
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    audit = MagicMock()
+    app.dependency_overrides[get_audit_service] = lambda: audit
+
+    response = client.get(
+        "/api/appointments",
+        params={"start": "2026-04-15T00:00:00Z", "end": "2026-04-16T00:00:00Z"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert audit.log_appointment_action.call_count == 2
+    audited_ids = {call.args[3] for call in audit.log_appointment_action.call_args_list}
+    assert audited_ids == {"appt-1", "appt-2"}
+
+
+def test_create_appointment_carries_patient_name(
+    client: TestClient, mock_repo: Any, mock_user_id: str
+) -> None:
+    """The create response carries the name too, so the calendar can label
+    the event straight from the mutation result."""
+    mock_repo.create(_patient(), mock_user_id)
+    scheduling_svc = MagicMock()
+    scheduling_svc.create_appointment.return_value = _real_appointment()
+    app.dependency_overrides[get_scheduling_service] = lambda: scheduling_svc
+    app.dependency_overrides[get_scheduling_patient_repository] = lambda: mock_repo
+
+    response = client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    assert response.json()["patient_name"] == "Jane Smith"
+
+
 def test_check_conflicts_permissive_when_unconfigured(client: TestClient) -> None:
     """A practice with no availability rules gets neither conflicts nor a
     hard block — booking must stay permissive until rules are set up."""
@@ -411,3 +496,98 @@ def test_create_recurring_series_creates_all_occurrences(write_client: TestClien
     assert [occ["recurrence_index"] for occ in occurrences] == [0, 1, 2, 3]
     starts = [occ["start_at"] for occ in occurrences]
     assert starts == sorted(starts)
+
+
+# --- Google Calendar push-on-write ---
+#
+# write_client wires the real SchedulingService over an in-memory repo, so
+# these exercise the actual persistence of google_event_id/google_sync_status,
+# not a canned mock return.
+
+
+def test_create_appointment_pushes_to_connected_google_calendar(
+    write_client: TestClient,
+) -> None:
+    """A connected user's new appointment is pushed to Google and the
+    returned event id + synced status are persisted."""
+    gcal_service = MagicMock()
+    gcal_service.push_appointment.return_value = "gcal-evt-1"
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal_service
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["google_event_id"] == "gcal-evt-1"
+    assert body["google_sync_status"] == "synced"
+    gcal_service.push_appointment.assert_called_once()
+
+
+def test_update_appointment_pushes_stored_event_id(write_client: TestClient) -> None:
+    """Updating an already-synced appointment pushes the update to Google
+    carrying the previously stored event id (an update, not a create)."""
+    gcal_service = MagicMock()
+    gcal_service.push_appointment.return_value = "gcal-evt-1"
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal_service
+
+    created = write_client.post("/api/appointments", json=_create_payload())
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+    assert created.json()["google_event_id"] == "gcal-evt-1"
+
+    gcal_service.push_appointment.reset_mock()
+    gcal_service.push_appointment.return_value = "gcal-evt-1"
+
+    response = write_client.patch(f"/api/appointments/{appt_id}", json={"title": "Rescheduled"})
+
+    assert response.status_code == 200, response.text
+    gcal_service.push_appointment.assert_called_once()
+    pushed_appt = gcal_service.push_appointment.call_args[0][1]
+    assert pushed_appt.google_event_id == "gcal-evt-1"
+
+
+def test_cancel_appointment_deletes_google_event(write_client: TestClient) -> None:
+    """Cancelling an appointment with a linked Google event deletes it."""
+    gcal_service = MagicMock()
+    gcal_service.push_appointment.return_value = "gcal-evt-1"
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal_service
+
+    created = write_client.post("/api/appointments", json=_create_payload())
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+
+    response = write_client.delete(f"/api/appointments/{appt_id}")
+
+    assert response.status_code == 200, response.text
+    gcal_service.delete_event.assert_called_once_with("test-user-123", "gcal-evt-1")
+
+
+def test_create_appointment_google_failure_still_succeeds(write_client: TestClient) -> None:
+    """A Google Calendar failure never fails the appointment write — the
+    appointment is created with google_sync_status='error' instead."""
+    gcal_service = MagicMock()
+    gcal_service.push_appointment.side_effect = Exception("Google API down")
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal_service
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["google_sync_status"] == "error"
+
+
+def test_create_appointment_not_connected_leaves_status_null(
+    write_client: TestClient,
+) -> None:
+    """A user with no Google Calendar connection gets no event and no
+    error — absence of sync isn't an error."""
+    gcal_service = MagicMock()
+    gcal_service.push_appointment.return_value = None
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal_service
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["google_event_id"] is None
+    assert body["google_sync_status"] is None

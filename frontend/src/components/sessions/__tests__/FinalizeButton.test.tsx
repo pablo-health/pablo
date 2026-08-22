@@ -4,7 +4,7 @@
  * Tests for FinalizeButton component
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -348,6 +348,40 @@ describe("FinalizeButton", () => {
 
       const pendingButton = screen.getByRole("button", { name: /finalizing/i })
       expect(pendingButton).toBeDisabled()
+    })
+  })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it("hides the Finalize Session button for a pending-review session when read-only", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
+
+      expect(
+        screen.queryByRole("button", { name: /finalize session/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("still shows the disabled Finalized status badge when read-only", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      render(<FinalizeButton {...defaultProps} status="finalized" />, {
+        wrapper: createWrapper(),
+      })
+
+      const button = screen.getByRole("button", { name: /finalized/i })
+      expect(button).toBeInTheDocument()
+      expect(button).toBeDisabled()
+    })
+
+    it("shows the Finalize Session button when the flag is unset", () => {
+      render(<FinalizeButton {...defaultProps} />, { wrapper: createWrapper() })
+
+      expect(
+        screen.getByRole("button", { name: /finalize session/i }),
+      ).toBeInTheDocument()
     })
   })
 })

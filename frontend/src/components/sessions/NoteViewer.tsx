@@ -17,6 +17,7 @@
 import { useState } from "react"
 import { AlertTriangle, Check, Download, Edit, X, Save } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { areAllGrounded, isTextGrounded } from "@/lib/utils/grounding"
 import { Button } from "@/components/ui/button"
 import {
@@ -89,17 +90,22 @@ export function NoteViewer({
   groundingSource,
   className,
 }: NoteViewerProps) {
+  const { readOnly } = useReadOnlyMode()
   const noteType = note.note_type
   const baseContent = noteContentFromNote(note)
   const persistedEdited = noteEditedContentFromNote(note)
   const editedContent = pendingEdited ?? persistedEdited
+  // The single gate for the whole note-editing flow: the sub-views derive
+  // `canEdit` from this, so the Edit button, the blank-note auto-open, and
+  // the save actions all fall away together. Export stays reachable.
+  const viewOnly = readonly || readOnly
 
   if (noteType === "narrative") {
     return (
       <NarrativeNoteView
         note={asNarrative(baseContent)}
         noteEdited={asNarrative(editedContent)}
-        readonly={readonly}
+        readonly={viewOnly}
         onSave={onSave}
         className={className}
       />
@@ -111,7 +117,7 @@ export function NoteViewer({
       note={asSOAP(baseContent)}
       noteEdited={asSOAP(editedContent)}
       structured={structuredSoapFromNote(note)}
-      readonly={readonly}
+      readonly={viewOnly}
       pdfMetadata={pdfMetadata}
       onSave={onSave}
       onClaimClick={onClaimClick}

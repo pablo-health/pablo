@@ -2,7 +2,7 @@
 
 """Tests for patient export API endpoint."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -79,6 +79,31 @@ def test_export_patient_json_success(client, mock_export_service):
     mock_export_service.get_patient_export_data.assert_called_once_with(
         "patient-123", "user-456", "json"
     )
+
+
+def test_export_patient_json_serializes_datetimes(client, mock_export_service):
+    """The real export service returns datetime objects straight off the
+    models — the response must encode them, not 500. The other tests mock
+    with pre-stringified dates, which is exactly how this went unseen."""
+    mock_export_service.get_patient_export_data.return_value = {
+        "patient": {
+            "id": "patient-123",
+            "first_name": "John",
+            "last_name": "Doe",
+            "created_at": datetime(2026, 1, 5, 9, 30, tzinfo=UTC),
+            "updated_at": datetime(2026, 2, 1, 14, 0, tzinfo=UTC),
+        },
+        "sessions": [{"id": "session-1", "session_date": datetime(2026, 3, 2, 10, 0, tzinfo=UTC)}],
+        "exported_at": datetime(2026, 8, 15, 12, 0, tzinfo=UTC),
+        "export_format": "json",
+    }
+
+    response = client.get("/api/patients/patient-123/export?format=json")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["patient"]["created_at"] == "2026-01-05T09:30:00+00:00"
+    assert data["sessions"][0]["session_date"] == "2026-03-02T10:00:00+00:00"
 
 
 def test_export_patient_json_default_format(client, mock_export_service):

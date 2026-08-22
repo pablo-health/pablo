@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Check, ChevronRight, Plus, X } from "lucide-react"
 import {
@@ -17,11 +17,18 @@ import { Textarea } from "@/components/ui/textarea"
 import { usePatientList } from "@/hooks/usePatients"
 import {
   useCreateAppointment,
+  useCreateRecurringAppointment,
   useUpdateAppointment,
   useCancelAppointment,
+  useEditAppointmentSeries,
+  useCancelAppointmentSeries,
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
-import type { AppointmentResponse, SessionType } from "@/types/scheduling"
+import type {
+  AppointmentResponse,
+  RecurrenceFrequency,
+  SessionType,
+} from "@/types/scheduling"
 import type { PatientResponse } from "@/types/patients"
 import type { UserPreferences } from "@/lib/api/users"
 import { DEFAULT_NOTE_TYPE } from "@/types/noteTypes"
@@ -38,10 +45,122 @@ const SESSION_TYPE_LABELS: Record<string, string> = Object.fromEntries(
 )
 const QUICK_LENGTHS = [45, 50, 30, 60, 90]
 
-function buildTitle(patient: PatientResponse | undefined, sessionType: string): string {
-  if (!patient) return ""
+// Monthly is supported by the backend but deliberately not exposed yet.
+type RepeatOption = "none" | Extract<RecurrenceFrequency, "weekly" | "biweekly">
+const REPEAT_OPTIONS: { value: RepeatOption; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Biweekly" },
+]
+type SeriesEndMode = "count" | "date"
+
+type SeriesScope = "this" | "series"
+const SCOPE_OPTIONS: { value: SeriesScope; label: string }[] = [
+  { value: "this", label: "Just this session" },
+  { value: "series", label: "This and future sessions" },
+]
+
+function buildTitle(patientName: string | undefined, sessionType: string): string {
+  if (!patientName) return ""
   const label = SESSION_TYPE_LABELS[sessionType] ?? sessionType
-  return `${patient.first_name} ${patient.last_name} — ${label}`
+  return `${patientName} — ${label}`
+}
+
+const PATIENT_SEARCH_DEBOUNCE_MS = 250
+
+function patientLabel(p: PatientResponse): string {
+  return `${p.last_name}, ${p.first_name}`
+}
+
+function PatientCombobox({
+  patients,
+  patientId,
+  fallbackLabel,
+  onSelect,
+  query,
+  onQueryChange,
+}: {
+  patients: PatientResponse[]
+  patientId: string
+  fallbackLabel: string
+  onSelect: (patient: PatientResponse) => void
+  query: string
+  onQueryChange: (query: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = patients.find((p) => p.id === patientId)
+  // While the field isn't focused, show the selected patient's name even if
+  // a search would no longer surface them (e.g. editing an appointment for
+  // someone outside the default roster page).
+  const displayValue = open ? query : selected ? patientLabel(selected) : fallbackLabel
+
+  return (
+    <div className="relative">
+      <input
+        id="patient"
+        role="combobox"
+        aria-label="Patient"
+        aria-required="true"
+        aria-expanded={open}
+        aria-controls="patient-listbox"
+        aria-autocomplete="list"
+        autoComplete="off"
+        placeholder="Select patient…"
+        className={FIELD_CLASS}
+        style={fieldStyle()}
+        value={displayValue}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onQueryChange(e.target.value)
+          setOpen(true)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false)
+        }}
+        onBlur={() => setOpen(false)}
+      />
+      {open && (
+        <ul
+          id="patient-listbox"
+          role="listbox"
+          aria-label="Patients"
+          className="absolute z-10 mt-1 max-h-56 w-full overflow-y-auto rounded-[10px] border py-1 shadow-lg"
+          style={{
+            backgroundColor: "var(--ed-canvas-elev)",
+            borderColor: "var(--ed-hairline-strong)",
+          }}
+        >
+          {patients.length === 0 ? (
+            <li className="px-3 py-2 text-[13px]" style={{ color: "var(--ed-ink-soft)" }}>
+              No patients found
+            </li>
+          ) : (
+            patients.map((p) => (
+              <li
+                key={p.id}
+                role="option"
+                aria-selected={p.id === patientId}
+                // Fires before the input's blur so the selection lands
+                // instead of being pre-empted by the dropdown closing.
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  onSelect(p)
+                  setOpen(false)
+                }}
+                className="cursor-pointer px-3 py-2 text-[13.5px]"
+                style={{
+                  color: "var(--ed-ink)",
+                  backgroundColor: p.id === patientId ? "var(--ed-field-bg)" : "transparent",
+                }}
+              >
+                {patientLabel(p)}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 function toDateInput(d: Date): string {
@@ -173,16 +292,37 @@ function AppointmentForm({
   onClose: () => void
   preferences?: UserPreferences
 }) {
-  const { data: patientData } = usePatientList()
+  const [patientQuery, setPatientQuery] = useState(appointment?.patient_name ?? "")
+  const [debouncedPatientQuery, setDebouncedPatientQuery] = useState(patientQuery)
+  useEffect(() => {
+    const timer = setTimeout(
+      () => setDebouncedPatientQuery(patientQuery),
+      PATIENT_SEARCH_DEBOUNCE_MS,
+    )
+    return () => clearTimeout(timer)
+  }, [patientQuery])
+  // With no search text, this is the roster's first page at the server's
+  // cap — unchanged for practices small enough not to need search. Typing
+  // hands the query to the endpoint's own server-side search instead of
+  // scanning a locally-truncated page.
+  const { data: patientData } = usePatientList({
+    page_size: 100,
+    search: debouncedPatientQuery || undefined,
+  })
   const patients = patientData?.data ?? []
   const { data: noteTypesData } = useNoteTypes()
   const noteTypes = noteTypesData?.note_types ?? []
 
   const createMutation = useCreateAppointment()
+  const createRecurringMutation = useCreateRecurringAppointment()
   const updateMutation = useUpdateAppointment()
   const cancelMutation = useCancelAppointment()
+  const editSeriesMutation = useEditAppointmentSeries()
+  const cancelSeriesMutation = useCancelAppointmentSeries()
 
   const isEditing = !!appointment
+  const isRecurring = !!appointment?.recurring_appointment_id
+  const [scope, setScope] = useState<SeriesScope>("this")
 
   const defaultDuration =
     appointment?.duration_minutes ?? preferences?.default_duration_minutes ?? 45
@@ -203,6 +343,11 @@ function AppointmentForm({
   const [timeStr, setTimeStr] = useState(toTimeInput(start0))
   const [duration, setDuration] = useState(defaultDuration)
   const [sessionType, setSessionType] = useState(defaultSessionType)
+
+  const [repeat, setRepeat] = useState<RepeatOption>("none")
+  const [seriesEndMode, setSeriesEndMode] = useState<SeriesEndMode>("count")
+  const [seriesCount, setSeriesCount] = useState("")
+  const [seriesEndDate, setSeriesEndDate] = useState("")
 
   const [lengths, setLengths] = useState<number[]>(() => {
     const base = [...QUICK_LENGTHS]
@@ -229,10 +374,19 @@ function AppointmentForm({
 
   const newLenRef = useRef<HTMLInputElement>(null)
 
-  const patient = patients.find((p) => p.id === patientId)
+  // The list-driven name is authoritative when the patient is in the
+  // current (possibly search-filtered) results; otherwise fall back to the
+  // name captured at selection time (or, in edit mode, the server-resolved
+  // name on the appointment) so the title still renders correctly for a
+  // patient outside the active result set.
+  const [selectedPatientName, setSelectedPatientName] = useState(appointment?.patient_name ?? "")
+  const patientFromList = patients.find((p) => p.id === patientId)
+  const patientDisplayName = patientFromList
+    ? `${patientFromList.first_name} ${patientFromList.last_name}`
+    : selectedPatientName
   const start = fromInputs(dateStr, timeStr)
   const end = new Date(start.getTime() + duration * 60000)
-  const computedTitle = buildTitle(patient, sessionType)
+  const computedTitle = buildTitle(patientDisplayName || undefined, sessionType)
   // An empty/whitespace override means "no override" — the caption and the
   // submitted payload fall back to the auto title.
   const title = titleOverride?.trim() ? titleOverride : computedTitle
@@ -251,7 +405,11 @@ function AppointmentForm({
   }
 
   const canSave = !!patientId
-  const isSubmitting = createMutation.isPending || updateMutation.isPending
+  const isSubmitting =
+    createMutation.isPending ||
+    createRecurringMutation.isPending ||
+    updateMutation.isPending ||
+    editSeriesMutation.isPending
 
   const handleSubmit = () => {
     const payload = {
@@ -265,19 +423,54 @@ function AppointmentForm({
       notes: notes || null,
     }
     if (isEditing && appointment) {
+      if (isRecurring && scope === "series") {
+        // The edit-series endpoint only accepts this subset of fields —
+        // it has no notion of a per-occurrence start/end time.
+        editSeriesMutation.mutate(
+          {
+            appointmentId: appointment.id,
+            data: {
+              title,
+              session_type: sessionType,
+              video_link: videoLink || null,
+              notes: notes || null,
+            },
+          },
+          { onSuccess: onClose },
+        )
+        return
+      }
       updateMutation.mutate(
         { appointmentId: appointment.id, data: payload },
         { onSuccess: onClose },
       )
-    } else {
-      createMutation.mutate(payload, { onSuccess: onClose })
+      return
     }
+    if (repeat !== "none") {
+      const count = seriesEndMode === "count" && seriesCount ? parseInt(seriesCount, 10) : null
+      const endDate = seriesEndMode === "date" && seriesEndDate ? seriesEndDate : null
+      createRecurringMutation.mutate(
+        {
+          ...payload,
+          frequency: repeat,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          count,
+          end_date: endDate,
+        },
+        { onSuccess: onClose },
+      )
+      return
+    }
+    createMutation.mutate(payload, { onSuccess: onClose })
   }
 
   const handleCancelAppt = () => {
-    if (appointment) {
-      cancelMutation.mutate(appointment.id, { onSuccess: onClose })
+    if (!appointment) return
+    if (isRecurring && scope === "series") {
+      cancelSeriesMutation.mutate(appointment.id, { onSuccess: onClose })
+      return
     }
+    cancelMutation.mutate(appointment.id, { onSuccess: onClose })
   }
 
   const headerHint = `${formatDay(start)} · ${formatTime(start)}`
@@ -316,26 +509,21 @@ function AppointmentForm({
         {/* Patient */}
         <div>
           <FieldLabel>Patient</FieldLabel>
-          <Select value={patientId} onValueChange={setPatientId}>
-            <SelectTrigger
-              id="patient"
-              aria-label="Patient"
-              aria-required="true"
-              className="w-full"
-            >
-              <SelectValue placeholder="Select patient…" />
-            </SelectTrigger>
-            <SelectContent>
-              {patients.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.last_name}, {p.first_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <PatientCombobox
+            patients={patients}
+            patientId={patientId}
+            fallbackLabel={selectedPatientName}
+            query={patientQuery}
+            onQueryChange={setPatientQuery}
+            onSelect={(p) => {
+              setPatientId(p.id)
+              setSelectedPatientName(`${p.first_name} ${p.last_name}`)
+              setPatientQuery("")
+            }}
+          />
 
           {/* Auto title — subtle, editable caption */}
-          {patient && (
+          {patientDisplayName && (
             <div className="mt-2 flex items-center gap-2 text-[12.5px]">
               {editingTitle ? (
                 <Input
@@ -512,6 +700,139 @@ function AppointmentForm({
           </div>
         </div>
 
+        {/* Scope chooser — recurring appointments in edit mode only */}
+        {isEditing && isRecurring && (
+          <div>
+            <FieldLabel>Applies to</FieldLabel>
+            <div
+              className="inline-flex gap-0.5 rounded-[10px] border p-[3px]"
+              role="radiogroup"
+              aria-label="Applies to"
+              style={{
+                borderColor: "var(--ed-field-border)",
+                backgroundColor: "var(--ed-field-bg)",
+              }}
+            >
+              {SCOPE_OPTIONS.map((s) => {
+                const active = scope === s.value
+                return (
+                  <button
+                    key={s.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setScope(s.value)}
+                    className="cursor-pointer rounded-[7px] border-none px-4 py-[7px] text-[13.5px] font-semibold"
+                    style={{
+                      backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                      color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Repeats — create mode only */}
+        {!isEditing && (
+          <div>
+            <FieldLabel>Repeats</FieldLabel>
+            <div
+              className="inline-flex gap-0.5 rounded-[10px] border p-[3px]"
+              role="radiogroup"
+              aria-label="Repeats"
+              style={{
+                borderColor: "var(--ed-field-border)",
+                backgroundColor: "var(--ed-field-bg)",
+              }}
+            >
+              {REPEAT_OPTIONS.map((r) => {
+                const active = repeat === r.value
+                return (
+                  <button
+                    key={r.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setRepeat(r.value)}
+                    className="cursor-pointer rounded-[7px] border-none px-4 py-[7px] text-[13.5px] font-semibold"
+                    style={{
+                      backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                      color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                    }}
+                  >
+                    {r.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {repeat !== "none" && (
+              <div className="ed-fade-in mt-3 flex flex-col gap-2">
+                <div
+                  className="inline-flex w-fit gap-0.5 rounded-[10px] border p-[3px]"
+                  role="radiogroup"
+                  aria-label="Ends"
+                  style={{
+                    borderColor: "var(--ed-field-border)",
+                    backgroundColor: "var(--ed-field-bg)",
+                  }}
+                >
+                  {(
+                    [
+                      { value: "count", label: "For N sessions" },
+                      { value: "date", label: "Until date" },
+                    ] as const
+                  ).map((o) => {
+                    const active = seriesEndMode === o.value
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setSeriesEndMode(o.value)}
+                        className="cursor-pointer rounded-[7px] border-none px-3 py-[6px] text-[12.5px] font-semibold"
+                        style={{
+                          backgroundColor: active ? "var(--ed-cta-bg)" : "transparent",
+                          color: active ? "var(--ed-cta-fg)" : "var(--ed-ink-muted)",
+                        }}
+                      >
+                        {o.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                {seriesEndMode === "count" ? (
+                  <input
+                    type="number"
+                    min={1}
+                    max={104}
+                    value={seriesCount}
+                    onChange={(e) => setSeriesCount(e.target.value)}
+                    aria-label="Number of sessions"
+                    placeholder="Default: ~6 months"
+                    className={FIELD_CLASS}
+                    style={fieldStyle()}
+                  />
+                ) : (
+                  <input
+                    type="date"
+                    value={seriesEndDate}
+                    onChange={(e) => setSeriesEndDate(e.target.value)}
+                    aria-label="Repeat until"
+                    className={FIELD_CLASS}
+                    style={fieldStyle()}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* More options */}
         <div className="pt-3.5" style={{ borderTop: "1px solid var(--ed-hairline)" }}>
           <button
@@ -589,7 +910,7 @@ function AppointmentForm({
           <button
             type="button"
             onClick={handleCancelAppt}
-            disabled={cancelMutation.isPending}
+            disabled={cancelMutation.isPending || cancelSeriesMutation.isPending}
             className="mr-auto cursor-pointer rounded-full border bg-transparent px-4 py-[9px] text-[13px] font-semibold disabled:opacity-50"
             style={{
               borderColor: "var(--ed-status-noshow-fg)",

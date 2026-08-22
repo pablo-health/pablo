@@ -676,6 +676,19 @@ class Settings(BaseSettings):
             "Bucket for encrypted audio uploads, on the provider selected by file_storage_provider."
         ),
     )
+    transcription_audio_upload_url_ttl_seconds: int = Field(
+        default=3600,
+        description=(
+            "V4 signed PUT URL lifetime for session-audio uploads. Sized for "
+            "multi-hundred-MB two-channel raw session recordings on slow "
+            "links (~864 MB observed for a 50-minute raw PCM session) — the "
+            "300s document-upload TTL expired mid-upload in the 2026-07-16 "
+            "e2e run. The PUT URL is still constrained to a single object "
+            "name + content type + max-bytes ceiling at sign time, so the "
+            "longer window only widens misuse of exactly one pre-named "
+            "object, nothing else."
+        ),
+    )
     # Object-storage provider for file upload/download surfaces (patient
     # documents, signed-URL session audio, hard-purge blob deletes).
     # Bucket-name settings (patient_documents_gcs_bucket,
@@ -825,6 +838,18 @@ class Settings(BaseSettings):
             "queue's maxAttempts: the worker reads the Cloud Tasks retry-count "
             "header and, on any attempt before the last, returns 5xx so the "
             "queue retries with backoff instead of failing the session."
+        ),
+    )
+    document_finalize_task_queue: str = Field(
+        default="pablo-soap-generation",
+        description=(
+            "Cloud Tasks queue for off-request patient-document finalize "
+            "(GCS download + PyMuPDF + Document AI). Deliberately reuses the "
+            "pablo-soap-generation queue rather than provisioning a dedicated "
+            "one — same IAM, same maxAttempts/maxConcurrentDispatches profile, "
+            "and this ships with zero new infra. Point this at a dedicated "
+            "queue later if the two workloads need different concurrency or "
+            "retry limits."
         ),
     )
 

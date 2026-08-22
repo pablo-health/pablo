@@ -122,6 +122,16 @@ class PatientRow(Base):
     phi_email_consent_doc: Mapped[str | None] = mapped_column(Text)
     # The user who recorded the consent decision (audit provenance).
     phi_email_consent_by: Mapped[str | None] = mapped_column(String(128))
+    # Per-patient rate override, integer minor units (cents). NULL = no
+    # override; the effective rate falls through to the appointment type's
+    # default (see app.scheduling_engine.services.rate_resolver). Reduced-fee
+    # and sliding-scale arrangements are per-person, so this is a real
+    # column rather than a note someone has to remember to read.
+    rate_cents: Mapped[int | None] = mapped_column(Integer)
+    # Free-text record of a sliding-scale arrangement, in the clinician's own
+    # words. Never parsed or used in arithmetic — exists so the reason for a
+    # rate survives staff turnover and the clinician's memory.
+    sliding_scale_note: Mapped[str | None] = mapped_column(Text)
 
 
 class TherapySessionRow(Base):
@@ -535,6 +545,26 @@ class AvailabilityRuleRow(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AppointmentTypeRow(Base):
+    """Practice-level default fee for a named appointment type.
+
+    ``default_fee_cents`` is the fee a clinician charges for this type of
+    session (e.g. "individual", "intake") absent a per-patient override —
+    see :mod:`app.scheduling_engine.services.rate_resolver`.
+    """
+
+    __tablename__ = "appointment_types"
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    default_fee_cents: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_appointment_types_user_name"),)
+
+
 class GoogleCalendarTokenRow(Base):
     __tablename__ = "google_calendar_tokens"
 
@@ -883,12 +913,21 @@ class PatientDocumentRow(Base):
     )
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # NULL = extracted synchronously under the old finalize path (read as
+    # COMPLETE, see app.models.patient_document.ExtractionStatus). New rows
+    # get an explicit value: 'pending' the moment the finalize worker job is
+    # enqueued, then 'complete' or 'failed' once the worker finishes.
+    extraction_status: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
         Index("ix_patient_documents_patient_deleted", "patient_id", "deleted_at"),
         CheckConstraint(
             "category IN ('chart', 'consent', 'therapist_private', 'psychotherapy_notes')",
             name="ck_patient_documents_category",
+        ),
+        CheckConstraint(
+            "extraction_status IS NULL OR extraction_status IN ('pending', 'complete', 'failed')",
+            name="ck_patient_documents_extraction_status",
         ),
         CheckConstraint(
             "extracted_via IS NULL OR extracted_via IN ('pymupdf', 'document_ai', 'unavailable')",

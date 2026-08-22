@@ -75,6 +75,17 @@ CREATE TABLE __TENANT_SCHEMA__.allowed_emails (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.appointment_types (
+    id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    name character varying(100) NOT NULL,
+    default_fee_cents integer,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.appointments (
     id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -395,8 +406,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     category character varying(32) DEFAULT 'chart'::character varying NOT NULL,
     extracted_via character varying(32),
     extraction_metadata jsonb,
+    extraction_status character varying(16),
     CONSTRAINT ck_patient_documents_category CHECK (((category)::text = ANY ((ARRAY['chart'::character varying, 'consent'::character varying, 'therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[]))),
-    CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[]))))
+    CONSTRAINT ck_patient_documents_extracted_via CHECK (((extracted_via IS NULL) OR ((extracted_via)::text = ANY ((ARRAY['pymupdf'::character varying, 'document_ai'::character varying, 'unavailable'::character varying])::text[])))),
+    CONSTRAINT ck_patient_documents_extraction_status CHECK (((extraction_status IS NULL) OR ((extraction_status)::text = ANY ((ARRAY['pending'::character varying, 'complete'::character varying, 'failed'::character varying])::text[]))))
 );
 
 
@@ -442,7 +455,9 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     phi_email_consent boolean,
     phi_email_consent_at timestamp with time zone,
     phi_email_consent_doc text,
-    phi_email_consent_by character varying(128)
+    phi_email_consent_by character varying(128),
+    rate_cents integer,
+    sliding_scale_note text
 );
 
 
@@ -621,6 +636,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.allowed_emails
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
+    ADD CONSTRAINT appointment_types_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
     ADD CONSTRAINT appointments_pkey PRIMARY KEY (id);
 
@@ -761,8 +781,17 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointment_types
+    ADD CONSTRAINT uq_appointment_types_user_name UNIQUE (user_id, name);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
     ADD CONSTRAINT uq_prescribing_checklist_items_encounter_item UNIQUE (encounter_id, item_id);
+
+
+
+CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types USING btree (user_id);
 
 
 

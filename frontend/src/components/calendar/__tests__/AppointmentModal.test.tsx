@@ -1,28 +1,55 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { afterEach, describe, it, expect, vi } from "vitest"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AppointmentModal } from "../AppointmentModal"
 import type { UserPreferences } from "@/lib/api/users"
 import type { AppointmentResponse } from "@/types/scheduling"
+import type { PatientListParams } from "@/types/patients"
+
+const {
+  mockCreate,
+  mockCreateRecurring,
+  mockUpdate,
+  mockCancel,
+  mockEditSeries,
+  mockCancelSeries,
+} = vi.hoisted(() => ({
+  mockCreate: vi.fn(),
+  mockCreateRecurring: vi.fn(),
+  mockUpdate: vi.fn(),
+  mockCancel: vi.fn(),
+  mockEditSeries: vi.fn(),
+  mockCancelSeries: vi.fn(),
+}))
+
+// p3 only turns up once a search is in flight, standing in for a patient
+// past the roster's default (unfiltered) first page.
+const ALL_PATIENTS = [
+  { id: "p1", first_name: "Jane", last_name: "Doe" },
+  { id: "p2", first_name: "John", last_name: "Smith" },
+  { id: "p3", first_name: "Priya", last_name: "Nguyen" },
+]
 
 vi.mock("@/hooks/usePatients", () => ({
-  usePatientList: () => ({
-    data: {
-      data: [
-        { id: "p1", first_name: "Jane", last_name: "Doe" },
-        { id: "p2", first_name: "John", last_name: "Smith" },
-      ],
-    },
-  }),
+  usePatientList: (params?: PatientListParams) => {
+    const search = params?.search?.toLowerCase()
+    const data = search
+      ? ALL_PATIENTS.filter((p) => `${p.first_name} ${p.last_name}`.toLowerCase().includes(search))
+      : ALL_PATIENTS.slice(0, 2)
+    return { data: { data } }
+  },
 }))
 
 vi.mock("@/hooks/useAppointments", () => ({
-  useCreateAppointment: () => ({ mutate: vi.fn(), isPending: false }),
-  useUpdateAppointment: () => ({ mutate: vi.fn(), isPending: false }),
-  useCancelAppointment: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateAppointment: () => ({ mutate: mockCreate, isPending: false }),
+  useCreateRecurringAppointment: () => ({ mutate: mockCreateRecurring, isPending: false }),
+  useUpdateAppointment: () => ({ mutate: mockUpdate, isPending: false }),
+  useCancelAppointment: () => ({ mutate: mockCancel, isPending: false }),
+  useEditAppointmentSeries: () => ({ mutate: mockEditSeries, isPending: false }),
+  useCancelAppointmentSeries: () => ({ mutate: mockCancelSeries, isPending: false }),
 }))
 
 vi.mock("@/hooks/useNoteTypes", () => ({
@@ -78,6 +105,12 @@ const baseAppointment: AppointmentResponse = {
   updated_at: null,
 }
 
+const recurringAppointment: AppointmentResponse = {
+  ...baseAppointment,
+  id: "a2",
+  recurring_appointment_id: "series-1",
+}
+
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -90,6 +123,10 @@ function createWrapper() {
 }
 
 describe("AppointmentModal", () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
   it("renders the new-appointment header when no appointment provided", () => {
     render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
     expect(screen.getByText("New appointment")).toBeInTheDocument()
@@ -273,6 +310,27 @@ describe("AppointmentModal", () => {
       await user.click(screen.getByRole("button", { name: "reset" }))
       expect(screen.getByText("Jane Doe — Individual")).toBeInTheDocument()
     })
+
+    it("finds and books a patient that only turns up via search, outside the first page", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      expect(screen.queryByRole("option", { name: /Nguyen, Priya/i })).not.toBeInTheDocument()
+
+      await user.type(patientTrigger, "priya")
+      await waitFor(() => {
+        expect(screen.getByRole("option", { name: /Nguyen, Priya/i })).toBeInTheDocument()
+      })
+      await user.click(screen.getByRole("option", { name: /Nguyen, Priya/i }))
+
+      expect(screen.getByText("Priya Nguyen — Individual")).toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect(mockCreate.mock.calls[0][0]).toMatchObject({ patient_id: "p3" })
+    })
   })
 
   describe("Note type picker", () => {
@@ -285,6 +343,130 @@ describe("AppointmentModal", () => {
       await user.click(trigger)
       await user.click(screen.getByRole("option", { name: /narrative/i }))
       expect(trigger).toHaveTextContent("Narrative")
+    })
+  })
+
+  describe("Recurrence (create mode only)", () => {
+    async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+    }
+
+    it("does not render a Repeats control in edit mode", () => {
+      render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+        wrapper: createWrapper(),
+      })
+      expect(screen.queryByRole("radiogroup", { name: /repeats/i })).not.toBeInTheDocument()
+    })
+
+    it("submits the legacy single-create payload when Repeats is left at None", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await selectPatient(user)
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect(mockCreateRecurring).not.toHaveBeenCalled()
+      const [payload] = mockCreate.mock.calls[0]
+      expect(payload).toMatchObject({ patient_id: "p1", session_type: "individual" })
+      expect(payload).not.toHaveProperty("frequency")
+    })
+
+    it("submits the recurring payload with an IANA timezone for a weekly repeat with a session count", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      await selectPatient(user)
+
+      await user.click(screen.getByRole("radio", { name: "Weekly" }))
+      await user.type(screen.getByLabelText("Number of sessions"), "6")
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreateRecurring).toHaveBeenCalledTimes(1)
+      expect(mockCreate).not.toHaveBeenCalled()
+      const [payload] = mockCreateRecurring.mock.calls[0]
+      expect(payload).toMatchObject({
+        patient_id: "p1",
+        frequency: "weekly",
+        count: 6,
+        end_date: null,
+      })
+      expect(typeof payload.timezone).toBe("string")
+      expect(payload.timezone.length).toBeGreaterThan(0)
+    })
+
+    it("does not offer a Monthly option", () => {
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      expect(screen.queryByRole("radio", { name: /monthly/i })).not.toBeInTheDocument()
+    })
+  })
+
+  describe("Recurring series scope (edit mode only)", () => {
+    it("does not render a scope chooser for a non-recurring appointment", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={baseAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      expect(screen.queryByRole("radiogroup", { name: /applies to/i })).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockUpdate).toHaveBeenCalledTimes(1)
+      expect(mockEditSeries).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole("button", { name: /cancel appointment/i }))
+      expect(mockCancel).toHaveBeenCalledTimes(1)
+      expect(mockCancelSeries).not.toHaveBeenCalled()
+    })
+
+    it("saves this occurrence only via the existing PATCH when 'Just this session' is kept", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={recurringAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      const group = screen.getByRole("radiogroup", { name: /applies to/i })
+      expect(within(group).getByRole("radio", { name: /just this session/i })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      )
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockUpdate).toHaveBeenCalledTimes(1)
+      expect(mockUpdate.mock.calls[0][0]).toMatchObject({ appointmentId: "a2" })
+      expect(mockEditSeries).not.toHaveBeenCalled()
+    })
+
+    it("saves the whole series via edit-series when 'This and future sessions' is chosen", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={recurringAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      const group = screen.getByRole("radiogroup", { name: /applies to/i })
+      await user.click(within(group).getByRole("radio", { name: /this and future sessions/i }))
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockEditSeries).toHaveBeenCalledTimes(1)
+      expect(mockUpdate).not.toHaveBeenCalled()
+      const [args] = mockEditSeries.mock.calls[0]
+      expect(args).toMatchObject({ appointmentId: "a2" })
+    })
+
+    it("cancels the whole series via cancel-series when 'This and future sessions' is chosen", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} appointment={recurringAppointment} />, {
+        wrapper: createWrapper(),
+      })
+
+      const group = screen.getByRole("radiogroup", { name: /applies to/i })
+      await user.click(within(group).getByRole("radio", { name: /this and future sessions/i }))
+      await user.click(screen.getByRole("button", { name: /cancel appointment/i }))
+
+      expect(mockCancelSeries).toHaveBeenCalledTimes(1)
+      expect(mockCancelSeries).toHaveBeenCalledWith("a2", expect.anything())
+      expect(mockCancel).not.toHaveBeenCalled()
     })
   })
 })

@@ -112,6 +112,22 @@ describe("EditorialEventCard", () => {
     expect(document.querySelector("svg.lucide-video")).not.toBeInTheDocument()
   })
 
+  it("shows a repeating-series icon only when the appointment belongs to a series", () => {
+    const { rerender } = render(
+      <EditorialEventCard
+        appointment={appointment({ recurring_appointment_id: "series-1" })}
+        patientName="Jane Doe"
+        onClick={vi.fn()}
+      />,
+    )
+    expect(document.querySelector("svg.lucide-repeat")).toBeInTheDocument()
+
+    rerender(
+      <EditorialEventCard appointment={appointment()} patientName="Jane Doe" onClick={vi.fn()} />,
+    )
+    expect(document.querySelector("svg.lucide-repeat")).not.toBeInTheDocument()
+  })
+
   it("does not render a leading person/group or trailing status icon", () => {
     render(
       <EditorialEventCard

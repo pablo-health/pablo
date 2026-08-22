@@ -6,7 +6,7 @@
  * Tests for conditional feedback collection based on rating threshold.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import {
   QualityRatingWithFeedback,
@@ -391,6 +391,68 @@ describe("QualityRatingWithFeedback", () => {
         reason: "Updated reason",
         sections: ["assessment", "plan"],
       })
+    })
+  })
+
+  describe("read-only deployment mode", () => {
+    afterEach(() => vi.unstubAllEnvs())
+
+    it("hides feedback UI and forces read-only stars when the deployment flag is set, even with readonly={false}", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+
+      const value: RatingFeedback = {
+        rating: 2,
+        reason: "Should not show",
+        sections: ["assessment"],
+      }
+
+      render(
+        <QualityRatingWithFeedback
+          value={value}
+          onChange={mockOnChange}
+          readonly={false}
+        />
+      )
+
+      expect(
+        screen.queryByText("Which sections need improvement?")
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByText("Additional feedback (optional)")
+      ).not.toBeInTheDocument()
+
+      const stars = screen.getAllByRole("button")
+      expect(stars).toHaveLength(5)
+      stars.forEach((star) => expect(star).toBeDisabled())
+
+      fireEvent.click(stars[1])
+      expect(mockOnChange).not.toHaveBeenCalled()
+    })
+
+    it("shows feedback UI and interactive stars when the deployment flag is unset", () => {
+      const value: RatingFeedback = {
+        rating: 2,
+        reason: "",
+        sections: [],
+      }
+
+      render(
+        <QualityRatingWithFeedback
+          value={value}
+          onChange={mockOnChange}
+          readonly={false}
+        />
+      )
+
+      expect(
+        screen.getByText("Which sections need improvement?")
+      ).toBeInTheDocument()
+      expect(
+        screen.getByText("Additional feedback (optional)")
+      ).toBeInTheDocument()
+
+      const stars = screen.getAllByRole("button")
+      stars.forEach((star) => expect(star).not.toBeDisabled())
     })
   })
 })

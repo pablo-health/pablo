@@ -10,6 +10,7 @@ import { useCompanionDevices } from "@/hooks/useCompanionDevices"
 import { useDashboardSummary } from "@/hooks/useDashboard"
 import { useUserTimeZone } from "@/hooks/usePreferences"
 import { isCompanionAvailable } from "@/lib/companion"
+import { useCompanionAccess } from "@/lib/companion.extensions"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { CompanionGetDialog } from "./CompanionGetDialog"
 import { StartSessionButton } from "./StartSessionButton"
@@ -29,7 +30,11 @@ export function TodayPanel() {
   // can route the deep link, and only treat the user as "set up" once the
   // backend reports at least one enrolled install. An empty list (or a
   // backend without the endpoint) falls back to the Download affordance.
-  const platformSupported = isCompanionAvailable()
+  // Per-account dimension folded in beside the platform one: a deployment
+  // may configure recording per practice (companion.extensions.ts), and an
+  // account without it should see no companion affordances at all.
+  const companionAccess = useCompanionAccess()
+  const platformSupported = isCompanionAvailable() && companionAccess
   const { data: devices } = useCompanionDevices()
   const companionEnrolled = platformSupported && (devices?.length ?? 0) > 0
 
@@ -84,7 +89,12 @@ export function TodayPanel() {
               />
             ))}
           </ul>
-          <CompanionFooter onGetApp={() => setCompanionDialogOpen(true)} />
+          {/* The footer shows on every PLATFORM (non-mac users get the
+              "coming soon" dialog), but not to an account whose deployment
+              policy says recording isn't theirs to set up. */}
+          {companionAccess && (
+            <CompanionFooter onGetApp={() => setCompanionDialogOpen(true)} />
+          )}
           <CompanionGetDialog
             open={companionDialogOpen}
             onOpenChange={setCompanionDialogOpen}

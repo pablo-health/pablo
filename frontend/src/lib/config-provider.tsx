@@ -19,6 +19,7 @@ export interface RuntimeConfig {
   showVerificationBadges: boolean
   introVideoUrl: string
   passkeysEnabled: boolean
+  resubscribeUrl: string
 }
 
 interface ConfigContextValue {

@@ -96,6 +96,35 @@ describe("EditorialCalendar", () => {
     expect(cells.length).toBeGreaterThanOrEqual(42)
   })
 
+  it("labels an event from the payload's patient_name even when the patient is missing from the patient list", () => {
+    // The patient list is paginated; a patient past the first page never
+    // reaches patientMap. The payload's server-resolved name must win so the
+    // event still carries the patient's name (not the title fallback).
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a9",
+      patient_id: "p-not-on-first-page",
+      patient_name: "Riley Nguyen",
+      title: "Riley Nguyen — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    render(
+      <EditorialCalendar {...defaults()} defaultView="day" />,
+      { wrapper: wrap() },
+    )
+
+    expect(screen.getByText("Riley Nguyen")).toBeInTheDocument()
+  })
+
   it("right-click status menu marks a no-show via the update mutation", () => {
     // Place a confirmed appointment at 10:00 today so it lands inside the
     // day-view working-hours window.

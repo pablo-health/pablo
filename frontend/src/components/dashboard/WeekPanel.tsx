@@ -25,7 +25,7 @@ export function WeekPanel() {
 
       <ul className="space-y-2">
         <StatRow
-          label="Notes awaiting your signature"
+          label="Notes awaiting your review"
           value={stats.notesPending}
           loading={sessionsLoading}
           href="/dashboard/sessions"

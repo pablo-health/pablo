@@ -41,7 +41,7 @@ def test_register_and_run_invokes_hook_in_order() -> None:
 
 
 def test_run_with_no_registered_hooks_is_a_noop() -> None:
-    # Self-hosted OSS deployments never load the SaaS overlay, so the
+    # Self-hosted OSS deployments never register a hook, so the
     # hook list stays empty. The fresh-template branch in
     # create_practice_schema must not crash when it dispatches.
     provisioning._run_post_provision_hooks(_FAKE_ENGINE, "practice_test")

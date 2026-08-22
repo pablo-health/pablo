@@ -29,6 +29,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel, Field
@@ -38,6 +39,17 @@ from ..auth.service import _resolve_practice_from_email, require_cloud_tasks_inv
 from ..db import _request_session, arm_current_user_id, create_standalone_session
 from ..db.models import TherapySessionRow
 from ..db.platform_models import PlatformUserRow, PracticeRow
+
+# Optional billing extension point, mirroring the trial gate in
+# ``routes/sessions.py``. When a billing overlay is installed it registers
+# ``app.routes.subscription``; otherwise the import fails and metering
+# becomes a no-op, so OSS runs with no billing behaviour at all.
+try:
+    from ..routes.subscription import (  # type: ignore[import-not-found]
+        record_recorded_session,
+    )
+except ImportError:  # pragma: no cover -- no subscription overlay installed
+    record_recorded_session = None  # type: ignore[assignment]
 from ..models import SessionStatus, UploadTranscriptToSessionRequest
 from ..models.audit import AuditAction
 from ..repositories import (
@@ -132,6 +144,30 @@ def _resolve_schema_for_user(user_id: str) -> str | None:
             if practice:
                 return practice[1]
     return None
+
+
+def _meter_recorded_session(user_id: str, session_id: str) -> None:
+    """Report a successfully transcribed recording to the billing overlay.
+
+    No-op when no billing overlay is installed. This lives on the
+    transcription-completion path rather than in the upload route's trial
+    gate because only *recorded* sessions are billable — notes generated
+    from uploaded or pasted transcripts are unlimited, and metering them
+    would bill for something the pricing advertises as free.
+
+    Never raises: a billing outage must not fail a clinician's
+    transcription.
+    """
+    if record_recorded_session is None:
+        return
+    try:
+        with create_standalone_session() as tmp:
+            user_row = tmp.get(PlatformUserRow, user_id)
+            email = user_row.email if user_row else None
+        if email:
+            record_recorded_session(email, session_id, get_settings())
+    except Exception:
+        logger.exception("Could not meter recorded session %s", session_id)
 
 
 def _record_transcript_upload_audit(session: TherapySession, user_id: str) -> None:
@@ -260,6 +296,14 @@ def process_transcription_result(
 
             if standalone_db:
                 standalone_db.commit()
+
+            # Meter exactly here: this branch is the one place a recording
+            # is newly transcribed. The PENDING_REVIEW/FINALIZED early
+            # return and the PROCESSING branch above both skip it, so a
+            # duplicate poll or a retried callback cannot double-count —
+            # and the meter event carries the session id as Stripe's
+            # idempotency key as a second line of defence.
+            _meter_recorded_session(user_id, session_id)
 
         # Hand the multi-second SOAP generation to the durable shared worker.
         # It re-resolves the tenant schema from user_id (no schema/PHI in the
@@ -459,6 +503,50 @@ _POLL_CYCLE_DELAY_SECONDS = 15
 _MAX_POLL_CYCLES = 240  # x 15s = ~60 minutes of polling
 
 
+def _poll_job_status(api_key: str, job: dict, session_id: str) -> tuple[str, dict | None] | None:
+    """Check one job's status, tolerating a transient provider error.
+
+    Returns ``None`` (leave the job pending this cycle) on a transient httpx
+    error — 429/5xx/timeout/connection drop — mirroring how the submit path
+    already tolerates provider failures. The caller's existing re-enqueue
+    path retries the job next cycle; never raise out of here and never fail
+    the session for a transient error.
+    """
+    try:
+        return AssemblyAiTranscriptionService.check_job_status(api_key, job["transcript_id"])
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Transcription poll: provider error on job %s (session=%s): %s",
+            job["transcript_id"],
+            session_id,
+            exc,
+        )
+        return None
+
+
+def _poll_pending_jobs(api_key: str, jobs: list[dict], session_id: str) -> str | None:
+    """Poll every job still missing utterances, mutating ``jobs`` in place.
+
+    Returns an application-level error message if AssemblyAI reported one
+    (stops at the first, matching prior behavior), else ``None``. A job whose
+    provider check hits a transient httpx error is left pending — it is not
+    an application-level error and does not stop the loop.
+    """
+    for job in jobs:
+        if "utterances" in job:
+            continue  # fetched on an earlier cycle
+        status_result = _poll_job_status(api_key, job, session_id)
+        if status_result is None:
+            continue  # transient provider error; retried next cycle
+        job_status, result = status_result
+        if job_status == "error":
+            error_detail = result.get("error", "unknown") if result else "unknown"
+            return f"AssemblyAI job {job['transcript_id']}: {error_detail}"
+        if job_status == "completed" and result is not None:
+            job["utterances"] = AssemblyAiTranscriptionService.parse_result(job, result)
+    return None
+
+
 @router.post("/api/internal/transcription-poll")
 def transcription_poll(
     request: TranscriptionPollRequest,
@@ -502,19 +590,7 @@ def transcription_poll(
 
         api_key = settings.assemblyai_api_key.get_secret_value()
         jobs = job_metadata["jobs"]
-        error_msg: str | None = None
-        for job in jobs:
-            if "utterances" in job:
-                continue  # fetched on an earlier cycle
-            job_status, result = AssemblyAiTranscriptionService.check_job_status(
-                api_key, job["transcript_id"]
-            )
-            if job_status == "error":
-                error_detail = result.get("error", "unknown") if result else "unknown"
-                error_msg = f"AssemblyAI job {job['transcript_id']}: {error_detail}"
-                break
-            if job_status == "completed" and result is not None:
-                job["utterances"] = AssemblyAiTranscriptionService.parse_result(job, result)
+        error_msg = _poll_pending_jobs(api_key, jobs, request.session_id)
 
         poll_cycles = int(job_metadata.get("poll_cycles", 0)) + 1
         # New top-level dict so the ORM sees the JSON column change; the

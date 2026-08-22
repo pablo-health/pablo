@@ -43,6 +43,9 @@ def _make_service(
     reminder_service = MagicMock()
     reminder_service.check_and_send_reminders.return_value = {"24h_sent": 0, "1h_sent": 0}
 
+    appointment_repo = MagicMock()
+    appointment_repo.get_by_google_event_id.return_value = None
+
     return SyncSchedulerService(
         ical_config_repo=ical_config_repo,
         google_token_repo=google_token_repo,
@@ -50,6 +53,7 @@ def _make_service(
         ical_sync_service=ical_sync_service,
         google_calendar_service=google_calendar_service,
         reminder_service=reminder_service,
+        appointment_repo=appointment_repo,
     )
 
 
@@ -283,3 +287,35 @@ class TestExecute:
         }
         summary = service.execute("user1")
         assert summary.reminders_sent == 3
+
+    def test_records_drift_for_owned_appointment(self) -> None:
+        """A Google change referencing a known google_event_id marks that
+        appointment external_change and is counted in the summary."""
+        service = _make_service()
+        service._google_token_repo.get.return_value = _make_google_token()  # type: ignore[attr-defined]
+        service._google_calendar_service.sync_from_google.return_value = [  # type: ignore[attr-defined]
+            {"google_event_id": "gcal-evt-1", "summary": "", "status": "confirmed"},
+        ]
+        owned_appt = MagicMock()
+        owned_appt.google_sync_status = "synced"
+        service._appointment_repo.get_by_google_event_id.return_value = owned_appt  # type: ignore[attr-defined]
+
+        summary = service.execute("user1")
+
+        assert summary.google_changes_processed == 1
+        assert owned_appt.google_sync_status == "external_change"
+        service._appointment_repo.update.assert_called_once_with(owned_appt)  # type: ignore[attr-defined]
+
+    def test_ignores_change_with_no_matching_appointment(self) -> None:
+        """A Google change for an event Pablo never pushed is not counted."""
+        service = _make_service()
+        service._google_token_repo.get.return_value = _make_google_token()  # type: ignore[attr-defined]
+        service._google_calendar_service.sync_from_google.return_value = [  # type: ignore[attr-defined]
+            {"google_event_id": "gcal-evt-unknown", "summary": "", "status": "confirmed"},
+        ]
+        service._appointment_repo.get_by_google_event_id.return_value = None  # type: ignore[attr-defined]
+
+        summary = service.execute("user1")
+
+        assert summary.google_changes_processed == 0
+        service._appointment_repo.update.assert_not_called()  # type: ignore[attr-defined]

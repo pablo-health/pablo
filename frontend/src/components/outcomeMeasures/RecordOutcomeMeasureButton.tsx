@@ -32,6 +32,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/Toast"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { useCreateOutcomeMeasure } from "@/hooks/useOutcomeMeasures"
 import {
   INSTRUMENTS,
@@ -84,6 +85,7 @@ export function RecordOutcomeMeasureButton({
 
   const { showToast } = useToast()
   const createMeasure = useCreateOutcomeMeasure()
+  const { readOnly } = useReadOnlyMode()
 
   const meta = getInstrumentMeta(instrumentCode) as InstrumentMeta
   const answeredKeys = Object.keys(itemScores)
@@ -136,6 +138,8 @@ export function RecordOutcomeMeasureButton({
       showToast(messageForError(err), "error")
     }
   }
+
+  if (readOnly) return null
 
   return (
     <Dialog

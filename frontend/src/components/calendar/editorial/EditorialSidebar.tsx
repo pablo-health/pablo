@@ -3,6 +3,7 @@
 "use client"
 
 import { Plus } from "lucide-react"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import type { AppointmentStatus } from "@/types/scheduling"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { editorialStatusMeta } from "./status"
@@ -32,6 +33,8 @@ export function EditorialSidebar({
   onCreateNew,
   onToggleStatus,
 }: EditorialSidebarProps) {
+  const { readOnly } = useReadOnlyMode()
+
   return (
     <aside
       className="hidden w-[280px] shrink-0 flex-col gap-6 px-5 py-6 lg:flex"
@@ -41,19 +44,21 @@ export function EditorialSidebar({
         color: "var(--ed-ink)",
       }}
     >
-      <button
-        type="button"
-        onClick={onCreateNew}
-        className="flex w-full items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold tracking-wide transition-all hover:translate-y-[-1px] active:translate-y-0"
-        style={{
-          backgroundColor: "var(--ed-cta-bg)",
-          color: "var(--ed-cta-fg)",
-          boxShadow: "var(--ed-shadow-card)",
-        }}
-      >
-        <Plus className="h-4 w-4" />
-        New appointment
-      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          onClick={onCreateNew}
+          className="flex w-full items-center justify-center gap-2 rounded-full px-5 py-3 text-sm font-semibold tracking-wide transition-all hover:translate-y-[-1px] active:translate-y-0"
+          style={{
+            backgroundColor: "var(--ed-cta-bg)",
+            color: "var(--ed-cta-fg)",
+            boxShadow: "var(--ed-shadow-card)",
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          New appointment
+        </button>
+      )}
 
       <EditorialMiniMonth selected={selected} onSelect={onSelectDate} />
 

@@ -1,14 +1,15 @@
 name: CI
 
+# Deliberately no `paths-ignore`. It suppresses the whole run, so the checks
+# this workflow owns never report — and several of them are required by
+# branch protection, which leaves such a pull request unmergeable rather than
+# cheap. Jobs instead classify the diff themselves (scripts/ci_classify_diff.sh)
+# and skip the work while still reporting green.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - ".beads/**"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - ".beads/**"
   workflow_call:
   workflow_dispatch:
 
@@ -79,36 +80,55 @@ jobs:
           sudo apt-get clean
 
       - uses: actions/checkout@v7
+        with:
+          # Need history back to the PR base for the classify step below.
+          fetch-depth: 0
+
+      - id: classify
+        # Self-contained rather than a shared `needs:` job: a skipped
+        # dependency skips its dependents, and the classification only makes
+        # sense for a pull request. When this step does not run, `substantive`
+        # is '' and every gate below fails open to doing the full job.
+        if: github.event_name == 'pull_request'
+        run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
       - uses: actions/setup-python@v7
+        if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
 
       - name: Install Poetry
+        if: steps.classify.outputs.substantive != 'false'
         run: pipx install poetry
 
       - name: Configure Poetry virtualenv location
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
+        if: steps.classify.outputs.substantive != 'false'
         uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry install --no-interaction --no-ansi
 
       - name: Audit Python dependencies
+        if: steps.classify.outputs.substantive != 'false'
         run: |
           pipx inject poetry poetry-plugin-export
           poetry export --only=main --without-hashes -f requirements.txt -o /tmp/requirements-audit.txt
           pipx run pip-audit -r /tmp/requirements-audit.txt --no-deps --disable-pip
 
       - name: Lint (ruff + mypy)
+        if: steps.classify.outputs.substantive != 'false'
         run: make lint
 
       - name: Alembic single-head check
+        if: steps.classify.outputs.substantive != 'false'
         # Two PRs that each add a migration off the same parent will
         # silently produce two heads and break ``alembic upgrade head``
         # for every downstream consumer. Catch it at PR time instead of
@@ -125,6 +145,7 @@ jobs:
           echo "Single head, good."
 
       - name: Test (pytest)
+        if: steps.classify.outputs.substantive != 'false'
         run: cd backend && poetry run pytest tests/ -m "not spacy" --cov=app --cov-report=term-missing --cov-report=html --cov-fail-under=67
 
   backend-integration:
@@ -132,24 +153,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Need history back to the PR base for the classify step below.
+          fetch-depth: 0
+
+      - id: classify
+        # See the note in the backend job — self-contained and fails open.
+        if: github.event_name == 'pull_request'
+        run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
       - uses: actions/setup-python@v7
+        if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
 
       - name: Install Poetry
+        if: steps.classify.outputs.substantive != 'false'
         run: pipx install poetry
 
       - name: Configure Poetry virtualenv location
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
+        if: steps.classify.outputs.substantive != 'false'
         uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry install --no-interaction --no-ansi
 
       # Postgres comes up via testcontainers — see
@@ -168,12 +202,14 @@ jobs:
       # level (THERAPY-o1zh soft-delete uuid drift, THERAPY-n0ac
       # tenant-fan-out semantics); re-enable them as those issues close.
       - name: Cache Postgres test image
+        if: steps.classify.outputs.substantive != 'false'
         uses: actions/cache@v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
 
       - name: Load or pull Postgres test image
+        if: steps.classify.outputs.substantive != 'false'
         # testcontainers pulls postgres:16-alpine from Docker Hub at test
         # time; on shared runners that pull can hit anonymous rate limits
         # and fail the create with a 404 ("no such image"). Restore from
@@ -191,6 +227,7 @@ jobs:
           fi
 
       - name: Run integration tests
+        if: steps.classify.outputs.substantive != 'false'
         run: make test-integration
 
   tenant-template-drift:
@@ -205,33 +242,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Need history back to the PR base for the classify step below.
+          fetch-depth: 0
+
+      - id: classify
+        # See the note in the backend job — self-contained and fails open.
+        if: github.event_name == 'pull_request'
+        run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
       - uses: actions/setup-python@v7
+        if: steps.classify.outputs.substantive != 'false'
         with:
           python-version: "3.13"
 
       - name: Install Poetry
+        if: steps.classify.outputs.substantive != 'false'
         run: pipx install poetry
 
       - name: Configure Poetry virtualenv location
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry config virtualenvs.in-project true
 
       - name: Cache Poetry virtualenv
+        if: steps.classify.outputs.substantive != 'false'
         uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install dependencies
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry install --no-interaction --no-ansi
 
       - name: Cache Postgres test image
+        if: steps.classify.outputs.substantive != 'false'
         uses: actions/cache@v6
         with:
           path: ~/.cache/tc-images
           key: tc-image-postgres-16-alpine
 
       - name: Load or pull Postgres test image
+        if: steps.classify.outputs.substantive != 'false'
         # Shares the cache key with the integration job above — whichever
         # runs first populates the tarball; both restore it and skip the
         # Docker Hub pull on a cache hit.
@@ -247,9 +299,11 @@ jobs:
           fi
 
       - name: Regenerate template (testcontainers Postgres)
+        if: steps.classify.outputs.substantive != 'false'
         run: poetry run python backend/scripts/regen_tenant_template.py
 
       - name: Fail if template drifted from alembic head
+        if: steps.classify.outputs.substantive != 'false'
         run: |
           if ! git diff --exit-code backend/app/db/tenant_template.sql; then
             echo "::error::tenant_template.sql is out of sync with alembic head."
@@ -266,14 +320,27 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Need history back to the PR base for the classify step below.
+          fetch-depth: 0
+
+      - id: classify
+        # See the note in the backend job — self-contained and fails open.
+        # `working-directory: frontend` is set for this job, so reach back up
+        # to the repository root for the script and the diff.
+        if: github.event_name == 'pull_request'
+        working-directory: .
+        run: bash scripts/ci_classify_diff.sh "origin/${{ github.base_ref }}"
 
       - uses: actions/setup-node@v7
+        if: steps.classify.outputs.substantive != 'false'
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
+        if: steps.classify.outputs.substantive != 'false'
         # --audit-signatures verifies each package's npm registry signature
         # before install, catching account-takeover republishes that share
         # a pinned version.
@@ -288,13 +355,17 @@ jobs:
       # suggested remedy is a --force major downgrade of the linter.
       # Dependabot still opens PRs for dev dependencies.
       - name: Audit npm dependencies
+        if: steps.classify.outputs.substantive != 'false'
         run: npm audit --audit-level=high --omit=dev
 
       - name: Type check
+        if: steps.classify.outputs.substantive != 'false'
         run: npx tsc --noEmit
 
       - name: Lint
+        if: steps.classify.outputs.substantive != 'false'
         run: npm run lint
 
       - name: Test
+        if: steps.classify.outputs.substantive != 'false'
         run: npm run test -- --run

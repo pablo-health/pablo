@@ -20,6 +20,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { format } from "date-fns"
 import { ArrowLeft, Calendar, Check, Pencil, X } from "lucide-react"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import type { SessionStatus } from "@/types/sessions"
 import { SessionStatusBadge } from "./SessionStatusBadge"
 
@@ -51,8 +52,10 @@ export function SessionDetailHeader({
   savingSessionDate = false,
 }: SessionDetailHeaderProps) {
   const formattedDate = format(new Date(sessionDate), "MMMM d, yyyy")
+  const { readOnly } = useReadOnlyMode()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState("")
+  const canEditDate = editableSessionDate && !readOnly
 
   const startEditing = () => {
     setValue(toDateInputValue(sessionDate))
@@ -110,7 +113,7 @@ export function SessionDetailHeader({
             ) : (
               <>
                 <span>{formattedDate}</span>
-                {editableSessionDate && (
+                {canEditDate && (
                   <button
                     type="button"
                     onClick={startEditing}

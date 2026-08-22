@@ -4,8 +4,8 @@
 
 This is the single import point for all heavy-path callers (audio upload,
 SOAP generation, document finalize). It lives in the OSS ``app`` layer so
-both OSS and the SaaS overlay can import it (SaaS may import from ``app``,
-never the reverse).
+both OSS and a downstream deployment's overlay can import it (the overlay
+may import from ``app``, never the reverse).
 
 The current backend is Cloud Tasks via :func:`enqueue_cloud_task`. To swap
 to Pub/Sub later, replace the call inside :func:`enqueue` and update queue
@@ -15,8 +15,6 @@ config — call sites and worker routes stay untouched.
 from __future__ import annotations
 
 import re
-
-from ..services.cloud_tasks_service import enqueue_cloud_task
 
 # Cloud Tasks task name constraint: https://cloud.google.com/tasks/docs/reference/rest/v2/projects.locations.queues.tasks
 _TASK_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,500}$")
@@ -42,4 +40,12 @@ def enqueue(
     """
     if dedup_key is not None and not _TASK_NAME_RE.match(dedup_key):
         raise ValueError(f"dedup_key must match [A-Za-z0-9_-]{{1,500}}, got: {dedup_key!r}")
+
+    # Imported lazily to avoid a circular import. This module is the single
+    # import point for heavy-path callers, so services import it — and
+    # ``app.services.__init__`` eagerly imports the whole service layer. A
+    # module-level import here would mean importing task_queue first runs
+    # that __init__, which re-enters this module before ``enqueue`` exists.
+    from ..services.cloud_tasks_service import enqueue_cloud_task
+
     enqueue_cloud_task(queue_name, handler_path, payload, task_name=dedup_key)

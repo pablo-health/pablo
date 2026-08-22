@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/table"
 import { useToast } from "@/components/ui/Toast"
 import { usePatientList, useRestorePatient } from "@/hooks/usePatients"
+import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import type { PatientResponse } from "@/types/patients"
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24
@@ -64,6 +65,7 @@ function formatDeletedAt(deletedAtIso: string | null): string {
 
 export function RecentlyDeletedPatients() {
   const { showToast } = useToast()
+  const { readOnly } = useReadOnlyMode()
   const { data, isLoading, error } = usePatientList({
     include_deleted: "recent",
   })
@@ -124,7 +126,9 @@ export function RecentlyDeletedPatients() {
               <TableHead>Sessions</TableHead>
               <TableHead>Deleted</TableHead>
               <TableHead>Time remaining</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              {!readOnly && (
+                <TableHead className="text-right">Actions</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -142,18 +146,20 @@ export function RecentlyDeletedPatients() {
                       ? "1 day remaining"
                       : `${remaining} days remaining`}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Restore patient ${patient.first_name} ${patient.last_name}`}
-                      disabled={restore.isPending}
-                      onClick={() => handleRestore(patient)}
-                    >
-                      <Undo2 className="w-4 h-4 mr-2" />
-                      Restore
-                    </Button>
-                  </TableCell>
+                  {!readOnly && (
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Restore patient ${patient.first_name} ${patient.last_name}`}
+                        disabled={restore.isPending}
+                        onClick={() => handleRestore(patient)}
+                      >
+                        <Undo2 className="w-4 h-4 mr-2" />
+                        Restore
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               )
             })}

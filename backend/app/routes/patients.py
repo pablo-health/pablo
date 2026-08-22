@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import cast
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, Response
 
 from ..api_errors import BadRequestError, NotFoundError, ServerError
@@ -123,6 +124,8 @@ def create_patient(
     - **status**: Patient status - active, inactive, or on_hold (defaults to active)
     - **date_of_birth**: Date of birth in ISO format (optional)
     - **diagnosis**: Current diagnosis (optional)
+    - **rate_cents**: Per-patient rate override, in cents (optional)
+    - **sliding_scale_note**: Free-text note on a sliding-scale arrangement (optional)
     """
     now = utc_now()
 
@@ -135,6 +138,8 @@ def create_patient(
         status=request.status,
         date_of_birth=request.date_of_birth,
         diagnosis=request.diagnosis,
+        rate_cents=request.rate_cents,
+        sliding_scale_note=request.sliding_scale_note,
         created_at=now,
         updated_at=now,
         session_count=0,
@@ -269,6 +274,8 @@ def update_patient(
     - **status**: New status - active, inactive, or on_hold (optional)
     - **date_of_birth**: New date of birth (optional)
     - **diagnosis**: New diagnosis (optional)
+    - **rate_cents**: New per-patient rate override, in cents (optional)
+    - **sliding_scale_note**: New sliding-scale note (optional)
 
     Only provided fields will be updated.
     """
@@ -301,6 +308,12 @@ def update_patient(
     if request.diagnosis is not None:
         changed_fields.append("diagnosis")
         patient.diagnosis = request.diagnosis
+    if request.rate_cents is not None:
+        changed_fields.append("rate_cents")
+        patient.rate_cents = request.rate_cents
+    if request.sliding_scale_note is not None:
+        changed_fields.append("sliding_scale_note")
+        patient.sliding_scale_note = request.sliding_scale_note
 
     patient = repo.update(patient)
     audit.log_patient_action(
@@ -530,5 +543,9 @@ def export_patient_data(
             headers={"Content-Disposition": f'attachment; filename="{export_data["filename"]}"'},
         )
 
-    # Return JSON directly
-    return JSONResponse(content=export_data)
+    # Return JSON directly. Through the encoder, not raw: the export dict
+    # carries datetime objects straight off the models (patient timestamps,
+    # session dates), and JSONResponse's plain json.dumps refuses them —
+    # a 500 on the Right to Access endpoint. The unit tests didn't see it
+    # because they mock the export service with pre-stringified dates.
+    return JSONResponse(content=jsonable_encoder(export_data))

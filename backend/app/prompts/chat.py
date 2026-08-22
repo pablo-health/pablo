@@ -1,5 +1,5 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
-"""Chat system prompt — single source of truth for OSS + the SaaS overlay hook.
+"""Chat system prompt — single source of truth for OSS + the downstream overlay hook.
 
 The prompt body lives here (not in frontend code, not duplicated in YAML
 eval cases) so:
@@ -54,10 +54,10 @@ Cite which chart sources support each claim using bracketed names:
 """
 
 
-# Internal registry slot for the SaaS overlay (or any other downstream
-# consumer) to plug in a provider-aware resolver. The OSS path is
-# deliberately model-neutral and provider-neutral — see ``chat_model_resolver``
-# for the matching pattern on the model side.
+# Internal registry slot for a downstream deployment's overlay (or any
+# other downstream consumer) to plug in a provider-aware resolver. The
+# OSS path is deliberately model-neutral and provider-neutral — see
+# ``chat_model_resolver`` for the matching pattern on the model side.
 _provider_resolver: ProviderResolver | None = None
 
 
@@ -80,9 +80,9 @@ def register_provider(resolver: ProviderResolver) -> None:
     given ``provider_type``.
 
     Idempotent: calling this multiple times replaces the previously
-    registered resolver. The intended call site is ``saas.bootstrap``
-    (or equivalent) during application startup, before any chat
-    requests are served.
+    registered resolver. The intended call site is the overlay's own
+    bootstrap (or equivalent) during application startup, before any
+    chat requests are served.
     """
     global _provider_resolver  # noqa: PLW0603
     _provider_resolver = resolver

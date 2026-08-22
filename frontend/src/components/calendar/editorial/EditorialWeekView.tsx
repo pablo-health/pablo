@@ -264,7 +264,7 @@ function DayColumn({
           >
             <EditorialEventCard
               appointment={appointment}
-              patientName={patientMap.get(appointment.patient_id)}
+              patientName={appointment.patient_name ?? patientMap.get(appointment.patient_id)}
               micro={micro}
               compact={compact}
             />

@@ -9,7 +9,7 @@
  * plus the new Narrative path (single-textarea editor + save flow).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { NoteViewer } from "../NoteViewer"
 import type {
@@ -822,5 +822,84 @@ describe("NoteViewer (Narrative)", () => {
 
     expect(screen.queryByText("Unsaved Changes")).not.toBeInTheDocument()
     expect(screen.queryByText("Save Changes")).not.toBeInTheDocument()
+  })
+})
+
+describe("read-only deployment mode", () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  describe("SOAP notes", () => {
+    it("hides the Edit button but still renders note content when the deployment flag is set", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      renderViewer()
+
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument()
+      expect(screen.getByText("Anxiety about work")).toBeInTheDocument()
+    })
+
+    it("shows the Edit button when the deployment flag is unset", () => {
+      renderViewer()
+
+      expect(screen.getByText("Edit")).toBeInTheDocument()
+    })
+
+    it("does not auto-open a blank note into edit mode when the deployment flag is set", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      renderViewer({ note: null })
+
+      expect(screen.getByText("SOAP note not yet generated")).toBeInTheDocument()
+      expect(screen.queryAllByRole("textbox")).toHaveLength(0)
+    })
+  })
+
+  describe("Narrative notes", () => {
+    // renderNarrative() is scoped inside the "NoteViewer (Narrative)" describe
+    // above, so this block builds its own narrative note via the module-level
+    // buildNoteForTest() instead of reaching into that closure.
+    const narrativeReadOnlyContent: NoteContent = {
+      note_type: "narrative",
+      body: "Met with client to review progress on coping strategies.",
+    }
+
+    function renderNarrativeForReadOnlyTests(overrides: LegacyRenderOpts = {}) {
+      const status = overrides.status ?? "pending_review"
+      const noteContent = "note" in overrides ? overrides.note : narrativeReadOnlyContent
+      const note = buildNoteForTest({
+        ...overrides,
+        note: noteContent,
+        noteType: "narrative",
+        status,
+      })
+      return render(
+        <NoteViewer
+          note={note}
+          pendingEdited={overrides.noteEdited ?? null}
+          readonly={overrides.readonly === true ? true : false}
+          onSave={overrides.onSave ?? (() => {})}
+        />,
+      )
+    }
+
+    it("hides the Edit button but still renders note content when the deployment flag is set", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      renderNarrativeForReadOnlyTests()
+
+      expect(screen.queryByText("Edit")).not.toBeInTheDocument()
+      expect(screen.getByText(/Met with client to review progress/)).toBeInTheDocument()
+    })
+
+    it("shows the Edit button when the deployment flag is unset", () => {
+      renderNarrativeForReadOnlyTests()
+
+      expect(screen.getByText("Edit")).toBeInTheDocument()
+    })
+
+    it("does not auto-open a blank note into edit mode when the deployment flag is set", () => {
+      vi.stubEnv("NEXT_PUBLIC_READ_ONLY", "true")
+      renderNarrativeForReadOnlyTests({ note: null })
+
+      expect(screen.getByText("Narrative note not yet generated")).toBeInTheDocument()
+      expect(screen.queryAllByRole("textbox")).toHaveLength(0)
+    })
   })
 })

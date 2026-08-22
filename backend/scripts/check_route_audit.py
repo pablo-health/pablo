@@ -91,7 +91,6 @@ HTTP_METHODS: frozenset[str] = frozenset({"get", "post", "patch", "put", "delete
 # Keyed by (method, mounted-path) — i.e. router prefix + decorator arg.
 AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
-        ("get", "/api/appointments"),  # list_appointments — calendar metadata
         # internal_transcription.py — the transcript-upload audit is emitted
         # inside process_transcription_result (the single completion funnel),
         # not on the route signature; both handlers delegate to it.
@@ -186,6 +185,10 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("delete", "/api/availability/rules/{rule_id}"),  # deletes an availability rule
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
+        ("post", "/api/appointment-types"),  # creates an appointment type
+        ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type
+        ("delete", "/api/appointment-types/{appointment_type_id}"),  # deletes an appointment type
         ("get", "/api/google-calendar/authorize"),  # OAuth start, returns auth URL
         ("get", "/api/google-calendar/callback"),  # OAuth token exchange, no events
         ("get", "/api/google-calendar/status"),  # calendar connection status

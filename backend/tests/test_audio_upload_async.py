@@ -42,6 +42,7 @@ def _assemblyai_settings(**overrides: object) -> types.SimpleNamespace:
         "transcription_audio_bucket": "test-audio-bucket",
         "transcription_task_queue": "test-transcription-queue",
         "patient_documents_upload_url_ttl_seconds": 900,
+        "transcription_audio_upload_url_ttl_seconds": 3600,
         "pablo_edition": "solo",
         "is_development": False,
     }
@@ -180,6 +181,12 @@ class TestSignedUrlAssemblyAi:
         body = resp.json()
         assert body["therapist"]["gcs_path"] == f"signed/{session.id}/therapist.pcm"
         assert body["client"]["gcs_path"] == f"signed/{session.id}/client.pcm"
+
+        # Audio uploads get their own (longer) TTL, not the document TTL.
+        assert fake_storage.make_upload_target.call_count == 2
+        for call in fake_storage.make_upload_target.call_args_list:
+            assert call.kwargs["ttl_seconds"] == 3600
+            assert call.kwargs["ttl_seconds"] != 900
 
     def test_finalize_enqueues_submit_for_assemblyai(
         self, client: object, mock_session_repo: object, mock_user_id: str
