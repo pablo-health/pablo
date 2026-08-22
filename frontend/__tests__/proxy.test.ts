@@ -4,11 +4,11 @@ import { readFileSync } from "fs"
 import { join } from "path"
 import { describe, expect, it } from "vitest"
 
-// THERAPY-hhmj — proxy.ts (renamed from middleware.ts per the Next 16
-// convention) carries the matcher list that pablo-saas's Cloud Armor
-// config mirrors (scripts/setup-cloud-armor.sh). Asserting on the file
-// text, not the imported config, avoids pulling the auth provider chain
-// into the test environment.
+// proxy.ts (renamed from middleware.ts per the Next 16 convention)
+// carries the matcher list that downstream deployment configs mirror,
+// so its shape is a contract worth guarding directly. Asserting on the
+// file text, not the imported config, avoids pulling the auth provider
+// chain into the test environment.
 
 const proxySource = readFileSync(join(__dirname, "..", "proxy.ts"), "utf8")
 
