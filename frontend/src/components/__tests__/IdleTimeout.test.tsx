@@ -19,7 +19,12 @@ const { getSessionStatus, touchSession, handleTerminalAuthLogout, routerPush, si
   }))
 
 vi.mock("@/lib/api/session", () => ({ getSessionStatus, touchSession }))
-vi.mock("@/lib/api/client", () => ({ handleTerminalAuthLogout }))
+// `returnToParam` is stubbed to "" so these cases keep asserting the bare
+// boot URL; the parameter it builds has its own coverage in client.test.ts.
+vi.mock("@/lib/api/client", () => ({
+  handleTerminalAuthLogout,
+  returnToParam: () => "",
+}))
 vi.mock("@/lib/auth/provider", () => ({
   getClientAuthProvider: () => ({ signOut }),
 }))

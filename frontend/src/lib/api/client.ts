@@ -80,8 +80,34 @@ export function handleTerminalAuthLogout(reason: "idle_timeout" | "session_expir
     } catch {
       // Provider not initialized — still redirect.
     }
-    window.location.assign(`/login?reason=${reason}`)
+    window.location.assign(`/login?reason=${reason}${returnToParam()}`)
   })()
+}
+
+/**
+ * The `&returnTo=` fragment that sends the user back where they were once they
+ * sign in again, or "" when there is nowhere sensible to return to.
+ *
+ * An idle timeout is not a navigation the user asked for — it fires on a timer,
+ * mid-task, from whatever page they were on. Without this the sign-in that
+ * follows lands them on the dashboard, so stepping away from a half-written
+ * note costs them their place with no way back but the browser's Back button.
+ *
+ * Only the path, query, and hash are carried, never an absolute URL: the value
+ * is read back off the query string on the login screen, and a full URL there
+ * would be an open redirect. `/login` itself is excluded so a boot that somehow
+ * fires on the login screen can't loop back into it.
+ */
+export function returnToParam(): string {
+  if (typeof window === "undefined") return ""
+  // Each part defaulted rather than read straight off `location`: this runs
+  // under test doubles that stand in a partial location object, where the raw
+  // concatenation would produce NaN instead of a string.
+  const loc = window.location
+  const here = `${loc?.pathname ?? ""}${loc?.search ?? ""}${loc?.hash ?? ""}`
+  if (!here.startsWith("/") || here.startsWith("//")) return ""
+  if (here === "/" || here.startsWith("/login")) return ""
+  return `&returnTo=${encodeURIComponent(here)}`
 }
 
 /**
