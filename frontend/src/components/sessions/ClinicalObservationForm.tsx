@@ -57,8 +57,36 @@ const ATTITUDE_OPTIONS = [
   "withdrawn",
 ] as const
 
+const AFFECT_CONGRUENCE_OPTIONS = ["congruent", "incongruent"] as const
+
+const AFFECT_RANGE_OPTIONS = ["full", "restricted", "blunted", "flat"] as const
+
+const AFFECT_STABILITY_OPTIONS = ["stable", "labile"] as const
+
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+/**
+ * Combine the structured affect fields into a single readable phrase,
+ * e.g. "congruent, restricted range, stable" with optional trailing notes.
+ */
+function formatAffect(obs: {
+  affect_congruence: string
+  affect_range: string
+  affect_stability: string
+  affect_notes: string
+}): string {
+  const parts: string[] = []
+  if (obs.affect_congruence) parts.push(obs.affect_congruence)
+  if (obs.affect_range) parts.push(`${obs.affect_range} range`)
+  if (obs.affect_stability) parts.push(obs.affect_stability)
+  const structured = parts.join(", ")
+
+  if (structured && obs.affect_notes) {
+    return `${structured} — ${obs.affect_notes}`
+  }
+  return structured || obs.affect_notes
 }
 
 export function ClinicalObservationForm({
@@ -94,7 +122,7 @@ export function ClinicalObservationForm({
           />
           <ReadonlyField label="Attitude / Behavior" value={value.attitude ? capitalize(value.attitude) : ""} />
           <ReadonlyField label="Non-verbal" value={value.non_verbal} />
-          <ReadonlyField label="Affect Observation" value={value.affect_observation} />
+          <ReadonlyField label="Affect" value={formatAffect(value)} />
         </dl>
       </div>
     )
@@ -269,20 +297,80 @@ export function ClinicalObservationForm({
           />
         </div>
 
-        {/* Affect Observation */}
+        {/* Affect */}
         <div>
-          <label
-            htmlFor="obs-affect"
-            className="block text-sm font-medium text-neutral-600 mb-1"
-          >
-            Affect Observation
-          </label>
+          <span className="block text-sm font-medium text-neutral-600 mb-1">
+            Affect
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div>
+              <label htmlFor="obs-affect-congruence" className="sr-only">
+                Affect Congruence
+              </label>
+              <Select
+                value={value.affect_congruence || undefined}
+                onValueChange={(v) => update("affect_congruence", v)}
+              >
+                <SelectTrigger id="obs-affect-congruence" className="w-full">
+                  <SelectValue placeholder="Congruence..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {AFFECT_CONGRUENCE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt} value={opt}>
+                      {capitalize(opt)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label htmlFor="obs-affect-range" className="sr-only">
+                Affect Range
+              </label>
+              <Select
+                value={value.affect_range || undefined}
+                onValueChange={(v) => update("affect_range", v)}
+              >
+                <SelectTrigger id="obs-affect-range" className="w-full">
+                  <SelectValue placeholder="Range..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {AFFECT_RANGE_OPTIONS.map((opt) => (
+                    <SelectItem key={opt} value={opt}>
+                      {capitalize(opt)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label htmlFor="obs-affect-stability" className="sr-only">
+                Affect Stability
+              </label>
+              <Select
+                value={value.affect_stability || undefined}
+                onValueChange={(v) => update("affect_stability", v)}
+              >
+                <SelectTrigger id="obs-affect-stability" className="w-full">
+                  <SelectValue placeholder="Stability..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {AFFECT_STABILITY_OPTIONS.map((opt) => (
+                    <SelectItem key={opt} value={opt}>
+                      {capitalize(opt)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <textarea
-            id="obs-affect"
-            value={value.affect_observation}
-            onChange={(e) => update("affect_observation", e.target.value)}
-            placeholder="Congruent/incongruent with mood, range, stability..."
-            className="w-full min-h-[80px] p-3 border border-neutral-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            id="obs-affect-notes"
+            value={value.affect_notes}
+            onChange={(e) => update("affect_notes", e.target.value)}
+            placeholder="Additional affect notes..."
+            className="mt-2 w-full min-h-[80px] p-3 border border-neutral-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+            aria-label="Affect notes"
           />
         </div>
       </div>
@@ -325,8 +413,9 @@ export function formatClinicalObservation(obs: ClinicalObservation): string {
   if (obs.non_verbal) {
     lines.push(`**Non-verbal:** ${obs.non_verbal}`)
   }
-  if (obs.affect_observation) {
-    lines.push(`**Affect Observation:** ${obs.affect_observation}`)
+  const affectText = formatAffect(obs)
+  if (affectText) {
+    lines.push(`**Affect:** ${affectText}`)
   }
 
   return lines.join("\n")
@@ -342,5 +431,8 @@ export const EMPTY_CLINICAL_OBSERVATION: ClinicalObservation = {
   psychomotor_notes: "",
   attitude: "",
   non_verbal: "",
-  affect_observation: "",
+  affect_congruence: "",
+  affect_range: "",
+  affect_stability: "",
+  affect_notes: "",
 }

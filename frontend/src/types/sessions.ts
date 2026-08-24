@@ -269,7 +269,10 @@ export interface ClinicalObservation {
   psychomotor_notes: string
   attitude: string
   non_verbal: string
-  affect_observation: string
+  affect_congruence: string
+  affect_range: string
+  affect_stability: string
+  affect_notes: string
 }
 
 // --- Helpers ----------------------------------------------------------------
