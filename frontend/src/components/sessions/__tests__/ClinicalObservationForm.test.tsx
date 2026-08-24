@@ -20,7 +20,10 @@ const fullObservation: ClinicalObservation = {
   psychomotor_notes: "",
   attitude: "",
   non_verbal: "Client maintained relaxed posture",
-  affect_observation: "Congruent with stated mood; full range",
+  affect_congruence: "congruent",
+  affect_range: "full",
+  affect_stability: "stable",
+  affect_notes: "",
 }
 
 describe("ClinicalObservationForm", () => {
@@ -39,7 +42,7 @@ describe("ClinicalObservationForm", () => {
       expect(screen.getByText("Psychomotor Activity")).toBeInTheDocument()
       expect(screen.getByText("Attitude / Behavior")).toBeInTheDocument()
       expect(screen.getByText("Non-verbal")).toBeInTheDocument()
-      expect(screen.getByText("Affect Observation")).toBeInTheDocument()
+      expect(screen.getByText("Affect")).toBeInTheDocument()
     })
 
     it("renders with empty default state cleanly", () => {
@@ -90,7 +93,7 @@ describe("ClinicalObservationForm", () => {
       })
     })
 
-    it("updates affect_observation textarea via onChange", () => {
+    it("updates affect_notes textarea via onChange", () => {
       const handleChange = vi.fn()
       render(
         <ClinicalObservationForm
@@ -99,16 +102,14 @@ describe("ClinicalObservationForm", () => {
         />
       )
 
-      const textarea = screen.getByPlaceholderText(
-        "Congruent/incongruent with mood, range, stability..."
-      )
+      const textarea = screen.getByPlaceholderText("Additional affect notes...")
       fireEvent.change(textarea, {
-        target: { value: "Congruent" },
+        target: { value: "Congruent with reported mood" },
       })
 
       expect(handleChange).toHaveBeenCalledWith({
         ...EMPTY_CLINICAL_OBSERVATION,
-        affect_observation: "Congruent",
+        affect_notes: "Congruent with reported mood",
       })
     })
 
@@ -151,7 +152,7 @@ describe("ClinicalObservationForm", () => {
         screen.getByText("Client maintained relaxed posture")
       ).toBeInTheDocument()
       expect(
-        screen.getByText("Congruent with stated mood; full range")
+        screen.getByText("congruent, full range, stable")
       ).toBeInTheDocument()
 
       // No inputs or textareas
@@ -213,7 +214,6 @@ describe("ClinicalObservationForm", () => {
       )
 
       expect(screen.getByLabelText("Non-verbal")).toBeInTheDocument()
-      expect(screen.getByLabelText("Affect Observation")).toBeInTheDocument()
     })
 
     it("has aria-labels for additional text inputs", () => {
@@ -225,6 +225,7 @@ describe("ClinicalObservationForm", () => {
       )
 
       expect(screen.getByLabelText("Psychomotor notes")).toBeInTheDocument()
+      expect(screen.getByLabelText("Affect notes")).toBeInTheDocument()
     })
 
     it("uses a fieldset with legend for form grouping", () => {
@@ -253,9 +254,7 @@ describe("formatClinicalObservation", () => {
     expect(result).toContain("**Eye Contact:** Appropriate")
     expect(result).toContain("**Psychomotor Activity:** Normal")
     expect(result).toContain("**Non-verbal:** Client maintained relaxed posture")
-    expect(result).toContain(
-      "**Affect Observation:** Congruent with stated mood; full range"
-    )
+    expect(result).toContain("**Affect:** congruent, full range, stable")
   })
 
   it("omits empty fields from output", () => {
@@ -302,7 +301,7 @@ describe("formatClinicalObservation", () => {
     expect(result).toContain("**Non-verbal:** Open body language")
     expect(result).not.toContain("Eye Contact")
     expect(result).not.toContain("Psychomotor")
-    expect(result).not.toContain("Affect Observation")
+    expect(result).not.toContain("Affect")
   })
 
   it("includes attitude in formatted output when set", () => {
@@ -319,6 +318,37 @@ describe("formatClinicalObservation", () => {
     const result = formatClinicalObservation(EMPTY_CLINICAL_OBSERVATION)
 
     expect(result).not.toContain("Attitude")
+  })
+
+  it("appends affect notes after the structured affect summary", () => {
+    const obs: ClinicalObservation = {
+      ...EMPTY_CLINICAL_OBSERVATION,
+      affect_congruence: "incongruent",
+      affect_range: "blunted",
+      affect_stability: "labile",
+      affect_notes: "Flat during discussion of loss",
+    }
+    const result = formatClinicalObservation(obs)
+
+    expect(result).toContain(
+      "**Affect:** incongruent, blunted range, labile — Flat during discussion of loss"
+    )
+  })
+
+  it("renders affect notes alone when no structured fields are set", () => {
+    const obs: ClinicalObservation = {
+      ...EMPTY_CLINICAL_OBSERVATION,
+      affect_notes: "Difficult to assess",
+    }
+    const result = formatClinicalObservation(obs)
+
+    expect(result).toContain("**Affect:** Difficult to assess")
+  })
+
+  it("omits affect from output when no affect fields are set", () => {
+    const result = formatClinicalObservation(EMPTY_CLINICAL_OBSERVATION)
+
+    expect(result).not.toContain("Affect")
   })
 })
 
