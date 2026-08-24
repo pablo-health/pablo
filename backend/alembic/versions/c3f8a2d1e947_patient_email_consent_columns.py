@@ -10,8 +10,10 @@ for that patient.
 Adds four columns to ``patients``:
 
 - ``phi_email_consent``     BOOLEAN — nullable tri-state: NULL = no record
-  on file, TRUE = consented, FALSE = declined. The current decision only;
-  the grant/withdrawal history lives in the audit trail.
+  on file, TRUE = consented, FALSE = declined. These four columns ARE the
+  consent authority — the current decision only. They record no history of
+  their own; recording the grant/withdrawal history (who changed it, when,
+  why) is the calling application's responsibility.
 - ``phi_email_consent_at``  TIMESTAMPTZ — when the decision was recorded.
 - ``phi_email_consent_doc`` TEXT — optional reference to a signed consent
   document backing the attestation.
