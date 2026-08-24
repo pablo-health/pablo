@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { getClientAuthProvider } from "@/lib/auth/provider"
-import { handleTerminalAuthLogout } from "@/lib/api/client"
+import { handleTerminalAuthLogout, returnToParam } from "@/lib/api/client"
 import { getSessionStatus, touchSession } from "@/lib/api/session"
 import {
   Dialog,
@@ -85,7 +85,7 @@ export function IdleTimeout() {
     } catch {
       // Provider not initialized (dev mode) — still redirect.
     }
-    router.push("/login?reason=idle_timeout")
+    router.push(`/login?reason=idle_timeout${returnToParam()}`)
   }, [router])
 
   /**
