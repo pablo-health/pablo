@@ -225,3 +225,78 @@ describe.each(["nested", "flat"] as const)(
     expect(assignSpy).not.toHaveBeenCalled()
   })
 })
+
+describe("returnToParam", () => {
+  /** Stand the interrupted page up in `window.location`. */
+  function atPage(pathname: string, search = "", hash = "") {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { assign: assignSpy, href: "http://test/", pathname, search, hash },
+    })
+  }
+
+  it("carries the interrupted page, query and hash included", async () => {
+    const { returnToParam } = await import("../client")
+    atPage("/dashboard/calendar", "?view=week", "#slot-3")
+
+    expect(returnToParam()).toBe(
+      `&returnTo=${encodeURIComponent("/dashboard/calendar?view=week#slot-3")}`,
+    )
+  })
+
+  it("returns nothing worth returning to for the root path", async () => {
+    const { returnToParam } = await import("../client")
+    atPage("/")
+
+    expect(returnToParam()).toBe("")
+  })
+
+  it("refuses to point back at the login screen", async () => {
+    const { returnToParam } = await import("../client")
+    atPage("/login", "?reason=idle_timeout")
+
+    // Otherwise a boot that fires while already on /login round-trips into
+    // itself and the user can never leave.
+    expect(returnToParam()).toBe("")
+  })
+
+  it("refuses a protocol-relative path", async () => {
+    const { returnToParam } = await import("../client")
+    // `startsWith("/")` alone accepts "//evil.example", which the browser
+    // resolves as an absolute URL to another origin — an open redirect once
+    // the login screen reads this value back off the query string.
+    atPage("//evil.example/steal")
+
+    expect(returnToParam()).toBe("")
+  })
+
+  it("survives a partial location object instead of yielding NaN", async () => {
+    const { returnToParam } = await import("../client")
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { assign: assignSpy, href: "http://test/" },
+    })
+
+    // pathname/search/hash all absent: concatenating them raw produces NaN,
+    // and calling .startsWith on that throws inside the logout path — which
+    // would swallow the redirect entirely rather than degrade to a default.
+    expect(returnToParam()).toBe("")
+  })
+
+  it("appends the parameter to the boot URL", async () => {
+    const client = await freshClient()
+    atPage("/dashboard/calendar")
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err401("IDLE_TIMEOUT")))
+
+    await expect(client.getBlob("/api/download")).rejects.toMatchObject({
+      code: "IDLE_TIMEOUT",
+    })
+    await vi.waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith(
+        `/login?reason=idle_timeout&returnTo=${encodeURIComponent("/dashboard/calendar")}`,
+      ),
+    )
+  })
+})

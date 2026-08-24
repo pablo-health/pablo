@@ -19,6 +19,7 @@ import type { UserCredential } from "firebase/auth"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { clearStaleSession } from "./client"
 import { useAuth } from "@/lib/auth-context"
+import { safeReturnTo } from "@/lib/auth/returnTo"
 import {
   consumeRecoveryNotice,
   installAuthRecovery,
@@ -35,6 +36,15 @@ function getUrlParam(name: string): string {
   if (typeof window === "undefined") return ""
   const params = new URLSearchParams(window.location.search)
   return params.get(name) || ""
+}
+
+/**
+ * Back to the page a forced logout interrupted, or the dashboard when there is
+ * nothing to return to. Validation lives in `safeReturnTo` — shared with the
+ * MFA enrolment form, which resolves the same parameter one step later.
+ */
+function postLoginDestination(): string {
+  return safeReturnTo(getUrlParam("returnTo"))
 }
 
 export function FirebaseLoginScreen() {
@@ -130,7 +140,7 @@ export function FirebaseLoginScreen() {
   // re-login navigates via finishLogin(), not this effect.
   useEffect(() => {
     if (user && !authLoading && !isSignUp && !cameFromForcedLogout) {
-      router.push("/dashboard")
+      router.push(postLoginDestination())
     }
   }, [user, authLoading, router, isSignUp, cameFromForcedLogout])
 
@@ -150,7 +160,12 @@ export function FirebaseLoginScreen() {
         "X-Refresh-Token": refreshToken,
       },
     })
-    router.push("/dashboard")
+    // Back to the page the logout interrupted, not unconditionally to the
+    // dashboard. Safe even when we arrived here from a forced logout: unlike
+    // the "already authenticated" effect above — which fires on a session that
+    // may still be the stale one being cleared — this runs only after a
+    // credential has actually resolved, so the session behind it is fresh.
+    router.push(postLoginDestination())
   }
 
   return (
