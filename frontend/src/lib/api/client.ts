@@ -118,6 +118,43 @@ export interface ApiErrorResponse {
   }
 }
 
+/**
+ * Pull the `{ error: { code, message, details } }` envelope out of an error
+ * body, at either of the two depths the API actually emits it.
+ *
+ * NESTED is the one that was being missed. A route that refuses a request by
+ * raising `HTTPException(detail={"error": {...}})` does not reach us in that
+ * shape: `register_exception_handlers` deliberately passes `HTTPException`
+ * through to FastAPI's own renderer, and that renderer wraps whatever detail
+ * it was handed under a `detail` key. So the envelope arrives one level down:
+ *
+ *     {"detail": {"error": {"code": "IDLE_TIMEOUT", …}}}
+ *
+ * Reading only the top level meant every one of those raise sites resolved to
+ * `UNKNOWN_ERROR`, which quietly disabled all three things downstream of the
+ * code: the idle-timeout logout, the terminal-auth logout, and the
+ * force-refresh retry for an expired token. Nothing errored — the codes simply
+ * never matched, so a session that should have been recovered or ended cleanly
+ * instead stayed half-alive and every later request failed on its own.
+ *
+ * FLAT is what a body written straight to a `JSONResponse` looks like, which
+ * is what the `APIError` handler produces. Both shapes are real, so read both
+ * rather than betting on one.
+ *
+ * A `detail` that is not an envelope (some sites pass a bare string) falls
+ * through to the top level and then fails the `error` lookup — the same "not
+ * one of ours" answer as a body with no envelope at all.
+ */
+function findErrorEnvelope(data: unknown): ApiErrorResponse | null {
+  if (typeof data !== "object" || data === null) return null
+  const top = data as Record<string, unknown>
+  const detail = top.detail
+  if (typeof detail === "object" && detail !== null && "error" in detail) {
+    return detail as unknown as ApiErrorResponse
+  }
+  return top as unknown as ApiErrorResponse
+}
+
 export class ApiError extends Error {
   constructor(
     public code: string,
@@ -204,7 +241,7 @@ async function peekErrorCode(response: Response): Promise<string | null> {
   const contentType = response.headers.get("content-type")
   if (!contentType?.includes("application/json")) return null
   try {
-    const data = (await response.clone().json()) as ApiErrorResponse
+    const data = findErrorEnvelope((await response.clone().json()) as unknown)
     return data?.error?.code ?? null
   } catch {
     return null
@@ -291,7 +328,7 @@ export async function apiClient<T>(
 
     if (contentType?.includes("application/json")) {
       try {
-        errorData = (await response.json()) as ApiErrorResponse
+        errorData = findErrorEnvelope((await response.json()) as unknown)
       } catch {
         // Failed to parse error response
       }
@@ -414,7 +451,7 @@ export async function getBlob(endpoint: string, token?: string): Promise<Blob> {
     let errorData: ApiErrorResponse | null = null
     if (response.headers.get("content-type")?.includes("application/json")) {
       try {
-        errorData = (await response.json()) as ApiErrorResponse
+        errorData = findErrorEnvelope((await response.json()) as unknown)
       } catch {
         // Non-JSON error body — fall through to the generic message.
       }

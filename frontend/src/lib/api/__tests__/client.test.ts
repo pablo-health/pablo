@@ -6,6 +6,17 @@
  * every action. Covers the recoverable refresh-retry, the terminal
  * session-expired redirect (for each terminal code), idle-timeout, MFA
  * pass-through, the caller-token scope, and the single-redirect re-entry guard.
+ *
+ * WIRE SHAPE. Every case here runs against BOTH envelope shapes the API
+ * emits, because the shape is what this suite previously got wrong. A route
+ * that raises `HTTPException(detail={"error": ...})` reaches the client as
+ * `{"detail": {"error": ...}}` — FastAPI's renderer wraps the detail — while a
+ * body written straight to a `JSONResponse` arrives flat. The old fixtures
+ * asserted only the flat shape, which no auth raise site actually produces, so
+ * the suite passed green while every redirect and retry below was dead in a
+ * real browser: the code resolved to UNKNOWN_ERROR and matched nothing.
+ *
+ * Keep both shapes. Dropping the nested one is what let this regress unseen.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 
@@ -18,8 +29,23 @@ vi.mock("@/lib/auth/provider", () => ({
 // No error-path interceptors in these tests.
 vi.mock("../client.extensions", () => ({ apiErrorInterceptors: [] }))
 
+/**
+ * The two real wire shapes. `nested` is what an `HTTPException(detail=...)`
+ * raise site produces — the one every auth code below actually travels in.
+ */
+const ENVELOPES = {
+  nested: (code: string) => ({ detail: { error: { code, message: code } } }),
+  flat: (code: string) => ({ error: { code, message: code } }),
+} as const
+
+type EnvelopeShape = keyof typeof ENVELOPES
+
+// Reassigned per shape by the describe.each below, so the existing cases read
+// unchanged while running twice.
+let envelope: EnvelopeShape = "nested"
+
 function err401(code: string): Response {
-  return new Response(JSON.stringify({ error: { code, message: code } }), {
+  return new Response(JSON.stringify(ENVELOPES[envelope](code)), {
     status: 401,
     headers: { "content-type": "application/json" },
   })
@@ -59,7 +85,13 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe("apiClient terminal-auth handling", () => {
+describe.each(["nested", "flat"] as const)(
+  "apiClient terminal-auth handling (%s envelope)",
+  (shape) => {
+  beforeEach(() => {
+    envelope = shape
+  })
+
   it("retries once on an expired token, then succeeds without redirecting", async () => {
     const client = await freshClient()
     const fetchMock = vi
@@ -151,7 +183,13 @@ describe("apiClient terminal-auth handling", () => {
   })
 })
 
-describe("getBlob terminal-auth handling", () => {
+describe.each(["nested", "flat"] as const)(
+  "getBlob terminal-auth handling (%s envelope)",
+  (shape) => {
+  beforeEach(() => {
+    envelope = shape
+  })
+
   it("redirects with reason=idle_timeout on an idle 401", async () => {
     const client = await freshClient()
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(err401("IDLE_TIMEOUT")))
