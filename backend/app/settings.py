@@ -771,6 +771,27 @@ class Settings(BaseSettings):
         default=25 * 1024 * 1024,
         description="Maximum patient-document upload size (bytes).",
     )
+
+    # Email delivery for notification surfaces (booking confirmations,
+    # reminders). 'none' logs and drops every message — the seam a
+    # delivery-dependent caller must check via EmailSender.can_deliver
+    # before it can refuse to arm.
+    email_backend: Literal["none", "smtp"] = Field(
+        default="none",
+        description=(
+            "Email backend for notification surfaces. "
+            "'none' = log only, no delivery (default) — a bare deployment "
+            "behaves exactly as it does today. "
+            "'smtp' = deliver via SMTP with STARTTLS; requires smtp_host, "
+            "smtp_port, smtp_username, smtp_password, smtp_from."
+        ),
+    )
+    smtp_host: str = Field(default="", description="SMTP server hostname")
+    smtp_port: int = Field(default=587, description="SMTP server port (587 for STARTTLS)")
+    smtp_username: str = Field(default="", description="SMTP auth username")
+    smtp_password: SecretStr = Field(default=SecretStr(""), description="SMTP auth password")
+    smtp_from: str = Field(default="", description="From address for outbound email")
+
     # Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
     # Leave processor_id unset to disable — scanned PDFs land with
     # extracted_text=NULL, same as before the feature existed.
