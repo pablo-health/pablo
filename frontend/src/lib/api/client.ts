@@ -182,6 +182,14 @@ function findErrorEnvelope(data: unknown): ApiErrorResponse | null {
 }
 
 export class ApiError extends Error {
+  /**
+   * Set by a registered error interceptor to mean: an explanation has
+   * already been surfaced to the user (a dialog, a flash) for this failure.
+   * Callers must not render their own generic error copy, and a caller that
+   * is itself a modal must close so that explanation is not occluded.
+   */
+  public handledExternally?: boolean
+
   constructor(
     public code: string,
     message: string,
