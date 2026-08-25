@@ -13,8 +13,12 @@ so the env var must be set before app code is imported.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class _PgState:
@@ -95,6 +99,43 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_unconfigure(config: pytest.Config) -> None:
     if _PgState.container is not None:
         _PgState.container.stop()
+
+
+def clear_fastapi_dependency_caches() -> None:
+    """Clear fastapi's module-level dependency-classification caches.
+
+    fastapi classifies every dependency callable (generator? async
+    generator? coroutine?) through a handful of ``lru_cache``-wrapped
+    helpers in ``fastapi.dependencies.models``, keyed on the callable
+    itself. Each app built in this suite defines its own generator
+    session dependency closing over a fresh engine, so those caches
+    accumulate a strong reference to every engine the suite has ever
+    built and never let go — across hundreds of app constructions that
+    exhausts the Postgres connection pool.
+
+    Discover cache-bearing attributes by scanning the module rather than
+    naming the three private helpers: they're internal, and upstream has
+    already renamed the cache-size constant once.
+    """
+    from fastapi.dependencies import models  # noqa: PLC0415
+
+    for name in dir(models):
+        candidate = getattr(models, name)
+        if hasattr(candidate, "cache_clear"):
+            candidate.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _release_fastapi_dependency_caches() -> Iterator[None]:
+    """Release engines pinned by fastapi's dependency-classification caches.
+
+    Runs after every test so each freshly-built app's dependency
+    closures are eligible for garbage collection before the next one is
+    constructed. See ``clear_fastapi_dependency_caches`` for why this is
+    necessary.
+    """
+    yield
+    clear_fastapi_dependency_caches()
 
 
 @pytest.fixture
