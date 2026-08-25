@@ -590,7 +590,13 @@ def _load_document_manifest(docs: list[PatientDocument]) -> LoadedSource:
         upload_date = getattr(doc, "upload_date", None) or doc.created_at.date()
         preview = _manifest_preview(doc)
         lines.append(f"- {title} · {upload_date} · {preview}")
-    text = "## PATIENT DOCUMENTS ON FILE\n" + "\n".join(lines) if lines else ""
+    header = (
+        "## PATIENT DOCUMENTS ON FILE\n"
+        "Every uploaded document is listed here. If a document below is not "
+        "shown in full, its content is not loaded right now — never say it "
+        "does not exist.\n"
+    )
+    text = header + "\n".join(lines) if lines else ""
     return LoadedSource(
         key=SOURCE_KEY_DOCUMENT_MANIFEST,
         priority=DOCUMENT_MANIFEST_PRIORITY,

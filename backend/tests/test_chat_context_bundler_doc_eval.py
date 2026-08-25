@@ -38,6 +38,7 @@ from app.services.chat_context_bundler import (
     SOURCE_KEY_PATIENT_DOCUMENTS,
     SOURCE_KEY_SAFETY_PLAN_ACTIVE,
     InvalidSelectionError,
+    _load_document_manifest,
     _score_doc_relevance,
     assemble_context_bundle,
     register_document_strategy,
@@ -275,6 +276,22 @@ class TestManifestInvariant:
         )
         # No docs → manifest is present but empty of file entries.
         assert ".pdf" not in bundle.text
+
+    def test_manifest_instructs_model_not_to_assert_absence(
+        self,
+        docs_repo: InMemoryPatientDocumentRepository,
+    ) -> None:
+        """A budget-dropped doc body must not read as a missing document —
+        the manifest text itself has to tell the model that a listing here
+        doesn't imply the full body is loaded."""
+        docs_repo.add(_doc(filename="intake.pdf", extracted_text=_BRIEF_INTAKE))
+        docs = docs_repo.list_for_patient(PATIENT_ID, USER_ID)
+        loaded = _load_document_manifest(docs)
+        assert "never say it does not exist" in loaded.text
+
+    def test_manifest_instruction_absent_when_no_docs(self) -> None:
+        loaded = _load_document_manifest([])
+        assert loaded.text == ""
 
 
 # ── 2. Relevance ordering ─────────────────────────────────────────────────────
