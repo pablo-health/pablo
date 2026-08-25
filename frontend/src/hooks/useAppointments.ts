@@ -31,17 +31,42 @@ export function useAppointmentList(start: string, end: string, token?: string) {
   })
 }
 
+/** Range params a list query was created with, read back off its query key. */
+function listRangeOf(queryKey: readonly unknown[]): { start: string; end: string } | undefined {
+  const params = queryKey[2]
+  if (!params || typeof params !== "object") return undefined
+  const { start, end } = params as { start?: unknown; end?: unknown }
+  return typeof start === "string" && typeof end === "string" ? { start, end } : undefined
+}
+
 export function useCreateAppointment(token?: string) {
-  return useAuthMutation({
-    mutationFn: (data: CreateAppointmentRequest) => createAppointment(data, token),
-    invalidateKeys: [queryKeys.appointments.all],
+  return useAuthMutation<AppointmentResponse, CreateAppointmentRequest>({
+    mutationFn: (data) => createAppointment(data, token),
+    onSuccess: (appointment, _variables, queryClient) => {
+      const startAt = new Date(appointment.start_at).getTime()
+      const cachedLists = queryClient.getQueriesData<AppointmentListResponse>({
+        queryKey: queryKeys.appointments.lists(),
+      })
+      for (const [queryKey, cached] of cachedLists) {
+        const range = listRangeOf(queryKey)
+        if (!cached || !range) continue
+        const rangeStart = new Date(range.start).getTime()
+        const rangeEnd = new Date(range.end).getTime()
+        if (startAt < rangeStart || startAt >= rangeEnd) continue
+        queryClient.setQueryData<AppointmentListResponse>(queryKey, {
+          ...cached,
+          data: [...cached.data, appointment],
+          total: cached.total + 1,
+        })
+      }
+    },
   })
 }
 
 export function useCreateRecurringAppointment(token?: string) {
   return useAuthMutation<AppointmentListResponse, CreateRecurringAppointmentRequest>({
     mutationFn: (data) => createRecurringAppointment(data, token),
-    invalidateKeys: [queryKeys.appointments.all],
+    invalidateKeys: [queryKeys.appointments.lists()],
   })
 }
 
