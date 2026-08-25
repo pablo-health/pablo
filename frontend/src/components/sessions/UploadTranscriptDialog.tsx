@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ApiError } from "@/lib/api/client"
 import { usePatientList } from "@/hooks/usePatients"
 import { useUploadSession } from "@/hooks/useSessions"
 import { parseTranscriptFile } from "@/lib/utils/transcriptParser"
@@ -213,6 +214,10 @@ export function UploadTranscriptDialog({
         setFileError(null)
         onSuccess(session)
       } catch (error: unknown) {
+        if (error instanceof ApiError && error.handledExternally) {
+          handleOpenChange(false)
+          return
+        }
         const message =
           error instanceof Error ? error.message : "Failed to upload session"
         setUploadError(message)
@@ -240,6 +245,10 @@ export function UploadTranscriptDialog({
       {
         onError: (error: unknown) => {
           setGeneratingPatientId(null)
+          if (error instanceof ApiError && error.handledExternally) {
+            handleOpenChange(false)
+            return
+          }
           const message =
             error instanceof Error ? error.message : "Failed to upload session"
           setUploadError(message)

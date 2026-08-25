@@ -11,6 +11,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { UploadTranscriptDialog } from "../UploadTranscriptDialog"
+import { ApiError } from "@/lib/api/client"
 import * as patientsApi from "@/lib/api/patients"
 import * as sessionsApi from "@/lib/api/sessions"
 import { createMockPatient, createMockSession } from "@/test/factories"
@@ -915,6 +916,84 @@ describe("UploadTranscriptDialog", () => {
       await waitFor(() => {
         expect(onSuccess).toHaveBeenCalledWith(mockSession)
       })
+    })
+
+    it("closes the dialog and shows no inline error when the failure was already handled externally", async () => {
+      const user = userEvent.setup()
+      const onSuccess = vi.fn()
+
+      const handledError = new ApiError("BLOCKED", "Blocked")
+      handledError.handledExternally = true
+      vi.mocked(sessionsApi.uploadSession).mockRejectedValue(handledError)
+
+      render(<UploadTranscriptDialog onSuccess={onSuccess} />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("Upload Session"))
+
+      await waitFor(() => {
+        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+      })
+
+      const selectTrigger = screen.getByRole("combobox")
+      await user.click(selectTrigger)
+      const doeJaneOptions = await screen.findAllByText("Doe, Jane")
+      await user.click(doeJaneOptions[doeJaneOptions.length - 1])
+
+      const dateInput = screen.getByLabelText(/Session Date/)
+      await user.type(dateInput, "2024-01-15T14:30")
+
+      const file = new File(["Test"], "transcript.txt", { type: "text/plain" })
+      const fileInput = screen.getByLabelText(/Transcript File/)
+      await user.upload(fileInput, file)
+
+      await user.click(screen.getByText("Upload & Generate SOAP"))
+
+      await waitFor(() => {
+        expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
+      })
+
+      expect(screen.queryByText("Blocked")).not.toBeInTheDocument()
+    })
+
+    it("leaves the dialog closed with no inline error when a fire-and-forget upload fails after external handling", async () => {
+      const user = userEvent.setup()
+
+      const handledError = new ApiError("BLOCKED", "Blocked")
+      handledError.handledExternally = true
+      vi.mocked(sessionsApi.uploadSession).mockRejectedValue(handledError)
+
+      render(<UploadTranscriptDialog />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("Upload Session"))
+
+      await waitFor(() => {
+        expect(screen.getByText("Select a patient...")).toBeInTheDocument()
+      })
+
+      const selectTrigger = screen.getByRole("combobox")
+      await user.click(selectTrigger)
+      const doeJaneOptions = await screen.findAllByText("Doe, Jane")
+      await user.click(doeJaneOptions[doeJaneOptions.length - 1])
+
+      const dateInput = screen.getByLabelText(/Session Date/)
+      await user.type(dateInput, "2024-01-15T14:30")
+
+      const file = new File(["Test content"], "transcript.txt", {
+        type: "text/plain",
+      })
+      const fileInput = screen.getByLabelText(/Transcript File/)
+      await user.upload(fileInput, file)
+
+      // Submit — dialog closes immediately, overlay mounts
+      await user.click(screen.getByText("Upload & Generate SOAP"))
+
+      await waitFor(() => {
+        expect(screen.queryByText("Pablo is writing your note")).not.toBeInTheDocument()
+      })
+
+      // Unlike an unhandled failure, the dialog must not re-open with error copy
+      expect(screen.queryByText("Upload Session Transcript")).not.toBeInTheDocument()
+      expect(screen.queryByText("Blocked")).not.toBeInTheDocument()
     })
   })
 
