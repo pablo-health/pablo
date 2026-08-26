@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import String, Uuid, bindparam, func, or_, select, text, update
 
 from ...db.models import AppointmentRow, PatientClinicianRow
-from ...scheduling_engine.models.appointment import Appointment
+from ...scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from ...scheduling_engine.repositories.appointment import AppointmentRepository
 from ...utcnow import utc_now
 
@@ -214,6 +214,28 @@ class PostgresAppointmentRepository(AppointmentRepository):
         ).scalar_one_or_none()
         return _row_to_appointment(row) if row else None
 
+    def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
+        """Pending requests on ``user_id``'s calendar whose expiry has passed.
+
+        The calendar-owner slice, like ``list_by_range`` — expiring a stale
+        request is housekeeping on your own diary, not a patient query.
+        """
+        rows = (
+            self._session.execute(
+                select(AppointmentRow)
+                .where(
+                    AppointmentRow.user_id == user_id,
+                    AppointmentRow.status == AppointmentStatus.PENDING,
+                    AppointmentRow.pending_expires_at.is_not(None),
+                    AppointmentRow.pending_expires_at <= now,
+                )
+                .order_by(AppointmentRow.pending_expires_at)
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_appointment(r) for r in rows]
+
     def create(self, appointment: Appointment) -> Appointment:
         row = AppointmentRow()
         _appointment_to_row(appointment, row)
@@ -297,6 +319,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         session_id=row.session_id,
         reminder_24h_sent=row.reminder_24h_sent,
         reminder_1h_sent=row.reminder_1h_sent,
+        pending_expires_at=row.pending_expires_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -329,5 +352,6 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.session_id = appt.session_id
     row.reminder_24h_sent = appt.reminder_24h_sent
     row.reminder_1h_sent = appt.reminder_1h_sent
+    row.pending_expires_at = appt.pending_expires_at
     row.created_at = appt.created_at
     row.updated_at = appt.updated_at

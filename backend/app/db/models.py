@@ -506,6 +506,11 @@ class AppointmentRow(Base):
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Set only while status is 'pending': the instant the request stops holding
+    # its slot. Indexed because the sweep that expires them is a range scan.
+    pending_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))

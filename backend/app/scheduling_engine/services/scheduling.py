@@ -72,6 +72,13 @@ class SchedulingService:
             else datetime.fromisoformat(str(end_at).replace("Z", "+00:00"))
         )
 
+        # Request mode. A surface that cannot commit the diary on its own asks
+        # for PENDING and supplies the instant the request stops holding its
+        # slot; everything else gets the confirmed booking it always got, so no
+        # existing caller changes behaviour by upgrading.
+        status = self._requested_status(data.get("status"))
+        pending_expires_at = self._pending_expiry(status, data.get("pending_expires_at"))
+
         now = _now()
         appointment = Appointment(
             id=str(uuid.uuid4()),
@@ -81,7 +88,8 @@ class SchedulingService:
             start_at=start_dt,
             end_at=end_dt,
             duration_minutes=duration_minutes,
-            status=AppointmentStatus.CONFIRMED,
+            status=status,
+            pending_expires_at=pending_expires_at,
             session_type=str(data.get("session_type", "individual")),
             video_link=data.get("video_link"),  # type: ignore[arg-type]
             video_platform=data.get("video_platform"),  # type: ignore[arg-type]
@@ -140,10 +148,86 @@ class SchedulingService:
 
         return self._repo.update(appointment)
 
+    @staticmethod
+    def _requested_status(raw: object) -> AppointmentStatus:
+        """The status a create may ask for — confirmed (the default) or pending.
+
+        Nothing else: an appointment cannot be born cancelled, completed or a
+        no-show, and letting a caller say so would put the calendar into states
+        the rest of the engine has no path to.
+        """
+        if raw is None:
+            return AppointmentStatus.CONFIRMED
+        creatable = {AppointmentStatus.CONFIRMED, AppointmentStatus.PENDING}
+        try:
+            status = AppointmentStatus(str(raw))
+        except ValueError:
+            raise InvalidAppointmentError(f"Unknown appointment status: {raw}") from None
+        if status not in creatable:
+            raise InvalidAppointmentError(f"Cannot create an appointment as {status}")
+        return status
+
+    @staticmethod
+    def _pending_expiry(status: AppointmentStatus, raw: object) -> datetime | None:
+        """When a pending request stops holding its slot.
+
+        REQUIRED for a pending appointment, and refused for any other. A
+        pending request occupies its slot exactly like a confirmed one, so one
+        created without an expiry holds a therapist's hour until somebody
+        notices — which, on a queue nobody is watching, is never. Making it
+        mandatory here means the footgun cannot be loaded rather than being
+        documented and then forgotten.
+        """
+        if status is not AppointmentStatus.PENDING:
+            if raw is not None:
+                raise InvalidAppointmentError(
+                    "pending_expires_at is only meaningful for a pending appointment"
+                )
+            return None
+        if raw is None:
+            raise InvalidAppointmentError("A pending appointment must carry pending_expires_at")
+        if isinstance(raw, datetime):
+            return raw
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+
+    def confirm_appointment(self, appointment_id: str, user_id: str) -> Appointment:
+        """Accept a pending request: it becomes an ordinary booking.
+
+        The expiry goes with it — once confirmed there is nothing left to
+        expire, and leaving the timestamp behind would arm the sweep against a
+        real appointment.
+        """
+        appointment = self.get_appointment(appointment_id, user_id)
+        if appointment.status != AppointmentStatus.PENDING:
+            raise InvalidAppointmentError(
+                f"Only a pending appointment can be confirmed (this one is {appointment.status})"
+            )
+        appointment.status = AppointmentStatus.CONFIRMED
+        appointment.pending_expires_at = None
+        appointment.updated_at = _now()
+        return self._repo.update(appointment)
+
+    def expire_pending_appointments(self, user_id: str) -> list[Appointment]:
+        """Release the slots held by requests nobody answered in time.
+
+        Cancels rather than deletes, so the request is still visible as
+        something that was asked for and lapsed — which is what a patient who
+        rings back to ask "did you get my request?" needs somebody to be able
+        to see. Returns what it expired so the caller can tell whoever asked.
+        """
+        expired: list[Appointment] = []
+        for appointment in self._repo.list_expired_pending(user_id, _now()):
+            appointment.status = AppointmentStatus.CANCELLED
+            appointment.pending_expires_at = None
+            appointment.updated_at = _now()
+            expired.append(self._repo.update(appointment))
+        return expired
+
     def cancel_appointment(self, appointment_id: str, user_id: str) -> Appointment:
         """Cancel a single appointment."""
         appointment = self.get_appointment(appointment_id, user_id)
         appointment.status = AppointmentStatus.CANCELLED
+        appointment.pending_expires_at = None
         appointment.updated_at = _now()
         return self._repo.update(appointment)
 

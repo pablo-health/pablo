@@ -11,6 +11,17 @@ from typing import Any
 
 
 class AppointmentStatus(StrEnum):
+    # Requested, not yet agreed to by the practice. A booking surface that
+    # cannot commit the diary on its own — a booking form, an assistant taking
+    # a call — creates one of these and someone confirms it.
+    #
+    # A PENDING appointment OCCUPIES ITS SLOT. Availability treats everything
+    # that is not cancelled as busy, so a requested time is not offered to
+    # somebody else while it is being decided. That is the behaviour you want
+    # and it is also why ``pending_expires_at`` exists: without an expiry, a
+    # request nobody gets round to answering holds a slot for ever, and a queue
+    # left unread quietly eats the calendar.
+    PENDING = "pending"
     CONFIRMED = "confirmed"
     CANCELLED = "cancelled"
     NO_SHOW = "no_show"
@@ -68,6 +79,12 @@ class Appointment:
     reminder_24h_sent: bool = False
     reminder_1h_sent: bool = False
 
+    # When a PENDING request stops holding its slot. None for every other
+    # status. Whoever creates the request decides the instant — the rules that
+    # determine it (how much notice a practice wants, how long it is willing to
+    # sit on a request) belong to the surface that took the booking, not here.
+    pending_expires_at: datetime | None = None
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -101,6 +118,7 @@ class Appointment:
             session_id=data.get("session_id"),
             reminder_24h_sent=data.get("reminder_24h_sent", False),
             reminder_1h_sent=data.get("reminder_1h_sent", False),
+            pending_expires_at=data.get("pending_expires_at"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -132,6 +150,7 @@ class Appointment:
             "ical_sync_status": self.ical_sync_status,
             "ehr_appointment_url": self.ehr_appointment_url,
             "session_id": self.session_id,
+            "pending_expires_at": self.pending_expires_at,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,
             "created_at": self.created_at,
