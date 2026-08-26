@@ -271,6 +271,7 @@ def _to_response(appt: Appointment, *, patient_name: str | None = None) -> Appoi
         video_link=appt.video_link,
         video_platform=appt.video_platform,
         notes=appt.notes,
+        note_type=appt.note_type,
         recurrence_rule=appt.recurrence_rule,
         recurring_appointment_id=appt.recurring_appointment_id,
         recurrence_index=appt.recurrence_index,
@@ -503,8 +504,9 @@ def start_session_from_appointment(
     therapy session and sets appointment.session_id to link them.
 
     Optional body field ``note_type`` selects the note-type registry
-    key for the session. When omitted, the session falls back to the
-    appointment's default (currently SOAP).
+    key for the session, overriding the appointment's own note type.
+    When omitted, the session uses the note type chosen when the
+    appointment was booked (SOAP if none was set).
     """
     # 1. Fetch appointment
     try:
@@ -523,9 +525,9 @@ def start_session_from_appointment(
     if not appt.patient_id:
         raise BadRequestError("Appointment has no linked patient. Resolve the client match first.")
 
-    # 4. Authorize requested note type. Only check when caller explicitly
-    #    requested one — falling back to the default is always allowed.
-    requested_note_type = body.note_type if body else None
+    # 4. Authorize the effective note type — an explicit override, or else
+    #    the one seeded on the appointment at booking time.
+    requested_note_type = (body.note_type if body else None) or appt.note_type
     if requested_note_type is not None and not authorizer.is_allowed(user, requested_note_type):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

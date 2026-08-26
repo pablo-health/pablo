@@ -305,6 +305,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         video_link=row.video_link,
         video_platform=row.video_platform,
         notes=row.notes,
+        note_type=row.note_type,
         recurrence_rule=row.recurrence_rule,
         recurring_appointment_id=row.recurring_appointment_id,
         recurrence_index=row.recurrence_index,
@@ -338,6 +339,7 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.video_link = appt.video_link
     row.video_platform = appt.video_platform
     row.notes = appt.notes
+    row.note_type = appt.note_type
     row.recurrence_rule = appt.recurrence_rule
     row.recurring_appointment_id = appt.recurring_appointment_id
     row.recurrence_index = appt.recurrence_index

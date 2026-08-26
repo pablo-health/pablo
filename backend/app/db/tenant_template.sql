@@ -99,6 +99,7 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     video_link text,
     video_platform character varying(30),
     notes text,
+    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
     recurrence_rule character varying(50),
     recurring_appointment_id uuid,
     recurrence_index integer,

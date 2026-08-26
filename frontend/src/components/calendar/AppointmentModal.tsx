@@ -369,7 +369,7 @@ function AppointmentForm({
     isEditing && (!!appointment.video_link || !!appointment.notes),
   )
   const [videoLink, setVideoLink] = useState(appointment?.video_link ?? "")
-  const [noteType, setNoteType] = useState<string>(DEFAULT_NOTE_TYPE)
+  const [noteType, setNoteType] = useState<string>(appointment?.note_type ?? DEFAULT_NOTE_TYPE)
   const [notes, setNotes] = useState(appointment?.notes ?? "")
 
   const newLenRef = useRef<HTMLInputElement>(null)
@@ -421,6 +421,7 @@ function AppointmentForm({
       session_type: sessionType,
       video_link: videoLink || null,
       notes: notes || null,
+      note_type: noteType,
     }
     if (isEditing && appointment) {
       if (isRecurring && scope === "series") {
@@ -434,6 +435,7 @@ function AppointmentForm({
               session_type: sessionType,
               video_link: videoLink || null,
               notes: notes || null,
+              note_type: noteType,
             },
           },
           { onSuccess: onClose },

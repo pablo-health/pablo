@@ -94,6 +94,7 @@ class SchedulingService:
             video_link=data.get("video_link"),  # type: ignore[arg-type]
             video_platform=data.get("video_platform"),  # type: ignore[arg-type]
             notes=data.get("notes"),  # type: ignore[arg-type]
+            note_type=str(data.get("note_type") or "soap"),
             created_at=now,
             updated_at=now,
         )
@@ -129,6 +130,7 @@ class SchedulingService:
             "video_link",
             "video_platform",
             "notes",
+            "note_type",
             "status",
             "session_id",
             "google_event_id",
@@ -310,6 +312,7 @@ class SchedulingService:
                 video_link=data.get("video_link"),  # type: ignore[arg-type]
                 video_platform=data.get("video_platform"),  # type: ignore[arg-type]
                 notes=data.get("notes"),  # type: ignore[arg-type]
+                note_type=str(data.get("note_type") or "soap"),
                 recurrence_rule=rrule_str,
                 recurring_appointment_id=master_id,
                 recurrence_index=idx,
@@ -335,7 +338,14 @@ class SchedulingService:
             user_id, appointment.recurring_appointment_id, after=appointment.start_at
         )
         now = _now()
-        allowed_fields = {"title", "session_type", "video_link", "video_platform", "notes"}
+        allowed_fields = {
+            "title",
+            "session_type",
+            "video_link",
+            "video_platform",
+            "notes",
+            "note_type",
+        }
         for appt in future:
             for field, value in updates.items():
                 if field in allowed_fields:

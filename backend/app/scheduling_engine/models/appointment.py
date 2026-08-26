@@ -54,6 +54,9 @@ class Appointment:
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    # Registry key for the note generated when a session is started from this
+    # appointment. Defaults to SOAP, mirroring notes.note_type.
+    note_type: str = "soap"
 
     # Recurrence
     recurrence_rule: str | None = None
@@ -104,6 +107,7 @@ class Appointment:
             video_link=data.get("video_link"),
             video_platform=data.get("video_platform"),
             notes=data.get("notes"),
+            note_type=data.get("note_type") or "soap",
             recurrence_rule=data.get("recurrence_rule"),
             recurring_appointment_id=data.get("recurring_appointment_id"),
             recurrence_index=data.get("recurrence_index"),
@@ -138,6 +142,7 @@ class Appointment:
             "video_link": self.video_link,
             "video_platform": self.video_platform,
             "notes": self.notes,
+            "note_type": self.note_type,
             "recurrence_rule": self.recurrence_rule,
             "recurring_appointment_id": self.recurring_appointment_id,
             "recurrence_index": self.recurrence_index,
