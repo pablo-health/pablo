@@ -421,6 +421,7 @@ function AppointmentForm({
     editSeriesMutation.isPending
 
   const handleSubmit = () => {
+    const videoPlatform = appointment?.video_platform ?? preferences?.default_video_platform ?? null
     const payload = {
       patient_id: patientId,
       title,
@@ -429,6 +430,7 @@ function AppointmentForm({
       duration_minutes: duration,
       session_type: sessionType,
       video_link: videoLink || null,
+      video_platform: videoPlatform,
       notes: notes || null,
     }
     if (isEditing && appointment) {

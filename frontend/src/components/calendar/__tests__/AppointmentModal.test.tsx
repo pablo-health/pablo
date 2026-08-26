@@ -397,6 +397,36 @@ describe("AppointmentModal", () => {
     })
   })
 
+  describe("Video platform default", () => {
+    it("carries the user's default video platform onto a newly created appointment", async () => {
+      const user = userEvent.setup()
+      const prefs = { default_video_platform: "google_meet" } as UserPreferences
+      render(<AppointmentModal open onClose={vi.fn()} preferences={prefs} />, {
+        wrapper: createWrapper(),
+      })
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      const [payload] = mockCreate.mock.calls[0]
+      expect(payload).toMatchObject({ video_platform: "google_meet" })
+    })
+
+    it("keeps an existing appointment's video platform on edit", async () => {
+      const user = userEvent.setup()
+      const appointment = { ...baseAppointment, video_platform: "zoom" }
+      const prefs = { default_video_platform: "google_meet" } as UserPreferences
+      render(
+        <AppointmentModal open onClose={vi.fn()} appointment={appointment} preferences={prefs} />,
+        { wrapper: createWrapper() },
+      )
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ video_platform: "zoom" })
+    })
+  })
+
   describe("Recurrence (create mode only)", () => {
     async function selectPatient(user: ReturnType<typeof userEvent.setup>) {
       const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
