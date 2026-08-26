@@ -156,6 +156,10 @@ class AppointmentResponse(BaseModel):
     diagnosis_codes: list[str] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Messages from soft-enforcement availability rules the booking violated.
+    # Empty when nothing was violated, no rules are configured, or availability
+    # rules didn't run at all (e.g. a series occurrence).
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AppointmentListResponse(BaseModel):
