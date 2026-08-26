@@ -51,3 +51,21 @@ export interface UpdateAvailabilityRuleRequest {
   enforcement?: EnforcementLevel
   params?: Record<string, unknown>
 }
+
+export interface ParseAvailabilityRulesRequest {
+  text: string
+}
+
+export interface ProposedAvailabilityRule {
+  rule_type: RuleType
+  enforcement: EnforcementLevel
+  params: Record<string, unknown>
+  human_summary: string
+}
+
+export interface ParseAvailabilityRulesResponse {
+  proposals: ProposedAvailabilityRule[]
+  could_not_parse: string | null
+  exclusive: boolean
+  existing_conflicting_rules: AvailabilityRule[]
+}

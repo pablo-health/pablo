@@ -10,6 +10,8 @@ import type {
   AvailabilityRule,
   AvailabilityRuleListResponse,
   CreateAvailabilityRuleRequest,
+  ParseAvailabilityRulesRequest,
+  ParseAvailabilityRulesResponse,
   UpdateAvailabilityRuleRequest,
 } from "@/types/availability"
 import { del, get, patch, post } from "./client"
@@ -40,4 +42,11 @@ export async function deleteAvailabilityRule(
   token?: string
 ): Promise<void> {
   return del<void>(`/api/availability/rules/${ruleId}`, token)
+}
+
+export async function parseAvailabilityRules(
+  data: ParseAvailabilityRulesRequest,
+  token?: string
+): Promise<ParseAvailabilityRulesResponse> {
+  return post<ParseAvailabilityRulesResponse>("/api/availability/rules/parse", data, token)
 }
