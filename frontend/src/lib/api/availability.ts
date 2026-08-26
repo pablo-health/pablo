@@ -10,6 +10,7 @@ import type {
   AvailabilityRule,
   AvailabilityRuleListResponse,
   CreateAvailabilityRuleRequest,
+  FreeSlotsResponse,
   ParseAvailabilityRulesRequest,
   ParseAvailabilityRulesResponse,
   UpdateAvailabilityRuleRequest,
@@ -42,6 +43,16 @@ export async function deleteAvailabilityRule(
   token?: string
 ): Promise<void> {
   return del<void>(`/api/availability/rules/${ruleId}`, token)
+}
+
+export async function getFreeSlots(
+  date: string,
+  duration?: number,
+  token?: string
+): Promise<FreeSlotsResponse> {
+  const params = new URLSearchParams({ date })
+  if (duration) params.set("duration", String(duration))
+  return get<FreeSlotsResponse>(`/api/availability/slots?${params}`, token)
 }
 
 export async function parseAvailabilityRules(

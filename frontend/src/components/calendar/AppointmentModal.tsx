@@ -24,6 +24,7 @@ import {
   useCancelAppointmentSeries,
 } from "@/hooks/useAppointments"
 import { useNoteTypes } from "@/hooks/useNoteTypes"
+import { AvailabilitySlotPicker } from "./AvailabilitySlotPicker"
 import type {
   AppointmentResponse,
   RecurrenceFrequency,
@@ -597,6 +598,14 @@ function AppointmentForm({
               style={fieldStyle()}
             />
           </div>
+          {!isEditing && (
+            <AvailabilitySlotPicker
+              date={dateStr}
+              duration={duration}
+              selectedTime={timeStr}
+              onSelect={setTimeStr}
+            />
+          )}
         </div>
 
         {/* Length — quick-pick chips */}

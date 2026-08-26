@@ -141,6 +141,8 @@ const baseQueryKeys = {
   availability: {
     all: ["availability"] as const,
     rules: () => [...baseQueryKeys.availability.all, "rules"] as const,
+    slots: (date: string, duration?: number) =>
+      [...baseQueryKeys.availability.all, "slots", date, duration ?? null] as const,
   },
 
   // User query keys
