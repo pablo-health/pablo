@@ -12,6 +12,7 @@ choices the wrapper enforces:
 * Confidence post-processing (per-page flagging + the overall
   low-confidence marker prepended to the body).
 * The one-retry-then-give-up policy for transient errors.
+* Lazy, cached, config-overridable project/processor discovery.
 
 Real-API behavior is covered by an opt-in integration test gated
 behind ``DOCAI_INTEGRATION=1`` (not in this file).
@@ -27,6 +28,7 @@ import pytest
 from app.services import document_ai_ocr as ocr_module
 from app.services.document_ai_ocr import (
     _LOW_CONFIDENCE_MARKER,
+    PABLO_OCR_PROCESSOR_NAME,
     DocumentAiOcrClient,
     OcrResult,
 )
@@ -59,8 +61,14 @@ class _FakeResponse:
 
 
 @dataclass
+class _FakeProcessor:
+    name: str
+    display_name: str
+
+
+@dataclass
 class _FakeDocAiClient:
-    """Records ``process_document`` calls and returns a scripted response.
+    """Records ``process_document``/``list_processors`` calls.
 
     The real client raises ``google.api_core.exceptions``; tests that
     need to exercise the retry path use ``raises`` instead.
@@ -69,6 +77,9 @@ class _FakeDocAiClient:
     response: _FakeResponse | None = None
     raises: list[BaseException] = field(default_factory=list)
     calls: list[Any] = field(default_factory=list)
+    processors: list[_FakeProcessor] = field(default_factory=list)
+    list_processors_calls: list[str] = field(default_factory=list)
+    list_processors_raises: BaseException | None = None
 
     def process_document(self, request: Any, **kwargs: Any) -> _FakeResponse:
         # Real client also takes timeout= and retry=; accept them so the
@@ -79,6 +90,12 @@ class _FakeDocAiClient:
         if self.response is None:
             raise RuntimeError("test bug: no response scripted")
         return self.response
+
+    def list_processors(self, parent: str) -> list[_FakeProcessor]:
+        self.list_processors_calls.append(parent)
+        if self.list_processors_raises is not None:
+            raise self.list_processors_raises
+        return self.processors
 
 
 # ---- helpers ----------------------------------------------------------
@@ -129,20 +146,171 @@ class TestIsConfigured:
         assert client.is_configured is False
         assert client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf") is None
 
-    def test_returns_none_when_processor_id_unset(self) -> None:
+    def test_true_with_kill_switch_on_even_if_unset(self) -> None:
+        # Project/processor may still fail to resolve, but that's a separate,
+        # explicitly logged failure — not reflected in is_configured.
         client = DocumentAiOcrClient(
-            settings=_settings(processor_id=None),
+            settings=_settings(processor_id=None, project_id=None),
             client_factory=_FakeDocAiClient,
         )
-        assert client.is_configured is False
-        assert client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf") is None
+        assert client.is_configured is True
 
-    def test_returns_none_when_project_id_unset(self) -> None:
+
+# ---- project/processor discovery --------------------------------------
+
+
+class TestDiscovery:
+    def test_project_resolved_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "env-project")
+        fake = _FakeDocAiClient(response=_fake_response(text="x", confidences=[0.9]))
         client = DocumentAiOcrClient(
-            settings=_settings(project_id=None),
-            client_factory=_FakeDocAiClient,
+            settings=_settings(project_id=None), client_factory=lambda: fake
         )
-        assert client.is_configured is False
+
+        result = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert result is not None
+        assert fake.calls[0].name == "projects/env-project/locations/us/processors/abc123"
+        assert fake.list_processors_calls == []
+
+    def test_project_falls_back_to_google_auth_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        monkeypatch.setattr("google.auth.default", lambda: (object(), "auth-project"))
+        fake = _FakeDocAiClient(response=_fake_response(text="x", confidences=[0.9]))
+        client = DocumentAiOcrClient(
+            settings=_settings(project_id=None), client_factory=lambda: fake
+        )
+
+        result = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert result is not None
+        assert fake.calls[0].name == "projects/auth-project/locations/us/processors/abc123"
+
+    def test_processor_discovered_by_display_name(self) -> None:
+        fake = _FakeDocAiClient(
+            response=_fake_response(text="x", confidences=[0.9]),
+            processors=[
+                _FakeProcessor(
+                    name="projects/pablohealth-test/locations/us/processors/aaa111",
+                    display_name="some-other-processor",
+                ),
+                _FakeProcessor(
+                    name="projects/pablohealth-test/locations/us/processors/bbb222",
+                    display_name=PABLO_OCR_PROCESSOR_NAME,
+                ),
+            ],
+        )
+        client = DocumentAiOcrClient(
+            settings=_settings(processor_id=None), client_factory=lambda: fake
+        )
+
+        result = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert result is not None
+        assert fake.calls[0].name == "projects/pablohealth-test/locations/us/processors/bbb222"
+        assert fake.list_processors_calls == ["projects/pablohealth-test/locations/us"]
+
+    def test_explicit_config_wins_and_skips_discovery_entirely(self) -> None:
+        fake = _FakeDocAiClient(response=_fake_response(text="x", confidences=[0.9]))
+        client = DocumentAiOcrClient(settings=_settings(), client_factory=lambda: fake)
+
+        result = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert result is not None
+        assert fake.list_processors_calls == []
+
+    def test_discovery_happens_at_most_once_per_instance(self) -> None:
+        fake = _FakeDocAiClient(
+            response=_fake_response(text="x", confidences=[0.9]),
+            processors=[
+                _FakeProcessor(
+                    name="projects/pablohealth-test/locations/us/processors/bbb222",
+                    display_name=PABLO_OCR_PROCESSOR_NAME,
+                ),
+            ],
+        )
+        client = DocumentAiOcrClient(
+            settings=_settings(processor_id=None), client_factory=lambda: fake
+        )
+
+        client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+        client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert len(fake.list_processors_calls) == 1
+
+    def test_construction_makes_no_network_call(self) -> None:
+        def _factory() -> Any:
+            raise AssertionError("client factory should not run at construction time")
+
+        DocumentAiOcrClient(settings=_settings(processor_id=None), client_factory=_factory)
+
+    def test_no_matching_processor_degrades_gracefully_and_does_not_retry(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = _FakeDocAiClient(
+            response=_fake_response(text="x", confidences=[0.9]),
+            processors=[
+                _FakeProcessor(
+                    name="projects/pablohealth-test/locations/us/processors/aaa111",
+                    display_name="some-other-processor",
+                ),
+            ],
+        )
+        client = DocumentAiOcrClient(
+            settings=_settings(processor_id=None), client_factory=lambda: fake
+        )
+
+        with caplog.at_level("WARNING", logger=ocr_module.__name__):
+            first = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+        second = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert first is None
+        assert second is None
+        assert fake.calls == []
+        assert len(fake.list_processors_calls) == 1
+        assert PABLO_OCR_PROCESSOR_NAME in caplog.text
+        assert "projects/pablohealth-test/locations/us" in caplog.text
+
+    def test_kill_switch_off_skips_discovery_and_auth(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _raise_if_called() -> Any:
+            raise AssertionError("google.auth.default should not run with the kill-switch off")
+
+        monkeypatch.setattr("google.auth.default", _raise_if_called)
+        fake = _FakeDocAiClient(response=_fake_response(text="x", confidences=[0.9]))
+        client = DocumentAiOcrClient(
+            settings=_settings(project_id=None, processor_id=None, enabled=False),
+            client_factory=lambda: fake,
+        )
+
+        result = client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        assert result is None
+        assert fake.calls == []
+        assert fake.list_processors_calls == []
+
+    def test_resolution_logged_once_with_no_document_details(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = _FakeDocAiClient(
+            response=_fake_response(text="secret patient text", confidences=[0.9])
+        )
+        client = DocumentAiOcrClient(settings=_settings(), client_factory=lambda: fake)
+
+        with caplog.at_level("INFO", logger=ocr_module.__name__):
+            client.extract(pdf_bytes=_pdf_with_pages(1), mime_type="application/pdf")
+
+        resolution_records = [r for r in caplog.records if "document_ai resolved" in r.message]
+        assert len(resolution_records) == 1
+        message = resolution_records[0].message
+        assert "pablohealth-test" in message
+        assert "us" in message
+        assert "abc123" in message
+        assert "configured" in message
+        assert "secret patient text" not in message
 
 
 # ---- happy path ------------------------------------------------------
