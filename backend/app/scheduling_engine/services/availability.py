@@ -73,7 +73,15 @@ class AvailabilityEngine:
         conflicts: list[Conflict] = []
 
         for rule in rules:
-            conflict = self._check_rule(rule, user_id, proposed_start, proposed_end)
+            try:
+                conflict = self._check_rule(rule, user_id, proposed_start, proposed_end)
+            except (KeyError, TypeError, ValueError):
+                # rule.params is an untyped dict with no validation at write time
+                # (see AvailabilityRule) — a malformed rule is treated as
+                # non-blocking rather than failing the whole check, since by
+                # the time rules gate bookings a bad one must not take down
+                # every other rule's evaluation, let alone the booking itself.
+                continue
             if conflict:
                 conflicts.append(conflict)
 
