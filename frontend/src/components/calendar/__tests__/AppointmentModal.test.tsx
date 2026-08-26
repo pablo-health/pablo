@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { afterEach, describe, it, expect, vi } from "vitest"
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -16,6 +16,7 @@ const {
   mockCancel,
   mockEditSeries,
   mockCancelSeries,
+  mockUsePatientList,
 } = vi.hoisted(() => ({
   mockCreate: vi.fn(),
   mockCreateRecurring: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mockCancel: vi.fn(),
   mockEditSeries: vi.fn(),
   mockCancelSeries: vi.fn(),
+  mockUsePatientList: vi.fn(),
 }))
 
 // p3 only turns up once a search is in flight, standing in for a patient
@@ -34,13 +36,7 @@ const ALL_PATIENTS = [
 ]
 
 vi.mock("@/hooks/usePatients", () => ({
-  usePatientList: (params?: PatientListParams) => {
-    const search = params?.search?.toLowerCase()
-    const data = search
-      ? ALL_PATIENTS.filter((p) => `${p.first_name} ${p.last_name}`.toLowerCase().includes(search))
-      : ALL_PATIENTS.slice(0, 2)
-    return { data: { data } }
-  },
+  usePatientList: (params?: PatientListParams) => mockUsePatientList(params),
 }))
 
 vi.mock("@/hooks/useAppointments", () => ({
@@ -123,6 +119,20 @@ function createWrapper() {
 }
 
 describe("AppointmentModal", () => {
+  beforeEach(() => {
+    mockUsePatientList.mockImplementation((params?: PatientListParams) => {
+      const search = params?.search?.toLowerCase()
+      if (search) {
+        const data = ALL_PATIENTS.filter((p) =>
+          `${p.first_name} ${p.last_name}`.toLowerCase().includes(search),
+        )
+        return { data: { data, total: data.length, page: 1, page_size: data.length } }
+      }
+      const data = ALL_PATIENTS.slice(0, 2)
+      return { data: { data, total: ALL_PATIENTS.length, page: 1, page_size: 2 } }
+    })
+  })
+
   afterEach(() => {
     vi.clearAllMocks()
   })
@@ -330,6 +340,47 @@ describe("AppointmentModal", () => {
       await user.click(screen.getByRole("button", { name: "Schedule" }))
       expect(mockCreate).toHaveBeenCalledTimes(1)
       expect(mockCreate.mock.calls[0][0]).toMatchObject({ patient_id: "p3" })
+    })
+  })
+
+  describe("Truncated roster hint", () => {
+    it("shows a count hint when the roster exceeds the loaded page and the query is empty", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+
+      expect(screen.getByText("Showing first 2 of 3 — type to search")).toBeInTheDocument()
+      const options = screen.getAllByRole("option")
+      expect(options).toHaveLength(2)
+    })
+
+    it("hides the hint once the user starts searching", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.type(patientTrigger, "priya")
+
+      await waitFor(() => {
+        expect(screen.getByRole("option", { name: /Nguyen, Priya/i })).toBeInTheDocument()
+      })
+      expect(screen.queryByText(/Showing first/i)).not.toBeInTheDocument()
+    })
+
+    it("does not show the hint when the roster fits within the loaded page", async () => {
+      mockUsePatientList.mockReturnValue({
+        data: { data: ALL_PATIENTS, total: ALL_PATIENTS.length, page: 1, page_size: 100 },
+      })
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+
+      expect(screen.queryByText(/Showing first/i)).not.toBeInTheDocument()
     })
   })
 
