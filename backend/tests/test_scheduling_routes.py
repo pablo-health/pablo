@@ -29,6 +29,7 @@ from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRe
 from app.scheduling_engine.repositories.availability_rule import (
     InMemoryAvailabilityRuleRepository,
 )
+from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 from app.services.availability_parse_service import AvailabilityRuleParseService
@@ -132,10 +133,11 @@ def write_client(
 ) -> TestClient:
     """A ``client`` wired to the real SchedulingService over in-memory repos,
     rather than a MagicMock. The tests using this fixture exercise the
-    write path's actual validation (or lack of it) instead of asserting
-    on canned mock returns.
+    write path's actual validation, including availability-rule enforcement,
+    instead of asserting on canned mock returns.
     """
-    app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo)
+    engine = AvailabilityEngine(rule_repo, appt_repo)
+    app.dependency_overrides[get_scheduling_service] = lambda: SchedulingService(appt_repo, engine)
     app.dependency_overrides[get_availability_rule_repository] = lambda: rule_repo
     return client
 
@@ -408,10 +410,11 @@ def test_create_appointment_succeeds_with_no_availability_rules(client: TestClie
 # The tests below run the real SchedulingService instead of a MagicMock so
 # they exercise its actual validation. That service (see
 # app/scheduling_engine/services/scheduling.py) rejects a colliding time via
-# AppointmentRepository.list_overlapping, but still never consults
-# AvailabilityEngine and still doesn't check that end_at is after start_at.
-# The remaining "ignores_*" tests below pin down those two gaps as they exist
-# today so a follow-up has a baseline to flip.
+# AppointmentRepository.list_overlapping and refuses hard-enforcement
+# availability-rule conflicts via AvailabilityEngine.check_conflicts, but
+# still doesn't check that end_at is after start_at. The
+# "test_create_appointment_accepts_end_before_start" test below pins that
+# remaining gap down as it exists today so a follow-up has a baseline to flip.
 
 
 def test_create_appointment_happy_path(write_client: TestClient) -> None:
@@ -425,13 +428,9 @@ def test_create_appointment_happy_path(write_client: TestClient) -> None:
     assert body["status"] == "confirmed"
 
 
-def test_create_appointment_ignores_blocked_day_rule(write_client: TestClient) -> None:
-    """KNOWN HOLE: create_appointment never calls AvailabilityEngine, so a
-    hard-enforcement rule blocking this day of week has no effect on the
-    write path. Follow-up: route creation through
-    AvailabilityEngine.check_conflicts (or an equivalent check) and reject
-    hard conflicts before persisting.
-    """
+def test_create_appointment_rejects_blocked_day_rule(write_client: TestClient) -> None:
+    """A hard-enforcement rule blocking this day of week refuses the booking
+    with 422 (not the 409 collision status), naming the violated rule."""
     rule_response = write_client.post(
         "/api/availability/rules",
         json={
@@ -444,7 +443,107 @@ def test_create_appointment_ignores_blocked_day_rule(write_client: TestClient) -
 
     response = write_client.post("/api/appointments", json=_create_payload())
 
+    assert response.status_code == 422, response.text
+    assert "blocked" in response.json()["error"]["message"].lower()
+
+
+def test_create_appointment_returns_soft_rule_warnings(write_client: TestClient) -> None:
+    """A soft-enforcement rule violation doesn't block the booking, but its
+    warning message rides along on the created appointment rather than
+    silently vanishing."""
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_day_of_week",
+            "enforcement": "soft",
+            "params": {"day_of_week": 2},  # 2026-04-15 is a Wednesday
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
     assert response.status_code == 201, response.text
+    body = response.json()
+    assert len(body["warnings"]) == 1
+    assert "blocked" in body["warnings"][0].lower()
+
+
+def test_create_appointment_clean_slate_has_no_warnings(write_client: TestClient) -> None:
+    """A booking that violates nothing still succeeds, with no warnings."""
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    assert response.json()["warnings"] == []
+
+
+def test_create_appointment_malformed_rule_does_not_500(write_client: TestClient) -> None:
+    """A rule with params missing an expected key must not 500 the booking
+    path — it's treated as non-blocking rather than crashing the check."""
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2},  # missing "start"/"end"
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+
+
+def test_update_appointment_rejects_blocked_day_rule_on_reschedule(
+    write_client: TestClient,
+) -> None:
+    """PATCH is gated the same as create when a time field moves onto a
+    hard-blocked day."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_day_of_week",
+            "enforcement": "hard",
+            "params": {"day_of_week": 3},  # 2026-04-16 is a Thursday
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={"start_at": "2026-04-16T14:00:00Z", "end_at": "2026-04-16T14:50:00Z"},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_update_appointment_without_time_change_ignores_blocked_day_rule(
+    write_client: TestClient,
+) -> None:
+    """Updating a non-time field never re-triggers rule enforcement — this is
+    the same guard start-session relies on to link session_id unaffected."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "block_day_of_week",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2},  # 2026-04-15 is a Wednesday — the existing slot
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.patch(f"/api/appointments/{appt_id}", json={"title": "Renamed"})
+
+    assert response.status_code == 200, response.text
 
 
 def test_create_appointment_rejects_overlap(write_client: TestClient) -> None:

@@ -36,3 +36,11 @@ class InvalidAppointmentError(SchedulingError):
 
 class InvalidRecurrenceError(SchedulingError):
     """Raised when recurrence parameters are invalid."""
+
+
+class RuleViolationError(SchedulingError):
+    """Raised when a proposed booking violates a hard-enforcement availability rule."""
+
+    def __init__(self, violations: list[str]) -> None:
+        self.violations = violations
+        super().__init__("; ".join(violations))

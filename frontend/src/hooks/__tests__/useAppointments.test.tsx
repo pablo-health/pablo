@@ -38,6 +38,7 @@ function makeAppointment(overrides: Partial<AppointmentResponse> = {}): Appointm
     video_link: null,
     video_platform: null,
     notes: null,
+    note_type: "soap",
     recurrence_rule: null,
     recurring_appointment_id: null,
     recurrence_index: null,

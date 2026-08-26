@@ -28,6 +28,7 @@ export interface AppointmentResponse {
   video_link: string | null
   video_platform: string | null
   notes: string | null
+  note_type: string
   recurrence_rule: string | null
   recurring_appointment_id: string | null
   recurrence_index: number | null
@@ -54,6 +55,7 @@ export interface CreateAppointmentRequest {
   video_link?: string | null
   video_platform?: string | null
   notes?: string | null
+  note_type?: string
 }
 
 export interface CreateRecurringAppointmentRequest {
@@ -66,6 +68,7 @@ export interface CreateRecurringAppointmentRequest {
   video_link?: string | null
   video_platform?: string | null
   notes?: string | null
+  note_type?: string
   frequency: RecurrenceFrequency
   timezone: string
   end_date?: string | null
@@ -82,6 +85,7 @@ export interface UpdateAppointmentRequest {
   video_link?: string | null
   video_platform?: string | null
   notes?: string | null
+  note_type?: string
   status?: AppointmentStatus
 }
 
@@ -96,4 +100,5 @@ export interface EditSeriesRequest {
   video_link?: string | null
   video_platform?: string | null
   notes?: string | null
+  note_type?: string
 }

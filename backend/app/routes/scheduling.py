@@ -13,7 +13,12 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 
-from ..api_errors import BadRequestError, ConflictError, NotFoundError
+from ..api_errors import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -88,6 +93,7 @@ from ..scheduling_engine.exceptions import (
     AppointmentNotFoundError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
+    RuleViolationError,
 )
 from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
@@ -174,19 +180,20 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
-def get_scheduling_service(
-    repo: AppointmentRepository = Depends(get_appointment_repository),
-) -> SchedulingService:
-    """Get scheduling service with injected repository."""
-    return SchedulingService(repo)
-
-
 def get_availability_engine(
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
     appt_repo: AppointmentRepository = Depends(get_appointment_repository),
 ) -> AvailabilityEngine:
     """Get availability engine with injected repositories."""
     return AvailabilityEngine(rule_repo, appt_repo)
+
+
+def get_scheduling_service(
+    repo: AppointmentRepository = Depends(get_appointment_repository),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
+) -> SchedulingService:
+    """Get scheduling service with injected repository and availability engine."""
+    return SchedulingService(repo, engine)
 
 
 def get_google_calendar_service(
@@ -263,7 +270,12 @@ def _patient_name_map(
     return {pid: f"{p.first_name} {p.last_name}" for pid, p in patients.items()}
 
 
-def _to_response(appt: Appointment, *, patient_name: str | None = None) -> AppointmentResponse:
+def _to_response(
+    appt: Appointment,
+    *,
+    patient_name: str | None = None,
+    warnings: list[str] | None = None,
+) -> AppointmentResponse:
     return AppointmentResponse(
         id=appt.id,
         user_id=appt.user_id,
@@ -278,6 +290,7 @@ def _to_response(appt: Appointment, *, patient_name: str | None = None) -> Appoi
         video_link=appt.video_link,
         video_platform=appt.video_platform,
         notes=appt.notes,
+        note_type=appt.note_type,
         recurrence_rule=appt.recurrence_rule,
         recurring_appointment_id=appt.recurring_appointment_id,
         recurrence_index=appt.recurrence_index,
@@ -296,6 +309,7 @@ def _to_response(appt: Appointment, *, patient_name: str | None = None) -> Appoi
         diagnosis_codes=appt.diagnosis_codes,
         created_at=appt.created_at,
         updated_at=appt.updated_at,
+        warnings=warnings or [],
     )
 
 
@@ -324,6 +338,11 @@ def create_appointment(
         raise BadRequestError(str(e)) from e
     except AppointmentConflictError as e:
         raise ConflictError(str(e)) from e
+    except RuleViolationError as e:
+        raise UnprocessableEntityError(str(e), {"violations": e.violations}) from e
+    # Captured before any further service calls (Google sync below issues its
+    # own update_appointment for linking, which resets rule_warnings).
+    warnings = service.rule_warnings
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -335,6 +354,7 @@ def create_appointment(
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+        warnings=warnings,
     )
 
 
@@ -427,6 +447,11 @@ def update_appointment(
         raise BadRequestError(str(e)) from e
     except AppointmentConflictError as e:
         raise ConflictError(str(e)) from e
+    except RuleViolationError as e:
+        raise UnprocessableEntityError(str(e), {"violations": e.violations}) from e
+    # Captured before any further service calls (Google sync below issues its
+    # own update_appointment for linking, which resets rule_warnings).
+    warnings = service.rule_warnings
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -439,6 +464,7 @@ def update_appointment(
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+        warnings=warnings,
     )
 
 
@@ -519,8 +545,9 @@ def start_session_from_appointment(
     therapy session and sets appointment.session_id to link them.
 
     Optional body field ``note_type`` selects the note-type registry
-    key for the session. When omitted, the session falls back to the
-    appointment's default (currently SOAP).
+    key for the session, overriding the appointment's own note type.
+    When omitted, the session uses the note type chosen when the
+    appointment was booked (SOAP if none was set).
     """
     # 1. Fetch appointment
     try:
@@ -539,9 +566,9 @@ def start_session_from_appointment(
     if not appt.patient_id:
         raise BadRequestError("Appointment has no linked patient. Resolve the client match first.")
 
-    # 4. Authorize requested note type. Only check when caller explicitly
-    #    requested one — falling back to the default is always allowed.
-    requested_note_type = body.note_type if body else None
+    # 4. Authorize the effective note type — an explicit override, or else
+    #    the one seeded on the appointment at booking time.
+    requested_note_type = (body.note_type if body else None) or appt.note_type
     if requested_note_type is not None and not authorizer.is_allowed(user, requested_note_type):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

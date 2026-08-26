@@ -15,12 +15,15 @@ from ..exceptions import (
     AppointmentNotFoundError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
+    RuleViolationError,
 )
 from ..models.appointment import Appointment, AppointmentStatus, RecurrenceFrequency
+from ..models.availability import EnforcementLevel
 from .recurrence import RecurrenceGenerator
 
 if TYPE_CHECKING:
     from ..repositories.appointment import AppointmentRepository
+    from .availability import AvailabilityEngine
 
 
 def _now() -> datetime:
@@ -47,8 +50,39 @@ class SchedulingService:
     Database-independent: operates through the AppointmentRepository ABC.
     """
 
-    def __init__(self, appointment_repo: AppointmentRepository) -> None:
+    def __init__(
+        self,
+        appointment_repo: AppointmentRepository,
+        availability_engine: AvailabilityEngine | None = None,
+    ) -> None:
         self._repo = appointment_repo
+        self._availability_engine = availability_engine
+        # Populated by the most recent create/update call — the caller reads
+        # this right after, before making any further calls on this service,
+        # to surface soft-rule warnings alongside the written appointment.
+        self.rule_warnings: list[str] = []
+
+    def _check_availability_rules(
+        self,
+        user_id: str,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> list[str]:
+        """Evaluate availability rules against a proposed booking window.
+
+        Skipped entirely when no engine was wired in (the ~35 tests that
+        construct ``SchedulingService(repo)`` directly) or when the user has
+        configured no rules. A hard-enforcement violation refuses the
+        booking; soft violations are returned as warning messages for the
+        caller to surface rather than silently vanishing.
+        """
+        if self._availability_engine is None:
+            return []
+        result = self._availability_engine.check_conflicts(user_id, start_dt, end_dt)
+        hard = [c.message for c in result.conflicts if c.enforcement == EnforcementLevel.HARD]
+        if hard:
+            raise RuleViolationError(hard)
+        return [c.message for c in result.conflicts if c.enforcement == EnforcementLevel.SOFT]
 
     def _reject_if_overlapping(
         self,
@@ -114,6 +148,7 @@ class SchedulingService:
         pending_expires_at = self._pending_expiry(status, data.get("pending_expires_at"))
 
         self._reject_if_overlapping(user_id, start_dt, end_dt)
+        self.rule_warnings = self._check_availability_rules(user_id, start_dt, end_dt)
 
         now = _now()
         appointment = Appointment(
@@ -130,6 +165,7 @@ class SchedulingService:
             video_link=data.get("video_link"),  # type: ignore[arg-type]
             video_platform=data.get("video_platform"),  # type: ignore[arg-type]
             notes=data.get("notes"),  # type: ignore[arg-type]
+            note_type=str(data.get("note_type") or "soap"),
             created_at=now,
             updated_at=now,
         )
@@ -165,6 +201,7 @@ class SchedulingService:
             "video_link",
             "video_platform",
             "notes",
+            "note_type",
             "status",
             "session_id",
             "google_event_id",
@@ -180,9 +217,11 @@ class SchedulingService:
                 raise InvalidAppointmentError(f"Cannot update field: {field}")
             setattr(appointment, field, value)
 
-        # Only re-check collision when a time field actually moved — the
-        # internal start-session call attaches session_id with no time
-        # fields at all and must never see a 409 here.
+        # Only re-check collision and availability rules when a time field
+        # actually moved — the internal start-session call attaches
+        # session_id with no time fields at all and must never see a 409 or
+        # 422 here.
+        self.rule_warnings = []
         if {"start_at", "end_at", "duration_minutes"} & updates.keys():
             appointment.start_at = _as_datetime(appointment.start_at)
             appointment.end_at = _as_datetime(appointment.end_at)
@@ -191,6 +230,9 @@ class SchedulingService:
                 appointment.start_at,
                 appointment.end_at,
                 exclude_appointment_id=appointment_id,
+            )
+            self.rule_warnings = self._check_availability_rules(
+                user_id, appointment.start_at, appointment.end_at
             )
 
         appointment.updated_at = _now()
@@ -376,6 +418,7 @@ class SchedulingService:
                 video_link=data.get("video_link"),  # type: ignore[arg-type]
                 video_platform=data.get("video_platform"),  # type: ignore[arg-type]
                 notes=data.get("notes"),  # type: ignore[arg-type]
+                note_type=str(data.get("note_type") or "soap"),
                 recurrence_rule=rrule_str,
                 recurring_appointment_id=master_id,
                 recurrence_index=idx,
@@ -401,7 +444,14 @@ class SchedulingService:
             user_id, appointment.recurring_appointment_id, after=appointment.start_at
         )
         now = _now()
-        allowed_fields = {"title", "session_type", "video_link", "video_platform", "notes"}
+        allowed_fields = {
+            "title",
+            "session_type",
+            "video_link",
+            "video_platform",
+            "notes",
+            "note_type",
+        }
         for appt in future:
             for field, value in updates.items():
                 if field in allowed_fields:
