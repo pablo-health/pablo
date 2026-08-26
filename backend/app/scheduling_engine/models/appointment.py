@@ -78,6 +78,17 @@ class Appointment:
     # Clinical link
     session_id: str | None = None
 
+    # Billing codes for the visit — CPT service code, up to four modifiers,
+    # unit count, place of service, and an ordered ICD-10 diagnosis list
+    # (first code is primary). Every field is clinician-entered; nothing
+    # here is inferred or defaulted from duration, note content, or
+    # anything else.
+    service_code: str | None = None
+    modifiers: list[str] | None = None
+    unit_count: int | None = None
+    place_of_service: str | None = None
+    diagnosis_codes: list[str] | None = None
+
     # Reminders
     reminder_24h_sent: bool = False
     reminder_1h_sent: bool = False
@@ -120,6 +131,11 @@ class Appointment:
             ical_sync_status=data.get("ical_sync_status"),
             ehr_appointment_url=data.get("ehr_appointment_url"),
             session_id=data.get("session_id"),
+            service_code=data.get("service_code"),
+            modifiers=data.get("modifiers"),
+            unit_count=data.get("unit_count"),
+            place_of_service=data.get("place_of_service"),
+            diagnosis_codes=data.get("diagnosis_codes"),
             reminder_24h_sent=data.get("reminder_24h_sent", False),
             reminder_1h_sent=data.get("reminder_1h_sent", False),
             pending_expires_at=data.get("pending_expires_at"),
@@ -155,6 +171,11 @@ class Appointment:
             "ical_sync_status": self.ical_sync_status,
             "ehr_appointment_url": self.ehr_appointment_url,
             "session_id": self.session_id,
+            "service_code": self.service_code,
+            "modifiers": self.modifiers,
+            "unit_count": self.unit_count,
+            "place_of_service": self.place_of_service,
+            "diagnosis_codes": self.diagnosis_codes,
             "pending_expires_at": self.pending_expires_at,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,

@@ -15,6 +15,7 @@ the same four-column format (``code``, ``billable``, ``category``,
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -73,3 +74,14 @@ def load_icd10_catalog(session: Session, path: Path = BUNDLED_CATALOG) -> int:
         count += 1
     session.flush()
     return count
+
+
+@lru_cache(maxsize=1)
+def known_icd10_codes() -> frozenset[str]:
+    """The set of ICD-10-CM codes in the bundled reference file.
+
+    File-based (not a DB query) so any caller can validate a code without a
+    session — e.g. request-model validators that run before a transaction
+    exists. Cached: the bundled file only changes on deploy.
+    """
+    return frozenset(row["code"] for row in _read_rows(BUNDLED_CATALOG))

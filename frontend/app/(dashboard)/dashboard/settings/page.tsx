@@ -125,7 +125,7 @@ export default function SettingsPage() {
 
       <SettingsSection
         icon={Clock}
-        title="Working Hours"
+        title="Calendar display hours"
         description="The calendar highlights this window and scrolls to the start of your day."
       >
         <WorkingHoursSettings

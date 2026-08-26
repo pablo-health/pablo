@@ -13,11 +13,17 @@ Sync only. The OCR processor's ``processDocument`` API caps around
 30 pages, so we cap at the same number; larger docs are out of scope
 for v1. Low confidence prefixes the body with a marker — we don't
 gate, because a partial extraction beats nothing.
+
+Project and processor id are optional settings — when unset, the
+client derives them (ambient GCP project, then the processor whose
+displayName matches) and caches the result for its lifetime. See
+``DocumentAiOcrClient._resolve_target``.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -33,6 +39,11 @@ _AVG_CONFIDENCE_LOW_THRESHOLD = 0.5
 
 _LOW_CONFIDENCE_PAGE_FRACTION_THRESHOLD = 0.25
 _PAGE_CONFIDENCE_LOW_THRESHOLD = 0.5
+
+# displayName of the processor we look for when document_ai_processor_id is
+# unset. A GCP project can hold several Document AI processors (OCR, Form
+# Parser, handwriting); this is the one we mean.
+PABLO_OCR_PROCESSOR_NAME = "pablo-patient-doc-ocr"
 
 # Test seam: monkeypatched to a no-op so retry tests don't sleep for real.
 _retry_sleep = time.sleep
@@ -63,6 +74,15 @@ class DocumentAiOcrClient:
     Construction is cheap (lazy auth at first call). Inject a fake
     underlying client via ``_client_factory`` in tests; production
     construction uses ``google.cloud.documentai`` directly.
+
+    The GCP project and processor id are resolved lazily on first use
+    and cached for the client's lifetime: project from
+    ``document_ai_project_id``, else ``GOOGLE_CLOUD_PROJECT``, else
+    ``google.auth.default()``; processor from
+    ``document_ai_processor_id``, else the processor whose
+    ``displayName`` is ``PABLO_OCR_PROCESSOR_NAME``. If resolution
+    fails, that failure is cached too — discovery is attempted at
+    most once per instance, success or failure.
     """
 
     def __init__(
@@ -74,30 +94,29 @@ class DocumentAiOcrClient:
         self._settings = settings
         self._client_factory = client_factory
         self._client: Any | None = None
+        self._resolved_target: tuple[str, str] | None = None
+        self._resolution_failed = False
 
     # --- public API ---------------------------------------------------
 
     @property
     def is_configured(self) -> bool:
-        """True iff a processor is set and the kill-switch is on."""
-        s = self._settings
-        return bool(
-            s.allow_document_ai_ocr and s.document_ai_project_id and s.document_ai_processor_id
-        )
+        """True iff the kill-switch is on.
+
+        Project and processor are resolved lazily (and may still fail
+        to resolve) — this only reflects deliberate operator intent.
+        """
+        return bool(self._settings.allow_document_ai_ocr)
 
     def extract(self, *, pdf_bytes: bytes, mime_type: str) -> OcrResult | None:
         """OCR a PDF. Returns ``None`` on any soft failure."""
-        if not self.is_configured:
+        if not self.is_configured or mime_type != "application/pdf":
             return None
 
-        if mime_type != "application/pdf":
+        prepared = self._prepare()
+        if prepared is None:
             return None
-
-        try:
-            client = self._get_client()
-        except OcrUnavailableError:
-            logger.warning("document_ai client unavailable; OCR skipped")
-            return None
+        client, project, processor_id = prepared
 
         page_count = _count_pdf_pages(pdf_bytes)
         if page_count > self._settings.document_ai_max_pages:
@@ -108,7 +127,7 @@ class DocumentAiOcrClient:
             )
             return None
 
-        request = self._build_request(pdf_bytes)
+        request = self._build_request(pdf_bytes, project=project, processor_id=processor_id)
         start = time.monotonic()
         response = _call_with_one_retry(client.process_document, request)
         latency_ms = int((time.monotonic() - start) * 1000)
@@ -119,6 +138,20 @@ class DocumentAiOcrClient:
         return _parse_response(response, latency_ms=latency_ms)
 
     # --- internals ----------------------------------------------------
+
+    def _prepare(self) -> tuple[Any, str, str] | None:
+        """Build the underlying client and resolve (project, processor_id)."""
+        try:
+            client = self._get_client()
+        except OcrUnavailableError:
+            logger.warning("document_ai client unavailable; OCR skipped")
+            return None
+
+        target = self._resolve_target(client)
+        if target is None:
+            return None
+        project, processor_id = target
+        return client, project, processor_id
 
     def _get_client(self) -> Any:
         if self._client is not None:
@@ -138,14 +171,13 @@ class DocumentAiOcrClient:
         )
         return self._client
 
-    def _build_request(self, pdf_bytes: bytes) -> Any:
+    def _build_request(self, pdf_bytes: bytes, *, project: str, processor_id: str) -> Any:
         from google.cloud import documentai  # type: ignore[attr-defined]
 
-        s = self._settings
         processor_name = (
-            f"projects/{s.document_ai_project_id}"
-            f"/locations/{s.document_ai_location}"
-            f"/processors/{s.document_ai_processor_id}"
+            f"projects/{project}"
+            f"/locations/{self._settings.document_ai_location}"
+            f"/processors/{processor_id}"
         )
         raw_document = documentai.RawDocument(
             content=pdf_bytes,
@@ -155,6 +187,87 @@ class DocumentAiOcrClient:
             name=processor_name,
             raw_document=raw_document,
         )
+
+    def _resolve_target(self, client: Any) -> tuple[str, str] | None:
+        """Resolve (project, processor_id), caching success and failure alike."""
+        if self._resolved_target is not None:
+            return self._resolved_target
+        if self._resolution_failed:
+            return None
+
+        project, project_source = self._resolve_project()
+        if project is None:
+            self._resolution_failed = True
+            logger.warning(
+                "document_ai resolution failed: could not determine a GCP project "
+                "(set document_ai_project_id or GOOGLE_CLOUD_PROJECT)"
+            )
+            return None
+
+        processor_id, processor_source = self._resolve_processor(client, project=project)
+        if processor_id is None:
+            self._resolution_failed = True
+            return None
+
+        self._resolved_target = (project, processor_id)
+        logger.info(
+            "document_ai resolved: project=%s (%s) location=%s processor=%s (%s)",
+            project,
+            project_source,
+            self._settings.document_ai_location,
+            processor_id,
+            processor_source,
+        )
+        return self._resolved_target
+
+    def _resolve_project(self) -> tuple[str | None, str]:
+        s = self._settings
+        if s.document_ai_project_id:
+            return s.document_ai_project_id, "configured"
+
+        env_project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if env_project:
+            return env_project, "environment"
+
+        try:
+            import google.auth
+
+            _credentials, project = google.auth.default()
+        except Exception:
+            logger.warning("document_ai project discovery failed: google.auth.default() raised")
+            return None, "discovered"
+
+        return (project, "discovered") if project else (None, "discovered")
+
+    def _resolve_processor(self, client: Any, *, project: str) -> tuple[str | None, str]:
+        s = self._settings
+        if s.document_ai_processor_id:
+            return s.document_ai_processor_id, "configured"
+
+        parent = f"projects/{project}/locations/{s.document_ai_location}"
+        try:
+            processors = list(client.list_processors(parent=parent))
+        except Exception:
+            logger.warning(
+                "document_ai processor discovery failed: could not list processors "
+                "looking for display_name=%r under parent=%s",
+                PABLO_OCR_PROCESSOR_NAME,
+                parent,
+            )
+            return None, "discovered"
+
+        for processor in processors:
+            if getattr(processor, "display_name", None) == PABLO_OCR_PROCESSOR_NAME:
+                processor_id = str(processor.name).rsplit("/", maxsplit=1)[-1]
+                return processor_id, "discovered"
+
+        logger.warning(
+            "document_ai processor discovery found no match: looking for "
+            "display_name=%r under parent=%s",
+            PABLO_OCR_PROCESSOR_NAME,
+            parent,
+        )
+        return None, "discovered"
 
 
 # --- module-level helpers --------------------------------------------

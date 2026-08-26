@@ -536,6 +536,14 @@ class AppointmentRow(Base):
     ehr_appointment_url: Mapped[str | None] = mapped_column(Text)
     # Clinical link
     session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    # Billing codes for the visit — see app.scheduling_engine.models.appointment.
+    # Clinician-entered only; every column is nullable and nothing here is
+    # populated automatically.
+    service_code: Mapped[str | None] = mapped_column(String(10))
+    modifiers: Mapped[list | None] = mapped_column(JSONB)
+    unit_count: Mapped[int | None] = mapped_column(Integer)
+    place_of_service: Mapped[str | None] = mapped_column(String(2))
+    diagnosis_codes: Mapped[list | None] = mapped_column(JSONB)
     # Reminders
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False)

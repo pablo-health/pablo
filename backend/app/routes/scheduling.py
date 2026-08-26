@@ -13,13 +13,19 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 
-from ..api_errors import BadRequestError, ConflictError, NotFoundError
+from ..api_errors import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+)
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
     require_active_subscription,
     require_baa_acceptance,
 )
+from ..db import release_db_connection
 from ..models import (
     AuditAction,
     ScheduleSessionRequest,
@@ -45,6 +51,9 @@ from ..models.scheduling import (
     FreeSlotsResponse,
     GoogleCalendarAuthResponse,
     GoogleCalendarStatusResponse,
+    ParseAvailabilityRulesRequest,
+    ParseAvailabilityRulesResponse,
+    ProposedAvailabilityRule,
     StartSessionFromAppointmentRequest,
     TimeSlotResponse,
     UpdateAppointmentRequest,
@@ -52,6 +61,7 @@ from ..models.scheduling import (
     UpdateAvailabilityRuleRequest,
 )
 from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
+from ..rate_limit import get_availability_parse_limiter
 from ..repositories import (
     NotesRepository,
     PatientRepository,
@@ -79,9 +89,11 @@ from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
 from ..scheduling_engine.exceptions import (
+    AppointmentConflictError,
     AppointmentNotFoundError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
+    RuleViolationError,
 )
 from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
@@ -95,6 +107,7 @@ from ..services import (
     SessionService,
     get_audit_service,
 )
+from ..services.availability_parse_service import AvailabilityRuleParseService
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -167,19 +180,20 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
-def get_scheduling_service(
-    repo: AppointmentRepository = Depends(get_appointment_repository),
-) -> SchedulingService:
-    """Get scheduling service with injected repository."""
-    return SchedulingService(repo)
-
-
 def get_availability_engine(
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
     appt_repo: AppointmentRepository = Depends(get_appointment_repository),
 ) -> AvailabilityEngine:
     """Get availability engine with injected repositories."""
     return AvailabilityEngine(rule_repo, appt_repo)
+
+
+def get_scheduling_service(
+    repo: AppointmentRepository = Depends(get_appointment_repository),
+    engine: AvailabilityEngine = Depends(get_availability_engine),
+) -> SchedulingService:
+    """Get scheduling service with injected repository and availability engine."""
+    return SchedulingService(repo, engine)
 
 
 def get_google_calendar_service(
@@ -256,7 +270,12 @@ def _patient_name_map(
     return {pid: f"{p.first_name} {p.last_name}" for pid, p in patients.items()}
 
 
-def _to_response(appt: Appointment, *, patient_name: str | None = None) -> AppointmentResponse:
+def _to_response(
+    appt: Appointment,
+    *,
+    patient_name: str | None = None,
+    warnings: list[str] | None = None,
+) -> AppointmentResponse:
     return AppointmentResponse(
         id=appt.id,
         user_id=appt.user_id,
@@ -283,8 +302,14 @@ def _to_response(appt: Appointment, *, patient_name: str | None = None) -> Appoi
         ical_sync_status=appt.ical_sync_status,
         ehr_appointment_url=appt.ehr_appointment_url,
         session_id=appt.session_id,
+        service_code=appt.service_code,
+        modifiers=appt.modifiers,
+        unit_count=appt.unit_count,
+        place_of_service=appt.place_of_service,
+        diagnosis_codes=appt.diagnosis_codes,
         created_at=appt.created_at,
         updated_at=appt.updated_at,
+        warnings=warnings or [],
     )
 
 
@@ -311,6 +336,13 @@ def create_appointment(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
+    except RuleViolationError as e:
+        raise UnprocessableEntityError(str(e), {"violations": e.violations}) from e
+    # Captured before any further service calls (Google sync below issues its
+    # own update_appointment for linking, which resets rule_warnings).
+    warnings = service.rule_warnings
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -322,6 +354,7 @@ def create_appointment(
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+        warnings=warnings,
     )
 
 
@@ -412,6 +445,13 @@ def update_appointment(
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
+    except RuleViolationError as e:
+        raise UnprocessableEntityError(str(e), {"violations": e.violations}) from e
+    # Captured before any further service calls (Google sync below issues its
+    # own update_appointment for linking, which resets rule_warnings).
+    warnings = service.rule_warnings
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -424,6 +464,7 @@ def update_appointment(
     return _to_response(
         appt,
         patient_name=_patient_name_map(patient_repo, user.id, [appt]).get(appt.patient_id),
+        warnings=warnings,
     )
 
 
@@ -594,6 +635,8 @@ def create_recurring_appointment(
         )
     except (InvalidAppointmentError, InvalidRecurrenceError) as e:
         raise BadRequestError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
     first_appt_id = appointments[0].id if appointments else "series"
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_SERIES_CREATED,
@@ -701,7 +744,12 @@ def _rule_to_response(rule: AvailabilityRule) -> AvailabilityRuleResponse:
 @router.get("/api/availability/slots", response_model=FreeSlotsResponse)
 def get_free_slots(
     date: str = Query(..., description="Date (YYYY-MM-DD)"),
-    duration: int = Query(50, description="Slot duration in minutes", ge=1, le=480),
+    duration: int | None = Query(
+        None,
+        description="Slot duration in minutes (defaults to the user's session default)",
+        ge=1,
+        le=480,
+    ),
     ctx: TenantContext = Depends(get_tenant_context),
     engine: AvailabilityEngine = Depends(get_availability_engine),
 ) -> FreeSlotsResponse:
@@ -709,7 +757,7 @@ def get_free_slots(
     result = engine.get_free_slots(ctx.user_id, date, duration)
     return FreeSlotsResponse(
         date=date,
-        duration_minutes=duration,
+        duration_minutes=result.duration_minutes,
         slots=[TimeSlotResponse(start=s.start, end=s.end) for s in result.slots],
         total=len(result.slots),
         configured=result.configured,
@@ -838,6 +886,62 @@ def delete_availability_rule(
     deleted = rule_repo.delete(rule_id, ctx.user_id)
     if not deleted:
         raise NotFoundError(f"Rule not found: {rule_id}")
+
+
+def get_availability_rule_parse_service() -> AvailabilityRuleParseService:
+    """Get the natural-language availability-rule parse service instance."""
+    return AvailabilityRuleParseService()
+
+
+@router.post("/api/availability/rules/parse", response_model=ParseAvailabilityRulesResponse)
+def parse_availability_rules(
+    request: ParseAvailabilityRulesRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    parse_service: AvailabilityRuleParseService = Depends(get_availability_rule_parse_service),
+) -> ParseAvailabilityRulesResponse:
+    """Parse a natural-language sentence into proposed availability rules.
+
+    Two-stage propose-then-confirm: this never creates a rule. The caller
+    reviews (and may edit) each proposal, then confirms it through the
+    existing create-rule endpoint -- no new write path exists here.
+    """
+    get_availability_parse_limiter().check(ctx.user_id)
+
+    # Release the request-scoped DB connection before the LLM call, same
+    # seam as the note-import route (sessions.py) -- otherwise the pooled
+    # connection (and its open transaction) sits idle across the round trip.
+    release_db_connection()
+
+    result = parse_service.parse(request.text)
+
+    proposals = [
+        ProposedAvailabilityRule(
+            rule_type=p.rule_type,
+            enforcement=p.enforcement,
+            params=p.params,
+            human_summary=p.human_summary,
+        )
+        for p in result.proposals
+    ]
+
+    existing_conflicting_rules: list[AvailabilityRuleResponse] = []
+    if result.exclusive and proposals:
+        proposed_days = {
+            p.params["day_of_week"] for p in result.proposals if p.rule_type == "working_hours"
+        }
+        existing_conflicting_rules = [
+            _rule_to_response(r)
+            for r in rule_repo.list_by_user(ctx.user_id)
+            if r.rule_type == "working_hours" and r.params.get("day_of_week") not in proposed_days
+        ]
+
+    return ParseAvailabilityRulesResponse(
+        proposals=proposals,
+        could_not_parse=result.could_not_parse,
+        exclusive=result.exclusive,
+        existing_conflicting_rules=existing_conflicting_rules,
+    )
 
 
 # --- Appointment type endpoints ---

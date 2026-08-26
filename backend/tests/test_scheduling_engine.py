@@ -8,9 +8,19 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from app.scheduling_engine.exceptions import AppointmentNotFoundError, InvalidAppointmentError
+from app.scheduling_engine.exceptions import (
+    AppointmentConflictError,
+    AppointmentNotFoundError,
+    InvalidAppointmentError,
+    RuleViolationError,
+)
 from app.scheduling_engine.models.appointment import AppointmentStatus
+from app.scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.repositories.availability_rule import (
+    InMemoryAvailabilityRuleRepository,
+)
+from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 
 USER_ID = "user-1"
@@ -73,6 +83,36 @@ class TestCreateAppointment:
     def test_rejects_invalid_duration(self, service: SchedulingService) -> None:
         with pytest.raises(InvalidAppointmentError, match="duration_minutes"):
             service.create_appointment(USER_ID, data=_appt_data(duration_minutes=0))
+
+    def test_rejects_overlapping_appointment(self, service: SchedulingService) -> None:
+        service.create_appointment(USER_ID, data=_appt_data())
+        with pytest.raises(AppointmentConflictError):
+            service.create_appointment(USER_ID, data=_appt_data(patient_id="patient-2"))
+
+    def test_accepts_back_to_back_appointment(self, service: SchedulingService) -> None:
+        service.create_appointment(USER_ID, data=_appt_data())
+        second = service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                patient_id="patient-2",
+                start_at=datetime.fromisoformat("2026-03-20T14:50:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-20T15:40:00+00:00"),
+            ),
+        )
+        assert second.id
+
+    def test_rebooks_slot_freed_by_cancellation(
+        self, service: SchedulingService, repo: InMemoryAppointmentRepository
+    ) -> None:
+        first = service.create_appointment(USER_ID, data=_appt_data())
+        service.cancel_appointment(first.id, USER_ID)
+        second = service.create_appointment(USER_ID, data=_appt_data(patient_id="patient-2"))
+        assert second.id
+
+    def test_overlap_check_is_scoped_to_user(self, service: SchedulingService) -> None:
+        service.create_appointment("other-user", data=_appt_data())
+        appt = service.create_appointment(USER_ID, data=_appt_data())
+        assert appt.id
 
 
 class TestGetAppointment:
@@ -171,6 +211,41 @@ class TestUpdateAppointment:
         updated = service.update_appointment(created.id, USER_ID, title="Moved")
         assert updated.is_exception is True
 
+    def test_rejects_move_onto_another_appointment(self, service: SchedulingService) -> None:
+        service.create_appointment(USER_ID, data=_appt_data())
+        second = service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                patient_id="patient-2",
+                start_at=datetime.fromisoformat("2026-03-20T16:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-20T16:50:00+00:00"),
+            ),
+        )
+        with pytest.raises(AppointmentConflictError):
+            service.update_appointment(
+                second.id,
+                USER_ID,
+                start_at=datetime.fromisoformat("2026-03-20T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-20T14:50:00+00:00"),
+            )
+
+    def test_allows_move_that_only_overlaps_itself(self, service: SchedulingService) -> None:
+        created = service.create_appointment(USER_ID, data=_appt_data())
+        moved = service.update_appointment(
+            created.id,
+            USER_ID,
+            start_at=datetime.fromisoformat("2026-03-20T14:10:00+00:00"),
+            end_at=datetime.fromisoformat("2026-03-20T15:00:00+00:00"),
+        )
+        assert moved.start_at == datetime.fromisoformat("2026-03-20T14:10:00+00:00")
+
+    def test_non_time_update_does_not_check_overlap(self, service: SchedulingService) -> None:
+        """Mirrors the internal start-session call, which only ever attaches
+        session_id: no time field is changing, so no collision check runs."""
+        created = service.create_appointment(USER_ID, data=_appt_data())
+        updated = service.update_appointment(created.id, USER_ID, session_id="session-1")
+        assert updated.session_id == "session-1"
+
 
 class TestCancelAppointment:
     def test_cancels_appointment(self, service: SchedulingService) -> None:
@@ -206,3 +281,160 @@ class TestListPatientAppointments:
         results = service.list_patient_appointments(USER_ID, "patient-a")
         assert len(results) == 1
         assert results[0].patient_id == "patient-a"
+
+
+class TestCreateRecurring:
+    def test_rejects_series_with_colliding_occurrence(
+        self, service: SchedulingService, repo: InMemoryAppointmentRepository
+    ) -> None:
+        """A single occurrence colliding with an existing appointment fails
+        the whole series — nothing from it is persisted."""
+        service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                patient_id="patient-2",
+                start_at=datetime.fromisoformat("2026-03-27T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-27T14:50:00+00:00"),
+            ),
+        )
+
+        with pytest.raises(AppointmentConflictError):
+            service.create_recurring(
+                USER_ID,
+                data=_appt_data(),
+                recurrence={"frequency": "weekly", "timezone": "UTC", "count": 4},
+            )
+
+        remaining = repo.list_by_range(USER_ID, "2026-03-19T00:00:00Z", "2026-04-11T00:00:00Z")
+        assert len(remaining) == 1, "only the pre-existing blocker should remain"
+
+    def test_creates_series_with_no_collisions(self, service: SchedulingService) -> None:
+        appointments = service.create_recurring(
+            USER_ID,
+            data=_appt_data(),
+            recurrence={"frequency": "weekly", "timezone": "UTC", "count": 4},
+        )
+        assert len(appointments) == 4
+
+
+@pytest.fixture
+def rule_repo() -> InMemoryAvailabilityRuleRepository:
+    return InMemoryAvailabilityRuleRepository()
+
+
+@pytest.fixture
+def gated_service(
+    repo: InMemoryAppointmentRepository,
+    rule_repo: InMemoryAvailabilityRuleRepository,
+) -> SchedulingService:
+    """A SchedulingService with a real AvailabilityEngine wired in."""
+    return SchedulingService(repo, AvailabilityEngine(rule_repo, repo))
+
+
+def _block_day_rule(
+    day_of_week: int, *, enforcement: str = EnforcementLevel.HARD
+) -> AvailabilityRule:
+    # _appt_data() defaults to 2026-03-20, a Friday (weekday() == 4).
+    return AvailabilityRule(
+        id="rule-1",
+        user_id=USER_ID,
+        rule_type=RuleType.BLOCK_DAY_OF_WEEK,
+        enforcement=enforcement,
+        params={"day_of_week": day_of_week},
+    )
+
+
+class TestAvailabilityRuleEnforcement:
+    def test_hard_rule_refuses_the_booking(
+        self,
+        gated_service: SchedulingService,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        repo: InMemoryAppointmentRepository,
+    ) -> None:
+        rule_repo.create(_block_day_rule(4))  # Friday — matches _appt_data()'s default
+
+        with pytest.raises(RuleViolationError):
+            gated_service.create_appointment(USER_ID, data=_appt_data())
+
+        assert repo.list_by_range(USER_ID, "2026-03-19T00:00:00Z", "2026-03-21T00:00:00Z") == []
+
+    def test_soft_rule_allows_and_returns_warning(
+        self,
+        gated_service: SchedulingService,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+    ) -> None:
+        rule_repo.create(_block_day_rule(4, enforcement=EnforcementLevel.SOFT))
+
+        appt = gated_service.create_appointment(USER_ID, data=_appt_data())
+
+        assert appt.id
+        assert len(gated_service.rule_warnings) == 1
+
+    def test_no_violation_succeeds_with_no_warnings(
+        self,
+        gated_service: SchedulingService,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+    ) -> None:
+        rule_repo.create(_block_day_rule(0))  # Monday — doesn't match
+
+        appt = gated_service.create_appointment(USER_ID, data=_appt_data())
+
+        assert appt.id
+        assert gated_service.rule_warnings == []
+
+    def test_user_with_no_rules_is_unaffected(self, gated_service: SchedulingService) -> None:
+        appt = gated_service.create_appointment(USER_ID, data=_appt_data())
+
+        assert appt.id
+        assert gated_service.rule_warnings == []
+
+    def test_engine_absent_skips_rule_checking(self, service: SchedulingService) -> None:
+        """SchedulingService(repo) with no engine — the ~35 other tests in this
+        file — must keep compiling and behaving exactly as before."""
+        appt = service.create_appointment(USER_ID, data=_appt_data())
+
+        assert appt.id
+        assert service.rule_warnings == []
+
+    def test_malformed_rule_does_not_raise(
+        self,
+        gated_service: SchedulingService,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+    ) -> None:
+        """A rule missing an expected params key is treated as non-blocking
+        rather than surfacing a KeyError on the booking path."""
+        rule_repo.create(
+            AvailabilityRule(
+                id="rule-1",
+                user_id=USER_ID,
+                rule_type=RuleType.WORKING_HOURS,
+                enforcement=EnforcementLevel.HARD,
+                params={"day_of_week": 4},  # missing "start"/"end"
+            )
+        )
+
+        appt = gated_service.create_appointment(USER_ID, data=_appt_data())
+
+        assert appt.id
+
+    def test_update_checks_rules_only_when_time_changes(
+        self,
+        gated_service: SchedulingService,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+    ) -> None:
+        appt = gated_service.create_appointment(USER_ID, data=_appt_data())
+        rule_repo.create(_block_day_rule(4))  # now blocks the appointment's own day
+
+        # No time field touched — must not trip the rule (mirrors the
+        # start-session internal update, which only ever sets session_id).
+        updated = gated_service.update_appointment(appt.id, USER_ID, title="Renamed")
+        assert updated.title == "Renamed"
+
+        # Moving the time onto the (now-blocked) same day is refused.
+        with pytest.raises(RuleViolationError):
+            gated_service.update_appointment(
+                appt.id,
+                USER_ID,
+                start_at=datetime.fromisoformat("2026-03-20T15:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-20T15:50:00+00:00"),
+            )

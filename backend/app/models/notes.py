@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 # annotation it must validate, and Note is used by ``NoteResponse.from_note``.
 from .enums import SOAPSection  # noqa: TC001
 from .note import Note  # noqa: TC001
+from .scheduling import VisitCodingFields
 from .transcript import TranscriptModel  # noqa: TC001 — runtime Pydantic field
 
 
@@ -92,15 +93,24 @@ class FinalizeNoteRequest(BaseModel):
     quality_rating_sections: list[SOAPSection] | None = None
 
 
-class CreateStandaloneNoteRequest(BaseModel):
+class CreateStandaloneNoteRequest(VisitCodingFields):
     """Request body for ``POST /api/patients/{patient_id}/notes``.
 
     Creates a patient-owned note without an associated recorded session.
     If ``dictation_transcript`` is supplied, the same generation pipeline
     used for session uploads runs against it; otherwise the note is
     persisted with empty content for the clinician to fill via PATCH.
+
+    ``appointment_id`` is optional — when the note is being authored for a
+    specific visit, this is the primary place to code it (the session
+    duration and clinical picture are both on screen). The billing-code
+    fields inherited from :class:`VisitCodingFields` are written to that
+    appointment, not to the note itself: a visit can carry several notes
+    or none, so the appointment is the single place a receipt reads from.
+    Omitting them leaves the visit's codes exactly as they were.
     """
 
     note_type: str
     content_edited: dict[str, Any] | None = None
     dictation_transcript: TranscriptModel | None = None
+    appointment_id: str | None = None

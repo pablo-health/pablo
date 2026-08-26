@@ -116,7 +116,12 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     reminder_1h_sent boolean NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone,
-    pending_expires_at timestamp with time zone
+    pending_expires_at timestamp with time zone,
+    service_code character varying(10),
+    modifiers jsonb,
+    unit_count integer,
+    place_of_service character varying(2),
+    diagnosis_codes jsonb
 );
 
 

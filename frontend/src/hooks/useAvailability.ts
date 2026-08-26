@@ -5,12 +5,17 @@
 import type {
   AvailabilityRule,
   CreateAvailabilityRuleRequest,
+  FreeSlotsResponse,
+  ParseAvailabilityRulesRequest,
+  ParseAvailabilityRulesResponse,
   UpdateAvailabilityRuleRequest,
 } from "@/types/availability"
 import {
   createAvailabilityRule,
   deleteAvailabilityRule,
+  getFreeSlots,
   listAvailabilityRules,
+  parseAvailabilityRules,
   updateAvailabilityRule,
 } from "@/lib/api/availability"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -45,5 +50,20 @@ export function useDeleteAvailabilityRule(token?: string) {
   return useAuthMutation<void, string>({
     mutationFn: (ruleId) => deleteAvailabilityRule(ruleId, token),
     invalidateKeys: [queryKeys.availability.all],
+  })
+}
+
+export function useFreeSlots(date: string, duration?: number, token?: string) {
+  return useAuthQuery<FreeSlotsResponse>({
+    queryKey: queryKeys.availability.slots(date, duration),
+    queryFn: () => getFreeSlots(date, duration, token),
+    staleTime: 30 * 1000,
+    enabled: !!date,
+  })
+}
+
+export function useParseAvailabilityRules(token?: string) {
+  return useAuthMutation<ParseAvailabilityRulesResponse, ParseAvailabilityRulesRequest>({
+    mutationFn: (data) => parseAvailabilityRules(data, token),
   })
 }

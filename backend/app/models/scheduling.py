@@ -5,13 +5,46 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Runtime import: Pydantic resolves this annotation at runtime for validation,
 # so it cannot live in a TYPE_CHECKING block.
 from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
+from .validators import validate_visit_diagnosis_codes, validate_visit_modifiers
+
+# 11 office, 02 telehealth other than home, 10 telehealth in home. Closed —
+# payers deny claims on a missing or unrecognized place-of-service code, so
+# an unknown value is rejected here rather than reaching storage.
+PlaceOfServiceCode = Literal["11", "02", "10"]
+
+
+class VisitCodingFields(BaseModel):
+    """Billing codes a clinician records on a visit.
+
+    Shared between the two surfaces that write them — a standalone edit on
+    the appointment (:class:`UpdateAppointmentRequest`) and note creation
+    (``CreateStandaloneNoteRequest``) — so both validate identically and
+    converge on the same stored fields. Every field is optional: nothing
+    infers or defaults a code, so an unset visit stays unset.
+    """
+
+    service_code: str | None = Field(default=None, max_length=10)
+    modifiers: list[str] | None = None
+    unit_count: int | None = Field(default=None, ge=1)
+    place_of_service: PlaceOfServiceCode | None = None
+    diagnosis_codes: list[str] | None = None
+
+    @field_validator("modifiers")
+    @classmethod
+    def _validate_modifiers(cls, v: list[str] | None) -> list[str] | None:
+        return validate_visit_modifiers(v)
+
+    @field_validator("diagnosis_codes")
+    @classmethod
+    def _validate_diagnosis_codes(cls, v: list[str] | None) -> list[str] | None:
+        return validate_visit_diagnosis_codes(v)
 
 
 class StartSessionFromAppointmentRequest(BaseModel):
@@ -69,8 +102,13 @@ class EditSeriesRequest(BaseModel):
     note_type: str | None = None
 
 
-class UpdateAppointmentRequest(BaseModel):
-    """Request to update an appointment."""
+class UpdateAppointmentRequest(VisitCodingFields):
+    """Request to update an appointment.
+
+    Inherits the billing-code fields from :class:`VisitCodingFields` — this
+    is the "standalone edit on the visit" surface for after-the-fact
+    correction and for visits that never get a note.
+    """
 
     title: str | None = None
     patient_id: str | None = None
@@ -116,8 +154,17 @@ class AppointmentResponse(BaseModel):
     ical_sync_status: str | None = None
     ehr_appointment_url: str | None = None
     session_id: str | None = None
+    service_code: str | None = None
+    modifiers: list[str] | None = None
+    unit_count: int | None = None
+    place_of_service: str | None = None
+    diagnosis_codes: list[str] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Messages from soft-enforcement availability rules the booking violated.
+    # Empty when nothing was violated, no rules are configured, or availability
+    # rules didn't run at all (e.g. a series occurrence).
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AppointmentListResponse(BaseModel):
@@ -163,6 +210,43 @@ class AvailabilityRuleListResponse(BaseModel):
 
     data: list[AvailabilityRuleResponse]
     total: int
+
+
+class ParseAvailabilityRulesRequest(BaseModel):
+    """Request to parse a natural-language sentence into rule proposals."""
+
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class ProposedAvailabilityRule(BaseModel):
+    """A single rule proposal parsed from natural language, pending confirm.
+
+    Never persisted directly -- the caller confirms (optionally editing
+    it first) through the existing create-rule endpoint.
+    """
+
+    rule_type: str
+    enforcement: str
+    params: dict[str, Any]
+    human_summary: str
+
+
+class ParseAvailabilityRulesResponse(BaseModel):
+    """Response for a natural-language availability-rule parse.
+
+    Semantic outcomes are always HTTP 200: ``proposals`` may be empty with
+    a ``could_not_parse`` reason instead -- that's a product outcome, not a
+    transport error. ``exclusive`` and ``existing_conflicting_rules``
+    support "I ONLY meet on..." phrasing: when true, existing working-hours
+    rules for days not covered by the proposals are surfaced here so the
+    confirm UI can flag them, without the parser ever proposing to delete
+    or modify them.
+    """
+
+    proposals: list[ProposedAvailabilityRule]
+    could_not_parse: str | None = None
+    exclusive: bool = False
+    existing_conflicting_rules: list[AvailabilityRuleResponse] = Field(default_factory=list)
 
 
 class CheckConflictsRequest(BaseModel):
