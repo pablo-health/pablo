@@ -5,13 +5,46 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Runtime import: Pydantic resolves this annotation at runtime for validation,
 # so it cannot live in a TYPE_CHECKING block.
 from ..scheduling_engine.models.appointment import AppointmentStatus  # noqa: TC001
+from .validators import validate_visit_diagnosis_codes, validate_visit_modifiers
+
+# 11 office, 02 telehealth other than home, 10 telehealth in home. Closed —
+# payers deny claims on a missing or unrecognized place-of-service code, so
+# an unknown value is rejected here rather than reaching storage.
+PlaceOfServiceCode = Literal["11", "02", "10"]
+
+
+class VisitCodingFields(BaseModel):
+    """Billing codes a clinician records on a visit.
+
+    Shared between the two surfaces that write them — a standalone edit on
+    the appointment (:class:`UpdateAppointmentRequest`) and note creation
+    (``CreateStandaloneNoteRequest``) — so both validate identically and
+    converge on the same stored fields. Every field is optional: nothing
+    infers or defaults a code, so an unset visit stays unset.
+    """
+
+    service_code: str | None = Field(default=None, max_length=10)
+    modifiers: list[str] | None = None
+    unit_count: int | None = Field(default=None, ge=1)
+    place_of_service: PlaceOfServiceCode | None = None
+    diagnosis_codes: list[str] | None = None
+
+    @field_validator("modifiers")
+    @classmethod
+    def _validate_modifiers(cls, v: list[str] | None) -> list[str] | None:
+        return validate_visit_modifiers(v)
+
+    @field_validator("diagnosis_codes")
+    @classmethod
+    def _validate_diagnosis_codes(cls, v: list[str] | None) -> list[str] | None:
+        return validate_visit_diagnosis_codes(v)
 
 
 class StartSessionFromAppointmentRequest(BaseModel):
@@ -66,8 +99,13 @@ class EditSeriesRequest(BaseModel):
     notes: str | None = None
 
 
-class UpdateAppointmentRequest(BaseModel):
-    """Request to update an appointment."""
+class UpdateAppointmentRequest(VisitCodingFields):
+    """Request to update an appointment.
+
+    Inherits the billing-code fields from :class:`VisitCodingFields` — this
+    is the "standalone edit on the visit" surface for after-the-fact
+    correction and for visits that never get a note.
+    """
 
     title: str | None = None
     patient_id: str | None = None
@@ -111,6 +149,11 @@ class AppointmentResponse(BaseModel):
     ical_sync_status: str | None = None
     ehr_appointment_url: str | None = None
     session_id: str | None = None
+    service_code: str | None = None
+    modifiers: list[str] | None = None
+    unit_count: int | None = None
+    place_of_service: str | None = None
+    diagnosis_codes: list[str] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

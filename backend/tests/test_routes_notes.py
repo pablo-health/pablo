@@ -23,9 +23,18 @@ from app.routes.notes import (
 from app.routes.notes import (
     get_notes_repository as get_notes_route_notes_repository,
 )
+from app.routes.notes import (
+    get_scheduling_service as get_notes_scheduling_service,
+)
+from app.routes.scheduling import (
+    get_scheduling_service as get_appointments_scheduling_service,
+)
 from app.routes.sessions import (
     get_notes_repository as get_sessions_notes_repository,
 )
+from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import GeneratedNote, NoteGenerationService
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
@@ -454,6 +463,141 @@ class TestListPatientNotesAudit:
             if call.args[0].action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
+
+
+def _seed_appointment(
+    appt_repo: InMemoryAppointmentRepository,
+    *,
+    user_id: str,
+    patient_id: str,
+    appt_id: str = "appt-1",
+) -> Appointment:
+    now = datetime.now(UTC)
+    appt = Appointment(
+        id=appt_id,
+        user_id=user_id,
+        patient_id=patient_id,
+        title="Weekly check-in",
+        start_at=now,
+        end_at=now,
+        duration_minutes=50,
+        status="confirmed",
+        session_type="individual",
+    )
+    return appt_repo.create(appt)
+
+
+class TestVisitCodingAtNoteCreation:
+    """Billing codes live on the appointment, not the note — see PABLO-85r.
+
+    Both coding surfaces (note creation and the standalone appointment
+    edit) go through the same ``SchedulingService.update_appointment``,
+    so these tests wire both routers to one shared in-memory repository
+    to prove they converge on a single stored record.
+    """
+
+    def test_note_creation_writes_codes_onto_the_appointment(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={
+                "note_type": "soap",
+                "appointment_id": "appt-1",
+                "service_code": "90837",
+                "modifiers": ["95"],
+                "unit_count": 1,
+                "place_of_service": "02",
+                "diagnosis_codes": ["F41.1", "F32.9"],
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        stored = appt_repo.get("appt-1", mock_user_id)
+        assert stored is not None
+        assert stored.service_code == "90837"
+        assert stored.modifiers == ["95"]
+        assert stored.unit_count == 1
+        assert stored.place_of_service == "02"
+        assert stored.diagnosis_codes == ["F41.1", "F32.9"]
+
+    def test_note_creation_without_codes_leaves_visit_unset(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Creating a note on a visit never infers a billing code — omitting
+        the fields leaves the appointment exactly as it was."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1"},
+        )
+
+        assert response.status_code == 201, response.text
+        stored = appt_repo.get("appt-1", mock_user_id)
+        assert stored is not None
+        assert stored.service_code is None
+        assert stored.diagnosis_codes is None
+
+    def test_note_creation_and_standalone_edit_converge_on_one_record(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Codes set at note creation are visible through the standalone
+        appointment-edit surface, and vice versa — one store, not two."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        shared_service = SchedulingService(appt_repo)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: shared_service
+        app.dependency_overrides[get_appointments_scheduling_service] = lambda: shared_service
+
+        note_response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={
+                "note_type": "soap",
+                "appointment_id": "appt-1",
+                "service_code": "90837",
+                "diagnosis_codes": ["F41.1"],
+            },
+        )
+        assert note_response.status_code == 201, note_response.text
+
+        # Read through the *other* surface — the standalone appointment GET.
+        appt_response = client.get("/api/appointments/appt-1")
+        assert appt_response.status_code == 200, appt_response.text
+        assert appt_response.json()["service_code"] == "90837"
+        assert appt_response.json()["diagnosis_codes"] == ["F41.1"]
+
+        # Now correct it via the standalone edit surface...
+        patch_response = client.patch(
+            "/api/appointments/appt-1",
+            json={"service_code": "90834"},
+        )
+        assert patch_response.status_code == 200, patch_response.text
+
+        # ...and the change is visible back through the same record.
+        assert appt_repo.get("appt-1", mock_user_id).service_code == "90834"
 
 
 # Avoid unused-fixture warnings.

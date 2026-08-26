@@ -289,6 +289,11 @@ def _to_response(appt: Appointment, *, patient_name: str | None = None) -> Appoi
         ical_sync_status=appt.ical_sync_status,
         ehr_appointment_url=appt.ehr_appointment_url,
         session_id=appt.session_id,
+        service_code=appt.service_code,
+        modifiers=appt.modifiers,
+        unit_count=appt.unit_count,
+        place_of_service=appt.place_of_service,
+        diagnosis_codes=appt.diagnosis_codes,
         created_at=appt.created_at,
         updated_at=appt.updated_at,
     )

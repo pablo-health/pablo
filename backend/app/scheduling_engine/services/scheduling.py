@@ -169,6 +169,11 @@ class SchedulingService:
             "session_id",
             "google_event_id",
             "google_sync_status",
+            "service_code",
+            "modifiers",
+            "unit_count",
+            "place_of_service",
+            "diagnosis_codes",
         }
         for field, value in updates.items():
             if field not in allowed_fields:

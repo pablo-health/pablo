@@ -15,6 +15,7 @@ authors without an associated recorded session.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -39,11 +40,16 @@ from ..notes import (
 )
 from ..repositories import NotesRepository, PatientRepository
 from ..repositories import (
+    get_appointment_repository as _appt_repo_factory,
+)
+from ..repositories import (
     get_notes_repository as _notes_repo_factory,
 )
 from ..repositories import (
     get_patient_repository as _patient_repo_factory,
 )
+from ..scheduling_engine.exceptions import AppointmentNotFoundError
+from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import (
     AuditService,
     NoteAlreadyFinalizedError,
@@ -54,6 +60,10 @@ from ..services import (
     get_audit_service,
 )
 from ..utcnow import utc_now
+
+if TYPE_CHECKING:
+    from ..scheduling_engine.models.appointment import Appointment
+    from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +95,24 @@ def get_note_service(
 def get_note_generation_service() -> NoteGenerationService:
     """Get note generation service for standalone-note dictation flows."""
     return RegistryNoteGenerationService()
+
+
+def get_appointment_repository(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> AppointmentRepository:
+    """Get appointment repository scoped to the tenant's database."""
+    return _appt_repo_factory()
+
+
+def get_scheduling_service(
+    repo: AppointmentRepository = Depends(get_appointment_repository),
+) -> SchedulingService:
+    """Get scheduling service.
+
+    Used to write visit billing codes entered at note-creation time onto
+    the same appointment record the standalone visit-edit surface writes to.
+    """
+    return SchedulingService(repo)
 
 
 def get_registry() -> NoteTypeRegistry:
@@ -244,6 +272,7 @@ def create_standalone_note(
     registry: NoteTypeRegistry = Depends(get_registry),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
     note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
+    scheduling_service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
     """Create a patient-owned note with no associated recording session.
@@ -253,6 +282,12 @@ def create_standalone_note(
     transcript is provided, the same generation pipeline used by the
     session-upload path runs against it; otherwise the note is stored
     empty for the clinician to fill via PATCH.
+
+    If ``appointment_id`` and any billing-code field are supplied, this is
+    also where a clinician codes the visit — the primary coding surface,
+    since the session duration and clinical picture are both on screen
+    here. The codes are written to the appointment, not the note; omitting
+    them leaves the visit's codes exactly as they were.
     """
     if not registry.has(request.note_type):
         raise BadRequestError(
@@ -282,6 +317,20 @@ def create_standalone_note(
     patient = patient_repo.get(patient_id, user.id)
     if patient is None:
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
+
+    appointment: Appointment | None = None
+    if request.appointment_id is not None:
+        try:
+            appointment = scheduling_service.get_appointment(request.appointment_id, user.id)
+        except AppointmentNotFoundError as exc:
+            raise NotFoundError(
+                "Appointment not found", {"appointment_id": request.appointment_id}
+            ) from exc
+        if appointment.patient_id != patient.id:
+            raise BadRequestError(
+                "Appointment does not belong to this patient",
+                {"appointment_id": request.appointment_id},
+            )
 
     content: dict[str, object] | None = None
     if request.dictation_transcript is not None:
@@ -331,4 +380,27 @@ def create_standalone_note(
         session_id=None,
         changes={"note_type": note.note_type, "standalone": True},
     )
+
+    if appointment is not None:
+        visit_codes = request.model_dump(
+            include={
+                "service_code",
+                "modifiers",
+                "unit_count",
+                "place_of_service",
+                "diagnosis_codes",
+            },
+            exclude_none=True,
+        )
+        if visit_codes:
+            scheduling_service.update_appointment(appointment.id, user.id, **visit_codes)
+            audit.log_appointment_action(
+                AuditAction.APPOINTMENT_UPDATED,
+                user,
+                http_request,
+                appointment.id,
+                patient_id=appointment.patient_id,
+                changes={"changed_fields": sorted(visit_codes.keys())},
+            )
+
     return NoteResponse.from_note(note)

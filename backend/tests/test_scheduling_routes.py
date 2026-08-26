@@ -550,6 +550,95 @@ def test_update_appointment_moving_onto_itself_succeeds(write_client: TestClient
     assert body["start_at"] == "2026-04-15T14:10:00Z"
 
 
+# --- Visit billing codes ---
+
+
+def test_create_appointment_leaves_billing_codes_unset(write_client: TestClient) -> None:
+    """Booking a visit never infers or defaults a billing code."""
+    response = write_client.post("/api/appointments", json=_create_payload())
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["service_code"] is None
+    assert body["modifiers"] is None
+    assert body["unit_count"] is None
+    assert body["place_of_service"] is None
+    assert body["diagnosis_codes"] is None
+
+
+def test_patch_appointment_round_trips_billing_codes(write_client: TestClient) -> None:
+    """Every visit-coding field survives a PATCH + GET round trip, and the
+    diagnosis list keeps the order it was given in (first = primary)."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    appt_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={
+            "service_code": "90837",
+            "modifiers": ["95", "GT"],
+            "unit_count": 1,
+            "place_of_service": "02",
+            "diagnosis_codes": ["F41.1", "F32.9"],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["service_code"] == "90837"
+    assert body["modifiers"] == ["95", "GT"]
+    assert body["unit_count"] == 1
+    assert body["place_of_service"] == "02"
+    assert body["diagnosis_codes"] == ["F41.1", "F32.9"]
+
+    fetched = write_client.get(f"/api/appointments/{appt_id}")
+    assert fetched.json()["diagnosis_codes"] == ["F41.1", "F32.9"]
+
+
+def test_patch_appointment_rejects_unknown_icd10_code(write_client: TestClient) -> None:
+    """A diagnosis code absent from the bundled ICD-10-CM catalog is
+    rejected with a message naming the offending code."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    appt_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={"diagnosis_codes": ["F41.1", "Z99.NOPE"]},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "Z99.NOPE" in response.text
+
+
+def test_patch_appointment_rejects_unknown_place_of_service(write_client: TestClient) -> None:
+    """Place of service is a closed enum — an unrecognized value never reaches storage."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    appt_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={"place_of_service": "99"},
+    )
+
+    assert response.status_code == 422, response.text
+
+    fetched = write_client.get(f"/api/appointments/{appt_id}")
+    assert fetched.json()["place_of_service"] is None
+
+
+def test_patch_appointment_rejects_more_than_four_modifiers(write_client: TestClient) -> None:
+    """A visit may carry at most four modifiers."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    appt_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={"modifiers": ["95", "GT", "59", "XE", "XP"]},
+    )
+
+    assert response.status_code == 422, response.text
+
+
 def test_create_recurring_series_creates_all_occurrences(write_client: TestClient) -> None:
     """A recurring request fans out into one appointment per occurrence,
     sharing a recurring_appointment_id."""

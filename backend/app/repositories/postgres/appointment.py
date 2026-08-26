@@ -317,6 +317,11 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         ical_sync_status=row.ical_sync_status,
         ehr_appointment_url=row.ehr_appointment_url,
         session_id=row.session_id,
+        service_code=row.service_code,
+        modifiers=row.modifiers,
+        unit_count=row.unit_count,
+        place_of_service=row.place_of_service,
+        diagnosis_codes=row.diagnosis_codes,
         reminder_24h_sent=row.reminder_24h_sent,
         reminder_1h_sent=row.reminder_1h_sent,
         pending_expires_at=row.pending_expires_at,
@@ -350,6 +355,11 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.ical_sync_status = appt.ical_sync_status
     row.ehr_appointment_url = appt.ehr_appointment_url
     row.session_id = appt.session_id
+    row.service_code = appt.service_code
+    row.modifiers = appt.modifiers
+    row.unit_count = appt.unit_count
+    row.place_of_service = appt.place_of_service
+    row.diagnosis_codes = appt.diagnosis_codes
     row.reminder_24h_sent = appt.reminder_24h_sent
     row.reminder_1h_sent = appt.reminder_1h_sent
     row.pending_expires_at = appt.pending_expires_at
