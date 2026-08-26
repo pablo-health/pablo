@@ -31,6 +31,16 @@ def _ranges_overlap(start_a: int, end_a: int, start_b: int, end_b: int) -> bool:
     return start_a < end_b and start_b < end_a
 
 
+DEFAULT_DURATION_MINUTES = 50
+
+_ALIGNMENT_STEP_MINUTES = {"hour": 60, "half_hour": 30}
+
+
+def _next_aligned_minute(minute: int, step: int) -> int:
+    remainder = minute % step
+    return minute if remainder == 0 else minute + (step - remainder)
+
+
 class AvailabilityEngine:
     """Checks scheduling conflicts and computes free slots.
 
@@ -69,8 +79,14 @@ class AvailabilityEngine:
 
         return ConflictCheckResult(configured=bool(rules), conflicts=conflicts)
 
-    def get_free_slots(self, user_id: str, date_str: str, duration_minutes: int) -> FreeSlotsResult:
+    def get_free_slots(
+        self, user_id: str, date_str: str, duration_minutes: int | None = None
+    ) -> FreeSlotsResult:
         """Compute available time slots for a given date and duration.
+
+        ``duration_minutes`` of None resolves from the user's session_defaults
+        rule (falling back to :data:`DEFAULT_DURATION_MINUTES`); callers that
+        pass a duration explicitly keep that exact value.
 
         A user with zero rules is NOT CONFIGURED — ``configured`` is False,
         distinct from a configured user whose rules simply leave no openings
@@ -79,15 +95,18 @@ class AvailabilityEngine:
         from "this day is full".
         """
         rules = self._rule_repo.list_by_user(user_id)
+        resolved_duration = (
+            duration_minutes if duration_minutes is not None else self._get_default_duration(rules)
+        )
         if not rules:
-            return FreeSlotsResult(configured=False, slots=[])
+            return FreeSlotsResult(configured=False, slots=[], duration_minutes=resolved_duration)
 
         working_ranges = self._get_working_hours(rules, date_str)
         if not working_ranges:
-            return FreeSlotsResult(configured=True, slots=[])
+            return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
         if self._is_date_blocked(rules, date_str):
-            return FreeSlotsResult(configured=True, slots=[])
+            return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
 
         blocked_minutes = self._get_blocked_minutes(rules)
 
@@ -103,18 +122,22 @@ class AvailabilityEngine:
 
         max_per_day = self._get_max_per_day(rules)
         if max_per_day is not None and len(active) >= max_per_day:
-            return FreeSlotsResult(configured=True, slots=[])
+            return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
+
+        alignment_step = self._get_alignment_step(rules)
 
         slots: list[TimeSlot] = []
         remaining_capacity = max_per_day - len(active) if max_per_day is not None else None
 
         for work_start, work_end in working_ranges:
-            minute = work_start
-            while minute + duration_minutes <= work_end:
-                slot_range = set(range(minute, minute + duration_minutes))
+            minute = (
+                _next_aligned_minute(work_start, alignment_step) if alignment_step else work_start
+            )
+            while minute + resolved_duration <= work_end:
+                slot_range = set(range(minute, minute + resolved_duration))
                 if not slot_range & blocked_minutes:
                     start_h, start_m = divmod(minute, 60)
-                    end_min = minute + duration_minutes
+                    end_min = minute + resolved_duration
                     end_h, end_m = divmod(end_min, 60)
                     slot = TimeSlot(
                         start=f"{date_str}T{start_h:02d}:{start_m:02d}:00Z",
@@ -124,12 +147,18 @@ class AvailabilityEngine:
                     if remaining_capacity is not None:
                         remaining_capacity -= 1
                         if remaining_capacity <= 0:
-                            return FreeSlotsResult(configured=True, slots=slots)
-                    minute += duration_minutes
+                            return FreeSlotsResult(
+                                configured=True, slots=slots, duration_minutes=resolved_duration
+                            )
+                    minute += resolved_duration + buffer_before + buffer_after
+                    if alignment_step:
+                        minute = _next_aligned_minute(minute, alignment_step)
+                elif alignment_step:
+                    minute = _next_aligned_minute(minute + 1, alignment_step)
                 else:
                     minute += 1
 
-        return FreeSlotsResult(configured=True, slots=slots)
+        return FreeSlotsResult(configured=True, slots=slots, duration_minutes=resolved_duration)
 
     def _check_rule(
         self,
@@ -378,6 +407,32 @@ class AvailabilityEngine:
             elif rule.rule_type == RuleType.BUFFER_AFTER:
                 buffer_after = max(buffer_after, rule.params["minutes"])
         return buffer_before, buffer_after
+
+    def _get_session_defaults_rule(self, rules: list[AvailabilityRule]) -> AvailabilityRule | None:
+        """Get the user's session_defaults rule, if any (first by created_at)."""
+        for rule in rules:
+            if rule.rule_type == RuleType.SESSION_DEFAULTS:
+                return rule
+        return None
+
+    def _get_default_duration(self, rules: list[AvailabilityRule]) -> int:
+        """Resolve the fallback slot duration from the session_defaults rule."""
+        rule = self._get_session_defaults_rule(rules)
+        if rule is not None:
+            duration = rule.params.get("duration_minutes")
+            if duration is not None:
+                return int(duration)
+        return DEFAULT_DURATION_MINUTES
+
+    def _get_alignment_step(self, rules: list[AvailabilityRule]) -> int:
+        """Resolve the start-time alignment grid (in minutes), 0 for none."""
+        rule = self._get_session_defaults_rule(rules)
+        if rule is None:
+            return 0
+        alignment = rule.params.get("alignment")
+        if not isinstance(alignment, str):
+            return 0
+        return _ALIGNMENT_STEP_MINUTES.get(alignment, 0)
 
     def _get_max_per_day(self, rules: list[AvailabilityRule]) -> int | None:
         """Get the most restrictive max_per_day value."""

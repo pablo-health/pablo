@@ -24,6 +24,7 @@ from app.routes.scheduling import (
     get_patient_repository as get_scheduling_patient_repository,
 )
 from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import (
     InMemoryAvailabilityRuleRepository,
@@ -341,6 +342,43 @@ def test_check_conflicts_permissive_when_unconfigured(client: TestClient) -> Non
     assert body["conflicts"] == []
     assert body["has_hard_conflicts"] is False
     assert body["configured"] is False
+
+
+def test_free_slots_resolves_default_duration_from_session_defaults(
+    client: TestClient, rule_repo: InMemoryAvailabilityRuleRepository
+) -> None:
+    """Without a duration query param, the resolved default comes from the
+    user's session_defaults rule and is echoed back in duration_minutes."""
+    app.dependency_overrides[get_availability_rule_repository] = lambda: rule_repo
+    rule_repo.create(
+        AvailabilityRule(
+            id="rule-1",
+            user_id="test-user-123",
+            rule_type=RuleType.WORKING_HOURS,
+            enforcement="hard",
+            params={"day_of_week": 2, "start": "09:00", "end": "17:00"},
+        )
+    )
+    rule_repo.create(
+        AvailabilityRule(
+            id="rule-2",
+            user_id="test-user-123",
+            rule_type=RuleType.SESSION_DEFAULTS,
+            enforcement="soft",
+            params={"duration_minutes": 60},
+        )
+    )
+
+    response = client.get("/api/availability/slots", params={"date": "2026-04-15"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["duration_minutes"] == 60
+
+    explicit_response = client.get(
+        "/api/availability/slots", params={"date": "2026-04-15", "duration": 30}
+    )
+    assert explicit_response.json()["duration_minutes"] == 30
 
 
 def test_create_appointment_succeeds_with_no_availability_rules(client: TestClient) -> None:

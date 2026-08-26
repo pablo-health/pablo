@@ -57,3 +57,4 @@ class FreeSlotsResult:
 
     configured: bool
     slots: list[TimeSlot]
+    duration_minutes: int = 0
