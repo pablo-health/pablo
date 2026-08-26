@@ -71,3 +71,19 @@ export interface ParseAvailabilityRulesResponse {
   exclusive: boolean
   existing_conflicting_rules: AvailabilityRule[]
 }
+
+export interface TimeSlot {
+  start: string
+  end: string
+}
+
+export interface FreeSlotsResponse {
+  date: string
+  duration_minutes: number
+  slots: TimeSlot[]
+  total: number
+  // False when the practice has no availability rules at all. An empty
+  // `slots` list otherwise reads identically whether nothing is set up or
+  // the day is simply full — check this first.
+  configured: boolean
+}
