@@ -79,6 +79,7 @@ function PatientCombobox({
   onSelect,
   query,
   onQueryChange,
+  total,
 }: {
   patients: PatientResponse[]
   patientId: string
@@ -86,6 +87,7 @@ function PatientCombobox({
   onSelect: (patient: PatientResponse) => void
   query: string
   onQueryChange: (query: string) => void
+  total: number
 }) {
   const [open, setOpen] = useState(false)
   const selected = patients.find((p) => p.id === patientId)
@@ -156,6 +158,11 @@ function PatientCombobox({
                 {patientLabel(p)}
               </li>
             ))
+          )}
+          {!query && total > patients.length && (
+            <li className="px-3 py-2 text-[13px]" style={{ color: "var(--ed-ink-soft)" }}>
+              Showing first {patients.length} of {total} — type to search
+            </li>
           )}
         </ul>
       )}
@@ -310,6 +317,7 @@ function AppointmentForm({
     search: debouncedPatientQuery || undefined,
   })
   const patients = patientData?.data ?? []
+  const patientTotal = patientData?.total ?? patients.length
   const { data: noteTypesData } = useNoteTypes()
   const noteTypes = noteTypesData?.note_types ?? []
 
@@ -515,6 +523,7 @@ function AppointmentForm({
             fallbackLabel={selectedPatientName}
             query={patientQuery}
             onQueryChange={setPatientQuery}
+            total={patientTotal}
             onSelect={(p) => {
               setPatientId(p.id)
               setSelectedPatientName(`${p.first_name} ${p.last_name}`)
