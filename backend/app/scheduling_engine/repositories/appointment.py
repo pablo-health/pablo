@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ...utcnow import utc_now
+from ..models.appointment import AppointmentStatus
 
 if TYPE_CHECKING:
     from ..models.appointment import Appointment
@@ -131,6 +132,15 @@ class AppointmentRepository(ABC):
         Sets ``patient_id`` (and refreshes ``updated_at``) on every
         appointment in ``appointment_ids``; returns the number updated.
         Replaces the per-row update loop in iCal client resolution.
+        """
+
+    @abstractmethod
+    def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
+        """Pending requests whose ``pending_expires_at`` has passed.
+
+        The sweep behind :meth:`SchedulingService.expire_pending_appointments`.
+        A pending request holds its slot, so one nobody answers has to stop
+        holding it eventually or an unread queue silently eats the calendar.
         """
 
     @abstractmethod
@@ -277,6 +287,16 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             if a.user_id == user_id and a.google_event_id == google_event_id:
                 return a
         return None
+
+    def list_expired_pending(self, user_id: str, now: datetime) -> list[Appointment]:
+        return [
+            appt
+            for appt in self._appointments.values()
+            if appt.user_id == user_id
+            and appt.status == AppointmentStatus.PENDING
+            and appt.pending_expires_at is not None
+            and appt.pending_expires_at <= now
+        ]
 
     def create(self, appointment: Appointment) -> Appointment:
         self._appointments[appointment.id] = appointment
