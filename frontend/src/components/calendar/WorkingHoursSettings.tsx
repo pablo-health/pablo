@@ -78,11 +78,10 @@ export function WorkingHoursSettings({
 
   return (
     <div className="space-y-4">
-      <h3 className="sr-only">Working Hours</h3>
+      <h3 className="sr-only">Calendar display hours</h3>
       <p className="text-sm text-neutral-600">
-        Set your typical working hours. The calendar will highlight this
-        window and scroll to the start of your day. You can still scroll
-        to see times outside working hours.
+        Choose the hours your calendar highlights and scrolls to by
+        default. You can still scroll to see times outside this window.
       </p>
       <div className="flex items-end gap-4">
         <div className="grid gap-2">
