@@ -160,6 +160,43 @@ class AvailabilityRuleListResponse(BaseModel):
     total: int
 
 
+class ParseAvailabilityRulesRequest(BaseModel):
+    """Request to parse a natural-language sentence into rule proposals."""
+
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class ProposedAvailabilityRule(BaseModel):
+    """A single rule proposal parsed from natural language, pending confirm.
+
+    Never persisted directly -- the caller confirms (optionally editing
+    it first) through the existing create-rule endpoint.
+    """
+
+    rule_type: str
+    enforcement: str
+    params: dict[str, Any]
+    human_summary: str
+
+
+class ParseAvailabilityRulesResponse(BaseModel):
+    """Response for a natural-language availability-rule parse.
+
+    Semantic outcomes are always HTTP 200: ``proposals`` may be empty with
+    a ``could_not_parse`` reason instead -- that's a product outcome, not a
+    transport error. ``exclusive`` and ``existing_conflicting_rules``
+    support "I ONLY meet on..." phrasing: when true, existing working-hours
+    rules for days not covered by the proposals are surfaced here so the
+    confirm UI can flag them, without the parser ever proposing to delete
+    or modify them.
+    """
+
+    proposals: list[ProposedAvailabilityRule]
+    could_not_parse: str | None = None
+    exclusive: bool = False
+    existing_conflicting_rules: list[AvailabilityRuleResponse] = Field(default_factory=list)
+
+
 class CheckConflictsRequest(BaseModel):
     """Request to check scheduling conflicts."""
 
