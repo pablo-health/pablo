@@ -114,7 +114,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     reminder_24h_sent boolean NOT NULL,
     reminder_1h_sent boolean NOT NULL,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    pending_expires_at timestamp with time zone
 );
 
 
@@ -800,6 +801,10 @@ CREATE INDEX ix_appointments_ical_source ON __TENANT_SCHEMA__.appointments USING
 
 
 CREATE INDEX ix_appointments_patient_id ON __TENANT_SCHEMA__.appointments USING btree (patient_id);
+
+
+
+CREATE INDEX ix_appointments_pending_expires_at ON __TENANT_SCHEMA__.appointments USING btree (pending_expires_at) WHERE (pending_expires_at IS NOT NULL);
 
 
 

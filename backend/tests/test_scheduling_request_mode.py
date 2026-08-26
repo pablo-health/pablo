@@ -62,9 +62,7 @@ class TestCreatingARequest:
         assert appt.status == AppointmentStatus.CONFIRMED
         assert appt.pending_expires_at is None
 
-    def test_a_request_is_created_pending_with_its_expiry(
-        self, service: SchedulingService
-    ) -> None:
+    def test_a_request_is_created_pending_with_its_expiry(self, service: SchedulingService) -> None:
         appt = service.create_appointment(
             USER_ID,
             data=_appt_data(status="pending", pending_expires_at=FAR_FUTURE),
@@ -80,14 +78,10 @@ class TestCreatingARequest:
         with pytest.raises(InvalidAppointmentError, match="must carry pending_expires_at"):
             service.create_appointment(USER_ID, data=_appt_data(status="pending"))
 
-    def test_an_expiry_on_a_confirmed_booking_is_refused(
-        self, service: SchedulingService
-    ) -> None:
+    def test_an_expiry_on_a_confirmed_booking_is_refused(self, service: SchedulingService) -> None:
         # It would arm the sweep against a real appointment.
         with pytest.raises(InvalidAppointmentError, match="only meaningful"):
-            service.create_appointment(
-                USER_ID, data=_appt_data(pending_expires_at=FAR_FUTURE)
-            )
+            service.create_appointment(USER_ID, data=_appt_data(pending_expires_at=FAR_FUTURE))
 
     @pytest.mark.parametrize("status", ["cancelled", "completed", "no_show"])
     def test_an_appointment_cannot_be_born_in_a_terminal_state(
@@ -212,11 +206,13 @@ class TestPendingHoldsTheSlot:
             ),
         )
         assert not any(
-            s.start.startswith(f"{DAY}T14:00") for s in engine.get_free_slots(USER_ID, DAY, 50).slots
+            s.start.startswith(f"{DAY}T14:00")
+            for s in engine.get_free_slots(USER_ID, DAY, 50).slots
         )
 
         service.expire_pending_appointments(USER_ID)
 
         assert any(
-            s.start.startswith(f"{DAY}T14:00") for s in engine.get_free_slots(USER_ID, DAY, 50).slots
+            s.start.startswith(f"{DAY}T14:00")
+            for s in engine.get_free_slots(USER_ID, DAY, 50).slots
         )
