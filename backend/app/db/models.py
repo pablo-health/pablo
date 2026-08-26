@@ -515,6 +515,11 @@ class AppointmentRow(Base):
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Registry key for the note generated when a session is started from this
+    # appointment. Mirrors NoteRow.note_type.
+    note_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="soap", default="soap"
+    )
     # Recurrence
     recurrence_rule: Mapped[str | None] = mapped_column(String(50))
     recurring_appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)

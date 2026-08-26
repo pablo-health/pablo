@@ -120,7 +120,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     modifiers jsonb,
     unit_count integer,
     place_of_service character varying(2),
-    diagnosis_codes jsonb
+    diagnosis_codes jsonb,
+    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL
 );
 
 

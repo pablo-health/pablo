@@ -90,6 +90,7 @@ const baseAppointment: AppointmentResponse = {
   video_link: null,
   video_platform: null,
   notes: null,
+  note_type: "soap",
   recurrence_rule: null,
   recurring_appointment_id: null,
   recurrence_index: null,
@@ -394,6 +395,39 @@ describe("AppointmentModal", () => {
       await user.click(trigger)
       await user.click(screen.getByRole("option", { name: /narrative/i }))
       expect(trigger).toHaveTextContent("Narrative")
+    })
+
+    it("submits the selected note type when creating an appointment", async () => {
+      const user = userEvent.setup()
+      render(<AppointmentModal open onClose={vi.fn()} />, { wrapper: createWrapper() })
+      const patientTrigger = screen.getByRole("combobox", { name: /patient/i })
+      await user.click(patientTrigger)
+      await user.click(screen.getByRole("option", { name: /Doe, Jane/i }))
+      await user.click(screen.getByRole("button", { name: /more options/i }))
+      await user.click(screen.getByRole("combobox", { name: /note type/i }))
+      await user.click(screen.getByRole("option", { name: /narrative/i }))
+      await user.click(screen.getByRole("button", { name: "Schedule" }))
+
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+      expect(mockCreate.mock.calls[0][0]).toMatchObject({ note_type: "narrative" })
+    })
+
+    it("pre-selects the note type stored on the appointment when editing", async () => {
+      render(
+        <AppointmentModal
+          open
+          onClose={vi.fn()}
+          appointment={{ ...baseAppointment, note_type: "narrative" }}
+        />,
+        { wrapper: createWrapper() },
+      )
+      const user = userEvent.setup()
+      await user.click(screen.getByRole("button", { name: /more options/i }))
+      expect(screen.getByRole("combobox", { name: /note type/i })).toHaveTextContent("Narrative")
+
+      await user.click(screen.getByRole("button", { name: "Save changes" }))
+      expect(mockUpdate).toHaveBeenCalledTimes(1)
+      expect(mockUpdate.mock.calls[0][0].data).toMatchObject({ note_type: "narrative" })
     })
   })
 

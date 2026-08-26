@@ -69,6 +69,7 @@ class CreateAppointmentRequest(BaseModel):
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    note_type: str | None = None
 
 
 class CreateRecurringAppointmentRequest(BaseModel):
@@ -83,6 +84,7 @@ class CreateRecurringAppointmentRequest(BaseModel):
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    note_type: str | None = None
     frequency: str  # weekly | biweekly | monthly
     timezone: str  # IANA timezone e.g. "America/New_York"
     end_date: str | None = None  # YYYY-MM-DD
@@ -97,6 +99,7 @@ class EditSeriesRequest(BaseModel):
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    note_type: str | None = None
 
 
 class UpdateAppointmentRequest(VisitCodingFields):
@@ -116,6 +119,7 @@ class UpdateAppointmentRequest(VisitCodingFields):
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    note_type: str | None = None
     status: AppointmentStatus | None = None
 
 
@@ -138,6 +142,7 @@ class AppointmentResponse(BaseModel):
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
+    note_type: str = "soap"
     recurrence_rule: str | None = None
     recurring_appointment_id: str | None = None
     recurrence_index: int | None = None
