@@ -255,6 +255,7 @@ class Patient:
     chart_closure_reason: str | None = None
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
+    origin: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""
