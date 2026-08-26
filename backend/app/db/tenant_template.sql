@@ -138,7 +138,8 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
     session_id uuid,
     ip_address character varying(45),
     user_agent text,
-    changes jsonb
+    changes jsonb,
+    actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL
 );
 
 
@@ -828,6 +829,10 @@ CREATE INDEX ix_appointments_user_id ON __TENANT_SCHEMA__.appointments USING btr
 
 
 CREATE INDEX ix_audit_logs_action ON __TENANT_SCHEMA__.audit_logs USING btree (action);
+
+
+
+CREATE INDEX ix_audit_logs_actor_type ON __TENANT_SCHEMA__.audit_logs USING btree (actor_type);
 
 
 

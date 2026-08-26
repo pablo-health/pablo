@@ -258,6 +258,19 @@ PHI_FIELD_NAMES: frozenset[str] = frozenset(
 )
 
 
+# What kind of principal performed an audited action.
+#
+# ``clinician`` is every actor the system had until a patient principal existed:
+# a signed-in practitioner, and also system/service actions and unauthenticated
+# probes, which are recorded rather than rejected (see AuditLogRow.user_id).
+# ``patient`` is a patient principal acting for themselves — consent decisions
+# above all, which is what makes the distinction legally load-bearing rather
+# than cosmetic.
+ACTOR_TYPE_CLINICIAN = "clinician"
+ACTOR_TYPE_PATIENT = "patient"
+ACTOR_TYPES: tuple[str, ...] = (ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT)
+
+
 @dataclass
 class AuditLogEntry:
     """
@@ -280,8 +293,18 @@ class AuditLogEntry:
         )
     )
 
-    # Who performed the action
+    # Who performed the action.
+    #
+    # ``user_id`` is the actor identifier as recorded; ``actor_type`` says what
+    # KIND of actor it names. Both ids are uuids, so without the discriminator a
+    # row cannot answer "was this the clinician or the patient?" without joining
+    # two tables and hoping exactly one matches — and this is the six-year
+    # record, read years later by someone in a dispute.
+    #
+    # Defaults to ``clinician`` so every row written before this existed, and
+    # every caller that does not set it, keeps exactly the meaning it had.
     user_id: str = ""
+    actor_type: str = ACTOR_TYPE_CLINICIAN
 
     # What action was performed
     action: str = ""  # AuditAction value
