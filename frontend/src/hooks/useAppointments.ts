@@ -60,6 +60,18 @@ export function useCreateAppointment(token?: string) {
         })
       }
     },
+    // The append above is an OPTIMISATION, not the consistency mechanism: it
+    // puts the appointment on the grid without a round-trip. This is what makes
+    // the grid eventually agree with the server — ordering, any field the
+    // server computed, and every cached range the walk above did not visit
+    // (a range whose entry had not loaded yet is skipped, and `total` is the
+    // list's own count rather than a recomputation).
+    //
+    // Restored after being dropped in #742. A booked appointment failing to
+    // appear is the bug this hook exists to prevent, so it should not hinge on
+    // a single mechanism: if the append misses, the refetch still corrects it.
+    // Scoped to lists() rather than all() so unrelated detail queries survive.
+    invalidateKeys: [queryKeys.appointments.lists()],
   })
 }
 
