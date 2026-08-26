@@ -10,7 +10,7 @@ reload/edit and seeds the session (and its note) when the appointment is
 started.
 
 Revision ID: 3873a3d6dc33
-Revises: c7e2b81f40a9
+Revises: a1c7f6e93d2b
 Create Date: 2026-08-26
 """
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "3873a3d6dc33"
-down_revision: str | Sequence[str] | None = "c7e2b81f40a9"
+down_revision: str | Sequence[str] | None = "a1c7f6e93d2b"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

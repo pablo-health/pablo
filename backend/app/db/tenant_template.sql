@@ -99,7 +99,6 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     video_link text,
     video_platform character varying(30),
     notes text,
-    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
     recurrence_rule character varying(50),
     recurring_appointment_id uuid,
     recurrence_index integer,
@@ -121,7 +120,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     modifiers jsonb,
     unit_count integer,
     place_of_service character varying(2),
-    diagnosis_codes jsonb
+    diagnosis_codes jsonb,
+    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL
 );
 
 
