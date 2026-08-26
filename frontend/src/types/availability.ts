@@ -4,9 +4,10 @@
  * Availability rule types
  *
  * Mirrors backend/app/scheduling_engine/models/availability.py — the
- * eight RuleType values and the two EnforcementLevel values. params
+ * nine RuleType values and the two EnforcementLevel values. params
  * shape varies per rule_type; see AvailabilitySettings.tsx for the
- * per-type param forms.
+ * per-type param forms. session_defaults has its own dedicated fields
+ * section rather than a generic RuleForm entry.
  */
 
 export const RULE_TYPES = [
@@ -18,6 +19,7 @@ export const RULE_TYPES = [
   "buffer_after",
   "block_date_range",
   "block_specific_dates",
+  "session_defaults",
 ] as const
 
 export type RuleType = (typeof RULE_TYPES)[number]

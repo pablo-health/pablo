@@ -51,7 +51,12 @@ export const RULE_TYPE_LABELS: Record<RuleType, string> = {
   buffer_after: "Buffer after appointments",
   block_date_range: "Block a date range",
   block_specific_dates: "Block specific dates",
+  session_defaults: "Scheduling defaults",
 }
+
+// The rule-type picker in RuleForm offers every type except session_defaults,
+// which has its own dedicated fields section — one editing surface only.
+const PICKER_RULE_TYPES = RULE_TYPES.filter((rt) => rt !== "session_defaults")
 
 type RuleGroup = "Working hours" | "Blocked time" | "Limits & buffers"
 
@@ -64,6 +69,7 @@ const RULE_TYPE_GROUPS: Record<RuleType, RuleGroup> = {
   max_per_day: "Limits & buffers",
   buffer_before: "Limits & buffers",
   buffer_after: "Limits & buffers",
+  session_defaults: "Limits & buffers",
 }
 
 const GROUP_ORDER: RuleGroup[] = ["Working hours", "Blocked time", "Limits & buffers"]
@@ -86,6 +92,8 @@ function defaultFields(ruleType: RuleType): ParamFields {
     case "block_date_range":
       return { start_date: "", end_date: "" }
     case "block_specific_dates":
+      return {}
+    case "session_defaults":
       return {}
   }
 }
@@ -129,6 +137,8 @@ function paramsToFields(
         fields: {},
         dates: Array.isArray(params.dates) ? params.dates.map(String) : [],
       }
+    case "session_defaults":
+      return { fields: {}, dates: [] }
   }
 }
 
@@ -157,6 +167,8 @@ function buildParams(
       return { start_date: fields.start_date, end_date: fields.end_date }
     case "block_specific_dates":
       return { dates }
+    case "session_defaults":
+      return {}
   }
 }
 
@@ -187,6 +199,8 @@ function validate(ruleType: RuleType, fields: ParamFields, dates: string[]): str
       return null
     case "block_day_of_week":
       return null
+    case "session_defaults":
+      return null
   }
 }
 
@@ -211,9 +225,153 @@ export function summarize(rule: AvailabilityRule): string {
       return `${p.start_date} to ${p.end_date} blocked`
     case "block_specific_dates":
       return `${(Array.isArray(p.dates) ? p.dates : []).join(", ")} blocked`
+    case "session_defaults": {
+      const parts: string[] = []
+      if (p.duration_minutes != null) parts.push(`${p.duration_minutes} min sessions`)
+      if (p.alignment === "hour") parts.push("on the hour")
+      if (p.alignment === "half_hour") parts.push("on the half hour")
+      return parts.length > 0 ? parts.join(", ") : "No scheduling defaults set"
+    }
     default:
       return ""
   }
+}
+
+// --- Scheduling defaults: session length, break, and start-time alignment ---
+//
+// These three fields map onto a single session_defaults rule (length +
+// alignment) and the existing buffer_after rule (break) rather than any new
+// storage. Kept as pure functions so the mapping is unit-testable without
+// rendering the form.
+
+export type SessionAlignment = "hour" | "half_hour" | "none"
+
+export interface SchedulingDefaultsFields {
+  durationMinutes: string
+  breakMinutes: string
+  alignment: SessionAlignment
+}
+
+export function schedulingDefaultsFromRules(rules: AvailabilityRule[]): SchedulingDefaultsFields {
+  const sessionDefaults = rules.find((r) => r.rule_type === "session_defaults")
+  const bufferAfter = rules.find((r) => r.rule_type === "buffer_after")
+  const alignment = sessionDefaults?.params.alignment
+  return {
+    durationMinutes:
+      sessionDefaults?.params.duration_minutes != null
+        ? String(sessionDefaults.params.duration_minutes)
+        : "",
+    breakMinutes: bufferAfter?.params.minutes != null ? String(bufferAfter.params.minutes) : "0",
+    alignment: alignment === "hour" || alignment === "half_hour" ? alignment : "none",
+  }
+}
+
+export interface SchedulingDefaultsPayloads {
+  sessionDefaultsParams: Record<string, unknown>
+  breakMinutes: number
+}
+
+export function schedulingDefaultsToRulePayloads(
+  fields: SchedulingDefaultsFields
+): SchedulingDefaultsPayloads {
+  const sessionDefaultsParams: Record<string, unknown> = {}
+  if (fields.durationMinutes !== "") {
+    sessionDefaultsParams.duration_minutes = Number(fields.durationMinutes)
+  }
+  if (fields.alignment !== "none") {
+    sessionDefaultsParams.alignment = fields.alignment
+  }
+  return {
+    sessionDefaultsParams,
+    breakMinutes: fields.breakMinutes === "" ? 0 : Number(fields.breakMinutes),
+  }
+}
+
+interface SchedulingDefaultsSectionProps {
+  rules: AvailabilityRule[]
+  onSave: (fields: SchedulingDefaultsFields) => void
+  isSaving: boolean
+  error: string | null
+}
+
+function SchedulingDefaultsSection({
+  rules,
+  onSave,
+  isSaving,
+  error,
+}: SchedulingDefaultsSectionProps) {
+  const initial = schedulingDefaultsFromRules(rules)
+  const [durationMinutes, setDurationMinutes] = useState(initial.durationMinutes)
+  const [breakMinutes, setBreakMinutes] = useState(initial.breakMinutes)
+  const [alignment, setAlignment] = useState<SessionAlignment>(initial.alignment)
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    onSave({ durationMinutes, breakMinutes, alignment })
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-4 rounded-md border border-neutral-200 p-4"
+    >
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+        Scheduling defaults
+      </h3>
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="grid gap-2">
+          <Label htmlFor="session-length">Session length (minutes)</Label>
+          <Input
+            id="session-length"
+            type="number"
+            min={1}
+            placeholder="50"
+            value={durationMinutes}
+            onChange={(e) => setDurationMinutes(e.target.value)}
+            disabled={isSaving}
+            className="w-32"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="session-break">Break between sessions (minutes)</Label>
+          <Input
+            id="session-break"
+            type="number"
+            min={0}
+            value={breakMinutes}
+            onChange={(e) => setBreakMinutes(e.target.value)}
+            disabled={isSaving}
+            className="w-32"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="session-alignment">Start-time alignment</Label>
+          <Select
+            value={alignment}
+            onValueChange={(v) => setAlignment(v as SessionAlignment)}
+            disabled={isSaving}
+          >
+            <SelectTrigger id="session-alignment" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hour">On the hour</SelectItem>
+              <SelectItem value="half_hour">On the half hour</SelectItem>
+              <SelectItem value="none">No alignment</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {error && (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
+      )}
+      <Button type="submit" size="sm" disabled={isSaving}>
+        {isSaving ? "Saving..." : "Save scheduling defaults"}
+      </Button>
+    </form>
+  )
 }
 
 interface RuleParamsFieldsProps {
@@ -437,6 +595,10 @@ function RuleParamsFields({
           )}
         </div>
       )
+    case "session_defaults":
+      // Owned by the dedicated "Scheduling defaults" fields section above —
+      // never reachable here since PICKER_RULE_TYPES excludes it.
+      return null
   }
 }
 
@@ -505,7 +667,7 @@ export function RuleForm({ initialRule, onCancel, onSubmit, isSaving, submitErro
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {RULE_TYPES.map((rt) => (
+            {PICKER_RULE_TYPES.map((rt) => (
               <SelectItem key={rt} value={rt}>
                 {RULE_TYPE_LABELS[rt]}
               </SelectItem>
@@ -588,8 +750,12 @@ export function AvailabilitySettings() {
   const [editingRule, setEditingRule] = useState<AvailabilityRule | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
+  const [schedulingDefaultsError, setSchedulingDefaultsError] = useState<string | null>(null)
 
   const rules = data?.data ?? []
+  // session_defaults is edited exclusively through the dedicated fields
+  // section above — keep it out of the generic grouped rule list.
+  const visibleRules = rules.filter((rule) => rule.rule_type !== "session_defaults")
 
   function openCreateForm() {
     setEditingRule(null)
@@ -641,6 +807,37 @@ export function AvailabilitySettings() {
     })
   }
 
+  function handleSchedulingDefaultsSave(fields: SchedulingDefaultsFields) {
+    setSchedulingDefaultsError(null)
+    const { sessionDefaultsParams, breakMinutes } = schedulingDefaultsToRulePayloads(fields)
+    const existingSessionDefaults = rules.find((r) => r.rule_type === "session_defaults")
+    const existingBufferAfter = rules.find((r) => r.rule_type === "buffer_after")
+    const onError = (err: unknown) => setSchedulingDefaultsError(errorMessage(err))
+
+    if (existingSessionDefaults) {
+      updateMutation.mutate(
+        { ruleId: existingSessionDefaults.id, data: { params: sessionDefaultsParams } },
+        { onError }
+      )
+    } else {
+      createMutation.mutate(
+        { rule_type: "session_defaults", enforcement: "soft", params: sessionDefaultsParams },
+        { onError }
+      )
+    }
+
+    if (breakMinutes > 0) {
+      const params = { minutes: breakMinutes }
+      if (existingBufferAfter) {
+        updateMutation.mutate({ ruleId: existingBufferAfter.id, data: { params } }, { onError })
+      } else {
+        createMutation.mutate({ rule_type: "buffer_after", enforcement: "hard", params }, { onError })
+      }
+    } else if (existingBufferAfter) {
+      deleteMutation.mutate(existingBufferAfter.id, { onError })
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -655,12 +852,19 @@ export function AvailabilitySettings() {
   }
 
   const activeGroups = GROUP_ORDER.filter((group) =>
-    rules.some((rule) => RULE_TYPE_GROUPS[rule.rule_type] === group)
+    visibleRules.some((rule) => RULE_TYPE_GROUPS[rule.rule_type] === group)
   )
 
   return (
     <div className="space-y-4">
-      {rules.length === 0 && (
+      <SchedulingDefaultsSection
+        rules={rules}
+        onSave={handleSchedulingDefaultsSave}
+        isSaving={createMutation.isPending || updateMutation.isPending || deleteMutation.isPending}
+        error={schedulingDefaultsError}
+      />
+
+      {visibleRules.length === 0 && (
         <div className="rounded-md border border-dashed border-neutral-300 p-6 text-center">
           <p className="text-sm text-neutral-600">
             You don&apos;t have any availability rules yet. A rule controls when
@@ -677,7 +881,7 @@ export function AvailabilitySettings() {
             {group}
           </h3>
           <ul className="space-y-2">
-            {rules
+            {visibleRules
               .filter((rule) => RULE_TYPE_GROUPS[rule.rule_type] === group)
               .map((rule) => (
                 <li

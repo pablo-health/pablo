@@ -699,7 +699,12 @@ def _rule_to_response(rule: AvailabilityRule) -> AvailabilityRuleResponse:
 @router.get("/api/availability/slots", response_model=FreeSlotsResponse)
 def get_free_slots(
     date: str = Query(..., description="Date (YYYY-MM-DD)"),
-    duration: int = Query(50, description="Slot duration in minutes", ge=1, le=480),
+    duration: int | None = Query(
+        None,
+        description="Slot duration in minutes (defaults to the user's session default)",
+        ge=1,
+        le=480,
+    ),
     ctx: TenantContext = Depends(get_tenant_context),
     engine: AvailabilityEngine = Depends(get_availability_engine),
 ) -> FreeSlotsResponse:
@@ -707,7 +712,7 @@ def get_free_slots(
     result = engine.get_free_slots(ctx.user_id, date, duration)
     return FreeSlotsResponse(
         date=date,
-        duration_minutes=duration,
+        duration_minutes=result.duration_minutes,
         slots=[TimeSlotResponse(start=s.start, end=s.end) for s in result.slots],
         total=len(result.slots),
         configured=result.configured,
