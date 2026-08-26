@@ -464,7 +464,8 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     phi_email_consent_doc text,
     phi_email_consent_by character varying(128),
     rate_cents integer,
-    sliding_scale_note text
+    sliding_scale_note text,
+    origin character varying(20)
 );
 
 

@@ -132,6 +132,15 @@ class PatientRow(Base):
     # words. Never parsed or used in arithmetic — exists so the reason for a
     # rate survives staff turnover and the clinician's memory.
     sliding_scale_note: Mapped[str | None] = mapped_column(Text)
+    # Where this row came from, for a human merge review to prioritize.
+    # NULL = created by staff in the normal chart flow (the overwhelming
+    # majority of rows, and not itself suspicious). A non-NULL value marks a
+    # row created through an unauthenticated intake surface that cannot
+    # verify the caller's claimed identity, so it may duplicate an existing
+    # chart — 'voice' today, room for e.g. 'public_booking' later. Nothing
+    # reads this column to merge or de-duplicate automatically; it only
+    # flags a row for a person to look at.
+    origin: Mapped[str | None] = mapped_column(String(20))
 
 
 class TherapySessionRow(Base):
