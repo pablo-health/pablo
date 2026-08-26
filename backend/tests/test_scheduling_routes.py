@@ -407,11 +407,11 @@ def test_create_appointment_succeeds_with_no_availability_rules(client: TestClie
 #
 # The tests below run the real SchedulingService instead of a MagicMock so
 # they exercise its actual validation. That service (see
-# app/scheduling_engine/services/scheduling.py) only checks patient_id,
-# start_at/end_at presence, and duration_minutes — it never consults
-# AvailabilityEngine or AppointmentRepository.list_overlapping. The three
-# "ignores_*" tests below pin down that gap as it exists today so a follow-up
-# that wires in real conflict checking has a baseline to flip.
+# app/scheduling_engine/services/scheduling.py) rejects a colliding time via
+# AppointmentRepository.list_overlapping, but still never consults
+# AvailabilityEngine and still doesn't check that end_at is after start_at.
+# The remaining "ignores_*" tests below pin down those two gaps as they exist
+# today so a follow-up has a baseline to flip.
 
 
 def test_create_appointment_happy_path(write_client: TestClient) -> None:
@@ -447,14 +447,43 @@ def test_create_appointment_ignores_blocked_day_rule(write_client: TestClient) -
     assert response.status_code == 201, response.text
 
 
-def test_create_appointment_ignores_overlap(write_client: TestClient) -> None:
-    """KNOWN HOLE: create_appointment never calls
-    AppointmentRepository.list_overlapping, so a second appointment on the
-    same calendar slot is accepted instead of rejected. Follow-up: check
-    for overlap before persisting and surface a 409/400 on collision.
-    """
+def test_create_appointment_rejects_overlap(write_client: TestClient) -> None:
+    """A second appointment on the same clinician's calendar at an
+    overlapping time is rejected with 409, not double-booked."""
     first = write_client.post("/api/appointments", json=_create_payload())
     assert first.status_code == 201, first.text
+
+    second = write_client.post("/api/appointments", json=_create_payload(patient_id="patient-2"))
+
+    assert second.status_code == 409, second.text
+
+
+def test_create_appointment_back_to_back_is_accepted(write_client: TestClient) -> None:
+    """An appointment starting exactly when another ends is not a collision —
+    half-open intervals mean back-to-back bookings stay legal."""
+    first = write_client.post("/api/appointments", json=_create_payload())
+    assert first.status_code == 201, first.text
+
+    second = write_client.post(
+        "/api/appointments",
+        json=_create_payload(
+            patient_id="patient-2",
+            start_at="2026-04-15T14:50:00Z",
+            end_at="2026-04-15T15:40:00Z",
+        ),
+    )
+
+    assert second.status_code == 201, second.text
+
+
+def test_create_appointment_rebooks_cancelled_slot(write_client: TestClient) -> None:
+    """A cancelled appointment does not block rebooking its slot."""
+    first = write_client.post("/api/appointments", json=_create_payload())
+    assert first.status_code == 201, first.text
+    first_id = first.json()["id"]
+
+    cancel_response = write_client.delete(f"/api/appointments/{first_id}")
+    assert cancel_response.status_code == 200, cancel_response.text
 
     second = write_client.post("/api/appointments", json=_create_payload(patient_id="patient-2"))
 
@@ -479,13 +508,9 @@ def test_create_appointment_accepts_end_before_start(write_client: TestClient) -
     assert body["end_at"] < body["start_at"]
 
 
-def test_update_appointment_ignores_overlap(write_client: TestClient) -> None:
-    """KNOWN HOLE: update_appointment (like create_appointment) never checks
-    AppointmentRepository.list_overlapping, so rescheduling one appointment
-    on top of another is accepted instead of rejected. Follow-up: apply the
-    same overlap check on the update path, excluding the appointment being
-    moved.
-    """
+def test_update_appointment_rejects_overlap(write_client: TestClient) -> None:
+    """Rescheduling one appointment on top of a different appointment is
+    rejected with 409 instead of silently double-booking the slot."""
     first = write_client.post("/api/appointments", json=_create_payload())
     assert first.status_code == 201, first.text
 
@@ -505,9 +530,24 @@ def test_update_appointment_ignores_overlap(write_client: TestClient) -> None:
         json={"start_at": "2026-04-15T14:00:00Z", "end_at": "2026-04-15T14:50:00Z"},
     )
 
+    assert response.status_code == 409, response.text
+
+
+def test_update_appointment_moving_onto_itself_succeeds(write_client: TestClient) -> None:
+    """Moving an appointment a few minutes later only overlaps its own prior
+    slot, which must not count as a collision against itself."""
+    created = write_client.post("/api/appointments", json=_create_payload())
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={"start_at": "2026-04-15T14:10:00Z", "end_at": "2026-04-15T15:00:00Z"},
+    )
+
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["start_at"] == "2026-04-15T14:00:00Z"
+    assert body["start_at"] == "2026-04-15T14:10:00Z"
 
 
 def test_create_recurring_series_creates_all_occurrences(write_client: TestClient) -> None:
@@ -538,6 +578,44 @@ def test_create_recurring_series_creates_all_occurrences(write_client: TestClien
     assert [occ["recurrence_index"] for occ in occurrences] == [0, 1, 2, 3]
     starts = [occ["start_at"] for occ in occurrences]
     assert starts == sorted(starts)
+
+
+def test_create_recurring_series_rejects_colliding_occurrence(
+    write_client: TestClient,
+    appt_repo: InMemoryAppointmentRepository,
+) -> None:
+    """One colliding occurrence fails the whole series rather than creating
+    the non-colliding occurrences and skipping the bad one — a partially
+    booked series is harder to reason about than a rejected request."""
+    blocker = write_client.post(
+        "/api/appointments",
+        json=_create_payload(
+            patient_id="patient-2",
+            start_at="2026-04-29T14:00:00Z",
+            end_at="2026-04-29T14:50:00Z",
+        ),
+    )
+    assert blocker.status_code == 201, blocker.text
+
+    response = write_client.post(
+        "/api/appointments/recurring",
+        json={
+            "patient_id": "patient-1",
+            "title": "Weekly check-in",
+            "start_at": "2026-04-15T14:00:00Z",
+            "end_at": "2026-04-15T14:50:00Z",
+            "duration_minutes": 50,
+            "frequency": "weekly",
+            "timezone": "UTC",
+            "count": 4,
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    remaining = appt_repo.list_by_range(
+        "test-user-123", "2026-04-01T00:00:00Z", "2026-05-01T00:00:00Z"
+    )
+    assert len(remaining) == 1, "no occurrence from the rejected series should persist"
 
 
 # --- Google Calendar push-on-write ---

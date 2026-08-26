@@ -84,6 +84,7 @@ from ..repositories import (
     get_session_repository as _session_repo_factory,
 )
 from ..scheduling_engine.exceptions import (
+    AppointmentConflictError,
     AppointmentNotFoundError,
     InvalidAppointmentError,
     InvalidRecurrenceError,
@@ -316,6 +317,8 @@ def create_appointment(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         user,
@@ -417,6 +420,8 @@ def update_appointment(
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_UPDATED,
         user,
@@ -598,6 +603,8 @@ def create_recurring_appointment(
         )
     except (InvalidAppointmentError, InvalidRecurrenceError) as e:
         raise BadRequestError(str(e)) from e
+    except AppointmentConflictError as e:
+        raise ConflictError(str(e)) from e
     first_appt_id = appointments[0].id if appointments else "series"
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_SERIES_CREATED,

@@ -10,7 +10,12 @@ from datetime import date as date_type
 from typing import TYPE_CHECKING
 
 from ...utcnow import utc_now
-from ..exceptions import AppointmentNotFoundError, InvalidAppointmentError, InvalidRecurrenceError
+from ..exceptions import (
+    AppointmentConflictError,
+    AppointmentNotFoundError,
+    InvalidAppointmentError,
+    InvalidRecurrenceError,
+)
 from ..models.appointment import Appointment, AppointmentStatus, RecurrenceFrequency
 from .recurrence import RecurrenceGenerator
 
@@ -30,6 +35,12 @@ def _to_utc(iso_str: str) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
+def _as_datetime(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
 class SchedulingService:
     """Orchestrates appointment CRUD with validation.
 
@@ -38,6 +49,29 @@ class SchedulingService:
 
     def __init__(self, appointment_repo: AppointmentRepository) -> None:
         self._repo = appointment_repo
+
+    def _reject_if_overlapping(
+        self,
+        user_id: str,
+        start_dt: datetime,
+        end_dt: datetime,
+        *,
+        exclude_appointment_id: str | None = None,
+    ) -> None:
+        """Raise if the proposed slot collides with an existing booking.
+
+        Pure collision check against the calendar as it stands — no rules,
+        no buffers. ``list_overlapping`` already excludes cancelled
+        appointments and treats back-to-back as non-overlapping.
+        """
+        conflicts = self._repo.list_overlapping(
+            user_id, start_dt, end_dt, exclude_appointment_id=exclude_appointment_id
+        )
+        if conflicts:
+            conflicting = conflicts[0]
+            raise AppointmentConflictError(
+                f"Conflicts with an existing appointment at {conflicting.start_at.isoformat()}"
+            )
 
     def create_appointment(
         self,
@@ -78,6 +112,8 @@ class SchedulingService:
         # existing caller changes behaviour by upgrading.
         status = self._requested_status(data.get("status"))
         pending_expires_at = self._pending_expiry(status, data.get("pending_expires_at"))
+
+        self._reject_if_overlapping(user_id, start_dt, end_dt)
 
         now = _now()
         appointment = Appointment(
@@ -138,6 +174,19 @@ class SchedulingService:
             if field not in allowed_fields:
                 raise InvalidAppointmentError(f"Cannot update field: {field}")
             setattr(appointment, field, value)
+
+        # Only re-check collision when a time field actually moved — the
+        # internal start-session call attaches session_id with no time
+        # fields at all and must never see a 409 here.
+        if {"start_at", "end_at", "duration_minutes"} & updates.keys():
+            appointment.start_at = _as_datetime(appointment.start_at)
+            appointment.end_at = _as_datetime(appointment.end_at)
+            self._reject_if_overlapping(
+                user_id,
+                appointment.start_at,
+                appointment.end_at,
+                exclude_appointment_id=appointment_id,
+            )
 
         appointment.updated_at = _now()
 
@@ -294,9 +343,21 @@ class SchedulingService:
         if freq == RecurrenceFrequency.BIWEEKLY:
             rrule_str = "FREQ=WEEKLY;INTERVAL=2"
 
+        # One colliding occurrence fails the whole series rather than
+        # silently dropping it: nothing is written via create_batch until
+        # every occurrence has cleared the collision check, so a rejection
+        # here leaves the calendar untouched instead of half-booked.
         appointments: list[Appointment] = []
         for idx, occ_start in enumerate(occurrences):
             occ_end = occ_start + appt_duration
+            # RecurrenceGenerator returns naive-UTC datetimes; the repo's
+            # overlap query compares them against aware timestamps from the
+            # non-recurring create path, so they need a UTC tzinfo to compare.
+            self._reject_if_overlapping(
+                user_id,
+                occ_start.replace(tzinfo=UTC) if occ_start.tzinfo is None else occ_start,
+                occ_end.replace(tzinfo=UTC) if occ_end.tzinfo is None else occ_end,
+            )
             appt = Appointment(
                 id=master_id if idx == 0 else str(uuid.uuid4()),
                 user_id=user_id,
