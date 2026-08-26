@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
@@ -15,6 +15,7 @@ from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
 from app.routes.scheduling import (
     _get_session_service,
+    get_availability_rule_parse_service,
     get_availability_rule_repository,
     get_google_calendar_service,
     get_scheduling_service,
@@ -29,6 +30,9 @@ from app.scheduling_engine.repositories.availability_rule import (
 )
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
+from app.services.availability_parse_service import AvailabilityRuleParseService
+from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
+from fastapi import HTTPException, status
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
@@ -591,3 +595,168 @@ def test_create_appointment_not_connected_leaves_status_null(
     body = response.json()
     assert body["google_event_id"] is None
     assert body["google_sync_status"] is None
+
+
+# --- Natural-language availability rule parse ---
+
+
+def _wire_parse_service(response: dict[str, Any]) -> None:
+    gateway = FakeStructuredLLMGateway(default_response=StructuredCompletion(data=response))
+    app.dependency_overrides[get_availability_rule_parse_service] = lambda: (
+        AvailabilityRuleParseService(llm_gateway=gateway)
+    )
+
+
+def test_parse_availability_rules_returns_proposals_creates_nothing(
+    write_client: TestClient, rule_repo: InMemoryAvailabilityRuleRepository
+) -> None:
+    """The parse endpoint returns proposals but never writes a rule — rule
+    creation still only happens through POST /api/availability/rules."""
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "block_day_of_week",
+                    "enforcement": "hard",
+                    "day_of_week": 4,
+                    "human_summary": "No Fridays.",
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+
+    response = write_client.post(
+        "/api/availability/rules/parse", json={"text": "No appointments on Fridays"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["proposals"]) == 1
+    assert body["proposals"][0]["rule_type"] == "block_day_of_week"
+    assert body["proposals"][0]["params"] == {"day_of_week": 4}
+    assert body["could_not_parse"] is None
+    assert rule_repo.list_by_user("test-user-123") == []
+
+
+def test_parse_availability_rules_rate_limited(write_client: TestClient) -> None:
+    """A limiter whose check() raises surfaces as 429 — proving the route is
+    rate-limit-gated."""
+
+    def raise_429(_key: str) -> None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again later.",
+        )
+
+    with patch("app.routes.scheduling.get_availability_parse_limiter") as mock_limiter:
+        mock_limiter.return_value.check.side_effect = raise_429
+
+        response = write_client.post(
+            "/api/availability/rules/parse", json={"text": "No appointments on Fridays"}
+        )
+
+    assert response.status_code == 429
+
+
+def test_parse_exclusive_with_no_existing_rules_has_no_conflicts(
+    write_client: TestClient,
+) -> None:
+    """'I only meet on...' with no other working_hours rules present yields
+    exclusive=true and an empty existing_conflicting_rules list."""
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "working_hours",
+                    "enforcement": "hard",
+                    "day_of_week": 0,
+                    "start": "13:00",
+                    "end": "15:00",
+                    "human_summary": "Mondays 1-3.",
+                },
+                {
+                    "rule_type": "working_hours",
+                    "enforcement": "hard",
+                    "day_of_week": 1,
+                    "start": "14:00",
+                    "end": "16:00",
+                    "human_summary": "Tuesdays 2-4.",
+                },
+            ],
+            "could_not_parse": None,
+            "exclusive": True,
+        }
+    )
+
+    response = write_client.post(
+        "/api/availability/rules/parse",
+        json={"text": "I only meet on Mondays from 1-3 and Tuesdays 2-4"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["proposals"]) == 2
+    assert body["exclusive"] is True
+    assert body["existing_conflicting_rules"] == []
+
+
+def test_parse_exclusive_surfaces_existing_conflicting_rule(
+    write_client: TestClient, rule_repo: InMemoryAvailabilityRuleRepository
+) -> None:
+    """A pre-existing Wednesday working_hours rule shows up in
+    existing_conflicting_rules when the parse is exclusive and doesn't
+    mention Wednesday — and is never deleted or modified."""
+    existing = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2, "start": "10:00", "end": "12:00"},
+        },
+    )
+    assert existing.status_code == 201, existing.text
+
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "working_hours",
+                    "enforcement": "hard",
+                    "day_of_week": 0,
+                    "start": "13:00",
+                    "end": "15:00",
+                    "human_summary": "Mondays 1-3.",
+                },
+                {
+                    "rule_type": "working_hours",
+                    "enforcement": "hard",
+                    "day_of_week": 1,
+                    "start": "14:00",
+                    "end": "16:00",
+                    "human_summary": "Tuesdays 2-4.",
+                },
+            ],
+            "could_not_parse": None,
+            "exclusive": True,
+        }
+    )
+
+    response = write_client.post(
+        "/api/availability/rules/parse",
+        json={"text": "I only meet on Mondays from 1-3 and Tuesdays 2-4"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["proposals"]) == 2
+    assert body["exclusive"] is True
+    assert len(body["existing_conflicting_rules"]) == 1
+    assert body["existing_conflicting_rules"][0]["params"]["day_of_week"] == 2
+
+    # No deletion/modification happened, and the two proposals weren't
+    # created either — only the one explicit create call above landed.
+    all_rules = rule_repo.list_by_user("test-user-123")
+    assert len(all_rules) == 1
+    assert all_rules[0].params["day_of_week"] == 2

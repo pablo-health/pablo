@@ -10,6 +10,7 @@ import type { AvailabilityRule } from "@/types/availability"
 const mutateCreate = vi.fn()
 const mutateUpdate = vi.fn()
 const mutateDelete = vi.fn()
+const mutateParse = vi.fn()
 
 let rulesData: AvailabilityRule[] = []
 let listLoading = false
@@ -24,6 +25,7 @@ vi.mock("@/hooks/useAvailability", () => ({
   useCreateAvailabilityRule: () => ({ mutate: mutateCreate, isPending: false }),
   useUpdateAvailabilityRule: () => ({ mutate: mutateUpdate, isPending: false }),
   useDeleteAvailabilityRule: () => ({ mutate: mutateDelete, isPending: false }),
+  useParseAvailabilityRules: () => ({ mutate: mutateParse, isPending: false }),
 }))
 
 function makeRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
@@ -56,6 +58,13 @@ describe("AvailabilitySettings", () => {
     rulesData = []
     listLoading = false
     listErrored = false
+  })
+
+  it("mounts the natural-language rule entry beside the rules list", () => {
+    renderWithClient()
+
+    expect(screen.getByLabelText(/describe your availability/i)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Parse" })).toBeInTheDocument()
   })
 
   it("shows an explanatory empty state when there are no rules", () => {

@@ -897,6 +897,13 @@ class Settings(BaseSettings):
         description="Gemini model for EHR navigation LLM fallback",
     )
 
+    # Natural-language availability rule entry
+    availability_parse_daily_limit: int = Field(
+        default=100,
+        ge=1,
+        description="Max natural-language availability-rule parse calls per user per day",
+    )
+
     # Per-user burst rate limits. These guard the expensive LLM- and
     # transcription-backed endpoints against a single authenticated caller
     # driving unbounded compute spend. They are per-deployment abuse

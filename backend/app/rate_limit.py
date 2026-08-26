@@ -241,6 +241,27 @@ def get_ehr_navigate_limiter() -> RateLimiter:
     return _ehr_navigate_limiter
 
 
+# Availability parse: per-user daily rate limit (lazily initialized from settings).
+_availability_parse_limiter: RateLimiter | None = None
+
+
+def get_availability_parse_limiter() -> RateLimiter:
+    """Get the per-user daily rate limiter for the availability-rule parse endpoint."""
+    global _availability_parse_limiter  # noqa: PLW0603
+    if _availability_parse_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _availability_parse_limiter = _create_limiter(
+            max_requests=settings.availability_parse_daily_limit,
+            window_seconds=86_400,
+        )
+        logger.info(
+            "Availability parse rate limiter: %s", type(_availability_parse_limiter).__name__
+        )
+    return _availability_parse_limiter
+
+
 # Chat send: per-user burst limit (per-minute + per-hour sliding windows).
 _chat_send_limiter: RateLimiter | None = None
 

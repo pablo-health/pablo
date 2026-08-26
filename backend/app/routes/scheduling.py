@@ -20,6 +20,7 @@ from ..auth.service import (
     require_active_subscription,
     require_baa_acceptance,
 )
+from ..db import release_db_connection
 from ..models import (
     AuditAction,
     ScheduleSessionRequest,
@@ -45,6 +46,9 @@ from ..models.scheduling import (
     FreeSlotsResponse,
     GoogleCalendarAuthResponse,
     GoogleCalendarStatusResponse,
+    ParseAvailabilityRulesRequest,
+    ParseAvailabilityRulesResponse,
+    ProposedAvailabilityRule,
     StartSessionFromAppointmentRequest,
     TimeSlotResponse,
     UpdateAppointmentRequest,
@@ -52,6 +56,7 @@ from ..models.scheduling import (
     UpdateAvailabilityRuleRequest,
 )
 from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
+from ..rate_limit import get_availability_parse_limiter
 from ..repositories import (
     NotesRepository,
     PatientRepository,
@@ -95,6 +100,7 @@ from ..services import (
     SessionService,
     get_audit_service,
 )
+from ..services.availability_parse_service import AvailabilityRuleParseService
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -836,6 +842,62 @@ def delete_availability_rule(
     deleted = rule_repo.delete(rule_id, ctx.user_id)
     if not deleted:
         raise NotFoundError(f"Rule not found: {rule_id}")
+
+
+def get_availability_rule_parse_service() -> AvailabilityRuleParseService:
+    """Get the natural-language availability-rule parse service instance."""
+    return AvailabilityRuleParseService()
+
+
+@router.post("/api/availability/rules/parse", response_model=ParseAvailabilityRulesResponse)
+def parse_availability_rules(
+    request: ParseAvailabilityRulesRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
+    parse_service: AvailabilityRuleParseService = Depends(get_availability_rule_parse_service),
+) -> ParseAvailabilityRulesResponse:
+    """Parse a natural-language sentence into proposed availability rules.
+
+    Two-stage propose-then-confirm: this never creates a rule. The caller
+    reviews (and may edit) each proposal, then confirms it through the
+    existing create-rule endpoint -- no new write path exists here.
+    """
+    get_availability_parse_limiter().check(ctx.user_id)
+
+    # Release the request-scoped DB connection before the LLM call, same
+    # seam as the note-import route (sessions.py) -- otherwise the pooled
+    # connection (and its open transaction) sits idle across the round trip.
+    release_db_connection()
+
+    result = parse_service.parse(request.text)
+
+    proposals = [
+        ProposedAvailabilityRule(
+            rule_type=p.rule_type,
+            enforcement=p.enforcement,
+            params=p.params,
+            human_summary=p.human_summary,
+        )
+        for p in result.proposals
+    ]
+
+    existing_conflicting_rules: list[AvailabilityRuleResponse] = []
+    if result.exclusive and proposals:
+        proposed_days = {
+            p.params["day_of_week"] for p in result.proposals if p.rule_type == "working_hours"
+        }
+        existing_conflicting_rules = [
+            _rule_to_response(r)
+            for r in rule_repo.list_by_user(ctx.user_id)
+            if r.rule_type == "working_hours" and r.params.get("day_of_week") not in proposed_days
+        ]
+
+    return ParseAvailabilityRulesResponse(
+        proposals=proposals,
+        could_not_parse=result.could_not_parse,
+        exclusive=result.exclusive,
+        existing_conflicting_rules=existing_conflicting_rules,
+    )
 
 
 # --- Appointment type endpoints ---

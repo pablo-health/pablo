@@ -5,12 +5,15 @@
 import type {
   AvailabilityRule,
   CreateAvailabilityRuleRequest,
+  ParseAvailabilityRulesRequest,
+  ParseAvailabilityRulesResponse,
   UpdateAvailabilityRuleRequest,
 } from "@/types/availability"
 import {
   createAvailabilityRule,
   deleteAvailabilityRule,
   listAvailabilityRules,
+  parseAvailabilityRules,
   updateAvailabilityRule,
 } from "@/lib/api/availability"
 import { queryKeys } from "@/lib/api/queryKeys"
@@ -45,5 +48,11 @@ export function useDeleteAvailabilityRule(token?: string) {
   return useAuthMutation<void, string>({
     mutationFn: (ruleId) => deleteAvailabilityRule(ruleId, token),
     invalidateKeys: [queryKeys.availability.all],
+  })
+}
+
+export function useParseAvailabilityRules(token?: string) {
+  return useAuthMutation<ParseAvailabilityRulesResponse, ParseAvailabilityRulesRequest>({
+    mutationFn: (data) => parseAvailabilityRules(data, token),
   })
 }

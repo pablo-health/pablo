@@ -27,6 +27,7 @@ import type {
   EnforcementLevel,
   RuleType,
 } from "@/types/availability"
+import { NaturalLanguageRuleEntry } from "./NaturalLanguageRuleEntry"
 
 const DAY_OPTIONS = [
   { value: 0, label: "Monday" },
@@ -712,6 +713,8 @@ export function AvailabilitySettings() {
           {listError}
         </p>
       )}
+
+      <NaturalLanguageRuleEntry />
 
       {formOpen ? (
         <RuleForm
