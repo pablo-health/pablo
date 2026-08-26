@@ -164,24 +164,35 @@ describe("useAppointments hooks", () => {
       expect(queryClient.getQueryData(detailKey)).toEqual(detailData)
     })
 
-    it("does not trigger a second list fetch for an active calendar view", async () => {
+    // The load-bearing one. Every other test here seeds the cache by hand and
+    // never mounts a list observer, so none of them exercise what the calendar
+    // actually does: hold an ACTIVE useAppointmentList while a create resolves.
+    // The appointment appearing on the grid is the whole feature, and until now
+    // nothing asserted it end to end at the hook seam.
+    it("an active list observer sees the created appointment without a reload", async () => {
       const queryClient = newQueryClient()
       const range = { start: "2026-01-04T00:00:00Z", end: "2026-01-11T00:00:00Z" }
       vi.mocked(schedulingApi.listAppointments).mockResolvedValue({ data: [], total: 0 })
 
       const wrapper = createWrapper(queryClient)
-      const { result: listResult } = renderHook(
-        () => useAppointmentList(range.start, range.end),
+      const { result } = renderHook(
+        () => ({
+          list: useAppointmentList(range.start, range.end),
+          create: useCreateAppointment(),
+        }),
         { wrapper },
       )
-      await waitFor(() => expect(listResult.current.isSuccess).toBe(true))
-      expect(schedulingApi.listAppointments).toHaveBeenCalledTimes(1)
+      await waitFor(() => expect(result.current.list.isSuccess).toBe(true))
+      expect(result.current.list.data?.data).toHaveLength(0)
 
       const created = makeAppointment({ start_at: "2026-01-05T15:00:00Z" })
       vi.mocked(schedulingApi.createAppointment).mockResolvedValue(created)
+      vi.mocked(schedulingApi.listAppointments).mockResolvedValue({
+        data: [created],
+        total: 1,
+      })
 
-      const { result: createResult } = renderHook(() => useCreateAppointment(), { wrapper })
-      await createResult.current.mutateAsync({
+      await result.current.create.mutateAsync({
         patient_id: "patient-1",
         title: "Therapy session",
         start_at: created.start_at,
@@ -189,7 +200,34 @@ describe("useAppointments hooks", () => {
         duration_minutes: 50,
       })
 
-      expect(schedulingApi.listAppointments).toHaveBeenCalledTimes(1)
+      await waitFor(() =>
+        expect(result.current.list.data?.data.map((a) => a.id)).toEqual([created.id]),
+      )
+    })
+
+    // The append is an optimisation; the invalidation is what makes the grid
+    // agree with the server. #742 shipped the former and dropped the latter,
+    // leaving one mechanism with no backstop — assert both are wired.
+    it("also invalidates the lists so the grid reconciles with the server", async () => {
+      const queryClient = newQueryClient()
+      vi.mocked(schedulingApi.createAppointment).mockResolvedValue(makeAppointment())
+
+      const { result } = renderHook(() => useCreateAppointment(), {
+        wrapper: createWrapper(queryClient),
+      })
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries")
+
+      await result.current.mutateAsync({
+        patient_id: "patient-1",
+        title: "Therapy session",
+        start_at: "2026-01-05T15:00:00Z",
+        end_at: "2026-01-05T15:50:00Z",
+        duration_minutes: 50,
+      })
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: queryKeys.appointments.lists(),
+      })
     })
   })
 
