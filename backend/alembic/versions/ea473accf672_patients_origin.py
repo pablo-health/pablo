@@ -17,7 +17,7 @@ created by staff — the common case stays unmarked. A non-NULL value names
 which intake surface created the row.
 
 Revision ID: ea473accf672
-Revises: a1c7f6e93d2b
+Revises: 3873a3d6dc33
 Create Date: 2026-08-26
 """
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "ea473accf672"
-down_revision: str | Sequence[str] | None = "a1c7f6e93d2b"
+down_revision: str | Sequence[str] | None = "3873a3d6dc33"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
