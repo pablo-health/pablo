@@ -19,6 +19,10 @@ const mutateParse = vi.fn()
 let rulesData: AvailabilityRule[] = []
 let listLoading = false
 let listErrored = false
+let preferencesData: { working_hours_start: number; working_hours_end: number } | undefined = {
+  working_hours_start: 8,
+  working_hours_end: 18,
+}
 
 vi.mock("@/hooks/useAvailability", () => ({
   useAvailabilityRules: () => ({
@@ -30,6 +34,10 @@ vi.mock("@/hooks/useAvailability", () => ({
   useUpdateAvailabilityRule: () => ({ mutate: mutateUpdate, isPending: false }),
   useDeleteAvailabilityRule: () => ({ mutate: mutateDelete, isPending: false }),
   useParseAvailabilityRules: () => ({ mutate: mutateParse, isPending: false }),
+}))
+
+vi.mock("@/hooks/usePreferences", () => ({
+  usePreferences: () => ({ data: preferencesData }),
 }))
 
 function makeRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
@@ -62,6 +70,7 @@ describe("AvailabilitySettings", () => {
     rulesData = []
     listLoading = false
     listErrored = false
+    preferencesData = { working_hours_start: 8, working_hours_end: 18 }
   })
 
   it("mounts the natural-language rule entry beside the rules list", () => {
@@ -77,6 +86,47 @@ describe("AvailabilitySettings", () => {
     expect(
       screen.getByText(/don't have any availability rules yet/i)
     ).toBeInTheDocument()
+  })
+
+  describe("seed from calendar display hours", () => {
+    it("shows the seed action when there are no rules, and does not create anything on its own", () => {
+      renderWithClient()
+
+      expect(
+        screen.getByRole("button", { name: "Start from your calendar display hours" })
+      ).toBeInTheDocument()
+      expect(mutateCreate).not.toHaveBeenCalled()
+    })
+
+    it("hides the seed action once a rule exists", () => {
+      rulesData = [makeRule({ id: "r1" })]
+      renderWithClient()
+
+      expect(
+        screen.queryByRole("button", { name: "Start from your calendar display hours" })
+      ).not.toBeInTheDocument()
+    })
+
+    it("creates five weekday working_hours rules from the display preference", async () => {
+      const user = userEvent.setup()
+      renderWithClient()
+
+      await user.click(
+        screen.getByRole("button", { name: "Start from your calendar display hours" })
+      )
+
+      expect(mutateCreate).toHaveBeenCalledTimes(5)
+      for (let dayOfWeek = 0; dayOfWeek <= 4; dayOfWeek++) {
+        expect(mutateCreate).toHaveBeenCalledWith(
+          {
+            rule_type: "working_hours",
+            enforcement: "hard",
+            params: { day_of_week: dayOfWeek, start: "08:00", end: "18:00" },
+          },
+          expect.anything()
+        )
+      }
+    })
   })
 
   it("lists existing rules grouped by category", () => {

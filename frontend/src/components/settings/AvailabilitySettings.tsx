@@ -20,6 +20,7 @@ import {
   useUpdateAvailabilityRule,
   useDeleteAvailabilityRule,
 } from "@/hooks/useAvailability"
+import { usePreferences } from "@/hooks/usePreferences"
 import { ApiError } from "@/lib/api/client"
 import { RULE_TYPES, ENFORCEMENT_LEVELS } from "@/types/availability"
 import type {
@@ -743,6 +744,7 @@ function errorMessage(err: unknown): string {
 
 export function AvailabilitySettings() {
   const { data, isLoading, error } = useAvailabilityRules()
+  const { data: preferences } = usePreferences()
   const createMutation = useCreateAvailabilityRule()
   const updateMutation = useUpdateAvailabilityRule()
   const deleteMutation = useDeleteAvailabilityRule()
@@ -752,6 +754,7 @@ export function AvailabilitySettings() {
   const [formError, setFormError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [schedulingDefaultsError, setSchedulingDefaultsError] = useState<string | null>(null)
+  const [seedError, setSeedError] = useState<string | null>(null)
 
   const rules = data?.data ?? []
   // session_defaults is edited exclusively through the dedicated fields
@@ -806,6 +809,19 @@ export function AvailabilitySettings() {
     deleteMutation.mutate(rule.id, {
       onError: (err) => setListError(errorMessage(err)),
     })
+  }
+
+  function handleSeedFromDisplayHours() {
+    if (!preferences) return
+    setSeedError(null)
+    const start = `${String(preferences.working_hours_start).padStart(2, "0")}:00`
+    const end = `${String(preferences.working_hours_end).padStart(2, "0")}:00`
+    for (let dayOfWeek = 0; dayOfWeek <= 4; dayOfWeek++) {
+      createMutation.mutate(
+        { rule_type: "working_hours", enforcement: "hard", params: { day_of_week: dayOfWeek, start, end } },
+        { onError: (err) => setSeedError(errorMessage(err)) }
+      )
+    }
   }
 
   function handleSchedulingDefaultsSave(fields: SchedulingDefaultsFields) {
@@ -866,13 +882,28 @@ export function AvailabilitySettings() {
       />
 
       {visibleRules.length === 0 && (
-        <div className="rounded-md border border-dashed border-neutral-300 p-6 text-center">
+        <div className="rounded-md border border-dashed border-neutral-300 p-6 text-center space-y-3">
           <p className="text-sm text-neutral-600">
             You don&apos;t have any availability rules yet. A rule controls when
             appointments can be booked — for example blocking Fridays, capping
             how many sessions you take in a day, or requiring a buffer between
             back-to-back sessions.
           </p>
+          {preferences && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSeedFromDisplayHours}
+              disabled={createMutation.isPending}
+            >
+              Start from your calendar display hours
+            </Button>
+          )}
+          {seedError && (
+            <p role="alert" className="text-sm text-red-600">
+              {seedError}
+            </p>
+          )}
         </div>
       )}
 
