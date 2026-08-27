@@ -10,8 +10,10 @@ supports those two.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.auth import patient_context as patient_context_module
@@ -25,6 +27,7 @@ from app.auth.patient_context import (
     get_patient_resolver_registry,
 )
 from app.auth.service import TenantContext, verify_token
+from app.db import middleware as middleware_module
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
@@ -177,10 +180,29 @@ class TestResolverInterfaceHasNoIdpTypes:
     """
 
     def test_protocol_signature_mentions_no_identity_provider(self) -> None:
-        source = inspect.getsource(patient_context_module.PatientPrincipalResolver)
-        lowered = source.lower()
+        """The *interface* must be vendor-free. Prose about vendors is not.
+
+        The docstring is stripped before checking, deliberately. It carries
+        a warning that names Firebase as a trap for future resolver authors
+        — "whatever you mint must be structurally unacceptable to the
+        clinician verifiers" — and that warning is worth more than a
+        blanket no-vendor-words rule. What has to stay clean is the
+        signature: the members and annotations a second front door must
+        satisfy.
+        """
+        protocol = patient_context_module.PatientPrincipalResolver
+        source = inspect.getsource(protocol)
+        docstring = inspect.getdoc(protocol) or ""
+        signature_only = source
+        for line in docstring.splitlines():
+            signature_only = signature_only.replace(line, "")
+
+        lowered = signature_only.lower()
         for vendor in ("firebase", "oidc", "saml", "jwt", "smart", "oauth"):
-            assert vendor not in lowered, f"resolver protocol names {vendor}"
+            assert vendor not in lowered, f"resolver protocol signature names {vendor}"
+
+        # The annotations name only this module's own types.
+        assert set(protocol.resolve.__annotations__) == {"credential", "return"}
 
     def test_the_credential_carries_opaque_material_only(self) -> None:
         fields = set(PatientCredential.__dataclass_fields__)
@@ -330,6 +352,58 @@ class TestHardSeparation:
         assert response.status_code == 401
         assert sloppy.calls == [], "a clinician credential reached a patient resolver"
 
+    @pytest.mark.parametrize("multi_tenancy", [True, False])
+    def test_the_real_middleware_stashes_the_identity_the_guard_reads(
+        self, monkeypatch: pytest.MonkeyPatch, multi_tenancy: bool
+    ) -> None:
+        """The guard above is only worth anything if the wiring feeds it.
+
+        The previous test installs its own middleware to set
+        ``verified_identity``, so it proves the guard works *given* that
+        state — not that anything in production produces it. The real
+        producer is ``DatabaseSessionMiddleware``, and the verify-and-stash
+        step used to sit inside its ``if settings.multi_tenancy_enabled:``
+        branch. That flag defaults to False, so on a single-tenant install
+        — the default, and the shape a self-hosted companion would run —
+        nothing ever set the value and the guard was dead code while its
+        docstring claimed otherwise.
+
+        Parametrized over both tenancy modes precisely because only one of
+        them was broken, and the broken one was the default.
+        """
+
+        identity = SimpleNamespace(provider="oidc", email="clinician@example.test", claims={})
+
+        monkeypatch.setattr(
+            middleware_module,
+            "get_settings",
+            lambda: SimpleNamespace(multi_tenancy_enabled=multi_tenancy),
+        )
+        monkeypatch.setattr(middleware_module, "get_session_factory", lambda: MagicMock)
+        monkeypatch.setattr(middleware_module, "set_tenant_schema", lambda *_: None)
+        monkeypatch.setattr("app.auth.service.verify_token", lambda _token: identity)
+        monkeypatch.setattr(
+            middleware_module,
+            "_resolve_schema_from_request",
+            lambda _request: "practice_abc",
+        )
+
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer clinician-token"}
+        request.state = SimpleNamespace()
+
+        async def _call_next(_request: object) -> object:
+            return SimpleNamespace()
+
+        middleware = middleware_module.DatabaseSessionMiddleware(app=MagicMock())
+        asyncio.run(middleware.dispatch(request, _call_next))
+
+        assert getattr(request.state, "verified_identity", None) is not None, (
+            "DatabaseSessionMiddleware did not stash an identity, so "
+            "get_patient_context's clinician guard is dead code "
+            f"(multi_tenancy_enabled={multi_tenancy})"
+        )
+
     def test_a_patient_credential_does_not_satisfy_a_clinician_dependency(self) -> None:
         """The reverse direction, at the verifier every clinician path runs through.
 
@@ -404,6 +478,6 @@ class TestDependencyRaisesNotReturnsNone:
         request = _StubRequest({"authorization": "Bearer nope"})
 
         with pytest.raises(HTTPException) as excinfo:
-            get_patient_context(request, registry)  # type: ignore[arg-type]
+            asyncio.run(get_patient_context(request, registry))  # type: ignore[arg-type]
 
         assert excinfo.value.status_code == 401

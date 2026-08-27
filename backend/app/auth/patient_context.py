@@ -42,7 +42,12 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from fastapi import Depends, HTTPException, Request, status
 
-from ..db import arm_current_patient_id, get_db_session, set_tenant_schema
+from ..db import (
+    DEFAULT_PRACTICE_SCHEMA,
+    arm_current_patient_id,
+    get_db_session,
+    set_tenant_schema,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -129,10 +134,30 @@ class PatientPrincipalResolver(Protocol):
     """A front door: turns one kind of credential into a patient principal.
 
     ``credential_kind`` is what the resolver is registered under.
-    ``resolve`` returns ``None`` for "not mine, or not valid" — it does
-    not raise to signal rejection, because a resolver's failure must not
-    be able to choose the response the caller sees. The dependency turns
-    every unresolved credential into an identical 401.
+
+    **Contract for implementers, and both halves are load-bearing:**
+
+    1. **Return ``None`` to reject.** Raising is for infrastructure
+       failure only. The registry treats an exception as a rejection and
+       moves on to the *next* resolver registered for this kind, so a
+       front door that raises on a forged signature — rather than
+       returning ``None`` — forfeits its precedence and hands the
+       credential to whatever sits behind it. The effective strength of a
+       credential kind is its weakest registered resolver.
+    2. **A patient credential must fail every clinician verifier.** The
+       reverse separation direction (a patient token not satisfying
+       ``get_current_user_id`` / ``get_tenant_context``) currently holds
+       only because no patient credential format exists yet. If a future
+       front door mints something a clinician verifier accepts — Firebase
+       custom tokens being the obvious trap — then ``verify_token`` would
+       accept it and the clinician auto-provision path would treat the
+       patient as a user. Whatever you mint must be structurally
+       unacceptable to those verifiers, not merely different in practice.
+
+    Resolvers should also avoid blocking the event loop:
+    ``get_patient_context`` is an async dependency (it has to be — see its
+    docstring), so a resolver doing network I/O should not do it
+    synchronously on the calling thread.
     """
 
     credential_kind: str
@@ -170,20 +195,26 @@ class PatientResolverRegistry:
         is tried. That is deliberate: an adapter reaching a down identity
         provider should not be able to turn a patient's request into a
         500 that discloses which front door broke, and it must not skip
-        the resolvers registered behind it. The exception type is logged
-        without the credential material.
+        the resolvers registered behind it.
+
+        Only the exception's *type name* is logged — no message, no
+        traceback. Identity-provider SDKs routinely put the offending
+        token into the exception text (JWT libraries quote the token they
+        could not decode; HTTP clients attach request bodies), so
+        ``exc_info=True`` here would be a credential-to-logs channel in a
+        codebase whose rule is that neither PHI nor secrets reach a log.
         """
         for resolver in self._by_kind.get(credential.kind, ()):
             try:
                 context = resolver.resolve(credential)
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "Patient principal resolver failed",
                     extra={
                         "credential_kind": credential.kind,
                         "resolver": type(resolver).__name__,
+                        "error_type": type(exc).__name__,
                     },
-                    exc_info=True,
                 )
                 continue
             if context is not None:
@@ -215,6 +246,16 @@ def _credential_from_request(request: Request) -> PatientCredential | None:
     return PatientCredential(kind=scheme.lower(), value=value.strip())
 
 
+def _is_tenant_schema(schema: str) -> bool:
+    """Is this the schema of an actual practice, rather than a shared one?
+
+    ``platform``, ``public`` and ``practice`` (the provisioning template)
+    are all valid identifiers and all wrong answers for a patient request.
+    A per-practice schema is ``practice_<id>``.
+    """
+    return schema.startswith(f"{DEFAULT_PRACTICE_SCHEMA}_")
+
+
 def _unauthenticated() -> HTTPException:
     """The single 401 every failure to resolve a patient produces.
 
@@ -235,11 +276,28 @@ def _unauthenticated() -> HTTPException:
     )
 
 
-def get_patient_context(
+async def get_patient_context(
     request: Request,
     registry: PatientResolverRegistry = Depends(get_patient_resolver_registry),
 ) -> PatientContext:
     """FastAPI dependency: resolve the caller to an authenticated patient.
+
+    **This must stay `async`.** FastAPI runs a *sync* dependency in a
+    throwaway anyio threadpool worker whose context is a copy, so a
+    ``ContextVar.set()`` inside one is discarded the moment it returns.
+    ``set_tenant_schema`` below writes ``_current_tenant_schema``, and the
+    pool-checkout listener re-applies ``search_path`` from exactly that
+    ContextVar on every connection this request later acquires. As a sync
+    dependency, the schema would be lost: the in-connection ``SET`` holds
+    only until the first mid-request commit releases the connection, and
+    the next checkout would then stamp whatever the middleware left —
+    ``DEFAULT_PRACTICE_SCHEMA``, the shared template — while the patient
+    GUC below stayed correctly armed off ``Session.info``. The second half
+    of the request would read and write the template schema under a live
+    patient identity. The GUC survives that hop because it has a
+    ``Session.info`` channel (see ``arm_current_user_id``); the schema has
+    no such channel, so this dependency has to run on the event loop
+    instead. A regression test covers it.
 
     Patient routes depend on this and on nothing clinician-shaped. It:
 
@@ -262,9 +320,19 @@ def get_patient_context(
     identity when the token is a clinician's, so the check costs a
     ``getattr`` rather than a second round trip to the identity provider.
 
-    The reverse direction needs no guard: a patient credential is not a
-    Firebase or OIDC token, so the clinician dependencies reject it in
-    their verifiers. Both directions are covered by tests.
+    The reverse direction needs no guard *today*: a patient credential is
+    not a Firebase or OIDC token, so the clinician dependencies reject it
+    in their verifiers. That is a property of the credential format, not
+    of this code, so it is written down as a requirement on resolver
+    authors — see ``PatientPrincipalResolver``.
+
+    **Not usable on a WebSocket route.** This takes a ``Request``, and
+    ``DatabaseSessionMiddleware`` is a ``BaseHTTPMiddleware`` that does
+    not run for the websocket scope at all — so neither the clinician
+    short-circuit's stash nor the request-scoped session exists there. A
+    patient WebSocket endpoint (companion chat is the obvious candidate)
+    needs a parallel dependency that rebuilds *both* the guard and the
+    arming; it must not reach for this one.
 
     Raises:
         HTTPException: 401 if no patient principal can be resolved.
@@ -279,6 +347,21 @@ def get_patient_context(
 
     context = registry.resolve(credential)
     if context is None:
+        raise _unauthenticated()
+
+    if not _is_tenant_schema(context.practice_schema):
+        # A resolver is trusted code, but this dependency is the single
+        # choke point where a resolver's answer becomes a search_path, so
+        # it fences it. ``_validate_schema_name`` further down only proves
+        # the name is injection-safe: "platform", "public" and the shared
+        # "practice" template all satisfy it, and so does any *other*
+        # tenant's schema. A resolver that derived the schema from a token
+        # claim and got it wrong would otherwise drive the session
+        # straight into that schema with a patient principal armed.
+        logger.error(
+            "Patient resolver returned a non-tenant schema; refusing",
+            extra={"credential_kind": credential.kind},
+        )
         raise _unauthenticated()
 
     session = get_db_session()

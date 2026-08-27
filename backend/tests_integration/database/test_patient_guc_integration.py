@@ -26,7 +26,7 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 
 # Skip the whole module if no Postgres URL is available.
 _DB_URL = os.environ.get("DATABASE_URL", "")
@@ -226,3 +226,259 @@ class TestOffRequestWorkDoesNotInheritAPatient:
             pass
 
         assert _current_patient_id.get() == _PATIENT_A
+
+
+# ---------------------------------------------------------------------------
+# IDOR: can patient A reach patient B's row?
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def idor_table():  # type: ignore[return]
+    """A patient-scoped canary table with the policy shape u37i.3 will ship.
+
+    This is a PROOF OF MECHANISM, not the product's policies — no real
+    patient-scoped table has an ``app.current_patient_id`` policy yet, and
+    writing them is a separate change. What it proves is the thing worth
+    knowing before those policies get written: that the GUC this PR adds is
+    actually usable as an isolation boundary, that it fails closed when
+    unset, and that a clinician principal does not satisfy it.
+
+    Owner-bypass matters here. ``ENABLE ROW LEVEL SECURITY`` alone is not
+    enough when the connecting role owns the table — which it does, since
+    this connects as ``pablo`` and ``pablo`` runs the CREATE. Without
+    ``FORCE``, every assertion below would pass vacuously by bypassing the
+    policy rather than satisfying it.
+    """
+    engine = create_engine(_DB_URL)
+    with engine.begin() as conn:
+        # Guard against a vacuous suite: if the connecting role bypasses
+        # RLS, every isolation assertion here is meaningless.
+        bypasses = conn.execute(
+            text("SELECT rolbypassrls OR rolsuper FROM pg_roles WHERE rolname = current_user")
+        ).scalar()
+        if bypasses:
+            pytest.skip("connecting role bypasses RLS; IDOR assertions would pass vacuously")
+
+        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_SCHEMA}"))
+        conn.execute(
+            text(f"""
+                CREATE TABLE IF NOT EXISTS {_SCHEMA}.companion_note (
+                    id uuid PRIMARY KEY,
+                    patient_id uuid NOT NULL,
+                    body text NOT NULL
+                )
+            """)
+        )
+        conn.execute(text(f"ALTER TABLE {_SCHEMA}.companion_note ENABLE ROW LEVEL SECURITY"))
+        conn.execute(text(f"ALTER TABLE {_SCHEMA}.companion_note FORCE ROW LEVEL SECURITY"))
+        conn.execute(
+            text(f"""
+                CREATE POLICY companion_note_patient_scope
+                ON {_SCHEMA}.companion_note
+                USING (patient_id::text = current_setting('app.current_patient_id', true))
+            """)
+        )
+
+    # Seed one row per patient, with RLS temporarily off so the seed itself
+    # is not the thing under test.
+    with engine.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {_SCHEMA}.companion_note NO FORCE ROW LEVEL SECURITY"))
+        conn.execute(text(f"ALTER TABLE {_SCHEMA}.companion_note DISABLE ROW LEVEL SECURITY"))
+        for patient, body in ((_PATIENT_A, "note for A"), (_PATIENT_B, "note for B")):
+            conn.execute(
+                text(
+                    f"INSERT INTO {_SCHEMA}.companion_note (id, patient_id, body) "  # noqa: S608
+                    "VALUES (gen_random_uuid(), CAST(:pid AS uuid), :body)"
+                ),
+                {"pid": patient, "body": body},
+            )
+        conn.execute(text(f"ALTER TABLE {_SCHEMA}.companion_note ENABLE ROW LEVEL SECURITY"))
+        conn.execute(text(f"ALTER TABLE {_SCHEMA}.companion_note FORCE ROW LEVEL SECURITY"))
+
+    yield
+
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP SCHEMA IF EXISTS {_SCHEMA} CASCADE"))
+    engine.dispose()
+
+
+@pytest.mark.usefixtures("idor_table")
+class TestPatientCannotReachAnotherPatientsRow:
+    """The direct-object-reference attempt, at the layer that must stop it.
+
+    A patient authenticated as A asks for B's data — by listing, by naming
+    B's id outright, and by trying to write to B's row. Every one must come
+    back empty rather than forbidden: RLS filters, it does not raise, so
+    "zero rows" is the correct shape of the refusal and also means an
+    attacker learns nothing about whether B's row exists.
+    """
+
+    def test_the_seed_is_visible_to_its_owner(self) -> None:
+        """Guard against the whole class passing because the table is empty."""
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            rows = (
+                session.execute(
+                    text(f"SELECT body FROM {_SCHEMA}.companion_note")  # noqa: S608
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == ["note for A"]
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_listing_never_includes_the_other_patient(self) -> None:
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            rows = (
+                session.execute(
+                    text(f"SELECT body FROM {_SCHEMA}.companion_note")  # noqa: S608
+                )
+                .scalars()
+                .all()
+            )
+            assert "note for B" not in rows
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_naming_the_other_patients_id_outright_returns_nothing(self) -> None:
+        """The actual IDOR move: armed as A, ask for B by id."""
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            rows = (
+                session.execute(
+                    text(
+                        f"SELECT body FROM {_SCHEMA}.companion_note "  # noqa: S608
+                        "WHERE patient_id = CAST(:pid AS uuid)"
+                    ),
+                    {"pid": _PATIENT_B},
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == []
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_writing_to_the_other_patients_row_affects_nothing(self) -> None:
+        """Reads are not the only IDOR surface; a blind write must miss too."""
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            result = session.execute(
+                text(
+                    f"UPDATE {_SCHEMA}.companion_note SET body = 'tampered' "  # noqa: S608
+                    "WHERE patient_id = CAST(:pid AS uuid)"
+                ),
+                {"pid": _PATIENT_B},
+            )
+            assert result.rowcount == 0
+            session.commit()
+        finally:
+            session.rollback()
+            session.close()
+
+        # And B's row is intact when B asks for it.
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_B)
+            rows = (
+                session.execute(
+                    text(f"SELECT body FROM {_SCHEMA}.companion_note")  # noqa: S608
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == ["note for B"]
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_deleting_the_other_patients_row_affects_nothing(self) -> None:
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            result = session.execute(
+                text(
+                    f"DELETE FROM {_SCHEMA}.companion_note "  # noqa: S608
+                    "WHERE patient_id = CAST(:pid AS uuid)"
+                ),
+                {"pid": _PATIENT_B},
+            )
+            assert result.rowcount == 0
+            session.commit()
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_no_principal_armed_sees_nothing(self) -> None:
+        """Fail-closed: an unarmed session is not an admin session."""
+        session = create_standalone_session(_SCHEMA)
+        try:
+            _reset_principal_gucs(session)
+            rows = (
+                session.execute(
+                    text(f"SELECT body FROM {_SCHEMA}.companion_note")  # noqa: S608
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == []
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_a_clinician_principal_does_not_satisfy_a_patient_policy(self) -> None:
+        """Cross-principal: arming the clinician GUC must not open patient rows.
+
+        This is the database-level half of the separation the dependency
+        enforces at the door, and the reason the two ids get two GUCs
+        instead of sharing one.
+        """
+        session = create_standalone_session(_SCHEMA)
+        try:
+            _reset_principal_gucs(session)
+            arm_current_user_id(session, _CLINICIAN)
+            rows = (
+                session.execute(
+                    text(f"SELECT body FROM {_SCHEMA}.companion_note")  # noqa: S608
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == []
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_a_clinician_id_equal_to_a_patient_id_still_sees_nothing(self) -> None:
+        """The collision case that a single shared GUC would have allowed.
+
+        Both ids are uuids drawn from the same space. If the policy read one
+        "current principal" GUC, a clinician whose user id happened to equal
+        a patient id would read that patient's rows. Two GUCs make the
+        collision unrepresentable — this pins that.
+        """
+        session = create_standalone_session(_SCHEMA)
+        try:
+            _reset_principal_gucs(session)
+            arm_current_user_id(session, _PATIENT_B)  # clinician id == patient B's id
+            rows = (
+                session.execute(
+                    text(f"SELECT body FROM {_SCHEMA}.companion_note")  # noqa: S608
+                )
+                .scalars()
+                .all()
+            )
+            assert rows == []
+        finally:
+            session.rollback()
+            session.close()

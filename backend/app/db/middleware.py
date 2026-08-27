@@ -34,23 +34,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_schema_from_request(request: Request) -> str | None:
-    """Extract tenant schema from the Authorization header.
+def _verify_and_stash_clinician_identity(request: Request) -> None:
+    """Verify a bearer token as a clinician's and cache the result.
 
-    Verifies the bearer token (Firebase, or a configured OIDC issuer —
-    each verifier is tried in turn) to get the user's email, then
-    resolves the practice schema. Tenant resolution is email-based,
-    so it is provider-agnostic; only the verification step differs.
-    Returns None if unauthenticated or no mapping. Errors are swallowed —
-    auth dependencies will reject bad tokens later.
+    Runs on **every** request carrying a bearer token, whether or not
+    multi-tenancy is enabled. Two things depend on that being
+    unconditional:
+
+    * Clinician dependencies (``require_mfa``, ``get_current_user_id``,
+      ``get_tenant_context``) reuse the stash instead of re-verifying, so
+      doing it here costs nothing net — it moves the verification, it
+      does not add one.
+    * ``get_patient_context`` treats the presence of a stashed identity as
+      "this credential belongs to a clinician" and refuses the request.
+      That is the only structural thing keeping a clinician's token from
+      being offered to a patient resolver, since both principals arrive
+      as ``Authorization: Bearer``. Gating it on ``multi_tenancy_enabled``
+      would silently disarm that guard on every single-tenant install —
+      which is the default, and the configuration a self-hosted patient
+      companion would run in.
+
+    Errors are swallowed: this is a cache-priming step, and a bad token
+    must be rejected by the auth dependencies with their specific error
+    codes, not turned into a 500 here. A token that fails to verify simply
+    leaves nothing stashed, which is the correct input to both consumers.
     """
     auth_header = request.headers.get("authorization", "")
     if not auth_header.startswith("Bearer "):
-        return None
+        return
 
     token = auth_header[7:]
     try:
-        from ..auth.service import _resolve_practice_from_email, verify_token
+        from ..auth.service import verify_token
 
         identity = verify_token(token)
 
@@ -64,14 +79,31 @@ def _resolve_schema_from_request(request: Request) -> str | None:
         if identity.provider == "firebase":
             request.state.decoded_firebase_token = identity.claims
             request.state.verified_firebase_token_raw = token
+    except Exception:
+        logger.debug("Middleware identity verification skipped (token parse failed)")
 
-        if not identity.email:
-            return None
+
+def _resolve_schema_from_request(request: Request) -> str | None:
+    """Extract tenant schema from the Authorization header.
+
+    Reuses the identity ``_verify_and_stash_clinician_identity`` already
+    verified for this request, then resolves the practice schema from its
+    email. Tenant resolution is email-based, so it is provider-agnostic.
+    Returns None if unauthenticated or no mapping. Errors are swallowed —
+    auth dependencies will reject bad tokens later.
+    """
+    identity = getattr(request.state, "verified_identity", None)
+    if identity is None or not identity.email:
+        return None
+
+    try:
+        from ..auth.service import _resolve_practice_from_email
+
         practice = _resolve_practice_from_email(identity.email)
         if practice:
             return practice[1]  # schema_name
     except Exception:
-        logger.debug("Middleware schema resolution skipped (token parse failed)")
+        logger.debug("Middleware schema resolution skipped (practice lookup failed)")
     return None
 
 
@@ -94,6 +126,13 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         _request_session.set(session)
 
         settings = get_settings()
+
+        # Verify the bearer token before any dependency runs, regardless of
+        # tenancy mode. Deliberately outside the multi-tenancy branch below:
+        # `get_patient_context` reads the stash to refuse clinician
+        # credentials on patient routes, and that guard has to work on
+        # single-tenant installs too. See the function's docstring.
+        _verify_and_stash_clinician_identity(request)
 
         # Resolve tenant schema from auth token before any dependencies run.
         # This prevents race conditions where repo factories query the DB

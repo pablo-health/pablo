@@ -713,6 +713,112 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
     _OVERLAY_NOT_ROW_SCOPED.update(table_names)
 
 
+# Tenant tables the PATIENT principal may reach, mapped to the column that
+# identifies which patient owns the row. A registry rather than column
+# inference on purpose: plenty of tables carry a ``patient_id`` without the
+# patient being entitled to read them (``notes`` is the clinician's
+# clinical record ABOUT the patient, not a record FOR them). Patient-
+# readability is a product decision, and no column shape implies it.
+#
+# Core seeds exactly one entry: a patient may read their own ``patients``
+# row, keyed on ``id``. Intake submissions, companion threads and
+# appointments register their own through this seam in their own changes.
+PATIENT_READABLE_TABLES: dict[str, str] = {"patients": "id"}
+
+# Of those, the ones a patient may also WRITE. Deliberately empty in core:
+# nothing a patient can currently reach is patient-writable, and read and
+# write are separate registries so granting one never silently grants the
+# other.
+PATIENT_WRITABLE_TABLES: dict[str, str] = {}
+
+
+def register_overlay_patient_scoped(
+    table_name: str, key_column: str = "patient_id", *, writable: bool = False
+) -> None:
+    """Register a tenant table as reachable by the patient principal.
+
+    ``enable_rls_on_schema`` adds an **additive** patient policy to every
+    registered table: Postgres permissive policies OR together, so the
+    patient arm widens access for a patient principal without altering —
+    or even touching the text of — the clinician policy beside it.
+
+    Args:
+        table_name: The tenant table.
+        key_column: The column holding the owning patient's id. Defaults
+            to ``patient_id``; ``patients`` itself is keyed on ``id``.
+        writable: Also grant UPDATE/INSERT with a matching ``WITH CHECK``.
+            Off by default, so registering a table for reading never
+            silently makes it writable.
+
+    Registration is a deployment-level statement about the product, so it
+    happens at bootstrap, not per-request. A registered table missing
+    ``key_column`` makes ``enable_rls_on_schema`` raise rather than ship a
+    policy that silently matches nothing.
+    """
+    PATIENT_READABLE_TABLES[table_name] = key_column
+    if writable:
+        PATIENT_WRITABLE_TABLES[table_name] = key_column
+
+
+def _patient_principal_predicate(key_column: str) -> str:
+    """The row test for "this row belongs to the calling patient".
+
+    Same ``::text``-cast idiom as the clinician arm: the column is a native
+    ``uuid`` and the GUC is always text, so casting the column (rather than
+    the GUC) means an unset GUC yields NULL and matches nothing — fail
+    closed, with no ``invalid input syntax for uuid`` path an attacker
+    could use to distinguish states.
+    """
+    return f"{key_column}::text = current_setting('app.current_patient_id', true)"
+
+
+def _apply_patient_principal_policies(
+    session: Session, qualified: str, table_name: str, columns: set[str]
+) -> None:
+    """Add the additive patient-principal policies to a registered table.
+
+    Called for every table before the clinician policy shape is chosen, so
+    a registered table gets its patient arm regardless of which clinician
+    branch handles it (several of them ``continue``).
+
+    Unregistered tables get nothing — which is the point. A clinician-
+    scoped table keyed on ``app.current_user_id`` fails closed for a
+    patient principal automatically, because a patient request never arms
+    that GUC. That is asserted directly in the integration suite rather
+    than assumed.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    key_column = PATIENT_READABLE_TABLES.get(table_name)
+    if key_column is None:
+        return
+
+    if key_column not in columns:
+        raise RuntimeError(
+            f"enable_rls_on_schema: {qualified} is registered patient-scoped on "
+            f"'{key_column}', but that column is not present (columns found: "
+            f"{sorted(columns)}). Refusing to create a policy that would match "
+            f"nothing — fix the registration or the table."
+        )
+
+    predicate = _patient_principal_predicate(key_column)
+    session.execute(
+        text(f"CREATE POLICY rls_patient_self_read ON {qualified} FOR SELECT USING ({predicate})")
+    )
+    logger.info("RLS (patient self-read on %s) enabled on %s", key_column, qualified)
+
+    if table_name in PATIENT_WRITABLE_TABLES:
+        session.execute(
+            text(
+                f"CREATE POLICY rls_patient_self_write ON {qualified} "
+                f"FOR UPDATE USING ({predicate}) WITH CHECK ({predicate})"
+            )
+        )
+        logger.info("RLS (patient self-write on %s) enabled on %s", key_column, qualified)
+
+
 def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant-table shape
     session: Session, schema_name: str
 ) -> None:
@@ -851,6 +957,17 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_modify ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_delete ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_insert ON {qualified}"))
+        # The patient-principal arm. Dropped unconditionally so a table
+        # that is later UNregistered sheds its patient policy on the next
+        # run, rather than keeping a stale grant nobody is looking for.
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_read ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}"))
+
+        # Additive: created before the clinician shape is chosen, because
+        # several of those branches ``continue``. Permissive policies OR
+        # together, so this widens access for a patient principal without
+        # touching any clinician policy.
+        _apply_patient_principal_policies(session, qualified, table_name, columns)
 
         # Pick the policy shape:
         #   * patient_documents — combined policy. Non-private rows

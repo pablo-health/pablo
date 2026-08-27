@@ -95,7 +95,7 @@ TENANT_SCOPED_TABLES = (
 # Self-healing coverage: union the curated list with every RLS-forced table
 # derived automatically from the ORM.  Any new table with user_id, patient_id,
 # or id column (and not in not_row_scoped) is picked up here automatically.
-from app.db import rls_forced_tenant_tables  # noqa: E402
+from app.db import PATIENT_READABLE_TABLES, rls_forced_tenant_tables  # noqa: E402
 
 _EFFECTIVE_TABLES: frozenset[str] = frozenset(TENANT_SCOPED_TABLES) | rls_forced_tenant_tables()
 
@@ -301,6 +301,124 @@ class TestRlsFailsClosedWithoutGuc:
             "unset, the following tables returned non-zero rows. Either "
             "RLS was disabled on the table, a policy permits rows on "
             "unset GUC, or the pablo role gained BYPASSRLS. "
+            f"Leaks: {leaks}. All probed: {visible_counts}."
+        )
+
+
+class TestPatientPrincipalHasNoClinicianReach:
+    """A patient principal must see nothing in the clinician-scoped tables.
+
+    This is the same fail-closed probe as the class above, run against the
+    same REAL provisioned tenant schema and the REAL policies that ship —
+    but with the patient GUC armed instead of the clinician one.
+
+    Why it matters, and why it is not redundant with the class above: the
+    tables here are scoped by ``app.current_user_id``. Arming a *patient*
+    leaves that GUC unset, so every one of them must stay closed. If a
+    future change ever made the two principals share a GUC — or made
+    ``arm_current_patient_id`` also arm the clinician one "for
+    convenience" — a patient session would silently acquire a clinician's
+    reach across the whole tenant, and this test is what fires.
+
+    Note what this does NOT prove: no product table has an
+    ``app.current_patient_id`` policy yet, so nothing here shows patient
+    data being correctly scoped *to its own patient*. That arrives with
+    the patient-scoped policies; the two-patient IDOR proof against a
+    canary table lives in ``test_patient_guc_integration.py`` until then.
+    """
+
+    def test_patient_guc_alone_returns_zero_rows_on_every_clinician_table(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        seed_user = "8f4c1b7a-2d9e-5a3c-b6f1-0e2d4c8a9b31"
+        patient_id = str(uuid.uuid4())
+
+        # Seed as a clinician so a passing test means "RLS hid the row",
+        # not "the table was empty anyway".
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": seed_user},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patients (id, first_name, last_name, "
+                    "first_name_lower, last_name_lower, status, "
+                    "session_count, created_at, updated_at) "
+                    "VALUES (CAST(:pid AS uuid), 'Grace', 'Hopper', "
+                    "'grace', 'hopper', 'active', 0, now(), now())"
+                ),
+                {"pid": patient_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO patient_clinicians (patient_id, user_id, granted_by) "
+                    "VALUES (CAST(:pid AS uuid), :u, :u)"
+                ),
+                {"pid": patient_id, "u": seed_user},
+            )
+
+        # Probe on a fresh connection: patient armed, clinician explicitly
+        # cleared. This is exactly the state a patient request runs in.
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_user_id"))
+            conn.execute(
+                text("SELECT set_config('app.current_patient_id', :p, false)"),
+                {"p": patient_id},
+            )
+
+            # Guard against a vacuous pass: the patient GUC must really be
+            # armed, or "zero rows everywhere" proves nothing.
+            armed = conn.execute(
+                text("SELECT current_setting('app.current_patient_id', true)")
+            ).scalar()
+            assert armed == patient_id
+
+            visible_counts: dict[str, int] = {}
+            for table in _EFFECTIVE_TABLES:
+                # The tables a patient is deliberately entitled to read are
+                # not part of this assertion — they have their own patient
+                # arm, and their two-patient isolation is proven in
+                # test_patient_principal_rls.py. What is under test here is
+                # everything the patient was NOT granted.
+                if table in PATIENT_READABLE_TABLES:
+                    continue
+                exists = conn.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_schema = :s AND table_name = :t"
+                    ),
+                    {"s": tenant_schema, "t": table},
+                ).first()
+                if not exists:
+                    continue
+                count = conn.execute(
+                    text(f"SELECT count(*) FROM {tenant_schema}.{table}")  # noqa: S608
+                ).scalar_one()
+                visible_counts[table] = int(count)
+
+            # Control: the patient CAN see their own row in the one table
+            # they are registered for. Without this the zeros above could
+            # mean "the patient GUC does nothing at all" rather than "the
+            # patient GUC grants exactly what it should".
+            own = conn.execute(
+                text(f"SELECT count(*) FROM {tenant_schema}.patients"),  # noqa: S608
+            ).scalar_one()
+            assert int(own) == 1, (
+                "the patient could not see their own patients row, so the "
+                "zero-rows assertions below prove nothing about scoping"
+            )
+
+        assert visible_counts, "no clinician-scoped tables were probed"
+        leaks = {t: c for t, c in visible_counts.items() if c > 0}
+        assert not leaks, (
+            "A patient principal reached clinician-scoped rows. With only "
+            "app.current_patient_id armed, every table NOT registered in "
+            "PATIENT_READABLE_TABLES must return zero rows. Either the two "
+            "principals now share a GUC, arm_current_patient_id also arms "
+            "the clinician GUC, or a policy accepts the patient GUC. "
             f"Leaks: {leaks}. All probed: {visible_counts}."
         )
 
