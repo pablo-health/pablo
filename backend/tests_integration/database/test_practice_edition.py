@@ -46,7 +46,12 @@ def engine() -> Iterator[Engine]:
 def pg_session(engine: Engine) -> Iterator[Session]:
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     session = factory()
-    session.execute(text("TRUNCATE TABLE platform.practices"))
+    # booking_links.practice_id references practices, so practices can no
+    # longer be truncated alone. Both tables are named explicitly rather than
+    # using CASCADE: this stays an exact list of what the fixture resets, and
+    # a future FK to practices fails loudly here instead of silently widening
+    # the wipe. (Same multi-table form as the suite conftest.)
+    session.execute(text("TRUNCATE TABLE platform.booking_links, platform.practices"))
     session.commit()
     try:
         yield session

@@ -548,9 +548,17 @@ class BookingLinkRow(PlatformBase):
 
     id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
     slug: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # The FK to platform.users(id) is declared in the Alembic migration (raw
+    # SQL), not here — same reason as LaunchIntentRow and PasskeyCredentialRow
+    # above: ``PlatformBase.metadata.create_all`` runs before migrations at env
+    # bootstrap, and an ORM-level ForeignKey would emit the FK while users.id
+    # may be transiently varchar, tripping a uuid<->varchar mismatch. This
+    # table is the one that makes that failure reachable: its migration's
+    # downgrade drops it outright, so a down/up replay has create_all rebuild
+    # it from scratch against a schema state where c1d7e4a9f2b6 has not yet
+    # re-converted users.id.
     user_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False),
-        ForeignKey(f"{PLATFORM_SCHEMA}.users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

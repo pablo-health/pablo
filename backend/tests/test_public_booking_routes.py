@@ -438,9 +438,12 @@ def test_deactivate_and_delete_booking_link(
     assert stored is not None
     assert stored.is_active is False
 
-    assert managed_client.delete(f"/api/booking-links/{link_id}").status_code == 204
+    deleted = managed_client.delete(f"/api/booking-links/{link_id}")
+    assert deleted.status_code == 204
     assert link_repo.get_by_slug("intro-call") is None
-    assert managed_client.delete(f"/api/booking-links/{link_id}").status_code == 404
+
+    deleted_again = managed_client.delete(f"/api/booking-links/{link_id}")
+    assert deleted_again.status_code == 404
 
 
 # ------------------------------------------- public: owner subscription gate
@@ -527,13 +530,13 @@ def test_another_users_link_is_invisible_to_the_caller(
     foreign = link_repo.create(_link(slug="someone-else", user_id="other-user-999"))
 
     assert managed_client.get("/api/booking-links").json()["total"] == 0
-    assert (
-        managed_client.patch(
-            f"/api/booking-links/{foreign.id}", json={"title": "Hijacked"}
-        ).status_code
-        == 404
+    hijack_attempt = managed_client.patch(
+        f"/api/booking-links/{foreign.id}", json={"title": "Hijacked"}
     )
-    assert managed_client.delete(f"/api/booking-links/{foreign.id}").status_code == 404
+    assert hijack_attempt.status_code == 404
+
+    delete_attempt = managed_client.delete(f"/api/booking-links/{foreign.id}")
+    assert delete_attempt.status_code == 404
 
     # Untouched, and still resolvable on the public path by its real owner.
     stored = link_repo.get_by_slug("someone-else")

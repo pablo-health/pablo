@@ -339,7 +339,10 @@ def create_public_booking(
         changes={"source": "public_booking"},
     )
 
-    appt = _sync_appointment_to_google(scheduling, gcal_service, ctx.owner, appt)
+    # Called for its side effect only — it persists google_event_id on the
+    # appointment. The confirmation below is built from the link and the
+    # booked slot, so the synced copy it returns has nothing to add here.
+    _sync_appointment_to_google(scheduling, gcal_service, ctx.owner, appt)
 
     return PublicBookingConfirmation(
         host_name=ctx.link.host_name,
