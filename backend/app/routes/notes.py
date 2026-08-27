@@ -508,9 +508,8 @@ def generate_standalone_note_job(
     patient = patient_repo.get(note.patient_id, payload.user_id)
     if patient is None:
         logger.warning(
-            "generate-standalone-note job: patient %s not found for note %s — dropping "
+            "generate-standalone-note job: patient not found for note %s — dropping "
             "(non-retryable)",
-            note.patient_id,
             payload.note_id,
         )
         return {"status": "not_found"}
