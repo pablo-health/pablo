@@ -354,11 +354,17 @@ class SchedulingService:
         *,
         data: dict[str, str | int | datetime | None],
         recurrence: dict[str, str | int | None],
+        tz: tzinfo = UTC,
     ) -> list[Appointment]:
         """Create a recurring appointment series using fan-out pattern.
 
         data: appointment fields (patient_id, title, start_at, end_at, etc.)
         recurrence: keys frequency, timezone, end_date (optional), count (optional)
+
+        ``tz`` is the zone availability rules are evaluated in for each
+        occurrence — see ``AvailabilityEngine.check_conflicts``. Independent
+        of ``recurrence["timezone"]``, which drives occurrence expansion.
+        Defaults to UTC.
         """
         frequency = str(recurrence.get("frequency", ""))
         timezone = str(recurrence.get("timezone", "UTC"))
@@ -410,15 +416,20 @@ class SchedulingService:
         # every occurrence has cleared the collision check, so a rejection
         # here leaves the calendar untouched instead of half-booked.
         appointments: list[Appointment] = []
+        warnings: list[str] = []
         for idx, occ_start in enumerate(occurrences):
             occ_end = occ_start + appt_duration
             # RecurrenceGenerator returns naive-UTC datetimes; the repo's
-            # overlap query compares them against aware timestamps from the
-            # non-recurring create path, so they need a UTC tzinfo to compare.
-            self._reject_if_overlapping(
-                user_id,
-                occ_start.replace(tzinfo=UTC) if occ_start.tzinfo is None else occ_start,
-                occ_end.replace(tzinfo=UTC) if occ_end.tzinfo is None else occ_end,
+            # overlap query and the rule check both compare them against
+            # aware timestamps from the non-recurring create path, so they
+            # need a UTC tzinfo to compare / localize.
+            occ_start_aware = (
+                occ_start.replace(tzinfo=UTC) if occ_start.tzinfo is None else occ_start
+            )
+            occ_end_aware = occ_end.replace(tzinfo=UTC) if occ_end.tzinfo is None else occ_end
+            self._reject_if_overlapping(user_id, occ_start_aware, occ_end_aware)
+            warnings.extend(
+                self._check_availability_rules(user_id, occ_start_aware, occ_end_aware, tz)
             )
             appt = Appointment(
                 id=master_id if idx == 0 else str(uuid.uuid4()),
@@ -442,6 +453,7 @@ class SchedulingService:
             )
             appointments.append(appt)
 
+        self.rule_warnings = warnings
         return self._repo.create_batch(appointments)
 
     def edit_future_occurrences(

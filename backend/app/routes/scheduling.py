@@ -7,9 +7,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 
@@ -66,6 +67,8 @@ from ..repositories import (
     NotesRepository,
     PatientRepository,
     TherapySessionRepository,
+    UserRepository,
+    get_user_repository,
 )
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
@@ -194,6 +197,32 @@ def get_scheduling_service(
 ) -> SchedulingService:
     """Get scheduling service with injected repository and availability engine."""
     return SchedulingService(repo, engine)
+
+
+def _owner_timezone(user_repo: UserRepository, user_id: str) -> tzinfo:
+    """Resolve the rule owner's IANA timezone preference.
+
+    Falls back to UTC on an unresolvable preference (never seen by
+    ``ZoneInfo``, e.g. left over from a client bug) rather than failing the
+    request — a bad stored string shouldn't block every booking read/write
+    until someone fixes it by hand. Logs the user id only; the raw
+    preference string is caller-controlled input and doesn't belong in logs.
+    """
+    raw = user_repo.get_preferences(user_id).timezone
+    try:
+        return ZoneInfo(raw)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("Invalid timezone preference for user %s; falling back to UTC", user_id)
+        return UTC
+
+
+def get_owner_timezone(
+    ctx: TenantContext = Depends(get_tenant_context),
+    user_repo: UserRepository = Depends(get_user_repository),
+) -> tzinfo:
+    """The rule owner's preferred timezone — the frame availability rules
+    (working hours, blocked days, per-day caps) are evaluated in."""
+    return _owner_timezone(user_repo, ctx.user_id)
 
 
 def get_google_calendar_service(
@@ -327,12 +356,14 @@ def create_appointment(
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Create a new appointment."""
     try:
         appt = service.create_appointment(
             user.id,
             data=request.model_dump(),
+            tz=tz,
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
@@ -436,11 +467,12 @@ def update_appointment(
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Update an appointment."""
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     try:
-        appt = service.update_appointment(appointment_id, user.id, **updates)
+        appt = service.update_appointment(appointment_id, user.id, tz=tz, **updates)
     except AppointmentNotFoundError as e:
         raise NotFoundError(str(e)) from e
     except InvalidAppointmentError as e:
@@ -620,6 +652,7 @@ def create_recurring_appointment(
     service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentListResponse:
     """Create a recurring appointment series."""
     try:
@@ -632,11 +665,14 @@ def create_recurring_appointment(
                 "end_date": request.end_date,
                 "count": request.count,
             },
+            tz=tz,
         )
     except (InvalidAppointmentError, InvalidRecurrenceError) as e:
         raise BadRequestError(str(e)) from e
     except AppointmentConflictError as e:
         raise ConflictError(str(e)) from e
+    except RuleViolationError as e:
+        raise UnprocessableEntityError(str(e), {"violations": e.violations}) from e
     first_appt_id = appointments[0].id if appointments else "series"
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_SERIES_CREATED,
@@ -752,9 +788,10 @@ def get_free_slots(
     ),
     ctx: TenantContext = Depends(get_tenant_context),
     engine: AvailabilityEngine = Depends(get_availability_engine),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> FreeSlotsResponse:
     """Get available time slots for a given date."""
-    result = engine.get_free_slots(ctx.user_id, date, duration)
+    result = engine.get_free_slots(ctx.user_id, date, duration, tz=tz)
     return FreeSlotsResponse(
         date=date,
         duration_minutes=result.duration_minutes,
@@ -769,9 +806,10 @@ def check_conflicts(
     request: CheckConflictsRequest,
     ctx: TenantContext = Depends(get_tenant_context),
     engine: AvailabilityEngine = Depends(get_availability_engine),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> CheckConflictsResponse:
     """Check scheduling conflicts for a proposed time."""
-    result = engine.check_conflicts(ctx.user_id, request.start_at, request.end_at)
+    result = engine.check_conflicts(ctx.user_id, request.start_at, request.end_at, tz=tz)
     conflict_responses = [
         ConflictResponse(
             rule_type=c.rule.rule_type,
