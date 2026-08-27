@@ -4,7 +4,13 @@
 
 from datetime import UTC, datetime, timedelta
 
-from app.models.audit import AuditAction, AuditLogEntry, ResourceType
+from app.models.audit import (
+    ACTOR_TYPE_ANONYMOUS,
+    ACTOR_TYPE_CLINICIAN,
+    AuditAction,
+    AuditLogEntry,
+    ResourceType,
+)
 from app.repositories.audit import InMemoryAuditRepository
 
 
@@ -81,6 +87,32 @@ class TestSelfAuditViewRoute:
         # Response should not echo user_id or changes
         assert "user_id" not in body["data"][0]
         assert "changes" not in body["data"][0]
+        # A row in the caller's own trail is not necessarily a row the caller
+        # wrote — a public booking lands here under an anonymous actor — so
+        # the kind of principal has to travel with it.
+        assert body["data"][0]["actor_type"] == ACTOR_TYPE_CLINICIAN
+
+    def test_reports_the_actor_type_of_each_row(
+        self,
+        client,
+        mock_user_id,
+        mock_audit_service,  # type: ignore[no-untyped-def]
+    ) -> None:
+        audit = mock_audit_service
+        audit._repo = InMemoryAuditRepository()
+        audit._repo.append(
+            AuditLogEntry(
+                user_id=mock_user_id,
+                action="patient_created",
+                actor_type=ACTOR_TYPE_ANONYMOUS,
+            )
+        )
+
+        resp = client.get("/api/users/me/audit-log")
+
+        assert resp.status_code == 200
+        rows = [r for r in resp.json()["data"] if r["action"] == "patient_created"]
+        assert [r["actor_type"] for r in rows] == [ACTOR_TYPE_ANONYMOUS]
 
     def test_read_is_meta_audited(
         self,

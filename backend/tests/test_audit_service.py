@@ -8,7 +8,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from app.models import Patient, User
-from app.models.audit import AUDIT_LOG_RETENTION_DAYS, AuditAction, AuditLogEntry, ResourceType
+from app.models.audit import (
+    ACTOR_TYPE_ANONYMOUS,
+    ACTOR_TYPE_CLINICIAN,
+    AUDIT_LOG_RETENTION_DAYS,
+    AuditAction,
+    AuditLogEntry,
+    ResourceType,
+)
 from app.models.session import SessionStatus, TherapySession, Transcript
 from app.repositories.audit import InMemoryAuditRepository
 from app.services import audit_cloud_logging
@@ -205,6 +212,58 @@ class TestAuditService:
         assert entry.resource_id == test_session.id
         assert entry.session_id == test_session.id
         assert entry.patient_id == test_patient.id
+
+    def test_log_patient_action_records_actor_type(
+        self,
+        audit_service: AuditService,
+        repo: InMemoryAuditRepository,
+        test_user: User,
+        test_patient: Patient,
+        mock_request: MagicMock,
+    ) -> None:
+        anonymous = audit_service.log_patient_action(
+            AuditAction.PATIENT_CREATED,
+            test_user,
+            mock_request,
+            test_patient,
+            actor_type=ACTOR_TYPE_ANONYMOUS,
+        )
+        default = audit_service.log_patient_action(
+            AuditAction.PATIENT_CREATED,
+            test_user,
+            mock_request,
+            test_patient,
+        )
+        assert anonymous.actor_type == ACTOR_TYPE_ANONYMOUS
+        assert default.actor_type == ACTOR_TYPE_CLINICIAN
+        assert [e.actor_type for e in repo.all()] == [ACTOR_TYPE_ANONYMOUS, ACTOR_TYPE_CLINICIAN]
+
+    def test_log_appointment_action_records_actor_type(
+        self,
+        audit_service: AuditService,
+        repo: InMemoryAuditRepository,
+        test_user: User,
+        test_patient: Patient,
+        mock_request: MagicMock,
+    ) -> None:
+        anonymous = audit_service.log_appointment_action(
+            AuditAction.APPOINTMENT_CREATED,
+            test_user,
+            mock_request,
+            "appt-1",
+            patient_id=test_patient.id,
+            actor_type=ACTOR_TYPE_ANONYMOUS,
+        )
+        default = audit_service.log_appointment_action(
+            AuditAction.APPOINTMENT_CREATED,
+            test_user,
+            mock_request,
+            "appt-2",
+            patient_id=test_patient.id,
+        )
+        assert anonymous.actor_type == ACTOR_TYPE_ANONYMOUS
+        assert default.actor_type == ACTOR_TYPE_CLINICIAN
+        assert [e.actor_type for e in repo.all()] == [ACTOR_TYPE_ANONYMOUS, ACTOR_TYPE_CLINICIAN]
 
 
 class _FakeRedis:

@@ -36,7 +36,7 @@ from ..auth.route_access import AccessLevel, resolve_access_level
 from ..auth.route_security import truly_public
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models import Patient, User
-from ..models.audit import AuditAction
+from ..models.audit import ACTOR_TYPE_ANONYMOUS, AuditAction
 from ..models.booking_link import (
     BookingLink,
     CreatePublicBookingRequest,
@@ -244,6 +244,20 @@ def get_public_free_slots(
     )
 
 
+def _booking_provenance(ctx: PublicBookingContext) -> dict[str, str]:
+    """Where a public booking came from, for the audit row.
+
+    The actor has no identifier of its own, so this and the request's IP are
+    the whole answer to "who did this". Ids and the slug only — never the
+    booker's name or email, which are PHI the audit trail must not carry.
+    """
+    return {
+        "source": "public_booking",
+        "booking_link_id": ctx.link.id,
+        "booking_link_slug": ctx.link.slug,
+    }
+
+
 def _find_or_create_patient(
     request: CreatePublicBookingRequest,
     ctx: PublicBookingContext,
@@ -272,7 +286,8 @@ def _find_or_create_patient(
         ctx.owner,
         http_request,
         patient,
-        changes={"source": "public_booking"},
+        changes=_booking_provenance(ctx),
+        actor_type=ACTOR_TYPE_ANONYMOUS,
     )
     return patient
 
@@ -336,7 +351,8 @@ def create_public_booking(
         http_request,
         appt.id,
         patient_id=patient.id,
-        changes={"source": "public_booking"},
+        changes=_booking_provenance(ctx),
+        actor_type=ACTOR_TYPE_ANONYMOUS,
     )
 
     # Called for its side effect only — it persists google_event_id on the
