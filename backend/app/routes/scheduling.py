@@ -225,6 +225,12 @@ def get_owner_timezone(
     return _owner_timezone(user_repo, ctx.user_id)
 
 
+def _now(tz: tzinfo) -> datetime:
+    """Current time in the given timezone — a seam tests monkeypatch to pin
+    the reference date natural-language date resolution runs against."""
+    return datetime.now(tz)
+
+
 def get_google_calendar_service(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
@@ -937,6 +943,7 @@ def parse_availability_rules(
     ctx: TenantContext = Depends(get_tenant_context),
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
     parse_service: AvailabilityRuleParseService = Depends(get_availability_rule_parse_service),
+    user_repo: UserRepository = Depends(get_user_repository),
 ) -> ParseAvailabilityRulesResponse:
     """Parse a natural-language sentence into proposed availability rules.
 
@@ -946,12 +953,18 @@ def parse_availability_rules(
     """
     get_availability_parse_limiter().check(ctx.user_id)
 
+    # The reference date a "next Friday"-style sentence resolves against is
+    # the clinician's own calendar day, read before the connection below is
+    # released -- same owner-timezone frame as rule evaluation.
+    tz = _owner_timezone(user_repo, ctx.user_id)
+    reference_date = _now(tz).date()
+
     # Release the request-scoped DB connection before the LLM call, same
     # seam as the note-import route (sessions.py) -- otherwise the pooled
     # connection (and its open transaction) sits idle across the round trip.
     release_db_connection()
 
-    result = parse_service.parse(request.text)
+    result = parse_service.parse(request.text, reference_date=reference_date)
 
     proposals = [
         ProposedAvailabilityRule(
