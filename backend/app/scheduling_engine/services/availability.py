@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import TYPE_CHECKING
 
 from ..models.availability import RuleType
@@ -19,6 +19,20 @@ if TYPE_CHECKING:
 
 def _parse_iso(s: str) -> datetime:
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def _local(dt: datetime | str, tz: tzinfo) -> datetime:
+    """Resolve an instant to its wall-clock representation in ``tz``."""
+    parsed = dt if isinstance(dt, datetime) else _parse_iso(dt)
+    return parsed.astimezone(tz)
+
+
+def _minute_to_utc_iso(day: date, minute: int, tz: tzinfo) -> str:
+    """Render a local (day, minute-of-day) slot boundary as a UTC instant."""
+    extra_days, minute_of_day = divmod(minute, 24 * 60)
+    hour, mins = divmod(minute_of_day, 60)
+    local_dt = datetime.combine(day + timedelta(days=extra_days), time(hour, mins), tzinfo=tz)
+    return local_dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _time_to_minutes(t: str) -> int:
@@ -56,9 +70,18 @@ class AvailabilityEngine:
         self._appt_repo = appointment_repo
 
     def check_conflicts(
-        self, user_id: str, start_at: str | datetime, end_at: str | datetime
+        self,
+        user_id: str,
+        start_at: str | datetime,
+        end_at: str | datetime,
+        *,
+        tz: tzinfo = UTC,
     ) -> ConflictCheckResult:
         """Check all availability rules for conflicts with a proposed time.
+
+        ``tz`` is the zone rules are evaluated in — weekday, hour, and date
+        boundaries all read off the proposed time as seen in ``tz``, not UTC.
+        Defaults to UTC so existing callers are unaffected.
 
         A user with zero rules is NOT CONFIGURED — ``configured`` is False,
         and ``conflicts`` is (necessarily) empty because there is nothing to
@@ -68,8 +91,8 @@ class AvailabilityEngine:
         than treating the empty list as "checked and clear".
         """
         rules = self._rule_repo.list_by_user(user_id)
-        proposed_start = start_at if isinstance(start_at, datetime) else _parse_iso(start_at)
-        proposed_end = end_at if isinstance(end_at, datetime) else _parse_iso(end_at)
+        proposed_start = _local(start_at, tz)
+        proposed_end = _local(end_at, tz)
         conflicts: list[Conflict] = []
 
         for rule in rules:
@@ -88,9 +111,19 @@ class AvailabilityEngine:
         return ConflictCheckResult(configured=bool(rules), conflicts=conflicts)
 
     def get_free_slots(
-        self, user_id: str, date_str: str, duration_minutes: int | None = None
+        self,
+        user_id: str,
+        date_str: str,
+        duration_minutes: int | None = None,
+        *,
+        tz: tzinfo = UTC,
     ) -> FreeSlotsResult:
         """Compute available time slots for a given date and duration.
+
+        ``date_str`` is a local calendar date in ``tz`` — the working-hours
+        window runs from local midnight to the next local midnight, and slot
+        boundaries are computed in ``tz`` before being rendered as UTC
+        instants. Defaults to UTC so existing callers are unaffected.
 
         ``duration_minutes`` of None resolves from the user's session_defaults
         rule (falling back to :data:`DEFAULT_DURATION_MINUTES`); callers that
@@ -118,14 +151,17 @@ class AvailabilityEngine:
 
         blocked_minutes = self._get_blocked_minutes(rules)
 
-        day_start = f"{date_str}T00:00:00Z"
-        day_end = f"{date_str}T23:59:59Z"
+        day = date.fromisoformat(date_str)
+        day_start = datetime.combine(day, time(0), tzinfo=tz)
+        day_end = day_start + timedelta(days=1)
         existing = self._appt_repo.list_by_range(user_id, day_start, day_end)
         active = [a for a in existing if a.status != "cancelled"]
 
         buffer_before, buffer_after = self._get_buffers(rules)
 
-        appt_blocked = self._appointments_to_blocked_minutes(active, buffer_before, buffer_after)
+        appt_blocked = self._appointments_to_blocked_minutes(
+            active, buffer_before, buffer_after, tz
+        )
         blocked_minutes = blocked_minutes | appt_blocked
 
         max_per_day = self._get_max_per_day(rules)
@@ -144,12 +180,9 @@ class AvailabilityEngine:
             while minute + resolved_duration <= work_end:
                 slot_range = set(range(minute, minute + resolved_duration))
                 if not slot_range & blocked_minutes:
-                    start_h, start_m = divmod(minute, 60)
-                    end_min = minute + resolved_duration
-                    end_h, end_m = divmod(end_min, 60)
                     slot = TimeSlot(
-                        start=f"{date_str}T{start_h:02d}:{start_m:02d}:00Z",
-                        end=f"{date_str}T{end_h:02d}:{end_m:02d}:00Z",
+                        start=_minute_to_utc_iso(day, minute, tz),
+                        end=_minute_to_utc_iso(day, minute + resolved_duration, tz),
                     )
                     slots.append(slot)
                     if remaining_capacity is not None:
@@ -259,9 +292,8 @@ class AvailabilityEngine:
         user_id: str,
         proposed_start: datetime,
     ) -> Conflict | None:
-        date_str = proposed_start.strftime("%Y-%m-%d")
-        day_start = f"{date_str}T00:00:00Z"
-        day_end = f"{date_str}T23:59:59Z"
+        day_start = datetime.combine(proposed_start.date(), time(0), tzinfo=proposed_start.tzinfo)
+        day_end = day_start + timedelta(days=1)
         existing = self._appt_repo.list_by_range(user_id, day_start, day_end)
         active = [a for a in existing if a.status != "cancelled"]
         max_count = rule.params["max"]
@@ -288,10 +320,8 @@ class AvailabilityEngine:
         # Find appointments that could end within the buffer window.
         # We need appointments whose end_at > buffer_start, so search
         # with a wide start range to capture them.
-        date_str = proposed_start.strftime("%Y-%m-%d")
-        day_start = f"{date_str}T00:00:00Z"
-        day_end = proposed_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-        nearby = self._appt_repo.list_by_range(user_id, day_start, day_end)
+        day_start = datetime.combine(proposed_start.date(), time(0), tzinfo=proposed_start.tzinfo)
+        nearby = self._appt_repo.list_by_range(user_id, day_start, proposed_start)
         for appt in nearby:
             if appt.status == "cancelled":
                 continue
@@ -314,9 +344,7 @@ class AvailabilityEngine:
         buffer_minutes = params["minutes"]
         buffer_end = proposed_end + timedelta(minutes=buffer_minutes)
 
-        day_start = proposed_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-        day_end = buffer_end.strftime("%Y-%m-%dT%H:%M:%SZ")
-        nearby = self._appt_repo.list_by_range(user_id, day_start, day_end)
+        nearby = self._appt_repo.list_by_range(user_id, proposed_end, buffer_end)
         for appt in nearby:
             if appt.status == "cancelled":
                 continue
@@ -362,8 +390,7 @@ class AvailabilityEngine:
         self, rules: list[AvailabilityRule], date_str: str
     ) -> list[tuple[int, int]]:
         """Get working hour ranges (in minutes) for a given date."""
-        dt = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
-        day_of_week = dt.weekday()
+        day_of_week = date.fromisoformat(date_str).weekday()
         ranges: list[tuple[int, int]] = []
         for rule in rules:
             if (
@@ -376,8 +403,7 @@ class AvailabilityEngine:
         return sorted(ranges)
 
     def _is_date_blocked(self, rules: list[AvailabilityRule], date_str: str) -> bool:
-        dt = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
-        day_of_week = dt.weekday()
+        day_of_week = date.fromisoformat(date_str).weekday()
         for rule in rules:
             if (
                 rule.rule_type == RuleType.BLOCK_DAY_OF_WEEK
@@ -457,12 +483,13 @@ class AvailabilityEngine:
         appointments: list[Appointment],
         buffer_before: int,
         buffer_after: int,
+        tz: tzinfo,
     ) -> set[int]:
         """Convert existing appointments (with buffers) to blocked minutes."""
         blocked: set[int] = set()
         for appt in appointments:
-            appt_start = appt.start_at
-            appt_end = appt.end_at
+            appt_start = _local(appt.start_at, tz)
+            appt_end = _local(appt.end_at, tz)
             start_min = appt_start.hour * 60 + appt_start.minute - buffer_before
             end_min = appt_end.hour * 60 + appt_end.minute + buffer_after
             start_min = max(start_min, 0)

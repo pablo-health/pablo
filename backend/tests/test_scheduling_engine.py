@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.scheduling_engine.exceptions import (
@@ -16,6 +17,7 @@ from app.scheduling_engine.exceptions import (
 )
 from app.scheduling_engine.models.appointment import AppointmentStatus
 from app.scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
+from app.scheduling_engine.models.conflict import ConflictCheckResult
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import (
     InMemoryAvailabilityRuleRepository,
@@ -438,3 +440,91 @@ class TestAvailabilityRuleEnforcement:
                 start_at=datetime.fromisoformat("2026-03-20T15:00:00+00:00"),
                 end_at=datetime.fromisoformat("2026-03-20T15:50:00+00:00"),
             )
+
+
+class _RecordingAvailabilityEngine(AvailabilityEngine):
+    """Records the ``tz`` it was called with instead of checking real rules."""
+
+    def __init__(self) -> None:
+        self.seen_tz: tzinfo | None = None
+
+    def check_conflicts(
+        self,
+        user_id: str,
+        start_at: str | datetime,
+        end_at: str | datetime,
+        *,
+        tz: tzinfo = UTC,
+    ) -> ConflictCheckResult:
+        self.seen_tz = tz
+        return ConflictCheckResult(configured=False, conflicts=[])
+
+
+@pytest.fixture
+def recording_engine() -> _RecordingAvailabilityEngine:
+    return _RecordingAvailabilityEngine()
+
+
+@pytest.fixture
+def tz_recording_service(
+    repo: InMemoryAppointmentRepository,
+    recording_engine: _RecordingAvailabilityEngine,
+) -> SchedulingService:
+    return SchedulingService(repo, recording_engine)
+
+
+class TestTimezoneForwarding:
+    """`create_appointment`/`update_appointment` forward ``tz`` straight
+    through to `AvailabilityEngine.check_conflicts` rather than defaulting
+    it away."""
+
+    def test_create_appointment_forwards_tz(
+        self,
+        tz_recording_service: SchedulingService,
+        recording_engine: _RecordingAvailabilityEngine,
+    ) -> None:
+        ny = ZoneInfo("America/New_York")
+        tz_recording_service.create_appointment(USER_ID, data=_appt_data(), tz=ny)
+        assert recording_engine.seen_tz is ny
+
+    def test_create_appointment_defaults_to_utc(
+        self,
+        tz_recording_service: SchedulingService,
+        recording_engine: _RecordingAvailabilityEngine,
+    ) -> None:
+        tz_recording_service.create_appointment(USER_ID, data=_appt_data())
+        assert recording_engine.seen_tz is UTC
+
+    def test_update_appointment_forwards_tz(
+        self,
+        tz_recording_service: SchedulingService,
+        recording_engine: _RecordingAvailabilityEngine,
+    ) -> None:
+        ny = ZoneInfo("America/New_York")
+        created = tz_recording_service.create_appointment(USER_ID, data=_appt_data())
+        recording_engine.seen_tz = None
+
+        tz_recording_service.update_appointment(
+            created.id,
+            USER_ID,
+            tz=ny,
+            start_at=datetime.fromisoformat("2026-03-20T15:00:00+00:00"),
+            end_at=datetime.fromisoformat("2026-03-20T15:50:00+00:00"),
+        )
+        assert recording_engine.seen_tz is ny
+
+    def test_update_appointment_defaults_to_utc(
+        self,
+        tz_recording_service: SchedulingService,
+        recording_engine: _RecordingAvailabilityEngine,
+    ) -> None:
+        created = tz_recording_service.create_appointment(USER_ID, data=_appt_data())
+        recording_engine.seen_tz = None
+
+        tz_recording_service.update_appointment(
+            created.id,
+            USER_ID,
+            start_at=datetime.fromisoformat("2026-03-20T15:00:00+00:00"),
+            end_at=datetime.fromisoformat("2026-03-20T15:50:00+00:00"),
+        )
+        assert recording_engine.seen_tz is UTC
