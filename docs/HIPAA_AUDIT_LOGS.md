@@ -19,8 +19,8 @@ Pablo uses a two-layer audit trail:
 
 | Layer | Source | What it captures | Retention |
 |---|---|---|---|
-| **Application audit log** | `AuditService` (`backend/app/services/audit_service.py`) | Structured records of every PHI-touching API request: who (user_id, email), what (action + resource), when, where (IP, user agent), change diff for mutations | 6 years (log sink) |
-| **Database audit log** | Cloud SQL `pgaudit` extension | Raw SQL statements against `patients`, `sessions`, `soap_notes`, etc. — defense-in-depth in case the application layer is bypassed | 6 years (log sink) |
+| **Application audit log** | `AuditService` (`backend/app/services/audit_service.py`) | Structured records of every PHI-touching API request: who (`user_id` + `actor_type` — deliberately no name or email, the entry itself is PHI-free), what (action + resource), when, where (IP, user agent), and for mutations a field-**name** diff (which fields changed, never their values) | 7 years (2,555 days — exceeds the 6-year § 164.316 minimum) |
+| **Database audit log** | Cloud SQL `pgaudit` extension (must be enabled per deployment — see below) | Raw SQL statements against `patients`, `sessions`, `soap_notes`, etc. — defense-in-depth in case the application layer is bypassed | 6 years (log sink) |
 
 Both layers ship to **Cloud Logging** as structured JSON and are exported to a dedicated Log Sink (Cloud Storage or BigQuery) for long-term retention.
 
@@ -28,7 +28,7 @@ Both layers ship to **Cloud Logging** as structured JSON and are exported to a d
 
 The `audit_logs` table is **append-only** — the application role may `INSERT` and `SELECT` but cannot alter or destroy existing records. This is enforced in the database so a compromised application process can't rewrite history:
 
-- **Self-host (trigger-based).** Every tenant schema carries a `BEFORE UPDATE OR DELETE` trigger (`audit_logs_append_only`) and a statement-level `BEFORE TRUNCATE` trigger (`audit_logs_no_truncate`) that raise on any attempt to edit, delete, or wipe audit rows. They fire even for the table owner — the app connects as that owner, so table privileges alone wouldn't stop it. A row-level UPDATE/DELETE trigger does **not** fire on `TRUNCATE`, which is why the separate TRUNCATE trigger exists (otherwise the trail could be wiped wholesale in one statement). The retention job is the sole exception: it arms a transaction-scoped `SET LOCAL app.allow_audit_purge = 'on'` before deleting rows past the 6-year window. Both triggers ship in `tenant_template.sql` (migrations `b33a493310b6`, `a7e3f1b9c204`).
+- **Self-host (trigger-based).** Every tenant schema carries a `BEFORE UPDATE OR DELETE` trigger (`audit_logs_append_only`) and a statement-level `BEFORE TRUNCATE` trigger (`audit_logs_no_truncate`) that raise on any attempt to edit, delete, or wipe audit rows. They fire even for the table owner — the app connects as that owner, so table privileges alone wouldn't stop it. A row-level UPDATE/DELETE trigger does **not** fire on `TRUNCATE`, which is why the separate TRUNCATE trigger exists (otherwise the trail could be wiped wholesale in one statement). The retention job is the sole exception: it arms a transaction-scoped `SET LOCAL app.allow_audit_purge = 'on'` before deleting rows past the 2,555-day (7-year) retention window. Both triggers ship in `tenant_template.sql` (migrations `b33a493310b6`, `a7e3f1b9c204`).
 - **Managed build (privilege-based).** The managed deployment goes further: the application role is a non-owner with `UPDATE`, `DELETE`, **and `TRUNCATE` revoked** on `audit_logs` (role separation), and a separate maintenance role runs retention — so immutability holds by privilege, independent of any trigger.
 
 The weekly pentest verifies this on every run: it asserts the application role cannot effectively UPDATE, DELETE, or TRUNCATE `audit_logs` (privilege revoked, or a BEFORE trigger enforcing it).
@@ -42,7 +42,7 @@ The weekly pentest verifies this on every run: it asserts the application role c
   "severity": "INFO",
   "message": "audit: PATIENT_VIEWED by user u_123 on patient/p_456",
   "user_id": "u_123",
-  "user_email": "therapist@example.com",
+  "actor_type": "clinician",
   "action": "PATIENT_VIEWED",
   "resource_type": "patient",
   "resource_id": "p_456",
@@ -62,14 +62,16 @@ See `AuditAction` in `backend/app/models/audit.py`. Current coverage includes PA
 
 ## Database audit log (pgaudit)
 
-Cloud SQL for PostgreSQL supports the `pgaudit` extension, enabled via database flags. Pablo's setup enables pgaudit at the `write, ddl` level by default:
+Cloud SQL for PostgreSQL supports the `pgaudit` extension, enabled via database flags. **This layer is per-deployment configuration, not something the application enables for you** — it does not exist on an instance until the flags are set (patching flags restarts the instance):
 
-```
-pgaudit.log=write,ddl
-pgaudit.log_relation=on
+```bash
+gcloud sql instances patch <INSTANCE> \
+  --database-flags="^#^cloudsql.enable_pgaudit=on#pgaudit.log=write,ddl"
 ```
 
-This produces a `AUDIT:` prefix on INSERT/UPDATE/DELETE/DDL statements in `postgres.log`, which Cloud SQL forwards to Cloud Logging automatically. `read` logging is **intentionally disabled** by default — the application-level audit already records intent at the API layer, and pgaudit `read` logging is cost- and noise-prohibitive at query volume. Enable it case-by-case for forensic investigations.
+(The `^#^` prefix switches gcloud's flag separator to `#` because the `write,ddl` value contains a comma. `--database-flags` replaces the instance's whole flag set — carry any existing flags along.) Verify with `gcloud sql instances describe <INSTANCE> --format='table(settings.databaseFlags)'` and keep the output with your compliance records; a periodic log review should confirm the layer is still producing entries, since a silently absent flag looks identical to a quiet database.
+
+Once enabled, this produces an `AUDIT:` prefix on INSERT/UPDATE/DELETE/DDL statements in `postgres.log`, which Cloud SQL forwards to Cloud Logging automatically. `read` logging is **intentionally disabled** by default — the application-level audit already records intent at the API layer, and pgaudit `read` logging is cost- and noise-prohibitive at query volume. Enable it case-by-case for forensic investigations.
 
 ## Querying
 
