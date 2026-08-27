@@ -311,7 +311,7 @@ class TestRlsGucRearmedAcrossCommit:
 
     ``set_config(..., is_local=true)`` is transaction-scoped, so a mid-request
     commit (e.g. the lock-release commit before SOAP generation) clears it.
-    Without ``_rearm_rls_user_id_on_txn_begin``, the next query in the request
+    Without ``_rearm_rls_principal_gucs_on_txn_begin``, the next query in the request
     would start a fresh transaction with no GUC and RLS would silently return
     zero rows — patient data vanishing mid-request, indistinguishable from
     "no data". That listener had no test coverage.

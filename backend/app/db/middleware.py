@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from ..settings import get_settings
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
+    _current_patient_id,
     _current_tenant_schema,
     _current_user_id,
     _request_session,
@@ -126,6 +127,12 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             # ever shares it across requests) sees a clean slate.
             # Belt-and-braces against cross-tenant identity leak.
             _current_user_id.set(None)
+            # Same for the patient principal. This one matters more than
+            # belt-and-braces: a patient id left armed would re-arm
+            # app.current_patient_id on the next transaction through the
+            # after_begin listener, so a leaked slot reads as "a patient
+            # is calling" on a request that has no patient at all.
+            _current_patient_id.set(None)
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:

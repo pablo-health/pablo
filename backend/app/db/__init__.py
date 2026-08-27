@@ -68,6 +68,22 @@ _current_user_id: ContextVar[str | None] = ContextVar("_current_user_id", defaul
 # worker thread (see :func:`arm_current_user_id`).
 _RLS_USER_ID_KEY = "rls_current_user_id"
 
+# Request-scoped patient id, the patient analog of ``_current_user_id``
+# above. Patient-facing surfaces authenticate a *patient* principal (see
+# ``app.auth.patient_context``), not a clinician, so patient-scoped RLS
+# policies read a separate GUC — ``app.current_patient_id``. Two GUCs
+# rather than one "whoever is calling" GUC because a policy has to be
+# able to say which kind of principal it grants to: a shared GUC would
+# make ``USING (patient_id = current_setting(...))`` accept a clinician
+# whose user id happened to equal a patient id, and would leave every
+# existing clinician policy silently satisfiable by a patient principal.
+_current_patient_id: ContextVar[str | None] = ContextVar("_current_patient_id", default=None)
+
+# Key under which the request's patient id is stashed on ``Session.info``.
+# Same reasoning as ``_RLS_USER_ID_KEY``: the Session object survives the
+# threadpool-worker hop that discards a sync dependency's ContextVar set.
+_RLS_PATIENT_ID_KEY = "rls_current_patient_id"
+
 # Default practice schema for Pablo Solo (single practice)
 DEFAULT_PRACTICE_SCHEMA = "practice"
 PLATFORM_SCHEMA = "platform"
@@ -438,8 +454,41 @@ def arm_current_user_id(session: Session, user_id: str) -> None:
     )
 
 
+def set_current_patient_id(patient_id: str) -> None:
+    """Stash the request's patient id for transaction-local RLS.
+
+    The patient-principal mirror of :func:`set_current_user_id`; the same
+    ``after_begin`` listener re-applies it on every new transaction, and
+    ``DatabaseSessionMiddleware`` clears it at request end.
+    """
+    _current_patient_id.set(patient_id)
+
+
+def arm_current_patient_id(session: Session, patient_id: str) -> None:
+    """Arm the RLS ``app.current_patient_id`` GUC for a patient request.
+
+    The patient-principal mirror of :func:`arm_current_user_id`, and it
+    does the same three things for the same reasons: stash the id on
+    ``session.info`` so the ``after_begin`` listener can re-apply the GUC
+    after a mid-request commit, stash it in the ContextVar for the
+    off-request primitives, and issue ``set_config`` once for the
+    transaction that is already open.
+
+    It deliberately does **not** also arm ``app.current_user_id``. A
+    patient is not a clinician with a different id: leaving the clinician
+    GUC empty is what makes every existing clinician-scoped policy return
+    zero rows for a patient principal, which is the fail-closed direction.
+    """
+    session.info[_RLS_PATIENT_ID_KEY] = patient_id
+    set_current_patient_id(patient_id)
+    session.execute(
+        text("SELECT set_config('app.current_patient_id', :pid, true)"),
+        {"pid": patient_id},
+    )
+
+
 @event.listens_for(Session, "after_begin")
-def _rearm_rls_user_id_on_txn_begin(  # type: ignore[no-untyped-def]
+def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
     session, _transaction, connection
 ) -> None:
     """Re-apply the RLS ``app.current_user_id`` GUC on every txn begin.
@@ -463,14 +512,26 @@ def _rearm_rls_user_id_on_txn_begin(  # type: ignore[no-untyped-def]
     worker would not — see :func:`arm_current_user_id`. It no-ops when
     neither is set — CLI scripts, alembic, integration test fixtures that
     arm the GUC themselves all stay unaffected.
+
+    It re-applies ``app.current_patient_id`` on the same terms for a
+    patient principal (see :func:`arm_current_patient_id`). One listener
+    covering both GUCs rather than two: a second listener would re-arm in
+    an order SQLAlchemy does not guarantee, and only one of the two is
+    ever set on a given request anyway.
     """
     user_id = session.info.get(_RLS_USER_ID_KEY) or _current_user_id.get()
-    if user_id is None:
-        return
-    connection.execute(
-        text("SELECT set_config('app.current_user_id', :uid, true)"),
-        {"uid": user_id},
-    )
+    if user_id is not None:
+        connection.execute(
+            text("SELECT set_config('app.current_user_id', :uid, true)"),
+            {"uid": user_id},
+        )
+
+    patient_id = session.info.get(_RLS_PATIENT_ID_KEY) or _current_patient_id.get()
+    if patient_id is not None:
+        connection.execute(
+            text("SELECT set_config('app.current_patient_id', :pid, true)"),
+            {"pid": patient_id},
+        )
 
 
 @event.listens_for(Engine, "checkout")
