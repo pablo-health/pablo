@@ -22,6 +22,7 @@ import pytest
 from app.api_errors import register_exception_handlers
 from app.main import app as real_app
 from app.models import Patient, User
+from app.models.audit import ACTOR_TYPE_ANONYMOUS, ACTOR_TYPE_CLINICIAN, AuditAction
 from app.models.booking_link import BookingLink
 from app.rate_limit import (
     require_public_booking_rate_limit,
@@ -32,6 +33,7 @@ from app.repositories import (
     get_patient_repository,
     get_user_repository,
 )
+from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.booking_link import InMemoryBookingLinkRepository
 from app.repositories.patient import InMemoryPatientRepository
 from app.routes import public_booking as public_booking_module
@@ -52,6 +54,7 @@ from app.scheduling_engine.repositories.availability_rule import (
 from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
+from app.services.audit_service import AuditService
 from app.utcnow import utc_now
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -105,9 +108,22 @@ class _FakeAudit:
         self.calls: list[dict[str, Any]] = []
 
     def log_patient_action(
-        self, action: Any, user: Any, request: Any, patient: Any, changes: Any = None
+        self,
+        action: Any,
+        user: Any,
+        request: Any,
+        patient: Any,
+        changes: Any = None,
+        actor_type: str = ACTOR_TYPE_CLINICIAN,
     ) -> None:
-        self.calls.append({"action": action, "patient": patient, "changes": changes})
+        self.calls.append(
+            {
+                "action": action,
+                "patient": patient,
+                "changes": changes,
+                "actor_type": actor_type,
+            }
+        )
 
     def log_appointment_action(
         self,
@@ -117,9 +133,16 @@ class _FakeAudit:
         appointment_id: str,
         patient_id: str | None = None,
         changes: Any = None,
+        actor_type: str = ACTOR_TYPE_CLINICIAN,
     ) -> None:
         self.calls.append(
-            {"action": action, "appointment_id": appointment_id, "patient_id": patient_id}
+            {
+                "action": action,
+                "appointment_id": appointment_id,
+                "patient_id": patient_id,
+                "changes": changes,
+                "actor_type": actor_type,
+            }
         )
 
 
@@ -144,13 +167,16 @@ def link_repo() -> InMemoryBookingLinkRepository:
     return InMemoryBookingLinkRepository()
 
 
-@pytest.fixture
-def public_client(link_repo: InMemoryBookingLinkRepository) -> Any:
-    """A TestClient over an app that mounts only the public router."""
+def _public_app(link_repo: InMemoryBookingLinkRepository, audit: Any = None) -> Any:
+    """A TestClient over an app that mounts only the public router.
+
+    ``audit`` defaults to the recording fake; pass a real ``AuditService``
+    to assert on the rows that actually land in a repository.
+    """
     appt_repo = InMemoryAppointmentRepository()
     rule_repo = InMemoryAvailabilityRuleRepository()
     patient_repo = InMemoryPatientRepository()
-    fake_audit = _FakeAudit()
+    fake_audit = audit if audit is not None else _FakeAudit()
 
     gcal = MagicMock()
     gcal.push_appointment.return_value = None
@@ -177,6 +203,11 @@ def public_client(link_repo: InMemoryBookingLinkRepository) -> Any:
     client.patient_repo = patient_repo  # type: ignore[attr-defined]  # test-only stash
     client.audit = fake_audit  # type: ignore[attr-defined]  # test-only stash
     return client
+
+
+@pytest.fixture
+def public_client(link_repo: InMemoryBookingLinkRepository) -> Any:
+    return _public_app(link_repo)
 
 
 def _book(client: Any, slug: str, start_at: str, email: str = "jane@example.com") -> Any:
@@ -280,6 +311,20 @@ def test_booking_creates_patient_and_appointment(
     assert any("patient_created" in a for a in actions)
     assert any("appointment_created" in a for a in actions)
 
+    # Nobody signed in to make this booking; the trail must not read as though
+    # the therapist created the chart and the appointment themselves.
+    link = link_repo.get_by_slug("intro-call")
+    assert link is not None
+    for call in public_client.audit.calls:
+        assert call["actor_type"] == ACTOR_TYPE_ANONYMOUS
+        assert call["changes"]["source"] == "public_booking"
+        assert call["changes"]["booking_link_id"] == link.id
+        assert call["changes"]["booking_link_slug"] == "intro-call"
+        # Provenance is ids and slugs. The booker's own details stay out.
+        assert "jane@example.com" not in call["changes"].values()
+        assert "Jane" not in call["changes"].values()
+        assert "Roe" not in call["changes"].values()
+
 
 def test_booked_slot_is_no_longer_offered_or_bookable(
     public_client: Any, link_repo: InMemoryBookingLinkRepository
@@ -310,6 +355,55 @@ def test_repeat_booker_reuses_patient_record(
 
     _patients, total = public_client.patient_repo.list_by_user(OWNER_ID)
     assert total == 1
+
+    # The reuse path skips patient_created, so the only rows are the two
+    # appointments — and they are anonymous too.
+    actions = [str(c["action"]) for c in public_client.audit.calls]
+    assert not any("patient_created" in a for a in actions[1:])
+    assert [c["actor_type"] for c in public_client.audit.calls] == [ACTOR_TYPE_ANONYMOUS] * len(
+        public_client.audit.calls
+    )
+
+
+def test_public_booking_audit_rows_live_in_the_owner_scope_as_anonymous(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    """The whole point of the discriminator, end to end.
+
+    The rows still belong to the owner — they are written under the owner's
+    RLS context and the owner is who reads them back — but they say an
+    anonymous principal acted, and the request context carries the only
+    identity the booker has.
+    """
+    repo = InMemoryAuditRepository()
+    client = _public_app(link_repo, audit=AuditService(repo))
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:30:00Z",
+            "first_name": "Jane",
+            "last_name": "Roe",
+            "email": "jane@example.com",
+        },
+        headers={"X-Forwarded-For": "203.0.113.9"},
+    )
+    assert resp.status_code == 201
+
+    rows = repo.list_for_user(OWNER_ID)
+    assert {r.action for r in rows} == {
+        AuditAction.PATIENT_CREATED.value,
+        AuditAction.APPOINTMENT_CREATED.value,
+    }
+    assert len(rows) == 2
+    for row in rows:
+        assert row.actor_type == ACTOR_TYPE_ANONYMOUS
+        assert row.user_id == OWNER_ID
+        assert row.ip_address == "203.0.113.9"
+        assert row.patient_id is not None
 
 
 def test_booking_reveals_nothing_about_existing_patients(

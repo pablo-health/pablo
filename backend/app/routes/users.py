@@ -811,8 +811,13 @@ def save_theme_preference(
 
 class AuditLogItem(BaseModel):
     # Omits user_id (implicit), changes (PHI-adjacent), and expires_at.
+    #
+    # actor_type is NOT implicit: every row here is scoped to the caller, but
+    # not every row was written BY them — a public booking writes into the
+    # owner's trail as an anonymous actor.
     id: str
     timestamp: str
+    actor_type: str
     action: str
     resource_type: str
     resource_id: str
@@ -850,6 +855,7 @@ def list_my_audit_log(
             AuditLogItem(
                 id=e.id,
                 timestamp=e.timestamp,
+                actor_type=e.actor_type,
                 action=e.action,
                 resource_type=e.resource_type,
                 resource_id=e.resource_id,

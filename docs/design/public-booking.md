@@ -67,12 +67,17 @@ Every public endpoint goes through one dependency chain:
    skip this. Either way `arm_current_user_id(owner)` arms RLS, so
    every repository call behaves exactly as if the owner were making
    it — no RLS bypass, no special-cased queries.
-4. **Audit as the owner.** The booking POST writes
-   `PATIENT_CREATED` (when a new patient record is created) and
-   `APPOINTMENT_CREATED` through the tenant `AuditService` under the
-   owner's identity, with a `source: public_booking` marker in the
-   changes payload. The GET endpoints disclose no PHI and are
-   classified non-PHI in the audit guardrail.
+4. **Audit within the owner's scope, as an anonymous actor.** The
+   booking POST writes `PATIENT_CREATED` (when a new patient record is
+   created) and `APPOINTMENT_CREATED` through the tenant `AuditService`
+   with `actor_type: anonymous`. `user_id` stays the owner — that is
+   the RLS context the write runs under, and it is what puts the row in
+   the owner's own trail, which is where a clinician looks to work out
+   where a chart came from. Who acted is answered by the request's IP
+   plus `changes`, which carries `source: public_booking` and the
+   booking link's id and slug; never the booker's name or email. The
+   GET endpoints disclose no PHI and are classified non-PHI in the
+   audit guardrail.
 
 ### Booking validation
 
@@ -285,16 +290,6 @@ once the previous one is being beaten:
   claimed. Until then, treat deletion as *deactivation plus a
   released name*, and prefer `is_active: false` for any link that was
   ever published.
-- **Audit actor fidelity** (PABLO-e3a.6). A public booking is logged as
-  `PATIENT_CREATED` / `APPOINTMENT_CREATED` with the *link owner* as
-  the actor, because `AuditService` has no representation for an
-  anonymous booker. The trail therefore reads as though the clinician
-  created that chart. `changes={"source": "public_booking"}` marks the
-  provenance, but the actor field itself is wrong — and it is wrong
-  precisely in the spoofed-booking case above, where the audit trail
-  is what a clinician would consult to work out where a chart came
-  from. Giving the audit trail a real anonymous-actor concept is the
-  fix.
 
 ## Frontend
 

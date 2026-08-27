@@ -7,7 +7,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..models.audit import PHI_FIELD_NAMES, AuditAction, AuditLogEntry, ResourceType
+from ..models.audit import (
+    ACTOR_TYPE_CLINICIAN,
+    PHI_FIELD_NAMES,
+    AuditAction,
+    AuditLogEntry,
+    ResourceType,
+)
 from ..repositories.audit import AuditRepository, InMemoryAuditRepository
 from ..request_context import extract_request_context
 
@@ -138,6 +144,7 @@ class AuditService:
         patient: Patient | None = None,
         session: TherapySession | None = None,
         changes: dict[str, Any] | None = None,
+        actor_type: str = ACTOR_TYPE_CLINICIAN,
     ) -> AuditLogEntry:
         """Log an audit event.
 
@@ -145,10 +152,17 @@ class AuditService:
         completion callbacks, Cloud Tasks workers) can audit without a live
         HTTP request; ``extract_request_context`` treats ``None`` as
         no-ip/no-user-agent.
+
+        ``user`` is the principal the row is SCOPED to — the identity the
+        write runs under, which for every authenticated path is also who
+        acted. ``actor_type`` is what separates the two: a public surface
+        passes ``ACTOR_TYPE_ANONYMOUS`` so the row stops claiming its owner
+        did the thing.
         """
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
+            actor_type=actor_type,
             action=action.value,
             resource_type=resource_type.value,
             resource_id=resource_id,
@@ -168,6 +182,7 @@ class AuditService:
         request: Request,
         patient: Patient,
         changes: dict[str, Any] | None = None,
+        actor_type: str = ACTOR_TYPE_CLINICIAN,
     ) -> AuditLogEntry:
         return self.log(
             action=action,
@@ -177,6 +192,7 @@ class AuditService:
             resource_id=patient.id,
             patient=patient,
             changes=changes,
+            actor_type=actor_type,
         )
 
     def log_session_action(
@@ -354,10 +370,12 @@ class AuditService:
         appointment_id: str,
         patient_id: str | None = None,
         changes: dict[str, Any] | None = None,
+        actor_type: str = ACTOR_TYPE_CLINICIAN,
     ) -> AuditLogEntry:
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
+            actor_type=actor_type,
             action=action.value,
             resource_type=ResourceType.APPOINTMENT.value,
             resource_id=appointment_id,

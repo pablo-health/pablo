@@ -156,7 +156,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("patch", "/api/booking-links/{link_id}"),  # updates link copy/duration/active
         ("delete", "/api/booking-links/{link_id}"),  # deletes a booking link
         # public_booking.py — public display card + free/busy only; the booking
-        # POST (which creates patient + appointment PHI) IS audited as the owner
+        # POST (which creates patient + appointment PHI) IS audited, as an
+        # anonymous actor within the owner's scope
         ("get", "/api/public/booking-links/{slug}"),  # link display card, no PHI
         ("get", "/api/public/booking-links/{slug}/slots"),  # free slots, no PHI
         # compliance.py — therapist's own compliance checklist (license/insurance/training)

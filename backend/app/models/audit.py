@@ -266,9 +266,18 @@ PHI_FIELD_NAMES: frozenset[str] = frozenset(
 # ``patient`` is a patient principal acting for themselves — consent decisions
 # above all, which is what makes the distinction legally load-bearing rather
 # than cosmetic.
+# ``anonymous`` is an unauthenticated principal acting through a public surface
+# (today: a booking link). For this kind, ``user_id`` names the SCOPE principal
+# — the clinician whose RLS context the write happened under — not the actor;
+# the actor is identified by ``ip_address`` plus the provenance in ``changes``.
 ACTOR_TYPE_CLINICIAN = "clinician"
 ACTOR_TYPE_PATIENT = "patient"
-ACTOR_TYPES: tuple[str, ...] = (ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT)
+ACTOR_TYPE_ANONYMOUS = "anonymous"
+ACTOR_TYPES: tuple[str, ...] = (
+    ACTOR_TYPE_CLINICIAN,
+    ACTOR_TYPE_PATIENT,
+    ACTOR_TYPE_ANONYMOUS,
+)
 
 
 @dataclass
@@ -337,6 +346,7 @@ class AuditLogEntry:
             timestamp=data["timestamp"],
             expires_at=data["expires_at"],
             user_id=data["user_id"],
+            actor_type=data.get("actor_type", ACTOR_TYPE_CLINICIAN),
             action=data["action"],
             resource_type=data["resource_type"],
             resource_id=data["resource_id"],
