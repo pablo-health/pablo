@@ -22,8 +22,16 @@ def _parse_iso(s: str) -> datetime:
 
 
 def _local(dt: datetime | str, tz: tzinfo) -> datetime:
-    """Resolve an instant to its wall-clock representation in ``tz``."""
+    """Resolve an instant to its wall-clock representation in ``tz``.
+
+    Offset-less input is read as wall-clock in ``tz`` rather than converted.
+    ``astimezone`` would otherwise resolve a naive datetime against the
+    *host's* timezone, so the same rule check would land on a different hour
+    on a UTC container than on a developer's laptop.
+    """
     parsed = dt if isinstance(dt, datetime) else _parse_iso(dt)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=tz)
     return parsed.astimezone(tz)
 
 

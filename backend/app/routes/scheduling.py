@@ -405,14 +405,17 @@ def list_appointments(
     service: SchedulingService = Depends(get_scheduling_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     audit: AuditService = Depends(get_audit_service),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentListResponse:
     """List appointments in a date range.
 
     ``start``/``end`` are parsed and validated as ISO 8601 at the request
     layer, so a malformed value is rejected with a 422 instead of reaching
-    the service and surfacing as a 500.
+    the service and surfacing as a 500. A value sent without an offset is
+    read as wall-clock in the owner's timezone, matching how availability
+    rules are evaluated.
     """
-    appointments = service.list_appointments(user.id, start.isoformat(), end.isoformat())
+    appointments = service.list_appointments(user.id, start.isoformat(), end.isoformat(), tz=tz)
     names = _patient_name_map(patient_repo, user.id, appointments)
     # The payload carries each patient's display name, which makes reading
     # this list a per-record identifier read rather than bare calendar
