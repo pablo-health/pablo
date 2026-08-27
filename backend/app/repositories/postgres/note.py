@@ -245,6 +245,7 @@ def _row_to_note(row: NoteRow) -> Note:
         quality_rating=row.quality_rating,
         quality_rating_reason=row.quality_rating_reason,
         quality_rating_sections=row.quality_rating_sections,
+        status=row.status,
         export_status=row.export_status,
         export_queued_at=row.export_queued_at,
         export_reviewed_at=row.export_reviewed_at,
@@ -269,6 +270,7 @@ def _note_to_row(note: Note, row: NoteRow) -> None:
     row.quality_rating = note.quality_rating
     row.quality_rating_reason = note.quality_rating_reason
     row.quality_rating_sections = note.quality_rating_sections
+    row.status = note.status
     row.export_status = note.export_status
     row.export_queued_at = note.export_queued_at
     row.export_reviewed_at = note.export_reviewed_at

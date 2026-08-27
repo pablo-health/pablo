@@ -209,6 +209,10 @@ class NoteRow(Base):
     quality_rating: Mapped[int | None] = mapped_column(Integer)
     quality_rating_reason: Mapped[str | None] = mapped_column(Text)
     quality_rating_sections: Mapped[list | None] = mapped_column(JSONB)
+    # 'processing' | 'complete' | 'failed' — see app.models.note.Note.status.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="complete", default="complete"
+    )
     # Export tracking — mirrors TherapySessionRow.export_*
     export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
     export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

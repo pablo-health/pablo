@@ -2,6 +2,7 @@
 
 "use client"
 
+import type { UseQueryOptions } from "@tanstack/react-query"
 import type {
   CreateStandaloneNoteRequest,
   FinalizeNoteRequest,
@@ -19,8 +20,13 @@ import {
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
 
-export function useNote(noteId: string | undefined, token?: string) {
+export function useNote(
+  noteId: string | undefined,
+  token?: string,
+  options?: Omit<UseQueryOptions<Note>, "queryKey" | "queryFn" | "enabled">,
+) {
   return useAuthQuery<Note>({
+    ...options,
     queryKey: queryKeys.notes.detail(noteId ?? ""),
     queryFn: () => fetchNote(noteId!, token),
     enabled: !!noteId,

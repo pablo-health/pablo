@@ -27,6 +27,14 @@ export type ExportStatus =
   | "skipped"
 
 /**
+ * Lifecycle of the standalone-note dictation path: 'processing' from the
+ * moment the skeleton is persisted, until the Cloud Tasks worker writes
+ * 'complete' (with content) or 'failed'. Every note created any other way
+ * (no dictation, session-derived) is 'complete' from creation.
+ */
+export type NoteGenerationStatus = "processing" | "complete" | "failed"
+
+/**
  * Patient-owned clinical note. Mirrors `NoteResponse` from the backend.
  */
 export interface Note {
@@ -40,6 +48,7 @@ export interface Note {
   quality_rating: number | null
   quality_rating_reason: string | null
   quality_rating_sections: string[] | null
+  status: NoteGenerationStatus
   export_status: ExportStatus
   export_queued_at: string | null
   export_reviewed_at: string | null

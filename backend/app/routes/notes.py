@@ -17,11 +17,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ConflictError, NotFoundError
-from ..auth.service import TenantContext, get_tenant_context, require_baa_acceptance
-from ..db import release_db_connection
+from ..auth.service import (
+    TenantContext,
+    get_tenant_context,
+    require_baa_acceptance,
+    require_cloud_tasks_invoker,
+)
+from ..db import arm_current_user_id, get_db_session, release_db_connection, set_tenant_schema
+from ..jobs.task_queue import enqueue
 from ..models import (
     AuditAction,
     CreateStandaloneNoteRequest,
@@ -29,6 +36,7 @@ from ..models import (
     NoteResponse,
     PatientNotesListResponse,
     Transcript,
+    TranscriptModel,
     UpdateNoteEditsRequest,
     User,
 )
@@ -38,7 +46,7 @@ from ..notes import (
     get_default_registry,
     get_note_type_authorizer,
 )
-from ..repositories import NotesRepository, PatientRepository
+from ..repositories import NotesRepository, PatientRepository, UserRepository, get_user_repository
 from ..repositories import (
     get_appointment_repository as _appt_repo_factory,
 )
@@ -59,6 +67,9 @@ from ..services import (
     RegistryNoteGenerationService,
     get_audit_service,
 )
+from ..services.note_generation_service import TransientNoteGenerationError
+from ..services.session_generation_worker import resolve_tenant_schema_for_user
+from ..settings import get_settings
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
@@ -69,6 +80,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
 patient_notes_router = APIRouter(prefix="/api/patients", tags=["notes"])
+internal_jobs_router = APIRouter(tags=["notes"])
 
 
 def get_notes_repository(
@@ -118,6 +130,25 @@ def get_scheduling_service(
 def get_registry() -> NoteTypeRegistry:
     """Indirection so tests can swap the registry per-request."""
     return get_default_registry()
+
+
+def get_worker_note_service() -> NoteService:
+    """NoteService for the off-request Cloud Tasks worker.
+
+    Built from the raw repository factory — NOT the ``get_tenant_context``-
+    scoped ``get_note_service`` above. The worker authenticates as the
+    Cloud-Tasks service account, which has no Firebase user session, so it
+    must not depend on ``get_tenant_context``. The route handler arms the
+    request-scoped DB session's tenant schema (resolved from the job's
+    ``user_id``) before this service's repository does any reads or writes —
+    same pattern as ``sessions.get_worker_session_service``.
+    """
+    return NoteService(_notes_repo_factory())
+
+
+def get_worker_patient_repository() -> PatientRepository:
+    """PatientRepository for the off-request Cloud Tasks worker (see get_worker_note_service)."""
+    return _patient_repo_factory()
 
 
 @router.get("/{note_id}")
@@ -265,13 +296,13 @@ def list_patient_notes(
 def create_standalone_note(
     patient_id: str,
     http_request: Request,
+    http_response: Response,
     request: CreateStandaloneNoteRequest,
     user: User = Depends(require_baa_acceptance),
     note_service: NoteService = Depends(get_note_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     registry: NoteTypeRegistry = Depends(get_registry),
     authorizer: NoteTypeAuthorizer = Depends(get_note_type_authorizer),
-    note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
     scheduling_service: SchedulingService = Depends(get_scheduling_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> NoteResponse:
@@ -279,9 +310,12 @@ def create_standalone_note(
 
     This is the original pa-0nx feature: clinicians may author a note
     without ever recording or transcribing a session. If a dictation
-    transcript is provided, the same generation pipeline used by the
-    session-upload path runs against it; otherwise the note is stored
-    empty for the clinician to fill via PATCH.
+    transcript is provided, the note skeleton is persisted as
+    ``processing`` and returned with ``202`` — the same generation
+    pipeline used by the session-upload path runs off-request on a Cloud
+    Tasks worker (``/api/internal/jobs/generate-standalone-note``); poll
+    ``GET /api/notes/{id}`` for ``status``. With no dictation, the note is
+    stored empty (``201``) for the clinician to fill via PATCH.
 
     If ``appointment_id`` and any billing-code field are supplied, this is
     also where a clinician codes the visit — the primary coding surface,
@@ -332,42 +366,12 @@ def create_standalone_note(
                 {"appointment_id": request.appointment_id},
             )
 
-    content: dict[str, object] | None = None
-    if request.dictation_transcript is not None:
-        transcript = Transcript(
-            format=request.dictation_transcript.format.value,
-            content=request.dictation_transcript.content,
-        )
-        # Release the request-scoped DB connection before the multi-second
-        # LLM generation so we don't hold a pooled connection (and the
-        # patient read's locks) idle across it -- the stale-connection 500
-        # window. Tenant scoping re-arms on the next checkout. Same seam as
-        # upload_session (THERAPY-da7t) and the import path.
-        release_db_connection()
-        try:
-            generated = note_generation_service.generate_note(
-                request.note_type,
-                transcript,
-                patient,
-                utc_now(),
-            )
-        except (ValueError, KeyError) as exc:
-            logger.exception(
-                "Standalone note generation failed for note_type=%s",
-                request.note_type,
-            )
-            raise BadRequestError(
-                "Note generation failed",
-                {"note_type": request.note_type},
-                code="NOTE_GENERATION_FAILED",
-            ) from exc
-        content = generated.content
-
     note = note_service.create_standalone_note(
         patient_id=patient.id,
         note_type=request.note_type,
-        content=content,
+        content=None,
         content_edited=request.content_edited,
+        status="processing" if request.dictation_transcript is not None else "complete",
         user_id=user.id,
     )
 
@@ -380,6 +384,23 @@ def create_standalone_note(
         session_id=None,
         changes={"note_type": note.note_type, "standalone": True},
     )
+
+    if request.dictation_transcript is not None:
+        enqueue(
+            get_settings().soap_generation_task_queue,
+            "/api/internal/jobs/generate-standalone-note",
+            {
+                "note_id": note.id,
+                "user_id": user.id,
+                "note_type": note.note_type,
+                "transcript": {
+                    "format": request.dictation_transcript.format.value,
+                    "content": request.dictation_transcript.content,
+                },
+            },
+            dedup_key=note.id,
+        )
+        http_response.status_code = status.HTTP_202_ACCEPTED
 
     if appointment is not None:
         visit_codes = request.model_dump(
@@ -404,3 +425,149 @@ def create_standalone_note(
             )
 
     return NoteResponse.from_note(note)
+
+
+class GenerateStandaloneNoteJob(BaseModel):
+    """Cloud Tasks payload for off-request standalone-note generation.
+
+    The dictation transcript travels here because nothing else about the
+    note persists it. No tenant schema name (it can identify a tenant);
+    the worker re-resolves the schema from ``user_id`` server-side.
+    """
+
+    note_id: str
+    user_id: str
+    note_type: str
+    transcript: TranscriptModel
+
+
+def _is_final_note_generation_attempt(request: Request) -> bool:
+    """Whether this is the last Cloud Tasks delivery for a standalone-note job.
+
+    Mirrors ``sessions._is_final_soap_attempt`` — this job runs on the same
+    queue (``soap_generation_task_queue``), so it shares that queue's retry
+    budget.
+    """
+    raw = request.headers.get("X-CloudTasks-TaskRetryCount")
+    try:
+        retry_count = int(raw) if raw is not None else 0
+    except ValueError:
+        retry_count = 0
+    return retry_count >= get_settings().soap_generation_max_attempts - 1
+
+
+@internal_jobs_router.post(
+    "/api/internal/jobs/generate-standalone-note", status_code=status.HTTP_200_OK
+)
+def generate_standalone_note_job(
+    payload: GenerateStandaloneNoteJob,
+    http_request: Request,
+    _invoker: None = Depends(require_cloud_tasks_invoker),
+    note_service: NoteService = Depends(get_worker_note_service),
+    patient_repo: PatientRepository = Depends(get_worker_patient_repository),
+    note_generation_service: NoteGenerationService = Depends(get_note_generation_service),
+    user_repo: UserRepository = Depends(get_user_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> dict[str, str]:
+    """Worker: generate content for a ``processing`` standalone note.
+
+    Mirrors ``sessions.generate_soap_job``. Invoked only by Cloud Tasks
+    (service-account OIDC, enforced by ``require_cloud_tasks_invoker``), so
+    it scopes itself to the job's tenant from ``user_id`` before touching
+    any tenant-scoped row, and runs the LLM off the create-note request
+    thread.
+
+    Answers ``200`` once the job is accounted for — a success, the
+    non-retryable outcomes (unknown tenant, vanished note/patient), and a
+    recorded *deterministic* generation failure (the note is durably marked
+    ``failed``). A *transient* failure (e.g. an LLM 429) instead returns
+    ``503`` so the queue retries with backoff, until the final attempt — at
+    which point it is recorded as ``failed`` and answered ``200``.
+    """
+    schema = resolve_tenant_schema_for_user(payload.user_id)
+    if schema is None:
+        logger.warning(
+            "generate-standalone-note job: no active tenant for user %s — dropping (non-retryable)",
+            payload.user_id,
+        )
+        return {"status": "unknown_tenant"}
+
+    db_session = get_db_session()
+    set_tenant_schema(db_session, schema)
+    arm_current_user_id(db_session, payload.user_id)
+
+    try:
+        note = note_service.get_note(payload.note_id, payload.user_id)
+    except NoteNotFoundError:
+        logger.warning(
+            "generate-standalone-note job: note %s not found — dropping (non-retryable)",
+            payload.note_id,
+        )
+        return {"status": "not_found"}
+
+    patient = patient_repo.get(note.patient_id, payload.user_id)
+    if patient is None:
+        logger.warning(
+            "generate-standalone-note job: patient not found for note %s — dropping "
+            "(non-retryable)",
+            payload.note_id,
+        )
+        return {"status": "not_found"}
+
+    transcript = Transcript(
+        format=payload.transcript.format.value,
+        content=payload.transcript.content,
+    )
+    # Release the pooled connection before the multi-second LLM call — same
+    # seam ``upload_session`` and the old inline dictation path used.
+    release_db_connection()
+    try:
+        generated = note_generation_service.generate_note(
+            payload.note_type,
+            transcript,
+            patient,
+            utc_now(),
+        )
+    except TransientNoteGenerationError:
+        if not _is_final_note_generation_attempt(http_request):
+            logger.warning(
+                "generate-standalone-note job: transient failure for note %s — retrying via queue",
+                payload.note_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Note generation temporarily unavailable; retrying.",
+            ) from None
+        logger.warning(
+            "generate-standalone-note job: transient failure for note %s on the final "
+            "attempt; marking failed",
+            payload.note_id,
+        )
+        note_service.fail_generation(payload.note_id, payload.user_id)
+        return {"status": "failed"}
+    except (ValueError, KeyError):
+        logger.exception(
+            "generate-standalone-note job: generation failed for note %s", payload.note_id
+        )
+        note_service.fail_generation(payload.note_id, payload.user_id)
+        return {"status": "failed"}
+
+    note = note_service.complete_generation(payload.note_id, generated.content, payload.user_id)
+
+    owner = user_repo.get(payload.user_id)
+    if owner is not None:
+        audit.log_note_action(
+            action=AuditAction.SESSION_NOTE_GENERATED,
+            user=owner,
+            request=http_request,
+            note_id=note.id,
+            patient_id=note.patient_id,
+            session_id=None,
+        )
+    else:
+        logger.warning(
+            "generate-standalone-note job: owner %s not found for audit on note %s",
+            payload.user_id,
+            note.id,
+        )
+    return {"status": "ok"}

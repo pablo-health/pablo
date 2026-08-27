@@ -361,7 +361,8 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     redacted_export_payload jsonb,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    status character varying(20) DEFAULT 'complete'::character varying NOT NULL
 );
 
 

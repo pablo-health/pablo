@@ -88,6 +88,7 @@ export function createMockNote(overrides: Partial<Note> = {}): Note {
     quality_rating: null,
     quality_rating_reason: null,
     quality_rating_sections: null,
+    status: "complete",
     export_status: "not_queued",
     export_queued_at: null,
     export_reviewed_at: null,

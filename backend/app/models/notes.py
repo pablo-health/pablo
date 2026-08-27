@@ -36,6 +36,7 @@ class NoteResponse(BaseModel):
     quality_rating: int | None = None
     quality_rating_reason: str | None = None
     quality_rating_sections: list[str] | None = None
+    status: str = "complete"
     export_status: str = "not_queued"
     export_queued_at: datetime | None = None
     export_reviewed_at: datetime | None = None
@@ -57,6 +58,7 @@ class NoteResponse(BaseModel):
             quality_rating=note.quality_rating,
             quality_rating_reason=note.quality_rating_reason,
             quality_rating_sections=note.quality_rating_sections,
+            status=note.status,
             export_status=note.export_status,
             export_queued_at=note.export_queued_at,
             export_reviewed_at=note.export_reviewed_at,
