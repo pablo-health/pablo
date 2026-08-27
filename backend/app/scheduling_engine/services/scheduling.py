@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from datetime import date as date_type
 from typing import TYPE_CHECKING
 
@@ -67,8 +67,13 @@ class SchedulingService:
         user_id: str,
         start_dt: datetime,
         end_dt: datetime,
+        tz: tzinfo = UTC,
     ) -> list[str]:
         """Evaluate availability rules against a proposed booking window.
+
+        ``tz`` is the zone rules are evaluated in — see
+        ``AvailabilityEngine.check_conflicts``. Defaults to UTC so existing
+        callers are unaffected.
 
         Skipped entirely when no engine was wired in (the ~35 tests that
         construct ``SchedulingService(repo)`` directly) or when the user has
@@ -78,7 +83,7 @@ class SchedulingService:
         """
         if self._availability_engine is None:
             return []
-        result = self._availability_engine.check_conflicts(user_id, start_dt, end_dt)
+        result = self._availability_engine.check_conflicts(user_id, start_dt, end_dt, tz=tz)
         hard = [c.message for c in result.conflicts if c.enforcement == EnforcementLevel.HARD]
         if hard:
             raise RuleViolationError(hard)
@@ -112,11 +117,15 @@ class SchedulingService:
         user_id: str,
         *,
         data: dict[str, str | int | datetime | None],
+        tz: tzinfo = UTC,
     ) -> Appointment:
         """Create a single appointment.
 
         Required keys in data: patient_id, title, start_at, end_at, duration_minutes.
         Optional: session_type, video_link, video_platform, notes.
+
+        ``tz`` is the zone availability rules are evaluated in — see
+        ``AvailabilityEngine.check_conflicts``. Defaults to UTC.
         """
         patient_id = data.get("patient_id", "")
         if not patient_id:
@@ -148,7 +157,7 @@ class SchedulingService:
         pending_expires_at = self._pending_expiry(status, data.get("pending_expires_at"))
 
         self._reject_if_overlapping(user_id, start_dt, end_dt)
-        self.rule_warnings = self._check_availability_rules(user_id, start_dt, end_dt)
+        self.rule_warnings = self._check_availability_rules(user_id, start_dt, end_dt, tz)
 
         now = _now()
         appointment = Appointment(
@@ -186,9 +195,15 @@ class SchedulingService:
         self,
         appointment_id: str,
         user_id: str,
+        *,
+        tz: tzinfo = UTC,
         **updates: str | int | bool | None,
     ) -> Appointment:
-        """Update fields on an existing appointment."""
+        """Update fields on an existing appointment.
+
+        ``tz`` is the zone availability rules are evaluated in — see
+        ``AvailabilityEngine.check_conflicts``. Defaults to UTC.
+        """
         appointment = self.get_appointment(appointment_id, user_id)
 
         allowed_fields = {
@@ -232,7 +247,7 @@ class SchedulingService:
                 exclude_appointment_id=appointment_id,
             )
             self.rule_warnings = self._check_availability_rules(
-                user_id, appointment.start_at, appointment.end_at
+                user_id, appointment.start_at, appointment.end_at, tz
             )
 
         appointment.updated_at = _now()

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
@@ -852,3 +853,115 @@ class TestConfiguredSentinel:
         slots_result = engine.get_free_slots(USER_ID, "2026-03-18", 50)
         assert slots_result.configured is True
         assert len(slots_result.slots) == 1
+
+
+NY = ZoneInfo("America/New_York")
+
+
+class TestTimezoneAwareRuleEvaluation:
+    """A clinician's rules are configured in their own zone, not UTC.
+
+    2026-08-26 is a Wednesday and falls in EDT (UTC-4); 2026-11-04 is a
+    Wednesday after the fall DST change and falls in EST (UTC-5). Every
+    case here is paired with the same call minus ``tz`` to pin down that
+    the zone, and nothing else, is what flips the outcome.
+    """
+
+    def test_working_hours_conflict_flips_with_timezone(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+
+        # 19:00 UTC = 15:00 EDT — inside working hours in NY, outside in UTC.
+        ny_evening = engine.check_conflicts(
+            USER_ID, "2026-08-26T19:00:00Z", "2026-08-26T19:50:00Z", tz=NY
+        ).conflicts
+        utc_evening = engine.check_conflicts(
+            USER_ID, "2026-08-26T19:00:00Z", "2026-08-26T19:50:00Z"
+        ).conflicts
+        assert ny_evening == []
+        assert len(utc_evening) == 1
+
+        # 12:00 UTC = 08:00 EDT — outside working hours in NY, inside in UTC.
+        ny_morning = engine.check_conflicts(
+            USER_ID, "2026-08-26T12:00:00Z", "2026-08-26T12:50:00Z", tz=NY
+        ).conflicts
+        utc_morning = engine.check_conflicts(
+            USER_ID, "2026-08-26T12:00:00Z", "2026-08-26T12:50:00Z"
+        ).conflicts
+        assert len(ny_morning) == 1
+        assert utc_morning == []
+
+    def test_free_slots_local_day_with_dst(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+
+        # Before the fall-back: 09:00 EDT == 13:00Z.
+        summer_slots = engine.get_free_slots(USER_ID, "2026-08-26", 50, tz=NY).slots
+        assert summer_slots[0].start == "2026-08-26T13:00:00Z"
+        assert all(s.end <= "2026-08-26T21:00:00Z" for s in summer_slots)
+
+        # After the fall-back: 09:00 EST == 14:00Z.
+        winter_slots = engine.get_free_slots(USER_ID, "2026-11-04", 50, tz=NY).slots
+        assert winter_slots[0].start == "2026-11-04T14:00:00Z"
+
+    def test_local_day_window_for_max_per_day(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 3, "start": "09:00", "end": "17:00"},
+                rule_id="r2",
+            )
+        )
+        rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 1}, rule_id="r3"))
+        # 2026-08-27T02:00:00Z is 22:00 EDT on the 26th, not the 27th.
+        appt_repo.create(_appt("2026-08-27T02:00:00Z", "2026-08-27T02:50:00Z"))
+
+        # tz=NY: the appointment counts against the 26th local day, so a
+        # second booking that day is refused by max_per_day.
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-08-26T13:00:00Z", "2026-08-26T13:50:00Z", tz=NY
+        ).conflicts
+        assert len(conflicts) == 1
+        assert "maximum" in conflicts[0].message.lower()
+
+        # The 27th local day is untouched by it.
+        slots_27_ny = engine.get_free_slots(USER_ID, "2026-08-27", 50, tz=NY).slots
+        assert len(slots_27_ny) > 0
+
+        # With the UTC default, the same appointment lands on the 27th
+        # instead, so it fully consumes that day's single slot.
+        slots_27_utc = engine.get_free_slots(USER_ID, "2026-08-27", 50).slots
+        assert slots_27_utc == []
+
+    def test_block_day_of_week_is_local(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 5}))  # Saturday
+
+        # 2026-08-30T02:00:00Z is Saturday 22:00 EDT, but Sunday in UTC.
+        ny_conflicts = engine.check_conflicts(
+            USER_ID, "2026-08-30T02:00:00Z", "2026-08-30T02:50:00Z", tz=NY
+        ).conflicts
+        utc_conflicts = engine.check_conflicts(
+            USER_ID, "2026-08-30T02:00:00Z", "2026-08-30T02:50:00Z"
+        ).conflicts
+        assert len(ny_conflicts) == 1
+        assert utc_conflicts == []
