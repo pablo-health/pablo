@@ -17,7 +17,7 @@ appointments — so no blind patient-list read and none of its spurious
 disclosure, so each one shown is audited ``session_viewed``.
 """
 
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
@@ -29,7 +29,7 @@ from ..models.scheduling import AppointmentResponse
 from ..repositories import NotesRepository, PatientRepository, TherapySessionRepository
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
-from .scheduling import _to_response, get_scheduling_service
+from .scheduling import _to_response, get_owner_timezone, get_scheduling_service
 from .sessions import (
     get_notes_repository,
     get_patient_repository,
@@ -78,11 +78,16 @@ def get_dashboard_summary(
     patient_repo: PatientRepository = Depends(get_patient_repository),
     notes_repo: NotesRepository = Depends(get_notes_repository),
     audit: AuditService = Depends(get_audit_service),
+    tz: tzinfo = Depends(get_owner_timezone),
 ) -> DashboardSummaryResponse:
-    """Aggregate the clinician dashboard into a single read."""
+    """Aggregate the clinician dashboard into a single read.
+
+    Range bounds sent without an offset are read as wall-clock in the
+    clinician's own timezone, so "today" is their midnight-to-midnight.
+    """
     # Today's appointments + last-visit dates for exactly those patients —
     # no blind patient-list page (and so none of its patient_viewed rows).
-    today_appts = scheduling.list_appointments(user.id, today_start, today_end)
+    today_appts = scheduling.list_appointments(user.id, today_start, today_end, tz=tz)
     today_patient_ids = list({a.patient_id for a in today_appts})
     today_patients = patient_repo.get_multiple(today_patient_ids, user.id)
     last_visit_by_patient = {
@@ -91,7 +96,7 @@ def get_dashboard_summary(
     }
 
     # Rest-of-week: only the confirmed count is shown.
-    week_appts = scheduling.list_appointments(user.id, week_start, week_end)
+    week_appts = scheduling.list_appointments(user.id, week_start, week_end, tz=tz)
     week_confirmed_count = sum(1 for a in week_appts if a.status == "confirmed")
 
     # Session aggregates computed over the full accessible set, not a page.

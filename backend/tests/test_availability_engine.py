@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -965,3 +967,57 @@ class TestTimezoneAwareRuleEvaluation:
         ).conflicts
         assert len(ny_conflicts) == 1
         assert utc_conflicts == []
+
+
+class TestNaiveInputIsHostIndependent:
+    """A datetime with no offset is read as wall-clock in ``tz``.
+
+    ``datetime.astimezone()`` resolves a naive value against the *host's*
+    timezone, so evaluating one that way would give a different answer on a
+    UTC container than on a laptop in Chicago — a bug that passes CI and
+    fails in front of a clinician. These cases pin the reading to ``tz``.
+    """
+
+    def _conflicts_under_host_tz(self, engine: AvailabilityEngine, host_tz: str) -> list[object]:
+        """Run a naive-input rule check with the process pinned to ``host_tz``."""
+        previous = os.environ.get("TZ")
+        os.environ["TZ"] = host_tz
+        time.tzset()
+        try:
+            # No offset: "15:00 on Wednesday the 26th", the practice's clock.
+            return list(
+                engine.check_conflicts(
+                    USER_ID, "2026-08-26T15:00:00", "2026-08-26T15:50:00", tz=NY
+                ).conflicts
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous
+            time.tzset()
+
+    def test_naive_reading_does_not_move_with_the_host_timezone(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+
+        # 15:00 is inside 09:00-17:00 whatever the host clock says.
+        assert self._conflicts_under_host_tz(engine, "UTC") == []
+        assert self._conflicts_under_host_tz(engine, "America/Chicago") == []
+        assert self._conflicts_under_host_tz(engine, "Asia/Tokyo") == []
+
+    def test_naive_reading_is_the_practice_clock_not_utc(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        """08:00 local is outside working hours even though 08:00Z is inside."""
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+
+        naive_early = engine.check_conflicts(
+            USER_ID, "2026-08-26T08:00:00", "2026-08-26T08:50:00", tz=NY
+        ).conflicts
+        assert len(naive_early) == 1

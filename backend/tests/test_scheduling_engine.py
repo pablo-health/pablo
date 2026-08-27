@@ -528,3 +528,100 @@ class TestTimezoneForwarding:
             end_at=datetime.fromisoformat("2026-03-20T15:50:00+00:00"),
         )
         assert recording_engine.seen_tz is UTC
+
+
+class TestNaiveDatetimeInput:
+    """An offset-less datetime means the practice's own wall-clock.
+
+    The API accepts a bare ``2026-03-18T09:00:00`` (``start_at`` is a plain
+    ``datetime`` on the request models), so the service has to decide what
+    zone that string is in. It reads it in the caller's ``tz`` — the same
+    frame availability rules are evaluated in — rather than silently
+    stamping UTC.
+    """
+
+    NY = ZoneInfo("America/New_York")
+
+    def test_list_range_is_local_midnight_to_midnight(self, service: SchedulingService) -> None:
+        # 03:00Z on Mar 18 is 23:00 EDT on Mar *17* — outside a New York
+        # "March 18", but inside a UTC one.
+        service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                title="Late on the 17th, New York time",
+                start_at=datetime.fromisoformat("2026-03-18T03:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T03:50:00+00:00"),
+            ),
+        )
+        service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                title="Mid-morning on the 18th",
+                start_at=datetime.fromisoformat("2026-03-18T14:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T14:50:00+00:00"),
+            ),
+        )
+
+        results = service.list_appointments(
+            USER_ID, "2026-03-18T00:00:00", "2026-03-19T00:00:00", tz=self.NY
+        )
+
+        assert [a.title for a in results] == ["Mid-morning on the 18th"]
+
+    def test_naive_list_range_still_defaults_to_utc(self, service: SchedulingService) -> None:
+        """No ``tz`` means UTC — the pre-existing behaviour, unchanged."""
+        service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                title="Late on the 17th, New York time",
+                start_at=datetime.fromisoformat("2026-03-18T03:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T03:50:00+00:00"),
+            ),
+        )
+
+        results = service.list_appointments(USER_ID, "2026-03-18T00:00:00", "2026-03-19T00:00:00")
+
+        assert [a.title for a in results] == ["Late on the 17th, New York time"]
+
+    def test_aware_list_range_ignores_tz(self, service: SchedulingService) -> None:
+        """An explicit offset is an instant; ``tz`` must not shift it."""
+        service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                title="Late on the 17th, New York time",
+                start_at=datetime.fromisoformat("2026-03-18T03:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-18T03:50:00+00:00"),
+            ),
+        )
+
+        results = service.list_appointments(
+            USER_ID, "2026-03-18T00:00:00Z", "2026-03-19T00:00:00Z", tz=self.NY
+        )
+
+        assert [a.title for a in results] == ["Late on the 17th, New York time"]
+
+    def test_create_reads_naive_start_in_caller_tz(self, service: SchedulingService) -> None:
+        appt = service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                start_at=datetime.fromisoformat("2026-03-20T15:00:00"),
+                end_at=datetime.fromisoformat("2026-03-20T15:50:00"),
+            ),
+            tz=self.NY,
+        )
+
+        # 15:00 in New York, not 15:00 UTC and not 15:00 on whatever zone the
+        # test host happens to sit in.
+        assert appt.start_at == datetime.fromisoformat("2026-03-20T19:00:00+00:00")
+
+    def test_create_leaves_aware_start_alone(self, service: SchedulingService) -> None:
+        appt = service.create_appointment(
+            USER_ID,
+            data=_appt_data(
+                start_at=datetime.fromisoformat("2026-03-20T15:00:00+00:00"),
+                end_at=datetime.fromisoformat("2026-03-20T15:50:00+00:00"),
+            ),
+            tz=self.NY,
+        )
+
+        assert appt.start_at == datetime.fromisoformat("2026-03-20T15:00:00+00:00")

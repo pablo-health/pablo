@@ -30,18 +30,36 @@ def _now() -> datetime:
     return utc_now()
 
 
-def _to_utc(iso_str: str) -> str:
-    """Normalize an ISO 8601 datetime string to UTC Z-suffix format."""
-    dt = datetime.fromisoformat(iso_str)
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(UTC)
-    return dt.isoformat().replace("+00:00", "Z")
+def _localize(dt: datetime, tz: tzinfo) -> datetime:
+    """Attach ``tz`` to a naive datetime, reading it as local wall-clock.
+
+    A caller that sends ``2026-08-27T15:00:00`` with no offset means three
+    o'clock on the practice's own clock — the same thing the clinician means
+    when they type "15:00" into an availability rule. Note this is
+    deliberately ``replace``, not ``astimezone``: ``astimezone`` on a naive
+    datetime assumes the *host's* timezone, which would make the same request
+    resolve differently on a UTC container than on a developer's laptop.
+    Already-aware input is an explicit instant and passes through untouched.
+    """
+    return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt
 
 
-def _as_datetime(value: datetime | str) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+def _to_utc(iso_str: str, tz: tzinfo = UTC) -> str:
+    """Normalize an ISO 8601 datetime string to UTC Z-suffix format.
+
+    An offset-less string is read as wall-clock in ``tz`` (see ``_localize``).
+    """
+    dt = _localize(datetime.fromisoformat(iso_str), tz)
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _as_datetime(value: datetime | str, tz: tzinfo = UTC) -> datetime:
+    parsed = (
+        value
+        if isinstance(value, datetime)
+        else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    )
+    return _localize(parsed, tz)
 
 
 class SchedulingService:
@@ -134,20 +152,14 @@ class SchedulingService:
         end_at = data.get("end_at")
         if not start_at or not end_at:
             raise InvalidAppointmentError("start_at and end_at are required")
+        if not isinstance(start_at, datetime | str) or not isinstance(end_at, datetime | str):
+            raise InvalidAppointmentError("start_at and end_at must be datetimes")
         duration_minutes = data.get("duration_minutes", 0)
         if not isinstance(duration_minutes, int) or duration_minutes <= 0:
             raise InvalidAppointmentError("duration_minutes must be positive")
 
-        start_dt = (
-            start_at
-            if isinstance(start_at, datetime)
-            else datetime.fromisoformat(str(start_at).replace("Z", "+00:00"))
-        )
-        end_dt = (
-            end_at
-            if isinstance(end_at, datetime)
-            else datetime.fromisoformat(str(end_at).replace("Z", "+00:00"))
-        )
+        start_dt = _as_datetime(start_at, tz)
+        end_dt = _as_datetime(end_at, tz)
 
         # Request mode. A surface that cannot commit the diary on its own asks
         # for PENDING and supplies the instant the request stops holding its
@@ -187,9 +199,16 @@ class SchedulingService:
             raise AppointmentNotFoundError(appointment_id)
         return appointment
 
-    def list_appointments(self, user_id: str, start: str, end: str) -> list[Appointment]:
-        """List appointments in a date range."""
-        return self._repo.list_by_range(user_id, _to_utc(start), _to_utc(end))
+    def list_appointments(
+        self, user_id: str, start: str, end: str, *, tz: tzinfo = UTC
+    ) -> list[Appointment]:
+        """List appointments in a date range.
+
+        ``start``/``end`` without an offset are read as wall-clock in ``tz``,
+        so "today" for a New York practice is that practice's midnight-to-
+        midnight rather than UTC's. Defaults to UTC.
+        """
+        return self._repo.list_by_range(user_id, _to_utc(start, tz), _to_utc(end, tz))
 
     def update_appointment(
         self,
@@ -238,8 +257,8 @@ class SchedulingService:
         # 422 here.
         self.rule_warnings = []
         if {"start_at", "end_at", "duration_minutes"} & updates.keys():
-            appointment.start_at = _as_datetime(appointment.start_at)
-            appointment.end_at = _as_datetime(appointment.end_at)
+            appointment.start_at = _as_datetime(appointment.start_at, tz)
+            appointment.end_at = _as_datetime(appointment.end_at, tz)
             self._reject_if_overlapping(
                 user_id,
                 appointment.start_at,
