@@ -60,10 +60,21 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
     leaves nothing stashed, which is the correct input to both consumers.
     """
     auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
+    # Case-INSENSITIVE on the scheme, and it has to be. RFC 7235 says the
+    # scheme is case-insensitive, FastAPI's own ``HTTPBearer`` compares
+    # ``scheme.lower() != "bearer"``, and ``_credential_from_request``
+    # lowercases it too — so ``Authorization: bearer <token>`` is a
+    # perfectly working clinician credential everywhere else in the stack.
+    # A case-SENSITIVE check here used to skip the stash for exactly that
+    # header, which left ``get_patient_context``'s clinician guard with
+    # nothing to read: one lowercased letter and a clinician's token got
+    # offered to every patient resolver. The guard is only as good as this
+    # parse, so this must stay at least as permissive as HTTPBearer's.
+    scheme, _, token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
         return
 
-    token = auth_header[7:]
+    token = token.strip()
     try:
         from ..auth.service import verify_token
 

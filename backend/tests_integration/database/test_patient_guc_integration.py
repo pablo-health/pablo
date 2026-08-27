@@ -27,6 +27,7 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 # Skip the whole module if no Postgres URL is available.
 _DB_URL = os.environ.get("DATABASE_URL", "")
@@ -55,6 +56,7 @@ from app.db import (  # noqa: E402
     arm_current_patient_id,
     arm_current_user_id,
     create_standalone_session,
+    get_engine,
 )
 from app.db.tenant_session import tenant_db_session  # noqa: E402
 
@@ -169,26 +171,119 @@ class TestPatientGucArming:
             session.close()
 
     def test_guc_is_absent_on_a_session_that_armed_nothing(self) -> None:
-        """A pooled connection must not carry a previous request's patient."""
-        armed = create_standalone_session(_SCHEMA)
-        arm_current_patient_id(armed, _PATIENT_A)
-        assert _read(armed, "app.current_patient_id") == _PATIENT_A
-        armed.rollback()
-        armed.close()
+        """A reused connection must not carry a previous request's patient.
 
-        # Simulate DatabaseSessionMiddleware's teardown, then a fresh request.
-        _current_patient_id.set(None)
+        The test owns one connection and binds both sessions to it, rather
+        than arming a pooled session and hoping the pool hands the same
+        backend back. Hoping is what this test used to do: it asserted
+        ``pg_backend_pid()`` matched — a real guard, since a fresh backend
+        obviously carries no GUC and would pass vacuously — but the pool
+        makes no such promise, so under a full-suite run the checkout came
+        back on a different backend and the guard failed the test rather
+        than the product. Owning the connection turns the reuse into a
+        fact, and makes the assertion strictly stronger: the same backend
+        every time, not just when the pool happens to cooperate.
+        """
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
 
-        # No reset here, deliberately: this assertion is only worth anything
-        # if it observes the connection as the product leaves it. The patient
-        # GUC is only ever set ``is_local=true``, so a rollback and a cleared
-        # ContextVar are all it should take.
-        fresh = create_standalone_session(_SCHEMA)
+            armed = Session(bind=conn)
+            arm_current_patient_id(armed, _PATIENT_A)
+            assert _read(armed, "app.current_patient_id") == _PATIENT_A
+            armed.rollback()
+            armed.close()
+
+            # Simulate DatabaseSessionMiddleware's teardown, then a fresh
+            # request landing on this very connection. No manual RESET: the
+            # assertion is only worth anything if it observes the connection
+            # as the product leaves it. The patient GUC is only ever set
+            # ``is_local=true``, so a rollback and a cleared ContextVar are
+            # all it should take.
+            _current_patient_id.set(None)
+
+            fresh = Session(bind=conn)
+            try:
+                assert _read(fresh, "app.current_patient_id") == ""
+            finally:
+                fresh.rollback()
+                fresh.close()
+
+    def test_arming_a_patient_disarms_an_already_armed_clinician(self) -> None:
+        """Mutual exclusion, enforced rather than assumed.
+
+        The patient policies are PERMISSIVE, so Postgres ORs them with the
+        clinician policies. A transaction carrying both GUCs satisfies both
+        families at once and sees the union of clinician and patient
+        grants. ``arm_current_user_id`` is called on the request-scoped
+        session from several places outside ``get_tenant_context`` (the
+        passkey route, the document-finalize and session-generation
+        workers), so a patient surface reusing one of those would land
+        both keys on one Session — and the ``after_begin`` listener re-arms
+        whatever it finds.
+        """
+        session = create_standalone_session(_SCHEMA)
         try:
-            assert _read(fresh, "app.current_patient_id") == ""
+            arm_current_user_id(session, _CLINICIAN)
+            assert _read(session, "app.current_user_id") == _CLINICIAN
+
+            arm_current_patient_id(session, _PATIENT_A)
+
+            assert _read(session, "app.current_patient_id") == _PATIENT_A
+            assert _read(session, "app.current_user_id") == "", (
+                "both principals armed on one transaction: the row set is the "
+                "union of clinician and patient grants"
+            )
         finally:
-            fresh.rollback()
-            fresh.close()
+            session.rollback()
+            session.close()
+
+    def test_arming_a_clinician_disarms_an_already_armed_patient(self) -> None:
+        """The mirror direction."""
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            arm_current_user_id(session, _CLINICIAN)
+
+            assert _read(session, "app.current_user_id") == _CLINICIAN
+            assert _read(session, "app.current_patient_id") == ""
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_the_disarm_survives_a_commit(self) -> None:
+        """Clearing must beat the listener's re-arm, not race it.
+
+        The listener reads ``session.info`` first and the ContextVar as a
+        fallback, so clearing only the dict would let the next transaction
+        resurrect the disarmed principal from the ambient ContextVar.
+        """
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_user_id(session, _CLINICIAN)
+            arm_current_patient_id(session, _PATIENT_A)
+            session.commit()
+
+            assert _read(session, "app.current_patient_id") == _PATIENT_A
+            assert _read(session, "app.current_user_id") == "", (
+                "the clinician GUC came back after a commit — the disarm "
+                "cleared session.info but not the ContextVar fallback"
+            )
+        finally:
+            session.rollback()
+            session.close()
+
+    def test_an_empty_patient_id_is_refused(self) -> None:
+        """An empty id would arm as '' rather than NULL, changing policy semantics."""
+        session = create_standalone_session(_SCHEMA)
+        try:
+            for bad in ("", "   "):
+                with pytest.raises(ValueError, match="non-empty"):
+                    arm_current_patient_id(session, bad)
+            assert _read(session, "app.current_patient_id") == ""
+        finally:
+            session.rollback()
+            session.close()
 
     def test_a_second_patient_replaces_the_first(self) -> None:
         session = create_standalone_session(_SCHEMA)

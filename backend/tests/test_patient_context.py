@@ -155,16 +155,28 @@ class TestPatientResolverRegistry:
         # The credential was offered to the first resolver, which declined.
         assert len(first.calls) == 1
 
-    def test_a_raising_resolver_does_not_skip_the_ones_behind_it(self) -> None:
+    def test_a_raising_resolver_aborts_rather_than_falling_through(self) -> None:
+        """No auth-strength downgrade: a raiser must not hand off to a weaker door.
+
+        ``None`` means "not my credential"; an exception means "I could
+        not decide". If a could-not-decide fell through to the next
+        resolver, an attacker who can make a strong front door raise —
+        DoS its provider, or trip a parse error before the signature
+        check — would be served by whatever weaker resolver sits behind
+        it. Here the resolver behind the broken one WOULD have accepted
+        the credential, and must not get the chance.
+        """
         registry = PatientResolverRegistry()
         broken = _ExplodingResolver()
-        working = _FakeResolver(accepts="good-token")
+        would_have_accepted = _FakeResolver(accepts="good-token")
         registry.register(broken)
-        registry.register(working)
+        registry.register(would_have_accepted)
+
         context = registry.resolve(PatientCredential(kind="bearer", value="good-token"))
+
         assert broken.calls == 1
-        assert context is not None
-        assert context.patient_id == _PATIENT_ID
+        assert context is None, "resolution fell through a raiser to a resolver behind it"
+        assert would_have_accepted.calls == [], "the weaker door was consulted anyway"
 
     def test_a_raising_resolver_alone_yields_no_principal(self) -> None:
         registry = PatientResolverRegistry()
@@ -404,25 +416,85 @@ class TestHardSeparation:
             f"(multi_tenancy_enabled={multi_tenancy})"
         )
 
-    def test_a_patient_credential_does_not_satisfy_a_clinician_dependency(self) -> None:
-        """The reverse direction, at the verifier every clinician path runs through.
+    def test_a_rejected_token_ends_the_clinician_chain_in_401_not_a_fallback(
+        self,
+    ) -> None:
+        """``verify_token`` fails closed when no configured issuer accepts a token.
 
-        A patient's companion credential is signed by Pablo, not by any
-        configured clinician issuer, so ``verify_token`` — the single
-        entry point ``DatabaseSessionMiddleware``, ``get_current_user_id``
-        and ``get_tenant_context`` all resolve identity through — rejects
-        it outright. Firebase is stood in for here the way it rejects an
-        unrecognized token in production; what is being pinned is that
-        the chain ends in a 401 rather than falling through to something
-        permissive.
+        Renamed from a "a patient credential does not satisfy a clinician
+        dependency" test, which is what it was originally called and is
+        NOT what it checks. The token string is decorative — this passes
+        identically with any string — so it cannot say anything about
+        patient credentials specifically. What it does pin is real and
+        worth keeping: the verifier chain ends in a 401 rather than
+        falling through to something permissive.
+
+        The actual reverse-direction guarantee — that a patient
+        credential is structurally unacceptable to every clinician
+        verifier — cannot be tested until a patient credential format
+        exists. It is written down as a requirement on resolver authors
+        in ``PatientPrincipalResolver``'s docstring instead, and belongs
+        in the change that introduces the first real resolver.
         """
         with patch("app.auth.service.firebase_auth.verify_id_token") as mock_verify:
             mock_verify.side_effect = firebase_auth.InvalidIdTokenError("Bad token")
 
             with pytest.raises(HTTPException) as excinfo:
-                verify_token("patient-companion-session-token")
+                verify_token("any-token-no-configured-issuer-accepts")
 
         assert excinfo.value.status_code == 401
+
+    @pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER", "BeArEr"])
+    def test_the_clinician_stash_is_case_insensitive_on_the_scheme(
+        self, monkeypatch: pytest.MonkeyPatch, scheme: str
+    ) -> None:
+        """One lowercased letter used to disarm the clinician guard entirely.
+
+        RFC 7235 makes the auth scheme case-insensitive, and FastAPI's
+        ``HTTPBearer`` compares ``scheme.lower() != "bearer"`` — so
+        ``Authorization: bearer <token>`` is a perfectly working clinician
+        credential on every clinician route. The middleware's stash used
+        ``startswith("Bearer ")``, so that header skipped the stash,
+        ``verified_identity`` stayed unset, and ``get_patient_context``'s
+        guard passed a clinician's token straight to every registered
+        patient resolver.
+        """
+        identity = SimpleNamespace(provider="oidc", email="clinician@example.test", claims={})
+        monkeypatch.setattr("app.auth.service.verify_token", lambda _token: identity)
+
+        request = MagicMock()
+        request.headers = {"authorization": f"{scheme} clinician-token"}
+        request.state = SimpleNamespace()
+
+        middleware_module._verify_and_stash_clinician_identity(request)
+
+        assert getattr(request.state, "verified_identity", None) is identity, (
+            f"scheme {scheme!r} skipped the stash, which disarms the clinician guard"
+        )
+
+    def test_a_lowercase_clinician_token_still_cannot_reach_a_resolver(
+        self, armed: dict[str, object], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end: the stash and the guard together, on the bypass header."""
+        registry = PatientResolverRegistry()
+        sloppy = _FakeResolver(accepts="clinician-token")
+        registry.register(sloppy)
+
+        identity = SimpleNamespace(provider="oidc", email="clinician@example.test", claims={})
+        monkeypatch.setattr("app.auth.service.verify_token", lambda _token: identity)
+
+        app = _build_app(registry)
+
+        @app.middleware("http")
+        async def _run_the_real_stash(request, call_next):  # type: ignore[no-untyped-def]
+            middleware_module._verify_and_stash_clinician_identity(request)
+            return await call_next(request)
+
+        client = TestClient(app)
+        response = client.get("/patient/me", headers={"Authorization": "bearer clinician-token"})
+
+        assert response.status_code == 401
+        assert sloppy.calls == [], "a lowercase-scheme clinician token reached a resolver"
 
     def test_patient_context_is_not_a_tenant_context(self) -> None:
         """No shared base class: a patient must not be duck-type substitutable."""

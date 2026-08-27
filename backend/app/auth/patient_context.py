@@ -100,6 +100,18 @@ class PatientContext:
     lives in. It is validated as an identifier before it reaches SQL (see
     ``app.db.set_tenant_schema``), so a resolver returning an
     attacker-influenced value cannot inject.
+
+    **Scope every query by ``patient_id`` from here, and do not accept a
+    patient id from the client.** A route shaped
+    ``GET /patient/record/{patient_id}`` has an IDOR surface by
+    construction: it invites an id the caller controls, and then the only
+    thing standing between two patients is that somebody remembered to
+    compare it. A route that reads the id off this context instead has
+    nothing to compare and nothing to forget — the principal already
+    says who is calling. Row-level security backs this up rather than
+    replacing it, and note it backs up *nothing* in a single-practice
+    deployment (see ``PATIENT_READABLE_TABLES``), so the route shape is
+    the primary control, not the fallback.
     """
 
     patient_id: str
@@ -138,12 +150,13 @@ class PatientPrincipalResolver(Protocol):
     **Contract for implementers, and both halves are load-bearing:**
 
     1. **Return ``None`` to reject.** Raising is for infrastructure
-       failure only. The registry treats an exception as a rejection and
-       moves on to the *next* resolver registered for this kind, so a
-       front door that raises on a forged signature — rather than
-       returning ``None`` — forfeits its precedence and hands the
-       credential to whatever sits behind it. The effective strength of a
-       credential kind is its weakest registered resolver.
+       failure only, and it is not a soft rejection: an exception aborts
+       resolution for the whole request, so the resolvers registered
+       behind you never see the credential and the caller gets a 401.
+       A front door that raises on a forged signature — rather than
+       returning ``None`` — therefore denies credentials that a later
+       resolver would legitimately have accepted. Reject with ``None``;
+       raise only when you genuinely could not decide.
     2. **A patient credential must fail every clinician verifier.** The
        reverse separation direction (a patient token not satisfying
        ``get_current_user_id`` / ``get_tenant_context``) currently holds
@@ -191,11 +204,23 @@ class PatientResolverRegistry:
     def resolve(self, credential: PatientCredential) -> PatientContext | None:
         """Return the first principal a registered resolver claims.
 
-        A resolver that raises is treated as a rejection and the next one
-        is tried. That is deliberate: an adapter reaching a down identity
-        provider should not be able to turn a patient's request into a
-        500 that discloses which front door broke, and it must not skip
-        the resolvers registered behind it.
+        A resolver that raises **aborts resolution entirely** — the
+        resolvers behind it are not tried, and the caller gets the same
+        uniform 401 as any other failure.
+
+        That asymmetry is the point. ``None`` means "not my credential";
+        an exception means "I could not decide". Letting a
+        could-not-decide fall through converts it into "someone weaker
+        may decide", which hands an attacker an auth-strength downgrade:
+        register a ``STEPPED_UP`` front door ahead of a
+        ``SINGLE_FACTOR`` one — the arrangement :class:`AuthStrength`
+        explicitly anticipates — and anyone who can make the first one
+        raise (DoS its provider, or feed input that trips a parse error
+        before the signature check) is served by the weaker door instead.
+        Aborting costs a resolvable credential nothing that matters: the
+        request fails closed, and every property the fall-through was
+        protecting is preserved. There is still no 500, still no
+        disclosure of which door broke.
 
         Only the exception's *type name* is logged — no message, no
         traceback. Identity-provider SDKs routinely put the offending
@@ -209,14 +234,14 @@ class PatientResolverRegistry:
                 context = resolver.resolve(credential)
             except Exception as exc:
                 logger.warning(
-                    "Patient principal resolver failed",
+                    "Patient principal resolver failed; aborting resolution",
                     extra={
                         "credential_kind": credential.kind,
                         "resolver": type(resolver).__name__,
                         "error_type": type(exc).__name__,
                     },
                 )
-                continue
+                return None
             if context is not None:
                 return context
         return None
@@ -365,6 +390,20 @@ async def get_patient_context(
         raise _unauthenticated()
 
     session = get_db_session()
-    set_tenant_schema(session, context.practice_schema)
-    arm_current_patient_id(session, context.patient_id)
+    try:
+        set_tenant_schema(session, context.practice_schema)
+        arm_current_patient_id(session, context.patient_id)
+    except ValueError:
+        # ``set_tenant_schema`` and ``arm_current_patient_id`` raise
+        # ValueError on a malformed schema or an empty patient id. Letting
+        # that escape would be a 500 carrying the offending value, and a
+        # 500 here is distinguishable from the uniform 401 — an oracle for
+        # "the credential resolved but the principal was malformed" versus
+        # "the credential did not resolve". Collapse it into the same 401
+        # everything else gets.
+        logger.error(
+            "Patient resolver produced a malformed principal; refusing",
+            extra={"credential_kind": credential.kind},
+        )
+        raise _unauthenticated() from None
     return context

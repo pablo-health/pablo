@@ -452,6 +452,9 @@ def arm_current_user_id(session: Session, user_id: str) -> None:
         text("SELECT set_config('app.current_user_id', :uid, true)"),
         {"uid": user_id},
     )
+    _disarm_other_principal(
+        session, _RLS_PATIENT_ID_KEY, "app.current_patient_id", _current_patient_id
+    )
 
 
 def set_current_patient_id(patient_id: str) -> None:
@@ -462,6 +465,69 @@ def set_current_patient_id(patient_id: str) -> None:
     ``DatabaseSessionMiddleware`` clears it at request end.
     """
     _current_patient_id.set(patient_id)
+
+
+def _disarm_other_principal(
+    session: Session,
+    info_key: str,
+    guc_name: str,
+    context_var: ContextVar[str | None],
+) -> None:
+    """Clear the principal this session is NOT running as.
+
+    Arming one principal must un-arm the other, structurally, not by
+    convention. Two reasons it cannot be left to callers:
+
+    * The patient policies are **permissive**, so Postgres ORs them with
+      the clinician policies. A transaction with both GUCs set satisfies
+      both families at once and sees the UNION of clinician and patient
+      grants — precisely the reach the two-principal split exists to
+      prevent.
+    * ``arm_current_user_id`` is called on the *request-scoped* session
+      from several places outside ``get_tenant_context`` (the passkey
+      route, the document-finalize and session-generation workers, the
+      internal transcription routes). Any patient surface that reuses one
+      of those would silently end up with both keys on one ``Session``,
+      and the ``after_begin`` listener re-arms whatever it finds.
+
+    Clearing to ``''`` rather than dropping the ``set_config`` matters:
+    the GUC may already be set on this transaction, and the policies use
+    the ``::text``-cast idiom where an empty GUC matches nothing.
+
+    All three carriers have to be cleared, not just ``session.info``. The
+    ``after_begin`` listener reads ``session.info`` *or* the ContextVar,
+    so clearing only the first would let the next transaction re-arm the
+    principal we just disarmed from the fallback.
+
+    **The clearing statement is issued unconditionally**, and that is the
+    point rather than an oversight. An earlier version skipped the
+    statement when neither in-process carrier was set, reasoning that a
+    transaction-local GUC cannot be armed if nothing in this process armed
+    it. That reasoning holds for every call site in ``app`` today — all of
+    them pass ``is_local=true`` — and it is exactly the kind of premise
+    that decays: it is a claim about every present and future writer of
+    these two GUCs, restated as an optimisation. A connection carrying a
+    session-level ``app.current_user_id`` (``set_config(..., false)``)
+    survives being returned to the pool, and the skip let that value ride
+    a *patient* request all the way to the policy evaluator — both
+    principals armed at once on one transaction, which is precisely the
+    union-of-grants this function exists to prevent. The integration suite
+    reproduces it whenever a fixture that sets a session-level GUC has
+    touched the pool first.
+
+    The skip was introduced to fix an integration-suite hang blamed on the
+    extra statement holding the audit writer's transaction open. That
+    diagnosis was wrong: the hang is the Cloud Logging audit dual-write
+    (``audit_dual_write_enabled`` defaults to ``True``, and a developer
+    machine with ADC makes a real network write inside ``_persist``), and
+    it reproduces on a tree that has none of this code. Nothing here ever
+    held that transaction. The cost of the statement is also smaller than
+    it looks: the callers already execute a ``set_config`` of their own,
+    so this adds a round trip to a transaction that is open either way.
+    """
+    session.info.pop(info_key, None)
+    context_var.set(None)
+    session.execute(text(f"SELECT set_config('{guc_name}', '', true)"))
 
 
 def arm_current_patient_id(session: Session, patient_id: str) -> None:
@@ -479,12 +545,22 @@ def arm_current_patient_id(session: Session, patient_id: str) -> None:
     GUC empty is what makes every existing clinician-scoped policy return
     zero rows for a patient principal, which is the fail-closed direction.
     """
+    if not patient_id or not patient_id.strip():
+        # An empty id would be armed as a real value — the listener guards
+        # on ``is not None``, so '' reaches the GUC and ``current_setting``
+        # returns '' rather than NULL. Any policy written with NULL
+        # semantics would then behave differently for "no patient" than
+        # intended. Refuse instead of arming a principal that is not one.
+        msg = "patient_id must be a non-empty identifier"
+        raise ValueError(msg)
+
     session.info[_RLS_PATIENT_ID_KEY] = patient_id
     set_current_patient_id(patient_id)
     session.execute(
         text("SELECT set_config('app.current_patient_id', :pid, true)"),
         {"pid": patient_id},
     )
+    _disarm_other_principal(session, _RLS_USER_ID_KEY, "app.current_user_id", _current_user_id)
 
 
 @event.listens_for(Session, "after_begin")
@@ -518,20 +594,42 @@ def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
     covering both GUCs rather than two: a second listener would re-arm in
     an order SQLAlchemy does not guarantee, and only one of the two is
     ever set on a given request anyway.
+
+    **Arming one principal clears the other, on every transaction**, in
+    the same statement. The transaction-local clear
+    :func:`_disarm_other_principal` issues dies with the transaction that
+    carried it, so a mid-request commit is exactly where a stale value
+    would come back: the listener re-arms the principal that IS set and,
+    without this, leaves whatever the connection is carrying for the one
+    that is not. Today that can only be a session-level
+    ``set_config(..., false)`` — which no ``app`` code path issues, though
+    the integration suite's fixtures do, and a psql session or an ops
+    script on the same connection could. The result would be both GUCs
+    live on one transaction, and because the patient policies are
+    PERMISSIVE Postgres ORs the two families and the request sees the
+    union of clinician and patient grants. Clearing to ``''`` costs
+    nothing: it rides the statement that was already being issued, and
+    the ``::text``-cast idiom every policy uses treats ``''`` as matching
+    no row.
+
+    Still a no-op when neither principal is armed, so CLI scripts,
+    alembic and the integration fixtures that arm a GUC themselves stay
+    unaffected — this clears the *unused* principal on a transaction that
+    has one, it does not impose a principal on a transaction that has
+    none.
     """
     user_id = session.info.get(_RLS_USER_ID_KEY) or _current_user_id.get()
-    if user_id is not None:
-        connection.execute(
-            text("SELECT set_config('app.current_user_id', :uid, true)"),
-            {"uid": user_id},
-        )
-
     patient_id = session.info.get(_RLS_PATIENT_ID_KEY) or _current_patient_id.get()
-    if patient_id is not None:
-        connection.execute(
-            text("SELECT set_config('app.current_patient_id', :pid, true)"),
-            {"pid": patient_id},
-        )
+    if user_id is None and patient_id is None:
+        return
+
+    connection.execute(
+        text(
+            "SELECT set_config('app.current_user_id', :uid, true), "
+            "set_config('app.current_patient_id', :pid, true)"
+        ),
+        {"uid": user_id or "", "pid": patient_id or ""},
+    )
 
 
 @event.listens_for(Engine, "checkout")
@@ -723,12 +821,35 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 # Core seeds exactly one entry: a patient may read their own ``patients``
 # row, keyed on ``id``. Intake submissions, companion threads and
 # appointments register their own through this seam in their own changes.
+#
+# IMPORTANT — where these policies do and do not apply. RLS is applied
+# per tenant schema, and ``enable_rls_on_schema`` deliberately returns
+# early for ``DEFAULT_PRACTICE_SCHEMA``. In a single-practice deployment
+# (``multi_tenancy_enabled=False``, the default) all data lives in that
+# schema and carries no row policies at all — clinician or patient. So
+# ``app.current_patient_id`` enforces nothing there, and patient
+# isolation rests entirely on each route's own predicates. Anyone writing
+# a patient route in that posture must not treat RLS as the backstop; it
+# is a backstop only where per-practice schemas exist.
 PATIENT_READABLE_TABLES: dict[str, str] = {"patients": "id"}
 
-# Of those, the ones a patient may also WRITE. Deliberately empty in core:
-# nothing a patient can currently reach is patient-writable, and read and
-# write are separate registries so granting one never silently grants the
-# other.
+# Of those, the ones a patient may also WRITE. Deliberately empty in core,
+# and read and write are separate registries so granting one never silently
+# grants the other.
+#
+# Empty here does NOT currently mean "a patient principal can write
+# nothing". ``patients`` carries ``rls_patient_insert ... FOR INSERT WITH
+# CHECK (true)`` — a permissive policy that consults no GUC, added to fix
+# the clinician chicken-and-egg where a brand-new patient has no
+# ``patient_clinicians`` grant yet and so fails ``has_patient_access`` on
+# its own first INSERT. It admits any principal subject to RLS, the
+# patient one included. SELECT/UPDATE/DELETE are all closed to a patient
+# (they key on ``app.current_user_id``, which a patient request leaves
+# empty, and the patient's own read policy is ``FOR SELECT`` only, so it
+# does not widen UPDATE's ``USING``); INSERT is the one gap. Unreachable
+# while no resolver and no patient route exist, and tracked to be closed
+# before the first front door lands. Do not read this registry as the
+# whole answer to "what can a patient write".
 PATIENT_WRITABLE_TABLES: dict[str, str] = {}
 
 
@@ -773,7 +894,7 @@ def _patient_principal_predicate(key_column: str) -> str:
 
 
 def _apply_patient_principal_policies(
-    session: Session, qualified: str, table_name: str, columns: set[str]
+    session: Session, schema_name: str, table_name: str, columns: set[str]
 ) -> None:
     """Add the additive patient-principal policies to a registered table.
 
@@ -786,11 +907,21 @@ def _apply_patient_principal_policies(
     patient principal automatically, because a patient request never arms
     that GUC. That is asserted directly in the integration suite rather
     than assumed.
+
+    ``columns`` must be the table's FULL column set, not the scoping-column
+    subset the policy-shape branches switch on. Against the subset this
+    check could only ever accept ``patient_id`` or ``id`` — the two key
+    columns core happens to use — and would reject every other one, so the
+    first table registered on, say, ``submitted_by_patient_id`` would fail
+    tenant provisioning over a column that is right there in the table.
+    Worse, the unit-level registry test would stay green throughout,
+    because it checks the ORM metadata, which has all the columns.
     """
     import logging
 
     logger = logging.getLogger(__name__)
 
+    qualified = f"{schema_name}.{table_name}"
     key_column = PATIENT_READABLE_TABLES.get(table_name)
     if key_column is None:
         return
@@ -893,19 +1024,35 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
 
     # One query per schema; gives us {table_name: {columns...}} and lets
     # us pick the right policy shape per table.
+    #
+    # It fetches EVERY column and narrows in Python, rather than filtering
+    # to the three scoping names in SQL. Which tables enter the loop is
+    # unchanged — still "carries one of user_id / patient_id / id" — but
+    # the column set each branch receives is now the table's real one.
+    # ``_apply_patient_principal_policies`` checks a patient-scoped
+    # registration's key column against that set, and against the narrowed
+    # version it could only ever accept ``patient_id`` or ``id``: the first
+    # table registered on, say, ``submitted_by_patient_id`` would have
+    # failed tenant provisioning over a column that is right there in the
+    # table. It also makes the deny-all guard's "columns present" message
+    # say what the table actually has.
     column_rows = session.execute(
         text(
             "SELECT table_name, column_name FROM information_schema.columns "
-            "WHERE table_schema = :schema "
-            "AND column_name IN ('user_id', 'patient_id', 'id') "
-            "AND table_name != 'alembic_version'"
+            "WHERE table_schema = :schema AND table_name != 'alembic_version'"
         ),
         {"schema": schema_name},
     ).fetchall()
 
-    tables: dict[str, set[str]] = {}
+    scoping_columns = {"user_id", "patient_id", "id"}
+    all_columns: dict[str, set[str]] = {}
     for table_name, column_name in column_rows:
-        tables.setdefault(table_name, set()).add(column_name)
+        all_columns.setdefault(table_name, set()).add(column_name)
+    tables: dict[str, set[str]] = {
+        table_name: columns
+        for table_name, columns in all_columns.items()
+        if columns & scoping_columns
+    }
 
     if not tables:
         logger.info(
@@ -940,6 +1087,19 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     # deny-all guard below.
     not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
 
+    # Which patient-scoped registrations actually got a policy, checked
+    # against the registry after the loop. The loop only iterates tables
+    # the column query returned, and that query filters to
+    # ``('user_id', 'patient_id', 'id')`` — so a registered table carrying
+    # none of those three names is never visited, and its registration
+    # becomes a silent no-op. Silent is the bad direction: the registry
+    # says the patient may read the table, no policy exists to say so, and
+    # under FORCE RLS the patient reads nothing. That looks like "the
+    # feature is broken" from the outside and like "we shipped the policy"
+    # from the registry, which is how a grant goes missing without anyone
+    # noticing it was supposed to be there.
+    patient_scoped_applied: set[str] = set()
+
     for table_name, columns in tables.items():
         qualified = f"{schema_name}.{table_name}"
         if table_name in not_row_scoped:
@@ -967,7 +1127,8 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         # several of those branches ``continue``. Permissive policies OR
         # together, so this widens access for a patient principal without
         # touching any clinician policy.
-        _apply_patient_principal_policies(session, qualified, table_name, columns)
+        _apply_patient_principal_policies(session, schema_name, table_name, columns)
+        patient_scoped_applied.add(table_name)
 
         # Pick the policy shape:
         #   * patient_documents — combined policy. Non-private rows
@@ -1173,6 +1334,31 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                 f"or list the table in ``not_row_scoped`` — refusing to leave "
                 f"it deny-all."
             )
+
+    # Every patient-scoped registration that names a table in THIS schema
+    # must have been given a policy above. See ``patient_scoped_applied``
+    # for why a registration can otherwise be skipped without a sound.
+    # Tables absent from the schema are not an error: the registry is
+    # process-wide while a schema may predate the migration that adds the
+    # table, and ``ensure_schemas`` reconciles those on the next run.
+    registered_here = {
+        table_name
+        for table_name in PATIENT_READABLE_TABLES
+        if table_name in tables and table_name not in not_row_scoped
+    }
+    skipped = registered_here - patient_scoped_applied
+    unreachable = {
+        table_name for table_name in PATIENT_READABLE_TABLES if table_name in not_row_scoped
+    }
+    if skipped or unreachable:
+        raise RuntimeError(
+            f"enable_rls_on_schema: patient-scoped registrations got no policy in "
+            f"{schema_name} — skipped={sorted(skipped)}, "
+            f"registered-but-not-row-scoped={sorted(unreachable)}. A table listed in "
+            f"PATIENT_READABLE_TABLES must be row-scoped and must carry one of the "
+            f"columns the schema query selects. Refusing to report success on a "
+            f"grant that was never created."
+        )
 
     session.commit()
 
