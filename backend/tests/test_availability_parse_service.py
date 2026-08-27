@@ -11,6 +11,7 @@ output) is what reaches the caller.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import pytest
@@ -25,6 +26,8 @@ from app.services.structured_llm_gateway import (
     StructuredOutputTruncatedError,
 )
 
+REFERENCE_DATE = date(2026, 8, 26)  # Wednesday
+
 
 def _service(gateway: FakeStructuredLLMGateway) -> AvailabilityRuleParseService:
     return AvailabilityRuleParseService(llm_gateway=gateway)
@@ -36,7 +39,7 @@ def _fake_service(response: dict[str, Any]) -> AvailabilityRuleParseService:
 
 
 class TestCoveredRuleTypes:
-    def test_covers_exactly_the_six_date_free_types(self) -> None:
+    def test_covers_exactly_the_eight_non_session_defaults_types(self) -> None:
         assert {
             "working_hours",
             "block_day_of_week",
@@ -44,6 +47,8 @@ class TestCoveredRuleTypes:
             "max_per_day",
             "buffer_before",
             "buffer_after",
+            "block_date_range",
+            "block_specific_dates",
         } == COVERED_RULE_TYPES
 
     def test_every_covered_type_is_a_valid_rule_type(self) -> None:
@@ -102,6 +107,56 @@ class TestMultipleProposals:
             assert proposal.params["end"] == "17:00"
 
 
+class TestDateIntentResolution:
+    def test_next_weekday_date_intent_resolves_to_block_specific_dates(self) -> None:
+        response = {
+            "proposals": [
+                {
+                    "rule_type": "block_specific_dates",
+                    "enforcement": "hard",
+                    "date_intent": {
+                        "items": [{"day_of_week": 4, "modifier": "next"}],
+                        "range": False,
+                    },
+                    "human_summary": "Blocked next Friday.",
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+        result = _fake_service(response).parse("Block next Friday", REFERENCE_DATE)
+
+        assert result.could_not_parse is None
+        assert len(result.proposals) == 1
+        proposal = result.proposals[0]
+        assert proposal.rule_type == "block_specific_dates"
+        assert proposal.params == {"dates": ["2026-09-04"]}
+
+    def test_range_date_intent_resolves_to_block_date_range(self) -> None:
+        response = {
+            "proposals": [
+                {
+                    "rule_type": "block_date_range",
+                    "enforcement": "hard",
+                    "date_intent": {
+                        "items": [{"day_of_week": 4}, {"day_of_week": 0}],
+                        "range": True,
+                    },
+                    "human_summary": "Blocked Friday through Monday.",
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+        result = _fake_service(response).parse("Block Friday through Monday", REFERENCE_DATE)
+
+        assert result.could_not_parse is None
+        assert len(result.proposals) == 1
+        proposal = result.proposals[0]
+        assert proposal.rule_type == "block_date_range"
+        assert proposal.params == {"start_date": "2026-08-28", "end_date": "2026-08-31"}
+
+
 class TestRejectedProposals:
     def _assert_rejected(self, response: dict[str, Any]) -> None:
         result = _fake_service(response).parse("some sentence")
@@ -109,18 +164,43 @@ class TestRejectedProposals:
         assert result.could_not_parse
         assert result.could_not_parse.strip() != ""
 
-    def test_rejects_block_date_range(self) -> None:
+    def test_rejects_a_date_proposal_that_resolves_its_own_dates(self) -> None:
+        # The model must emit date_intent tokens, never a resolved date --
+        # a proposal carrying start_date/end_date/dates directly is
+        # rejected exactly like any other malformed proposal.
         self._assert_rejected(
             {
                 "proposals": [
                     {
                         "rule_type": "block_date_range",
                         "enforcement": "hard",
+                        "start_date": "2026-09-01",
+                        "end_date": "2026-09-05",
                         "human_summary": "Blocked next week.",
                     }
                 ]
             }
         )
+
+    def test_rejects_a_date_proposal_when_no_reference_date_is_given(self) -> None:
+        result = _fake_service(
+            {
+                "proposals": [
+                    {
+                        "rule_type": "block_specific_dates",
+                        "enforcement": "hard",
+                        "date_intent": {
+                            "items": [{"day_of_week": 4, "modifier": "next"}],
+                            "range": False,
+                        },
+                        "human_summary": "Blocked next Friday.",
+                    }
+                ]
+            }
+        ).parse("Block next Friday")
+
+        assert result.proposals == []
+        assert result.could_not_parse
 
     def test_rejects_unknown_rule_type(self) -> None:
         self._assert_rejected(

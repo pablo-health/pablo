@@ -120,6 +120,40 @@ describe("NaturalLanguageRuleEntry", () => {
     expect(screen.getAllByRole("button", { name: "Create" })).toHaveLength(1)
   })
 
+  it("renders a resolved date-range proposal and creates it only on explicit Create", async () => {
+    parseResponse = {
+      proposals: [
+        {
+          rule_type: "block_specific_dates",
+          enforcement: "hard",
+          params: { dates: ["2026-09-04"] },
+          human_summary: "Blocked next Friday.",
+        },
+      ],
+      could_not_parse: null,
+      exclusive: false,
+      existing_conflicting_rules: [],
+    }
+    mutateCreate.mockImplementation((_vars, opts) => opts.onSuccess({}))
+
+    const user = await submitText("Block next Friday")
+
+    expect(screen.getByText("2026-09-04 blocked")).toBeInTheDocument()
+    expect(mutateCreate).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Create" }))
+
+    expect(mutateCreate).toHaveBeenCalledTimes(1)
+    expect(mutateCreate).toHaveBeenCalledWith(
+      {
+        rule_type: "block_specific_dates",
+        enforcement: "hard",
+        params: { dates: ["2026-09-04"] },
+      },
+      expect.anything()
+    )
+  })
+
   it("shows the could_not_parse reason with no Create button", async () => {
     parseResponse = {
       proposals: [],

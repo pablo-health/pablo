@@ -1260,3 +1260,141 @@ def test_parse_exclusive_surfaces_existing_conflicting_rule(
     all_rules = rule_repo.list_by_user("test-user-123")
     assert len(all_rules) == 1
     assert all_rules[0].params["day_of_week"] == 2
+
+
+def _date_intent_proposal(items: list[dict[str, Any]], *, range_: bool = False) -> dict[str, Any]:
+    return {
+        "rule_type": "block_date_range" if range_ else "block_specific_dates",
+        "enforcement": "hard",
+        "date_intent": {"items": items, "range": range_},
+        "human_summary": "Blocked.",
+    }
+
+
+def test_parse_resolves_next_friday_using_owner_timezone_auckland(
+    write_client: TestClient, mock_user_repo: InMemoryUserRepository
+) -> None:
+    """13:00 UTC is already Thursday evening in Auckland (UTC+12 in August),
+    one calendar day ahead of the UTC date -- the reference date "next
+    Friday" resolves against must come from the owner's own timezone."""
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="Pacific/Auckland"))
+    _wire_parse_service(
+        {
+            "proposals": [_date_intent_proposal([{"day_of_week": 4, "modifier": "next"}])],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+
+    with patch(
+        "app.routes.scheduling._now",
+        side_effect=lambda tz: datetime(2026, 8, 26, 13, 0, tzinfo=UTC).astimezone(tz),
+    ):
+        response = write_client.post(
+            "/api/availability/rules/parse", json={"text": "Block next Friday"}
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["proposals"][0]["params"] == {"dates": ["2026-09-04"]}
+
+
+def test_parse_resolves_dates_using_owner_timezone_los_angeles(
+    write_client: TestClient, mock_user_repo: InMemoryUserRepository
+) -> None:
+    """The same instant read from America/Los_Angeles (UTC-7 in August) is
+    still 2026-08-26 -- "next Friday" and a bare "Thursday" resolve
+    against that Wednesday reference."""
+    mock_user_repo.save_preferences(
+        "test-user-123", UserPreferences(timezone="America/Los_Angeles")
+    )
+    _wire_parse_service(
+        {
+            "proposals": [
+                _date_intent_proposal([{"day_of_week": 4, "modifier": "next"}, {"day_of_week": 3}])
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+
+    with patch(
+        "app.routes.scheduling._now",
+        side_effect=lambda tz: datetime(2026, 8, 26, 13, 0, tzinfo=UTC).astimezone(tz),
+    ):
+        response = write_client.post(
+            "/api/availability/rules/parse",
+            json={"text": "Block next Friday and this Thursday"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["proposals"][0]["params"] == {"dates": ["2026-09-04", "2026-08-27"]}
+
+
+def test_parse_invalid_timezone_preference_falls_back_to_utc_without_500(
+    write_client: TestClient, mock_user_repo: InMemoryUserRepository
+) -> None:
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="Not/AZone"))
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "block_day_of_week",
+                    "enforcement": "hard",
+                    "day_of_week": 4,
+                    "human_summary": "No Fridays.",
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+
+    response = write_client.post(
+        "/api/availability/rules/parse", json={"text": "No appointments on Fridays"}
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_parse_reads_preferences_before_releasing_db_connection(
+    write_client: TestClient, mock_user_repo: InMemoryUserRepository
+) -> None:
+    """The timezone preference read that determines the reference date
+    must happen before the request-scoped DB connection is released for
+    the LLM round trip, not after."""
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="UTC"))
+    _wire_parse_service(
+        {
+            "proposals": [
+                {
+                    "rule_type": "block_day_of_week",
+                    "enforcement": "hard",
+                    "day_of_week": 4,
+                    "human_summary": "No Fridays.",
+                }
+            ],
+            "could_not_parse": None,
+            "exclusive": False,
+        }
+    )
+
+    events: list[str] = []
+    original_get_preferences = mock_user_repo.get_preferences
+
+    def spy_get_preferences(user_id: str) -> UserPreferences:
+        events.append("get_preferences")
+        return original_get_preferences(user_id)
+
+    def spy_release() -> None:
+        events.append("release_db_connection")
+
+    with (
+        patch.object(mock_user_repo, "get_preferences", side_effect=spy_get_preferences),
+        patch("app.routes.scheduling.release_db_connection", side_effect=spy_release),
+    ):
+        response = write_client.post(
+            "/api/availability/rules/parse", json={"text": "No appointments on Fridays"}
+        )
+
+    assert response.status_code == 200, response.text
+    assert events == ["get_preferences", "release_db_connection"]

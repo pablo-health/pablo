@@ -12,20 +12,29 @@ generative, so this mirrors :class:`NoteImportService`'s flash-tier,
 thinking-disabled model choice rather than the reasoning-heavy generation
 path.
 
-Deterministic date/day arithmetic stays out of scope entirely: the prompt
-receives no today's-date or timezone context, so it cannot compute a
-relative or year-ambiguous date, and date-bearing sentences are rejected
-into ``could_not_parse`` rather than guessed at. Only the six date-free
-rule types in :data:`COVERED_RULE_TYPES` are parsed; ``block_date_range``
-and ``block_specific_dates`` stay out of v1 for that reason.
+The model never computes a date itself: for the two date-bearing rule
+types (``block_date_range``, ``block_specific_dates``) it only extracts
+*tokens* -- an explicit month-day/year, or a weekday plus a "this"/"next"
+qualifier -- which :mod:`app.scheduling_engine.services.date_intent`
+resolves deterministically against a reference date supplied by the
+caller. A date-bearing sentence the model can't express as tokens (a
+named holiday, an unresolvable qualifier) is rejected into
+``could_not_parse`` rather than guessed at, and so is any date-type
+proposal the caller can't supply a reference date for.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, TypeGuard
+from typing import TYPE_CHECKING, Any, TypeGuard
 
+from ..scheduling_engine.services.date_intent import (
+    DateIntent,
+    DateToken,
+    UnresolvableDateIntent,
+    resolve_date_intent,
+)
 from ..settings import get_settings
 from .structured_llm_gateway import (
     StructuredLLMGateway,
@@ -33,12 +42,14 @@ from .structured_llm_gateway import (
     get_default_structured_llm_gateway,
 )
 
+if TYPE_CHECKING:
+    from datetime import date
+
 logger = logging.getLogger(__name__)
 
-# The six date-free rule types this parser covers -- an explicit allow-list,
-# not "every RuleType member", so a settings-owned or date-bearing type
-# added to the enum later is excluded automatically rather than silently
-# picked up.
+# The eight rule types this parser covers -- an explicit allow-list, not
+# "every RuleType member", so a settings-owned type added to the enum
+# later is excluded automatically rather than silently picked up.
 COVERED_RULE_TYPES = frozenset(
     {
         "working_hours",
@@ -47,8 +58,14 @@ COVERED_RULE_TYPES = frozenset(
         "max_per_day",
         "buffer_before",
         "buffer_after",
+        "block_date_range",
+        "block_specific_dates",
     }
 )
+
+# The two rule types whose params are dates -- resolved from date_intent
+# tokens rather than validated directly like the other six.
+_DATE_RULE_TYPES = frozenset({"block_date_range", "block_specific_dates"})
 
 _ENFORCEMENT_LEVELS = frozenset({"hard", "soft"})
 
@@ -63,11 +80,7 @@ _DEFAULT_COULD_NOT_PARSE = (
 _SYSTEM_PROMPT = (
     "You map a therapist's plain-language sentence describing their "
     "scheduling availability onto a fixed set of structured rule "
-    "proposals. You never invent a rule type outside the list below, and "
-    "you never compute or resolve dates -- if the sentence names or "
-    'implies a specific date or relative date ("next Friday", "the week '
-    'of Thanksgiving", "Dec 24"), leave proposals empty and explain why '
-    "in could_not_parse.\n\n"
+    "proposals. You never invent a rule type outside the list below.\n\n"
     "Days of the week are numbered 0=Monday, 1=Tuesday, 2=Wednesday, "
     "3=Thursday, 4=Friday, 5=Saturday, 6=Sunday.\n\n"
     "Covered rule types and their params:\n"
@@ -81,7 +94,26 @@ _SYSTEM_PROMPT = (
     "- buffer_before: minutes (integer, at least 0) -- gap required before "
     "every appointment.\n"
     "- buffer_after: minutes (integer, at least 0) -- gap required after "
-    "every appointment.\n\n"
+    "every appointment.\n"
+    "- block_date_range: date_intent describing a start and an end -- no "
+    "appointments anywhere in that span.\n"
+    "- block_specific_dates: date_intent listing one or more individual "
+    "dates -- no appointments on any of them.\n\n"
+    "For block_date_range and block_specific_dates, never write out a "
+    "resolved calendar date yourself. Instead emit a date_intent object "
+    "with an items list and a range flag. Each item is exactly one of:\n"
+    '  * explicit: the date exactly as the person said it, as "MM-DD" if '
+    'they gave no year or "YYYY-MM-DD" if they did -- copy their digits, '
+    "never compute a different date.\n"
+    "  * day_of_week: the 0-6 number for a weekday word, with modifier "
+    '"next" if they said "next <weekday>", "this" if they said "this '
+    '<weekday>", or no modifier for a bare weekday.\n'
+    'Set range to true with exactly two items (start, end) for a span ("from '
+    'Friday to Monday", "March 3 through March 10"); otherwise set range to '
+    'false and list one item per individual date ("the 1st and the 15th", '
+    '"next Friday and next Saturday"). If a date reference can\'t be '
+    "expressed this way (a named holiday, something too vague to pin down), "
+    "leave proposals empty and explain why in could_not_parse instead.\n\n"
     'A sentence naming several days ("9 to 5 on weekdays") becomes one '
     'proposal per day. Default enforcement to "hard"; use "soft" only '
     'for explicit preference language ("I\'d prefer not to...").\n\n'
@@ -110,6 +142,24 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                     "end": {"type": "string", "nullable": True},
                     "max": {"type": "integer", "nullable": True},
                     "minutes": {"type": "integer", "nullable": True},
+                    "date_intent": {
+                        "type": "object",
+                        "nullable": True,
+                        "properties": {
+                            "items": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "explicit": {"type": "string", "nullable": True},
+                                        "day_of_week": {"type": "integer", "nullable": True},
+                                        "modifier": {"type": "string", "nullable": True},
+                                    },
+                                },
+                            },
+                            "range": {"type": "boolean"},
+                        },
+                    },
                     "human_summary": {"type": "string"},
                 },
                 "required": ["rule_type", "enforcement", "human_summary"],
@@ -216,6 +266,88 @@ def _validate_params(rule_type: str, raw: dict[str, Any]) -> dict[str, Any] | No
     return validator(raw) if validator else None
 
 
+_MODIFIERS = frozenset({"this", "next"})
+_DATE_PARAM_KEYS = frozenset({"start_date", "end_date", "dates"})
+_RANGE_ITEM_COUNT = 2
+
+
+class _DateIntentUnresolvableError(Exception):
+    """A date_intent the resolver rejected -- carries the reason to show
+    the therapist verbatim, distinct from the generic could_not_parse used
+    for a malformed proposal."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _parse_date_token(raw: object) -> DateToken | None:
+    if not isinstance(raw, dict):
+        return None
+    explicit = raw.get("explicit")
+    day_of_week = raw.get("day_of_week")
+    modifier = raw.get("modifier")
+    has_explicit = isinstance(explicit, str) and explicit.strip() != ""
+    has_day = _is_valid_day(day_of_week)
+    if has_explicit == has_day:  # exactly one of the two must be set
+        return None
+    if modifier is not None and modifier not in _MODIFIERS:
+        return None
+    return DateToken(
+        explicit=explicit if has_explicit else None,
+        day_of_week=day_of_week if has_day else None,
+        modifier=modifier,
+    )
+
+
+def _parse_date_intent(raw: object) -> DateIntent | None:
+    if not isinstance(raw, dict):
+        return None
+    raw_items = raw.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        return None
+    tokens: list[DateToken] = []
+    for raw_item in raw_items:
+        token = _parse_date_token(raw_item)
+        if token is None:
+            return None
+        tokens.append(token)
+    is_range = raw.get("range", False)
+    if not isinstance(is_range, bool) or (is_range and len(tokens) != _RANGE_ITEM_COUNT):
+        return None
+    return DateIntent(items=tokens, range=is_range)
+
+
+def _resolve_date_params(
+    rule_type: str, raw: dict[str, Any], reference_date: date | None
+) -> dict[str, Any] | None:
+    """Resolve ``block_date_range``/``block_specific_dates`` params from a
+    ``date_intent`` token block.
+
+    Rejects (returns ``None``) a proposal that carries resolved params
+    directly -- the model must never compute a date itself -- and any
+    date-type proposal when no reference date is available. Raises
+    :class:`_DateIntentUnresolvableError` when the tokens are well-formed but
+    the tie-break rules can't resolve them, so the caller can surface the
+    specific reason instead of a generic rejection.
+    """
+    if any(key in raw for key in _DATE_PARAM_KEYS) or reference_date is None:
+        return None
+    intent = _parse_date_intent(raw.get("date_intent"))
+    if intent is None:
+        return None
+
+    resolved = resolve_date_intent(intent, reference_date)
+    if isinstance(resolved, UnresolvableDateIntent):
+        raise _DateIntentUnresolvableError(resolved.reason)
+
+    if rule_type == "block_date_range" and resolved.start_date and resolved.end_date:
+        return {"start_date": resolved.start_date, "end_date": resolved.end_date}
+    if rule_type == "block_specific_dates" and resolved.dates is not None:
+        return {"dates": resolved.dates}
+    return None
+
+
 class AvailabilityRuleParseService:
     """Parse a natural-language availability sentence into rule proposals."""
 
@@ -233,7 +365,7 @@ class AvailabilityRuleParseService:
         settings = get_settings()
         return self._model or settings.ai_model_flash or settings.ai_model
 
-    def parse(self, text: str) -> AvailabilityParseResult:
+    def parse(self, text: str, reference_date: date | None = None) -> AvailabilityParseResult:
         logger.info("Availability parse request: %d chars", len(text))
         try:
             completion = self._llm_gateway.complete_structured(
@@ -256,7 +388,7 @@ class AvailabilityRuleParseService:
                 )
             )
 
-        result = self._coerce(completion.data)
+        result = self._coerce(completion.data, reference_date)
         logger.info(
             "Availability parse result: %d proposal(s) [%s]",
             len(result.proposals),
@@ -264,14 +396,19 @@ class AvailabilityRuleParseService:
         )
         return result
 
-    def _coerce(self, data: dict[str, Any]) -> AvailabilityParseResult:
+    def _coerce(self, data: dict[str, Any], reference_date: date | None) -> AvailabilityParseResult:
         raw_proposals = data.get("proposals")
         if not isinstance(raw_proposals, list):
             raw_proposals = []
 
         proposals: list[ProposedRule] = []
         for raw in raw_proposals:
-            proposal = self._coerce_one(raw) if isinstance(raw, dict) else None
+            try:
+                proposal = self._coerce_one(raw, reference_date) if isinstance(raw, dict) else None
+            except _DateIntentUnresolvableError as exc:
+                # Unlike a malformed proposal, an unresolvable-but-well-formed
+                # date_intent gets its specific reason surfaced verbatim.
+                return AvailabilityParseResult(could_not_parse=exc.reason)
             if proposal is None:
                 # Fail closed: one schema-violating proposal rejects the
                 # whole response rather than silently dropping just that
@@ -294,14 +431,18 @@ class AvailabilityRuleParseService:
             exclusive=bool(data.get("exclusive", False)),
         )
 
-    def _coerce_one(self, raw: dict[str, Any]) -> ProposedRule | None:
+    def _coerce_one(self, raw: dict[str, Any], reference_date: date | None) -> ProposedRule | None:
         rule_type = raw.get("rule_type")
         if rule_type not in COVERED_RULE_TYPES:
             return None
         enforcement = raw.get("enforcement")
         if enforcement not in _ENFORCEMENT_LEVELS:
             enforcement = "hard"
-        params = _validate_params(rule_type, raw)
+        params = (
+            _resolve_date_params(rule_type, raw, reference_date)
+            if rule_type in _DATE_RULE_TYPES
+            else _validate_params(rule_type, raw)
+        )
         if params is None:
             return None
         human_summary = raw.get("human_summary")
