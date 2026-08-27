@@ -31,6 +31,11 @@ class Note:
     quality_rating: int | None = None
     quality_rating_reason: str | None = None
     quality_rating_sections: list[str] | None = None
+    # Lifecycle of the standalone-note dictation path: 'processing' from the
+    # moment the skeleton is persisted, until the Cloud Tasks worker writes
+    # 'complete' (with content) or 'failed'. Every note created any other
+    # way (no dictation, session-derived) starts and stays 'complete'.
+    status: str = "complete"
     export_status: str = "not_queued"
     export_queued_at: datetime | None = None
     export_reviewed_at: datetime | None = None
