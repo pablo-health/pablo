@@ -1,8 +1,7 @@
 # The patient principal (pablo#772) — state as of 2026-08-27
 
-Picks up from `pablo-saas/docs/internal/handoff-2026-08-26-consent-and-fleet.md`,
-which is still accurate about the consent design, the fleet and the traps. This
-covers only the patient-principal work.
+Covers the patient-principal work only. The consent design it sits beside is
+documented separately and is unchanged by any of this.
 
 ## Status
 
@@ -227,8 +226,10 @@ to it, which is strictly stronger.
 - **Killed runs leave orphaned testcontainers.** This conftest sets
   `TESTCONTAINERS_RYUK_DISABLED=true`, so nothing reaps them; they accumulate
   silently and degrade everything afterwards. `docker ps` and remove the stray
-  `postgres:16-alpine` after any kill. Leave `pablo-saas-*`, `pablo-postgres-1`,
-  `dramellea-*` and `buildx_*` alone — those are Kurt's, not test containers.
+  `postgres:16-alpine` after any kill. Match on the testcontainers-style
+  random name and the recent start time — long-running containers with project
+  names belong to whatever else is running on the machine, and killing those is
+  its own bad afternoon.
 - **`poetry run` in an OSS worktree makes an empty in-project `.venv`** and
   subprocess-based tests (`alembic upgrade head`) then resolve to system Python
   3.10 and fail with `'type' object is not subscriptable`. Either
@@ -291,9 +292,9 @@ explicit columns; it must never serialize the ORM model.
 
 ## What is next, in order
 
-1. **`u37i.2`** — magic-link issuance + step-up redemption. The SaaS companion
-   auth core is already merged, so the OSS side is the thinner half. When you
-   write the first real resolver, read `PatientPrincipalResolver`'s docstring
+1. **`u37i.2`** — magic-link issuance + step-up redemption, which is the first
+   real front door onto this seam. When you write that resolver, read
+   `PatientPrincipalResolver`'s docstring
    first: return `None` to reject, and whatever you mint must be structurally
    unacceptable to every clinician verifier.
 2. **`u37i.4`** — patient-principal audit, and it gates `u37i.2` rather than
