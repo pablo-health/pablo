@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..settings import get_settings
@@ -58,19 +57,28 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
     codes, not turned into a 500 here. A token that fails to verify simply
     leaves nothing stashed, which is the correct input to both consumers.
 
-    **A rejection and a failure are not the same thing**, though, and the
-    difference matters to the patient guard. "No stash" would otherwise
-    mean both "every verifier decided this is not a clinician's token" and
-    "a verifier could not decide" — and the second is the interesting one,
-    because Firebase's ``verify_id_token`` makes a network round trip
-    (``check_revoked=True``), so a provider outage produces it while
-    holding a credential that may well be a clinician's.
-    ``VerifierRegistry.verify`` already draws exactly that line: a 401 is
-    "not my token" and falls through to the next backend, while anything
-    else propagates immediately. So a 401 leaves no marker and a patient
-    resolver may see the credential; anything else sets
-    ``request.state.clinician_verification_errored`` and
-    ``get_patient_context`` refuses on it.
+    **A rejection and a failure are not distinguished here, and the obvious
+    fix for that is wrong.** "Nothing stashed" means both "every verifier
+    decided this is not a clinician's token" and "a verifier could not
+    decide" — and the second matters, because ``verify_id_token`` makes a
+    network round trip (``check_revoked=True``), so a provider outage
+    produces it while holding a credential that may well be a clinician's.
+    ``get_patient_context`` then offers that credential to patient
+    resolvers, and only the resolver contract stands in the way.
+
+    The tempting fix is a "verification errored" marker that
+    ``get_patient_context`` also refuses on, mirroring
+    ``PatientResolverRegistry.resolve``'s rule one layer down. It was
+    tried, and it fires far too widely: ``verify_firebase_token`` calls
+    ``initialize_firebase_app()`` OUTSIDE its ``try``, so a deployment with
+    no Firebase credentials raises here on **every** request, permanently.
+    A marker would make patient authentication silently impossible in any
+    install that does not run Firebase — a worse failure than the hole it
+    closes, and a harder one to diagnose. Distinguishing "this verifier is
+    not configured" from "this verifier broke mid-flight" has to happen in
+    the verifier layer, as a typed error, not by exception-shape guessing
+    out here. Until it does, the resolver contract in
+    ``PatientPrincipalResolver`` carries it.
 
     **It ignores the scheme entirely, and that is deliberate.** The obvious
     version checks for ``bearer`` — and then the guard covers exactly one
@@ -111,29 +119,8 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
         if identity.provider == "firebase":
             request.state.decoded_firebase_token = identity.claims
             request.state.verified_firebase_token_raw = token
-    except HTTPException as exc:
-        # 401 is the registry's "not my token" — every verifier rejected it,
-        # which is a *decision*, and the correct one to hand a patient route:
-        # this credential is not a clinician's. Any other status means a
-        # verifier failed for some reason of its own
-        # (``VerifierRegistry.verify`` re-raises non-401s immediately rather
-        # than falling through), so treat it as an undecided verification.
-        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
-            request.state.clinician_verification_errored = True
-        logger.debug("Middleware identity verification rejected the credential")
     except Exception:
-        # Could not decide. Firebase's ``verify_id_token`` does a network
-        # round trip (``check_revoked=True``), so a provider outage lands
-        # here — and without a marker it is indistinguishable from "this
-        # was never a clinician's token". ``get_patient_context`` reads
-        # this and refuses, which is the same rule
-        # ``PatientResolverRegistry.resolve`` already applies one layer
-        # down: an exception means could-not-decide, and letting a
-        # could-not-decide fall through converts it into "someone else may
-        # decide". Here that someone is every registered patient resolver,
-        # holding a clinician's credential.
-        request.state.clinician_verification_errored = True
-        logger.debug("Middleware identity verification could not complete")
+        logger.debug("Middleware identity verification skipped (token parse failed)")
 
 
 def _resolve_schema_from_request(request: Request) -> str | None:

@@ -82,19 +82,33 @@ it reappears every time the two parses disagree. The middleware now ignores the
 scheme entirely and mirrors `_credential_from_request`'s parse exactly; a
 non-clinician credential simply fails to verify and stashes nothing.
 
-**2c. "No stash" conflated a rejection with a failure.** The middleware swallowed
-every verifier exception, so an identity-provider outage looked identical to
-"every verifier decided this is not a clinician's token" — and Firebase's
-`verify_id_token` runs `check_revoked=True`, a network round trip, so the outage
-case is real and arrives holding a credential that may well be a clinician's.
-`VerifierRegistry.verify` already draws the line: a 401 means "not my token" and
-falls through, anything else propagates. A 401 now leaves no marker (it must
-not — a genuine patient credential produces exactly that, by contract);
-anything else sets `request.state.clinician_verification_errored` and
-`get_patient_context` refuses. Same rule `PatientResolverRegistry.resolve`
-applies one layer down, for the same reason: a could-not-decide that falls
-through becomes "someone weaker may decide". Patient routes 401 during a
-provider outage, which is the correct direction to fail.
+**2c. "No stash" conflates a rejection with a failure — still open, and the
+obvious fix is wrong.** The middleware swallows every verifier exception, so an
+identity-provider outage looks identical to "every verifier decided this is not
+a clinician's token". `verify_id_token` runs `check_revoked=True`, a network
+round trip, so the outage case is real and arrives holding a credential that may
+well be a clinician's.
+
+The tempting fix is a `clinician_verification_errored` marker that
+`get_patient_context` also refuses on — mirroring
+`PatientResolverRegistry.resolve`'s rule one layer down, and keyed off
+`VerifierRegistry.verify`'s existing line (a 401 means "not my token" and falls
+through; anything else propagates). **It was tried and reverted.**
+`verify_firebase_token` calls `initialize_firebase_app()` *outside* its `try`,
+so a deployment with no Firebase credentials raises on **every** request,
+permanently — the marker made patient authentication silently impossible rather
+than merely refusing it during an outage. CI caught it as 15 patient tests
+returning 401; it passed locally, because a developer machine has ADC and so
+gets a clean 401 from a real verifier. **That asymmetry is worth remembering:
+this particular fix is untestable in the failing direction on a machine with
+credentials.**
+
+Distinguishing "this verifier is not configured" from "this verifier broke
+mid-flight" belongs in the verifier layer as a typed error, not in
+exception-shape guessing at the middleware. Until then the resolver contract in
+`PatientPrincipalResolver` carries it, and the reasoning is recorded in
+`_verify_and_stash_clinician_identity`'s docstring so the next person does not
+re-derive the same wrong fix.
 
 **3. `_disarm_other_principal` skipped the clearing statement** when neither
 in-process carrier was set, reasoning that a transaction-local GUC cannot be
