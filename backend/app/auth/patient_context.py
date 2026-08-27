@@ -135,10 +135,10 @@ class PatientPrincipalResolver(Protocol):
     every unresolved credential into an identical 401.
     """
 
-    @property
-    def credential_kind(self) -> str: ...
+    credential_kind: str
 
-    def resolve(self, credential: PatientCredential) -> PatientContext | None: ...
+    def resolve(self, credential: PatientCredential) -> PatientContext | None:
+        raise NotImplementedError
 
 
 class PatientResolverRegistry:

@@ -49,15 +49,11 @@ class _FakeResolver:
         patient_id: str = _PATIENT_ID,
         strength: AuthStrength = AuthStrength.STEPPED_UP,
     ) -> None:
-        self._kind = kind
+        self.credential_kind = kind
         self._accepts = accepts
         self._patient_id = patient_id
         self._strength = strength
         self.calls: list[PatientCredential] = []
-
-    @property
-    def credential_kind(self) -> str:
-        return self._kind
 
     def resolve(self, credential: PatientCredential) -> PatientContext | None:
         self.calls.append(credential)
@@ -66,7 +62,7 @@ class _FakeResolver:
         return PatientContext(
             patient_id=self._patient_id,
             practice_schema=_SCHEMA,
-            credential_kind=self._kind,
+            credential_kind=self.credential_kind,
             auth_strength=self._strength,
         )
 
@@ -75,12 +71,8 @@ class _ExplodingResolver:
     """A front door whose identity provider is down."""
 
     def __init__(self, kind: str = "bearer") -> None:
-        self._kind = kind
+        self.credential_kind = kind
         self.calls = 0
-
-    @property
-    def credential_kind(self) -> str:
-        return self._kind
 
     def resolve(self, credential: PatientCredential) -> PatientContext | None:
         self.calls += 1
