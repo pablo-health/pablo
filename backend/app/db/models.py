@@ -983,6 +983,13 @@ class AuditLogRow(Base):
     # was unauthenticated); a uuid column would reject those at INSERT and lose
     # the record. Same "identifier as recorded" rationale as resource_id below.
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # What KIND of principal ``user_id`` names. Both a clinician id and a
+    # patient id are uuids, so without this a row cannot answer "clinician or
+    # patient?" without joining two tables and hoping exactly one matches —
+    # and this is the six-year record, read years later by someone in a
+    # dispute. Server default 'clinician' so every existing row, and every
+    # caller that does not set it, keeps the meaning it already had.
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="clinician")
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
     # resource_id is polymorphic (patient_id | session_id | user_id | …) —
