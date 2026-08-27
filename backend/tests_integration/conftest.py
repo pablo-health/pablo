@@ -56,6 +56,14 @@ def pytest_configure(config: pytest.Config) -> None:
     # user-namespace socket. ``pytest_unconfigure`` stops the container
     # explicitly, so cleanup is covered without Ryuk. Must be set
     # before testcontainers is imported.
+    #
+    # The cost of no reaper: a run that is KILLED never reaches
+    # ``pytest_unconfigure``, so its Postgres container survives. They
+    # accumulate silently — several of them will quietly starve the
+    # machine and make every later run slower and flakier, which reads as
+    # "the suite got slow" rather than "I left six databases running".
+    # After killing a run, ``docker ps`` and remove the stray
+    # ``postgres:16-alpine``.
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
     try:
