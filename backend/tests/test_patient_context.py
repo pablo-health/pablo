@@ -444,6 +444,37 @@ class TestHardSeparation:
 
         assert excinfo.value.status_code == 401
 
+    @pytest.mark.parametrize("scheme", ["Token", "DPoP", "SMART", "anything"])
+    def test_the_clinician_stash_ignores_the_scheme_entirely(
+        self, monkeypatch: pytest.MonkeyPatch, scheme: str
+    ) -> None:
+        """The guard has to be at least as scheme-open as the seam it guards.
+
+        ``_credential_from_request`` builds a ``PatientCredential`` out of
+        *whatever* scheme it finds and keys the resolver registry on it —
+        deliberately, so a future non-bearer front door can register its
+        own kind. A stash that only looked at ``bearer`` would therefore
+        cover exactly one of those kinds: a clinician's token sent as
+        ``Authorization: Token <jwt>`` would skip the stash, leave
+        ``verified_identity`` unset, and be handed to whichever resolver
+        registers under ``"token"``. That is the same hole the scheme-case
+        bug opened, one level up, and it reappears every time the two
+        parses disagree — so they must not disagree at all.
+        """
+        identity = SimpleNamespace(provider="oidc", email="clinician@example.test", claims={})
+        monkeypatch.setattr("app.auth.service.verify_token", lambda _token: identity)
+
+        request = MagicMock()
+        request.headers = {"authorization": f"{scheme} clinician-token"}
+        request.state = SimpleNamespace()
+
+        middleware_module._verify_and_stash_clinician_identity(request)
+
+        assert getattr(request.state, "verified_identity", None) is identity, (
+            f"scheme {scheme!r} skipped the stash, so a clinician credential sent "
+            f"under it would be offered to every resolver registered for that kind"
+        )
+
     @pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER", "BeArEr"])
     def test_the_clinician_stash_is_case_insensitive_on_the_scheme(
         self, monkeypatch: pytest.MonkeyPatch, scheme: str
@@ -495,6 +526,73 @@ class TestHardSeparation:
 
         assert response.status_code == 401
         assert sloppy.calls == [], "a lowercase-scheme clinician token reached a resolver"
+
+    def test_a_401_from_the_verifier_leaves_no_errored_marker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 401 is a decision, not a failure, and must not block patient auth.
+
+        ``VerifierRegistry.verify`` raises 401 to mean "no registered
+        verifier accepts this token" — which is exactly what a genuine
+        patient credential produces, since the resolver contract requires
+        one to be structurally unacceptable to every clinician verifier.
+        Marking that as undecided would refuse every patient credential
+        there will ever be.
+        """
+
+        def _reject(_token: str) -> None:
+            raise HTTPException(status_code=401, detail="not my token")
+
+        monkeypatch.setattr("app.auth.service.verify_token", _reject)
+
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer some-patient-credential"}
+        request.state = SimpleNamespace()
+
+        middleware_module._verify_and_stash_clinician_identity(request)
+
+        assert getattr(request.state, "verified_identity", None) is None
+        assert getattr(request.state, "clinician_verification_errored", False) is False
+
+    def test_a_verifier_that_could_not_decide_blocks_patient_resolution(
+        self, armed: dict[str, object], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An identity-provider outage must not downgrade to patient auth.
+
+        Firebase's ``verify_id_token`` runs ``check_revoked=True``, a
+        network round trip, so a provider outage raises here while holding
+        a credential that may well be a clinician's. Without the marker
+        that is indistinguishable from "not a clinician's token", and the
+        credential goes to every registered resolver — the same
+        auth-strength downgrade ``PatientResolverRegistry.resolve`` aborts
+        on one layer down. Patient routes 401 for the duration, which is
+        the correct direction to fail.
+        """
+        registry = PatientResolverRegistry()
+        sloppy = _FakeResolver(accepts="clinician-token")
+        registry.register(sloppy)
+
+        def _explode(_token: str) -> None:
+            raise ConnectionError("identity provider unreachable")
+
+        monkeypatch.setattr("app.auth.service.verify_token", _explode)
+
+        app = _build_app(registry)
+
+        @app.middleware("http")
+        async def _run_the_real_stash(request, call_next):  # type: ignore[no-untyped-def]
+            middleware_module._verify_and_stash_clinician_identity(request)
+            return await call_next(request)
+
+        client = TestClient(app)
+        response = client.get("/patient/me", headers={"Authorization": "Bearer clinician-token"})
+
+        assert response.status_code == 401
+        assert sloppy.calls == [], (
+            "a credential the clinician verifier could not decide on reached a "
+            "patient resolver — an identity-provider outage is not a licence to "
+            "try the weaker door"
+        )
 
     def test_patient_context_is_not_a_tenant_context(self) -> None:
         """No shared base class: a patient must not be duck-type substitutable."""

@@ -273,6 +273,45 @@ class TestPatientGucArming:
             session.rollback()
             session.close()
 
+    def test_both_principals_armed_at_once_is_refused(self) -> None:
+        """The union of two principals' grants is never opened, it is raised on.
+
+        ``arm_current_*`` clear each other's carriers, so this state has no
+        legitimate producer — but they clear them on the ``Session`` they
+        are handed, while the listener also reads the ambient ContextVars.
+        A caller that armed a patient on the request session and then set
+        the clinician ContextVar from the same context (entering
+        ``tenant_db_session`` inline on the event loop instead of in a
+        worker, against its documented contract) presents both.
+
+        Arming both would OR the permissive patient policies with the
+        clinician ones and hand the request the union — the single outcome
+        the two-principal split exists to prevent. Arming neither would be
+        a silent zero-row request, which reads as "no data" rather than as
+        a bug. So: raise.
+        """
+        session = create_standalone_session(_SCHEMA)
+        try:
+            arm_current_patient_id(session, _PATIENT_A)
+            # Simulate the contract violation: the clinician ContextVar set
+            # behind the back of the session that is carrying a patient.
+            _current_user_id.set(_CLINICIAN)
+            session.commit()  # the next statement opens a fresh transaction
+
+            with pytest.raises(RuntimeError, match="union of both principals"):
+                session.execute(text("SELECT 1"))
+        finally:
+            # Undo the violation before anything else opens a transaction.
+            # The autouse ContextVar fixture resets these too, but it runs
+            # AFTER the schema fixture's teardown, and that teardown opens a
+            # session of its own — which the guard would (correctly) refuse,
+            # turning this test into an ERROR. The test manufactured the bad
+            # state, so the test clears it.
+            _current_user_id.set(None)
+            _current_patient_id.set(None)
+            session.rollback()
+            session.close()
+
     def test_an_empty_patient_id_is_refused(self) -> None:
         """An empty id would arm as '' rather than NULL, changing policy semantics."""
         session = create_standalone_session(_SCHEMA)

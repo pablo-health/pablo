@@ -617,11 +617,38 @@ def _rearm_rls_principal_gucs_on_txn_begin(  # type: ignore[no-untyped-def]
     unaffected — this clears the *unused* principal on a transaction that
     has one, it does not impose a principal on a transaction that has
     none.
+
+    **Both principals visible at once is refused, loudly.** The arming
+    functions make it unreachable — each clears the other's carriers — but
+    they clear them on the ``Session`` they are handed, and this listener
+    also reads the ambient ContextVars. So a caller that armed a patient on
+    the request session and then set the clinician ContextVar from the same
+    context (entering ``tenant_db_session`` inline on the event loop rather
+    than in a worker, against its documented contract) would present both
+    here. Arming both is the union of grants, which is the one outcome this
+    whole split exists to prevent, and arming neither would be a silent
+    zero-row request — data vanishing mid-request, indistinguishable from
+    "no data", which is the failure mode this codebase keeps getting bitten
+    by. Raise instead: the state is an invariant violation with no
+    legitimate producer, so a 500 naming it is strictly better than either
+    guess.
     """
     user_id = session.info.get(_RLS_USER_ID_KEY) or _current_user_id.get()
     patient_id = session.info.get(_RLS_PATIENT_ID_KEY) or _current_patient_id.get()
     if user_id is None and patient_id is None:
         return
+
+    if user_id is not None and patient_id is not None:
+        # No ids in the message: both are principal identifiers, and the
+        # rule is that neither reaches a log.
+        msg = (
+            "Both a clinician and a patient principal are armed on this "
+            "session. Permissive RLS policies OR together, so this "
+            "transaction would see the union of both principals' grants. "
+            "Refusing to open it. Arm exactly one principal per unit of "
+            "work — see arm_current_user_id / arm_current_patient_id."
+        )
+        raise RuntimeError(msg)
 
     connection.execute(
         text(

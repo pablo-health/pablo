@@ -327,7 +327,9 @@ async def get_patient_context(
     Patient routes depend on this and on nothing clinician-shaped. It:
 
     1. Refuses outright if the credential already verified as a
-       *clinician* — see below.
+       *clinician* — see below — or if that verification could not be
+       completed, which is not the same as it having rejected the
+       credential.
     2. Normalizes the inbound credential and asks the registry for a
        principal; anything unresolved is a 401.
     3. Arms the tenant ``search_path`` for the request's session, which
@@ -364,6 +366,19 @@ async def get_patient_context(
     """
     if getattr(request.state, "verified_identity", None) is not None:
         logger.warning("Clinician credential presented to a patient route")
+        raise _unauthenticated()
+
+    if getattr(request.state, "clinician_verification_errored", False):
+        # The middleware could not decide whether this credential is a
+        # clinician's — a verifier failed for a reason of its own rather
+        # than rejecting the token. Refuse, for the same reason
+        # ``PatientResolverRegistry.resolve`` aborts on an exception: a
+        # could-not-decide that falls through becomes "someone else may
+        # decide", and here that someone is every registered patient
+        # resolver, holding a credential that may be a clinician's. The
+        # cost is that patient routes 401 during an identity-provider
+        # outage, which is the correct direction to fail.
+        logger.warning("Clinician verification did not complete; refusing patient resolution")
         raise _unauthenticated()
 
     credential = _credential_from_request(request)

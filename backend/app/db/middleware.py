@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from fastapi import HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..settings import get_settings
@@ -35,11 +36,10 @@ logger = logging.getLogger(__name__)
 
 
 def _verify_and_stash_clinician_identity(request: Request) -> None:
-    """Verify a bearer token as a clinician's and cache the result.
+    """Verify an ``Authorization`` credential as a clinician's and cache it.
 
-    Runs on **every** request carrying a bearer token, whether or not
-    multi-tenancy is enabled. Two things depend on that being
-    unconditional:
+    Runs on **every** request carrying one, whether or not multi-tenancy is
+    enabled. Two things depend on that being unconditional:
 
     * Clinician dependencies (``require_mfa``, ``get_current_user_id``,
       ``get_tenant_context``) reuse the stash instead of re-verifying, so
@@ -48,30 +48,51 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
     * ``get_patient_context`` treats the presence of a stashed identity as
       "this credential belongs to a clinician" and refuses the request.
       That is the only structural thing keeping a clinician's token from
-      being offered to a patient resolver, since both principals arrive
-      as ``Authorization: Bearer``. Gating it on ``multi_tenancy_enabled``
-      would silently disarm that guard on every single-tenant install —
-      which is the default, and the configuration a self-hosted patient
-      companion would run in.
+      being offered to a patient resolver. Gating it on
+      ``multi_tenancy_enabled`` would silently disarm that guard on every
+      single-tenant install — which is the default, and the configuration
+      a self-hosted patient companion would run in.
 
     Errors are swallowed: this is a cache-priming step, and a bad token
     must be rejected by the auth dependencies with their specific error
     codes, not turned into a 500 here. A token that fails to verify simply
     leaves nothing stashed, which is the correct input to both consumers.
+
+    **A rejection and a failure are not the same thing**, though, and the
+    difference matters to the patient guard. "No stash" would otherwise
+    mean both "every verifier decided this is not a clinician's token" and
+    "a verifier could not decide" — and the second is the interesting one,
+    because Firebase's ``verify_id_token`` makes a network round trip
+    (``check_revoked=True``), so a provider outage produces it while
+    holding a credential that may well be a clinician's.
+    ``VerifierRegistry.verify`` already draws exactly that line: a 401 is
+    "not my token" and falls through to the next backend, while anything
+    else propagates immediately. So a 401 leaves no marker and a patient
+    resolver may see the credential; anything else sets
+    ``request.state.clinician_verification_errored`` and
+    ``get_patient_context`` refuses on it.
+
+    **It ignores the scheme entirely, and that is deliberate.** The obvious
+    version checks for ``bearer`` — and then the guard covers exactly one
+    scheme while ``_credential_from_request`` builds a ``PatientCredential``
+    out of *any* scheme it finds, keying the registry on it. A clinician's
+    token sent as ``Authorization: Token <jwt>`` would be skipped here and
+    handed to whatever resolver registers under ``"token"``, which is the
+    single point of failure the guard exists to remove. That is also the
+    exact shape of the bug this parse already had once, where a
+    case-sensitive ``"Bearer "`` comparison let ``bearer`` through. The
+    seam is deliberately scheme-open so a future front door can register a
+    non-bearer kind; the guard has to be at least as open as the seam it
+    guards, so it attempts verification on any credential value and lets
+    the verifier decide. A non-clinician credential simply fails to verify
+    and stashes nothing, which is the same outcome as skipping it.
     """
     auth_header = request.headers.get("authorization", "")
-    # Case-INSENSITIVE on the scheme, and it has to be. RFC 7235 says the
-    # scheme is case-insensitive, FastAPI's own ``HTTPBearer`` compares
-    # ``scheme.lower() != "bearer"``, and ``_credential_from_request``
-    # lowercases it too — so ``Authorization: bearer <token>`` is a
-    # perfectly working clinician credential everywhere else in the stack.
-    # A case-SENSITIVE check here used to skip the stash for exactly that
-    # header, which left ``get_patient_context``'s clinician guard with
-    # nothing to read: one lowercased letter and a clinician's token got
-    # offered to every patient resolver. The guard is only as good as this
-    # parse, so this must stay at least as permissive as HTTPBearer's.
+    # Mirror ``_credential_from_request``'s parse exactly — same split, same
+    # strip, same emptiness test. The two must agree on what counts as a
+    # credential, or the guard has a hole shaped like the difference.
     scheme, _, token = auth_header.partition(" ")
-    if scheme.lower() != "bearer" or not token.strip():
+    if not scheme or not token.strip():
         return
 
     token = token.strip()
@@ -90,8 +111,29 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
         if identity.provider == "firebase":
             request.state.decoded_firebase_token = identity.claims
             request.state.verified_firebase_token_raw = token
+    except HTTPException as exc:
+        # 401 is the registry's "not my token" — every verifier rejected it,
+        # which is a *decision*, and the correct one to hand a patient route:
+        # this credential is not a clinician's. Any other status means a
+        # verifier failed for some reason of its own
+        # (``VerifierRegistry.verify`` re-raises non-401s immediately rather
+        # than falling through), so treat it as an undecided verification.
+        if exc.status_code != status.HTTP_401_UNAUTHORIZED:
+            request.state.clinician_verification_errored = True
+        logger.debug("Middleware identity verification rejected the credential")
     except Exception:
-        logger.debug("Middleware identity verification skipped (token parse failed)")
+        # Could not decide. Firebase's ``verify_id_token`` does a network
+        # round trip (``check_revoked=True``), so a provider outage lands
+        # here — and without a marker it is indistinguishable from "this
+        # was never a clinician's token". ``get_patient_context`` reads
+        # this and refuses, which is the same rule
+        # ``PatientResolverRegistry.resolve`` already applies one layer
+        # down: an exception means could-not-decide, and letting a
+        # could-not-decide fall through converts it into "someone else may
+        # decide". Here that someone is every registered patient resolver,
+        # holding a clinician's credential.
+        request.state.clinician_verification_errored = True
+        logger.debug("Middleware identity verification could not complete")
 
 
 def _resolve_schema_from_request(request: Request) -> str | None:
