@@ -113,6 +113,28 @@ class RedisSlidingWindow:
             self._redis.delete(rkey)
 
 
+class NamespacedLimiter:
+    """Wraps a limiter, prefixing every key before it reaches the store.
+
+    Both ``RedisSlidingWindow`` and ``InMemorySlidingWindow`` key their
+    storage purely off the string passed to ``check``. If two independent
+    limiters (e.g. chat-send and audio-upload) are ever handed the same raw
+    key — a bare user id — they silently share one budget. Namespacing at
+    the limiter itself, rather than at each call site, means a new limiter
+    can't reintroduce that collision just by forgetting to prefix its key.
+    """
+
+    def __init__(self, limiter: RateLimiter, namespace: str) -> None:
+        self._limiter = limiter
+        self._namespace = namespace
+
+    def check(self, key: str) -> None:
+        self._limiter.check(f"{self._namespace}{key}")
+
+    def reset(self) -> None:
+        self._limiter.reset()
+
+
 class CompositeLimiter:
     """Enforces several sliding windows at once (e.g. per-minute + per-hour).
 
@@ -120,6 +142,11 @@ class CompositeLimiter:
     ``429`` and short-circuits. This lets a single logical limit combine a
     tight burst window with a looser sustained-rate window so a caller can
     neither spike nor grind against an endpoint.
+
+    Each sub-window is wrapped in its own :class:`NamespacedLimiter` suffix
+    so the windows never share a key: on the Redis path, a shared key would
+    mean the per-minute window's pruning wipes entries before the per-hour
+    window ever sees them, making the per-hour limit unreachable.
     """
 
     def __init__(self, limiters: list[RateLimiter]) -> None:
@@ -142,6 +169,17 @@ def _create_limiter(max_requests: int, window_seconds: int) -> RateLimiter:
     if client is not None:
         return RedisSlidingWindow(max_requests, window_seconds, client)
     return InMemorySlidingWindow(max_requests, window_seconds)
+
+
+def _create_windowed_limiter(namespace: str, max_requests: int, window_seconds: int) -> RateLimiter:
+    """Create a limiter namespaced by endpoint and window length.
+
+    The window suffix (e.g. ``:60s``) is what keeps a :class:`CompositeLimiter`'s
+    sub-windows from colliding with each other; the namespace prefix is what
+    keeps different endpoints' limiters from colliding with each other.
+    """
+    limiter = _create_limiter(max_requests, window_seconds)
+    return NamespacedLimiter(limiter, f"{namespace}:{window_seconds}s:")
 
 
 # Pre-auth endpoints: 10 requests per 60 seconds per IP
@@ -248,12 +286,34 @@ def get_ehr_navigate_limiter() -> RateLimiter:
         from .settings import get_settings  # noqa: PLC0415
 
         settings = get_settings()
-        _ehr_navigate_limiter = _create_limiter(
+        _ehr_navigate_limiter = _create_windowed_limiter(
+            "ehr-nav",
             max_requests=settings.ehr_navigate_daily_limit,
             window_seconds=86_400,
         )
         logger.info("EHR navigate rate limiter: %s", type(_ehr_navigate_limiter).__name__)
     return _ehr_navigate_limiter
+
+
+# Availability parse: per-user daily rate limit (lazily initialized from settings).
+_availability_parse_limiter: RateLimiter | None = None
+
+
+def get_availability_parse_limiter() -> RateLimiter:
+    """Get the per-user daily rate limiter for the availability-rule parse endpoint."""
+    global _availability_parse_limiter  # noqa: PLW0603
+    if _availability_parse_limiter is None:
+        from .settings import get_settings  # noqa: PLC0415
+
+        settings = get_settings()
+        _availability_parse_limiter = _create_limiter(
+            max_requests=settings.availability_parse_daily_limit,
+            window_seconds=86_400,
+        )
+        logger.info(
+            "Availability parse rate limiter: %s", type(_availability_parse_limiter).__name__
+        )
+    return _availability_parse_limiter
 
 
 # Chat send: per-user burst limit (per-minute + per-hour sliding windows).
@@ -274,8 +334,12 @@ def get_chat_send_limiter() -> RateLimiter:
         settings = get_settings()
         _chat_send_limiter = CompositeLimiter(
             [
-                _create_limiter(max_requests=settings.chat_rate_per_min, window_seconds=60),
-                _create_limiter(max_requests=settings.chat_rate_per_hour, window_seconds=3_600),
+                _create_windowed_limiter(
+                    "chat-send", max_requests=settings.chat_rate_per_min, window_seconds=60
+                ),
+                _create_windowed_limiter(
+                    "chat-send", max_requests=settings.chat_rate_per_hour, window_seconds=3_600
+                ),
             ]
         )
         logger.info("Chat send rate limiter: %s", type(_chat_send_limiter).__name__)
@@ -300,8 +364,12 @@ def get_audio_upload_limiter() -> RateLimiter:
         settings = get_settings()
         _audio_upload_limiter = CompositeLimiter(
             [
-                _create_limiter(max_requests=settings.upload_rate_per_min, window_seconds=60),
-                _create_limiter(max_requests=settings.upload_rate_per_hour, window_seconds=3_600),
+                _create_windowed_limiter(
+                    "audio-upload", max_requests=settings.upload_rate_per_min, window_seconds=60
+                ),
+                _create_windowed_limiter(
+                    "audio-upload", max_requests=settings.upload_rate_per_hour, window_seconds=3_600
+                ),
             ]
         )
         logger.info("Audio upload rate limiter: %s", type(_audio_upload_limiter).__name__)

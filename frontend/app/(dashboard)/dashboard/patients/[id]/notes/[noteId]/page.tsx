@@ -39,7 +39,12 @@ interface PageProps {
 export default function StandaloneNotePage({ params }: PageProps) {
   const { id: patientId, noteId } = use(params)
   const { data: patient } = usePatient(patientId)
-  const { data: note, isLoading, error } = useNote(noteId)
+  const { data: note, isLoading, error } = useNote(noteId, undefined, {
+    // Poll while the dictated note is generating so the page updates
+    // itself without a manual refresh.
+    refetchInterval: (query) =>
+      query.state.data?.status === "processing" ? 3000 : false,
+  })
   const updateEdits = useUpdateNoteEdits()
   const finalize = useFinalizeNote()
 
@@ -109,6 +114,8 @@ export default function StandaloneNotePage({ params }: PageProps) {
   }
 
   const isFinalized = !!note.finalized_at
+  const isGenerating = note.status === "processing"
+  const generationFailed = note.status === "failed"
   const patientName = patient
     ? `${patient.first_name} ${patient.last_name}`
     : "Patient"
@@ -139,17 +146,29 @@ export default function StandaloneNotePage({ params }: PageProps) {
         </p>
       </div>
 
-      <NoteViewer
-        note={note}
-        readonly={isFinalized}
-        pdfMetadata={{
-          patient_name: patientName,
-          session_date: note.created_at,
-        }}
-        onSave={isFinalized ? undefined : handleSave}
-      />
+      {isGenerating ? (
+        <div className="card p-12 text-center">
+          <p className="text-neutral-500">Note is being generated…</p>
+        </div>
+      ) : generationFailed ? (
+        <div className="card p-12 text-center">
+          <p className="text-neutral-500">
+            Note generation failed. Create the note again to retry.
+          </p>
+        </div>
+      ) : (
+        <NoteViewer
+          note={note}
+          readonly={isFinalized}
+          pdfMetadata={{
+            patient_name: patientName,
+            session_date: note.created_at,
+          }}
+          onSave={isFinalized ? undefined : handleSave}
+        />
+      )}
 
-      {!isFinalized && (
+      {!isFinalized && !isGenerating && !generationFailed && (
         <div className="card space-y-6">
           <div>
             <h3 className="text-lg font-semibold text-neutral-900 mb-2">

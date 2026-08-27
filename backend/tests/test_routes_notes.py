@@ -6,27 +6,43 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
-from app.models import Note, Patient, Transcript
+from app.models import Note, Patient, Transcript, TranscriptModel, User
 from app.models.audit import AuditAction
+from app.models.enums import TranscriptFormat
 from app.notes import NoteTypeAuthorizer, get_note_type_authorizer
 from app.repositories import (
     InMemoryNotesRepository,
     InMemoryPatientRepository,
 )
+from app.routes import notes as notes_routes
 from app.routes.notes import (
-    get_note_generation_service,
+    GenerateStandaloneNoteJob,
+    generate_standalone_note_job,
 )
 from app.routes.notes import (
     get_notes_repository as get_notes_route_notes_repository,
 )
+from app.routes.notes import (
+    get_scheduling_service as get_notes_scheduling_service,
+)
+from app.routes.scheduling import (
+    get_scheduling_service as get_appointments_scheduling_service,
+)
 from app.routes.sessions import (
     get_notes_repository as get_sessions_notes_repository,
 )
-from app.services import GeneratedNote, NoteGenerationService
+from app.scheduling_engine.models.appointment import Appointment
+from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
+from app.scheduling_engine.services.scheduling import SchedulingService
+from app.services import GeneratedNote, NoteGenerationService, NoteService
+from app.services.note_generation_service import TransientNoteGenerationError
+from fastapi import HTTPException
 from fastapi.testclient import TestClient  # noqa: TC002 — runtime fixture type
 
 if TYPE_CHECKING:
@@ -204,7 +220,7 @@ class TestCreateStandaloneNote:
         assert stored[0].session_id is None
         assert stored[0].content is None
 
-    def test_creates_note_with_dictation_runs_generation(
+    def test_creates_note_with_dictation_returns_202_processing_and_enqueues(
         self,
         client: TestClient,
         mock_repo: InMemoryPatientRepository,
@@ -212,13 +228,8 @@ class TestCreateStandaloneNote:
         mock_user_id: str,
     ) -> None:
         patient = _seed_patient(mock_repo, user_id=mock_user_id)
-        generated_content = {
-            "subjective": {"chief_complaint": "Generated content"},
-        }
-        stub = _StubGenerator(generated_content)
-        app.dependency_overrides[get_note_generation_service] = lambda: stub
 
-        try:
+        with patch("app.routes.notes.enqueue") as mock_enqueue:
             response = client.post(
                 f"/api/patients/{patient.id}/notes",
                 json={
@@ -229,19 +240,47 @@ class TestCreateStandaloneNote:
                     },
                 },
             )
-        finally:
-            app.dependency_overrides.pop(get_note_generation_service, None)
+
+        assert response.status_code == 202, response.text
+        body = response.json()
+        assert body["status"] == "processing"
+        assert body["content"] is None
+        assert body["session_id"] is None
+
+        stored = mock_notes_repo.list_by_patient(patient.id)
+        assert len(stored) == 1
+        assert stored[0].status == "processing"
+        assert stored[0].content is None
+
+        mock_enqueue.assert_called_once_with(
+            "pablo-soap-generation",
+            "/api/internal/jobs/generate-standalone-note",
+            {
+                "note_id": body["id"],
+                "user_id": mock_user_id,
+                "note_type": "narrative",
+                "transcript": {"format": "txt", "content": "Client reported..."},
+            },
+            dedup_key=body["id"],
+        )
+
+    def test_creates_note_without_dictation_enqueues_nothing(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+
+        with patch("app.routes.notes.enqueue") as mock_enqueue:
+            response = client.post(
+                f"/api/patients/{patient.id}/notes",
+                json={"note_type": "soap"},
+            )
 
         assert response.status_code == 201
-        body = response.json()
-        assert body["content"] == generated_content
-        assert body["session_id"] is None
-        assert stub.last_call is not None
-        assert stub.last_call["note_type"] == "narrative"
-        assert stub.last_call["transcript"].content == "Client reported..."
-        assert stub.last_call["patient"].id == patient.id
-        # session_date defaulted to now → naive comparison: tz-aware datetime
-        assert stub.last_call["session_date"].tzinfo is not None
+        assert response.json()["status"] == "complete"
+        mock_enqueue.assert_not_called()
 
     def test_unknown_note_type_returns_400(
         self,
@@ -308,6 +347,205 @@ class TestCreateStandaloneNote:
         body = response.json()
         assert body["content_edited"] == edited
         assert body["content"] is None
+
+
+def _job_request(retry_count: int | None = None) -> Any:
+    """Fake Cloud Tasks delivery — real dict headers, since AuditService and
+    ``_is_final_note_generation_attempt`` both read through ``.headers.get``
+    (a MagicMock's ``.headers`` isn't dict-like and breaks both)."""
+    headers = {}
+    if retry_count is not None:
+        headers["X-CloudTasks-TaskRetryCount"] = str(retry_count)
+    return SimpleNamespace(headers=headers, client=None)
+
+
+class TestGenerateStandaloneNoteJob:
+    """Worker: POST /api/internal/jobs/generate-standalone-note.
+
+    Calls the handler directly rather than through ``TestClient`` — like
+    ``test_routes_passkey.TestAuthenticateFinish``, this stubs the tenant-
+    resolution plumbing (``resolve_tenant_schema_for_user`` + the db arming
+    calls) so the unit test stays in-memory instead of standing up a real
+    platform schema. The invoker-required posture itself (401/403 without a
+    Cloud Tasks OIDC token) is covered generically for every
+    ``require_cloud_tasks_invoker`` route by ``test_dpop_route_coverage`` /
+    ``test_route_mfa_guardrails``.
+    """
+
+    @staticmethod
+    def _patch_tenant(monkeypatch: pytest.MonkeyPatch, *, schema: str | None) -> None:
+        monkeypatch.setattr(notes_routes, "resolve_tenant_schema_for_user", lambda _u: schema)
+        monkeypatch.setattr(notes_routes, "get_db_session", MagicMock)
+        monkeypatch.setattr(notes_routes, "set_tenant_schema", lambda *_a, **_k: None)
+        monkeypatch.setattr(notes_routes, "arm_current_user_id", lambda *_a, **_k: None)
+
+    def test_completes_note_and_audits_generation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_repo: Any,
+        mock_user: User,
+        mock_user_id: str,
+    ) -> None:
+        self._patch_tenant(monkeypatch, schema="practice_x")
+        mock_user_repo.update(mock_user)
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        note_service = NoteService(mock_notes_repo)
+        note = note_service.create_standalone_note(
+            patient_id=patient.id,
+            note_type="narrative",
+            status="processing",
+            user_id=mock_user_id,
+        )
+        generated_content = {"subjective": {"chief_complaint": "Generated content"}}
+        stub = _StubGenerator(generated_content)
+        audit = MagicMock()
+
+        result = generate_standalone_note_job(
+            GenerateStandaloneNoteJob(
+                note_id=note.id,
+                user_id=mock_user_id,
+                note_type="narrative",
+                transcript=TranscriptModel(
+                    format=TranscriptFormat.TXT, content="Client reported..."
+                ),
+            ),
+            _job_request(),
+            note_service=note_service,
+            patient_repo=mock_repo,
+            note_generation_service=stub,
+            user_repo=mock_user_repo,
+            audit=audit,
+        )
+
+        assert result == {"status": "ok"}
+        stored = note_service.get_note(note.id, mock_user_id)
+        assert stored.status == "complete"
+        assert stored.content == generated_content
+        assert stub.last_call is not None
+        assert stub.last_call["note_type"] == "narrative"
+        assert stub.last_call["transcript"].content == "Client reported..."
+        audit.log_note_action.assert_called_once()
+        assert audit.log_note_action.call_args.kwargs["note_id"] == note.id
+
+    def test_deterministic_failure_marks_note_failed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_repo: Any,
+        mock_user_id: str,
+    ) -> None:
+        self._patch_tenant(monkeypatch, schema="practice_x")
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        note_service = NoteService(mock_notes_repo)
+        note = note_service.create_standalone_note(
+            patient_id=patient.id,
+            note_type="narrative",
+            status="processing",
+            user_id=mock_user_id,
+        )
+
+        class _FailingGenerator(NoteGenerationService):
+            def generate_note(self, note_type, transcript, patient, session_date):  # type: ignore[no-untyped-def]
+                raise ValueError("bad output")
+
+        result = generate_standalone_note_job(
+            GenerateStandaloneNoteJob(
+                note_id=note.id,
+                user_id=mock_user_id,
+                note_type="narrative",
+                transcript=TranscriptModel(format=TranscriptFormat.TXT, content="x"),
+            ),
+            _job_request(),
+            note_service=note_service,
+            patient_repo=mock_repo,
+            note_generation_service=_FailingGenerator(),
+            user_repo=mock_user_repo,
+            audit=MagicMock(),
+        )
+
+        assert result == {"status": "failed"}
+        stored = note_service.get_note(note.id, mock_user_id)
+        assert stored.status == "failed"
+        assert stored.content is None
+
+    def test_transient_failure_retries_until_final_attempt(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_repo: InMemoryPatientRepository,
+        mock_notes_repo: InMemoryNotesRepository,
+        mock_user_repo: Any,
+        mock_user_id: str,
+    ) -> None:
+        self._patch_tenant(monkeypatch, schema="practice_x")
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        note_service = NoteService(mock_notes_repo)
+        note = note_service.create_standalone_note(
+            patient_id=patient.id,
+            note_type="narrative",
+            status="processing",
+            user_id=mock_user_id,
+        )
+
+        class _TransientGenerator(NoteGenerationService):
+            def generate_note(self, note_type, transcript, patient, session_date):  # type: ignore[no-untyped-def]
+                raise TransientNoteGenerationError("rate limited")
+
+        job = GenerateStandaloneNoteJob(
+            note_id=note.id,
+            user_id=mock_user_id,
+            note_type="narrative",
+            transcript=TranscriptModel(format=TranscriptFormat.TXT, content="x"),
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            generate_standalone_note_job(
+                job,
+                _job_request(retry_count=0),
+                note_service=note_service,
+                patient_repo=mock_repo,
+                note_generation_service=_TransientGenerator(),
+                user_repo=mock_user_repo,
+                audit=MagicMock(),
+            )
+        assert exc.value.status_code == 503
+        assert note_service.get_note(note.id, mock_user_id).status == "processing"
+
+        final_result = generate_standalone_note_job(
+            job,
+            _job_request(retry_count=99),
+            note_service=note_service,
+            patient_repo=mock_repo,
+            note_generation_service=_TransientGenerator(),
+            user_repo=mock_user_repo,
+            audit=MagicMock(),
+        )
+        assert final_result == {"status": "failed"}
+        assert note_service.get_note(note.id, mock_user_id).status == "failed"
+
+    def test_unknown_tenant_is_dropped_non_retryably(
+        self, monkeypatch: pytest.MonkeyPatch, mock_user_id: str
+    ) -> None:
+        self._patch_tenant(monkeypatch, schema=None)
+
+        result = generate_standalone_note_job(
+            GenerateStandaloneNoteJob(
+                note_id="missing-note",
+                user_id=mock_user_id,
+                note_type="narrative",
+                transcript=TranscriptModel(format=TranscriptFormat.TXT, content="x"),
+            ),
+            _job_request(),
+            note_service=NoteService(InMemoryNotesRepository()),
+            patient_repo=InMemoryPatientRepository(),
+            note_generation_service=_StubGenerator({}),
+            user_repo=MagicMock(),
+            audit=MagicMock(),
+        )
+
+        assert result == {"status": "unknown_tenant"}
 
 
 class TestRequiresAuth:
@@ -454,6 +692,141 @@ class TestListPatientNotesAudit:
             if call.args[0].action == AuditAction.SESSION_VIEWED.value
         }
         assert viewed == {first.id, second.id}
+
+
+def _seed_appointment(
+    appt_repo: InMemoryAppointmentRepository,
+    *,
+    user_id: str,
+    patient_id: str,
+    appt_id: str = "appt-1",
+) -> Appointment:
+    now = datetime.now(UTC)
+    appt = Appointment(
+        id=appt_id,
+        user_id=user_id,
+        patient_id=patient_id,
+        title="Weekly check-in",
+        start_at=now,
+        end_at=now,
+        duration_minutes=50,
+        status="confirmed",
+        session_type="individual",
+    )
+    return appt_repo.create(appt)
+
+
+class TestVisitCodingAtNoteCreation:
+    """Billing codes live on the appointment, not the note — see PABLO-85r.
+
+    Both coding surfaces (note creation and the standalone appointment
+    edit) go through the same ``SchedulingService.update_appointment``,
+    so these tests wire both routers to one shared in-memory repository
+    to prove they converge on a single stored record.
+    """
+
+    def test_note_creation_writes_codes_onto_the_appointment(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={
+                "note_type": "soap",
+                "appointment_id": "appt-1",
+                "service_code": "90837",
+                "modifiers": ["95"],
+                "unit_count": 1,
+                "place_of_service": "02",
+                "diagnosis_codes": ["F41.1", "F32.9"],
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        stored = appt_repo.get("appt-1", mock_user_id)
+        assert stored is not None
+        assert stored.service_code == "90837"
+        assert stored.modifiers == ["95"]
+        assert stored.unit_count == 1
+        assert stored.place_of_service == "02"
+        assert stored.diagnosis_codes == ["F41.1", "F32.9"]
+
+    def test_note_creation_without_codes_leaves_visit_unset(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Creating a note on a visit never infers a billing code — omitting
+        the fields leaves the appointment exactly as it was."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: SchedulingService(
+            appt_repo
+        )
+
+        response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={"note_type": "soap", "appointment_id": "appt-1"},
+        )
+
+        assert response.status_code == 201, response.text
+        stored = appt_repo.get("appt-1", mock_user_id)
+        assert stored is not None
+        assert stored.service_code is None
+        assert stored.diagnosis_codes is None
+
+    def test_note_creation_and_standalone_edit_converge_on_one_record(
+        self,
+        client: TestClient,
+        mock_repo: InMemoryPatientRepository,
+        mock_user_id: str,
+    ) -> None:
+        """Codes set at note creation are visible through the standalone
+        appointment-edit surface, and vice versa — one store, not two."""
+        patient = _seed_patient(mock_repo, user_id=mock_user_id)
+        appt_repo = InMemoryAppointmentRepository()
+        _seed_appointment(appt_repo, user_id=mock_user_id, patient_id=patient.id)
+        shared_service = SchedulingService(appt_repo)
+        app.dependency_overrides[get_notes_scheduling_service] = lambda: shared_service
+        app.dependency_overrides[get_appointments_scheduling_service] = lambda: shared_service
+
+        note_response = client.post(
+            f"/api/patients/{patient.id}/notes",
+            json={
+                "note_type": "soap",
+                "appointment_id": "appt-1",
+                "service_code": "90837",
+                "diagnosis_codes": ["F41.1"],
+            },
+        )
+        assert note_response.status_code == 201, note_response.text
+
+        # Read through the *other* surface — the standalone appointment GET.
+        appt_response = client.get("/api/appointments/appt-1")
+        assert appt_response.status_code == 200, appt_response.text
+        assert appt_response.json()["service_code"] == "90837"
+        assert appt_response.json()["diagnosis_codes"] == ["F41.1"]
+
+        # Now correct it via the standalone edit surface...
+        patch_response = client.patch(
+            "/api/appointments/appt-1",
+            json={"service_code": "90834"},
+        )
+        assert patch_response.status_code == 200, patch_response.text
+
+        # ...and the change is visible back through the same record.
+        assert appt_repo.get("appt-1", mock_user_id).service_code == "90834"
 
 
 # Avoid unused-fixture warnings.

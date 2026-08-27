@@ -114,7 +114,14 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     reminder_24h_sent boolean NOT NULL,
     reminder_1h_sent boolean NOT NULL,
     created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    pending_expires_at timestamp with time zone,
+    service_code character varying(10),
+    modifiers jsonb,
+    unit_count integer,
+    place_of_service character varying(2),
+    diagnosis_codes jsonb,
+    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL
 );
 
 
@@ -131,7 +138,8 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
     session_id uuid,
     ip_address character varying(45),
     user_agent text,
-    changes jsonb
+    changes jsonb,
+    actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL
 );
 
 
@@ -353,7 +361,8 @@ CREATE TABLE __TENANT_SCHEMA__.notes (
     redacted_export_payload jsonb,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    status character varying(20) DEFAULT 'complete'::character varying NOT NULL
 );
 
 
@@ -457,7 +466,8 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     phi_email_consent_doc text,
     phi_email_consent_by character varying(128),
     rate_cents integer,
-    sliding_scale_note text
+    sliding_scale_note text,
+    origin character varying(20)
 );
 
 
@@ -803,6 +813,10 @@ CREATE INDEX ix_appointments_patient_id ON __TENANT_SCHEMA__.appointments USING 
 
 
 
+CREATE INDEX ix_appointments_pending_expires_at ON __TENANT_SCHEMA__.appointments USING btree (pending_expires_at) WHERE (pending_expires_at IS NOT NULL);
+
+
+
 CREATE INDEX ix_appointments_recurring_appointment_id ON __TENANT_SCHEMA__.appointments USING btree (recurring_appointment_id);
 
 
@@ -816,6 +830,10 @@ CREATE INDEX ix_appointments_user_id ON __TENANT_SCHEMA__.appointments USING btr
 
 
 CREATE INDEX ix_audit_logs_action ON __TENANT_SCHEMA__.audit_logs USING btree (action);
+
+
+
+CREATE INDEX ix_audit_logs_actor_type ON __TENANT_SCHEMA__.audit_logs USING btree (actor_type);
 
 
 

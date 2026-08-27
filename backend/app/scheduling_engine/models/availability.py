@@ -19,6 +19,7 @@ class RuleType(StrEnum):
     BUFFER_AFTER = "buffer_after"
     BLOCK_DATE_RANGE = "block_date_range"
     BLOCK_SPECIFIC_DATES = "block_specific_dates"
+    SESSION_DEFAULTS = "session_defaults"
 
 
 class EnforcementLevel(StrEnum):

@@ -10,7 +10,7 @@ No PHI: slug, owner, public display copy, and duration only. Shares the
 ``platform`` schema (no RLS) with the other cross-practice tables.
 
 Revision ID: c8d2f4a71e93
-Revises: b3a7f92c15e4
+Revises: 9deb5409153a
 Create Date: 2026-08-21
 """
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "c8d2f4a71e93"
-down_revision: str | Sequence[str] | None = "b3a7f92c15e4"
+down_revision: str | Sequence[str] | None = "9deb5409153a"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

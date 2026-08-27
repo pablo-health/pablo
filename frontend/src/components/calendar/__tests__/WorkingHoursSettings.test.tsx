@@ -35,10 +35,21 @@ describe("WorkingHoursSettings", () => {
           isSaving={false}
         />
       )
-      expect(screen.getByText("Working Hours")).toBeInTheDocument()
+      expect(screen.getByText("Calendar display hours")).toBeInTheDocument()
       expect(
-        screen.getByText(/Set your typical working hours/)
+        screen.getByText(/Choose the hours your calendar highlights/)
       ).toBeInTheDocument()
+    })
+
+    it("never describes the setting as controlling working hours", () => {
+      const { container } = render(
+        <WorkingHoursSettings
+          preferences={createPreferences()}
+          onSave={vi.fn()}
+          isSaving={false}
+        />
+      )
+      expect(container.textContent).not.toMatch(/working hours/i)
     })
 
     it("displays current start and end hours", () => {

@@ -192,6 +192,7 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/rules"),  # creates an availability rule
         ("patch", "/api/availability/rules/{rule_id}"),  # updates an availability rule
         ("delete", "/api/availability/rules/{rule_id}"),  # deletes an availability rule
+        ("post", "/api/availability/rules/parse"),  # NL rule proposals, no client attached
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
         ("get", "/api/appointment-types"),  # practice-level fee defaults, no client

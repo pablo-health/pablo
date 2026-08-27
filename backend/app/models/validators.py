@@ -7,6 +7,9 @@ from datetime import datetime
 # Phone number validation constants
 MIN_PHONE_DIGITS = 10  # Standard US phone number length
 
+# A visit may carry at most this many CPT modifiers.
+MAX_VISIT_MODIFIERS = 4
+
 
 def validate_iso_date(value: str | None, field_name: str) -> str | None:
     """
@@ -101,4 +104,50 @@ def validate_status(value: str) -> str:
     valid_statuses = ["active", "inactive", "on_hold"]
     if value not in valid_statuses:
         raise ValueError(f"Status must be one of: {', '.join(valid_statuses)}")
+    return value
+
+
+def validate_visit_modifiers(value: list[str] | None) -> list[str] | None:
+    """Validate the visit's CPT modifier list is within the allowed count.
+
+    Args:
+        value: The modifier codes to validate (e.g. ["95", "GT"])
+
+    Returns:
+        The validated modifier list
+
+    Raises:
+        ValueError: If more than MAX_VISIT_MODIFIERS are supplied
+    """
+    if value is not None and len(value) > MAX_VISIT_MODIFIERS:
+        raise ValueError(f"At most {MAX_VISIT_MODIFIERS} modifiers are allowed")
+    return value
+
+
+def validate_visit_diagnosis_codes(value: list[str] | None) -> list[str] | None:
+    """Validate every code against the bundled ICD-10-CM reference file.
+
+    Order is preserved (the first code is the primary diagnosis) — this
+    only rejects unknown codes, it never reorders or dedupes.
+
+    Args:
+        value: The ordered ICD-10 diagnosis codes to validate
+
+    Returns:
+        The validated code list, in the order given
+
+    Raises:
+        ValueError: If a code is not in the bundled ICD-10-CM catalog
+    """
+    if value is None:
+        return None
+    # Deferred: app.diagnostics.catalog imports app.db.platform_models, which
+    # imports app.models.enums -- importing it at module load time would
+    # reach back into app.models mid-init and deadlock the import.
+    from ..diagnostics.catalog import known_icd10_codes  # noqa: PLC0415
+
+    known = known_icd10_codes()
+    for code in value:
+        if code not in known:
+            raise ValueError(f"Unknown ICD-10 diagnosis code: {code!r}")
     return value

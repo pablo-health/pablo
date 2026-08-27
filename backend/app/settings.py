@@ -771,12 +771,38 @@ class Settings(BaseSettings):
         default=25 * 1024 * 1024,
         description="Maximum patient-document upload size (bytes).",
     )
+
+    # Email delivery for notification surfaces (booking confirmations,
+    # reminders). 'none' logs and drops every message — the seam a
+    # delivery-dependent caller must check via EmailSender.can_deliver
+    # before it can refuse to arm.
+    email_backend: Literal["none", "smtp"] = Field(
+        default="none",
+        description=(
+            "Email backend for notification surfaces. "
+            "'none' = log only, no delivery (default) — a bare deployment "
+            "behaves exactly as it does today. "
+            "'smtp' = deliver via SMTP with STARTTLS; requires smtp_host, "
+            "smtp_port, smtp_username, smtp_password, smtp_from."
+        ),
+    )
+    smtp_host: str = Field(default="", description="SMTP server hostname")
+    smtp_port: int = Field(default=587, description="SMTP server port (587 for STARTTLS)")
+    smtp_username: str = Field(default="", description="SMTP auth username")
+    smtp_password: SecretStr = Field(default=SecretStr(""), description="SMTP auth password")
+    smtp_from: str = Field(default="", description="From address for outbound email")
+
     # Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
-    # Leave processor_id unset to disable — scanned PDFs land with
-    # extracted_text=NULL, same as before the feature existed.
+    # Both project and processor id are optional — leave unset and the
+    # client derives them at first use. Set allow_document_ai_ocr=False
+    # to disable outright — scanned PDFs land with extracted_text=NULL,
+    # same as before the feature existed.
     document_ai_project_id: str | None = Field(
         default=None,
-        description="GCP project that owns the Document AI OCR processor.",
+        description=(
+            "GCP project that owns the Document AI OCR processor. "
+            "Optional; derived from GOOGLE_CLOUD_PROJECT or google.auth.default() when unset."
+        ),
     )
     document_ai_location: str = Field(
         default="us",
@@ -784,7 +810,11 @@ class Settings(BaseSettings):
     )
     document_ai_processor_id: str | None = Field(
         default=None,
-        description="Resource id of the OCR processor (hex suffix of the processor name).",
+        description=(
+            "Resource id of the OCR processor (hex suffix of the processor name). "
+            "Optional; derived by looking up the processor named "
+            "'pablo-patient-doc-ocr' when unset."
+        ),
     )
     document_ai_max_pages: int = Field(
         default=30,
@@ -874,6 +904,13 @@ class Settings(BaseSettings):
     ehr_navigate_model: str = Field(
         default="gemini-2.5-flash-lite",
         description="Gemini model for EHR navigation LLM fallback",
+    )
+
+    # Natural-language availability rule entry
+    availability_parse_daily_limit: int = Field(
+        default=100,
+        ge=1,
+        description="Max natural-language availability-rule parse calls per user per day",
     )
 
     # Per-user burst rate limits. These guard the expensive LLM- and

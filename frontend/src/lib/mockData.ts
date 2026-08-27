@@ -163,6 +163,7 @@ function buildNote(opts: {
     quality_rating: opts.quality_rating ?? null,
     quality_rating_reason: opts.quality_rating_reason ?? null,
     quality_rating_sections: opts.quality_rating_sections ?? null,
+    status: "complete",
     export_status: "not_queued",
     export_queued_at: null,
     export_reviewed_at: null,

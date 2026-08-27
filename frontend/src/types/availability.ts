@@ -4,9 +4,10 @@
  * Availability rule types
  *
  * Mirrors backend/app/scheduling_engine/models/availability.py — the
- * eight RuleType values and the two EnforcementLevel values. params
+ * nine RuleType values and the two EnforcementLevel values. params
  * shape varies per rule_type; see AvailabilitySettings.tsx for the
- * per-type param forms.
+ * per-type param forms. session_defaults has its own dedicated fields
+ * section rather than a generic RuleForm entry.
  */
 
 export const RULE_TYPES = [
@@ -18,6 +19,7 @@ export const RULE_TYPES = [
   "buffer_after",
   "block_date_range",
   "block_specific_dates",
+  "session_defaults",
 ] as const
 
 export type RuleType = (typeof RULE_TYPES)[number]
@@ -50,4 +52,38 @@ export interface UpdateAvailabilityRuleRequest {
   rule_type?: RuleType
   enforcement?: EnforcementLevel
   params?: Record<string, unknown>
+}
+
+export interface ParseAvailabilityRulesRequest {
+  text: string
+}
+
+export interface ProposedAvailabilityRule {
+  rule_type: RuleType
+  enforcement: EnforcementLevel
+  params: Record<string, unknown>
+  human_summary: string
+}
+
+export interface ParseAvailabilityRulesResponse {
+  proposals: ProposedAvailabilityRule[]
+  could_not_parse: string | null
+  exclusive: boolean
+  existing_conflicting_rules: AvailabilityRule[]
+}
+
+export interface TimeSlot {
+  start: string
+  end: string
+}
+
+export interface FreeSlotsResponse {
+  date: string
+  duration_minutes: number
+  slots: TimeSlot[]
+  total: number
+  // False when the practice has no availability rules at all. An empty
+  // `slots` list otherwise reads identically whether nothing is set up or
+  // the day is simply full — check this first.
+  configured: boolean
 }

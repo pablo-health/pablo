@@ -33,7 +33,12 @@ import ast
 from pathlib import Path
 
 import pytest
-from app.db import enable_rls_on_schema, rls_forced_tenant_tables
+from app.db import (
+    PATIENT_READABLE_TABLES,
+    PATIENT_WRITABLE_TABLES,
+    enable_rls_on_schema,
+    rls_forced_tenant_tables,
+)
 from app.db.models import Base
 
 
@@ -206,3 +211,55 @@ def test_rls_forced_tables_are_covered_by_rls_invariants() -> None:
         f"If coverage must be deferred, add the table name to "
         f"EXEMPT_RLS_FORCED_TABLES in this file with a written reason."
     )
+
+
+def test_patient_scoped_registry_names_real_tables_with_their_key_column() -> None:
+    """Every patient-scoped registration must match a real table and column.
+
+    ``enable_rls_on_schema`` raises when a registered table lacks its key
+    column, which is the right runtime behaviour but only fires during
+    provisioning. This catches the same mistake at unit-test speed, and
+    catches the other direction too: a table renamed or dropped out from
+    under the registry.
+    """
+    problems: list[str] = []
+    for table_name, key_column in PATIENT_READABLE_TABLES.items():
+        table = Base.metadata.tables.get(table_name)
+        if table is None:
+            problems.append(f"{table_name}: registered patient-scoped but not an ORM table")
+            continue
+        if key_column not in {c.name for c in table.columns}:
+            problems.append(
+                f"{table_name}: registered on '{key_column}' which the table does not have"
+            )
+
+    assert not problems, (
+        "PATIENT_READABLE_TABLES is out of sync with the schema: "
+        f"{problems}. A registration whose key column is missing would make "
+        "enable_rls_on_schema raise during tenant provisioning."
+    )
+
+
+def test_patient_writable_tables_are_a_subset_of_readable() -> None:
+    """Write access must never be granted to a table a patient cannot read.
+
+    The two registries are separate so granting reads never silently
+    grants writes — but the reverse (writable without readable) would
+    produce an UPDATE policy on a table with no patient SELECT arm, which
+    is incoherent rather than merely strict.
+    """
+    orphans = set(PATIENT_WRITABLE_TABLES) - set(PATIENT_READABLE_TABLES)
+    assert not orphans, (
+        f"tables registered patient-writable but not patient-readable: {sorted(orphans)}"
+    )
+
+
+def test_patients_is_registered_read_only() -> None:
+    """Core's single seed, pinned.
+
+    A patient reads their own demographics; nothing in core lets them
+    write that record. If this changes it should be a deliberate edit to
+    this assertion, not a side effect.
+    """
+    assert PATIENT_READABLE_TABLES.get("patients") == "id"
+    assert "patients" not in PATIENT_WRITABLE_TABLES

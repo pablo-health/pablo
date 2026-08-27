@@ -13,8 +13,33 @@ so the env var must be set before app code is imported.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+# Disable the Cloud Logging audit dual-write, exactly as ``tests/conftest.py``
+# does for the unit suite — this file never got the same line, and every
+# audited write in this suite paid for it. ``AuditService._persist`` calls
+# ``write_to_cloud_logging`` whenever ``audit_dual_write_enabled`` is set,
+# and that flag DEFAULTS TO TRUE.
+#
+# On CI there are no Application Default Credentials, so the client
+# constructor raises immediately and the miss is invisible. On a developer
+# machine with ADC present the client builds fine and ``log_struct`` makes a
+# real network write to a real project — which is (a) a hang: the first
+# audited test parks inside ``google.cloud.logging_v2.logger._do_log`` with
+# the Postgres connection sitting ``idle in transaction``, taking the whole
+# suite with it, and (b) wrong: synthetic audit rows land in the
+# ``pablo.audit_events`` stream that the retention-locked GCS sink mirrors
+# for six years.
+#
+# Module scope, not inside ``pytest_configure``: that function returns early
+# when ``DATABASE_URL`` is already exported, and the flag has to be set
+# before any app module is imported either way.
+os.environ["AUDIT_DUAL_WRITE_ENABLED"] = "false"
 
 
 class _PgState:
@@ -31,6 +56,14 @@ def pytest_configure(config: pytest.Config) -> None:
     # user-namespace socket. ``pytest_unconfigure`` stops the container
     # explicitly, so cleanup is covered without Ryuk. Must be set
     # before testcontainers is imported.
+    #
+    # The cost of no reaper: a run that is KILLED never reaches
+    # ``pytest_unconfigure``, so its Postgres container survives. They
+    # accumulate silently — several of them will quietly starve the
+    # machine and make every later run slower and flakier, which reads as
+    # "the suite got slow" rather than "I left six databases running".
+    # After killing a run, ``docker ps`` and remove the stray
+    # ``postgres:16-alpine``.
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
     try:
@@ -95,6 +128,43 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_unconfigure(config: pytest.Config) -> None:
     if _PgState.container is not None:
         _PgState.container.stop()
+
+
+def clear_fastapi_dependency_caches() -> None:
+    """Clear fastapi's module-level dependency-classification caches.
+
+    fastapi classifies every dependency callable (generator? async
+    generator? coroutine?) through a handful of ``lru_cache``-wrapped
+    helpers in ``fastapi.dependencies.models``, keyed on the callable
+    itself. Each app built in this suite defines its own generator
+    session dependency closing over a fresh engine, so those caches
+    accumulate a strong reference to every engine the suite has ever
+    built and never let go — across hundreds of app constructions that
+    exhausts the Postgres connection pool.
+
+    Discover cache-bearing attributes by scanning the module rather than
+    naming the three private helpers: they're internal, and upstream has
+    already renamed the cache-size constant once.
+    """
+    from fastapi.dependencies import models  # noqa: PLC0415
+
+    for name in dir(models):
+        candidate = getattr(models, name)
+        if hasattr(candidate, "cache_clear"):
+            candidate.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _release_fastapi_dependency_caches() -> Iterator[None]:
+    """Release engines pinned by fastapi's dependency-classification caches.
+
+    Runs after every test so each freshly-built app's dependency
+    closures are eligible for garbage collection before the next one is
+    constructed. See ``clear_fastapi_dependency_caches`` for why this is
+    necessary.
+    """
+    yield
+    clear_fastapi_dependency_caches()
 
 
 @pytest.fixture

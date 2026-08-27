@@ -63,6 +63,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 
 from . import (
+    _current_patient_id,
     _current_tenant_schema,
     _current_user_id,
     _request_session,
@@ -100,7 +101,7 @@ def tenant_db_session(
        calling ``get_db_session()`` resolve it without changes.
     5. On exit: commit if dirty (with fail-closed
        ``assert_tenant_schema_set`` guard); rollback on exception;
-       close the session; clear both ContextVars.
+       close the session; clear the request ContextVars.
 
     This context manager **must be entered on the thread that will run
     the DB work**.  SQLAlchemy sessions are not thread-safe.  When
@@ -131,6 +132,18 @@ def tenant_db_session(
     # exit a stale schema rides the next checkout in this context — the exact
     # connection-leak class this primitive exists to prevent.
     prior_schema = _current_tenant_schema.get()
+    # Clear any patient principal BEFORE the session is created, and the
+    # ordering is load-bearing. This primitive opens a *clinician* unit of
+    # work, and it can be entered from inside a patient request (a background
+    # task spawned during a patient's turn). ``create_standalone_session``
+    # runs ``set_tenant_schema``, which executes SQL and so fires the first
+    # BEGIN — at which point the ``after_begin`` listener reads this
+    # ContextVar and arms ``app.current_patient_id`` on the connection. Clear
+    # it afterwards and the worker's very first transaction is already
+    # holding a patient's row-level grants. The clinician id below can be set
+    # later because the explicit ``set_config`` in the try block corrects it;
+    # there is no such corrective call for the patient GUC, by design.
+    patient_id_token = _current_patient_id.set(None)
     session = create_standalone_session(schema)
     session_token = _request_session.set(session)
     # Save the previous user id and restore it on exit so nested
@@ -161,6 +174,7 @@ def tenant_db_session(
         session.close()
         _request_session.reset(session_token)
         _current_user_id.reset(user_id_token)
+        _current_patient_id.reset(patient_id_token)
         # Restore the tenant-schema ContextVar so a stale schema can't ride a
         # later pool checkout in this context (mirrors the _current_user_id
         # restore above). create_standalone_session set it via

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
@@ -517,6 +518,210 @@ class TestFreeSlots:
         slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 0
 
+    def test_no_buffer_or_session_defaults_matches_back_to_back_enumeration(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        starts = [s.start for s in slots]
+        assert starts == [
+            f"2026-03-18T{h:02d}:{m:02d}:00Z"
+            for h, m in [
+                (9, 0),
+                (9, 50),
+                (10, 40),
+                (11, 30),
+                (12, 20),
+                (13, 10),
+                (14, 0),
+                (14, 50),
+                (15, 40),
+            ]
+        ]
+
+    def test_alignment_none_matches_back_to_back_enumeration(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.SESSION_DEFAULTS, {"alignment": "none"}, rule_id="r2"))
+        without_rule = engine.get_free_slots(USER_ID, "2026-03-18", 50)
+        starts_with = [s.start for s in without_rule.slots]
+        assert starts_with == [
+            f"2026-03-18T{h:02d}:{m:02d}:00Z"
+            for h, m in [
+                (9, 0),
+                (9, 50),
+                (10, 40),
+                (11, 30),
+                (12, 20),
+                (13, 10),
+                (14, 0),
+                (14, 50),
+                (15, 40),
+            ]
+        ]
+
+
+class TestSessionDefaults:
+    def test_motivating_case_length_break_hour_alignment(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": 10}, rule_id="r2"))
+        rule_repo.create(
+            _rule(
+                RuleType.SESSION_DEFAULTS,
+                {"duration_minutes": 50, "alignment": "hour"},
+                rule_id="r3",
+            )
+        )
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", None).slots
+        starts = [s.start for s in slots]
+        assert starts == [f"2026-03-18T{h:02d}:00:00Z" for h in range(9, 17)]
+        assert "2026-03-18T09:50:00Z" not in starts
+        assert "2026-03-18T10:40:00Z" not in starts
+
+    def test_break_after_booking_without_alignment(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": 10}, rule_id="r2"))
+        appt_repo.create(_appt("2026-03-18T09:00:00Z", "2026-03-18T09:50:00Z"))
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        starts = [s.start for s in slots]
+        assert starts[0] == "2026-03-18T10:00:00Z"
+        assert "2026-03-18T09:50:00Z" not in starts
+
+    def test_break_after_booking_with_hour_alignment(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.BUFFER_AFTER, {"minutes": 10}, rule_id="r2"))
+        rule_repo.create(_rule(RuleType.SESSION_DEFAULTS, {"alignment": "hour"}, rule_id="r3"))
+        appt_repo.create(_appt("2026-03-18T09:00:00Z", "2026-03-18T09:50:00Z"))
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        starts = [s.start for s in slots]
+        assert starts[0] == "2026-03-18T10:00:00Z"
+        assert starts[1] == "2026-03-18T11:00:00Z"
+
+    def test_alignment_edge_at_window_start_hour(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:30", "end": "12:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.SESSION_DEFAULTS, {"alignment": "hour"}, rule_id="r2"))
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert slots[0].start == "2026-03-18T10:00:00Z"
+        assert "2026-03-18T09:30:00Z" not in [s.start for s in slots]
+
+    def test_alignment_edge_at_window_start_half_hour(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:30", "end": "12:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.SESSION_DEFAULTS, {"alignment": "half_hour"}, rule_id="r2"))
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert slots[0].start == "2026-03-18T09:30:00Z"
+
+    def test_default_length_fallback(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "12:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.SESSION_DEFAULTS, {"duration_minutes": 60}, rule_id="r2"))
+        result = engine.get_free_slots(USER_ID, "2026-03-18", None)
+        assert result.duration_minutes == 60
+        assert result.slots[0].end == "2026-03-18T10:00:00Z"
+
+        explicit = engine.get_free_slots(USER_ID, "2026-03-18", 30)
+        assert explicit.duration_minutes == 30
+        assert explicit.slots[0].end == "2026-03-18T09:30:00Z"
+
+    def test_default_length_falls_back_to_fifty_with_no_rule(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "12:00"},
+                rule_id="r1",
+            )
+        )
+        result = engine.get_free_slots(USER_ID, "2026-03-18", None)
+        assert result.duration_minutes == 50
+
+    def test_session_defaults_does_not_affect_conflict_checking(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        without_result = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.SESSION_DEFAULTS,
+                {"duration_minutes": 50, "alignment": "hour"},
+                rule_id="r2",
+            )
+        )
+        with_result = engine.check_conflicts(
+            USER_ID, "2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z"
+        )
+        assert len(without_result.conflicts) == len(with_result.conflicts) == 0
+
 
 class TestMultipleRulesInteraction:
     def test_working_hours_and_block_time(
@@ -648,3 +853,115 @@ class TestConfiguredSentinel:
         slots_result = engine.get_free_slots(USER_ID, "2026-03-18", 50)
         assert slots_result.configured is True
         assert len(slots_result.slots) == 1
+
+
+NY = ZoneInfo("America/New_York")
+
+
+class TestTimezoneAwareRuleEvaluation:
+    """A clinician's rules are configured in their own zone, not UTC.
+
+    2026-08-26 is a Wednesday and falls in EDT (UTC-4); 2026-11-04 is a
+    Wednesday after the fall DST change and falls in EST (UTC-5). Every
+    case here is paired with the same call minus ``tz`` to pin down that
+    the zone, and nothing else, is what flips the outcome.
+    """
+
+    def test_working_hours_conflict_flips_with_timezone(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+
+        # 19:00 UTC = 15:00 EDT — inside working hours in NY, outside in UTC.
+        ny_evening = engine.check_conflicts(
+            USER_ID, "2026-08-26T19:00:00Z", "2026-08-26T19:50:00Z", tz=NY
+        ).conflicts
+        utc_evening = engine.check_conflicts(
+            USER_ID, "2026-08-26T19:00:00Z", "2026-08-26T19:50:00Z"
+        ).conflicts
+        assert ny_evening == []
+        assert len(utc_evening) == 1
+
+        # 12:00 UTC = 08:00 EDT — outside working hours in NY, inside in UTC.
+        ny_morning = engine.check_conflicts(
+            USER_ID, "2026-08-26T12:00:00Z", "2026-08-26T12:50:00Z", tz=NY
+        ).conflicts
+        utc_morning = engine.check_conflicts(
+            USER_ID, "2026-08-26T12:00:00Z", "2026-08-26T12:50:00Z"
+        ).conflicts
+        assert len(ny_morning) == 1
+        assert utc_morning == []
+
+    def test_free_slots_local_day_with_dst(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(
+            _rule(RuleType.WORKING_HOURS, {"day_of_week": 2, "start": "09:00", "end": "17:00"})
+        )
+
+        # Before the fall-back: 09:00 EDT == 13:00Z.
+        summer_slots = engine.get_free_slots(USER_ID, "2026-08-26", 50, tz=NY).slots
+        assert summer_slots[0].start == "2026-08-26T13:00:00Z"
+        assert all(s.end <= "2026-08-26T21:00:00Z" for s in summer_slots)
+
+        # After the fall-back: 09:00 EST == 14:00Z.
+        winter_slots = engine.get_free_slots(USER_ID, "2026-11-04", 50, tz=NY).slots
+        assert winter_slots[0].start == "2026-11-04T14:00:00Z"
+
+    def test_local_day_window_for_max_per_day(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 3, "start": "09:00", "end": "17:00"},
+                rule_id="r2",
+            )
+        )
+        rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 1}, rule_id="r3"))
+        # 2026-08-27T02:00:00Z is 22:00 EDT on the 26th, not the 27th.
+        appt_repo.create(_appt("2026-08-27T02:00:00Z", "2026-08-27T02:50:00Z"))
+
+        # tz=NY: the appointment counts against the 26th local day, so a
+        # second booking that day is refused by max_per_day.
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-08-26T13:00:00Z", "2026-08-26T13:50:00Z", tz=NY
+        ).conflicts
+        assert len(conflicts) == 1
+        assert "maximum" in conflicts[0].message.lower()
+
+        # The 27th local day is untouched by it.
+        slots_27_ny = engine.get_free_slots(USER_ID, "2026-08-27", 50, tz=NY).slots
+        assert len(slots_27_ny) > 0
+
+        # With the UTC default, the same appointment lands on the 27th
+        # instead, so it fully consumes that day's single slot.
+        slots_27_utc = engine.get_free_slots(USER_ID, "2026-08-27", 50).slots
+        assert slots_27_utc == []
+
+    def test_block_day_of_week_is_local(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 5}))  # Saturday
+
+        # 2026-08-30T02:00:00Z is Saturday 22:00 EDT, but Sunday in UTC.
+        ny_conflicts = engine.check_conflicts(
+            USER_ID, "2026-08-30T02:00:00Z", "2026-08-30T02:50:00Z", tz=NY
+        ).conflicts
+        utc_conflicts = engine.check_conflicts(
+            USER_ID, "2026-08-30T02:00:00Z", "2026-08-30T02:50:00Z"
+        ).conflicts
+        assert len(ny_conflicts) == 1
+        assert utc_conflicts == []

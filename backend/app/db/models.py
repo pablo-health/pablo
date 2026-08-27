@@ -133,6 +133,15 @@ class PatientRow(Base):
     # words. Never parsed or used in arithmetic — exists so the reason for a
     # rate survives staff turnover and the clinician's memory.
     sliding_scale_note: Mapped[str | None] = mapped_column(Text)
+    # Where this row came from, for a human merge review to prioritize.
+    # NULL = created by staff in the normal chart flow (the overwhelming
+    # majority of rows, and not itself suspicious). A non-NULL value marks a
+    # row created through an unauthenticated intake surface that cannot
+    # verify the caller's claimed identity, so it may duplicate an existing
+    # chart — 'voice' today, room for e.g. 'public_booking' later. Nothing
+    # reads this column to merge or de-duplicate automatically; it only
+    # flags a row for a person to look at.
+    origin: Mapped[str | None] = mapped_column(String(20))
 
     __table_args__ = (
         # Backs PatientRepository.find_by_email, whose `lower(email) = ?`
@@ -213,6 +222,10 @@ class NoteRow(Base):
     quality_rating: Mapped[int | None] = mapped_column(Integer)
     quality_rating_reason: Mapped[str | None] = mapped_column(Text)
     quality_rating_sections: Mapped[list | None] = mapped_column(JSONB)
+    # 'processing' | 'complete' | 'failed' — see app.models.note.Note.status.
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="complete", default="complete"
+    )
     # Export tracking — mirrors TherapySessionRow.export_*
     export_status: Mapped[str] = mapped_column(String(20), default="not_queued")
     export_queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -519,10 +532,20 @@ class AppointmentRow(Base):
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Set only while status is 'pending': the instant the request stops holding
+    # its slot. Indexed because the sweep that expires them is a range scan.
+    pending_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Registry key for the note generated when a session is started from this
+    # appointment. Mirrors NoteRow.note_type.
+    note_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default="soap", default="soap"
+    )
     # Recurrence
     recurrence_rule: Mapped[str | None] = mapped_column(String(50))
     recurring_appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), index=True)
@@ -539,6 +562,14 @@ class AppointmentRow(Base):
     ehr_appointment_url: Mapped[str | None] = mapped_column(Text)
     # Clinical link
     session_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False))
+    # Billing codes for the visit — see app.scheduling_engine.models.appointment.
+    # Clinician-entered only; every column is nullable and nothing here is
+    # populated automatically.
+    service_code: Mapped[str | None] = mapped_column(String(10))
+    modifiers: Mapped[list | None] = mapped_column(JSONB)
+    unit_count: Mapped[int | None] = mapped_column(Integer)
+    place_of_service: Mapped[str | None] = mapped_column(String(2))
+    diagnosis_codes: Mapped[list | None] = mapped_column(JSONB)
     # Reminders
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -969,6 +1000,13 @@ class AuditLogRow(Base):
     # was unauthenticated); a uuid column would reject those at INSERT and lose
     # the record. Same "identifier as recorded" rationale as resource_id below.
     user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    # What KIND of principal ``user_id`` names. Both a clinician id and a
+    # patient id are uuids, so without this a row cannot answer "clinician or
+    # patient?" without joining two tables and hoping exactly one matches —
+    # and this is the six-year record, read years later by someone in a
+    # dispute. Server default 'clinician' so every existing row, and every
+    # caller that does not set it, keeps the meaning it already had.
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="clinician")
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
     # resource_id is polymorphic (patient_id | session_id | user_id | …) —

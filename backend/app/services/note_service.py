@@ -119,12 +119,17 @@ class NoteService:
         note_type: str,
         content: dict[str, Any] | None = None,
         content_edited: dict[str, Any] | None = None,
+        status: str = "complete",
         user_id: str,
     ) -> Note:
         """Persist a patient-owned note that is not bound to a session.
 
         Used by the standalone-note path (pa-0nx.3): no ``session_id``,
         and the row may be empty until the clinician fills it via PATCH.
+        ``status`` is ``'complete'`` unless this is the skeleton for a
+        dictation that generates off-request, in which case the caller
+        passes ``'processing'`` and a Cloud Tasks worker completes it
+        via :meth:`complete_generation` / :meth:`fail_generation`.
         """
         now = utc_now()
         note = Note(
@@ -134,6 +139,7 @@ class NoteService:
             note_type=note_type,
             content=content,
             content_edited=content_edited,
+            status=status,
             created_at=now,
             updated_at=now,
         )
@@ -144,6 +150,30 @@ class NoteService:
                 f"Patient {patient_id} not found",
                 {"patient_id": patient_id},
             ) from exc
+
+    def complete_generation(self, note_id: str, content: dict[str, Any], user_id: str) -> Note:
+        """Write generated content onto a ``processing`` note and mark it complete.
+
+        Called by the standalone-note dictation worker once generation
+        succeeds.
+        """
+        note = self.get_note(note_id, user_id)
+        note.content = content
+        note.status = "complete"
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
+
+    def fail_generation(self, note_id: str, user_id: str) -> Note:
+        """Mark a ``processing`` note ``failed`` with no content.
+
+        Called by the standalone-note dictation worker once generation has
+        durably failed (deterministic error, or a transient error on the
+        queue's final delivery attempt).
+        """
+        note = self.get_note(note_id, user_id)
+        note.status = "failed"
+        note.updated_at = utc_now()
+        return self._notes.update(note, user_id)
 
     # --- Edits ---
 
