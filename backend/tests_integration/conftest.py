@@ -20,6 +20,27 @@ import pytest
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+# Disable the Cloud Logging audit dual-write, exactly as ``tests/conftest.py``
+# does for the unit suite — this file never got the same line, and every
+# audited write in this suite paid for it. ``AuditService._persist`` calls
+# ``write_to_cloud_logging`` whenever ``audit_dual_write_enabled`` is set,
+# and that flag DEFAULTS TO TRUE.
+#
+# On CI there are no Application Default Credentials, so the client
+# constructor raises immediately and the miss is invisible. On a developer
+# machine with ADC present the client builds fine and ``log_struct`` makes a
+# real network write to a real project — which is (a) a hang: the first
+# audited test parks inside ``google.cloud.logging_v2.logger._do_log`` with
+# the Postgres connection sitting ``idle in transaction``, taking the whole
+# suite with it, and (b) wrong: synthetic audit rows land in the
+# ``pablo.audit_events`` stream that the retention-locked GCS sink mirrors
+# for six years.
+#
+# Module scope, not inside ``pytest_configure``: that function returns early
+# when ``DATABASE_URL`` is already exported, and the flag has to be set
+# before any app module is imported either way.
+os.environ["AUDIT_DUAL_WRITE_ENABLED"] = "false"
+
 
 class _PgState:
     container = None  # type: ignore[var-annotated]
@@ -35,6 +56,14 @@ def pytest_configure(config: pytest.Config) -> None:
     # user-namespace socket. ``pytest_unconfigure`` stops the container
     # explicitly, so cleanup is covered without Ryuk. Must be set
     # before testcontainers is imported.
+    #
+    # The cost of no reaper: a run that is KILLED never reaches
+    # ``pytest_unconfigure``, so its Postgres container survives. They
+    # accumulate silently — several of them will quietly starve the
+    # machine and make every later run slower and flakier, which reads as
+    # "the suite got slow" rather than "I left six databases running".
+    # After killing a run, ``docker ps`` and remove the stray
+    # ``postgres:16-alpine``.
     os.environ.setdefault("TESTCONTAINERS_RYUK_DISABLED", "true")
 
     try:

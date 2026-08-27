@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from ..settings import get_settings
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
+    _current_patient_id,
     _current_tenant_schema,
     _current_user_id,
     _request_session,
@@ -33,23 +34,78 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_schema_from_request(request: Request) -> str | None:
-    """Extract tenant schema from the Authorization header.
+def _verify_and_stash_clinician_identity(request: Request) -> None:
+    """Verify an ``Authorization`` credential as a clinician's and cache it.
 
-    Verifies the bearer token (Firebase, or a configured OIDC issuer —
-    each verifier is tried in turn) to get the user's email, then
-    resolves the practice schema. Tenant resolution is email-based,
-    so it is provider-agnostic; only the verification step differs.
-    Returns None if unauthenticated or no mapping. Errors are swallowed —
-    auth dependencies will reject bad tokens later.
+    Runs on **every** request carrying one, whether or not multi-tenancy is
+    enabled. Two things depend on that being unconditional:
+
+    * Clinician dependencies (``require_mfa``, ``get_current_user_id``,
+      ``get_tenant_context``) reuse the stash instead of re-verifying, so
+      doing it here costs nothing net — it moves the verification, it
+      does not add one.
+    * ``get_patient_context`` treats the presence of a stashed identity as
+      "this credential belongs to a clinician" and refuses the request.
+      That is the only structural thing keeping a clinician's token from
+      being offered to a patient resolver. Gating it on
+      ``multi_tenancy_enabled`` would silently disarm that guard on every
+      single-tenant install — which is the default, and the configuration
+      a self-hosted patient companion would run in.
+
+    Errors are swallowed: this is a cache-priming step, and a bad token
+    must be rejected by the auth dependencies with their specific error
+    codes, not turned into a 500 here. A token that fails to verify simply
+    leaves nothing stashed, which is the correct input to both consumers.
+
+    **A rejection and a failure are not distinguished here, and the obvious
+    fix for that is wrong.** "Nothing stashed" means both "every verifier
+    decided this is not a clinician's token" and "a verifier could not
+    decide" — and the second matters, because ``verify_id_token`` makes a
+    network round trip (``check_revoked=True``), so a provider outage
+    produces it while holding a credential that may well be a clinician's.
+    ``get_patient_context`` then offers that credential to patient
+    resolvers, and only the resolver contract stands in the way.
+
+    The tempting fix is a "verification errored" marker that
+    ``get_patient_context`` also refuses on, mirroring
+    ``PatientResolverRegistry.resolve``'s rule one layer down. It was
+    tried, and it fires far too widely: ``verify_firebase_token`` calls
+    ``initialize_firebase_app()`` OUTSIDE its ``try``, so a deployment with
+    no Firebase credentials raises here on **every** request, permanently.
+    A marker would make patient authentication silently impossible in any
+    install that does not run Firebase — a worse failure than the hole it
+    closes, and a harder one to diagnose. Distinguishing "this verifier is
+    not configured" from "this verifier broke mid-flight" has to happen in
+    the verifier layer, as a typed error, not by exception-shape guessing
+    out here. Until it does, the resolver contract in
+    ``PatientPrincipalResolver`` carries it.
+
+    **It ignores the scheme entirely, and that is deliberate.** The obvious
+    version checks for ``bearer`` — and then the guard covers exactly one
+    scheme while ``_credential_from_request`` builds a ``PatientCredential``
+    out of *any* scheme it finds, keying the registry on it. A clinician's
+    token sent as ``Authorization: Token <jwt>`` would be skipped here and
+    handed to whatever resolver registers under ``"token"``, which is the
+    single point of failure the guard exists to remove. That is also the
+    exact shape of the bug this parse already had once, where a
+    case-sensitive ``"Bearer "`` comparison let ``bearer`` through. The
+    seam is deliberately scheme-open so a future front door can register a
+    non-bearer kind; the guard has to be at least as open as the seam it
+    guards, so it attempts verification on any credential value and lets
+    the verifier decide. A non-clinician credential simply fails to verify
+    and stashes nothing, which is the same outcome as skipping it.
     """
     auth_header = request.headers.get("authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
+    # Mirror ``_credential_from_request``'s parse exactly — same split, same
+    # strip, same emptiness test. The two must agree on what counts as a
+    # credential, or the guard has a hole shaped like the difference.
+    scheme, _, token = auth_header.partition(" ")
+    if not scheme or not token.strip():
+        return
 
-    token = auth_header[7:]
+    token = token.strip()
     try:
-        from ..auth.service import _resolve_practice_from_email, verify_token
+        from ..auth.service import verify_token
 
         identity = verify_token(token)
 
@@ -63,14 +119,31 @@ def _resolve_schema_from_request(request: Request) -> str | None:
         if identity.provider == "firebase":
             request.state.decoded_firebase_token = identity.claims
             request.state.verified_firebase_token_raw = token
+    except Exception:
+        logger.debug("Middleware identity verification skipped (token parse failed)")
 
-        if not identity.email:
-            return None
+
+def _resolve_schema_from_request(request: Request) -> str | None:
+    """Extract tenant schema from the Authorization header.
+
+    Reuses the identity ``_verify_and_stash_clinician_identity`` already
+    verified for this request, then resolves the practice schema from its
+    email. Tenant resolution is email-based, so it is provider-agnostic.
+    Returns None if unauthenticated or no mapping. Errors are swallowed —
+    auth dependencies will reject bad tokens later.
+    """
+    identity = getattr(request.state, "verified_identity", None)
+    if identity is None or not identity.email:
+        return None
+
+    try:
+        from ..auth.service import _resolve_practice_from_email
+
         practice = _resolve_practice_from_email(identity.email)
         if practice:
             return practice[1]  # schema_name
     except Exception:
-        logger.debug("Middleware schema resolution skipped (token parse failed)")
+        logger.debug("Middleware schema resolution skipped (practice lookup failed)")
     return None
 
 
@@ -93,6 +166,13 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         _request_session.set(session)
 
         settings = get_settings()
+
+        # Verify the bearer token before any dependency runs, regardless of
+        # tenancy mode. Deliberately outside the multi-tenancy branch below:
+        # `get_patient_context` reads the stash to refuse clinician
+        # credentials on patient routes, and that guard has to work on
+        # single-tenant installs too. See the function's docstring.
+        _verify_and_stash_clinician_identity(request)
 
         # Resolve tenant schema from auth token before any dependencies run.
         # This prevents race conditions where repo factories query the DB
@@ -126,6 +206,12 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
             # ever shares it across requests) sees a clean slate.
             # Belt-and-braces against cross-tenant identity leak.
             _current_user_id.set(None)
+            # Same for the patient principal. This one matters more than
+            # belt-and-braces: a patient id left armed would re-arm
+            # app.current_patient_id on the next transaction through the
+            # after_begin listener, so a leaked slot reads as "a patient
+            # is calling" on a request that has no patient at all.
+            _current_patient_id.set(None)
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:

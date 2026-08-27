@@ -184,7 +184,7 @@ def _commit_intermediate(user_id: str) -> None:
     in-memory fakes, CLI scripts that never installed the middleware) --
     there's no transaction to commit there.
     """
-    del user_id  # listener-driven re-arm; see app.db._rearm_rls_user_id_on_txn_begin
+    del user_id  # listener-driven re-arm; see app.db._rearm_rls_principal_gucs_on_txn_begin
     from ..db import release_db_connection
 
     release_db_connection()
