@@ -71,6 +71,31 @@ letter and a clinician's token reached every patient resolver. The parse in
 `_verify_and_stash_clinician_identity` must stay at least as permissive as
 `HTTPBearer`'s, because the guard is only as good as that parse.
 
+**2b. The stash only looked at `bearer`, but the seam takes any scheme.**
+`_credential_from_request` builds a `PatientCredential` out of *whatever*
+scheme it finds and keys the registry on it — deliberately, so a future
+non-bearer front door can register its own kind. The stash checking for
+`bearer` therefore covered exactly one of those kinds: a clinician's token sent
+as `Authorization: Token <jwt>` skipped the stash and would be handed to
+whichever resolver registers under `"token"`. Same hole as 2, one level up, and
+it reappears every time the two parses disagree. The middleware now ignores the
+scheme entirely and mirrors `_credential_from_request`'s parse exactly; a
+non-clinician credential simply fails to verify and stashes nothing.
+
+**2c. "No stash" conflated a rejection with a failure.** The middleware swallowed
+every verifier exception, so an identity-provider outage looked identical to
+"every verifier decided this is not a clinician's token" — and Firebase's
+`verify_id_token` runs `check_revoked=True`, a network round trip, so the outage
+case is real and arrives holding a credential that may well be a clinician's.
+`VerifierRegistry.verify` already draws the line: a 401 means "not my token" and
+falls through, anything else propagates. A 401 now leaves no marker (it must
+not — a genuine patient credential produces exactly that, by contract);
+anything else sets `request.state.clinician_verification_errored` and
+`get_patient_context` refuses. Same rule `PatientResolverRegistry.resolve`
+applies one layer down, for the same reason: a could-not-decide that falls
+through becomes "someone weaker may decide". Patient routes 401 during a
+provider outage, which is the correct direction to fail.
+
 **3. `_disarm_other_principal` skipped the clearing statement** when neither
 in-process carrier was set, reasoning that a transaction-local GUC cannot be
 armed if this process did not arm it. True of every call site in `app/` today —
@@ -93,6 +118,16 @@ completion (see below) — a clinician UUID from an unrelated test module
 surfacing on a patient request. Neither was reachable in production: nothing in
 `app/` sets these GUCs session-level, and there are no patient routes. They were
 latent holes in the control this PR exists to build.
+
+The listener now also **raises** when both principals are visible at once,
+rather than arming both or arming neither. The arming functions make that state
+unreachable, but they clear carriers on the `Session` they are handed while the
+listener also reads the ambient ContextVars — so a caller entering
+`tenant_db_session` inline on the event loop, against its documented
+worker-thread contract, would present both. Arming both is the union; arming
+neither is a silent zero-row request, which reads as "no data" rather than as a
+bug. The state has no legitimate producer, so a 500 naming it beats either
+guess.
 
 ## The suite hang — resolved
 
@@ -198,6 +233,19 @@ half is `WITH CHECK (true)` — it consults no GUC, so it admits any principal
 subject to RLS. SELECT/UPDATE/DELETE are all correctly closed to a patient. Not
 reachable while no patient route exists; must close before `u37i.2`.
 
+**A patient can never authenticate on a single-tenant install, and the code
+argues both sides.** `_is_tenant_schema` requires a `practice_*` schema, so a
+single-practice deployment — whose data lives in `practice` — produces the
+uniform 401 for every resolver it could honestly register. Meanwhile the
+middleware's own docstring justifies unconditional clinician verification
+precisely because single-tenant "is the configuration a self-hosted patient
+companion would run in". Both cannot be true. It fails closed, so this is a
+design contradiction rather than a hole, but it needs deciding before `u37i.2`:
+either single-tenant patient surfaces are unsupported and the middleware comment
+should stop implying otherwise, or the dependency allows `DEFAULT_PRACTICE_SCHEMA`
+with the RLS backstop knowingly absent — which `PatientContext`'s docstring
+already anticipates, and which is the same hole as the next item.
+
 **Single-practice deployments run with no RLS at all.** The `practice` schema
 has 16 tables, 0 with `relrowsecurity`, 0 policies. `enable_rls_on_schema`
 returns early for `DEFAULT_PRACTICE_SCHEMA` (calling it "the template schema"),
@@ -212,6 +260,14 @@ code review.
 `write_to_cloud_logging` swallows every exception into a warning nobody reads,
 and the only coverage monkeypatches the function itself. An absence alert on the
 `pablo.audit_events` stream is worth more than any test here.
+
+**Only `tenant_db_session` and `run_in_tenant` clear the patient ContextVar.** A
+patient route that reached for `create_standalone_session` directly, or a
+Starlette background task that opened a session outside those two primitives,
+would inherit the armed patient id through the listener's ContextVar fallback.
+That mirrors the pre-existing clinician behaviour exactly, and there is no
+current trigger — but the first patient route is where it stops being
+theoretical, so open the unit of work through the primitives.
 
 **Column scope.** `rls_patient_self_read` grants a patient their whole
 `patients` row, and RLS has no column granularity. That row carries `diagnosis`,
