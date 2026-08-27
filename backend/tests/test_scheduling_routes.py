@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 from app.main import app
-from app.models import Patient, SessionStatus
+from app.models import Patient, SessionStatus, UserPreferences
 from app.models.session import TherapySession, Transcript
 from app.notes import get_note_type_authorizer
 from app.routes.scheduling import (
@@ -37,6 +38,7 @@ from app.services.structured_llm_gateway import FakeStructuredLLMGateway, Struct
 from fastapi import HTTPException, status
 
 if TYPE_CHECKING:
+    from app.repositories import InMemoryUserRepository
     from fastapi.testclient import TestClient
 
 
@@ -383,6 +385,69 @@ def test_free_slots_resolves_default_duration_from_session_defaults(
     assert explicit_response.json()["duration_minutes"] == 30
 
 
+# --- Owner-timezone framing: rules evaluate in the clinician's own zone ---
+
+
+def _wednesday_working_hours_rule() -> AvailabilityRule:
+    return AvailabilityRule(
+        id="rule-1",
+        user_id="test-user-123",
+        rule_type=RuleType.WORKING_HOURS,
+        enforcement="hard",
+        params={"day_of_week": 2, "start": "09:00", "end": "17:00"},  # 2026-08-26 is a Wednesday
+    )
+
+
+def test_free_slots_frames_working_hours_in_owner_timezone(
+    client: TestClient,
+    rule_repo: InMemoryAvailabilityRuleRepository,
+    mock_user_repo: InMemoryUserRepository,
+) -> None:
+    """The route, not the engine default, sets the frame: a 9-5 rule for a
+    New York clinician opens at 13:00Z, but the same rule for a UTC
+    clinician opens at 09:00Z."""
+    app.dependency_overrides[get_availability_rule_repository] = lambda: rule_repo
+    rule_repo.create(_wednesday_working_hours_rule())
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="America/New_York"))
+
+    response = client.get("/api/availability/slots", params={"date": "2026-08-26", "duration": 50})
+    assert response.status_code == 200, response.text
+    assert response.json()["slots"][0]["start"] == "2026-08-26T13:00:00Z"
+
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="UTC"))
+
+    utc_response = client.get(
+        "/api/availability/slots", params={"date": "2026-08-26", "duration": 50}
+    )
+    assert utc_response.status_code == 200, utc_response.text
+    assert utc_response.json()["slots"][0]["start"] == "2026-08-26T09:00:00Z"
+
+
+def test_free_slots_invalid_timezone_preference_falls_back_to_utc(
+    client: TestClient,
+    rule_repo: InMemoryAvailabilityRuleRepository,
+    mock_user_repo: InMemoryUserRepository,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A preference string ZoneInfo rejects must not 4xx/5xx the request —
+    it falls back to UTC framing, with exactly one warning logged that
+    never echoes the raw (user-controlled) preference string."""
+    app.dependency_overrides[get_availability_rule_repository] = lambda: rule_repo
+    rule_repo.create(_wednesday_working_hours_rule())
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="Not/AZone"))
+
+    with caplog.at_level(logging.WARNING):
+        response = client.get(
+            "/api/availability/slots", params={"date": "2026-08-26", "duration": 50}
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["slots"][0]["start"] == "2026-08-26T09:00:00Z"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "Not/AZone" not in warnings[0].getMessage()
+
+
 def test_create_appointment_succeeds_with_no_availability_rules(client: TestClient) -> None:
     """Booking isn't gated on availability configuration — a practice that
     hasn't set up any rules yet can still be scheduled into."""
@@ -544,6 +609,75 @@ def test_update_appointment_without_time_change_ignores_blocked_day_rule(
     response = write_client.patch(f"/api/appointments/{appt_id}", json={"title": "Renamed"})
 
     assert response.status_code == 200, response.text
+
+
+def test_create_appointment_evaluates_rules_in_owner_timezone(
+    write_client: TestClient,
+    mock_user_repo: InMemoryUserRepository,
+) -> None:
+    """A hard working-hours rule reads its 9-5 boundary off the clinician's
+    own timezone preference, not the raw UTC instant on the wire: 15:00 EDT
+    is inside it, 08:00 EDT is not, even though both are afternoon/morning
+    UTC instants that don't obviously look like 9-5."""
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="America/New_York"))
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    within_hours = write_client.post(
+        "/api/appointments",
+        json=_create_payload(start_at="2026-08-26T19:00:00Z", end_at="2026-08-26T19:50:00Z"),
+    )
+    assert within_hours.status_code == 201, within_hours.text
+
+    outside_hours = write_client.post(
+        "/api/appointments",
+        json=_create_payload(
+            patient_id="patient-2",
+            start_at="2026-08-26T12:00:00Z",
+            end_at="2026-08-26T12:50:00Z",
+        ),
+    )
+    assert outside_hours.status_code == 422, outside_hours.text
+    assert "working hours" in outside_hours.json()["error"]["message"].lower()
+
+
+def test_update_appointment_reschedule_evaluates_rules_in_owner_timezone(
+    write_client: TestClient,
+    mock_user_repo: InMemoryUserRepository,
+) -> None:
+    """PATCH reschedule is gated by the same owner-timezone frame as create."""
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="America/New_York"))
+    created = write_client.post(
+        "/api/appointments",
+        json=_create_payload(start_at="2026-08-26T19:00:00Z", end_at="2026-08-26T19:50:00Z"),
+    )
+    assert created.status_code == 201, created.text
+    appt_id = created.json()["id"]
+
+    rule_response = write_client.post(
+        "/api/availability/rules",
+        json={
+            "rule_type": "working_hours",
+            "enforcement": "hard",
+            "params": {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.patch(
+        f"/api/appointments/{appt_id}",
+        json={"start_at": "2026-08-26T12:00:00Z", "end_at": "2026-08-26T12:50:00Z"},
+    )
+
+    assert response.status_code == 422, response.text
+    assert "working hours" in response.json()["error"]["message"].lower()
 
 
 def test_create_appointment_rejects_overlap(write_client: TestClient) -> None:
@@ -804,6 +938,68 @@ def test_create_recurring_series_rejects_colliding_occurrence(
         "test-user-123", "2026-04-01T00:00:00Z", "2026-05-01T00:00:00Z"
     )
     assert len(remaining) == 1, "no occurrence from the rejected series should persist"
+
+
+def _wednesday_working_hours_rule_request() -> dict[str, Any]:
+    return {
+        "rule_type": "working_hours",
+        "enforcement": "hard",
+        "params": {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+    }
+
+
+def _weekly_series_payload(**overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "patient_id": "patient-1",
+        "title": "Weekly check-in",
+        "start_at": "2026-08-26T19:00:00Z",
+        "end_at": "2026-08-26T19:50:00Z",
+        "duration_minutes": 50,
+        "frequency": "weekly",
+        "timezone": "America/New_York",
+        "count": 4,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_create_recurring_series_within_hours_in_owner_timezone_succeeds(
+    write_client: TestClient,
+    mock_user_repo: InMemoryUserRepository,
+) -> None:
+    """A weekly Wednesday 3pm EDT series clears a 9-5 rule read in the
+    owner's own timezone, even though 3pm EDT is late afternoon UTC."""
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="America/New_York"))
+    rule_response = write_client.post(
+        "/api/availability/rules", json=_wednesday_working_hours_rule_request()
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post("/api/appointments/recurring", json=_weekly_series_payload())
+
+    assert response.status_code == 201, response.text
+    assert response.json()["total"] == 4
+
+
+def test_create_recurring_series_outside_hours_in_owner_timezone_refused(
+    write_client: TestClient,
+    mock_user_repo: InMemoryUserRepository,
+) -> None:
+    """The same series at 8am EDT is refused entirely — every occurrence is
+    checked against the owner-timezone frame, not just the first."""
+    mock_user_repo.save_preferences("test-user-123", UserPreferences(timezone="America/New_York"))
+    rule_response = write_client.post(
+        "/api/availability/rules", json=_wednesday_working_hours_rule_request()
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    response = write_client.post(
+        "/api/appointments/recurring",
+        json=_weekly_series_payload(start_at="2026-08-26T12:00:00Z", end_at="2026-08-26T12:50:00Z"),
+    )
+
+    assert response.status_code == 422, response.text
+    assert "working hours" in response.json()["error"]["message"].lower()
 
 
 # --- Google Calendar push-on-write ---
