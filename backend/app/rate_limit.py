@@ -221,6 +221,60 @@ def require_rate_limit(request: Request) -> None:
     _get_preauth_limiter().check(_get_client_ip(request))
 
 
+# Public booking (docs/design/public-booking.md): the anonymous booking
+# surface gets its own budget instead of sharing the pre-auth window with
+# login and signup. Sharing was wrong in both directions — browsing two
+# weeks of availability is ~15 requests and would exhaust a 10/60s login
+# budget, and booking traffic from one NAT'd address would lock out
+# logins for everyone behind it.
+#
+# Two windows with *distinct key namespaces*: a loose browse window that
+# a real visitor clicking through dates will not hit, and a tight
+# sustained window on the write, which is what actually costs something
+# (a patient record and an appointment). The namespaces matter — the
+# Redis limiter keys purely on the string it is handed, so two limiters
+# passed the same key silently share one window.
+_public_booking_browse_limiter: RateLimiter | None = None
+_public_booking_write_limiter: RateLimiter | None = None
+
+
+def _get_public_booking_browse_limiter() -> RateLimiter:
+    global _public_booking_browse_limiter  # noqa: PLW0603
+    if _public_booking_browse_limiter is None:
+        _public_booking_browse_limiter = _create_limiter(max_requests=60, window_seconds=60)
+        logger.info(
+            "Public booking browse rate limiter: %s",
+            type(_public_booking_browse_limiter).__name__,
+        )
+    return _public_booking_browse_limiter
+
+
+def _get_public_booking_write_limiter() -> RateLimiter:
+    global _public_booking_write_limiter  # noqa: PLW0603
+    if _public_booking_write_limiter is None:
+        _public_booking_write_limiter = _create_limiter(max_requests=10, window_seconds=3_600)
+        logger.info(
+            "Public booking write rate limiter: %s",
+            type(_public_booking_write_limiter).__name__,
+        )
+    return _public_booking_write_limiter
+
+
+def require_public_booking_rate_limit(request: Request) -> None:
+    """Browse-surface limit for the public booking endpoints, by client IP."""
+    _get_public_booking_browse_limiter().check(f"public-booking:{_get_client_ip(request)}")
+
+
+def require_public_booking_write_rate_limit(request: Request) -> None:
+    """Sustained limit on the booking POST, by client IP.
+
+    Bounds how many patient records and appointments one address can
+    create through a link. Applied on top of the browse limit, which
+    still provides the burst window.
+    """
+    _get_public_booking_write_limiter().check(f"public-booking-write:{_get_client_ip(request)}")
+
+
 # EHR navigate: per-user daily rate limit (lazily initialized from settings)
 _ehr_navigate_limiter: RateLimiter | None = None
 
@@ -325,3 +379,9 @@ def get_audio_upload_limiter() -> RateLimiter:
 def reset_preauth_limiter() -> None:
     """Reset the pre-auth rate limiter. Used by tests."""
     _get_preauth_limiter().reset()
+
+
+def reset_public_booking_limiters() -> None:
+    """Reset both public-booking rate limiters. Used by tests."""
+    _get_public_booking_browse_limiter().reset()
+    _get_public_booking_write_limiter().reset()

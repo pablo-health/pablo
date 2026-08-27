@@ -150,6 +150,15 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)
         ("post", "/api/launch/intent"),  # mints opaque launch intent, no PHI disclosed
+        # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
+        ("post", "/api/booking-links"),  # creates a booking link
+        ("get", "/api/booking-links"),  # lists caller's own booking links
+        ("patch", "/api/booking-links/{link_id}"),  # updates link copy/duration/active
+        ("delete", "/api/booking-links/{link_id}"),  # deletes a booking link
+        # public_booking.py — public display card + free/busy only; the booking
+        # POST (which creates patient + appointment PHI) IS audited as the owner
+        ("get", "/api/public/booking-links/{slug}"),  # link display card, no PHI
+        ("get", "/api/public/booking-links/{slug}/slots"),  # free slots, no PHI
         # compliance.py — therapist's own compliance checklist (license/insurance/training)
         ("get", "/api/compliance"),  # therapist's own compliance items
         ("get", "/api/compliance/templates"),  # compliance template catalog

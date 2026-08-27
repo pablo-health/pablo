@@ -30,6 +30,10 @@ from .allowlist import (
     AllowlistRepository,
     InMemoryAllowlistRepository,
 )
+from .booking_link import (
+    BookingLinkRepository,
+    InMemoryBookingLinkRepository,
+)
 from .chat import (
     ChatRepository,
     InMemoryChatRepository,
@@ -107,6 +111,13 @@ def get_allowlist_repository() -> AllowlistRepository:
     from .postgres.allowlist import PostgresAllowlistRepository
 
     return PostgresAllowlistRepository(_get_pg_session())
+
+
+def get_booking_link_repository() -> BookingLinkRepository:
+    """Get booking link repository instance."""
+    from .postgres.booking_link import PostgresBookingLinkRepository
+
+    return PostgresBookingLinkRepository(_get_pg_session())
 
 
 def get_patient_repository() -> PatientRepository:
@@ -268,6 +279,7 @@ def get_supervision_repository() -> PostgresSupervisionRepository:
 
 __all__ = [
     "AllowlistRepository",
+    "BookingLinkRepository",
     "ChatRepository",
     "ClinicianProfile",
     "ClinicianProfileRepository",
@@ -275,6 +287,7 @@ __all__ = [
     "EhrRouteRepository",
     "IdentityRepository",
     "InMemoryAllowlistRepository",
+    "InMemoryBookingLinkRepository",
     "InMemoryChatRepository",
     "InMemoryClinicianProfileRepository",
     "InMemoryEhrPromptRepository",
@@ -298,6 +311,7 @@ __all__ = [
     "get_appointment_repository",
     "get_appointment_type_repository",
     "get_availability_rule_repository",
+    "get_booking_link_repository",
     "get_chat_repository",
     "get_clinician_profile_repository",
     "get_compliance_document_repository",

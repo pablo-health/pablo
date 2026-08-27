@@ -985,6 +985,10 @@ CREATE INDEX ix_patients_deleted_at_partial ON __TENANT_SCHEMA__.patients USING 
 
 
 
+CREATE INDEX ix_patients_email_lower ON __TENANT_SCHEMA__.patients USING btree (lower((email)::text)) WHERE (deleted_at IS NULL);
+
+
+
 CREATE INDEX ix_patients_first_name_lower ON __TENANT_SCHEMA__.patients USING btree (first_name_lower);
 
 

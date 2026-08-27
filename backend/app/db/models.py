@@ -28,6 +28,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -141,6 +142,18 @@ class PatientRow(Base):
     # reads this column to merge or de-duplicate automatically; it only
     # flags a row for a person to look at.
     origin: Mapped[str | None] = mapped_column(String(20))
+
+    __table_args__ = (
+        # Backs PatientRepository.find_by_email, whose `lower(email) = ?`
+        # predicate cannot use a plain column index. Declared on the ORM
+        # (not raw op.execute) so create_all emits it and every freshly
+        # provisioned tenant gets it from tenant_template.sql.
+        Index(
+            "ix_patients_email_lower",
+            func.lower(email),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
 
 class TherapySessionRow(Base):

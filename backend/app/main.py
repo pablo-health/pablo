@@ -42,6 +42,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    booking_links,
     chat,
     compliance,
     dashboard,
@@ -55,6 +56,7 @@ from .routes import (
     passkey,
     patient_documents,
     patients,
+    public_booking,
     scheduling,
     sessions,
     supervision,
@@ -209,6 +211,12 @@ if settings.enable_patient_chat:
 # verified-link redemption path. See docs/design/companion-thin-client.md.
 if settings.enable_launch_intent:
     app.include_router(launch.router)
+# Public booking links (docs/design/public-booking.md). Management CRUD is
+# always mounted; the unauthenticated /api/public/* surface only when the
+# deployment opts in.
+app.include_router(booking_links.router)
+if settings.public_booking_enabled:
+    app.include_router(public_booking.router)
 
 
 @app.get("/api/health")
