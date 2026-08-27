@@ -1,40 +1,30 @@
-# Handoff: the patient principal (pablo#772) — 2026-08-27
+# The patient principal (pablo#772) — state as of 2026-08-27
 
-Written for a session starting cold. Picks up from
-`pablo-saas/docs/internal/handoff-2026-08-26-consent-and-fleet.md`, which is
-still accurate about the consent design, the fleet and the traps. This covers
-only the patient-principal work.
+Picks up from `pablo-saas/docs/internal/handoff-2026-08-26-consent-and-fleet.md`,
+which is still accurate about the consent design, the fleet and the traps. This
+covers only the patient-principal work.
 
-## Read this first: what is and is not verified
+## Status
 
-**`pablo#772` is OPEN, green on CI at `8664db9`, and Kurt has said he is fine
-with it going in.** Do not treat that as permission to push more.
-
-There is **one local commit past what CI has seen**:
-
-| Commit | State |
-|---|---|
-| `8664db9` | pushed, CI green, all checks pass |
-| `b57e156` | **local only, NOT pushed, NOT verified** |
-
-`b57e156` carries the second security review's fixes and two new test files.
-Its unit tests pass (2634) and each new integration file passes **on its own**.
-What I could **not** do is run the full `tests_integration/` suite to
-completion — see "The unresolved thing" below. **Do not push `b57e156` until
-that suite runs green**, because two of its changes touch `arm_current_user_id`,
-which is on many clinician paths.
-
-## What landed, and why
-
-`pablo#771` (`audit_logs.actor_type`) merged as `84f9fb0` — that was item 1 of
-the previous handoff.
-
-`pablo#772` is `u37i.1` (the patient principal) **plus `u37i.3`** (patient-scoped
+`pablo#772` is `u37i.1` (the patient principal) plus `u37i.3` (patient-scoped
 RLS policies). Kurt asked for `.3` in the same PR after asking "I feel actually
-testing that this works on our first table is important" — which was the right
-call, and `.3` registers exactly one core table so it fits.
+testing that this works on our first table is important" — the right call, and
+`.3` registers exactly one core table so it fits.
 
-Design decisions worth not relitigating:
+The branch is verified locally: unit suite 2634 passed, `tests_integration/`
+288 passed / 6 skipped. The one remaining integration failure,
+`test_fastapi_dependency_cache_release`, is environmental — it asserts that the
+installed fastapi still exhibits the dependency-cache leak it guards against,
+and the local venv carries fastapi 0.138.1 while `pyproject.toml` requires
+`>=0.139.0`. It fails identically on `origin/main`. CI installs from the lock
+and is unaffected.
+
+**Nothing here is reachable yet.** No resolver is registered, no route depends
+on `get_patient_context`, and `PATIENT_READABLE_TABLES` seeds exactly one entry.
+The seam is inert until `u37i.2` lands a front door. That is what makes the
+remaining gaps below "close before the door opens" rather than "incident".
+
+## Design decisions worth not relitigating
 
 - **Two GUCs, not one.** `app.current_patient_id` is separate from
   `app.current_user_id`. A shared "current principal" GUC would let
@@ -48,96 +38,107 @@ Design decisions worth not relitigating:
   not column inference. Plenty of tables carry a `patient_id` without the
   patient being entitled to read them — `notes` is the clinician's record
   *about* a patient, not *for* them. Read and write are separate registries.
-- **`get_patient_context` must stay `async`.** This is load-bearing, not style.
-  See the next section.
+- **`get_patient_context` must stay `async`.** Load-bearing, not style. A sync
+  dependency runs in a throwaway threadpool worker whose context copy is
+  discarded on return, so its `set_tenant_schema` ContextVar write is lost; the
+  GUC survives that hop because it also rides `Session.info`, and the schema has
+  no such carrier. After the first mid-request commit the next checkout would
+  re-stamp `search_path` from `DEFAULT_PRACTICE_SCHEMA` while the patient GUC
+  stayed correctly armed — the rest of the request reading and writing the
+  template schema under a live patient identity. A regression test fails if
+  anyone reverts it to `def`.
 
-## The two HIGH bugs, because the class will recur
+## The bug class that keeps recurring: two principals on one transaction
 
-Both were found by review, both were silent in the **default** configuration,
-and both defeated a property the code's own docstrings claimed.
+Four separate defects in this PR were the same shape. The patient policies are
+**permissive**, so Postgres ORs them with the clinician policies: a transaction
+carrying both GUCs satisfies both families and sees the UNION of clinician and
+patient grants. Every control here exists to make "exactly one principal per
+transaction" true by construction, and each defect was a place where it was
+true only by assumption instead.
 
 **1. The clinician guard was dead code.** `get_patient_context` refuses a
-credential the middleware already verified as a clinician's. But the
+credential the middleware already verified as a clinician's — but the
 verify-and-stash step sat inside `if settings.multi_tenancy_enabled:`, which
 defaults to `False`. On a single-tenant install — the default, and what a
 self-hosted companion runs — nothing ever set the value and the guard never
-fired. Fixed in `8664db9`.
+fired.
 
-Then Codex found the *second* way in: the stash matched `"Bearer "`
-case-sensitively while FastAPI's `HTTPBearer` matches `scheme.lower()`. So
-`Authorization: bearer <clinician-token>` authenticates fine on clinician routes
-but skipped the stash — one lowercase letter and a clinician's token reached
-every patient resolver. Fixed in `b57e156`.
+**2. The stash was case-sensitive.** It matched `"Bearer "` while FastAPI's
+`HTTPBearer` compares `scheme.lower()`. So `Authorization: bearer <token>`
+authenticates fine on clinician routes but skipped the stash — one lowercase
+letter and a clinician's token reached every patient resolver. The parse in
+`_verify_and_stash_clinician_identity` must stay at least as permissive as
+`HTTPBearer`'s, because the guard is only as good as that parse.
 
-**2. The patient's `search_path` did not survive a mid-request commit.**
-FastAPI runs a *sync* dependency in a throwaway threadpool worker whose context
-copy is discarded on return. `set_tenant_schema` writes a ContextVar; the GUC
-survived that hop because it also rides `Session.info`, and the schema had no
-such carrier. After the first mid-request commit released the connection, the
-next checkout re-stamped `search_path` from whatever the *middleware* left —
-`DEFAULT_PRACTICE_SCHEMA`, the shared template — while the patient GUC stayed
-correctly armed. The rest of the request would read and write the template
-schema under a live patient identity.
+**3. `_disarm_other_principal` skipped the clearing statement** when neither
+in-process carrier was set, reasoning that a transaction-local GUC cannot be
+armed if this process did not arm it. True of every call site in `app/` today —
+and it is a claim about every present and future writer of those two GUCs,
+restated as an optimisation. A connection carrying a session-level
+`set_config(..., false)` survives being returned to the pool, and the skip waved
+it straight into a patient request. Now unconditional.
 
-Fixed by making the dependency `async`, verified empirically both directions
-(a sync dep's ContextVar set is lost; an async dep's survives). **A regression
-test fails if anyone reverts it to `def`.**
+**4. The clear did not survive a commit.** `set_config(..., is_local=true)` dies
+with its transaction, and Pablo commits mid-request (`_commit_intermediate`'s
+lock release before the SOAP call). After that commit the `after_begin` listener
+re-armed the patient GUC and left the clinician one at whatever the connection
+was carrying — the union returned one commit later. The listener now sets both
+GUCs in one statement: arm the principal that is set, blank the other. Same
+round-trip count as before, and the property now holds on every transaction
+rather than only the first.
 
-## The unresolved thing — start here
+3 and 4 were found by the integration suite once it could actually run to
+completion (see below) — a clinician UUID from an unrelated test module
+surfacing on a patient request. Neither was reachable in production: nothing in
+`app/` sets these GUCs session-level, and there are no patient routes. They were
+latent holes in the control this PR exists to build.
 
-**The full `tests_integration/` suite does not complete on this machine.** It
-hangs on `tests_integration/database/test_audit_writes.py::TestLogPatientAction::
-test_writes_row_for_each_patient_action[patient_created]` — an **existing** test
-that runs before any of the new files.
+## The suite hang — resolved
 
-Symptom: elapsed time climbs for tens of minutes while CPU stays at a few
-seconds. In Postgres, one connection sits `idle in transaction` on an
-`INSERT INTO audit_logs`, and `pg_blocking_pids` reports nothing blocked. So it
-is waiting in Python, not on a database lock.
+The full `tests_integration/` suite used to park for tens of minutes on
+`test_audit_writes.py`, with a Postgres connection sitting `idle in transaction`
+on an `INSERT INTO audit_logs` and `pg_blocking_pids` reporting nothing blocked.
 
-**What I ruled out, so you don't repeat it:**
+It was the **Cloud Logging audit dual-write**. `audit_dual_write_enabled`
+defaults to `True`; `AuditService._persist` therefore calls
+`write_to_cloud_logging`, which builds a real client and issues a real network
+write. `tests/conftest.py:26` disables the flag for the unit suite and documents
+exactly this failure mode; `tests_integration/conftest.py` never got the same
+line. CI has no Application Default Credentials, so the client constructor
+raises immediately and the miss is invisible there — on a developer machine with
+ADC it blocks inside `google.cloud.logging_v2.logger._do_log`.
 
-- Not an interaction with the new test files — `test_audit_writes.py` hangs when
-  run entirely on its own.
-- Not `_disarm_other_principal`. I disabled it outright with an A/B edit and the
-  hang persisted. (That marker is reverted; `grep -n "AB-TEST\|MUTATION-TEST"`
-  over `backend/app/` returns nothing.)
-- Not obviously resource exhaustion, though it contributed: my killed runs left
-  **six orphaned testcontainers** because this conftest sets
-  `TESTCONTAINERS_RYUK_DISABLED=true`, so nothing reaps them. I removed those
-  six; the hang still reproduced afterwards.
+Two consequences, both now fixed by one line in the integration conftest:
 
-**What I did not get to check, in the order I would try it:**
+- The suite completes in ~80 seconds instead of never.
+- Synthetic audit rows are no longer written into the `pablo.audit_events`
+  stream that the retention-locked GCS sink mirrors for six years.
 
-1. Whether this hangs on `origin/main` too. That is the single most valuable
-   next data point and I should have done it first — it decides whether this is
-   ours at all. Use a separate worktree at `84f9fb0`; do **not** `git stash`
-   (shared stack, per the repo's CLAUDE.md).
-2. Whether it hangs in CI. CI was green on `8664db9`, including
-   `Backend integration (Postgres)`, which is evidence it may be local-only —
-   possibly Docker Desktop resource pressure on this Mac.
-3. `pytest --timeout` (pytest-timeout may need installing) plus `faulthandler`
-   to get a stack dump of where Python is parked.
+The diagnosis in the previous version of this document — that the hang was
+`_disarm_other_principal` holding the audit writer's transaction open — was
+wrong, and the early-return guard added to "fix" it was the defect described as
+3 above. `arm_current_user_id` already executes a `set_config` of its own, so a
+second statement changes no transaction state.
 
-**Every time you kill a run, `docker ps` and remove the orphaned
-`postgres:16-alpine` container.** They accumulate silently and degrade
-everything afterwards. Leave `pablo-saas-*`, `pablo-postgres-1`,
-`dramellea-*`, `buildx_*` alone — those are Kurt's, not test containers.
+`faulthandler` is what settled it: `PYTHONFAULTHANDLER=1`, then
+`kill -ABRT <pid>` on the parked process dumps every thread's Python stack.
+Three hypotheses had been chased without one.
 
-## Testing, and what each layer is actually for
+## Testing, and what each layer is for
 
 Four suites, deliberately not redundant:
 
 - `backend/tests/test_patient_context.py` — units. **Its dependency tests
   monkeypatch the DB-arming path**, which is precisely why they could not catch
-  bug 2. Do not add security coverage here and think you are done.
+  defects 3 and 4. Do not add security coverage here and think you are done.
 - `tests_integration/database/test_patient_guc_integration.py` — GUC mechanics
   against real Postgres.
 - `tests_integration/database/test_patient_principal_rls.py` — two-patient
   isolation via direct SQL on a **real provisioned schema** with the real
   shipped policies.
-- `tests_integration/database/test_patient_idor_http.py` (new, unpushed) — the
-  same question through **real HTTP with nothing mocked**.
+- `tests_integration/database/test_patient_idor_http.py` — the same question
+  through **real HTTP with nothing mocked**.
 
 **The IDOR file's design, since it looks wrong at a glance.** It has two route
 shapes. `/patient/record/{patient_id}` deliberately has *no ownership check*, so
@@ -147,8 +148,7 @@ should copy: it takes no id from the client at all and scopes by
 `context.patient_id`, so there is no ownership question to get wrong. **Do not
 copy the `{patient_id}` routes into production.**
 
-**Mutation-test anything you add here.** Everything above was mutation-tested
-and I would not trust it otherwise:
+**Mutation-test anything you add here.** Everything above was mutation-tested:
 
 | Mutation | Result |
 |---|---|
@@ -157,57 +157,82 @@ and I would not trust it otherwise:
 | Canary policy → `USING (true)` | 8 fail |
 | `get_patient_context` → `def` | 4 fail |
 
-## Traps this session hit
+A test that asserts a *pool* behaviour it cannot control is order-dependent, not
+strict. `test_guc_is_absent_on_a_session_that_armed_nothing` used to arm a
+pooled session and assert `pg_backend_pid()` matched on the next checkout — an
+honest anti-vacuous guard, since a fresh backend carries no GUC and would pass
+trivially, but the pool makes no such promise and a full-suite run failed the
+test rather than the product. It now owns one connection and binds both sessions
+to it, which is strictly stronger.
+
+## Traps
 
 - **Running `tests/` and `tests_integration/` in one pytest invocation silently
   disables the integration suite.** `tests/conftest.py:28` plants a dummy
   `DATABASE_URL` at import time; `tests_integration/conftest.py`'s
   `pytest_configure` sees it, assumes a real database, returns early and never
   sets `DATABASE_BACKEND=postgres` — so every integration module skips. Exit 0,
-  looks like a pass. Argument order does not help. **Run them separately.**
-  Worth fixing in the conftest; I left it alone as out of scope.
+  looks like a pass. Argument order does not help. **`make test-all` does
+  exactly this**, so that target reports success while testing half of what it
+  claims. Run them separately. Worth fixing in the conftest.
+- **Killed runs leave orphaned testcontainers.** This conftest sets
+  `TESTCONTAINERS_RYUK_DISABLED=true`, so nothing reaps them; they accumulate
+  silently and degrade everything afterwards. `docker ps` and remove the stray
+  `postgres:16-alpine` after any kill. Leave `pablo-saas-*`, `pablo-postgres-1`,
+  `dramellea-*` and `buildx_*` alone — those are Kurt's, not test containers.
 - **`poetry run` in an OSS worktree makes an empty in-project `.venv`** and
   subprocess-based tests (`alembic upgrade head`) then resolve to system Python
   3.10 and fail with `'type' object is not subscriptable`. Either
   `poetry install` in the worktree or use the main venv directly:
   `/Users/kurtn/Library/Caches/pypoetry/virtualenvs/pablo-YtzK5q4a-py3.13/bin/python`.
-- **The two reviewers disagreed with the current tree.** Codex reported two
-  findings as "still live" that `8664db9` had already fixed (the schema fence,
-  the `exc_info` removal). Verify every finding against the actual tree before
-  acting — one was a genuine live bypass, two were stale.
+- **Reviewers disagree with the tree.** Codex reported two findings as "still
+  live" that `8664db9` had already fixed. Verify every finding against the
+  actual tree before acting — one of the three was a genuine live bypass, two
+  were stale.
 
-## Filed, not fixed
+## Open, and tracked
 
-**`THERAPY-o0nz8` (P1)** — single-practice deployments run with **no RLS at
-all**. Verified: the `practice` schema has 16 tables, 0 with `relrowsecurity`,
-0 policies. `enable_rls_on_schema` returns early for `DEFAULT_PRACTICE_SCHEMA`
-(calling it "the template schema"), but `provisioning.py:156` also provisions it
-as the *live* schema when `multi_tenancy_enabled=False`, the shipped default.
+**A patient principal can INSERT into `patients`.** The clinician arm splits the
+`patients` policy per command to fix an INSERT chicken-and-egg, and the INSERT
+half is `WITH CHECK (true)` — it consults no GUC, so it admits any principal
+subject to RLS. SELECT/UPDATE/DELETE are all correctly closed to a patient. Not
+reachable while no patient route exists; must close before `u37i.2`.
 
-Scope: Pablo dev/prod are **not** affected — the SaaS overlay sets
-`MULTI_TENANCY_ENABLED=true`, so data lives in `practice_*` schemas that do get
-policies. OSS self-hosters on the default are affected.
+**Single-practice deployments run with no RLS at all.** The `practice` schema
+has 16 tables, 0 with `relrowsecurity`, 0 policies. `enable_rls_on_schema`
+returns early for `DEFAULT_PRACTICE_SCHEMA` (calling it "the template schema"),
+but `provisioning.py:156` also provisions it as the *live* schema when
+`multi_tenancy_enabled=False`, the shipped default. Pablo dev/prod are not
+affected. Self-hosters on the default are. Not an open door — the repositories
+carry explicit `_has_patient_access` / `user_id ==` checks, so the app layer
+holds; what is missing is the backstop, in the deployment least likely to have
+code review.
 
-Not an open door — the repositories carry explicit `_has_patient_access` /
-`user_id ==` checks, so the app layer holds. What is missing is the backstop,
-in the deployment least likely to have code review. The bead has three options
-weighed; the template-regeneration interaction is the risk.
+**The Cloud Logging dual-write is unverified end to end and fails silently.**
+`write_to_cloud_logging` swallows every exception into a warning nobody reads,
+and the only coverage monkeypatches the function itself. An absence alert on the
+`pablo.audit_events` stream is worth more than any test here.
+
+**Column scope.** `rls_patient_self_read` grants a patient their whole
+`patients` row, and RLS has no column granularity. That row carries `diagnosis`,
+`sliding_scale_note` ("in the clinician's own words", written for staff),
+`rate_cents`, `chart_closure_reason` and `origin`. A patient route must project
+explicit columns; it must never serialize the ORM model.
 
 ## What is next, in order
 
-1. **Resolve the hang** (above), then push `b57e156` and let CI confirm.
-2. `pablo#772` merges once that is green. Kurt has already approved it.
-3. **`u37i.2`** — magic-link issuance + step-up redemption. Note the SaaS
-   companion auth core is already merged at `backend/saas/patient_companion/`,
-   so the OSS side is the thinner half. When you write the first real resolver,
-   read `PatientPrincipalResolver`'s docstring first: return `None` to reject,
-   and whatever you mint must be structurally unacceptable to every clinician
-   verifier.
-4. **`u37i.4`** — patient-principal audit. Remember the finding from the
-   previous handoff: `audit_logs` is force-RLS'd on `user_id`, so every
-   patient-principal audit INSERT is denied today. `.4` must change the
-   `audit_logs` policy itself; `actor_type` (`84f9fb0`) was the prerequisite.
-   Land order is `.3` → `.4`; `.3` is in `#772`.
+1. **`u37i.2`** — magic-link issuance + step-up redemption. The SaaS companion
+   auth core is already merged, so the OSS side is the thinner half. When you
+   write the first real resolver, read `PatientPrincipalResolver`'s docstring
+   first: return `None` to reject, and whatever you mint must be structurally
+   unacceptable to every clinician verifier.
+2. **`u37i.4`** — patient-principal audit, and it gates `u37i.2` rather than
+   following it. `audit_logs` is force-RLS'd on `user_id`, so every
+   patient-principal audit INSERT is denied today: a patient route would either
+   500 on its own audit write or, if someone "fixed" that by not auditing, read
+   PHI with no entry in the audit-of-record. `.4` must change the `audit_logs`
+   policy itself; `actor_type` (`84f9fb0`) was the prerequisite. Land order is
+   `.3` → `.4` → `.2`.
 
 ## Open questions nobody has answered
 
@@ -216,7 +241,8 @@ weighed; the template-regeneration interaction is the risk.
   clinical patient route would make it opt-out instead of opt-in.
 - **WebSocket transport.** `BaseHTTPMiddleware` does not run for the websocket
   scope, so there is no session, no stash and no guard — and `get_db_session()`
-  raises a 500 rather than a 401. Companion chat in this stack is WebSocket-
-  based. This needs deciding *before* the resolver PR, not after.
+  raises a 500 rather than a 401. OSS has no websocket routes today; companion
+  chat in this stack is websocket-based. This needs deciding *before* the
+  resolver PR, not after.
 - Should the process-wide resolver registry be frozen after bootstrap? It has a
   public `clear()` and no dedupe.
