@@ -168,6 +168,33 @@ Key points:
 
 ---
 
+## Repeat sampling
+
+`run_note_generation.py` drives the real SOAP pipeline once per case by
+default. A single generation is a coin flip — the same case can pass on
+one run and fail on the next — so the runner also supports repeating
+each case and gating on the worst sample:
+
+```bash
+poetry run python -m backend.evals.run_note_generation --tier 2 --samples 3
+```
+
+With `--samples N`, every selected case is generated and judged N
+times. A case passes only if *all* N samples come back clean; one
+failing sample fails the whole case. The JSON report keeps every
+existing field but adds a `"samples"` list (the per-sample verdicts)
+and `"n_samples"` on each case, plus `"samples_per_case"` at the top
+level.
+
+This is a deliberate, manual step, not something CI runs: `--samples`
+multiplies model spend by N, and only the aggregation logic itself
+(`backend/tests/test_eval_sampling.py`) is covered by the automated
+gate. Refreshing a baseline file with a multi-sample run is a separate
+decision — run it, review the report, then decide whether to overwrite
+`baselines/note_generation_baseline.json`.
+
+---
+
 ## Configuration (`.env`)
 
 | Var | Required | Purpose |
