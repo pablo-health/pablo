@@ -14,7 +14,7 @@ import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Matches -prod, -production, -prod<N> at end of project id. The
@@ -1139,6 +1139,24 @@ class Settings(BaseSettings):
             "complexity once volume warrants it."
         ),
     )
+    assemblyai_speaker_labels_channels: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Channels ('Therapist' / 'Client') submitted with AssemblyAI's "
+            "speaker_labels option, so several people talking on one channel "
+            'are told apart in the transcript (e.g. "Client A", "Client '
+            'B"). Comma-separated in the environment, e.g. '
+            "ASSEMBLYAI_SPEAKER_LABELS_CHANNELS=Client. Empty (default) keeps "
+            "today's one-speaker-per-channel behavior."
+        ),
+    )
+
+    @field_validator("assemblyai_speaker_labels_channels", mode="before")
+    @classmethod
+    def _parse_speaker_labels_channels(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [c.strip() for c in v.split(",") if c.strip()]
+        return v
 
     # Calendar Auto-Sync (Cloud Scheduler + Cloud Tasks)
     calendar_auto_sync_enabled: bool = Field(
