@@ -302,6 +302,7 @@ class AssemblyAiTranscriptionService:
         self._api_key = settings.assemblyai_api_key.get_secret_value()
         self._speech_model = settings.assemblyai_speech_model
         self._vad_enabled = settings.assemblyai_vad_enabled
+        self._speaker_labels_channels = set(settings.assemblyai_speaker_labels_channels)
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": self._api_key}
@@ -316,15 +317,20 @@ class AssemblyAiTranscriptionService:
         response.raise_for_status()
         return response.json()["upload_url"]  # type: ignore[no-any-return]
 
-    async def _submit_transcription(self, client: httpx.AsyncClient, audio_url: str) -> str:
+    async def _submit_transcription(
+        self, client: httpx.AsyncClient, audio_url: str, *, speaker_labels: bool
+    ) -> str:
+        body: _JsonDict = {
+            "audio_url": audio_url,
+            "language_code": "en",
+            "speech_model": self._speech_model,
+        }
+        if speaker_labels:
+            body["speaker_labels"] = True
         response = await client.post(
             f"{ASSEMBLYAI_API_BASE}/transcript",
             headers=self._headers(),
-            json={
-                "audio_url": audio_url,
-                "language_code": "en",
-                "speech_model": self._speech_model,
-            },
+            json=body,
             timeout=30,
         )
         response.raise_for_status()
@@ -344,8 +350,8 @@ class AssemblyAiTranscriptionService:
         ``audio_url_factory(speaker, wav_bytes)`` returns a URL AssemblyAI
         can fetch the prepared speech-only audio from; when omitted the
         bytes are pushed through AssemblyAI's /upload endpoint. Returns job
-        metadata ``[{transcript_id, speaker, offset_map}, ...]`` for the
-        polling Cloud Task.
+        metadata ``[{transcript_id, speaker, offset_map, diarized}, ...]``
+        for the polling Cloud Task.
         """
         jobs: list[_JsonDict] = []
         async with tracing_async_client() as client:
@@ -370,12 +376,16 @@ class AssemblyAiTranscriptionService:
                     audio_url = audio_url_factory(speaker, prepared)
                 else:
                     audio_url = await self._upload_audio(client, prepared)
-                transcript_id = await self._submit_transcription(client, audio_url)
+                diarized = speaker in self._speaker_labels_channels
+                transcript_id = await self._submit_transcription(
+                    client, audio_url, speaker_labels=diarized
+                )
                 jobs.append(
                     {
                         "transcript_id": transcript_id,
                         "speaker": speaker,
                         "offset_map": offset_map,
+                        "diarized": diarized,
                     }
                 )
 
@@ -409,7 +419,8 @@ class AssemblyAiTranscriptionService:
         is mapped back through it; legacy per-region jobs carry a single
         constant ``original_offset``.
         """
-        speaker = job_meta["speaker"]
+        speaker: str = job_meta["speaker"]
+        diarized = bool(job_meta.get("diarized"))
         offset_map: list[list[float]] | None = job_meta.get("offset_map")
         if offset_map:
             concat_starts = [entry[0] for entry in offset_map]
@@ -432,12 +443,17 @@ class AssemblyAiTranscriptionService:
             start = to_original(0.0)
             return [{"start": start, "end": start, "speaker": speaker, "text": text}]
 
+        def word_speaker(w: _JsonDict) -> str:
+            if diarized and w.get("speaker"):
+                return f"{speaker} {w['speaker']}"
+            return speaker
+
         return _words_to_utterances(
             [
                 {
                     "start": to_original(w["start"] / 1000),
                     "end": to_original(w["end"] / 1000),
-                    "speaker": speaker,
+                    "speaker": word_speaker(w),
                     "text": w["text"],
                 }
                 for w in words
@@ -461,27 +477,39 @@ class AssemblyAiTranscriptionService:
 def _words_to_utterances(
     word_segments: list[_JsonDict], speaker: str, gap_threshold: float = 1.5
 ) -> list[_JsonDict]:
-    """Group word-level segments into utterances based on time gaps."""
+    """Group word-level segments into utterances based on time gaps and speaker changes.
+
+    Each word's own ``speaker`` field wins when present (diarized jobs carry a
+    per-word label like "Client A"); words without one fall back to the
+    channel-level ``speaker`` argument.
+    """
     if not word_segments:
         return []
+
+    def word_speaker(word: _JsonDict) -> str:
+        speaker_value: str = word.get("speaker", speaker)
+        return speaker_value
 
     utterances: list[_JsonDict] = []
     current_start = word_segments[0]["start"]
     current_end = word_segments[0]["end"]
+    current_speaker = word_speaker(word_segments[0])
     current_words = [word_segments[0]["text"]]
 
     for word in word_segments[1:]:
-        if word["start"] - current_end > gap_threshold:
+        this_speaker = word_speaker(word)
+        if word["start"] - current_end > gap_threshold or this_speaker != current_speaker:
             utterances.append(
                 {
                     "start": current_start,
                     "end": current_end,
-                    "speaker": speaker,
+                    "speaker": current_speaker,
                     "text": " ".join(current_words),
                 }
             )
             current_start = word["start"]
             current_words = []
+            current_speaker = this_speaker
 
         current_end = word["end"]
         current_words.append(word["text"])
@@ -490,7 +518,7 @@ def _words_to_utterances(
         {
             "start": current_start,
             "end": current_end,
-            "speaker": speaker,
+            "speaker": current_speaker,
             "text": " ".join(current_words),
         }
     )

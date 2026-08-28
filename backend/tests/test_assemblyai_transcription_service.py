@@ -399,6 +399,47 @@ class TestSubmitDualChannel:
         assert body["speech_model"] == "nano"
 
     @pytest.mark.anyio
+    async def test_default_submit_body_has_no_speaker_labels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(_settings())
+
+        jobs = await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM, client_audio=_SILENCE_PCM
+        )
+
+        submit_calls = [c for c in calls if c.url.path.endswith("/transcript")]
+        assert len(submit_calls) == 2
+        for c in submit_calls:
+            body: dict[str, Any] = json.loads(c.content)
+            assert "speaker_labels" not in body
+        assert [job["diarized"] for job in jobs] == [False, False]
+
+    @pytest.mark.anyio
+    async def test_speaker_labels_sent_only_for_configured_channels(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[httpx.Request] = []
+        _install_mock_transport(monkeypatch, _channel_handler(calls))
+        service = AssemblyAiTranscriptionService(
+            _settings(assemblyai_speaker_labels_channels=["Client"])
+        )
+
+        jobs = await service.submit_dual_channel(
+            therapist_audio=_SILENCE_PCM, client_audio=_SILENCE_PCM
+        )
+
+        submit_calls = [c for c in calls if c.url.path.endswith("/transcript")]
+        assert len(submit_calls) == 2
+        therapist_body: dict[str, Any] = json.loads(submit_calls[0].content)
+        client_body: dict[str, Any] = json.loads(submit_calls[1].content)
+        assert "speaker_labels" not in therapist_body
+        assert client_body["speaker_labels"] is True
+        assert [job["diarized"] for job in jobs] == [False, True]
+
+    @pytest.mark.anyio
     async def test_audio_url_factory_bypasses_provider_upload(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -586,6 +627,47 @@ class TestParseResult:
         result = {"words": [], "text": "   "}
 
         assert AssemblyAiTranscriptionService.parse_result(job_meta, result) == []
+
+    def test_diarized_words_keep_channel_and_letter(self) -> None:
+        job_meta = {
+            "speaker": "Client",
+            "diarized": True,
+            "offset_map": [[0.0, 10.0]],
+        }
+        result = {
+            "words": [
+                {"start": 0, "end": 500, "text": "Hello.", "speaker": "A"},
+                {"start": 500, "end": 1000, "text": "there.", "speaker": "A"},
+                {"start": 1000, "end": 1500, "text": "Hi.", "speaker": "B"},
+            ]
+        }
+
+        utterances = AssemblyAiTranscriptionService.parse_result(job_meta, result)
+
+        assert utterances == [
+            {"start": 10.0, "end": 11.0, "speaker": "Client A", "text": "Hello. there."},
+            {"start": 11.0, "end": 11.5, "speaker": "Client B", "text": "Hi."},
+        ]
+
+    def test_undiarized_job_ignores_word_speaker_field(self) -> None:
+        job_meta = {
+            "speaker": "Client",
+            "diarized": False,
+            "offset_map": [[0.0, 10.0]],
+        }
+        result = {
+            "words": [
+                {"start": 0, "end": 500, "text": "Hello.", "speaker": "A"},
+                {"start": 500, "end": 1000, "text": "there.", "speaker": "A"},
+                {"start": 1000, "end": 1500, "text": "Hi.", "speaker": "B"},
+            ]
+        }
+
+        utterances = AssemblyAiTranscriptionService.parse_result(job_meta, result)
+
+        assert utterances == [
+            {"start": 10.0, "end": 11.5, "speaker": "Client", "text": "Hello. there. Hi."}
+        ]
 
 
 class TestMergeUtterances:
