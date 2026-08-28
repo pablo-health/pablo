@@ -160,13 +160,16 @@ callback do two extra things:
    authorization code. The backend stores
    `(user_id, install_id, enrolled_at, last_seen)` and binds the
    issued refresh token to that `install_id`.
-2. **Redirect the browser to the web dashboard.** After the loopback
-   server (Mac) or `pablohealth://callback` handler (Windows) finishes
-   the code exchange, the OAuth completion page in the browser
-   navigates to `https://app.pablo.health/dashboard?from=companion`.
-   This is what makes "after OAuth, you're on the dashboard" land —
-   it's a server-side redirect in the OAuth completion handler, not
-   the companion driving the browser.
+2. **Redirect the browser to the web dashboard.** Where this happens
+   depends on which redirect the companion asked for. For a loopback
+   redirect (Mac), the code exchange finishes on the companion's own
+   loopback server and the browser tab that was showing the sign-in
+   page is left behind — there's nothing further for it to do. For a
+   custom-scheme redirect (`pablohealth://callback`, Windows), the
+   handoff to the app doesn't navigate the page away, so the web
+   sign-in page itself briefly shows a "sign-in complete" card and
+   then navigates on to `/dashboard?from=companion`. Either way, the
+   companion never drives the browser directly.
 
 ### Hardware-bound device key (in v1)
 
@@ -331,9 +334,9 @@ OAuth callback on Windows MSIX, which already uses it.
 5. **Frontend: emit `https://app.pablo.health/launch/<id>` from the
    wow button.** Land after backend `ENABLE_LAUNCH_INTENT` flips. Keep
    the `pablohealth://` emitter as Firefox fallback.
-6. **Backend: post-OAuth completion page redirects to
-   `/dashboard?from=companion`.** Small change in
-   `backend/app/routes/auth.py`'s native-callback handler.
+6. **Web sign-in page navigates on to `/dashboard?from=companion`
+   after a custom-scheme handoff.** Small change in the `/native-auth`
+   completion screen; the loopback branch is untouched.
 
 Order matters: backend before clients before frontend. Each step is
 independently shippable.
