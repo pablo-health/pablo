@@ -18,7 +18,10 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock
 
+from app.models import Patient
+from app.repositories.patient import InMemoryPatientRepository
 from app.repositories.postgres.patient import PostgresPatientRepository
+from app.utcnow import utc_now
 
 
 def test_get_with_non_uuid_id_returns_none_without_querying() -> None:
@@ -86,3 +89,30 @@ def test_reopen_chart_with_non_uuid_id_returns_none_without_querying() -> None:
 
     assert result is None
     session.get.assert_not_called()
+
+
+def test_pending_patients_are_invisible_to_list_and_find() -> None:
+    """A ``status='pending'`` placeholder (a booking-link hold) must never
+    surface as a chart — visible only through ``get``, which the confirm
+    step and future reconciliation still need."""
+    repo = InMemoryPatientRepository()
+    now = utc_now()
+    pending = Patient(
+        id=str(uuid.uuid4()),
+        first_name="Hold",
+        last_name="Er",
+        email="hold@example.com",
+        status="pending",
+        created_at=now,
+        updated_at=now,
+    )
+    repo.create(pending, "user-1")
+
+    patients, total = repo.list_by_user("user-1")
+    assert patients == []
+    assert total == 0
+    assert repo.find_by_email("hold@example.com", "user-1") is None
+    assert repo.get(pending.id, "user-1") is not None
+
+    assert repo.delete(pending.id, "user-1") is True
+    assert repo.list_recently_deleted("user-1") == []

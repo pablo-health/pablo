@@ -111,6 +111,7 @@ class PostgresPatientRepository(PatientRepository):
                 .where(
                     func.lower(PatientRow.email) == email.lower(),
                     PatientRow.deleted_at.is_(None),
+                    PatientRow.status != "pending",
                     *_live_grant_filter(user_id),
                 )
                 .order_by(PatientRow.created_at)
@@ -214,6 +215,7 @@ class PostgresPatientRepository(PatientRepository):
             .join(PatientClinicianRow, PatientClinicianRow.patient_id == PatientRow.id)
             .where(
                 PatientRow.deleted_at.is_(None),
+                PatientRow.status != "pending",
                 *_live_grant_filter(user_id),
             )
         )
@@ -344,6 +346,7 @@ class PostgresPatientRepository(PatientRepository):
                 .where(
                     PatientRow.deleted_at.isnot(None),
                     PatientRow.deleted_at > cutoff,
+                    PatientRow.status != "pending",
                     *_live_grant_filter(user_id),
                 )
                 .order_by(PatientRow.last_name_lower, PatientRow.first_name_lower)

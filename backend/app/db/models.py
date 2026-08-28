@@ -537,6 +537,12 @@ class AppointmentRow(Base):
     pending_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    # SHA-256 of the confirmation token mailed to the booker on a hold from
+    # a booking link that requires email confirmation. The raw token is
+    # never stored — same hash-at-rest pattern as LaunchIntentStore.
+    confirmation_token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))

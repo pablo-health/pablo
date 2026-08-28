@@ -182,6 +182,7 @@ class SchedulingService:
             duration_minutes=duration_minutes,
             status=status,
             pending_expires_at=pending_expires_at,
+            confirmation_token_hash=data.get("confirmation_token_hash"),  # type: ignore[arg-type]
             session_type=str(data.get("session_type", "individual")),
             video_link=data.get("video_link"),  # type: ignore[arg-type]
             video_platform=data.get("video_platform"),  # type: ignore[arg-type]
