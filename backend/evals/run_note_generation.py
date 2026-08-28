@@ -28,6 +28,11 @@ Usage::
     # A single case, verbose:
     poetry run python -m backend.evals.run_note_generation --case note-faith-013
 
+    # Repeat each case 3 times and only pass it if every run is clean —
+    # a manual check for flaky faithfulness, not something CI runs (it
+    # multiplies model spend by the sample count):
+    poetry run python -m backend.evals.run_note_generation --tier 2 --samples 3
+
 Exit code is 0 iff every scored case passes the faithfulness gate.
 """
 
@@ -43,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.evals.harness import load_yaml_dataset
+from backend.evals.sampling import CaseAggregate, SampleResult, aggregate_sample_verdicts
 from backend.evals.scorers.llm_judge_faithfulness import JudgeVerdict, score
 
 logger = logging.getLogger(__name__)
@@ -160,19 +166,15 @@ def _advisory_omissions(verdict: JudgeVerdict) -> list[str]:
     ]
 
 
-def _score_case(case: dict[str, Any], model: str | None, judge_model: str | None) -> dict[str, Any]:
-    case_id = case.get("id", "?")
-    expected = case.get("expected", {}) or {}
-    transcript_text = case.get("input", {}).get("transcript", "")
-    reference_soap = _load_reference_soap(expected.get("reference_soap_path"))
-    directives = expected.get("judge_directives")
-
-    print(f"\n=== {case_id} ===")
-    print(f"  {case.get('description', '')[:200]}")
-    print(
-        f"  transcript: {len(transcript_text)} chars | reference: {bool(reference_soap)} "
-        f"| directives: {len(directives) if directives else 0}"
-    )
+def _run_sample(
+    case: dict[str, Any],
+    model: str | None,
+    judge_model: str | None,
+    transcript_text: str,
+    reference_soap: str | None,
+    directives: list[str] | None,
+) -> SampleResult:
+    """Generate + judge the case once and print its status line."""
     print("  generating (real pipeline)...", flush=True)
 
     start = time.monotonic()
@@ -189,9 +191,9 @@ def _score_case(case: dict[str, Any], model: str | None, judge_model: str | None
     )
     hard = _hard_failures(verdict)
     advisory = _advisory_omissions(verdict)
-    passed = not hard  # gate on fabrication; omissions are advisory only
+    sample_passed = not hard  # gate on fabrication; omissions are advisory only
 
-    status = "PASS" if passed else "FAIL"
+    status = "PASS" if sample_passed else "FAIL"
     print(
         f"  [{status}] hallucinations={len(verdict.hallucinated_facts)} "
         f"(gate) | missing={len(verdict.missing_facts)} advisory-high={len(advisory)}"
@@ -203,19 +205,74 @@ def _score_case(case: dict[str, Any], model: str | None, judge_model: str | None
     if verdict.raw_response == "{}" or (not verdict.judge_notes and not verdict.hallucinated_facts):
         print(f"    judge raw: {verdict.raw_response[:300]!r}")
 
+    return SampleResult(
+        hard_failures=hard,
+        advisory_omissions=advisory,
+        judge_passes=verdict.passes,
+        gen_seconds=round(gen_elapsed, 1),
+        generated_chars=len(generated_soap),
+        hallucinated_facts=verdict.hallucinated_facts,
+        missing_facts=verdict.missing_facts,
+        judge_notes=verdict.judge_notes,
+    )
+
+
+def _score_case(
+    case: dict[str, Any], model: str | None, judge_model: str | None, n_samples: int = 1
+) -> dict[str, Any]:
+    case_id = case.get("id", "?")
+    expected = case.get("expected", {}) or {}
+    transcript_text = case.get("input", {}).get("transcript", "")
+    reference_soap = _load_reference_soap(expected.get("reference_soap_path"))
+    directives = expected.get("judge_directives")
+
+    print(f"\n=== {case_id} ===")
+    print(f"  {case.get('description', '')[:200]}")
+    print(
+        f"  transcript: {len(transcript_text)} chars | reference: {bool(reference_soap)} "
+        f"| directives: {len(directives) if directives else 0}"
+    )
+
+    samples: list[SampleResult] = []
+    for i in range(n_samples):
+        if n_samples > 1:
+            print(f"  --- sample {i + 1}/{n_samples} ---")
+        samples.append(
+            _run_sample(case, model, judge_model, transcript_text, reference_soap, directives)
+        )
+
+    aggregate: CaseAggregate = aggregate_sample_verdicts(samples)
+    first = samples[0]
+
+    if n_samples > 1:
+        clean = aggregate.n_samples - aggregate.n_failed_samples
+        print(
+            f"  case verdict: {'PASS' if aggregate.passed else 'FAIL'} "
+            f"({clean}/{aggregate.n_samples} samples clean)"
+        )
+
     return {
         "id": case_id,
         "tier": case.get("tier"),
-        "passed": passed,
-        "judge_passes": verdict.passes,
-        "gen_seconds": round(gen_elapsed, 1),
-        "generated_chars": len(generated_soap),
-        "hallucinated_facts": verdict.hallucinated_facts,
-        "missing_facts": verdict.missing_facts,
-        "hard_failures": hard,
-        "advisory_omissions": advisory,
-        "judge_notes": verdict.judge_notes,
+        "passed": aggregate.passed,
+        "judge_passes": first.judge_passes,
+        "gen_seconds": first.gen_seconds,
+        "generated_chars": first.generated_chars,
+        "hallucinated_facts": first.hallucinated_facts,
+        "missing_facts": first.missing_facts,
+        "hard_failures": aggregate.hard_failures,
+        "advisory_omissions": first.advisory_omissions,
+        "judge_notes": first.judge_notes,
+        "samples": [s.to_dict() for s in samples],
+        "n_samples": aggregate.n_samples,
     }
+
+
+def _positive_int(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"--samples must be >= 1, got {n}")
+    return n
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -231,6 +288,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--judge-model", default=None, help="Judge model override (default: gemini-3.5-flash)"
     )
+    parser.add_argument(
+        "--samples",
+        type=_positive_int,
+        default=1,
+        help=(
+            "Generate+judge each case N times; a case passes only if every sample is "
+            "clean (default: 1). Multiplies model spend by N — a deliberate manual "
+            "step, never run in CI."
+        ),
+    )
     parser.add_argument("--output", default=None, help="Write the full JSON report to this path")
     args = parser.parse_args(argv)
 
@@ -243,10 +310,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(
         f"Scoring {len(selected)} case(s) via the REAL note pipeline "
-        f"(gen model={args.model or 'settings.ai_model'}, judge={args.judge_model or 'default'})"
+        f"(gen model={args.model or 'settings.ai_model'}, judge={args.judge_model or 'default'}, "
+        f"samples={args.samples})"
     )
 
-    results = [_score_case(c, args.model, args.judge_model) for c in selected]
+    results = [_score_case(c, args.model, args.judge_model, args.samples) for c in selected]
     n_passed = sum(1 for r in results if r["passed"])
     all_passed = n_passed == len(results)
 
@@ -257,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
         "n_cases": len(results),
         "n_passed": n_passed,
         "all_passed": all_passed,
+        "samples_per_case": args.samples,
         "cases": results,
     }
 
