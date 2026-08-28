@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import secrets
 import sys
 import types
 import uuid
@@ -41,6 +42,7 @@ from app.repositories.patient import InMemoryPatientRepository
 from app.routes import public_booking as public_booking_module
 from app.routes.booking_links import get_link_repository
 from app.routes.public_booking import (
+    get_public_appointment_repository,
     get_public_availability_engine,
     get_public_gcal_service,
     get_public_scheduling_service,
@@ -48,6 +50,7 @@ from app.routes.public_booking import (
 from app.routes.public_booking import (
     router as public_router,
 )
+from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.availability import AvailabilityRule, RuleType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import (
@@ -221,6 +224,7 @@ def _public_app(
         rule_repo, appt_repo
     )
     app.dependency_overrides[get_public_scheduling_service] = lambda: SchedulingService(appt_repo)
+    app.dependency_overrides[get_public_appointment_repository] = lambda: appt_repo
     app.dependency_overrides[get_patient_repository] = lambda: patient_repo
     app.dependency_overrides[get_public_gcal_service] = lambda: gcal
     app.dependency_overrides[get_audit_service] = lambda: fake_audit
@@ -257,6 +261,20 @@ def _book(
     if note is not None:
         payload["note"] = note
     return client.post(f"/api/public/booking-links/{slug}/bookings", json=payload)
+
+
+def _hold(
+    client: Any, slug: str, start_at: str, email: str = "jane@example.com"
+) -> tuple[Any, str]:
+    """Book a slot on a default (born-true) link and return (response, token).
+
+    The token is parsed out of the confirmation email the hold sends —
+    the same thing a real booker would click through from their inbox.
+    """
+    resp = _book(client, slug, start_at, email=email)
+    match = re.search(r"token=(\S+)", client.email.sent[-1].text)
+    assert match is not None
+    return resp, match.group(1)
 
 
 # ---------------------------------------------------------------- public: card
@@ -651,6 +669,404 @@ def test_relaxed_link_books_instantly_exactly_as_before(
 
     assert public_client.email.sent == []
     public_client.gcal.push_appointment.assert_called_once()
+
+
+# ---------------------------------------------------- public: hold confirmation
+
+
+def test_hold_participates_in_buffers_max_per_day_and_free_slots(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """A hold is just an appointment to everything downstream of it — no
+    engine change was needed for it to occupy its slot, apply its buffer,
+    and count toward the daily cap."""
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    public_client.rule_repo.create(
+        AvailabilityRule(
+            id=str(uuid.uuid4()),
+            user_id=OWNER_ID,
+            rule_type=RuleType.BUFFER_AFTER,
+            enforcement="hard",
+            params={"minutes": 30},
+        )
+    )
+    public_client.rule_repo.create(
+        AvailabilityRule(
+            id=str(uuid.uuid4()),
+            user_id=OWNER_ID,
+            rule_type=RuleType.MAX_PER_DAY,
+            enforcement="hard",
+            params={"max": 2},
+        )
+    )
+
+    resp, _token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    assert resp.status_code == 201
+
+    starts = [
+        s["start"]
+        for s in public_client.get(
+            f"/api/public/booking-links/intro-call/slots?date={date_str}"
+        ).json()["slots"]
+    ]
+    assert f"{date_str}T09:00:00Z" not in starts
+    assert f"{date_str}T09:30:00Z" not in starts
+
+    resp2, _token2 = _hold(
+        public_client, "intro-call", f"{date_str}T10:00:00Z", email="b@example.com"
+    )
+    assert resp2.status_code == 201
+
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
+    assert slots["slots"] == []
+
+
+def test_expired_hold_releases_slot_and_sweeps_placeholder(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, _token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt.pending_expires_at = utc_now() - timedelta(seconds=1)
+    patient_id = appt.patient_id
+
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
+    assert f"{date_str}T09:00:00Z" in [s["start"] for s in slots["slots"]]
+
+    assert appt.status == "cancelled"
+    assert appt.confirmation_token_hash is not None
+
+    assert public_client.patient_repo.get(patient_id, OWNER_ID) is None
+    assert public_client.patient_repo.list_recently_deleted(OWNER_ID) == []
+
+    deletions = [c for c in public_client.audit.calls if c["action"] == AuditAction.PATIENT_DELETED]
+    assert any(c["changes"] == {"source": "public_booking_hold_expired"} for c in deletions)
+
+
+def test_sweep_never_touches_a_real_chart(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    patient = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Real",
+            last_name="Chart",
+            email="real@example.com",
+            status="active",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+    appt = public_client.appt_repo.create(
+        Appointment(
+            id=str(uuid.uuid4()),
+            user_id=OWNER_ID,
+            patient_id=patient.id,
+            title="A request from some other surface",
+            start_at=datetime.fromisoformat(f"{date_str}T09:00:00+00:00"),
+            end_at=datetime.fromisoformat(f"{date_str}T09:30:00+00:00"),
+            duration_minutes=30,
+            status="pending",
+            session_type="individual",
+            pending_expires_at=now - timedelta(hours=1),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+
+    assert appt.status == "cancelled"
+    unchanged = public_client.patient_repo.get(patient.id, OWNER_ID)
+    assert unchanged is not None
+    assert unchanged.status == "active"
+
+
+def test_confirm_finalizes_hold_and_promotes_placeholder(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    hold_resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+
+    resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "confirmed"
+    assert set(body) == set(hold_resp.json())
+
+    assert appt.status == "confirmed"
+    assert appt.pending_expires_at is None
+
+    patient = public_client.patient_repo.get(appt.patient_id, OWNER_ID)
+    assert patient is not None
+    assert patient.status == "active"
+    assert patient.origin == "public_booking"
+
+    public_client.gcal.push_appointment.assert_called_once()
+    assert any(
+        c["action"] == AuditAction.APPOINTMENT_UPDATED
+        and c["changes"] == {"source": "public_booking", "status": "confirmed"}
+        for c in public_client.audit.calls
+    )
+
+    calls_before = len(public_client.audit.calls)
+    second = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": token}
+    )
+    assert second.status_code == 200
+    assert len(public_client.audit.calls) == calls_before
+    public_client.gcal.push_appointment.assert_called_once()
+
+
+def test_confirm_attaches_verified_email_to_existing_chart(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+
+    _resp, token = _hold(
+        public_client, "intro-call", f"{date_str}T09:00:00Z", email="client@example.com"
+    )
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    placeholder_id = appt.patient_id
+    assert placeholder_id != existing.id
+
+    resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 200
+
+    assert appt.patient_id == existing.id
+    assert public_client.patient_repo.get(placeholder_id, OWNER_ID) is None
+    assert placeholder_id not in [
+        p.id for p, _ in public_client.patient_repo.list_recently_deleted(OWNER_ID)
+    ]
+
+    unchanged = public_client.patient_repo.get(existing.id, OWNER_ID)
+    assert unchanged.first_name == "Realfirst"
+    assert unchanged.last_name == "Reallast"
+
+    _patients, total = public_client.patient_repo.list_by_user(OWNER_ID)
+    assert total == 1
+
+
+def test_confirm_with_unknown_token_is_404(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": "not-a-real-token"}
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["message"] == public_booking_module._CONFIRMATION_INVALID
+
+
+def test_clinician_cancel_kills_the_token(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+
+    SchedulingService(public_client.appt_repo).cancel_appointment(appt.id, OWNER_ID)
+    assert appt.confirmation_token_hash is None
+
+    resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["message"] == public_booking_module._CONFIRMATION_INVALID
+    assert appt.status == "cancelled"
+
+
+def test_token_is_bound_to_its_link(link_repo: InMemoryBookingLinkRepository) -> None:
+    other_owner = User(
+        id="other-owner-456",
+        email="other@example.com",
+        name="Other Therapist",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+    )
+    client = _public_app(link_repo)
+    client.app.dependency_overrides[get_user_repository] = lambda: _FakeUserRepo(
+        {OWNER_ID: _owner(), other_owner.id: other_owner}
+    )
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+    link_repo.create(_link(slug="link-a", user_id=OWNER_ID))
+    link_repo.create(_link(slug="link-b", user_id=other_owner.id))
+
+    _resp, token = _hold(client, "link-a", f"{date_str}T09:00:00Z")
+    appt = next(iter(client.appt_repo._appointments.values()))
+
+    resp = client.post("/api/public/booking-links/link-b/confirm", json={"token": token})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["message"] == public_booking_module._CONFIRMATION_INVALID
+    assert appt.status == "pending"
+
+
+def test_expired_hold_click_finalizes_when_slot_still_free(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt.pending_expires_at = utc_now() - timedelta(seconds=1)
+
+    public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+    assert appt.status == "cancelled"
+
+    resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "confirmed"
+    assert appt.status == "confirmed"
+
+    patient = public_client.patient_repo.get(appt.patient_id, OWNER_ID)
+    assert patient is not None
+    assert patient.status == "active"
+
+
+def test_expired_hold_click_when_slot_taken_says_pick_another_time(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    link_repo.create(_link(slug="relaxed-link", require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt.pending_expires_at = utc_now() - timedelta(seconds=1)
+
+    public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+    assert appt.status == "cancelled"
+
+    taken = _book(public_client, "relaxed-link", f"{date_str}T09:00:00Z", email="other@example.com")
+    assert taken.status_code == 201
+
+    resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 409
+    assert resp.json()["error"]["message"] == public_booking_module._SLOT_TAKEN
+
+    assert appt.status == "cancelled"
+    assert public_client.patient_repo.get(appt.patient_id, OWNER_ID) is None
+
+
+def test_two_holds_on_one_slot_cannot_both_confirm(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    start_at = datetime.fromisoformat(f"{date_str}T09:00:00+00:00")
+    end_at = datetime.fromisoformat(f"{date_str}T09:30:00+00:00")
+    now = utc_now()
+
+    def _direct_hold(email: str) -> tuple[Appointment, str]:
+        placeholder = public_client.patient_repo.create(
+            Patient(
+                id=str(uuid.uuid4()),
+                first_name="Jane",
+                last_name="Roe",
+                email=email,
+                status="pending",
+                origin="public_booking",
+                created_at=now,
+                updated_at=now,
+            ),
+            OWNER_ID,
+        )
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        appt = public_client.appt_repo.create(
+            Appointment(
+                id=str(uuid.uuid4()),
+                user_id=OWNER_ID,
+                patient_id=placeholder.id,
+                title="Intro call",
+                start_at=start_at,
+                end_at=end_at,
+                duration_minutes=30,
+                status="pending",
+                session_type="individual",
+                pending_expires_at=now + timedelta(minutes=15),
+                confirmation_token_hash=token_hash,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        return appt, token
+
+    appt_a, token_a = _direct_hold("a@example.com")
+    appt_b, token_b = _direct_hold("b@example.com")
+
+    resp_a = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": token_a}
+    )
+    assert resp_a.status_code == 200
+
+    resp_b = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": token_b}
+    )
+    assert resp_b.status_code == 409
+    assert resp_b.json()["error"]["message"] == public_booking_module._SLOT_TAKEN
+
+    live = [a for a in public_client.appt_repo._appointments.values() if a.status != "cancelled"]
+    assert len(live) == 1
+    assert live[0].id == appt_a.id
+    assert appt_b.status == "cancelled"
+    assert public_client.patient_repo.get(appt_b.patient_id, OWNER_ID) is None
+
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
+    assert f"{date_str}T09:00:00Z" not in [s["start"] for s in slots["slots"]]
+
+
+def test_wound_down_practice_cannot_confirm(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+
+    _stub_subscription_module(monkeypatch, {"access_level": "read_only"})
+
+    resp = public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    assert resp.status_code == 403
+    assert appt.status == "pending"
 
 
 # ------------------------------------------------------- real app: flag gating

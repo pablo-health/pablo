@@ -236,6 +236,15 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def get_by_confirmation_token_hash(self, user_id: str, token_hash: str) -> Appointment | None:
+        row = self._session.execute(
+            select(AppointmentRow).where(
+                AppointmentRow.user_id == user_id,
+                AppointmentRow.confirmation_token_hash == token_hash,
+            )
+        ).scalar_one_or_none()
+        return _row_to_appointment(row) if row else None
+
     def create(self, appointment: Appointment) -> Appointment:
         row = AppointmentRow()
         _appointment_to_row(appointment, row)
