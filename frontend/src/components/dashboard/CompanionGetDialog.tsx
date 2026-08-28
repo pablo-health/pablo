@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { isMacOS } from "@/lib/companion"
+import { useCompanionDownloadUrl } from "@/lib/companion.extensions"
 
 interface CompanionGetDialogProps {
   open: boolean
@@ -23,6 +24,7 @@ export function CompanionGetDialog({
   onOpenChange,
 }: CompanionGetDialogProps) {
   const mac = isMacOS()
+  const downloadUrl = useCompanionDownloadUrl()
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -48,16 +50,19 @@ export function CompanionGetDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-2 pt-1">
-          {mac ? (
+          {mac && downloadUrl ? (
             <Button asChild>
-              <a
-                href="https://pablo.health"
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a href={downloadUrl} target="_blank" rel="noreferrer">
                 Download for macOS
               </a>
             </Button>
+          ) : mac ? (
+            <>
+              <Button disabled>Download for macOS</Button>
+              <p className="text-xs text-neutral-500">
+                Download unavailable — install later from Settings.
+              </p>
+            </>
           ) : (
             <p className="text-xs text-neutral-500">
               You&apos;re on a platform that isn&apos;t supported yet.
