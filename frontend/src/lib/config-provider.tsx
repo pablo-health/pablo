@@ -20,6 +20,7 @@ export interface RuntimeConfig {
   introVideoUrl: string
   passkeysEnabled: boolean
   resubscribeUrl: string
+  publicBookingEnabled: boolean
 }
 
 interface ConfigContextValue {

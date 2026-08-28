@@ -33,6 +33,7 @@ const TEST_CONFIG: RuntimeConfig = {
   introVideoUrl: "",
   passkeysEnabled: false,
   resubscribeUrl: "",
+  publicBookingEnabled: false,
 }
 
 describe("renderWithProviders", () => {

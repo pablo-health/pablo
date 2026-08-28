@@ -158,6 +158,16 @@ describe("Query Keys", () => {
     })
   })
 
+  describe("bookingLinks", () => {
+    it("generates base key", () => {
+      expect(queryKeys.bookingLinks.all).toEqual(["bookingLinks"])
+    })
+
+    it("generates list key", () => {
+      expect(queryKeys.bookingLinks.list()).toEqual(["bookingLinks", "list"])
+    })
+  })
+
   describe("type safety", () => {
     it("keys are readonly (as const)", () => {
       // This test verifies TypeScript types compile correctly

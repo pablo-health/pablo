@@ -256,6 +256,12 @@ const baseQueryKeys = {
     all: ["availabilityRules"] as const,
     list: () => [...baseQueryKeys.availabilityRules.all, "list"] as const,
   },
+
+  // Booking link query keys
+  bookingLinks: {
+    all: ["bookingLinks"] as const,
+    list: () => [...baseQueryKeys.bookingLinks.all, "list"] as const,
+  },
 } as const
 
 export const queryKeys = mergeQueryKeys(baseQueryKeys, queryKeyExtensions)
