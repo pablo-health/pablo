@@ -49,16 +49,17 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
 
     def get_by_slug(self, slug: str) -> BookingLink | None:
         stmt = (
-            select(BookingLinkRow, PracticeRow.schema_name)
+            select(BookingLinkRow, PracticeRow.schema_name, PracticeRow.edition)
             .outerjoin(PracticeRow, PracticeRow.id == BookingLinkRow.practice_id)
             .where(BookingLinkRow.slug == slug)
         )
         result = self._session.execute(stmt).one_or_none()
         if result is None:
             return None
-        row, schema_name = result
+        row, schema_name, edition = result
         link = _row_to_link(row)
         link.practice_schema = schema_name
+        link.practice_edition = edition
         return link
 
     def get(self, link_id: str, user_id: str) -> BookingLink | None:
