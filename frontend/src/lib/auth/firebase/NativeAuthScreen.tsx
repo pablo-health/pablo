@@ -10,7 +10,7 @@
  * handed back to the native app via its custom-scheme redirect.
  */
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "next/navigation"
 import { useConfig } from "@/lib/config"
 import {
@@ -19,6 +19,7 @@ import {
   AuthHeader,
   CredentialBlock,
 } from "@/components/auth"
+import { completionPathAfterHandoff } from "./nativeAuthCompletion"
 
 const ALLOWED_SCHEMES = ["pablohealth", "therapyrecorder"]
 
@@ -28,6 +29,13 @@ export function FirebaseNativeAuthScreen() {
   const [email, setEmail] = useState("")
   const [notice, setNotice] = useState("")
   const [redirecting, setRedirecting] = useState(false)
+  const completionTimer = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (completionTimer.current !== null) window.clearTimeout(completionTimer.current)
+    }
+  }, [])
 
   // Validate redirect_uri
   const redirectUri = searchParams.get("redirect_uri")
@@ -87,6 +95,13 @@ export function FirebaseNativeAuthScreen() {
         callbackUrl.searchParams.set("code", code)
         if (state) callbackUrl.searchParams.set("state", state)
         window.location.href = callbackUrl.toString()
+
+        const completionPath = completionPathAfterHandoff(redirectUri!)
+        if (completionPath !== null) {
+          completionTimer.current = window.setTimeout(() => {
+            window.location.replace(completionPath)
+          }, 1500)
+        }
       } catch {
         setNotice("Failed to get authentication tokens.")
         setRedirecting(false)
