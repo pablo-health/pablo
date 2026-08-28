@@ -414,3 +414,9 @@ wants client self-booking enables the flag and creates links. The
 `personal` practice edition works identically, so non-clinical
 operators can take bookings (e.g. consultations) with the same
 machinery.
+
+The frontend reads the same `PUBLIC_BOOKING_ENABLED` value (via
+`/api/config`) to decide whether the "Booking links" Settings section
+is shown at all — the management API is always mounted, but a
+shareable URL that 404s because the public page isn't live is worse
+than not offering it. One value, set on both containers.
