@@ -72,3 +72,12 @@ def test_internal_actor_user_ids_default_is_empty() -> None:
 def test_internal_actor_user_ids_parses_and_strips() -> None:
     settings = _make(INTERNAL_ACTOR_USER_IDS=" bot-1 , bot-2 ,, ")
     assert settings.internal_actor_user_ids == {"bot-1", "bot-2"}
+
+
+def test_assemblyai_speaker_labels_channels_default_is_empty() -> None:
+    assert _make().assemblyai_speaker_labels_channels == []
+
+
+def test_assemblyai_speaker_labels_channels_parses_and_strips() -> None:
+    settings = _make(assemblyai_speaker_labels_channels=" Client , , ")
+    assert settings.assemblyai_speaker_labels_channels == ["Client"]

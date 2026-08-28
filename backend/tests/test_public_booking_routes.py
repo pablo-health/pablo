@@ -26,7 +26,13 @@ from app.api_errors import register_exception_handlers
 from app.main import app as real_app
 from app.models import Patient, User
 from app.models.audit import ACTOR_TYPE_ANONYMOUS, ACTOR_TYPE_CLINICIAN, AuditAction
-from app.models.booking_link import BookingLink
+from app.models.booking_link import (
+    BookingLink,
+    BookingLinkResponse,
+    CreateBookingLinkRequest,
+    PublicBookingLinkResponse,
+    UpdateBookingLinkRequest,
+)
 from app.rate_limit import (
     require_public_booking_rate_limit,
     require_public_booking_write_rate_limit,
@@ -80,6 +86,7 @@ def _link(
     is_active: bool = True,
     duration_minutes: int = 30,
     require_email_confirmation: bool = True,
+    practice_edition: str | None = None,
 ) -> BookingLink:
     now = utc_now()
     return BookingLink(
@@ -96,6 +103,7 @@ def _link(
         created_at=now,
         updated_at=now,
         require_email_confirmation=require_email_confirmation,
+        practice_edition=practice_edition,
     )
 
 
@@ -401,7 +409,11 @@ def test_booked_slot_is_no_longer_offered_or_bookable(
 def test_repeat_booker_reuses_patient_record(
     public_client: Any, link_repo: InMemoryBookingLinkRepository
 ) -> None:
-    link_repo.create(_link(require_email_confirmation=False))
+    """Attach-by-match survives only on a personal-edition practice — see
+    test_relaxed_link_never_attaches_unverified_email_to_existing_chart for
+    the default (therapist) practice, where a repeat booker instead lands
+    as a fresh quarantined placeholder every time."""
+    link_repo.create(_link(require_email_confirmation=False, practice_edition="personal"))
     date_str = _bookable_date()
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
@@ -469,6 +481,7 @@ def test_booking_reveals_nothing_about_existing_patients(
     only link-derived fields, and the existing chart is never modified by
     attacker-supplied names."""
     link_repo.create(_link(require_email_confirmation=False))
+    link_repo.create(_link(slug="hold-link"))
     date_str = _bookable_date()
     public_client.rule_repo.create(_working_hours_rule(date_str))
 
@@ -508,6 +521,29 @@ def test_booking_reveals_nothing_about_existing_patients(
     expected_keys = {"host_name", "title", "start_at", "end_at", "duration_minutes", "status"}
     assert set(fresh.json()) == set(reused.json()) == expected_keys
     assert fresh.json()["status"] == reused.json()["status"] == "confirmed"
+
+    # Same no-oracle property on a born-true link: both hold, same shape.
+    fresh_hold = public_client.post(
+        "/api/public/booking-links/hold-link/bookings",
+        json={
+            "start_at": f"{date_str}T10:00:00Z",
+            "first_name": "New",
+            "last_name": "Person",
+            "email": "other-stranger@example.com",
+        },
+    )
+    reused_hold = public_client.post(
+        "/api/public/booking-links/hold-link/bookings",
+        json={
+            "start_at": f"{date_str}T10:30:00Z",
+            "first_name": "Wrong",
+            "last_name": "Name",
+            "email": "client@example.com",
+        },
+    )
+    assert fresh_hold.status_code == reused_hold.status_code == 201
+    assert set(fresh_hold.json()) == set(reused_hold.json()) == expected_keys
+    assert fresh_hold.json()["status"] == reused_hold.json()["status"] == "pending_confirmation"
 
     unchanged = public_client.patient_repo.get(existing.id, OWNER_ID)
     assert unchanged.first_name == "Realfirst"
@@ -669,6 +705,230 @@ def test_relaxed_link_books_instantly_exactly_as_before(
 
     assert public_client.email.sent == []
     public_client.gcal.push_appointment.assert_called_once()
+
+
+def test_relaxed_link_never_attaches_unverified_email_to_existing_chart(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """The invariant with the flag off: a matched email on a relaxed,
+    non-personal link books a fresh quarantined placeholder, never the
+    chart it matched."""
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:00:00Z",
+            "first_name": "Wrong",
+            "last_name": "Name",
+            "email": "client@example.com",
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["status"] == "confirmed"
+
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    assert appt.patient_id != existing.id
+
+    placeholder = public_client.patient_repo.get(appt.patient_id, OWNER_ID)
+    assert placeholder is not None
+    assert placeholder.status == "pending"
+    assert placeholder.origin == "public_booking"
+    assert placeholder.first_name == "Wrong"
+
+    unchanged = public_client.patient_repo.get(existing.id, OWNER_ID)
+    assert unchanged.first_name == "Realfirst"
+    assert unchanged.last_name == "Reallast"
+
+    _patients, total = public_client.patient_repo.list_by_user(OWNER_ID)
+    assert total == 1  # the placeholder is quarantined out of the list
+
+    created = [
+        c
+        for c in public_client.audit.calls
+        if c["action"] == AuditAction.PATIENT_CREATED and c["patient"].id == placeholder.id
+    ]
+    assert len(created) == 1
+    assert created[0]["changes"]["reason"] == "unverified_email_matched_chart"
+
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
+    assert f"{date_str}T09:00:00Z" not in [s["start"] for s in slots["slots"]]
+
+
+def test_relaxed_link_fresh_email_creates_active_patient_with_origin(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book(public_client, "intro-call", f"{date_str}T09:00:00Z", email="fresh@example.com")
+    assert resp.status_code == 201
+
+    patient = public_client.patient_repo.find_by_email("fresh@example.com", OWNER_ID)
+    assert patient is not None
+    assert patient.status == "active"
+    assert patient.origin == "public_booking"
+
+    _patients, total = public_client.patient_repo.list_by_user(OWNER_ID)
+    assert total == 1
+
+
+def test_personal_edition_practice_may_attach_by_match(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False, practice_edition="personal"))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:00:00Z",
+            "first_name": "Wrong",
+            "last_name": "Name",
+            "email": "client@example.com",
+        },
+    )
+    assert resp.status_code == 201
+
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    assert appt.patient_id == existing.id
+
+    _patients, total = public_client.patient_repo.list_by_user(OWNER_ID)
+    assert total == 1
+    assert not any(c["action"] == AuditAction.PATIENT_CREATED for c in public_client.audit.calls)
+
+    unchanged = public_client.patient_repo.get(existing.id, OWNER_ID)
+    assert unchanged.first_name == "Realfirst"
+    assert unchanged.last_name == "Reallast"
+
+
+@pytest.mark.parametrize("practice_edition", [None, "therapist"])
+def test_carve_out_is_keyed_to_edition_not_a_toggle(
+    public_client: Any,
+    link_repo: InMemoryBookingLinkRepository,
+    practice_edition: str | None,
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False, practice_edition=practice_edition))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:00:00Z",
+            "first_name": "Wrong",
+            "last_name": "Name",
+            "email": "client@example.com",
+        },
+    )
+    assert resp.status_code == 201
+
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    assert appt.patient_id != existing.id
+
+    # There is no request field, settings field, or booking-link column
+    # that changes this outcome — only the practice's declared edition.
+    assert "practice_edition" not in CreateBookingLinkRequest.model_fields
+    assert "practice_edition" not in UpdateBookingLinkRequest.model_fields
+    assert "practice_edition" not in BookingLinkResponse.model_fields
+    assert "practice_edition" not in PublicBookingLinkResponse.model_fields
+
+
+def test_get_by_slug_carries_practice_edition(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    link_repo.create(_link(practice_edition="personal"))
+    resolved = link_repo.get_by_slug("intro-call")
+    assert resolved is not None
+    assert resolved.practice_edition == "personal"
+
+
+def test_sweep_ignores_relaxed_path_placeholders(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """A relaxed-path placeholder has no pending appointment and no
+    confirmation token, so the hold-sweep dependency never touches it —
+    it survives exactly like any other chart until a person reconciles
+    it."""
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/bookings",
+        json={
+            "start_at": f"{date_str}T09:00:00Z",
+            "first_name": "Wrong",
+            "last_name": "Name",
+            "email": "client@example.com",
+        },
+    )
+    assert resp.status_code == 201
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    placeholder_id = appt.patient_id
+
+    # A slots GET runs sweep_expired_holds as a dependency; the placeholder
+    # must still be there afterward.
+    public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+
+    placeholder = public_client.patient_repo.get(placeholder_id, OWNER_ID)
+    assert placeholder is not None
+    assert placeholder.status == "pending"
 
 
 # ---------------------------------------------------- public: hold confirmation
