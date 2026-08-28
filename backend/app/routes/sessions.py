@@ -8,6 +8,7 @@ Thin HTTP handlers that delegate business logic to SessionService.
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -24,7 +25,13 @@ from google.api_core.exceptions import AlreadyExists
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from ..api_errors import BadRequestError, ConflictError, NotFoundError, ServerError
+from ..api_errors import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    ServerError,
+    UnprocessableEntityError,
+)
 from ..auth.service import (
     TenantContext,
     get_tenant_context,
@@ -1005,13 +1012,19 @@ async def _read_bounded(upload: UploadFile, label: str) -> bytes:
     return b"".join(chunks)
 
 
-def _audio_multipart_object_name(session_id: str, channel: str) -> str:
+def _audio_multipart_object_name(
+    session_id: str, channel: str, segment_index: int | None = None
+) -> str:
     """Per-session object name for a multipart-streamed channel.
 
     Kept separate from the ``signed/`` prefix the direct-to-GCS path uses so
-    the two transports never collide on an object name.
+    the two transports never collide on an object name. A segmented upload
+    gets a ``.seg000``-style suffix per index so later segments never
+    overwrite earlier ones.
     """
-    return f"audio/{session_id}/{channel}.pcm"
+    if segment_index is None:
+        return f"audio/{session_id}/{channel}.pcm"
+    return f"audio/{session_id}/{channel}.seg{segment_index:03d}.pcm"
 
 
 async def _stream_audio_to_storage(
@@ -1072,6 +1085,62 @@ def _revert_transcribing_and_raise(
     ) from None
 
 
+def _validate_segmented_upload_fields(
+    segment_index: int | None,
+    segment_offset_seconds: float | None,
+    provider: str,
+) -> None:
+    """Cross-field validation for the optional segmented-upload form fields.
+
+    ``segment_index`` opts in; the other two are only checked once it's set.
+    """
+    if segment_index is None:
+        return
+    if segment_offset_seconds is None:
+        raise UnprocessableEntityError(
+            "segment_offset_seconds is required when segment_index is set"
+        )
+    if provider != "assemblyai":
+        raise BadRequestError(
+            "Segmented upload is only supported for the AssemblyAI provider",
+            code="SEGMENTS_UNSUPPORTED",
+        )
+
+
+def _apply_segment_to_manifest(
+    existing: dict[str, Any] | None,
+    *,
+    segment_index: int,
+    segment_offset_seconds: float,
+    therapist_object: str,
+    client_object: str,
+    final: bool,
+) -> dict[str, Any]:
+    """Fold one segment's upload into the segmented-mode manifest.
+
+    Re-uploading an index replaces its entry (idempotent retry); ``final``
+    is sticky once set. Starts a fresh manifest if the prior metadata wasn't
+    already in segmented shape (e.g. a first segment after a plain upload).
+    """
+    base: dict[str, Any] = existing if existing and "segments" in existing else {"final": False}
+    prior_segments: list[dict[str, Any]] = base.get("segments") or []
+    segments = [s for s in prior_segments if s["index"] != segment_index]
+    segments.append(
+        {
+            "index": segment_index,
+            "offset_seconds": segment_offset_seconds,
+            "therapist": therapist_object,
+            "client": client_object,
+        }
+    )
+    segments.sort(key=lambda s: s["index"])
+    return {
+        "provider": "assemblyai",
+        "segments": segments,
+        "final": bool(base.get("final", False)) or final,
+    }
+
+
 async def _stream_and_submit_assemblyai(
     *,
     session: TherapySession,
@@ -1082,20 +1151,24 @@ async def _stream_and_submit_assemblyai(
     user: User,
     http_request: Request,
     audit: AuditService,
+    segment_index: int | None = None,
+    segment_offset_seconds: float | None = None,
+    final: bool = False,
 ) -> dict[str, str]:
     """Stream both channels to object storage and enqueue the submit worker.
 
     Keeps the bytes off the heap (streamed, never buffered whole) and the
     multi-second VAD-split + provider submit off this request thread — the
-    Cloud Task worker does that against ``audio_gcs_path``.
+    Cloud Task worker does that against ``audio_gcs_path`` (or, in segmented
+    mode, against the segment's manifest entry).
     """
     settings = get_settings()
     bucket = settings.transcription_audio_bucket
     if not bucket:
         raise ServerError("Transcription audio bucket is not configured")
 
-    therapist_object = _audio_multipart_object_name(session_id, "therapist")
-    client_object = _audio_multipart_object_name(session_id, "client")
+    therapist_object = _audio_multipart_object_name(session_id, "therapist", segment_index)
+    client_object = _audio_multipart_object_name(session_id, "client", segment_index)
     await _stream_audio_to_storage(
         therapist_audio, "therapist_audio", bucket=bucket, object_name=therapist_object
     )
@@ -1106,9 +1179,32 @@ async def _stream_and_submit_assemblyai(
     session.status = SessionStatus.TRANSCRIBING
     session.updated_at = utc_now()
     session.audio_gcs_path = f"{therapist_object},{client_object}"
-    # "submitting" is the pre-submit marker; the submit worker overwrites it
-    # with the provider job ids. Persisted so a retry is idempotent.
-    session.transcription_job_metadata = {"provider": "assemblyai", "state": "submitting"}
+
+    if segment_index is None:
+        # "submitting" is the pre-submit marker; the submit worker overwrites
+        # it with the provider job ids. Persisted so a retry is idempotent.
+        session.transcription_job_metadata = {"provider": "assemblyai", "state": "submitting"}
+        dedup_key = f"aai-submit-{session_id}"
+        task_payload: dict[str, object] = {"session_id": session_id, "user_id": user.id}
+    else:
+        if segment_offset_seconds is None:
+            # The route validates this before dispatching here; guards the
+            # type for the manifest helper below.
+            raise ServerError("segment_offset_seconds is required for a segmented upload")
+        session.transcription_job_metadata = _apply_segment_to_manifest(
+            session.transcription_job_metadata,
+            segment_index=segment_index,
+            segment_offset_seconds=segment_offset_seconds,
+            therapist_object=therapist_object,
+            client_object=client_object,
+            final=final,
+        )
+        dedup_key = f"aai-submit-{session_id}-{segment_index}"
+        task_payload = {
+            "session_id": session_id,
+            "user_id": user.id,
+            "segment_index": segment_index,
+        }
 
     # Commit, not just flush, before the worker is dispatched: it is a separate
     # request and cannot see this row until the transaction lands. `update()`
@@ -1122,13 +1218,13 @@ async def _stream_and_submit_assemblyai(
         enqueue(
             settings.transcription_task_queue,
             "/api/internal/assemblyai-submit",
-            {"session_id": session_id, "user_id": user.id},
-            dedup_key=f"aai-submit-{session_id}",
+            task_payload,
+            dedup_key=dedup_key,
         )
     except AlreadyExists:
-        # A submit task for this session is already queued (double-submit or a
-        # retry inside the dedup window) — the worker reads the latest audio
-        # path, so there's nothing to do. Don't revert.
+        # A submit task for this session (segment) is already queued
+        # (double-submit or a retry inside the dedup window) — the worker
+        # reads the latest state, so there's nothing to do. Don't revert.
         logger.info("assemblyai-submit already enqueued for session %s (dedup)", session_id)
     except Exception:
         _revert_transcribing_and_raise(session, session_repo, session_id, "assemblyai")
@@ -1159,6 +1255,9 @@ async def upload_audio(
     user: User = Depends(require_baa_acceptance),
     session_repo: TherapySessionRepository = Depends(get_session_repository),
     audit: AuditService = Depends(get_audit_service),
+    segment_index: int | None = Form(default=None, ge=0),
+    segment_offset_seconds: float | None = Form(default=None, ge=0),
+    final: bool = Form(default=False),
 ) -> dict[str, str]:
     """Upload dual-channel audio for server-side transcription.
 
@@ -1171,6 +1270,12 @@ async def upload_audio(
     request thread nor buffers hundreds of MB per channel in heap; the route
     answers 202. Practice tier users get priority processing; Solo tier uses
     the standard queue.
+
+    ``segment_index`` opts into segmented (mid-session) upload: the caller
+    streams the audio it has so far instead of waiting for the recording to
+    finish, tagging each chunk with its index and its offset from the start
+    of the session. ``segment_offset_seconds`` is then required, and the last
+    chunk sets ``final=true`` so the worker knows the manifest is complete.
     """
     # Deployment recording policy first — a refused caller shouldn't burn
     # rate-limit budget on a request that was never going to transcribe.
@@ -1187,6 +1292,11 @@ async def upload_audio(
             detail="Server-side transcription is not enabled.",
         )
 
+    segmented = segment_index is not None
+    _validate_segmented_upload_fields(
+        segment_index, segment_offset_seconds, settings.transcription_provider
+    )
+
     session = session_repo.get(session_id, user.id)
     if not session:
         raise NotFoundError("Session not found")
@@ -1196,10 +1306,13 @@ async def upload_audio(
         SessionStatus.TRANSCRIBING,
         SessionStatus.FAILED,
     }
+    if segmented:
+        # A segment can arrive while the session is still being recorded.
+        _retryable_statuses = _retryable_statuses | {SessionStatus.IN_PROGRESS}
     if session.status not in _retryable_statuses:
+        allowed = ", ".join(f"'{s.value}'" for s in sorted(_retryable_statuses))
         raise BadRequestError(
-            f"Session must be in 'recording_complete', 'transcribing', "
-            f"or 'failed' status, got '{session.status}'",
+            f"Session must be in one of [{allowed}] status, got '{session.status}'",
             code="INVALID_STATUS",
         )
 
@@ -1221,6 +1334,9 @@ async def upload_audio(
             user=user,
             http_request=http_request,
             audit=audit,
+            segment_index=segment_index,
+            segment_offset_seconds=segment_offset_seconds,
+            final=final,
         )
         response.status_code = status.HTTP_202_ACCEPTED
         return result

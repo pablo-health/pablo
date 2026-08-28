@@ -20,14 +20,16 @@ from app.models import SessionStatus, TherapySession, Transcript
 from app.services.file_storage import UploadTarget
 
 
-def _seed_recording_complete(repo: object, owner: str) -> TherapySession:
+def _seed_recording_complete(
+    repo: object, owner: str, status: SessionStatus = SessionStatus.RECORDING_COMPLETE
+) -> TherapySession:
     session = TherapySession(
         id=str(uuid.uuid4()),
         user_id=owner,
         patient_id=str(uuid.uuid4()),
         session_date=datetime(2026, 2, 4, tzinfo=UTC),
         session_number=1,
-        status=SessionStatus.RECORDING_COMPLETE,
+        status=status,
         transcript=Transcript(format="txt", content=""),
         created_at=datetime.now(UTC),
     )
@@ -222,3 +224,198 @@ class TestSignedUrlAssemblyAi:
             "provider": "assemblyai",
             "state": "submitting",
         }
+
+
+class TestSegmentedUpload:
+    """Mid-session (segmented) upload: opted into via ``segment_index``."""
+
+    def _upload(
+        self,
+        client: object,
+        session_id: str,
+        *,
+        segment_index: int,
+        segment_offset_seconds: float,
+        final: bool = False,
+        body: bytes = b"\x00" * 1024,
+    ) -> object:
+        return client.post(  # type: ignore[attr-defined]
+            f"/api/sessions/{session_id}/upload-audio",
+            files={
+                "therapist_audio": ("t.pcm", body, "application/octet-stream"),
+                "client_audio": ("c.pcm", body, "application/octet-stream"),
+            },
+            data={
+                "segment_index": str(segment_index),
+                "segment_offset_seconds": str(segment_offset_seconds),
+                "final": "true" if final else "false",
+            },
+        )
+
+    def test_first_segment_on_in_progress_session_is_accepted(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(
+            mock_session_repo, mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+        fake_storage = MagicMock()
+
+        with (
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+            patch("app.routes.sessions.enqueue") as mock_enqueue,
+        ):
+            resp = self._upload(client, session.id, segment_index=0, segment_offset_seconds=0)
+
+        assert resp.status_code == 202, resp.text  # type: ignore[attr-defined]
+
+        streamed_objects = {
+            call.kwargs["object_name"] for call in fake_storage.upload_stream.call_args_list
+        }
+        assert streamed_objects == {
+            f"audio/{session.id}/therapist.seg000.pcm",
+            f"audio/{session.id}/client.seg000.pcm",
+        }
+
+        assert mock_enqueue.call_args.args[1] == "/api/internal/assemblyai-submit"
+        assert mock_enqueue.call_args.args[2] == {
+            "session_id": session.id,
+            "user_id": mock_user_id,
+            "segment_index": 0,
+        }
+        assert mock_enqueue.call_args.kwargs["dedup_key"] == f"aai-submit-{session.id}-0"
+
+        updated = mock_session_repo.get(session.id, mock_user_id)  # type: ignore[attr-defined]
+        assert updated.status == SessionStatus.TRANSCRIBING
+        assert updated.transcription_job_metadata == {
+            "provider": "assemblyai",
+            "final": False,
+            "segments": [
+                {
+                    "index": 0,
+                    "offset_seconds": 0.0,
+                    "therapist": f"audio/{session.id}/therapist.seg000.pcm",
+                    "client": f"audio/{session.id}/client.seg000.pcm",
+                }
+            ],
+        }
+
+    def test_second_segment_appends_and_enqueues_with_its_own_dedup_key(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(
+            mock_session_repo, mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+        fake_storage = MagicMock()
+
+        with (
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+            patch("app.routes.sessions.enqueue") as mock_enqueue,
+        ):
+            self._upload(client, session.id, segment_index=0, segment_offset_seconds=0)
+            resp = self._upload(
+                client, session.id, segment_index=1, segment_offset_seconds=300, final=True
+            )
+
+        assert resp.status_code == 202, resp.text  # type: ignore[attr-defined]
+        assert mock_enqueue.call_count == 2
+        assert mock_enqueue.call_args.args[2] == {
+            "session_id": session.id,
+            "user_id": mock_user_id,
+            "segment_index": 1,
+        }
+        assert mock_enqueue.call_args.kwargs["dedup_key"] == f"aai-submit-{session.id}-1"
+
+        updated = mock_session_repo.get(session.id, mock_user_id)  # type: ignore[attr-defined]
+        metadata = updated.transcription_job_metadata
+        assert metadata["final"] is True
+        assert [s["index"] for s in metadata["segments"]] == [0, 1]
+        assert metadata["segments"][1]["offset_seconds"] == 300.0
+
+    def test_reuploading_a_segment_index_replaces_its_entry(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(
+            mock_session_repo, mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+        fake_storage = MagicMock()
+
+        with (
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+            patch("app.routes.sessions.enqueue"),
+        ):
+            self._upload(client, session.id, segment_index=0, segment_offset_seconds=0)
+            self._upload(client, session.id, segment_index=0, segment_offset_seconds=5)
+
+        updated = mock_session_repo.get(session.id, mock_user_id)  # type: ignore[attr-defined]
+        segments = updated.transcription_job_metadata["segments"]
+        assert len(segments) == 1
+        assert segments[0]["offset_seconds"] == 5.0
+
+    def test_final_is_sticky_once_set(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(
+            mock_session_repo, mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+        fake_storage = MagicMock()
+
+        with (
+            patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()),
+            patch(
+                "app.services.file_storage.file_storage_from_settings",
+                return_value=fake_storage,
+            ),
+            patch("app.routes.sessions.enqueue"),
+        ):
+            self._upload(client, session.id, segment_index=0, segment_offset_seconds=0, final=True)
+            self._upload(client, session.id, segment_index=1, segment_offset_seconds=300)
+
+        updated = mock_session_repo.get(session.id, mock_user_id)  # type: ignore[attr-defined]
+        assert updated.transcription_job_metadata["final"] is True
+
+    def test_segment_fields_with_whisper_provider_are_rejected(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(
+            mock_session_repo, mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+
+        with patch(
+            "app.routes.sessions.get_settings",
+            return_value=_assemblyai_settings(transcription_provider="whisper"),
+        ):
+            resp = self._upload(client, session.id, segment_index=0, segment_offset_seconds=0)
+
+        assert resp.status_code == 400, resp.text  # type: ignore[attr-defined]
+        assert resp.json()["error"]["code"] == "SEGMENTS_UNSUPPORTED"  # type: ignore[attr-defined]
+
+    def test_segment_index_without_offset_is_unprocessable(
+        self, client: object, mock_session_repo: object, mock_user_id: str
+    ) -> None:
+        session = _seed_recording_complete(
+            mock_session_repo, mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+
+        with patch("app.routes.sessions.get_settings", return_value=_assemblyai_settings()):
+            resp = client.post(  # type: ignore[attr-defined]
+                f"/api/sessions/{session.id}/upload-audio",
+                files={
+                    "therapist_audio": ("t.pcm", b"\x00" * 1024, "application/octet-stream"),
+                    "client_audio": ("c.pcm", b"\x00" * 1024, "application/octet-stream"),
+                },
+                data={"segment_index": "0"},
+            )
+
+        assert resp.status_code == 422, resp.text  # type: ignore[attr-defined]

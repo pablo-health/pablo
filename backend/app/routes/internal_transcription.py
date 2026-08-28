@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -75,6 +75,8 @@ from ..services.session_service import SessionService
 from ..settings import get_settings
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from ..models.session import TherapySession
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,9 @@ class AssemblyAiSubmitRequest(BaseModel):
 
     session_id: str
     user_id: str
+    # Set only for a segmented (mid-session) upload; resolves which manifest
+    # entry in ``transcription_job_metadata["segments"]`` to submit.
+    segment_index: int | None = None
 
 
 def _validate_tenant_db(tenant_db: str) -> None:
@@ -367,6 +372,80 @@ def transcription_complete(
         ) from None
 
 
+def _find_segment(metadata: dict[str, Any], segment_index: int) -> dict[str, Any] | None:
+    """Look up one segment's manifest entry by index."""
+    segments: list[dict[str, Any]] = metadata.get("segments") or []
+    for segment in segments:
+        if segment.get("index") == segment_index:
+            return segment
+    return None
+
+
+def _resolve_submit_target(
+    db: Session,
+    session_row: TherapySessionRow,
+    metadata: dict[str, Any],
+    session_id: str,
+    user_id: str,
+    segment_index: int | None,
+) -> tuple[str, str, float] | dict[str, str]:
+    """Resolve which two objects to submit and their session-start offset.
+
+    Returns ``(therapist_object, client_object, offset_seconds)`` to submit,
+    or a status dict when the caller should return immediately (segment
+    missing from the manifest, already submitted, or audio incomplete).
+    """
+    if segment_index is not None:
+        segment = _find_segment(metadata, segment_index)
+        if segment is None:
+            logger.warning(
+                "assemblyai-submit: session %s has no manifest entry for segment %d "
+                "— dropping (non-retryable)",
+                session_id,
+                segment_index,
+            )
+            return {"status": "not_found"}
+
+        already_submitted = any(
+            job.get("segment_index") == segment_index for job in metadata.get("jobs", [])
+        )
+        if already_submitted:
+            logger.info(
+                "assemblyai-submit: session %s segment %d already submitted",
+                session_id,
+                segment_index,
+            )
+            if metadata.get("final"):
+                _enqueue_poll(session_id, user_id)
+            return {"status": "already_submitted"}
+
+        return (segment["therapist"], segment["client"], float(segment["offset_seconds"]))
+
+    # Already submitted (a retry, or a double-enqueue): don't re-submit to
+    # AssemblyAI — just make sure the poller is running.
+    if metadata.get("jobs"):
+        logger.info(
+            "assemblyai-submit: session %s already submitted; ensuring poll is queued",
+            session_id,
+        )
+        _enqueue_poll(session_id, user_id)
+        return {"status": "already_submitted"}
+
+    audio_path = session_row.audio_gcs_path
+    if not audio_path or "," not in audio_path:
+        logger.error(
+            "assemblyai-submit: session %s has no dual-channel audio path",
+            session_id,
+        )
+        session_row.status = SessionStatus.FAILED.value
+        session_row.error = "Audio upload incomplete; cannot transcribe."
+        db.commit()
+        return {"status": "error"}
+
+    therapist_object, client_object = (part.strip() for part in audio_path.split(",", 1))
+    return (therapist_object, client_object, 0.0)
+
+
 @router.post("/api/internal/assemblyai-submit", status_code=status.HTTP_200_OK)
 def assemblyai_submit(
     request: AssemblyAiSubmitRequest,
@@ -383,9 +462,17 @@ def assemblyai_submit(
     the poller is queued. A submit failure marks the session ``failed`` and
     answers 200 so the queue does not loop a broken job — the session is then
     in a retryable status and the client can re-upload.
+
+    A request carrying ``segment_index`` submits one manifest segment instead
+    of the whole-session audio path: its jobs are tagged with that index and
+    appended to (never replacing) the recorded jobs, and the poller is only
+    enqueued once the manifest is ``final`` — polling before the session
+    finishes recording would burn the poll budget on a job that isn't done
+    yet.
     """
     settings = get_settings()
     schema_name = _resolve_schema_for_user(request.user_id)
+    segment_index = request.segment_index
 
     with create_standalone_session(practice_schema=schema_name) as db:
         # Arm the RLS GUC so the tenant-scoped TherapySessionRow lookup isn't
@@ -408,28 +495,14 @@ def assemblyai_submit(
             return {"status": "not_found"}
 
         metadata = session_row.transcription_job_metadata or {}
-        # Already submitted (a retry, or a double-enqueue): don't re-submit to
-        # AssemblyAI — just make sure the poller is running.
-        if metadata.get("jobs"):
-            logger.info(
-                "assemblyai-submit: session %s already submitted; ensuring poll is queued",
-                request.session_id,
-            )
-            _enqueue_poll(request.session_id, request.user_id)
-            return {"status": "already_submitted"}
 
-        audio_path = session_row.audio_gcs_path
-        if not audio_path or "," not in audio_path:
-            logger.error(
-                "assemblyai-submit: session %s has no dual-channel audio path",
-                request.session_id,
-            )
-            session_row.status = SessionStatus.FAILED.value
-            session_row.error = "Audio upload incomplete; cannot transcribe."
-            db.commit()
-            return {"status": "error"}
+        target = _resolve_submit_target(
+            db, session_row, metadata, request.session_id, request.user_id, segment_index
+        )
+        if isinstance(target, dict):
+            return target
+        therapist_object, client_object, segment_offset_seconds = target
 
-        therapist_object, client_object = (part.strip() for part in audio_path.split(",", 1))
         bucket = settings.transcription_audio_bucket
         storage = file_storage_from_settings(settings)
 
@@ -475,15 +548,35 @@ def assemblyai_submit(
             db.commit()
             return {"status": "error"}
 
-        session_row.transcription_job_metadata = {"provider": "assemblyai", "jobs": jobs}
+        if segment_index is not None:
+            jobs = AssemblyAiTranscriptionService.shift_job_offsets(jobs, segment_offset_seconds)
+            for job in jobs:
+                job["segment_index"] = segment_index
+            session_row.transcription_job_metadata = {
+                **metadata,
+                "jobs": [*metadata.get("jobs", []), *jobs],
+            }
+            should_poll = bool(metadata.get("final"))
+        else:
+            session_row.transcription_job_metadata = {"provider": "assemblyai", "jobs": jobs}
+            should_poll = True
         db.commit()
 
-    _enqueue_poll(request.session_id, request.user_id)
-    logger.info(
-        "assemblyai-submit: session=%s submitted %d jobs; poll queued",
-        request.session_id,
-        len(jobs),
-    )
+    if should_poll:
+        _enqueue_poll(request.session_id, request.user_id)
+        logger.info(
+            "assemblyai-submit: session=%s submitted %d jobs; poll queued",
+            request.session_id,
+            len(jobs),
+        )
+    else:
+        logger.info(
+            "assemblyai-submit: session=%s submitted segment %d (%d jobs); "
+            "awaiting final segment before polling",
+            request.session_id,
+            segment_index,
+            len(jobs),
+        )
     return {"status": "ok"}
 
 
@@ -545,6 +638,23 @@ def _poll_pending_jobs(api_key: str, jobs: list[dict], session_id: str) -> str |
         if job_status == "completed" and result is not None:
             job["utterances"] = AssemblyAiTranscriptionService.parse_result(job, result)
     return None
+
+
+def _awaiting_segments(job_metadata: dict[str, Any], jobs: list[dict]) -> bool:
+    """Whether a segmented manifest is still missing its final segment or a job.
+
+    A segment's submit task can land after this poll cycle starts, so
+    finishing as soon as every *recorded* job has utterances isn't enough —
+    segmented sessions also need the manifest itself marked ``final`` and
+    every listed segment to have a tagged job.
+    """
+    segments: list[dict[str, Any]] = job_metadata.get("segments") or []
+    if not segments:
+        return False
+    if not job_metadata.get("final"):
+        return True
+    tagged = {job.get("segment_index") for job in jobs}
+    return any(seg["index"] not in tagged for seg in segments)
 
 
 @router.post("/api/internal/transcription-poll")
@@ -609,7 +719,8 @@ def transcription_poll(
             return {"status": "error", "detail": error_msg}
 
         pending = sum(1 for job in jobs if "utterances" not in job)
-        if pending:
+        awaiting_segments = _awaiting_segments(job_metadata, jobs)
+        if pending or awaiting_segments:
             total = len(jobs)
             if poll_cycles >= _MAX_POLL_CYCLES:
                 logger.error(
