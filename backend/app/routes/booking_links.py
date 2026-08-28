@@ -78,7 +78,9 @@ def create_booking_link(
     try:
         link = repo.create(link)
     except SlugTakenError as e:
-        raise ConflictError("This slug is already taken. Please choose another.") from e
+        raise ConflictError(
+            "This slug is taken. Slugs stay reserved after a link is deleted, so pick another."
+        ) from e
     return BookingLinkResponse.from_link(link)
 
 
@@ -125,6 +127,6 @@ def delete_booking_link(
     ctx: TenantContext = Depends(get_tenant_context),
     repo: BookingLinkRepository = Depends(get_link_repository),
 ) -> None:
-    """Delete a booking link. Its public URL 404s immediately."""
+    """Tombstone a booking link. Its public URL 404s immediately and the slug stays claimed."""
     if not repo.delete(link_id, ctx.user_id):
         raise NotFoundError("Booking link not found")
