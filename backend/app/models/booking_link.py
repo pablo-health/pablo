@@ -141,6 +141,10 @@ class CreatePublicBookingRequest(BaseModel):
     note: str | None = Field(None, max_length=1000)
 
 
+class ConfirmPublicBookingRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+
+
 class PublicBookingConfirmation(BaseModel):
     """What the booker gets back — deliberately minimal, no internal ids.
 

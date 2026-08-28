@@ -15,8 +15,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from app.scheduling_engine.exceptions import InvalidAppointmentError
-from app.scheduling_engine.models.appointment import AppointmentStatus
+from app.scheduling_engine.exceptions import AppointmentConflictError, InvalidAppointmentError
+from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.models.availability import AvailabilityRule
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.availability_rule import (
@@ -126,6 +126,40 @@ class TestConfirming:
         appt = service.create_appointment(USER_ID, data=_appt_data())
         with pytest.raises(InvalidAppointmentError, match="Only a pending appointment"):
             service.confirm_appointment(appt.id, USER_ID)
+
+    def test_confirming_a_request_that_now_collides_is_refused(
+        self, repo: InMemoryAppointmentRepository, service: SchedulingService
+    ) -> None:
+        # Two requests racing for the same slot both sit pending at once —
+        # create_appointment's own check would normally prevent this, so
+        # the second is inserted directly, the way a genuine write race
+        # would land it.
+        repo.grant_access(PATIENT_ID, USER_ID)
+        first = service.create_appointment(
+            USER_ID, data=_appt_data(status="pending", pending_expires_at=FAR_FUTURE)
+        )
+        second = repo.create(
+            Appointment(
+                id="racing-request",
+                user_id=USER_ID,
+                patient_id=PATIENT_ID,
+                title="Session",
+                start_at=first.start_at,
+                end_at=first.end_at,
+                duration_minutes=50,
+                status=AppointmentStatus.PENDING,
+                session_type="individual",
+                pending_expires_at=FAR_FUTURE,
+            )
+        )
+
+        # Whichever confirms first wins the slot...
+        confirmed = service.confirm_appointment(first.id, USER_ID)
+        assert confirmed.status == AppointmentStatus.CONFIRMED
+
+        # ...and the other one now collides with a real, confirmed booking.
+        with pytest.raises(AppointmentConflictError):
+            service.confirm_appointment(second.id, USER_ID)
 
 
 class TestExpiring:

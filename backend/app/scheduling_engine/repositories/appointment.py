@@ -144,6 +144,17 @@ class AppointmentRepository(ABC):
         """
 
     @abstractmethod
+    def get_by_confirmation_token_hash(self, user_id: str, token_hash: str) -> Appointment | None:
+        """Find the appointment holding this confirmation token, any status.
+
+        Unlike every other lookup here, this deliberately does not filter
+        by status — a confirmed row answers an idempotent double-click, and
+        a cancelled row (hash still present) is a lapsed hold that may yet
+        be revived. ``user_id`` is the link owner, not a patient grant: a
+        token is bound to the link it was minted on.
+        """
+
+    @abstractmethod
     def delete(self, appointment_id: str, user_id: str) -> bool:
         """Delete an appointment. Returns True if deleted."""
 
@@ -297,6 +308,12 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             and appt.pending_expires_at is not None
             and appt.pending_expires_at <= now
         ]
+
+    def get_by_confirmation_token_hash(self, user_id: str, token_hash: str) -> Appointment | None:
+        for appt in self._appointments.values():
+            if appt.user_id == user_id and appt.confirmation_token_hash == token_hash:
+                return appt
+        return None
 
     def create(self, appointment: Appointment) -> Appointment:
         self._appointments[appointment.id] = appointment

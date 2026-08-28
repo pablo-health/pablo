@@ -20,7 +20,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
+    from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.models.conflict import TimeSlot
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
@@ -42,6 +43,7 @@ from ..models import Patient, User
 from ..models.audit import ACTOR_TYPE_ANONYMOUS, AuditAction
 from ..models.booking_link import (
     BookingLink,
+    ConfirmPublicBookingRequest,
     CreatePublicBookingRequest,
     PublicBookingConfirmation,
     PublicBookingLinkResponse,
@@ -59,7 +61,8 @@ from ..repositories import (
     get_patient_repository,
     get_user_repository,
 )
-from ..scheduling_engine.exceptions import InvalidAppointmentError
+from ..scheduling_engine.exceptions import AppointmentConflictError, InvalidAppointmentError
+from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
@@ -146,6 +149,18 @@ def get_public_scheduling_service(
     return SchedulingService(appt_repo)
 
 
+def get_public_appointment_repository(
+    appt_repo: AppointmentRepository = Depends(get_appointment_repository),
+) -> AppointmentRepository:
+    """The raw repository, for the one lookup the service layer doesn't wrap.
+
+    A thin passthrough so this — like every other public dependency — is a
+    single override point for tests, rather than reaching for the module-
+    level ``get_appointment_repository`` directly.
+    """
+    return appt_repo
+
+
 def get_public_gcal_service(
     token_repo: GoogleCalendarTokenRepository = Depends(get_google_calendar_token_repository),
     appt_repo: AppointmentRepository = Depends(get_appointment_repository),
@@ -159,9 +174,43 @@ def get_public_gcal_service(
     )
 
 
+def sweep_expired_holds(
+    http_request: Request,
+    ctx: PublicBookingContext = Depends(get_public_booking_context),
+    scheduling: SchedulingService = Depends(get_public_scheduling_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> None:
+    """Release lapsed holds' slots the next time anyone looks at this link.
+
+    A route dependency, not a cron: there is no reliable moment to sweep a
+    hold except when somebody next touches the link it belongs to, and that
+    is exactly when its slot matters. Expiring a request without a
+    confirmation token is ``expire_pending_appointments``'s own contract
+    (some other surface's request, not a hold) — its patient is a real
+    chart and must never be swept.
+    """
+    for appt in scheduling.expire_pending_appointments(ctx.link.user_id):
+        if appt.confirmation_token_hash is None:
+            continue
+        patient = patient_repo.get(appt.patient_id, ctx.link.user_id)
+        if patient is not None and patient.status == "pending":
+            patient_repo.delete(patient.id, ctx.link.user_id)
+            audit.log_patient_action(
+                AuditAction.PATIENT_DELETED,
+                ctx.owner,
+                http_request,
+                patient,
+                changes={"source": "public_booking_hold_expired"},
+                actor_type=ACTOR_TYPE_ANONYMOUS,
+            )
+
+
 _BOOKING_CLOSED = (
     "This practice isn't accepting online bookings right now. Please contact them directly."
 )
+_CONFIRMATION_INVALID = "This confirmation link is not valid."
+_SLOT_TAKEN = "That time was taken while you were confirming. Please pick another slot."
 
 
 def _require_owner_may_accept_bookings(owner: User) -> None:
@@ -231,7 +280,11 @@ def get_public_booking_link(
     )
 
 
-@router.get("/api/public/booking-links/{slug}/slots", response_model=FreeSlotsResponse)
+@router.get(
+    "/api/public/booking-links/{slug}/slots",
+    response_model=FreeSlotsResponse,
+    dependencies=[Depends(sweep_expired_holds)],
+)
 def get_public_free_slots(
     date_param: str = Query(..., alias="date", description="Date (YYYY-MM-DD)"),
     ctx: PublicBookingContext = Depends(get_public_booking_context),
@@ -332,8 +385,8 @@ def _place_hold(
     """Place a slot-holding appointment and mail a confirmation link.
 
     Always creates a fresh, quarantined patient record — never reused by
-    email, unlike the instant path. Verified attach happens on confirm
-    (a later change); this record is a placeholder until then.
+    email, unlike the instant path. Verified attach happens on confirm;
+    this record is a placeholder until then.
     """
     now = utc_now()
     patient = patient_repo.create(
@@ -413,7 +466,7 @@ def _place_hold(
     "/api/public/booking-links/{slug}/bookings",
     response_model=PublicBookingConfirmation,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_public_booking_write_rate_limit)],
+    dependencies=[Depends(require_public_booking_write_rate_limit), Depends(sweep_expired_holds)],
 )
 def create_public_booking(
     request: CreatePublicBookingRequest,
@@ -496,3 +549,198 @@ def create_public_booking(
         duration_minutes=ctx.link.duration_minutes,
         status="confirmed",
     )
+
+
+def _slot_start_iso(appt: Appointment) -> str:
+    """Render an appointment's start the way the availability engine does.
+
+    Free slots come back as UTC ``...Z`` strings truncated to the second;
+    comparing against those has to render the stored instant the same way
+    rather than relying on ``isoformat`` matching by accident.
+    """
+    return appt.start_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _confirmation_from_appointment(
+    ctx: PublicBookingContext, appt: Appointment
+) -> PublicBookingConfirmation:
+    return PublicBookingConfirmation(
+        host_name=ctx.link.host_name,
+        title=ctx.link.title,
+        start_at=_slot_start_iso(appt),
+        end_at=appt.end_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        duration_minutes=ctx.link.duration_minutes,
+        status="confirmed",
+    )
+
+
+def _release_the_loser(
+    appt: Appointment,
+    ctx: PublicBookingContext,
+    scheduling: SchedulingService,
+    patient_repo: PatientRepository,
+    http_request: Request,
+    audit: AuditService,
+) -> None:
+    """The slot went to someone else while this hold sat pending or lapsed.
+
+    Cancels this hold and soft-deletes its placeholder explicitly rather
+    than relying on the request rolling back — the winner's write already
+    committed, so this cleanup has to be its own, separately-committed
+    step for the two paths to agree on a single non-cancelled appointment.
+    """
+    scheduling.cancel_appointment(appt.id, ctx.link.user_id)
+    placeholder = patient_repo.get(appt.patient_id, ctx.link.user_id)
+    if placeholder is not None and placeholder.status == "pending":
+        patient_repo.delete(placeholder.id, ctx.link.user_id)
+        audit.log_patient_action(
+            AuditAction.PATIENT_DELETED,
+            ctx.owner,
+            http_request,
+            placeholder,
+            changes={"source": "public_booking_hold_lost_race"},
+            actor_type=ACTOR_TYPE_ANONYMOUS,
+        )
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_UPDATED,
+        ctx.owner,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={"source": "public_booking", "status": "cancelled_slot_taken"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+
+
+def _promote_pending_patient(
+    appt: Appointment,
+    ctx: PublicBookingContext,
+    patient_repo: PatientRepository,
+    scheduling: SchedulingService,
+    http_request: Request,
+    audit: AuditService,
+) -> Appointment:
+    """Turn a confirmed hold's quarantined placeholder into a real chart.
+
+    A verified email that matches an existing chart re-points the
+    appointment at it and drops the placeholder — the existing chart's own
+    fields are never touched. Otherwise the placeholder itself graduates
+    to an active patient, keeping its ``public_booking`` origin as
+    provenance rather than quarantine. Returns the appointment, re-pointed
+    if it was re-pointed — callers must use the returned value rather than
+    their own copy, since the object identity backing it isn't guaranteed
+    to be shared with the write this makes.
+    """
+    placeholder = patient_repo.get(appt.patient_id, ctx.link.user_id)
+    if placeholder is None or placeholder.status != "pending":
+        return appt  # already promoted (e.g. the idempotent second confirm)
+
+    existing = patient_repo.find_by_email(str(placeholder.email), ctx.link.user_id)
+    if existing is not None:
+        appt = scheduling.update_appointment(appt.id, ctx.link.user_id, patient_id=existing.id)
+        patient_repo.delete(placeholder.id, ctx.link.user_id)
+        audit.log_appointment_action(
+            AuditAction.APPOINTMENT_UPDATED,
+            ctx.owner,
+            http_request,
+            appt.id,
+            patient_id=existing.id,
+            changes={"source": "public_booking", "attached": "verified_email"},
+            actor_type=ACTOR_TYPE_ANONYMOUS,
+        )
+        audit.log_patient_action(
+            AuditAction.PATIENT_DELETED,
+            ctx.owner,
+            http_request,
+            placeholder,
+            changes={"source": "public_booking_placeholder_merged"},
+            actor_type=ACTOR_TYPE_ANONYMOUS,
+        )
+        return appt
+
+    placeholder.status = "active"
+    patient_repo.update(placeholder)
+    audit.log_patient_action(
+        AuditAction.PATIENT_UPDATED,
+        ctx.owner,
+        http_request,
+        placeholder,
+        changes={"source": "public_booking", "status": "active"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+    return appt
+
+
+@router.post(
+    "/api/public/booking-links/{slug}/confirm",
+    response_model=PublicBookingConfirmation,
+    dependencies=[Depends(sweep_expired_holds)],
+)
+def confirm_public_booking(
+    request: ConfirmPublicBookingRequest,
+    http_request: Request,
+    ctx: PublicBookingContext = Depends(get_public_booking_context),
+    engine: AvailabilityEngine = Depends(get_public_availability_engine),
+    scheduling: SchedulingService = Depends(get_public_scheduling_service),
+    appt_repo: AppointmentRepository = Depends(get_public_appointment_repository),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> PublicBookingConfirmation:
+    """Finish a hold: confirm it, or revive it if it already lapsed.
+
+    POST, not GET — a GET link is exactly what mail scanners and link
+    previewers fetch, and either would consume a one-time token before the
+    booker ever clicks it. One message covers a token that never existed,
+    belongs to another link, or was killed by a clinician cancelling the
+    hold in-app: none of those should be distinguishable from each other.
+    """
+    _require_owner_may_accept_bookings(ctx.owner)
+
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
+    appt = appt_repo.get_by_confirmation_token_hash(ctx.link.user_id, token_hash)
+    if appt is None:
+        raise NotFoundError(_CONFIRMATION_INVALID)
+
+    if appt.status == AppointmentStatus.CONFIRMED:
+        # Idempotent: a second click or a double form submit does nothing.
+        return _confirmation_from_appointment(ctx, appt)
+
+    if appt.status == AppointmentStatus.PENDING:
+        try:
+            appt = scheduling.confirm_appointment(appt.id, ctx.link.user_id)
+        except AppointmentConflictError:
+            _release_the_loser(appt, ctx, scheduling, patient_repo, http_request, audit)
+            raise ConflictError(_SLOT_TAKEN) from None
+    elif appt.status == AppointmentStatus.CANCELLED:
+        # Found by its hash, which only a lapsed hold still carries — a
+        # clinician-cancelled hold has its hash cleared and would never
+        # have matched the lookup above.
+        slots = engine.get_free_slots(
+            ctx.link.user_id, appt.start_at.date().isoformat(), ctx.link.duration_minutes
+        )
+        still_free = any(s.start == _slot_start_iso(appt) for s in slots.slots)
+        restored = patient_repo.restore(appt.patient_id, ctx.link.user_id) if still_free else None
+        if not still_free or restored is None:
+            raise ConflictError(_SLOT_TAKEN)
+        try:
+            appt = scheduling.finalize_lapsed_hold(appt.id, ctx.link.user_id)
+        except AppointmentConflictError:
+            raise ConflictError(_SLOT_TAKEN) from None
+    else:
+        raise NotFoundError(_CONFIRMATION_INVALID)
+
+    appt = _promote_pending_patient(appt, ctx, patient_repo, scheduling, http_request, audit)
+    appt = _sync_appointment_to_google(scheduling, gcal_service, ctx.owner, appt)
+
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_UPDATED,
+        ctx.owner,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={"source": "public_booking", "status": "confirmed"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+
+    return _confirmation_from_appointment(ctx, appt)

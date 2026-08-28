@@ -130,6 +130,36 @@ class SchedulingService:
                 f"Conflicts with an existing appointment at {conflicting.start_at.isoformat()}"
             )
 
+    def _reject_if_really_booked(
+        self,
+        user_id: str,
+        start_dt: datetime,
+        end_dt: datetime,
+        *,
+        exclude_appointment_id: str | None = None,
+    ) -> None:
+        """Raise if a genuinely committed appointment already occupies this slot.
+
+        Unlike :meth:`_reject_if_overlapping`, ignores other PENDING requests.
+        Two holds racing for the same slot both hold it as pending at once —
+        that isn't a conflict to fail on, it's exactly the situation whichever
+        confirms first is meant to resolve. The loser finds out at its own,
+        later confirm attempt, once the winner has become a real, CONFIRMED
+        appointment.
+        """
+        conflicts = [
+            c
+            for c in self._repo.list_overlapping(
+                user_id, start_dt, end_dt, exclude_appointment_id=exclude_appointment_id
+            )
+            if c.status != AppointmentStatus.PENDING
+        ]
+        if conflicts:
+            conflicting = conflicts[0]
+            raise AppointmentConflictError(
+                f"Conflicts with an existing appointment at {conflicting.start_at.isoformat()}"
+            )
+
     def create_appointment(
         self,
         user_id: str,
@@ -326,13 +356,51 @@ class SchedulingService:
 
         The expiry goes with it — once confirmed there is nothing left to
         expire, and leaving the timestamp behind would arm the sweep against a
-        real appointment.
+        real appointment. Re-checks for a collision first: the slot a request
+        held may have been double-booked by something else that landed while
+        it sat pending, and confirming into that collision would silently
+        double-book the calendar.
         """
         appointment = self.get_appointment(appointment_id, user_id)
         if appointment.status != AppointmentStatus.PENDING:
             raise InvalidAppointmentError(
                 f"Only a pending appointment can be confirmed (this one is {appointment.status})"
             )
+        self._reject_if_really_booked(
+            user_id,
+            _as_datetime(appointment.start_at),
+            _as_datetime(appointment.end_at),
+            exclude_appointment_id=appointment_id,
+        )
+        appointment.status = AppointmentStatus.CONFIRMED
+        appointment.pending_expires_at = None
+        appointment.updated_at = _now()
+        return self._repo.update(appointment)
+
+    def finalize_lapsed_hold(self, appointment_id: str, user_id: str) -> Appointment:
+        """Revive a hold that expired before anyone confirmed it.
+
+        Only a cancelled row that still carries its confirmation token
+        qualifies — that is what distinguishes a lapsed hold (sweep-
+        cancelled, hash intact) from a clinician-cancelled appointment
+        (hash cleared on cancel) or an ordinary cancellation. Re-checks for
+        a collision, same as :meth:`confirm_appointment`: the slot may have
+        been taken by somebody else since it lapsed.
+        """
+        appointment = self.get_appointment(appointment_id, user_id)
+        if (
+            appointment.status != AppointmentStatus.CANCELLED
+            or appointment.confirmation_token_hash is None
+        ):
+            raise InvalidAppointmentError(
+                f"Appointment {appointment_id} is not a lapsed hold that can be revived"
+            )
+        self._reject_if_really_booked(
+            user_id,
+            _as_datetime(appointment.start_at),
+            _as_datetime(appointment.end_at),
+            exclude_appointment_id=appointment_id,
+        )
         appointment.status = AppointmentStatus.CONFIRMED
         appointment.pending_expires_at = None
         appointment.updated_at = _now()
@@ -355,10 +423,18 @@ class SchedulingService:
         return expired
 
     def cancel_appointment(self, appointment_id: str, user_id: str) -> Appointment:
-        """Cancel a single appointment."""
+        """Cancel a single appointment.
+
+        Clears any confirmation token along with it — once a clinician has
+        cancelled a hold in-app, its link must stop working. This is the
+        signal that tells the confirm endpoint a cancelled-with-a-hash row
+        apart from this one is a lapsed hold rather than a killed one: the
+        expiry sweep deliberately leaves the hash in place.
+        """
         appointment = self.get_appointment(appointment_id, user_id)
         appointment.status = AppointmentStatus.CANCELLED
         appointment.pending_expires_at = None
+        appointment.confirmation_token_hash = None
         appointment.updated_at = _now()
         return self._repo.update(appointment)
 
