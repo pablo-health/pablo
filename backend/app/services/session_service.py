@@ -143,7 +143,11 @@ class SessionInTerminalStatusError(ConflictError):
 # Valid status transitions (state machine)
 VALID_TRANSITIONS: dict[str, set[str]] = {
     SessionStatus.SCHEDULED: {SessionStatus.IN_PROGRESS, SessionStatus.CANCELLED},
-    SessionStatus.IN_PROGRESS: {SessionStatus.RECORDING_COMPLETE, SessionStatus.CANCELLED},
+    SessionStatus.IN_PROGRESS: {
+        SessionStatus.RECORDING_COMPLETE,
+        SessionStatus.CANCELLED,
+        SessionStatus.SCHEDULED,
+    },
     SessionStatus.RECORDING_COMPLETE: {
         SessionStatus.QUEUED,
         SessionStatus.TRANSCRIBING,
@@ -699,13 +703,16 @@ class SessionService:
             target == SessionStatus.CANCELLED and session.started_at
         ):
             session.ended_at = now
+        elif target == SessionStatus.SCHEDULED:
+            session.started_at = None
+            session.ended_at = None
 
         session.status = target
         session.updated_at = now
         session = self.session_repo.update(session)
 
         patient = self._get_patient_or_raise(session.patient_id, user_id)
-        if target in {SessionStatus.CANCELLED, SessionStatus.IN_PROGRESS}:
+        if target in {SessionStatus.CANCELLED, SessionStatus.IN_PROGRESS, SessionStatus.SCHEDULED}:
             self._update_next_session_date(patient, user_id)
         return session, patient
 

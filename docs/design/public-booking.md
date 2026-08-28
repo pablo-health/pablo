@@ -105,22 +105,18 @@ exists in principle — the create path does more writes — but it is
 noise-dominated over the network and further blunted by the IP rate
 limit.)
 
-**Can an unverified email attach writes to a real chart?** Yes, and
-this is the real limit of phase 1: anyone who knows a patient's email
-can create an appointment (with attacker-chosen note text) that lands
-on that patient's chart and the clinician's calendar, attributed to the
-real client. Nothing is disclosed to the attacker — it is an integrity
-problem, not a confidentiality one — but a clinician could mistake the
-spoofed booking for a genuine one. The same unverified-email property
-also allows slow-drip junk patient records (rate-limited, deletable,
-but real).
+**Can an unverified email attach writes to a real chart?** No, since
+the chart invariant below: an email that hasn't been verified by a
+confirm click can never cause a booking to attach to an existing
+chart. Anyone who knows a patient's email can still create a booking
+against that email, but the write lands on a fresh record of its own
+— never on the real client's chart, never with attacker-chosen note
+text reaching a real client's calendar entry. The same unverified-email
+property still allows slow-drip junk patient records (rate-limited,
+deletable, quarantined out of chart lists, but real) — a nuisance, not
+an integrity break.
 
-This is acceptable while a deployment uses booking links for
-non-clinical intake — new-contact consultations, `personal`-edition
-practices — which is exactly the phase-1 scope the default-off flag
-protects. **Before positioning booking links as client self-scheduling
-against live charts, email confirmation must land**, with two layers
-that fail safe independently:
+The invariant holds through two layers that fail safe independently:
 
 1. **Per-link `require_email_confirmation`, born true, no UI.** A
    column on `booking_links` whose `true` default is enforced at the
@@ -163,20 +159,27 @@ that fail safe independently:
    Ships with the confirmation work at the latest.
 
 2. **The chart invariant, independent of the flag.** An unverified
-   email never attaches a booking to an existing chart — a matched
-   email either completes confirmation or lands as a pending record
-   the clinician reconciles (the EHR-import client-resolution shape)
-   before it touches the chart. This holds even on links where
-   confirmation was operator-relaxed: relaxing the flag trades
-   "confirm to finalize" for "book instantly as a fresh or pending
-   record" — it can never reopen spoofed writes onto a real chart.
-   A `personal`-edition practice, which declares it holds no clinical
-   charts, is the one place attach-by-match may skip verification —
-   a rule keyed to a declared fact, not a toggle.
+   email never attaches a booking to an existing chart. On a link that
+   requires confirmation, a matched email holds under a placeholder
+   record and only attaches to the real chart once its own confirm
+   link is clicked — never on the strength of the email alone. On a
+   link where confirmation was operator-relaxed (`UPDATE
+   platform.booking_links SET require_email_confirmation = false`,
+   a database-level action, not a setting), a matched email books
+   instantly, but against a fresh, quarantined placeholder record —
+   the same shape a hold's placeholder uses — leaving the matched
+   chart untouched for a person to reconcile later. Relaxing the flag
+   trades "confirm to finalize" for "book instantly as a fresh or
+   quarantined record"; it never reopens spoofed writes onto a real
+   chart. A `personal`-edition practice, which declares up front that
+   it holds no clinical charts, is the one place attach-by-match is
+   allowed — a rule keyed to that declared fact, not a toggle: nothing
+   in the booking request, the link's settings, or the management API
+   can produce the same effect.
 
-Until those land, the design intent stands: booking links book *time*,
-and chart identity stays therapist-confirmed. Phase 2 is tracked as
-epic PABLO-e3a.
+Booking links book *time*, and chart identity stays
+confirmation-gated — by a booker's own click, or by a practice's
+declared edition, never by an unverified claim alone.
 
 ### The wound-down practice
 

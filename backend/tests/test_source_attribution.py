@@ -28,6 +28,8 @@ from app.models.session import (
 )
 from app.models.soap_note import _to_sentence, _to_sentence_list
 from app.models.transcript import parse_transcript_segments as _parse_transcript_segments
+from app.notes.transcript_normalize import normalize_transcript_to_canonical_lines
+from app.services.assemblyai_transcription_service import AssemblyAiTranscriptionService
 from app.services.source_attribution_service import (
     _extract_json,
     _parse_segment_ids,
@@ -421,6 +423,28 @@ class TestTranscriptSegmentParsing:
         assert len(segments) == 1
         assert segments[0].index == 0
         assert segments[0].text == "Valid line."
+
+    def test_diarized_speaker_label_round_trips_through_merge_and_normalize(self) -> None:
+        """A diarized AssemblyAI job merges to a "Client A: ..." line, which is
+        normalized (google_meet's bracketed shape) and parsed the same way
+        every other transcript is — the two-word speaker label survives."""
+        merged = AssemblyAiTranscriptionService.merge_utterances(
+            [
+                {
+                    "speaker": "Client",
+                    "utterances": [
+                        {"start": 1.0, "end": 2.0, "speaker": "Client A", "text": "Hello there."}
+                    ],
+                }
+            ]
+        )
+        canonical = normalize_transcript_to_canonical_lines(merged, "google_meet")
+
+        segments = _parse_transcript_segments(canonical)
+
+        assert len(segments) == 1
+        assert segments[0].speaker == "Client A"
+        assert segments[0].text == "Hello there."
 
 
 # --- Source attribution service ---

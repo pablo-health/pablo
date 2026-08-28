@@ -48,6 +48,7 @@ from ..models.booking_link import (
     PublicBookingConfirmation,
     PublicBookingLinkResponse,
 )
+from ..models.enums import PracticeEdition
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
 from ..rate_limit import (
     require_public_booking_rate_limit,
@@ -320,24 +321,69 @@ def _booking_provenance(ctx: PublicBookingContext) -> dict[str, str]:
     }
 
 
-def _find_or_create_patient(
+def _is_personal_edition(link: BookingLink) -> bool:
+    """Whether this link's practice has declared itself non-clinical.
+
+    ``None`` — a single-schema deployment, or any value that isn't the
+    declared 'personal' string — means therapist semantics. The safe
+    default is the clinical one.
+    """
+    return link.practice_edition == PracticeEdition.PERSONAL.value
+
+
+def _patient_for_instant_booking(
     request: CreatePublicBookingRequest,
     ctx: PublicBookingContext,
     patient_repo: PatientRepository,
     http_request: Request,
     audit: AuditService,
 ) -> Patient:
+    """Resolve the patient record for a link that books without a hold.
+
+    An unverified email must never attach a booking to an existing
+    chart: a fresh email gets a real, active record; a matched email
+    gets a quarantined placeholder of its own, and the confirmed
+    appointment books against that placeholder rather than the chart
+    it matched. A personal-edition practice, which has declared it
+    holds no clinical charts, is the one place a match may attach —
+    byte-for-byte the original reuse-by-email behavior.
+    """
     existing = patient_repo.find_by_email(str(request.email), ctx.link.user_id)
-    if existing is not None:
+    if existing is not None and _is_personal_edition(ctx.link):
         return existing
 
     now = utc_now()
+    if existing is None:
+        patient = patient_repo.create(
+            Patient(
+                id=str(uuid.uuid4()),
+                first_name=request.first_name.strip(),
+                last_name=request.last_name.strip(),
+                email=str(request.email),
+                origin="public_booking",
+                created_at=now,
+                updated_at=now,
+            ),
+            ctx.link.user_id,
+        )
+        audit.log_patient_action(
+            AuditAction.PATIENT_CREATED,
+            ctx.owner,
+            http_request,
+            patient,
+            changes=_booking_provenance(ctx),
+            actor_type=ACTOR_TYPE_ANONYMOUS,
+        )
+        return patient
+
     patient = patient_repo.create(
         Patient(
             id=str(uuid.uuid4()),
             first_name=request.first_name.strip(),
             last_name=request.last_name.strip(),
             email=str(request.email),
+            status="pending",
+            origin="public_booking",
             created_at=now,
             updated_at=now,
         ),
@@ -348,7 +394,11 @@ def _find_or_create_patient(
         ctx.owner,
         http_request,
         patient,
-        changes=_booking_provenance(ctx),
+        changes={
+            "source": "public_booking",
+            "status": "pending",
+            "reason": "unverified_email_matched_chart",
+        },
         actor_type=ACTOR_TYPE_ANONYMOUS,
     )
     return patient
@@ -509,7 +559,7 @@ def create_public_booking(
             request, ctx, slot, note_lines, patient_repo, scheduling, sender, http_request, audit
         )
 
-    patient = _find_or_create_patient(request, ctx, patient_repo, http_request, audit)
+    patient = _patient_for_instant_booking(request, ctx, patient_repo, http_request, audit)
 
     try:
         appt = scheduling.create_appointment(

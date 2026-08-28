@@ -171,6 +171,48 @@ class TestTodaySessionsAudit:
         assert viewed == {first.id, second.id}
 
 
+class TestPatchSessionStatus:
+    """PATCH /api/sessions/{id}/status — the in_progress -> scheduled revert
+    a therapist needs when a recording never actually started."""
+
+    def test_patch_status_scheduled_reverts_an_in_progress_session(
+        self,
+        client: TestClient,
+        mock_session_repo: InMemoryTherapySessionRepository,
+        mock_repo: InMemoryPatientRepository,
+        mock_audit_service: AuditService,
+        mock_user_id: str,
+    ) -> None:
+        session = _seed_session(
+            mock_session_repo, owner=mock_user_id, status=SessionStatus.IN_PROGRESS
+        )
+        now = datetime.now(UTC)
+        patient = Patient(
+            id=session.patient_id,
+            first_name="Jane",
+            last_name="Smith",
+            created_at=now,
+            updated_at=now,
+        )
+        mock_repo.create(patient, mock_user_id)
+
+        resp = client.patch(
+            f"/api/sessions/{session.id}/status",
+            json={"status": "scheduled"},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "scheduled"
+        assert body["started_at"] is None
+
+        changes = {
+            call.args[0].resource_id: call.args[0].changes
+            for call in mock_audit_service._repo.append.call_args_list
+        }
+        assert changes[session.id] == {"status": "scheduled"}
+
+
 class TestUploadTranscriptAsync:
     """POST /api/sessions/{id}/transcript persists the transcript and returns
     202, handing generation to the worker rather than generating inline

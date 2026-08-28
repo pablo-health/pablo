@@ -71,6 +71,10 @@ class BookingLink:
     # tenant schema before any other query); owner-facing reads leave it
     # None.
     practice_schema: str | None = None
+    # The owning practice's declared edition ('therapist' / 'personal').
+    # Populated only by ``get_by_slug``, alongside practice_schema; None
+    # in a single-schema deployment (no practice row) or when unset.
+    practice_edition: str | None = None
 
 
 class CreateBookingLinkRequest(BaseModel):
