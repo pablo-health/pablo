@@ -326,6 +326,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         reminder_24h_sent=row.reminder_24h_sent,
         reminder_1h_sent=row.reminder_1h_sent,
         pending_expires_at=row.pending_expires_at,
+        confirmation_token_hash=row.confirmation_token_hash,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -365,5 +366,6 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.reminder_24h_sent = appt.reminder_24h_sent
     row.reminder_1h_sent = appt.reminder_1h_sent
     row.pending_expires_at = appt.pending_expires_at
+    row.confirmation_token_hash = appt.confirmation_token_hash
     row.created_at = appt.created_at
     row.updated_at = appt.updated_at

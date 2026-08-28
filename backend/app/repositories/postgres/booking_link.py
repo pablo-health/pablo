@@ -39,6 +39,7 @@ def _row_to_link(row: BookingLinkRow) -> BookingLink:
         is_active=row.is_active,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        require_email_confirmation=row.require_email_confirmation,
     )
 
 

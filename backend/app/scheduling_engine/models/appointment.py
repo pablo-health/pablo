@@ -99,6 +99,12 @@ class Appointment:
     # sit on a request) belong to the surface that took the booking, not here.
     pending_expires_at: datetime | None = None
 
+    # SHA-256 of the confirmation token mailed to the booker on a hold
+    # created through a booking link that requires email confirmation.
+    # Set only while status is 'pending'; the raw token itself is never
+    # stored. None for every appointment that never went through that path.
+    confirmation_token_hash: str | None = None
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -139,6 +145,7 @@ class Appointment:
             reminder_24h_sent=data.get("reminder_24h_sent", False),
             reminder_1h_sent=data.get("reminder_1h_sent", False),
             pending_expires_at=data.get("pending_expires_at"),
+            confirmation_token_hash=data.get("confirmation_token_hash"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -177,6 +184,7 @@ class Appointment:
             "place_of_service": self.place_of_service,
             "diagnosis_codes": self.diagnosis_codes,
             "pending_expires_at": self.pending_expires_at,
+            "confirmation_token_hash": self.confirmation_token_hash,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,
             "created_at": self.created_at,

@@ -121,7 +121,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     unit_count integer,
     place_of_service character varying(2),
     diagnosis_codes jsonb,
-    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL
+    note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
+    confirmation_token_hash character varying(64)
 );
 
 
@@ -802,6 +803,10 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
 
 
 CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types USING btree (user_id);
+
+
+
+CREATE INDEX ix_appointments_confirmation_token_hash ON __TENANT_SCHEMA__.appointments USING btree (confirmation_token_hash) WHERE (confirmation_token_hash IS NOT NULL);
 
 
 

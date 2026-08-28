@@ -27,6 +27,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -573,6 +574,13 @@ class BookingLinkRow(PlatformBase):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Enforced at the database layer, not here: no Python ``default``, so an
+    # INSERT that omits this column gets ``true`` from Postgres itself. No
+    # setting, no API field — relaxing a link is a direct UPDATE an operator
+    # runs by hand (docs/design/public-booking.md).
+    require_email_confirmation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
 
     __table_args__ = (  # type: ignore[assignment]  # tuple form for CheckConstraint, same as PracticeRow
         CheckConstraint(

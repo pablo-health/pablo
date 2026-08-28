@@ -236,6 +236,7 @@ class InMemoryPatientRepository(PatientRepository):
             for p in self._patients.values()
             if (p.email or "").lower() == email.lower()
             and p.id not in self._deleted_at
+            and p.status != "pending"
             and self._can_access(p.id, user_id)
         ]
         return min(matches, key=lambda p: p.created_at) if matches else None
@@ -252,7 +253,9 @@ class InMemoryPatientRepository(PatientRepository):
         patients = [
             p
             for p in self._patients.values()
-            if p.id not in self._deleted_at and self._can_access(p.id, user_id)
+            if p.id not in self._deleted_at
+            and p.status != "pending"
+            and self._can_access(p.id, user_id)
         ]
 
         if search:
@@ -316,7 +319,10 @@ class InMemoryPatientRepository(PatientRepository):
         rows = [
             (self._patients[pid], stamp)
             for pid, stamp in self._deleted_at.items()
-            if pid in self._patients and self._can_access(pid, user_id) and stamp > cutoff
+            if pid in self._patients
+            and self._patients[pid].status != "pending"
+            and self._can_access(pid, user_id)
+            and stamp > cutoff
         ]
         rows.sort(key=lambda pair: (pair[0].last_name_lower, pair[0].first_name_lower))
         return rows

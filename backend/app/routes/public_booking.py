@@ -15,7 +15,9 @@ patient data, no existing appointments, no internal ids.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
     from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
+    from ..scheduling_engine.models.conflict import TimeSlot
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
@@ -60,6 +63,7 @@ from ..scheduling_engine.exceptions import InvalidAppointmentError
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
+from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
 from ..services.google_calendar_service import GoogleCalendarService
 from ..settings import get_settings
 from ..utcnow import utc_now
@@ -77,6 +81,11 @@ router = APIRouter(
 
 # How far ahead a public booker may look and book.
 MAX_ADVANCE_DAYS = 60
+
+# How long a hold from a require-confirmation link keeps its slot before the
+# expiry sweep releases it. A constant, not a setting — see
+# docs/design/public-booking.md.
+HOLD_TTL_MINUTES = 15
 
 _LINK_NOT_FOUND = "This booking link does not exist or is no longer available."
 
@@ -292,6 +301,114 @@ def _find_or_create_patient(
     return patient
 
 
+def _confirmation_email(
+    ctx: PublicBookingContext, to: str, slot: TimeSlot, token: str
+) -> OutboundEmail:
+    confirm_url = f"{get_settings().app_url}/book/{ctx.link.slug}/confirm?token={token}"
+    return OutboundEmail(
+        to=to,
+        subject=f"Confirm your {ctx.link.title} with {ctx.link.host_name}",
+        kind="booking_confirmation",
+        text=(
+            f"{ctx.link.host_name} is holding {ctx.link.title} for you on "
+            f"{slot.start[:10]} at {slot.start[11:16]}, {ctx.link.duration_minutes} minutes.\n\n"
+            f"Confirm this booking: {confirm_url}\n\n"
+            f"This hold expires in {HOLD_TTL_MINUTES} minutes."
+        ),
+    )
+
+
+def _place_hold(
+    request: CreatePublicBookingRequest,
+    ctx: PublicBookingContext,
+    slot: TimeSlot,
+    note_lines: list[str],
+    patient_repo: PatientRepository,
+    scheduling: SchedulingService,
+    sender: EmailSender,
+    http_request: Request,
+    audit: AuditService,
+) -> PublicBookingConfirmation:
+    """Place a slot-holding appointment and mail a confirmation link.
+
+    Always creates a fresh, quarantined patient record — never reused by
+    email, unlike the instant path. Verified attach happens on confirm
+    (a later change); this record is a placeholder until then.
+    """
+    now = utc_now()
+    patient = patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name=request.first_name.strip(),
+            last_name=request.last_name.strip(),
+            email=str(request.email),
+            status="pending",
+            origin="public_booking",
+            created_at=now,
+            updated_at=now,
+        ),
+        ctx.link.user_id,
+    )
+    audit.log_patient_action(
+        AuditAction.PATIENT_CREATED,
+        ctx.owner,
+        http_request,
+        patient,
+        changes={"source": "public_booking", "status": "pending"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+
+    try:
+        appt = scheduling.create_appointment(
+            ctx.link.user_id,
+            data={
+                "patient_id": patient.id,
+                "title": ctx.link.title,
+                "start_at": slot.start,
+                "end_at": slot.end,
+                "duration_minutes": ctx.link.duration_minutes,
+                "session_type": ctx.link.session_type,
+                "notes": "\n".join(note_lines),
+                "status": "pending",
+                "pending_expires_at": now + timedelta(minutes=HOLD_TTL_MINUTES),
+                "confirmation_token_hash": token_hash,
+            },
+        )
+    except InvalidAppointmentError as e:
+        raise BadRequestError(str(e)) from e
+
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_CREATED,
+        ctx.owner,
+        http_request,
+        appt.id,
+        patient_id=patient.id,
+        changes={"source": "public_booking", "status": "pending"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+
+    message = _confirmation_email(ctx, str(request.email), slot, token)
+    try:
+        sender.send(message)
+    except Exception as e:
+        logger.warning("booking confirmation send failed: kind=%s", message.kind)
+        scheduling.cancel_appointment(appt.id, ctx.link.user_id)
+        patient_repo.delete(patient.id, ctx.link.user_id)
+        raise ForbiddenError(_BOOKING_CLOSED) from e
+
+    return PublicBookingConfirmation(
+        host_name=ctx.link.host_name,
+        title=ctx.link.title,
+        start_at=slot.start,
+        end_at=slot.end,
+        duration_minutes=ctx.link.duration_minutes,
+        status="pending_confirmation",
+    )
+
+
 @router.post(
     "/api/public/booking-links/{slug}/bookings",
     response_model=PublicBookingConfirmation,
@@ -306,15 +423,21 @@ def create_public_booking(
     scheduling: SchedulingService = Depends(get_public_scheduling_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
     gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    sender: EmailSender = Depends(get_email_sender),
     audit: AuditService = Depends(get_audit_service),
 ) -> PublicBookingConfirmation:
-    """Book a free slot: create (or reuse, by email) a patient record and
-    a confirmed appointment through the standard repositories.
+    """Book a free slot.
 
-    The requested start must exactly match a currently-free slot — the
-    client is never trusted about availability.
+    A link that requires email confirmation gets a slot-holding
+    appointment and a confirmation email instead of an instant booking —
+    see ``_place_hold``. The requested start must exactly match a
+    currently-free slot — the client is never trusted about availability.
     """
     _require_owner_may_accept_bookings(ctx.owner)
+
+    if ctx.link.require_email_confirmation and not sender.can_deliver:
+        logger.warning("booking refused, cannot deliver confirmation: slug=%s", ctx.link.slug)
+        raise ForbiddenError(_BOOKING_CLOSED)
 
     date_str = request.start_at[:10]
     _parse_booking_date(date_str)
@@ -324,11 +447,16 @@ def create_public_booking(
     if slot is None:
         raise ConflictError("That time is no longer available. Please pick another slot.")
 
-    patient = _find_or_create_patient(request, ctx, patient_repo, http_request, audit)
-
     note_lines = [f"Booked via booking link /{ctx.link.slug}."]
     if request.note:
         note_lines.append(f"Note from client: {request.note.strip()}")
+
+    if ctx.link.require_email_confirmation:
+        return _place_hold(
+            request, ctx, slot, note_lines, patient_repo, scheduling, sender, http_request, audit
+        )
+
+    patient = _find_or_create_patient(request, ctx, patient_repo, http_request, audit)
 
     try:
         appt = scheduling.create_appointment(
@@ -366,4 +494,5 @@ def create_public_booking(
         start_at=slot.start,
         end_at=slot.end,
         duration_minutes=ctx.link.duration_minutes,
+        status="confirmed",
     )

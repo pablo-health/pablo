@@ -43,10 +43,10 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..settings import Settings, get_settings
+
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from ..settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -170,3 +170,8 @@ def email_sender_from_settings(settings: Settings) -> EmailSender:
             from_addr=settings.smtp_from,
         )
     return NoneEmailSender()
+
+
+def get_email_sender() -> EmailSender:
+    """FastAPI dependency — the configured backend for this deployment."""
+    return email_sender_from_settings(get_settings())

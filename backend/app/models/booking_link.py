@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -61,6 +62,10 @@ class BookingLink:
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # Whether a booking through this link must confirm by email before it
+    # holds a real slot. Born true, database-enforced, no API surface — see
+    # BookingLinkRow.require_email_confirmation.
+    require_email_confirmation: bool = True
     # The owning practice's schema name. Populated only by
     # ``get_by_slug`` (the public resolution path, which must select a
     # tenant schema before any other query); owner-facing reads leave it
@@ -137,10 +142,15 @@ class CreatePublicBookingRequest(BaseModel):
 
 
 class PublicBookingConfirmation(BaseModel):
-    """What the booker gets back — deliberately minimal, no internal ids."""
+    """What the booker gets back — deliberately minimal, no internal ids.
+
+    Both the instant path and the hold-for-confirmation path return this
+    same shape; only ``status`` tells them apart.
+    """
 
     host_name: str
     title: str
     start_at: str
     end_at: str
     duration_minutes: int
+    status: Literal["confirmed", "pending_confirmation"]

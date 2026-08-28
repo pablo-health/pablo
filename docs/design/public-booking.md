@@ -127,9 +127,11 @@ that fail safe independently:
    database layer on insert, and which is *deliberately absent* from
    the management API schemas and any settings surface. Every link
    ever created requires confirmation; relaxing a specific link is a
-   conscious per-deployment operator action (direct update by whoever
-   runs the database), not a preference a clinician can flip while
-   chasing booking conversion. When required, the booking POST places
+   conscious per-deployment operator action — `UPDATE
+   platform.booking_links SET require_email_confirmation = false
+   WHERE slug = '...'` — run by whoever has database access, not a
+   preference a clinician can flip while chasing booking conversion.
+   When required, the booking POST places
    a short-TTL hold on the slot (rate-limited, capped per IP) and
    sends the confirmation link via the email seam; the appointment
    finalizes on click. The `none` email backend refuses to arm this
