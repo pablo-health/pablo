@@ -23,6 +23,11 @@
  *
  * A downstream build supplies its own richer surface and selects it in
  * a shadowed ./surface.ts.
+ *
+ * The surface ends with an optional working-hours step: it never blocks
+ * the dashboard (`required: false`), and its gate is the generic
+ * `onboarding_state` field the backend already exposes, set to
+ * "completed" whether the user saves a schedule or skips the step.
  */
 
 import type { OnboardingSurface, StepDef } from "./types"
@@ -38,6 +43,13 @@ const PASSKEY_STEP: StepDef = {
   gate: (status) => Boolean(status.mfa_enrolled_at),
 }
 
+const SCHEDULE_STEP: StepDef = {
+  id: "schedule",
+  path: "/onboarding/schedule",
+  gate: (status) => status.onboarding_state === "completed",
+  required: false,
+}
+
 export const MINIMAL_ONBOARDING_SURFACE: OnboardingSurface = {
-  steps: PASSKEYS_ENABLED ? [PASSKEY_STEP] : [],
+  steps: [...(PASSKEYS_ENABLED ? [PASSKEY_STEP] : []), SCHEDULE_STEP],
 }

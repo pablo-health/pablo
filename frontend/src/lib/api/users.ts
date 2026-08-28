@@ -56,6 +56,13 @@ export interface UserStatusBase {
    * presence so every user sees the step and can set title/credentials/phone.
    */
   profile_basics_completed_at: string | null
+  /**
+   * "in_progress" | "completed" | null. Set by the client via
+   * `updateUserProfile` as onboarding steps finish; onboarding surfaces
+   * can key an optional step's gate off this rather than adding a
+   * dedicated backend field per step.
+   */
+  onboarding_state: string | null
 }
 
 /**
@@ -74,6 +81,7 @@ export interface UpdateUserRequestBase {
   phone?: string
   /** Set to true when the user explicitly submits the profile-basics step. */
   profile_basics_completed?: boolean
+  onboarding_state?: "in_progress" | "completed"
 }
 
 export type UpdateUserRequest = UpdateUserRequestBase & UpdateUserRequestExtensions

@@ -17,6 +17,7 @@ import {
   type OnboardingSurface,
   type StepDef,
 } from "../types"
+import { MINIMAL_ONBOARDING_SURFACE } from "../minimal"
 
 // The gates below only read fields they care about, so a partial cast is
 // enough to drive them.
@@ -132,5 +133,38 @@ describe("requiredStepPosition", () => {
 
   it("returns null for a step not in the surface", () => {
     expect(requiredStepPosition(second, "ghost")).toBeNull()
+  })
+})
+
+describe("MINIMAL_ONBOARDING_SURFACE (stock surface)", () => {
+  it("has an optional schedule step positioned after passkey", () => {
+    const { steps } = MINIMAL_ONBOARDING_SURFACE
+    const scheduleIndex = steps.findIndex((s) => s.id === "schedule")
+    expect(scheduleIndex).not.toBe(-1)
+    expect(steps[scheduleIndex].required).toBe(false)
+    // schedule is the last step regardless of whether passkey is enabled.
+    expect(scheduleIndex).toBe(steps.length - 1)
+    // When passkeys are enabled for this build, passkey leads the surface.
+    const passkeyIndex = steps.findIndex((s) => s.id === "passkey")
+    if (passkeyIndex !== -1) {
+      expect(passkeyIndex).toBe(0)
+    }
+  })
+
+  it("never blocks the dashboard, but routes to it as the next incomplete step", () => {
+    const status = {
+      mfa_enrolled_at: "2026-07-14",
+      onboarding_state: null,
+    } as UserStatus
+    expect(firstIncompleteRequiredStep(MINIMAL_ONBOARDING_SURFACE, status)).toBeNull()
+    expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, status)?.id).toBe("schedule")
+  })
+
+  it("firstIncompleteStep returns null once onboarding_state is completed", () => {
+    const status = {
+      mfa_enrolled_at: "2026-07-14",
+      onboarding_state: "completed",
+    } as UserStatus
+    expect(firstIncompleteStep(MINIMAL_ONBOARDING_SURFACE, status)).toBeNull()
   })
 })
