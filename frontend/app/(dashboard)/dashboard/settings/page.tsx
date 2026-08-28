@@ -15,16 +15,17 @@ import { TranscriptionSettings } from "@/components/settings/TranscriptionSettin
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
 import { PasskeySettings } from "@/components/settings/PasskeySettings"
 import { AvailabilitySettings } from "@/components/settings/AvailabilitySettings"
+import { BookingLinkSettings } from "@/components/settings/BookingLinkSettings"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
 import { ThemeFlavorNote } from "@/components/theme/ThemeFlavorNote"
-import { AlertCircle, Archive, Calendar, CalendarClock, Check, Clock, Mic, Palette, Settings2, ShieldCheck, User } from "lucide-react"
+import { AlertCircle, Archive, Calendar, CalendarClock, Check, Clock, Link2, Mic, Palette, Settings2, ShieldCheck, User } from "lucide-react"
 import { isEnabled } from "@/lib/featureFlags"
 import { useConfig } from "@/lib/config"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
 
 export default function SettingsPage() {
-  const { passkeysEnabled } = useConfig()
+  const { passkeysEnabled, publicBookingEnabled } = useConfig()
   const { data: preferences, isLoading, error } = usePreferences()
   const saveMutation = useSavePreferences()
   const { data: userStatus } = useQuery({
@@ -142,6 +143,16 @@ export default function SettingsPage() {
       >
         <AvailabilitySettings />
       </SettingsSection>
+
+      {publicBookingEnabled && (
+        <SettingsSection
+          icon={Link2}
+          title="Booking links"
+          description="Public pages where clients pick a time. Each link books at a fixed length."
+        >
+          <BookingLinkSettings />
+        </SettingsSection>
+      )}
 
       {isEnabled("session_defaults") && (
         <SettingsSection

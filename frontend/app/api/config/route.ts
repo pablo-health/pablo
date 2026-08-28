@@ -28,5 +28,10 @@ export async function GET() {
     // points at its own reactivation/checkout page); empty means the UI
     // falls back to whatever default it ships with.
     resubscribeUrl: process.env.RESUBSCRIBE_URL || '',
+    // Runtime toggle for the "Booking links" Settings section, mirroring the
+    // backend's public_booking_enabled setting. Same env var on both
+    // containers so a deployment flips one value to turn on client
+    // self-booking end to end.
+    publicBookingEnabled: process.env.PUBLIC_BOOKING_ENABLED === 'true',
   })
 }
