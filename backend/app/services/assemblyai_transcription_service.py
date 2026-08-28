@@ -393,6 +393,27 @@ class AssemblyAiTranscriptionService:
         return jobs
 
     @staticmethod
+    def shift_job_offsets(jobs: list[_JsonDict], offset_seconds: float) -> list[_JsonDict]:
+        """Shift a segment's ``offset_map`` onto the whole-session timeline.
+
+        ``submit_dual_channel`` maps a segment's concatenated (VAD-trimmed)
+        timeline back to that segment's own original timeline, starting at 0.
+        Adding the segment's start-of-session offset to each entry's
+        original-timeline value lets ``parse_result`` map every word straight
+        to session-wide time with no further change.
+        """
+        if not offset_seconds:
+            return jobs
+        for job in jobs:
+            offset_map = job.get("offset_map")
+            if offset_map:
+                job["offset_map"] = [
+                    [concat_start, original_start + offset_seconds]
+                    for concat_start, original_start in offset_map
+                ]
+        return jobs
+
+    @staticmethod
     def check_job_status(api_key: str, transcript_id: str) -> tuple[str, _JsonDict | None]:
         """Check the status of a single AssemblyAI transcript (synchronous).
 

@@ -158,6 +158,133 @@ class TestAssemblyAiSubmitWorker:
         assert result["status"] == "not_found"
         mock_enqueue.assert_not_called()
 
+    def test_segment_submit_appends_tagged_job_with_shifted_offsets_and_skips_poll(self) -> None:
+        """A non-final segment's jobs are appended and tagged, but the poller
+
+        must not be enqueued yet — polling before the session finishes
+        recording would burn the poll budget on a job that isn't done.
+        """
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={
+                "provider": "assemblyai",
+                "final": False,
+                "segments": [
+                    {
+                        "index": 0,
+                        "offset_seconds": 300.0,
+                        "therapist": "audio/s1/therapist.seg000.pcm",
+                        "client": "audio/s1/client.seg000.pcm",
+                    }
+                ],
+            },
+            audio_gcs_path=None,
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+        fake_storage = MagicMock()
+        fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
+        submitted_job = {
+            "transcript_id": "t1",
+            "speaker": "Therapist",
+            "offset_map": [[0.0, 0.0], [5.0, 5.0]],
+            "diarized": False,
+        }
+        service = MagicMock()
+        service.submit_dual_channel = AsyncMock(return_value=[dict(submitted_job)])
+        settings = types.SimpleNamespace(
+            transcription_audio_bucket="bucket", transcription_task_queue="queue"
+        )
+        real_shift_job_offsets = it.AssemblyAiTranscriptionService.shift_job_offsets
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "file_storage_from_settings", return_value=fake_storage),
+            patch.object(it, "AssemblyAiTranscriptionService", return_value=service) as mock_cls,
+            patch.object(it, "get_settings", return_value=settings),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+        ):
+            # The class itself is mocked out to intercept the instance
+            # (``submit_dual_channel``), but ``shift_job_offsets`` is a real
+            # staticmethod call the worker makes on the class — restore it so
+            # the shift actually runs.
+            mock_cls.shift_job_offsets = real_shift_job_offsets
+            result = it.assemblyai_submit(
+                it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1", segment_index=0),
+                _invoker=None,
+            )
+
+        assert result["status"] == "ok"
+        jobs = session_row.transcription_job_metadata["jobs"]
+        assert len(jobs) == 1
+        assert jobs[0]["segment_index"] == 0
+        assert jobs[0]["offset_map"] == [[0.0, 300.0], [5.0, 305.0]]
+        mock_enqueue.assert_not_called()
+
+    def test_second_segment_submit_is_not_short_circuited_by_first_segments_jobs(self) -> None:
+        """The whole-session ``already_submitted`` short-circuit (metadata has
+
+        ``jobs``) must not swallow a later segment's own submit — only a job
+        already tagged with *this* segment's index should short-circuit it.
+        """
+        prior_job = {"transcript_id": "t0", "speaker": "Therapist", "segment_index": 0}
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={
+                "provider": "assemblyai",
+                "final": True,
+                "segments": [
+                    {
+                        "index": 0,
+                        "offset_seconds": 0.0,
+                        "therapist": "audio/s1/therapist.seg000.pcm",
+                        "client": "audio/s1/client.seg000.pcm",
+                    },
+                    {
+                        "index": 1,
+                        "offset_seconds": 300.0,
+                        "therapist": "audio/s1/therapist.seg001.pcm",
+                        "client": "audio/s1/client.seg001.pcm",
+                    },
+                ],
+                "jobs": [prior_job],
+            },
+            audio_gcs_path=None,
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+        fake_storage = MagicMock()
+        fake_storage.download_bytes.side_effect = [b"therapist-bytes", b"client-bytes"]
+        submitted_job = {"transcript_id": "t1", "speaker": "Therapist", "diarized": False}
+        service = MagicMock()
+        service.submit_dual_channel = AsyncMock(return_value=[dict(submitted_job)])
+        settings = types.SimpleNamespace(
+            transcription_audio_bucket="bucket", transcription_task_queue="queue"
+        )
+        real_shift_job_offsets = it.AssemblyAiTranscriptionService.shift_job_offsets
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "file_storage_from_settings", return_value=fake_storage),
+            patch.object(it, "AssemblyAiTranscriptionService", return_value=service) as mock_cls,
+            patch.object(it, "get_settings", return_value=settings),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+        ):
+            mock_cls.shift_job_offsets = real_shift_job_offsets
+            result = it.assemblyai_submit(
+                it.AssemblyAiSubmitRequest(session_id="s1", user_id="u1", segment_index=1),
+                _invoker=None,
+            )
+
+        assert result["status"] == "ok"
+        service.submit_dual_channel.assert_awaited_once()
+        jobs = session_row.transcription_job_metadata["jobs"]
+        assert [job.get("segment_index") for job in jobs] == [0, 1]
+        # Both manifest segments now have a job and the manifest is final.
+        mock_enqueue.assert_called_once()
+
 
 def _poll_settings() -> types.SimpleNamespace:
     return types.SimpleNamespace(
@@ -414,3 +541,147 @@ class TestTranscriptionPoll:
         assert (
             mock_enqueue.call_args.kwargs["schedule_delay_seconds"] == it._POLL_CYCLE_DELAY_SECONDS
         )
+
+    def test_segmented_all_jobs_complete_but_not_final_reenqueues(self) -> None:
+        """Every recorded job is done, but the manifest isn't ``final`` yet —
+
+        more segments are still coming, so this must not generate the note
+        from a partial transcript.
+        """
+        completed_job = {
+            **_JOB,
+            "segment_index": 0,
+            "utterances": [{"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "hi"}],
+        }
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={
+                "provider": "assemblyai",
+                "final": False,
+                "segments": [{"index": 0, "offset_seconds": 0.0, "therapist": "a", "client": "b"}],
+                "jobs": [completed_job],
+            },
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+            patch.object(it, "process_transcription_result") as mock_process,
+        ):
+            result = it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        assert result["status"] == "polling"
+        mock_process.assert_not_called()
+        mock_enqueue.assert_called_once()
+
+    def test_segmented_final_but_a_segment_still_lacks_a_job_reenqueues(self) -> None:
+        """``final`` is set, but segment 1's submit task hasn't landed yet —
+
+        its manifest entry exists with no matching job. Must not complete on
+        the strength of segment 0's job alone.
+        """
+        completed_job = {
+            **_JOB,
+            "segment_index": 0,
+            "utterances": [{"start": 0.0, "end": 1.0, "speaker": "Therapist", "text": "hi"}],
+        }
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={
+                "provider": "assemblyai",
+                "final": True,
+                "segments": [
+                    {"index": 0, "offset_seconds": 0.0, "therapist": "a", "client": "b"},
+                    {"index": 1, "offset_seconds": 300.0, "therapist": "c", "client": "d"},
+                ],
+                "jobs": [completed_job],
+            },
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(it, "enqueue_cloud_task") as mock_enqueue,
+            patch.object(it, "process_transcription_result") as mock_process,
+        ):
+            result = it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        assert result["status"] == "polling"
+        mock_process.assert_not_called()
+        mock_enqueue.assert_called_once()
+
+    def test_segmented_final_and_all_segments_complete_merges_in_original_order(self) -> None:
+        """Two segments (offsets 0 and 300) merge into one time-ordered transcript.
+
+        Jobs were appended out of order (segment 1's submit task landed
+        first) — the merge must still order by each utterance's
+        original-timeline start, not by job list order.
+        """
+        job_segment_1 = {
+            "transcript_id": "seg1",
+            "speaker": "Therapist",
+            "offset_map": [[0.0, 300.0]],
+            "segment_index": 1,
+        }
+        job_segment_0 = {
+            "transcript_id": "seg0",
+            "speaker": "Therapist",
+            "offset_map": [[0.0, 0.0]],
+            "segment_index": 0,
+        }
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={
+                "provider": "assemblyai",
+                "final": True,
+                "segments": [
+                    {"index": 0, "offset_seconds": 0.0, "therapist": "a", "client": "b"},
+                    {"index": 1, "offset_seconds": 300.0, "therapist": "c", "client": "d"},
+                ],
+                "jobs": [job_segment_1, job_segment_0],
+            },
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+
+        def _check_job_status(_api_key: str, transcript_id: str) -> tuple[str, dict]:
+            if transcript_id == "seg1":
+                return ("completed", {"words": [{"start": 0, "end": 500, "text": "later"}]})
+            return ("completed", {"words": [{"start": 0, "end": 500, "text": "earlier"}]})
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(
+                it.AssemblyAiTranscriptionService,
+                "check_job_status",
+                side_effect=_check_job_status,
+            ),
+            patch.object(
+                it,
+                "process_transcription_result",
+                return_value={"id": "s1", "status": "processing", "message": "ok"},
+            ) as mock_process,
+        ):
+            result = it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        assert result["status"] == "processing"
+        transcript = mock_process.call_args.kwargs["transcript_content"]
+        assert transcript.index("earlier") < transcript.index("later")
