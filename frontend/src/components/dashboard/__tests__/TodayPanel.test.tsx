@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { screen } from "@testing-library/react"
 import type { AppointmentResponse } from "@/types/scheduling"
+import { renderWithProviders } from "@/test/renderWithProviders"
 import { TodayPanel, formatLastVisit } from "../TodayPanel"
 
 const useDashboardSummary = vi.hoisted(() => vi.fn())
@@ -71,14 +71,7 @@ function mockSummary(
 }
 
 function renderPanel() {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  })
-  return render(
-    <QueryClientProvider client={client}>
-      <TodayPanel />
-    </QueryClientProvider>,
-  )
+  return renderWithProviders(<TodayPanel />)
 }
 
 describe("TodayPanel", () => {

@@ -14,6 +14,12 @@
  * UI-only: the components that consult this hide the companion affordances,
  * and the backend's recording policy hook (`_gate_recording`) refuses the
  * upload regardless of what the client showed.
+ *
+ * An implementation MAY be a hook and MAY require the app's providers
+ * (React Query, runtime config). The default build's implementations
+ * require nothing. Tests that render a consumer of a slot should use
+ * test/renderWithProviders so a data-backed implementation stays
+ * renderable.
  */
 
 export function useCompanionAccess(): boolean {
