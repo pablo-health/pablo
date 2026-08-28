@@ -273,6 +273,77 @@ class TestTransitionStatus:
         with pytest.raises(SessionNotFoundError):
             service.transition_status("nonexistent", user_id, req)
 
+    def test_in_progress_reverts_to_scheduled(
+        self,
+        service: SessionService,
+        session_repo: InMemoryTherapySessionRepository,
+        user_id: str,
+        patient: Patient,
+    ) -> None:
+        session = _make_session(session_repo, user_id, patient.id, SessionStatus.SCHEDULED)
+        service.transition_status(
+            session.id, user_id, UpdateSessionStatusRequest(status=SessionStatus.IN_PROGRESS)
+        )
+
+        updated, _ = service.transition_status(
+            session.id, user_id, UpdateSessionStatusRequest(status=SessionStatus.SCHEDULED)
+        )
+
+        assert updated.status == SessionStatus.SCHEDULED
+        assert updated.started_at is None
+        assert updated.ended_at is None
+
+    def test_revert_recomputes_next_session_date(
+        self,
+        service: SessionService,
+        session_repo: InMemoryTherapySessionRepository,
+        patient_repo: InMemoryPatientRepository,
+        user_id: str,
+        patient: Patient,
+    ) -> None:
+        future = datetime.now(UTC) + timedelta(days=3)
+        session = _make_session(
+            session_repo, user_id, patient.id, SessionStatus.SCHEDULED, scheduled_at=future
+        )
+        service.transition_status(
+            session.id, user_id, UpdateSessionStatusRequest(status=SessionStatus.IN_PROGRESS)
+        )
+        # Clobber the pointer so the revert's own recompute is what restores it.
+        patient.next_session_date = None
+        patient_repo.update(patient)
+
+        _, updated_patient = service.transition_status(
+            session.id, user_id, UpdateSessionStatusRequest(status=SessionStatus.SCHEDULED)
+        )
+
+        assert updated_patient.next_session_date == future
+
+    def test_scheduled_to_scheduled_still_409(
+        self,
+        service: SessionService,
+        session_repo: InMemoryTherapySessionRepository,
+        user_id: str,
+        patient: Patient,
+    ) -> None:
+        session = _make_session(session_repo, user_id, patient.id, SessionStatus.SCHEDULED)
+        req = UpdateSessionStatusRequest(status=SessionStatus.SCHEDULED)
+
+        with pytest.raises(SessionAlreadyInStatusError):
+            service.transition_status(session.id, user_id, req)
+
+    def test_revert_not_allowed_from_recording_complete(
+        self,
+        service: SessionService,
+        session_repo: InMemoryTherapySessionRepository,
+        user_id: str,
+        patient: Patient,
+    ) -> None:
+        session = _make_session(session_repo, user_id, patient.id, SessionStatus.RECORDING_COMPLETE)
+        req = UpdateSessionStatusRequest(status=SessionStatus.SCHEDULED)
+
+        with pytest.raises(InvalidStatusTransitionError):
+            service.transition_status(session.id, user_id, req)
+
 
 # --- Metadata update tests ---
 
