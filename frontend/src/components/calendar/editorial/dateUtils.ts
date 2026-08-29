@@ -17,9 +17,22 @@ import {
 
 export type EditorialView = "day" | "week" | "month"
 
-/** Height of one hour row in week/day views, in px. Must stay in sync with
- * `--ed-row-h` in editorial.css (JS positions events; CSS draws gridlines). */
-export const HOUR_ROW_PX = 54
+export type CalendarDensity = "gentle" | "balanced" | "compact"
+
+/** Row height / stack gap / stack padding-y for each density preset, in px.
+ * Balanced matches today's shipped look exactly, so switching to it is a
+ * no-op for existing users. */
+export const DENSITY_PRESETS: Record<
+  CalendarDensity,
+  { rowPx: number; stackGapPx: number; stackPadYPx: number }
+> = {
+  gentle: { rowPx: 64, stackGapPx: 18, stackPadYPx: 22 },
+  balanced: { rowPx: 54, stackGapPx: 10, stackPadYPx: 14 },
+  compact: { rowPx: 44, stackGapPx: 10, stackPadYPx: 14 },
+}
+
+/** Height of one hour row in week/day views, in px, at the balanced density. */
+export const HOUR_ROW_PX = DENSITY_PRESETS.balanced.rowPx
 
 /** Default working-hours window for the cropped week/day grid (7am–8pm). */
 export const DAY_START_HOUR = 7

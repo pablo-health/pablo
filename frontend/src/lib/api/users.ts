@@ -215,6 +215,7 @@ export interface UserPreferences {
   calendar_default_view: string
   timezone: string
   theme: ThemeId
+  calendar_density: "gentle" | "balanced" | "compact"
 }
 
 export async function getPreferences(

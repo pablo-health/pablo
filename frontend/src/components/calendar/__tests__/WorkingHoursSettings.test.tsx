@@ -21,6 +21,7 @@ function createPreferences(
     calendar_default_view: "week",
     timezone: "America/New_York",
     theme: "warm-paper",
+    calendar_density: "balanced",
     ...overrides,
   }
 }

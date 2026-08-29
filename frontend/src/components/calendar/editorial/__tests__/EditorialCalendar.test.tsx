@@ -197,4 +197,81 @@ describe("EditorialCalendar", () => {
     expect(updateMutate).not.toHaveBeenCalled()
     expect(screen.queryByRole("menu")).not.toBeInTheDocument()
   })
+
+  it("defaults to balanced density (54px rows) when no density prop is passed", () => {
+    const { container } = render(<EditorialCalendar {...defaults()} />, { wrapper: wrap() })
+    const canvas = container.querySelector("[data-editorial-theme]") as HTMLElement
+    expect(canvas).toHaveAttribute("data-density", "balanced")
+    expect(canvas.style.getPropertyValue("--ed-row-h")).toBe("54px")
+  })
+
+  it("applies compact density (44px rows, 10px stack gap) via inline style", () => {
+    const { container } = render(
+      <EditorialCalendar {...defaults()} density="compact" />,
+      { wrapper: wrap() },
+    )
+    const canvas = container.querySelector("[data-editorial-theme]") as HTMLElement
+    expect(canvas).toHaveAttribute("data-density", "compact")
+    expect(canvas.style.getPropertyValue("--ed-row-h")).toBe("44px")
+    expect(canvas.style.getPropertyValue("--ed-stack-gap")).toBe("10px")
+  })
+
+  it("positions a 10:00 event and passes drag rowHeightPx per density", () => {
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a-density",
+      patient_id: "p1",
+      title: "Jane Doe — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    const { rerender } = render(
+      <EditorialCalendar {...defaults()} defaultView="day" density="balanced" />,
+      { wrapper: wrap() },
+    )
+    // dayStart defaults to 7am, so 10:00 is 3 hours in: top = 3 * rowPx.
+    let event = document.querySelector('[data-event="1"]') as HTMLElement
+    expect(event.style.top).toBe(`${3 * 54}px`)
+
+    rerender(<EditorialCalendar {...defaults()} defaultView="day" density="compact" />)
+    event = document.querySelector('[data-event="1"]') as HTMLElement
+    expect(event.style.top).toBe(`${3 * 44}px`)
+  })
+
+  it("positions a 10:00 event the same way in week view under each density", () => {
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a-density-week",
+      patient_id: "p1",
+      title: "Jane Doe — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    const { rerender } = render(
+      <EditorialCalendar {...defaults()} defaultView="week" density="balanced" />,
+      { wrapper: wrap() },
+    )
+    let event = document.querySelector('[data-event="1"]') as HTMLElement
+    expect(event.style.top).toBe(`${3 * 54}px`)
+
+    rerender(<EditorialCalendar {...defaults()} defaultView="week" density="compact" />)
+    event = document.querySelector('[data-event="1"]') as HTMLElement
+    expect(event.style.top).toBe(`${3 * 44}px`)
+  })
 })

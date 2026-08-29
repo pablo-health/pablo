@@ -5,6 +5,7 @@
 from typing import Any, ClassVar
 
 from app.models import User
+from app.models.user import UserPreferences
 from app.repositories import InMemoryUserRepository
 
 
@@ -20,6 +21,30 @@ class TestGetPreferences:
         assert body["default_video_platform"] == "zoom"
         assert body["auto_transcribe"] is True
         assert body["therapist_display_name"] is None
+        assert body["calendar_density"] == "balanced"
+
+
+class TestCalendarDensity:
+    """Calendar density defaults to balanced and round-trips through the API."""
+
+    def test_default_is_balanced(self) -> None:
+        assert UserPreferences().calendar_density == "balanced"
+
+    def test_a_stored_blob_missing_the_key_loads_with_the_default(self) -> None:
+        assert UserPreferences(**{}).calendar_density == "balanced"
+
+    def test_put_round_trips_compact_through_get(self, client: Any) -> None:
+        put_response = client.put("/api/users/me/preferences", json={"calendar_density": "compact"})
+        assert put_response.status_code == 200
+        assert put_response.json()["calendar_density"] == "compact"
+
+        get_response = client.get("/api/users/me/preferences")
+        assert get_response.status_code == 200
+        assert get_response.json()["calendar_density"] == "compact"
+
+    def test_put_rejects_an_unknown_density(self, client: Any) -> None:
+        response = client.put("/api/users/me/preferences", json={"calendar_density": "dense"})
+        assert response.status_code == 422
 
 
 class TestSavePreferences:
@@ -37,6 +62,7 @@ class TestSavePreferences:
         "calendar_default_view": "dayGridMonth",
         "timezone": "America/Los_Angeles",
         "theme": "dark",
+        "calendar_density": "gentle",
     }
 
     def test_put_round_trips_a_full_body(self, client: Any) -> None:
