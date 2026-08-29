@@ -223,6 +223,19 @@ async def run_in_tenant[T](
     If *fn* raises, the session is rolled back and the exception propagates
     to the caller as-is (``tenant_db_session`` handles rollback).
 
+    **Await this; do not run it concurrently with other work on the caller's
+    session.** Because the worker inherits a copy of the caller's context,
+    ``tenant_db_session`` publishes over whatever session was bound there —
+    and publishing COMMITS the session it displaces, from the worker thread,
+    to keep it from sitting idle in an open transaction (see
+    ``publish_request_session``). A plain ``await`` is safe: the calling
+    coroutine is suspended for the duration, so nothing else touches that
+    session. Putting this in an ``asyncio.gather`` beside a task that uses the
+    caller's session is NOT safe — two threads would be driving one
+    ``Session``, which SQLAlchemy does not support, and the other task would
+    find its transaction committed underneath it. If you need that, open the
+    concurrent work's own session rather than sharing the bound one.
+
     Args:
         schema: Practice schema name — forwarded verbatim to
             ``tenant_db_session``.
