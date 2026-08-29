@@ -50,17 +50,25 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
 
     def get_by_slug(self, slug: str) -> BookingLink | None:
         stmt = (
-            select(BookingLinkRow, PracticeRow.schema_name, PracticeRow.edition)
+            select(
+                BookingLinkRow,
+                PracticeRow.schema_name,
+                PracticeRow.edition,
+                PracticeRow.is_active,
+                PracticeRow.deleted_at,
+            )
             .outerjoin(PracticeRow, PracticeRow.id == BookingLinkRow.practice_id)
             .where(BookingLinkRow.slug == slug, BookingLinkRow.deleted_at.is_(None))
         )
         result = self._session.execute(stmt).one_or_none()
         if result is None:
             return None
-        row, schema_name, edition = result
+        row, schema_name, edition, practice_is_active, practice_deleted_at = result
         link = _row_to_link(row)
         link.practice_schema = schema_name
         link.practice_edition = edition
+        if schema_name is not None:
+            link.practice_is_active = practice_is_active and practice_deleted_at is None
         return link
 
     def get(self, link_id: str, user_id: str) -> BookingLink | None:
