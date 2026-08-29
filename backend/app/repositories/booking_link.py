@@ -15,6 +15,8 @@ from abc import ABC, abstractmethod
 from threading import Lock
 from typing import TYPE_CHECKING
 
+from ..utcnow import utc_now
+
 if TYPE_CHECKING:
     from ..models.booking_link import BookingLink
 
@@ -28,26 +30,28 @@ class BookingLinkRepository(ABC):
 
     @abstractmethod
     def get_by_slug(self, slug: str) -> BookingLink | None:
-        """Resolve a slug regardless of owner or active state.
+        """Resolve a LIVE slug regardless of owner or active state.
 
         Callers on the public path must treat an inactive link exactly
+        like a missing one. A tombstoned link resolves to None, exactly
         like a missing one.
         """
 
     @abstractmethod
     def get(self, link_id: str, user_id: str) -> BookingLink | None:
-        """Fetch one link, scoped to its owner."""
+        """Fetch one live link, scoped to its owner."""
 
     @abstractmethod
     def list_by_user(self, user_id: str) -> list[BookingLink]:
-        """All of a user's links, active and inactive, newest first."""
+        """All of a user's live links, active and inactive, newest first."""
 
     @abstractmethod
     def create(self, link: BookingLink) -> BookingLink:
         """Insert a link.
 
         Raises:
-            SlugTakenError: the slug is already registered.
+            SlugTakenError: the slug is already registered, live or
+                tombstoned -- a deleted link's slug stays claimed forever.
         """
 
     @abstractmethod
@@ -56,7 +60,7 @@ class BookingLinkRepository(ABC):
 
     @abstractmethod
     def delete(self, link_id: str, user_id: str) -> bool:
-        """Delete a link, scoped to its owner. Returns whether a row existed."""
+        """Tombstone a link, scoped to its owner. Returns whether a live row existed."""
 
 
 class InMemoryBookingLinkRepository(BookingLinkRepository):
@@ -68,16 +72,29 @@ class InMemoryBookingLinkRepository(BookingLinkRepository):
 
     def get_by_slug(self, slug: str) -> BookingLink | None:
         with self._lock:
-            return next((link for link in self._links.values() if link.slug == slug), None)
+            return next(
+                (
+                    link
+                    for link in self._links.values()
+                    if link.slug == slug and link.deleted_at is None
+                ),
+                None,
+            )
 
     def get(self, link_id: str, user_id: str) -> BookingLink | None:
         with self._lock:
             link = self._links.get(link_id)
-            return link if link and link.user_id == user_id else None
+            if link is None or link.user_id != user_id or link.deleted_at is not None:
+                return None
+            return link
 
     def list_by_user(self, user_id: str) -> list[BookingLink]:
         with self._lock:
-            links = [link for link in self._links.values() if link.user_id == user_id]
+            links = [
+                link
+                for link in self._links.values()
+                if link.user_id == user_id and link.deleted_at is None
+            ]
         return sorted(links, key=lambda link: link.created_at, reverse=True)
 
     def create(self, link: BookingLink) -> BookingLink:
@@ -89,13 +106,19 @@ class InMemoryBookingLinkRepository(BookingLinkRepository):
 
     def update(self, link: BookingLink) -> BookingLink:
         with self._lock:
+            existing = self._links.get(link.id)
+            if existing is not None and existing.deleted_at is not None:
+                return link
             self._links[link.id] = link
         return link
 
     def delete(self, link_id: str, user_id: str) -> bool:
         with self._lock:
             link = self._links.get(link_id)
-            if link is None or link.user_id != user_id:
+            if link is None or link.user_id != user_id or link.deleted_at is not None:
                 return False
-            del self._links[link_id]
+            now = utc_now()
+            link.deleted_at = now
+            link.is_active = False
+            link.updated_at = now
             return True

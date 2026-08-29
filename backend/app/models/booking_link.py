@@ -75,6 +75,9 @@ class BookingLink:
     # Populated only by ``get_by_slug``, alongside practice_schema; None
     # in a single-schema deployment (no practice row) or when unset.
     practice_edition: str | None = None
+    # Set when the link is tombstoned. A tombstoned link never reaches a
+    # response; its slug stays claimed via the UNIQUE(slug) constraint.
+    deleted_at: datetime | None = None
 
 
 class CreateBookingLinkRequest(BaseModel):

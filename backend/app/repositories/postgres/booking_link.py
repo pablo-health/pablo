@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from ...db.platform_models import BookingLinkRow, PracticeRow
@@ -40,6 +40,7 @@ def _row_to_link(row: BookingLinkRow) -> BookingLink:
         created_at=row.created_at,
         updated_at=row.updated_at,
         require_email_confirmation=row.require_email_confirmation,
+        deleted_at=row.deleted_at,
     )
 
 
@@ -51,7 +52,7 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
         stmt = (
             select(BookingLinkRow, PracticeRow.schema_name, PracticeRow.edition)
             .outerjoin(PracticeRow, PracticeRow.id == BookingLinkRow.practice_id)
-            .where(BookingLinkRow.slug == slug)
+            .where(BookingLinkRow.slug == slug, BookingLinkRow.deleted_at.is_(None))
         )
         result = self._session.execute(stmt).one_or_none()
         if result is None:
@@ -64,7 +65,9 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
 
     def get(self, link_id: str, user_id: str) -> BookingLink | None:
         stmt = select(BookingLinkRow).where(
-            BookingLinkRow.id == link_id, BookingLinkRow.user_id == user_id
+            BookingLinkRow.id == link_id,
+            BookingLinkRow.user_id == user_id,
+            BookingLinkRow.deleted_at.is_(None),
         )
         row = self._session.execute(stmt).scalar_one_or_none()
         return _row_to_link(row) if row else None
@@ -72,7 +75,7 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
     def list_by_user(self, user_id: str) -> list[BookingLink]:
         stmt = (
             select(BookingLinkRow)
-            .where(BookingLinkRow.user_id == user_id)
+            .where(BookingLinkRow.user_id == user_id, BookingLinkRow.deleted_at.is_(None))
             .order_by(BookingLinkRow.created_at.desc())
         )
         return [_row_to_link(row) for row in self._session.execute(stmt).scalars()]
@@ -111,7 +114,9 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
 
     def update(self, link: BookingLink) -> BookingLink:
         stmt = select(BookingLinkRow).where(
-            BookingLinkRow.id == link.id, BookingLinkRow.user_id == link.user_id
+            BookingLinkRow.id == link.id,
+            BookingLinkRow.user_id == link.user_id,
+            BookingLinkRow.deleted_at.is_(None),
         )
         row = self._session.execute(stmt).scalar_one()
         row.host_name = link.host_name
@@ -124,14 +129,21 @@ class PostgresBookingLinkRepository(BookingLinkRepository):
         return _row_to_link(row)
 
     def delete(self, link_id: str, user_id: str) -> bool:
-        # cast: Session.execute is typed Result[Any]; a DELETE returns a
+        # Tombstone, not a hard delete: the row -- and the UNIQUE(slug)
+        # constraint on it -- stays, so the slug can never be reclaimed.
+        now = utc_now()
+        # cast: Session.execute is typed Result[Any]; an UPDATE returns a
         # CursorResult, which is what carries rowcount (same as appointment.py).
         result = cast(
             "CursorResult[Any]",
             self._session.execute(
-                delete(BookingLinkRow).where(
-                    BookingLinkRow.id == link_id, BookingLinkRow.user_id == user_id
+                update(BookingLinkRow)
+                .where(
+                    BookingLinkRow.id == link_id,
+                    BookingLinkRow.user_id == user_id,
+                    BookingLinkRow.deleted_at.is_(None),
                 )
+                .values(deleted_at=now, is_active=False, updated_at=now)
             ),
         )
         self._session.flush()

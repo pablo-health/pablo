@@ -43,7 +43,7 @@ from app.repositories import (
     get_user_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
-from app.repositories.booking_link import InMemoryBookingLinkRepository
+from app.repositories.booking_link import InMemoryBookingLinkRepository, SlugTakenError
 from app.repositories.patient import InMemoryPatientRepository
 from app.routes import public_booking as public_booking_module
 from app.routes.booking_links import get_link_repository
@@ -1396,8 +1396,70 @@ def test_deactivate_and_delete_booking_link(
     assert deleted.status_code == 204
     assert link_repo.get_by_slug("intro-call") is None
 
+    reclaimed = managed_client.post("/api/booking-links", json=_create_link_payload())
+    assert reclaimed.status_code == 409
+
     deleted_again = managed_client.delete(f"/api/booking-links/{link_id}")
     assert deleted_again.status_code == 404
+
+
+def test_deleted_slug_cannot_be_reclaimed_by_another_user(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    owned = link_repo.create(_link(slug="intro-call", user_id=OWNER_ID))
+    assert link_repo.delete(owned.id, OWNER_ID) is True
+
+    with pytest.raises(SlugTakenError):
+        link_repo.create(_link(slug="intro-call", user_id="other-user-999"))
+
+
+def test_tombstoned_link_is_a_public_404(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link = link_repo.create(_link())
+    assert link_repo.delete(link.id, OWNER_ID) is True
+    unknown = public_client.get("/api/public/booking-links/no-such-link")
+
+    card = public_client.get("/api/public/booking-links/intro-call")
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={_bookable_date()}")
+    unknown_slots = public_client.get(
+        f"/api/public/booking-links/no-such-link/slots?date={_bookable_date()}"
+    )
+    booking = _book(public_client, "intro-call", f"{_bookable_date()}T09:00:00Z")
+    unknown_booking = _book(public_client, "no-such-link", f"{_bookable_date()}T09:00:00Z")
+
+    assert card.status_code == 404
+    assert card.json() == unknown.json()
+    assert slots.status_code == 404
+    assert slots.json() == unknown_slots.json()
+    assert booking.status_code == 404
+    assert booking.json() == unknown_booking.json()
+
+
+def test_deleted_links_are_absent_from_owner_reads(
+    managed_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_id = managed_client.post("/api/booking-links", json=_create_link_payload()).json()["id"]
+    assert managed_client.delete(f"/api/booking-links/{link_id}").status_code == 204
+
+    listed = managed_client.get("/api/booking-links")
+    assert listed.json()["total"] == 0
+
+    patched = managed_client.patch(f"/api/booking-links/{link_id}", json={"title": "New title"})
+    assert patched.status_code == 404
+
+
+def test_tombstone_keeps_the_row_but_flips_active(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    link = link_repo.create(_link())
+    assert link_repo.delete(link.id, OWNER_ID) is True
+
+    stored = link_repo._links[link.id]
+    assert stored.deleted_at is not None
+    assert stored.is_active is False
+    assert link_repo.get(link.id, OWNER_ID) is None
+    assert link_repo.list_by_user(OWNER_ID) == []
 
 
 def test_require_email_confirmation_is_born_true_and_hidden(

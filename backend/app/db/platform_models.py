@@ -581,6 +581,10 @@ class BookingLinkRow(PlatformBase):
     require_email_confirmation: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("true")
     )
+    # Tombstone timestamp. NULL means live. A tombstoned row is never
+    # deleted -- its slug stays claimed via the UNIQUE(slug) constraint
+    # above, forever, for every caller including the original owner.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (  # type: ignore[assignment]  # tuple form for CheckConstraint, same as PracticeRow
         CheckConstraint(

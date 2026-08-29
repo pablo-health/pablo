@@ -52,6 +52,19 @@ selected. It stores no PHI: slug, owner, display copy, duration.
 | session_type     | VARCHAR(20)  | `individual` (default) / `couples` / `group` |
 | is_active        | BOOLEAN      | inactive links 404 publicly but stay listed for the owner |
 | created_at / updated_at | TIMESTAMPTZ |                                       |
+| deleted_at       | TIMESTAMPTZ NULL | tombstone; the slug stays claimed    |
+
+**Deletion is a tombstone, not a `DELETE`.** The row stays, `deleted_at`
+is stamped, and `is_active` flips to `false`. Every read path — slug
+resolution, the owner's list, direct fetch by id — treats a tombstoned
+row as absent, and the `UNIQUE(slug)` constraint on the still-present
+row keeps the slug claimed forever, for every caller including the
+original owner. A therapist who prints `/book/dr-smith` on a card,
+then deletes the link, does *not* hand the still-circulating traffic
+to whoever tries that slug next: creating a link with a tombstoned
+slug 409s, exactly like a live collision. There is no restore
+endpoint; a clinician who wants a slug back should deactivate
+(`is_active: false`) instead of deleting.
 
 ## Request flow (public)
 
@@ -59,8 +72,8 @@ Every public endpoint goes through one dependency chain:
 
 1. **Rate limit** by client IP (`require_rate_limit`, the same pre-auth
    limiter the passkey endpoints use).
-2. **Resolve slug** in `platform.booking_links`; missing *or inactive*
-   links are an identical 404 (no oracle for "exists but off").
+2. **Resolve slug** in `platform.booking_links`; missing, inactive, or
+   deleted links are an identical 404 (no oracle for "exists but off").
 3. **Enter the tenant.** When multi-tenancy is on, the link's
    `practice_id` resolves to the practice schema and
    `set_tenant_schema()` scopes the session; single-schema deployments
@@ -284,17 +297,6 @@ once the previous one is being beaten:
   engine-wide change and out of scope here.
 - **Multiple hosts / round-robin, intake forms, payments.** Not
   scheduling-engine concerns yet.
-- **Slug reuse after deletion** (PABLO-e3a.5). `delete` is a hard `DELETE`, so a
-  released slug is immediately re-registrable by *any* clinician on
-  the deployment. A therapist who prints `/book/dr-smith` on a card,
-  then deletes the link, hands whoever claims that slug next the
-  still-circulating traffic — and with it the names and emails of the
-  original practice's clients, collected on a booking form that looks
-  legitimate. `RESERVED_SLUGS` guards app routes; nothing guards
-  reuse. The fix is a tombstone: soft-delete the row and keep the slug
-  claimed. Until then, treat deletion as *deactivation plus a
-  released name*, and prefer `is_active: false` for any link that was
-  ever published.
 
 ## Frontend
 
