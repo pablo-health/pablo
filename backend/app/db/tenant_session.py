@@ -66,9 +66,10 @@ from . import (
     _current_patient_id,
     _current_tenant_schema,
     _current_user_id,
-    _request_session,
     assert_tenant_schema_set,
     create_standalone_session,
+    publish_request_session,
+    restore_request_session,
     set_current_user_id,
 )
 
@@ -98,7 +99,9 @@ def tenant_db_session(
        Session listener re-arms the GUC after any mid-flight
        ``session.commit()`` (same pattern as the HTTP path).
     4. Publish the session on ``_request_session`` so repo factories
-       calling ``get_db_session()`` resolve it without changes.
+       calling ``get_db_session()`` resolve it without changes — releasing
+       the session this one displaces, so it does not sit in an open
+       transaction for the duration (see ``publish_request_session``).
     5. On exit: commit if dirty (with fail-closed
        ``assert_tenant_schema_set`` guard); rollback on exception;
        close the session; clear the request ContextVars.
@@ -145,7 +148,14 @@ def tenant_db_session(
     # there is no such corrective call for the patient GUC, by design.
     patient_id_token = _current_patient_id.set(None)
     session = create_standalone_session(schema)
-    session_token = _request_session.set(session)
+    # Publishing (rather than a bare ContextVar set) is what releases the
+    # session this one displaces. Whatever opened that session -- most often
+    # DatabaseSessionMiddleware, whose transaction opened at request entry with
+    # its SET search_path -- cannot reach it again until teardown, so without
+    # this it sits idle in an open transaction for the whole unit of work below
+    # and gets killed by idle_in_transaction_session_timeout. See
+    # publish_request_session.
+    binding = publish_request_session(session)
     # Save the previous user id and restore it on exit so nested
     # usages (rare but possible in test harnesses) don't clobber an
     # outer context.
@@ -172,7 +182,7 @@ def tenant_db_session(
         raise
     finally:
         session.close()
-        _request_session.reset(session_token)
+        restore_request_session(binding)
         _current_user_id.reset(user_id_token)
         _current_patient_id.reset(patient_id_token)
         # Restore the tenant-schema ContextVar so a stale schema can't ride a
