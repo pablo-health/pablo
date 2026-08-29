@@ -311,9 +311,14 @@ confirmation card with `.ics` download. Styled with the standard brand
 tokens; no dashboard chrome.
 
 Owners manage links through authed CRUD at `/api/booking-links`
-(create, list, update copy/duration, activate/deactivate, delete). A
-dashboard management surface (Settings → Booking) is the natural next
-step; until it lands, links are managed via the API.
+(create, list, update copy/duration, activate/deactivate, delete).
+Settings → Booking links is the dashboard surface for this: a list of
+links with copy/activate/deactivate/edit/delete actions, an inline
+form for creating a link, and an inline form for editing host name,
+title, description, and length (the slug and session type are fixed
+once a link is created). Deleting a link opens a dialog explaining
+that its slug stays reserved for good and offering to deactivate
+instead.
 
 ## The email seam
 

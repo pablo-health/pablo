@@ -17,6 +17,7 @@ Object.defineProperty(navigator, "clipboard", {
 
 const mutateCreate = vi.fn()
 const mutateUpdate = vi.fn()
+const mutateDelete = vi.fn()
 
 let linksData: BookingLink[] = []
 let listLoading = false
@@ -37,6 +38,7 @@ vi.mock("@/hooks/useBookingLinks", () => ({
     isPending: false,
   }),
   useUpdateBookingLink: () => ({ mutate: mutateUpdate, isPending: false }),
+  useDeleteBookingLink: () => ({ mutate: mutateDelete, isPending: false }),
 }))
 
 function makeLink(overrides: Partial<BookingLink> = {}): BookingLink {
@@ -223,5 +225,27 @@ describe("BookingLinkSettings", () => {
     createOnError?.(new ApiError("BAD_REQUEST", message, undefined, 400))
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message)
+  })
+
+  it("swaps a row for the edit form when Edit is clicked", async () => {
+    linksData = [makeLink()]
+    renderWithClient()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: "Edit" }))
+
+    expect(screen.getByLabelText("Host name")).toHaveValue("Dr. Roe")
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument()
+  })
+
+  it("opens the delete dialog when Delete is clicked", async () => {
+    linksData = [makeLink()]
+    renderWithClient()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: "Delete" }))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveTextContent("Delete this booking link?")
   })
 })
