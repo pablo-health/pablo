@@ -87,6 +87,7 @@ def _link(
     duration_minutes: int = 30,
     require_email_confirmation: bool = True,
     practice_edition: str | None = None,
+    practice_is_active: bool | None = None,
 ) -> BookingLink:
     now = utc_now()
     return BookingLink(
@@ -104,6 +105,7 @@ def _link(
         updated_at=now,
         require_email_confirmation=require_email_confirmation,
         practice_edition=practice_edition,
+        practice_is_active=practice_is_active,
     )
 
 
@@ -307,12 +309,46 @@ def test_public_link_card_returns_display_fields(
 def test_unknown_and_inactive_slugs_are_identical_404s(
     public_client: Any, link_repo: InMemoryBookingLinkRepository
 ) -> None:
+    """A disabled owner or a wound-down practice refuse the same as a missing
+    or a deactivated slug — the same 404, on the card, the slots and the
+    booking POST alike."""
+    disabled_owner_id = "disabled-owner-789"
+    disabled_owner = User(
+        id=disabled_owner_id,
+        email="disabled@example.com",
+        name="Disabled Therapist",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+        status="disabled",
+    )
+    public_client.app.dependency_overrides[get_user_repository] = lambda: _FakeUserRepo(
+        {OWNER_ID: _owner(), disabled_owner_id: disabled_owner}
+    )
     link_repo.create(_link(slug="paused-link", is_active=False))
-    missing = public_client.get("/api/public/booking-links/no-such-link")
-    inactive = public_client.get("/api/public/booking-links/paused-link")
-    assert missing.status_code == 404
-    assert inactive.status_code == 404
-    assert missing.json() == inactive.json()
+    link_repo.create(_link(slug="disabled-owner-link", user_id=disabled_owner_id))
+    link_repo.create(_link(slug="wound-down-practice-link", practice_is_active=False))
+
+    date_str = _bookable_date()
+    slugs = [
+        "no-such-link",
+        "paused-link",
+        "disabled-owner-link",
+        "wound-down-practice-link",
+    ]
+
+    cards = [public_client.get(f"/api/public/booking-links/{slug}") for slug in slugs]
+    slots = [
+        public_client.get(f"/api/public/booking-links/{slug}/slots?date={date_str}")
+        for slug in slugs
+    ]
+    bookings = [_book(public_client, slug, f"{date_str}T09:30:00Z") for slug in slugs]
+
+    for responses in (cards, slots, bookings):
+        assert all(r.status_code == 404 for r in responses)
+        assert all(r.json() == responses[0].json() for r in responses)
+
+    # The disabled-owner refusal happens before any write.
+    assert public_client.patient_repo.list_by_user(disabled_owner_id)[1] == 0
+    assert public_client.audit.calls == []
 
 
 # --------------------------------------------------------------- public: slots
@@ -884,6 +920,20 @@ def test_get_by_slug_carries_practice_edition(
     resolved = link_repo.get_by_slug("intro-call")
     assert resolved is not None
     assert resolved.practice_edition == "personal"
+
+
+@pytest.mark.parametrize("practice_is_active", [True, False, None])
+def test_get_by_slug_carries_practice_is_active(
+    link_repo: InMemoryBookingLinkRepository,
+    practice_is_active: bool | None,
+) -> None:
+    """None means no practice row (single-tenant); True/False mirror the
+    owning practice's active state, as PostgresBookingLinkRepository.get_by_slug
+    derives it from ``PracticeRow.is_active`` and ``PracticeRow.deleted_at``."""
+    link_repo.create(_link(practice_is_active=practice_is_active))
+    resolved = link_repo.get_by_slug("intro-call")
+    assert resolved is not None
+    assert resolved.practice_is_active is practice_is_active
 
 
 def test_sweep_ignores_relaxed_path_placeholders(

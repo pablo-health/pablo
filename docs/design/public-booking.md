@@ -222,10 +222,15 @@ subscription module is absent entirely (a self-host that set
 rather than 500-ing every booking: a deployment that bills nobody has
 nothing to enforce.
 
-Note this is a **subscription** gate, not a user-state gate. A
-deactivated or offboarded clinician whose subscription is still `FULL`
-keeps a live booking link; tying link availability to owner account
-state is separate work (PABLO-e3a.10).
+This is a **subscription** gate, and it is deliberately not the same
+gate that covers owner account state. `get_public_booking_context`
+refuses a link outright — the same 404 as a missing or deactivated
+slug, on the card, the slots, and the booking POST alike — the moment
+its owner is disabled or its practice is inactive. A wound-down
+subscription is temporary and the card is still the clinician's, so
+reads stay open and only writes refuse with 403; a disabled account or
+an inactive practice is not temporary in the same way, so the link
+stops existing to the public entirely.
 
 ### Anti-automation ladder
 
@@ -306,9 +311,14 @@ confirmation card with `.ics` download. Styled with the standard brand
 tokens; no dashboard chrome.
 
 Owners manage links through authed CRUD at `/api/booking-links`
-(create, list, update copy/duration, activate/deactivate, delete). A
-dashboard management surface (Settings → Booking) is the natural next
-step; until it lands, links are managed via the API.
+(create, list, update copy/duration, activate/deactivate, delete).
+Settings → Booking links is the dashboard surface for this: a list of
+links with copy/activate/deactivate/edit/delete actions, an inline
+form for creating a link, and an inline form for editing host name,
+title, description, and length (the slug and session type are fixed
+once a link is created). Deleting a link opens a dialog explaining
+that its slug stays reserved for good and offering to deactivate
+instead.
 
 ## The email seam
 
