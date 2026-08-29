@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest"
 import {
   DAY_END_HOUR,
   DAY_START_HOUR,
+  DENSITY_PRESETS,
   HOUR_ROW_PX,
   dynamicDayWindow,
   gridHours,
@@ -52,7 +53,10 @@ describe("dateUtils", () => {
     expect(secondary).toBe("2026")
   })
 
-  it("HOUR_ROW_PX is the compact 54px default (must match --ed-row-h)", () => {
+  it("DENSITY_PRESETS carries the three density presets, and HOUR_ROW_PX is the balanced default", () => {
+    expect(DENSITY_PRESETS.balanced).toEqual({ rowPx: 54, stackGapPx: 10, stackPadYPx: 14 })
+    expect(DENSITY_PRESETS.gentle).toEqual({ rowPx: 64, stackGapPx: 18, stackPadYPx: 22 })
+    expect(DENSITY_PRESETS.compact).toEqual({ rowPx: 44, stackGapPx: 10, stackPadYPx: 14 })
     expect(HOUR_ROW_PX).toBe(54)
   })
 

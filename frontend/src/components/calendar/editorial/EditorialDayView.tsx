@@ -37,6 +37,8 @@ interface EditorialDayViewProps {
   /** Working-hours window. Pass 0/24 to render the full day. */
   dayStart?: number
   dayEnd?: number
+  /** Height of one hour row in px, from the active density preset. */
+  rowHeightPx?: number
 }
 
 export function EditorialDayView({
@@ -51,18 +53,19 @@ export function EditorialDayView({
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
+  rowHeightPx = HOUR_ROW_PX,
 }: EditorialDayViewProps) {
   const scrollerRef = useRef<HTMLDivElement>(null)
   const today = isToday(anchor)
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
   const startOffsetMin = dayStart * 60
-  const totalHeight = HOUR_ROW_PX * (dayEnd - dayStart)
+  const totalHeight = rowHeightPx * (dayEnd - dayStart)
 
   useEffect(() => {
     if (scrollerRef.current) {
-      scrollerRef.current.scrollTop = Math.max(scrollToHour - dayStart, 0) * HOUR_ROW_PX
+      scrollerRef.current.scrollTop = Math.max(scrollToHour - dayStart, 0) * rowHeightPx
     }
-  }, [scrollToHour, dayStart])
+  }, [scrollToHour, dayStart, rowHeightPx])
 
   const lanes = useMemo(() => {
     const dayAppts = appointments.filter((a) => isSameDay(new Date(a.start_at), anchor))
@@ -73,7 +76,7 @@ export function EditorialDayView({
     if ((e.target as HTMLElement).closest("button")) return
     const rect = e.currentTarget.getBoundingClientRect()
     const y = e.clientY - rect.top
-    const minutes = Math.max(0, Math.floor((y / HOUR_ROW_PX) * 60) + startOffsetMin)
+    const minutes = Math.max(0, Math.floor((y / rowHeightPx) * 60) + startOffsetMin)
     const snapped = Math.floor(minutes / 15) * 15
     const start = new Date(startOfDay(anchor).getTime() + snapped * 60_000)
     onSelectSlot(start.toISOString())
@@ -97,7 +100,7 @@ export function EditorialDayView({
               <div
                 key={h}
                 className="flex items-start justify-end pr-3 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
-                style={{ height: HOUR_ROW_PX, color: "var(--ed-ink-soft)" }}
+                style={{ height: rowHeightPx, color: "var(--ed-ink-soft)" }}
               >
                 {i === 0 ? "" : format(new Date().setHours(h, 0, 0, 0), "h a")}
               </div>
@@ -119,8 +122,8 @@ export function EditorialDayView({
               const endMin = minutesSinceMidnight(appointment.end_at)
               // With a dynamic window the grid always contains every appointment,
               // so no clamping is needed — render at the true position.
-              const top = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
-              const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 20)
+              const top = ((startMin - startOffsetMin) / 60) * rowHeightPx
+              const height = Math.max(((endMin - startMin) / 60) * rowHeightPx - 2, 20)
               const widthPct = 100 / laneCount
               const left = lane * widthPct
               const micro = height < EVENT_MICRO_PX
@@ -134,7 +137,7 @@ export function EditorialDayView({
                   onContextMenu={onContextMenu}
                   drag={{
                     mode: "day",
-                    rowHeightPx: HOUR_ROW_PX,
+                    rowHeightPx,
                     gridSelector: "[data-daycanvas]",
                     onMove,
                   }}
@@ -155,7 +158,7 @@ export function EditorialDayView({
                 </EditorialEventWrapper>
               )
             })}
-            {today && <DayNowLine dayStart={dayStart} dayEnd={dayEnd} />}
+            {today && <DayNowLine dayStart={dayStart} dayEnd={dayEnd} rowHeightPx={rowHeightPx} />}
           </div>
         </div>
       </div>
@@ -163,11 +166,19 @@ export function EditorialDayView({
   )
 }
 
-function DayNowLine({ dayStart, dayEnd }: { dayStart: number; dayEnd: number }) {
+function DayNowLine({
+  dayStart,
+  dayEnd,
+  rowHeightPx,
+}: {
+  dayStart: number
+  dayEnd: number
+  rowHeightPx: number
+}) {
   const now = new Date()
   const nowMin = now.getHours() * 60 + now.getMinutes()
   if (nowMin < dayStart * 60 || nowMin > dayEnd * 60) return null
-  const top = ((nowMin - dayStart * 60) / 60) * HOUR_ROW_PX
+  const top = ((nowMin - dayStart * 60) / 60) * rowHeightPx
   return (
     <div
       aria-hidden

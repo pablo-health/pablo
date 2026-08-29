@@ -2,4 +2,4 @@
 
 export { EditorialCalendar } from "./EditorialCalendar"
 export type { EditorialTheme } from "./EditorialSidebar"
-export type { EditorialView } from "./dateUtils"
+export type { CalendarDensity, EditorialView } from "./dateUtils"

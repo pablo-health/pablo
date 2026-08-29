@@ -10,6 +10,7 @@ import { SettingsSection } from "@/components/settings/SettingsSection"
 import { ProfileSettings } from "@/components/settings/ProfileSettings"
 import { ProviderTypeSettings } from "@/components/settings/ProviderTypeSettings"
 import { SessionDefaults } from "@/components/settings/SessionDefaults"
+import { CalendarDensitySettings } from "@/components/settings/CalendarDensitySettings"
 import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
@@ -102,6 +103,11 @@ export default function SettingsPage() {
       >
         <ThemeSwitcher />
         <ThemeFlavorNote />
+        <CalendarDensitySettings
+          preferences={preferences}
+          onSave={handleSave}
+          isSaving={saveMutation.isPending}
+        />
       </SettingsSection>
 
       <SettingsSection

@@ -181,6 +181,7 @@ export default function CalendarPage() {
       <div aria-label="Weekly appointment calendar">
         <EditorialCalendar
           theme={editorialTheme}
+          density={preferences?.calendar_density ?? "balanced"}
           workingHoursStart={preferences?.working_hours_start}
           defaultView={toEditorialView(preferences?.calendar_default_view) ?? "week"}
           onSelectSlot={handleSelectSlot}

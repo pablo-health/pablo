@@ -39,6 +39,8 @@ interface EditorialWeekViewProps {
   /** Working-hours window. Pass 0/24 to render the full day. */
   dayStart?: number
   dayEnd?: number
+  /** Height of one hour row in px, from the active density preset. */
+  rowHeightPx?: number
 }
 
 export function EditorialWeekView({
@@ -53,6 +55,7 @@ export function EditorialWeekView({
   scrollToHour = 8,
   dayStart = DAY_START_HOUR,
   dayEnd = DAY_END_HOUR,
+  rowHeightPx = HOUR_ROW_PX,
 }: EditorialWeekViewProps) {
   const days = useMemo(() => weekDays(anchor), [anchor])
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
@@ -60,9 +63,9 @@ export function EditorialWeekView({
 
   useEffect(() => {
     if (scrollerRef.current) {
-      scrollerRef.current.scrollTop = Math.max(scrollToHour - dayStart, 0) * HOUR_ROW_PX
+      scrollerRef.current.scrollTop = Math.max(scrollToHour - dayStart, 0) * rowHeightPx
     }
-  }, [scrollToHour, dayStart])
+  }, [scrollToHour, dayStart, rowHeightPx])
 
   const dayBuckets = useMemo(() => {
     const buckets: AppointmentResponse[][] = days.map(() => [])
@@ -85,7 +88,7 @@ export function EditorialWeekView({
       <DayHeaderRow days={days} />
       <div ref={scrollerRef} className="relative max-h-[68vh] overflow-y-auto">
         <div className="flex">
-          <HourRail hours={hours} />
+          <HourRail hours={hours} rowHeightPx={rowHeightPx} />
           <div
             data-weekgrid="1"
             className="ed-daycols ed-hourlines relative grid flex-1"
@@ -105,9 +108,10 @@ export function EditorialWeekView({
                 onContextMenu={onContextMenu}
                 dayStart={dayStart}
                 dayEnd={dayEnd}
+                rowHeightPx={rowHeightPx}
               />
             ))}
-            <NowLine days={days} dayStart={dayStart} dayEnd={dayEnd} />
+            <NowLine days={days} dayStart={dayStart} dayEnd={dayEnd} rowHeightPx={rowHeightPx} />
           </div>
         </div>
       </div>
@@ -159,7 +163,7 @@ function DayHeaderRow({ days }: { days: Date[] }) {
   )
 }
 
-function HourRail({ hours }: { hours: number[] }) {
+function HourRail({ hours, rowHeightPx }: { hours: number[]; rowHeightPx: number }) {
   return (
     <div
       className="ed-halfhour relative w-[60px] shrink-0"
@@ -169,7 +173,7 @@ function HourRail({ hours }: { hours: number[] }) {
         <div
           key={h}
           className="relative flex items-start justify-end pr-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
-          style={{ height: HOUR_ROW_PX, color: "var(--ed-ink-soft)" }}
+          style={{ height: rowHeightPx, color: "var(--ed-ink-soft)" }}
         >
           {i === 0 ? "" : format(new Date().setHours(h, 0, 0, 0), "h a")}
         </div>
@@ -190,6 +194,7 @@ function DayColumn({
   onContextMenu,
   dayStart,
   dayEnd,
+  rowHeightPx,
 }: {
   day: Date
   /** 0-based index of this column within the visible 7-day week (used for
@@ -204,16 +209,17 @@ function DayColumn({
   onContextMenu: (appointment: AppointmentResponse, x: number, y: number) => void
   dayStart: number
   dayEnd: number
+  rowHeightPx: number
 }) {
   const today = isToday(day)
-  const totalHeight = HOUR_ROW_PX * (dayEnd - dayStart)
+  const totalHeight = rowHeightPx * (dayEnd - dayStart)
   const startOffsetMin = dayStart * 60
 
   const handleSlotClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("button")) return
     const rect = e.currentTarget.getBoundingClientRect()
     const y = e.clientY - rect.top
-    const minutesFromMidnight = Math.max(0, Math.floor((y / HOUR_ROW_PX) * 60) + startOffsetMin)
+    const minutesFromMidnight = Math.max(0, Math.floor((y / rowHeightPx) * 60) + startOffsetMin)
     const snapped = Math.floor(minutesFromMidnight / 15) * 15
     const start = new Date(startOfDay(day).getTime() + snapped * 60_000)
     onSelectSlot(start.toISOString())
@@ -234,8 +240,8 @@ function DayColumn({
         const endMin = minutesSinceMidnight(appointment.end_at)
         // With a dynamic window the grid always contains every appointment,
         // so no clamping is needed — render at the true position.
-        const top = ((startMin - startOffsetMin) / 60) * HOUR_ROW_PX
-        const height = Math.max(((endMin - startMin) / 60) * HOUR_ROW_PX - 2, 20)
+        const top = ((startMin - startOffsetMin) / 60) * rowHeightPx
+        const height = Math.max(((endMin - startMin) / 60) * rowHeightPx - 2, 20)
         const widthPct = 100 / laneCount
         const left = lane * widthPct
         const micro = height < EVENT_MICRO_PX
@@ -249,7 +255,7 @@ function DayColumn({
             onContextMenu={onContextMenu}
             drag={{
               mode: "week",
-              rowHeightPx: HOUR_ROW_PX,
+              rowHeightPx,
               gridSelector: "[data-weekgrid]",
               sourceDayIndex: dayIndex,
               onMove,
@@ -279,17 +285,19 @@ function NowLine({
   days,
   dayStart,
   dayEnd,
+  rowHeightPx,
 }: {
   days: Date[]
   dayStart: number
   dayEnd: number
+  rowHeightPx: number
 }) {
   const todayIdx = days.findIndex((d) => isToday(d))
   if (todayIdx === -1) return null
   const now = new Date()
   const nowMin = now.getHours() * 60 + now.getMinutes()
   if (nowMin < dayStart * 60 || nowMin > dayEnd * 60) return null
-  const top = ((nowMin - dayStart * 60) / 60) * HOUR_ROW_PX
+  const top = ((nowMin - dayStart * 60) / 60) * rowHeightPx
   return (
     <div
       aria-hidden

@@ -15,6 +15,7 @@ from .validators import validate_phone
 ProviderType = Literal["therapist", "prescriber", "both"]
 OnboardingState = Literal["in_progress", "later", "completed"]
 ThemeName = Literal["warm-paper", "dark", "high-contrast", "boring-ehr"]
+CalendarDensity = Literal["gentle", "balanced", "compact"]
 
 # Max length of a single credential title (matches clinician_profiles.title).
 MAX_CREDENTIAL_TITLE_LEN = 50
@@ -79,6 +80,7 @@ class UserPreferences(BaseModel):
         description="IANA timezone. Auto-detected from browser on first save.",
     )
     theme: ThemeName = "warm-paper"
+    calendar_density: CalendarDensity = "balanced"
 
 
 class UpdateThemeRequest(BaseModel):

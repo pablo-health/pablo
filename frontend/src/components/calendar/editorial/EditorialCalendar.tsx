@@ -3,6 +3,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
+import type { CSSProperties } from "react"
 import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
 import { usePatientList } from "@/hooks/usePatients"
 import type {
@@ -20,7 +21,14 @@ import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { EditorialEventPeek } from "./EditorialEventPeek"
 import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
-import { dynamicDayWindow, shiftAnchor, visibleRange, type EditorialView } from "./dateUtils"
+import {
+  DENSITY_PRESETS,
+  dynamicDayWindow,
+  shiftAnchor,
+  visibleRange,
+  type CalendarDensity,
+  type EditorialView,
+} from "./dateUtils"
 
 const ALL_STATUSES: AppointmentStatus[] = [
   "confirmed",
@@ -38,6 +46,7 @@ interface EditorialCalendarProps {
   defaultView?: EditorialView
   workingHoursStart?: number
   theme: EditorialTheme
+  density?: CalendarDensity
   onSelectSlot: (start: string) => void
   /** Edit entrypoint — opens the edit sheet (double-click or peek's Edit). */
   onSelectAppointment: (appointment: AppointmentResponse) => void
@@ -60,11 +69,13 @@ export function EditorialCalendar({
   defaultView = "week",
   workingHoursStart = 8,
   theme,
+  density = "balanced",
   onSelectSlot,
   onSelectAppointment,
   onCreateNew,
   onViewChange,
 }: EditorialCalendarProps) {
+  const preset = DENSITY_PRESETS[density]
   const [view, setView] = useState<EditorialView>(defaultView)
   const [anchor, setAnchor] = useState<Date>(() => new Date())
   const [statusFilters, setStatusFilters] = useState<Set<AppointmentStatus>>(
@@ -194,12 +205,16 @@ export function EditorialCalendar({
   return (
     <div
       data-editorial-theme={theme}
+      data-density={density}
       className="ed-canvas relative flex min-h-[720px] overflow-hidden rounded-[18px]"
       style={{
         color: "var(--ed-ink)",
         border: "1px solid var(--ed-hairline)",
         boxShadow: "var(--ed-shadow-card)",
-      }}
+        "--ed-row-h": `${preset.rowPx}px`,
+        "--ed-stack-gap": `${preset.stackGapPx}px`,
+        "--ed-stack-pad-y": `${preset.stackPadYPx}px`,
+      } as CSSProperties} // CSSProperties has no index signature for custom properties
     >
       <EditorialSidebar
         selected={anchor}
@@ -267,6 +282,7 @@ export function EditorialCalendar({
             scrollToHour={workingHoursStart}
             dayStart={dayStart}
             dayEnd={dayEnd}
+            rowHeightPx={preset.rowPx}
           />
         )}
         {view === "day" && (
@@ -282,6 +298,7 @@ export function EditorialCalendar({
             scrollToHour={workingHoursStart}
             dayStart={dayStart}
             dayEnd={dayEnd}
+            rowHeightPx={preset.rowPx}
           />
         )}
         {view === "month" && (
