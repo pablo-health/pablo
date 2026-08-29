@@ -1421,9 +1421,7 @@ def test_tombstoned_link_is_a_public_404(
     unknown = public_client.get("/api/public/booking-links/no-such-link")
 
     card = public_client.get("/api/public/booking-links/intro-call")
-    slots = public_client.get(
-        f"/api/public/booking-links/intro-call/slots?date={_bookable_date()}"
-    )
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={_bookable_date()}")
     unknown_slots = public_client.get(
         f"/api/public/booking-links/no-such-link/slots?date={_bookable_date()}"
     )
