@@ -81,7 +81,12 @@ export interface UpdateUserRequestBase {
   phone?: string
   /** Set to true when the user explicitly submits the profile-basics step. */
   profile_basics_completed?: boolean
-  onboarding_state?: "in_progress" | "completed"
+  /**
+   * Mirrors the backend's ``OnboardingState`` literal. "later" is a real,
+   * persisted state — the deferral path writes it and the dashboard reads it —
+   * so omitting it here made the type narrower than the endpoint it describes.
+   */
+  onboarding_state?: "in_progress" | "later" | "completed"
 }
 
 export type UpdateUserRequest = UpdateUserRequestBase & UpdateUserRequestExtensions
