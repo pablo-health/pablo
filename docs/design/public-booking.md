@@ -222,10 +222,15 @@ subscription module is absent entirely (a self-host that set
 rather than 500-ing every booking: a deployment that bills nobody has
 nothing to enforce.
 
-Note this is a **subscription** gate, not a user-state gate. A
-deactivated or offboarded clinician whose subscription is still `FULL`
-keeps a live booking link; tying link availability to owner account
-state is separate work (PABLO-e3a.10).
+This is a **subscription** gate, and it is deliberately not the same
+gate that covers owner account state. `get_public_booking_context`
+refuses a link outright — the same 404 as a missing or deactivated
+slug, on the card, the slots, and the booking POST alike — the moment
+its owner is disabled or its practice is inactive. A wound-down
+subscription is temporary and the card is still the clinician's, so
+reads stay open and only writes refuse with 403; a disabled account or
+an inactive practice is not temporary in the same way, so the link
+stops existing to the public entirely.
 
 ### Anti-automation ladder
 

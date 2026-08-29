@@ -75,6 +75,11 @@ class BookingLink:
     # Populated only by ``get_by_slug``, alongside practice_schema; None
     # in a single-schema deployment (no practice row) or when unset.
     practice_edition: str | None = None
+    # Whether the owning practice is active. Populated only by
+    # ``get_by_slug``, alongside practice_schema; None when there is no
+    # practice row (single-tenant deployment), in which case the public
+    # surface has no practice-level reason to refuse the link.
+    practice_is_active: bool | None = None
     # Set when the link is tombstoned. A tombstoned link never reaches a
     # response; its slug stays claimed via the UNIQUE(slug) constraint.
     deleted_at: datetime | None = None

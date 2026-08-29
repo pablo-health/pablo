@@ -134,6 +134,8 @@ def get_public_booking_context(
     owner = user_repo.get(link.user_id)
     if owner is None:
         raise NotFoundError(_LINK_NOT_FOUND)
+    if owner.status == "disabled" or link.practice_is_active is False:
+        raise NotFoundError(_LINK_NOT_FOUND)
     return PublicBookingContext(link=link, owner=owner)
 
 
