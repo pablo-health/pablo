@@ -25,7 +25,7 @@ Off-request tenant context (background tasks, workers):
 
 import re
 import urllib.parse
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from functools import lru_cache
 
 from sqlalchemy import create_engine, event, text
@@ -38,6 +38,18 @@ _VALID_SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 # Request-scoped database session, set by DatabaseSessionMiddleware
 _request_session: ContextVar[Session | None] = ContextVar("_request_session", default=None)
+
+# Sessions that WERE published on ``_request_session`` and have since been
+# displaced by a nested publication (``publish_request_session``), outermost
+# first. They are still open and still owned by their creator — the middleware
+# closes its own session at request teardown — but nothing points at them for
+# the duration, which is precisely why they need tracking: a session no code can
+# reach is a session no guard can check, and an unreachable session holding an
+# open transaction is the leak this whole module exists to prevent.
+_displaced_sessions: ContextVar[tuple[Session, ...]] = ContextVar("_displaced_sessions", default=())
+
+# Opaque handle tying a publication to its matching restore.
+_RequestSessionBinding = tuple[Token[Session | None], Token[tuple[Session, ...]]]
 
 # Request-scoped tenant schema name. Propagates to the pool-checkout
 # event listener so every connection grabbed during a request — including
@@ -275,6 +287,62 @@ def get_db_session() -> Session:
     return session
 
 
+def bound_db_sessions() -> tuple[Session, ...]:
+    """Every session bound to this context: displaced ones first, then the current.
+
+    ``_request_session`` names only the INNERMOST session. A caller that opened
+    its own session and published it (``publish_request_session``, which is what
+    ``tenant_db_session`` does) leaves the previous one open behind it, and any
+    check that reads only the ContextVar is blind to exactly that session. Both
+    the release helper and the guard below iterate this instead.
+    """
+    current = _request_session.get()
+    displaced = _displaced_sessions.get()
+    return (*displaced, current) if current is not None else displaced
+
+
+def publish_request_session(session: Session) -> _RequestSessionBinding:
+    """Publish *session* as the request-scoped session, releasing the one it displaces.
+
+    Returns an opaque binding to hand back to :func:`restore_request_session`.
+
+    The displaced session is COMMITTED, not merely remembered. Nothing will
+    reach it again until the code that opened it tears it down, so any
+    transaction it is holding sits idle for however long the inner unit of work
+    takes -- and Postgres's ``idle_in_transaction_session_timeout`` terminates
+    the backend underneath it. The teardown commit then fails on a closed socket
+    long after the real work succeeded, turning a request that did everything
+    right into a 5xx (and, on a task-queue target, into a retry of work that is
+    already done). Committing here returns the connection to the pool, so the
+    teardown commit finds no open transaction and needs no connection at all.
+
+    Semantics worth stating plainly: pending work on the displaced session is
+    committed rather than rolled back, which is what an explicit
+    ``release_db_connection()`` at the same point would do. If the surrounding
+    request later raises, that work stays committed. The alternative is not
+    "the work rolls back" -- it is a connection the database kills mid-flight,
+    which loses the work anyway and misreports the outcome.
+
+    The caller must not be racing the displaced session's owner. In practice it
+    never is: a nested unit of work runs while its caller is blocked waiting for
+    it.
+    """
+    outgoing = _request_session.get()
+    displaced = _displaced_sessions.get()
+    if outgoing is not None:
+        if outgoing.in_transaction():
+            outgoing.commit()
+        displaced = (*displaced, outgoing)
+    return (_request_session.set(session), _displaced_sessions.set(displaced))
+
+
+def restore_request_session(binding: _RequestSessionBinding) -> None:
+    """Undo a :func:`publish_request_session`, re-exposing the session it displaced."""
+    session_token, displaced_token = binding
+    _request_session.reset(session_token)
+    _displaced_sessions.reset(displaced_token)
+
+
 def release_db_connection() -> None:
     """Commit the request-scoped transaction to release its pooled connection.
 
@@ -288,12 +356,15 @@ def release_db_connection() -> None:
     scoping survives transparently. This is what makes "just release the
     connection" safe despite per-connection tenant state.
 
-    No-ops when no request-scoped session is bound (``to_thread`` workers,
-    CLI scripts, unit tests with in-memory fakes) -- there's no
-    request-scoped transaction to release there.
+    Releases EVERY session bound to this context, not just the published one:
+    a displaced session's connection is held just as hard, and is harder to
+    notice precisely because nothing points at it.
+
+    No-ops when no session is bound (``to_thread`` workers, CLI scripts, unit
+    tests with in-memory fakes) -- there's no request-scoped transaction to
+    release there.
     """
-    session = _request_session.get()
-    if session is not None:
+    for session in bound_db_sessions():
         session.commit()
 
 
@@ -339,21 +410,28 @@ def assert_no_held_db_connection(context: str = "") -> None:
     to have run ``release_db_connection()`` first; the next query after that
     auto-begins a fresh, re-armed transaction.
 
-    No-ops when no request-scoped session is bound (``to_thread`` workers, CLI
-    scripts, unit tests with in-memory fakes), or when the bound session has no
-    open transaction -- the released, correct state. When a connection IS held:
+    Checks EVERY session bound to this context, not only the published one. A
+    caller that opens its own session and publishes it displaces the previous
+    one, which stays open with nothing pointing at it -- and a check that reads
+    only ``_request_session`` cannot see the very session most likely to be
+    stranded. Reading only the ContextVar made this guard blind in exactly the
+    case it was written for.
+
+    No-ops when no session is bound (``to_thread`` workers, CLI scripts, unit
+    tests with in-memory fakes), or when no bound session has an open
+    transaction -- the released, correct state. When a connection IS held:
     raises in development/test, turning a forgotten release into an immediate,
     obvious failure; in production it logs an error instead of crashing a live
     request (the call still works -- the slip is alerted, not silent).
     """
-    session = _request_session.get()
-    if session is None or not session.in_transaction():
+    held = sum(1 for session in bound_db_sessions() if session.in_transaction())
+    if not held:
         return
 
     from ..settings import get_settings
 
     detail = (
-        f"A pooled DB connection is held during an external call "
+        f"{held} pooled DB connection(s) held during an external call "
         f"({context or 'unspecified'}); call release_db_connection() before it "
         f"so a connection is not held idle across the round-trip."
     )
@@ -361,7 +439,9 @@ def assert_no_held_db_connection(context: str = "") -> None:
         import logging
 
         logging.getLogger(__name__).error(
-            "held_db_connection_during_external_call context=%s", context or "unspecified"
+            "held_db_connection_during_external_call context=%s held=%d",
+            context or "unspecified",
+            held,
         )
         return
     raise RuntimeError(detail)

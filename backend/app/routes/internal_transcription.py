@@ -36,7 +36,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..auth.service import _resolve_practice_from_email, require_cloud_tasks_invoker
-from ..db import _request_session, arm_current_user_id, create_standalone_session
+from ..db import (
+    arm_current_user_id,
+    create_standalone_session,
+    publish_request_session,
+    restore_request_session,
+)
 from ..db.models import TherapySessionRow
 from ..db.platform_models import PlatformUserRow, PracticeRow
 
@@ -217,7 +222,12 @@ def process_transcription_result(
 
     schema_name = _resolve_schema_for_user(user_id)
     standalone_db = create_standalone_session(practice_schema=schema_name)
-    _request_session.set(standalone_db)
+    # Publish rather than set: this runs on a request thread, so something else
+    # (the middleware) usually has a session open with a transaction already
+    # begun. Publishing releases that session for the duration and restores it
+    # afterwards; a bare set would strand it AND leave the request with no
+    # session at all once this returns.
+    binding = publish_request_session(standalone_db)
     # Arm the RLS GUC for this user so the SOAP session/note writes pass the
     # tenant tables' WITH CHECK policies under a NOBYPASSRLS role. This
     # off-request path doesn't go through the normal request auth, so it must
@@ -226,8 +236,8 @@ def process_transcription_result(
     arm_current_user_id(standalone_db, user_id)
 
     try:
-        # Repos read the active DB session from the request contextvar set
-        # above (_request_session.set), so no session arg is passed here.
+        # Repos read the active DB session from the request contextvar
+        # published above, so no session arg is passed here.
         session_repo = get_session_repository()
         patient_repo = get_patient_repository()
         soap_service = RegistryNoteGenerationService()
@@ -342,7 +352,7 @@ def process_transcription_result(
     finally:
         if standalone_db:
             standalone_db.close()
-            _request_session.set(None)
+        restore_request_session(binding)
 
 
 @router.post("/api/internal/transcription-complete")
