@@ -2,7 +2,7 @@
 
 "use client"
 
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -15,14 +15,12 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  useBookingLinks,
-  useCreateBookingLink,
-  useUpdateBookingLink,
-} from "@/hooks/useBookingLinks"
+import { useBookingLinks, useCreateBookingLink } from "@/hooks/useBookingLinks"
 import { ApiError } from "@/lib/api/client"
 import { SESSION_TYPES, SLUG_PATTERN } from "@/types/bookingLinks"
 import type { BookingLink, CreateBookingLinkRequest } from "@/types/bookingLinks"
+import { LinkRow } from "./BookingLinkRow"
+import { DeleteBookingLinkDialog } from "./DeleteBookingLinkDialog"
 
 const SLUG_HELP = "3–64 characters: lowercase letters, numbers, dashes."
 const SLUG_ERROR = "Slug must be 3–64 lowercase letters, numbers or dashes."
@@ -31,76 +29,6 @@ function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message
   if (err instanceof Error) return err.message
   return "Something went wrong. Please try again."
-}
-
-function bookingUrl(slug: string): string {
-  return `${window.location.origin}/book/${slug}`
-}
-
-function LinkRow({ link }: { link: BookingLink }) {
-  const [copied, setCopied] = useState(false)
-  const urlRef = useRef<HTMLParagraphElement>(null)
-  const updateMutation = useUpdateBookingLink()
-  const url = bookingUrl(link.slug)
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      const node = urlRef.current
-      const selection = window.getSelection()
-      if (node && selection) {
-        const range = document.createRange()
-        range.selectNodeContents(node)
-        selection.removeAllRanges()
-        selection.addRange(range)
-      }
-    }
-  }
-
-  function handleToggleActive() {
-    updateMutation.mutate({ linkId: link.id, data: { is_active: !link.is_active } })
-  }
-
-  return (
-    <li className="space-y-2 rounded-md border border-neutral-200 px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-neutral-900">{link.title}</p>
-          <p className="text-sm text-neutral-900">/book/{link.slug}</p>
-          <p ref={urlRef} className="text-xs text-neutral-500">
-            {url}
-          </p>
-          <p className="text-xs text-neutral-500">
-            {link.duration_minutes} min · {link.session_type}
-          </p>
-        </div>
-        <span
-          className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium ${
-            link.is_active ? "bg-secondary-100 text-secondary-700" : "bg-neutral-100 text-neutral-600"
-          }`}
-        >
-          {link.is_active ? "Active" : "Inactive"}
-        </span>
-      </div>
-      <div className="flex gap-2">
-        <Button type="button" size="sm" variant="outline" onClick={handleCopy}>
-          {copied ? "Copied" : "Copy link"}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={handleToggleActive}
-          disabled={updateMutation.isPending}
-        >
-          {link.is_active ? "Deactivate" : "Activate"}
-        </Button>
-      </div>
-    </li>
-  )
 }
 
 function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: () => void }) {
@@ -243,6 +171,8 @@ function CreateLinkForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
 export function BookingLinkSettings() {
   const { data, isLoading, error } = useBookingLinks()
   const [formOpen, setFormOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [deletingLink, setDeletingLink] = useState<BookingLink | null>(null)
 
   const links = data?.data ?? []
 
@@ -266,7 +196,15 @@ export function BookingLinkSettings() {
       {links.length > 0 && (
         <ul className="space-y-2">
           {links.map((link) => (
-            <LinkRow key={link.id} link={link} />
+            <LinkRow
+              key={link.id}
+              link={link}
+              isEditing={editingId === link.id}
+              onEdit={() => setEditingId(link.id)}
+              onCancelEdit={() => setEditingId(null)}
+              onSaved={() => setEditingId(null)}
+              onDeleteClick={() => setDeletingLink(link)}
+            />
           ))}
         </ul>
       )}
@@ -277,6 +215,16 @@ export function BookingLinkSettings() {
         <Button size="sm" onClick={() => setFormOpen(true)}>
           New booking link
         </Button>
+      )}
+
+      {deletingLink && (
+        <DeleteBookingLinkDialog
+          link={deletingLink}
+          open
+          onOpenChange={(open) => {
+            if (!open) setDeletingLink(null)
+          }}
+        />
       )}
     </div>
   )
