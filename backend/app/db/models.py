@@ -1013,6 +1013,12 @@ class AuditLogRow(Base):
     # dispute. Server default 'clinician' so every existing row, and every
     # caller that does not set it, keeps the meaning it already had.
     actor_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="clinician")
+    # For ``actor_type = 'system'``: which part of the system acted (a cron, a
+    # queue worker, a background agent). NULL for every human kind, whose actor
+    # is already named by ``user_id``. Free-form on purpose — a new background
+    # job should not need a migration to be able to audit itself — so it is
+    # neither constrained nor indexed as an enum would be.
+    actor_component: Mapped[str | None] = mapped_column(String(64))
     action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     resource_type: Mapped[str] = mapped_column(String(30), nullable=False)
     # resource_id is polymorphic (patient_id | session_id | user_id | …) —

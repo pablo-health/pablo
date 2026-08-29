@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ..models.audit import (
+    ACTOR_COMPONENT_MAX_LENGTH,
     ACTOR_TYPE_CLINICIAN,
     PHI_FIELD_NAMES,
     AuditAction,
@@ -102,6 +103,13 @@ class AuditService:
             return
         if entry.changes is not None:
             _assert_changes_phi_free(entry.changes)
+        if entry.actor_component is not None:
+            # A component label is a developer-supplied constant, so a value
+            # too long for the column is a bug in the caller, not user input.
+            # Truncate rather than raise: losing the tail of a label is a far
+            # better outcome than losing the audit row (see the re-raise
+            # below — a failed audit write fails the request).
+            entry.actor_component = entry.actor_component[:ACTOR_COMPONENT_MAX_LENGTH]
         try:
             self._repo.append(entry)
         except Exception:
@@ -145,6 +153,7 @@ class AuditService:
         session: TherapySession | None = None,
         changes: dict[str, Any] | None = None,
         actor_type: str = ACTOR_TYPE_CLINICIAN,
+        actor_component: str | None = None,
     ) -> AuditLogEntry:
         """Log an audit event.
 
@@ -163,6 +172,7 @@ class AuditService:
         entry = AuditLogEntry(
             user_id=user.id,
             actor_type=actor_type,
+            actor_component=actor_component,
             action=action.value,
             resource_type=resource_type.value,
             resource_id=resource_id,
@@ -183,6 +193,7 @@ class AuditService:
         patient: Patient,
         changes: dict[str, Any] | None = None,
         actor_type: str = ACTOR_TYPE_CLINICIAN,
+        actor_component: str | None = None,
     ) -> AuditLogEntry:
         return self.log(
             action=action,
@@ -193,6 +204,7 @@ class AuditService:
             patient=patient,
             changes=changes,
             actor_type=actor_type,
+            actor_component=actor_component,
         )
 
     def log_session_action(
@@ -371,11 +383,13 @@ class AuditService:
         patient_id: str | None = None,
         changes: dict[str, Any] | None = None,
         actor_type: str = ACTOR_TYPE_CLINICIAN,
+        actor_component: str | None = None,
     ) -> AuditLogEntry:
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
             actor_type=actor_type,
+            actor_component=actor_component,
             action=action.value,
             resource_type=ResourceType.APPOINTMENT.value,
             resource_id=appointment_id,
