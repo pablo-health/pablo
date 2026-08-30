@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -327,6 +328,254 @@ class TestPushAppointment:
         token_repo.get.return_value = None
         result = calendar_service.push_appointment("user-001", sample_appointment)
         assert result is None
+
+
+# Inbound Sync Tests
+
+
+class _FakeRequest:
+    """Stands in for a googleapiclient request; replays one page or raises."""
+
+    def __init__(self, page: dict | Exception) -> None:
+        self._page = page
+
+    def execute(self) -> dict:
+        if isinstance(self._page, Exception):
+            raise self._page
+        return self._page
+
+
+class _FakeEvents:
+    def __init__(self, pages: list[dict | Exception]) -> None:
+        self._pages = pages
+        self.calls: list[dict] = []
+
+    def list(self, **kwargs: object) -> _FakeRequest:
+        self.calls.append(dict(kwargs))
+        return _FakeRequest(self._pages[len(self.calls) - 1])
+
+
+class _FakeCalendarService:
+    def __init__(self, pages: list[dict | Exception]) -> None:
+        self.events_resource = _FakeEvents(pages)
+
+    def events(self) -> _FakeEvents:
+        return self.events_resource
+
+
+class _FakeHttpResponse:
+    def __init__(self, status: int) -> None:
+        self.status = status
+
+
+class _FakeHttpError(Exception):
+    """Mimics googleapiclient.errors.HttpError's status surface."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__(f"HTTP {status}")
+        self.resp = _FakeHttpResponse(status)
+
+
+def _event(event_id: str, summary: str = "Busy") -> dict:
+    return {
+        "id": event_id,
+        "summary": summary,
+        "start": {"dateTime": "2026-01-01T10:00:00Z"},
+        "end": {"dateTime": "2026-01-01T11:00:00Z"},
+        "status": "confirmed",
+    }
+
+
+@pytest.fixture
+def connected_token_doc() -> GoogleCalendarTokenDoc:
+    return GoogleCalendarTokenDoc(
+        user_id="user-001",
+        encrypted_tokens="encrypted",
+        calendar_id="primary@gmail.com",
+    )
+
+
+class TestSyncFromGoogle:
+    """Inbound sync: paging, syncToken handling, and expiry recovery."""
+
+    @staticmethod
+    def _run_sync(
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        token_doc: GoogleCalendarTokenDoc,
+        pages: list[dict | Exception],
+    ) -> tuple[list[dict], _FakeCalendarService]:
+        """Drive sync_from_google against a faked Google Calendar client."""
+        token_repo.get.return_value = token_doc
+        fake_service = _FakeCalendarService(pages)
+
+        creds = MagicMock()
+        creds.expired = False
+        with (
+            patch(
+                "app.services.google_calendar_service.decrypt_tokens",
+                return_value={"token": "ya29.access", "refresh_token": "1//refresh"},
+            ),
+            patch(
+                "app.services.google_calendar_service._make_credentials",
+                return_value=creds,
+            ),
+            patch(
+                "app.services.google_calendar_service._build_calendar_service",
+                return_value=fake_service,
+            ),
+        ):
+            changes = calendar_service.sync_from_google("user-001")
+        return changes, fake_service
+
+    def test_follows_next_page_token_across_pages(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        """Every page is read — stopping at the first silently drops changes."""
+        pages: list[dict | Exception] = [
+            {"items": [_event("e1"), _event("e2")], "nextPageToken": "page-2"},
+            {"items": [_event("e3"), _event("e4")], "nextPageToken": "page-3"},
+            {"items": [_event("e5")], "nextSyncToken": "sync-final"},
+        ]
+
+        changes, fake_service = self._run_sync(
+            calendar_service, token_repo, connected_token_doc, pages
+        )
+
+        assert [c["google_event_id"] for c in changes] == ["e1", "e2", "e3", "e4", "e5"]
+        calls = fake_service.events_resource.calls
+        assert len(calls) == 3
+        assert "pageToken" not in calls[0]
+        assert calls[1]["pageToken"] == "page-2"
+        assert calls[2]["pageToken"] == "page-3"
+        assert all(call["maxResults"] == 250 for call in calls)
+
+    def test_sync_token_comes_from_final_page(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        """Only the last page carries a usable nextSyncToken."""
+        pages: list[dict | Exception] = [
+            {"items": [_event("e1")], "nextPageToken": "page-2", "nextSyncToken": "stale"},
+            {"items": [_event("e2")], "nextSyncToken": "sync-final"},
+        ]
+
+        self._run_sync(calendar_service, token_repo, connected_token_doc, pages)
+
+        token_repo.update_sync_token.assert_called_once_with("user-001", "sync-final")
+
+    def test_single_page_response_unchanged(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        """Regression guard: one page still means one request and one token write."""
+        pages: list[dict | Exception] = [
+            {"items": [_event("e1", "Dentist")], "nextSyncToken": "sync-1"},
+        ]
+
+        changes, fake_service = self._run_sync(
+            calendar_service, token_repo, connected_token_doc, pages
+        )
+
+        assert len(fake_service.events_resource.calls) == 1
+        assert changes == [
+            {
+                "google_event_id": "e1",
+                "summary": "Dentist",
+                "start": {"dateTime": "2026-01-01T10:00:00Z"},
+                "end": {"dateTime": "2026-01-01T11:00:00Z"},
+                "status": "confirmed",
+            }
+        ]
+        token_repo.update_sync_token.assert_called_once_with("user-001", "sync-1")
+
+    def test_first_sync_uses_time_window_not_sync_token(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        pages: list[dict | Exception] = [{"items": [], "nextSyncToken": "sync-1"}]
+
+        _, fake_service = self._run_sync(calendar_service, token_repo, connected_token_doc, pages)
+
+        first_call = fake_service.events_resource.calls[0]
+        assert "syncToken" not in first_call
+        assert "timeMin" in first_call
+
+    def test_expired_sync_token_clears_and_resyncs(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        """A 410 means the stored token aged out: drop it and re-sync in the same run."""
+        connected_token_doc.sync_token = "expired-token"
+        pages: list[dict | Exception] = [
+            _FakeHttpError(410),
+            {"items": [_event("e1")], "nextSyncToken": "sync-fresh"},
+        ]
+
+        changes, fake_service = self._run_sync(
+            calendar_service, token_repo, connected_token_doc, pages
+        )
+
+        calls = fake_service.events_resource.calls
+        assert calls[0]["syncToken"] == "expired-token"
+        assert "syncToken" not in calls[1]
+        assert "timeMin" in calls[1]
+
+        token_repo.save.assert_called_once()
+        assert token_repo.save.call_args[0][0].sync_token is None
+
+        assert [c["google_event_id"] for c in changes] == ["e1"]
+        token_repo.update_sync_token.assert_called_once_with("user-001", "sync-fresh")
+
+    def test_non_gone_error_does_not_fail_the_run(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+    ) -> None:
+        pages: list[dict | Exception] = [_FakeHttpError(500)]
+
+        changes, _ = self._run_sync(calendar_service, token_repo, connected_token_doc, pages)
+
+        assert changes == []
+        token_repo.update_sync_token.assert_not_called()
+        token_repo.save.assert_not_called()
+
+    def test_no_event_content_in_logs(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        connected_token_doc: GoogleCalendarTokenDoc,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """HIPAA: sync logs page and change counts, never event content."""
+        connected_token_doc.sync_token = "expired-token"
+        secret = "Weekly-with-A-Patient"
+        pages: list[dict | Exception] = [
+            _FakeHttpError(410),
+            {"items": [_event("e1", secret)], "nextPageToken": "page-2"},
+            {"items": [_event("e2", secret)], "nextSyncToken": "sync-fresh"},
+        ]
+
+        with caplog.at_level(logging.DEBUG, logger="app.services.google_calendar_service"):
+            self._run_sync(calendar_service, token_repo, connected_token_doc, pages)
+
+        logged = " ".join(record.getMessage() for record in caplog.records)
+        assert secret not in logged
+        assert "e1" not in logged
+        assert "2 changes" in logged
+        assert "2 page(s)" in logged
 
 
 # Disconnect Tests
