@@ -22,7 +22,10 @@ from .repositories import (
     get_patient_repository,
     get_user_repository,
 )
-from .services.google_calendar_service import GoogleCalendarService
+from .services.google_calendar_service import (
+    GoogleCalendarService,
+    google_consent_surface,
+)
 from .services.ical_sync_service import ICalSyncService
 from .services.reminder_service import ReminderService
 from .services.sync_scheduler_service import SyncSchedulerService, _is_within_working_hours
@@ -62,11 +65,10 @@ def _run_sync_cycle() -> None:
             patient_repo=get_patient_repository(),
             mapping_repo=get_ical_client_mapping_repository(),
         ),
-        google_calendar_service=GoogleCalendarService(
+        google_calendar_service=GoogleCalendarService.from_surface(
+            google_consent_surface(settings),
             token_repo=google_token_repo,
             appointment_repo=appointment_repo,
-            client_id=settings.google_calendar_client_id,
-            client_secret=settings.google_calendar_client_secret.get_secret_value(),
         ),
         reminder_service=ReminderService(appointment_repo),
         appointment_repo=appointment_repo,

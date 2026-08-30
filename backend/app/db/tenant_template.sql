@@ -297,7 +297,8 @@ CREATE TABLE __TENANT_SCHEMA__.google_calendar_tokens (
     last_synced_at timestamp with time zone,
     connected_at timestamp with time zone,
     consecutive_error_count integer DEFAULT 0,
-    last_sync_error text
+    last_sync_error text,
+    provider character varying(32) DEFAULT 'google'::character varying NOT NULL
 );
 
 

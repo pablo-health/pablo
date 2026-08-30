@@ -12,10 +12,15 @@ from typing import Any
 
 @dataclass
 class GoogleCalendarTokenDoc:
-    """Represents a stored Google Calendar token document."""
+    """Represents a stored calendar OAuth token document."""
 
     user_id: str
     encrypted_tokens: str  # base64 AES-256-GCM encrypted
+    provider: str = "google"
+    """Which calendar provider issued these tokens. Rows predating the
+    provider seam are Google's, which is why that is the default here and
+    the server default in the database."""
+
     calendar_id: str | None = None
     sync_token: str | None = None
     last_synced_at: datetime | None = None
@@ -27,6 +32,7 @@ class GoogleCalendarTokenDoc:
         return {
             "user_id": self.user_id,
             "encrypted_tokens": self.encrypted_tokens,
+            "provider": self.provider,
             "calendar_id": self.calendar_id,
             "sync_token": self.sync_token,
             "last_synced_at": self.last_synced_at,
@@ -40,6 +46,7 @@ class GoogleCalendarTokenDoc:
         return cls(
             user_id=data["user_id"],
             encrypted_tokens=data["encrypted_tokens"],
+            provider=data.get("provider") or "google",
             calendar_id=data.get("calendar_id"),
             sync_token=data.get("sync_token"),
             last_synced_at=data.get("last_synced_at"),
