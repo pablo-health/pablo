@@ -370,6 +370,108 @@ class GoogleCalendarConsentOptionsResponse(BaseModel):
     busy_default: bool
 
 
+# --- Calendar practice-import models ---
+
+
+class ProposedSeriesResponse(BaseModel):
+    """One candidate client series a scan found.
+
+    ``summary`` is the calendar's own wording, carried here so a person can
+    read it and decide. It is never stored, logged, or sent anywhere else.
+    """
+
+    candidate_key: str
+    summary: str
+    weekday: int = Field(description="Monday is 0, matching Python's weekday()")
+    local_start_time: str = Field(description="HH:MM in the calendar's timezone")
+    duration_minutes: int
+    cadence: str = Field(description="weekly or biweekly")
+    occurrences_in_window: int
+    occurrences_ahead: int = Field(description="Occurrences still to come — the importable ones")
+    first_future_start: datetime | None
+    last_seen: datetime
+    recurrence_rule: str
+    status: str = Field(description="active, or looks_finished for a series that appears over")
+    confidence: float = Field(description="Structural score. Orders the list; hides nothing")
+    preselected: bool
+
+
+class ImportProposalResponse(BaseModel):
+    """What a scan of the calendar suggests the practice looks like.
+
+    Returned and then forgotten. Nothing here is written down until a
+    person confirms a subset of it.
+    """
+
+    series: list[ProposedSeriesResponse]
+    left_alone: int = Field(description="Events that matched nothing — a count, never their titles")
+    events_read: int
+    partial: bool = Field(
+        description="True when a cap was hit and this describes part of the calendar"
+    )
+    lookback_days: int
+    horizon_days: int
+    timezone: str
+
+
+class ImportConsentRequiredResponse(BaseModel):
+    """Reading event content was never granted, so nothing was read.
+
+    Carries the URL that asks for it — an incremental grant on top of what
+    the connection already holds.
+    """
+
+    needs_consent: bool = True
+    capability: str = "import"
+    auth_url: str
+
+
+class ConfirmImportSeries(BaseModel):
+    """One series a therapist chose to import.
+
+    The proposal is not stored, so a confirmation carries what it needs.
+    Everything here is checked before anything is written.
+    """
+
+    candidate_key: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(min_length=1, max_length=255)
+    start_at: datetime = Field(description="First occurrence to create — must be in the future")
+    duration_minutes: int = Field(ge=5, le=480)
+    cadence: str = Field(description="weekly, biweekly, or monthly")
+    occurrences: int = Field(ge=1, le=104)
+    timezone: str = Field(default="UTC", max_length=64)
+
+
+class ConfirmImportRequest(BaseModel):
+    """The subset of a proposal to turn into patients and appointments."""
+
+    series: list[ConfirmImportSeries] = Field(min_length=1, max_length=200)
+
+
+class ConfirmedSeriesResponse(BaseModel):
+    """What one confirmed series became."""
+
+    candidate_key: str
+    patient_id: str
+    appointments_created: int
+
+
+class ConfirmImportResponse(BaseModel):
+    """What the confirmation created, and what it could not."""
+
+    confirmed: list[ConfirmedSeriesResponse]
+    patients_created: int
+    appointments_created: int
+    skipped: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Candidate keys whose chart was created but whose recurring series "
+            "was not — a collision with something already booked. Keys only, "
+            "never titles."
+        ),
+    )
+
+
 # --- iCal sync models ---
 
 

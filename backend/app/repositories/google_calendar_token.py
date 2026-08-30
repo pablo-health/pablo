@@ -26,6 +26,13 @@ class GoogleCalendarTokenDoc:
     the therapist's own. Connections made before the choice existed wrote to
     the therapist's own calendar, so that is the default."""
 
+    granted_capabilities: str = "push,import"
+    """Comma-separated capabilities this connection actually holds. Lets a
+    feature tell "never asked for" from "asked and refused" without a round
+    trip to the provider. Connections predating the per-capability connect
+    flow were granted event write and event read together, which is why that
+    is the default here and in the database."""
+
     calendar_id: str | None = None
     sync_token: str | None = None
     last_synced_at: datetime | None = None
@@ -39,6 +46,7 @@ class GoogleCalendarTokenDoc:
             "encrypted_tokens": self.encrypted_tokens,
             "provider": self.provider,
             "write_target": self.write_target,
+            "granted_capabilities": self.granted_capabilities,
             "calendar_id": self.calendar_id,
             "sync_token": self.sync_token,
             "last_synced_at": self.last_synced_at,
@@ -54,6 +62,7 @@ class GoogleCalendarTokenDoc:
             encrypted_tokens=data["encrypted_tokens"],
             provider=data.get("provider") or "google",
             write_target=data.get("write_target") or "primary",
+            granted_capabilities=data.get("granted_capabilities") or "push,import",
             calendar_id=data.get("calendar_id"),
             sync_token=data.get("sync_token"),
             last_synced_at=data.get("last_synced_at"),

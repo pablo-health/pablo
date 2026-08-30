@@ -48,16 +48,23 @@ class BusyWindow:
 
 @dataclass(frozen=True)
 class ImportCandidate:
-    """One event a therapist may choose to import as a Pablo appointment.
+    """One occurrence a therapist may choose to import as an appointment.
 
     Only ever produced under an IMPORT grant, which is asked for when an
-    import is run and not at connect.
+    import is run and not at connect. ``summary`` is the calendar's own
+    words: it belongs in a response for a person to read and nowhere else.
     """
 
     provider_event_id: str
     start: datetime
     end: datetime
     summary: str
+    attendee_count: int = 0
+    """People on the invitation besides the therapist. Distinguishes a
+    client hour from a team meeting without reading either one."""
+
+    series_id: str | None = None
+    """The provider's id for the series this belongs to, when it has one."""
 
 
 @runtime_checkable

@@ -43,6 +43,7 @@ from .routes import (
     admin_pentest,
     auth,
     booking_links,
+    calendar_import,
     chat,
     compliance,
     dashboard,
@@ -195,6 +196,7 @@ app.include_router(patient_documents.internal_jobs_router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)
+app.include_router(calendar_import.router)
 app.include_router(note_types.router)
 app.include_router(compliance.router)
 app.include_router(supervision.router)
