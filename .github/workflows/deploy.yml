@@ -154,6 +154,8 @@ jobs:
     needs: [build-backend]
     if: github.event_name == 'push' || inputs.run_migrations == true
     runs-on: ubuntu-latest
+    outputs:
+      db_parked: ${{ steps.db.outputs.parked }}
     steps:
       - id: auth
         uses: google-github-actions/auth@v3
@@ -163,7 +165,33 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
+      # The Cloud SQL instance may be deliberately stopped to save cost.
+      # A parked database is a deployment choice, not a pipeline failure:
+      # build and push images as usual, then skip migrations, the backend
+      # rollout, and the smoke probes until the instance is running again.
+      - name: Check database availability
+        id: db
+        run: |
+          set -euo pipefail
+          STATE=$(gcloud sql instances describe pablo \
+            --project="${{ env.PROJECT }}" --format="value(state)")
+          echo "Cloud SQL instance state: ${STATE}"
+          if [ "${STATE}" = "RUNNABLE" ]; then
+            echo "parked=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "parked=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Cloud SQL instance is ${STATE} — skipping migrations and the backend rollout. Images for ${{ github.sha }} are built and pushed; start the instance and re-run this workflow to deploy."
+            {
+              echo "## Deploy skipped — database parked"
+              echo ""
+              echo "Cloud SQL instance \`pablo\` is **${STATE}**. Migrations, the backend rollout, and smoke tests were skipped on purpose."
+              echo ""
+              echo "Images for \`${{ github.sha }}\` are built and pushed. Start the instance and re-run this workflow to deploy."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Deploy pablo-migrate job at new SHA
+        if: steps.db.outputs.parked == 'false'
         run: |
           gcloud run jobs deploy pablo-migrate \
             --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" \
@@ -177,6 +205,7 @@ jobs:
             --max-retries=0 --task-timeout=600 --cpu=1 --memory=512Mi --quiet
 
       - name: Execute alembic upgrade head
+        if: steps.db.outputs.parked == 'false'
         run: |
           gcloud run jobs execute pablo-migrate \
             --project="${{ env.PROJECT }}" --region="${{ env.REGION }}" --wait
@@ -186,8 +215,9 @@ jobs:
     needs: [build-backend, migrate]
     # `migrate` is skipped when run_migrations=false (workflow_dispatch
     # opt-out). Keep this job alive in that case while still failing on
-    # an actual migrate failure.
-    if: always() && !failure() && !cancelled()
+    # an actual migrate failure. When migrate found the database parked,
+    # skip the rollout — a new revision can't serve without its database.
+    if: always() && !failure() && !cancelled() && needs.migrate.outputs.db_parked != 'true'
     runs-on: ubuntu-latest
     steps:
       - id: auth
@@ -263,8 +293,11 @@ jobs:
     needs: [deploy-backend, deploy-frontend]
     # Without this, GitHub Actions propagates `migrate`'s skip transitively
     # through deploy-backend → smoke, silencing the safety net on every
-    # code-only deploy. deploy-backend uses the same pattern for the same reason.
-    if: always() && !failure() && !cancelled()
+    # code-only deploy. deploy-backend uses the same pattern for the same
+    # reason. When the backend rollout itself was skipped (parked database),
+    # there is nothing to probe — the sha check would fail against the old
+    # revision by design, not by regression.
+    if: always() && !failure() && !cancelled() && needs.deploy-backend.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - id: auth
