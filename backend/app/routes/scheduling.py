@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -1180,6 +1180,14 @@ def google_calendar_authorize(
     return GoogleCalendarAuthResponse(auth_url=auth_url)
 
 
+def _parse_incremental_capability(value: str) -> CalendarCapability:
+    """Turn the query parameter into the single capability being granted, or reject it."""
+    try:
+        return CalendarCapability(value)
+    except ValueError as exc:
+        raise BadRequestError("Unsupported capability") from exc
+
+
 @router.get("/api/google-calendar/callback")
 def google_calendar_callback(
     code: str = Query(..., description="OAuth authorization code"),
@@ -1190,6 +1198,14 @@ def google_calendar_callback(
         description="The write target the authorization URL was built with",
     ),
     busy: bool = Query(True, description="Whether free/busy was part of that request"),
+    capability: str | None = Query(
+        None,
+        description=(
+            "A single capability being granted incrementally (currently only "
+            "'import'), on top of an existing connection — rather than the "
+            "connect-time set write_target/busy describe"
+        ),
+    ),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> dict[str, str]:
@@ -1200,22 +1216,34 @@ def google_calendar_callback(
     produced it. Declared with an empty default rather than as a required
     parameter so a missing one is answered the same way as a bad one.
 
-    The rest of the selection has to match what the authorization URL
-    carried: it decides both the grant being exchanged and which calendar
-    the connection is bound to.
+    Two shapes land here. A connect (no ``capability``) carries the whole
+    selection, which decides both the grant and which calendar the
+    connection is bound to. An incremental grant (``capability`` set, e.g.
+    from the import wizard's "Look at my week") carries only the one
+    capability being added — the write target is read back from the
+    existing connection rather than defaulted, so an incremental grant can
+    never silently rebind PUSH to a different calendar mid-flow.
     """
     if not _is_valid_gcal_redirect_uri(redirect_uri):
         raise BadRequestError("Invalid redirect_uri")
     if not state:
         raise BadRequestError("Missing state")
-    target = _parse_write_target(write_target)
+
+    if capability is not None:
+        capabilities: Collection[CalendarCapability] = [_parse_incremental_capability(capability)]
+        existing = service.get_sync_status(ctx.user_id)
+        target = _parse_write_target(existing.get("write_target") or DEFAULT_WRITE_TARGET.value)
+    else:
+        capabilities = _connect_capabilities(busy=busy)
+        target = _parse_write_target(write_target)
+
     try:
         service.handle_callback(
             ctx.user_id,
             code,
             redirect_uri,
             state=state,
-            capabilities=_connect_capabilities(busy=busy),
+            capabilities=capabilities,
             write_target=target,
         )
     except OAuthStateError as e:

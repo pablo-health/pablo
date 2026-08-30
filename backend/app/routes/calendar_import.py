@@ -37,6 +37,9 @@ from ..models import AuditAction, User
 from ..models.audit import ResourceType
 from ..models.patient import Patient
 from ..models.scheduling import (
+    BusyWindowResponse,
+    BusyWindowsNotGrantedResponse,
+    BusyWindowsResponse,
     ConfirmedSeriesResponse,
     ConfirmImportRequest,
     ConfirmImportResponse,
@@ -57,6 +60,7 @@ from ..scheduling_engine.services.scheduling import (  # noqa: TC001 — resolve
 )
 from ..services import AuditService, get_audit_service
 from ..services.google_calendar_service import (
+    CalendarBusyNotAuthorizedError,
     CalendarImportNotAuthorizedError,
     GoogleCalendarService,
 )
@@ -108,6 +112,35 @@ def _to_response(proposal: ImportProposal) -> ImportProposalResponse:
         lookback_days=proposal.lookback_days,
         horizon_days=proposal.horizon_days,
         timezone=proposal.timezone,
+    )
+
+
+@router.get(
+    "/busy",
+    response_model=BusyWindowsResponse | BusyWindowsNotGrantedResponse,
+)
+def get_calendar_busy_windows(
+    start: datetime = Query(..., description="Start of the window, inclusive"),
+    end: datetime = Query(..., description="End of the window, exclusive"),
+    ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),  # noqa: ARG001 — dependency gates access
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
+) -> BusyWindowsResponse | BusyWindowsNotGrantedResponse:
+    """Busy/free blocks over a window, before anything has been scanned.
+
+    Renders the "anonymous shapes" week grid a scan later sorts. BUSY is
+    opt-in at connect and never asked for again, so a connection that
+    declined it gets a typed "not granted" answer, not a 500 — the caller
+    falls back to building the grid from a scan response instead.
+    """
+    if end <= start:
+        raise BadRequestError("end must be after start")
+    try:
+        windows = service.list_busy_windows(ctx.user_id, start, end)
+    except CalendarBusyNotAuthorizedError:
+        return BusyWindowsNotGrantedResponse()
+    return BusyWindowsResponse(
+        windows=[BusyWindowResponse(start=window.start, end=window.end) for window in windows]
     )
 
 

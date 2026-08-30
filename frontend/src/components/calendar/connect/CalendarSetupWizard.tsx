@@ -8,19 +8,34 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { SetupNav, SetupWizardShell, type SetupStepperStep } from "@/components/setup"
 import { CalendarConnectStep } from "./CalendarConnectStep"
 import { CalendarSessionsStep } from "./CalendarSessionsStep"
+import { CalendarClientsStep } from "./CalendarClientsStep"
+import { CalendarReviewStep } from "./CalendarReviewStep"
 import {
   completeGoogleCalendarConnect,
+  completeGoogleCalendarImportConsent,
+  confirmCalendarImport,
   disconnectGoogleCalendar,
+  getCalendarBusyWindows,
   getGoogleCalendarAuthUrl,
   getGoogleCalendarConsentOptions,
   getGoogleCalendarStatus,
+  importNeedsConsent,
+  scanCalendarForImport,
+  type ConfirmImportResult,
   type GoogleCalendarSelection,
+  type ImportProposal,
 } from "@/lib/api/scheduling"
 
 const STEPS: SetupStepperStep[] = [
   { id: "connect", label: "Connect" },
   { id: "sessions", label: "Sessions" },
+  { id: "clients", label: "Your clients" },
+  { id: "review", label: "Review" },
 ]
+
+const CONNECT_INDEX = 0
+const CLIENTS_INDEX = 2
+const REVIEW_INDEX = 3
 
 const DEFAULT_SELECTION: GoogleCalendarSelection = { write_target: "app_calendar", busy: true }
 
@@ -28,6 +43,11 @@ const DEFAULT_SELECTION: GoogleCalendarSelection = { write_target: "app_calendar
  * client exactly, so the selection can't ride back on the URL. It waits
  * here instead, for the moment the browser lands back on this page. */
 const SELECTION_KEY = "pablo.calendar-connect.selection"
+
+/** Set while an incremental IMPORT-capability round trip is in flight, so
+ * the code-exchange effect knows this return from Google is "Look at my
+ * week" continuing, not a fresh connect. */
+const IMPORT_PENDING_KEY = "pablo.calendar-import.pending"
 
 function rememberSelection(selection: GoogleCalendarSelection): void {
   try {
@@ -52,6 +72,24 @@ function recallSelection(): GoogleCalendarSelection {
   }
 }
 
+function rememberImportPending(): void {
+  try {
+    window.sessionStorage.setItem(IMPORT_PENDING_KEY, "1")
+  } catch {
+    // Best effort — see rememberSelection.
+  }
+}
+
+function recallAndClearImportPending(): boolean {
+  try {
+    const pending = window.sessionStorage.getItem(IMPORT_PENDING_KEY) === "1"
+    window.sessionStorage.removeItem(IMPORT_PENDING_KEY)
+    return pending
+  } catch {
+    return false
+  }
+}
+
 function describeSelection(selection: GoogleCalendarSelection): string {
   const target =
     selection.write_target === "primary"
@@ -62,6 +100,19 @@ function describeSelection(selection: GoogleCalendarSelection): string {
 
 function message(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
+}
+
+/** A stable two-week window (one back, one ahead) for the pre-scan week
+ * grid — frozen for the component's life so it doesn't refetch on every
+ * render, and wide enough for a weekly-recurring block to show up at
+ * least once regardless of which day "now" happens to land on. */
+function busyWindowRange(): { start: string; end: string } {
+  const now = new Date()
+  const start = new Date(now)
+  start.setDate(start.getDate() - 7)
+  const end = new Date(now)
+  end.setDate(end.getDate() + 7)
+  return { start: start.toISOString(), end: end.toISOString() }
 }
 
 export function CalendarSetupWizard() {
@@ -75,6 +126,19 @@ export function CalendarSetupWizard() {
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Step 3 — the anonymous week grid and the scan it sorts.
+  const [busyRange] = useState(busyWindowRange)
+  const [proposal, setProposal] = useState<ImportProposal | null>(null)
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState<string | null>(null)
+
+  // Step 4 — which proposed series to keep.
+  const [checked, setChecked] = useState<Record<string, boolean>>({})
+  const [expanded, setExpanded] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [confirmResult, setConfirmResult] = useState<ConfirmImportResult | null>(null)
+
   const { data: status } = useQuery({
     queryKey: ["google-calendar", "status"],
     queryFn: getGoogleCalendarStatus,
@@ -84,6 +148,11 @@ export function CalendarSetupWizard() {
     queryFn: getGoogleCalendarConsentOptions,
     staleTime: 60 * 60 * 1000,
   })
+  const { data: busyWindows } = useQuery({
+    queryKey: ["google-calendar", "busy", busyRange.start, busyRange.end],
+    queryFn: () => getCalendarBusyWindows(busyRange.start, busyRange.end),
+    enabled: Boolean(status?.connected),
+  })
 
   // Show the connected calendar's own choice rather than the default, so
   // step 2 reflects what was actually granted.
@@ -92,6 +161,15 @@ export function CalendarSetupWizard() {
     if (!grantedWriteTarget) return
     setSelection((current) => ({ ...current, write_target: grantedWriteTarget }))
   }, [grantedWriteTarget])
+
+  // Once a proposal comes in, seed the review step's checkboxes from what
+  // the API preselected — never all-checked, never all-unchecked.
+  useEffect(() => {
+    if (!proposal) return
+    setChecked(
+      Object.fromEntries(proposal.series.map((series) => [series.candidate_key, series.preselected]))
+    )
+  }, [proposal])
 
   const redirectUri =
     typeof window === "undefined" ? "" : `${window.location.origin}/dashboard/settings/calendar`
@@ -109,6 +187,24 @@ export function CalendarSetupWizard() {
     }
   }, [redirectUri, selection])
 
+  const runScan = useCallback(async () => {
+    setScanning(true)
+    setScanError(null)
+    try {
+      const result = await scanCalendarForImport(redirectUri)
+      if (importNeedsConsent(result)) {
+        rememberImportPending()
+        window.location.assign(result.auth_url)
+        return
+      }
+      setProposal(result)
+    } catch (err) {
+      setScanError(message(err, "Could not read your calendar. Try again in a moment."))
+    } finally {
+      setScanning(false)
+    }
+  }, [redirectUri])
+
   const code = searchParams.get("code")
   const state = searchParams.get("state") ?? ""
   // An authorization code is single-use, and a re-rendered effect would
@@ -119,6 +215,33 @@ export function CalendarSetupWizard() {
     if (!code || exchangedCode.current === code) return
     exchangedCode.current = code
     let cancelled = false
+
+    if (recallAndClearImportPending()) {
+      // "Look at my week" sent the therapist to Google for the IMPORT
+      // grant alone. Completing it picks the flow back up: land on the
+      // clients step and finish what the button started, without making
+      // the therapist press it again.
+      setScanning(true)
+      completeGoogleCalendarImportConsent(code, state, redirectUri)
+        .then(() => {
+          if (cancelled) return
+          queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
+          setActiveIndex(CLIENTS_INDEX)
+          return runScan()
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setScanError(message(err, "Google did not finish granting access."))
+        })
+        .finally(() => {
+          if (cancelled) return
+          setScanning(false)
+          router.replace("/dashboard/settings/calendar")
+        })
+      return () => {
+        cancelled = true
+      }
+    }
+
     const granted = recallSelection()
     setSelection(granted)
     setConnecting(true)
@@ -140,7 +263,7 @@ export function CalendarSetupWizard() {
     return () => {
       cancelled = true
     }
-  }, [code, state, redirectUri, queryClient, router])
+  }, [code, state, redirectUri, queryClient, router, runScan])
 
   const handleDisconnect = useCallback(async () => {
     setError(null)
@@ -155,7 +278,41 @@ export function CalendarSetupWizard() {
     }
   }, [queryClient])
 
+  const finishWizard = useCallback(() => {
+    router.push("/dashboard/settings")
+  }, [router])
+
+  const handleToggleSeries = useCallback((candidateKey: string) => {
+    setChecked((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
+  }, [])
+
+  const handleConfirm = useCallback(async () => {
+    if (!proposal) return
+    setConfirming(true)
+    setConfirmError(null)
+    try {
+      const series = proposal.series
+        .filter((item) => checked[item.candidate_key])
+        .map((item) => ({
+          candidate_key: item.candidate_key,
+          display_name: item.summary,
+          start_at: item.first_future_start ?? new Date().toISOString(),
+          duration_minutes: item.duration_minutes,
+          cadence: item.cadence,
+          occurrences: Math.max(item.occurrences_ahead, 1),
+          timezone: proposal.timezone,
+        }))
+      const result = await confirmCalendarImport(series)
+      setConfirmResult(result)
+    } catch (err) {
+      setConfirmError(message(err, "Could not add those clients. Nothing was changed — try again."))
+    } finally {
+      setConfirming(false)
+    }
+  }, [proposal, checked])
+
   const isLastStep = activeIndex === STEPS.length - 1
+  const onReviewStep = activeIndex === REVIEW_INDEX
 
   return (
     <SetupWizardShell
@@ -165,16 +322,24 @@ export function CalendarSetupWizard() {
       reachable={() => true}
       title="Google Calendar"
       lede="Put the sessions you book in Pablo onto your calendar."
-      onFinishLater={() => router.push("/dashboard/settings")}
+      onFinishLater={onReviewStep ? undefined : () => router.push("/dashboard/settings")}
       footer={
-        <SetupNav
-          onBack={activeIndex > 0 ? () => setActiveIndex(activeIndex - 1) : undefined}
-          onContinue={() =>
-            isLastStep ? router.push("/dashboard/settings") : setActiveIndex(activeIndex + 1)
-          }
-          canContinue={!isLastStep || Boolean(status?.connected)}
-          isLastStep={isLastStep}
-        />
+        onReviewStep ? null : (
+          <SetupNav
+            onBack={activeIndex > 0 ? () => setActiveIndex(activeIndex - 1) : undefined}
+            onContinue={() =>
+              isLastStep ? router.push("/dashboard/settings") : setActiveIndex(activeIndex + 1)
+            }
+            canContinue={
+              activeIndex === CONNECT_INDEX
+                ? true
+                : activeIndex === CLIENTS_INDEX
+                  ? proposal !== null
+                  : !isLastStep || Boolean(status?.connected)
+            }
+            isLastStep={isLastStep}
+          />
+        )
       }
     >
       {activeIndex === 0 ? (
@@ -187,7 +352,7 @@ export function CalendarSetupWizard() {
           onConnect={startConnect}
           onDisconnect={handleDisconnect}
         />
-      ) : (
+      ) : activeIndex === 1 ? (
         <CalendarSessionsStep
           status={status}
           options={options}
@@ -196,6 +361,30 @@ export function CalendarSetupWizard() {
           connecting={connecting}
           error={error}
           onConnect={startConnect}
+        />
+      ) : activeIndex === CLIENTS_INDEX ? (
+        <CalendarClientsStep
+          busyWindows={busyWindows}
+          proposal={proposal}
+          scanning={scanning}
+          error={scanError}
+          onScan={runScan}
+          onSkip={finishWizard}
+        />
+      ) : (
+        <CalendarReviewStep
+          proposal={proposal}
+          checked={checked}
+          onToggle={handleToggleSeries}
+          expanded={expanded}
+          onToggleExpanded={() => setExpanded((value) => !value)}
+          onBack={() => setActiveIndex(CLIENTS_INDEX)}
+          onReviewAgain={() => setActiveIndex(CLIENTS_INDEX)}
+          onConfirm={handleConfirm}
+          confirming={confirming}
+          error={confirmError}
+          result={confirmResult}
+          onFinish={() => router.push("/dashboard/calendar")}
         />
       )}
     </SetupWizardShell>
