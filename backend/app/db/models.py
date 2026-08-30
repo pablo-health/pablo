@@ -623,6 +623,9 @@ class GoogleCalendarTokenRow(Base):
     provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default="google")
     write_target: Mapped[str] = mapped_column(String(32), nullable=False, server_default="primary")
     event_titling: Mapped[str] = mapped_column(String(16), nullable=False, server_default="generic")
+    titling_attested_account: Mapped[str] = mapped_column(
+        String(255), nullable=False, server_default=""
+    )
     granted_capabilities: Mapped[str] = mapped_column(
         String(255), nullable=False, server_default="push,import"
     )

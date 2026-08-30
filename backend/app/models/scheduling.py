@@ -357,7 +357,21 @@ class GoogleCalendarStatusResponse(BaseModel):
     calendar_id: str | None = None
     last_synced_at: datetime | None = None
     write_target: str | None = None
-    event_titling: str | None = None
+    event_titling: str | None = Field(
+        default=None,
+        description=(
+            "How sessions will actually read — the stored choice, unless it "
+            "is being held back for want of a fresh confirmation"
+        ),
+    )
+    titling_needs_attestation: bool = Field(
+        default=False,
+        description=(
+            "The connection holds a full-name preference attested for a "
+            "different Google account, so names are not being written until "
+            "it is confirmed again for this one"
+        ),
+    )
 
 
 class SetEventTitlingRequest(BaseModel):

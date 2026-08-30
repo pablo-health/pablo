@@ -192,6 +192,13 @@ export function CalendarSessionsStep({
           )
         })}
 
+        {status?.titling_needs_attestation ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50/60 p-3 text-sm text-neutral-900">
+            You chose full names for a different Google account. Events are reading as initials
+            until you confirm this account is covered too.
+          </p>
+        ) : null}
+
         {selection.event_titling === "full" ? (
           <label className="flex cursor-pointer gap-3 rounded-lg border border-amber-300 bg-amber-50/60 p-4">
             <Checkbox

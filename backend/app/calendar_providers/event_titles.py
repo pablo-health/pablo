@@ -54,6 +54,31 @@ class EventTitleStyle(Enum):
     covering the calendar it lands on."""
 
 
+CURRENT_ATTESTATION_VERSION = "v1"
+"""Which wording a new attestation is recorded against.
+
+Versioned rather than read live from the interface: an audit row is
+evidence of what someone agreed to at the time, and a later copy change
+must not rewrite what past attestations appear to have said. Add a new
+version, never edit an existing one.
+"""
+
+ATTESTATION_STATEMENTS: dict[str, str] = {
+    "v1": (
+        "I confirm this Google account is covered by a business associate "
+        "agreement (BAA) my practice holds. Pablo's BAA does not cover this "
+        "Google account, and a personal Gmail address never qualifies."
+    ),
+}
+"""What each version of the attestation says, in full.
+
+Recorded into the audit row alongside its version so the row stands on
+its own — a reader six months from now should not have to find this table
+to know what was agreed to, and should still be able to if the table
+moves.
+"""
+
+
 def parse_style(value: str | None) -> EventTitleStyle:
     """Read a stored style, falling back to the floor rather than raising.
 

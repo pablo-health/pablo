@@ -33,6 +33,12 @@ class GoogleCalendarTokenDoc:
     what an already-connected therapist's calendar says without them asking
     for it. New connections pick a value at connect time."""
 
+    titling_attested_account: str = ""
+    """The calendar account the therapist attested was covered when they
+    chose full names. Compared against the connected account before names
+    are written: an attestation is about one account, so it does not carry
+    over to a different one."""
+
     granted_capabilities: str = "push,import"
     """Comma-separated capabilities this connection actually holds. Lets a
     feature tell "never asked for" from "asked and refused" without a round
@@ -54,6 +60,7 @@ class GoogleCalendarTokenDoc:
             "provider": self.provider,
             "write_target": self.write_target,
             "event_titling": self.event_titling,
+            "titling_attested_account": self.titling_attested_account,
             "granted_capabilities": self.granted_capabilities,
             "calendar_id": self.calendar_id,
             "sync_token": self.sync_token,
@@ -71,6 +78,7 @@ class GoogleCalendarTokenDoc:
             provider=data.get("provider") or "google",
             write_target=data.get("write_target") or "primary",
             event_titling=data.get("event_titling") or "generic",
+            titling_attested_account=data.get("titling_attested_account") or "",
             granted_capabilities=data.get("granted_capabilities") or "push,import",
             calendar_id=data.get("calendar_id"),
             sync_token=data.get("sync_token"),

@@ -250,7 +250,13 @@ export interface GoogleCalendarStatus {
   calendar_id: string | null
   last_synced_at: string | null
   write_target: CalendarWriteTarget | null
+  /** How events will actually read — the stored choice, unless it is being
+   * held back for want of a fresh confirmation. */
   event_titling: EventTitling | null
+  /** The connection holds a full-name choice confirmed for a different
+   * Google account, so names are not being written until it is confirmed
+   * again for this one. */
+  titling_needs_attestation: boolean
 }
 
 function selectionParams(selection: GoogleCalendarSelection): string {

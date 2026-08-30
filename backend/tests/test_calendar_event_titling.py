@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 import pytest
 from app.calendar_providers.event_titles import (
+    ATTESTATION_STATEMENTS,
+    CURRENT_ATTESTATION_VERSION,
     DEFAULT_EVENT_SUMMARY,
     EventTitleStyle,
     initials_by_patient,
@@ -235,6 +237,7 @@ class TestPushedTitles:
         token_repo: MagicMock,
     ) -> None:
         token_repo.get.return_value.event_titling = style
+        token_repo.get.return_value.titling_attested_account = "primary@gmail.com"
         fake = _FakeCalendar()
 
         with _with_calendar(service, fake):
@@ -249,6 +252,7 @@ class TestPushedTitles:
     ) -> None:
         """A deployment that can't read names never accidentally sends one."""
         token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = "primary@gmail.com"
         bare = GoogleCalendarService(
             token_repo=token_repo,
             appointment_repo=appointment_repo,
@@ -338,6 +342,7 @@ class TestRetitleOnNarrowing:
     ) -> None:
         """HIPAA: counts only, on a path whose whole subject is names."""
         token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = "primary@gmail.com"
         appointment_repo.list_by_range.return_value = [
             _appointment("p1", start=NOW + timedelta(days=1), event_id="evt-1"),
         ]
@@ -354,6 +359,91 @@ class TestRetitleOnNarrowing:
         assert PATIENT_NAME[1] not in logged
         # It did write the name to the calendar, which is what was chosen.
         assert fake.events_resource.patched[0]["body"]["summary"] == "Zorbulax Quintwhistle"
+
+
+class TestAttestationCoversOneAccount:
+    """A confirmation is about the account it was made for."""
+
+    def test_a_full_name_preference_attested_for_another_account_is_not_honoured(
+        self,
+        service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """Reconnecting to a different Google account must not inherit the
+        permission that let names be written to the previous one."""
+        token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = "old-account@gmail.com"
+        token_repo.get.return_value.calendar_id = "new-account@gmail.com"
+        fake = _FakeCalendar()
+
+        with _with_calendar(service, fake):
+            service.push_appointment("user-001", _appointment("p1", start=NOW + timedelta(days=1)))
+
+        summary = fake.events_resource.inserted[0]["body"]["summary"]
+        assert summary == "Z.Q."
+        assert PATIENT_NAME[0] not in summary
+
+    def test_a_full_name_preference_with_no_attestation_at_all_is_not_honoured(
+        self,
+        service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = ""
+        fake = _FakeCalendar()
+
+        with _with_calendar(service, fake):
+            service.push_appointment("user-001", _appointment("p1", start=NOW + timedelta(days=1)))
+
+        assert fake.events_resource.inserted[0]["body"]["summary"] == "Z.Q."
+
+    def test_the_status_surface_says_a_fresh_confirmation_is_needed(
+        self,
+        service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = "old-account@gmail.com"
+        token_repo.get.return_value.calendar_id = "new-account@gmail.com"
+
+        status = service.get_sync_status("user-001")
+
+        assert status["titling_needs_attestation"] is True
+        # And it reports what will actually be written, not the stored value.
+        assert status["event_titling"] == "initials"
+
+    def test_a_matching_attestation_is_honoured_and_needs_nothing(
+        self,
+        service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = "primary@gmail.com"
+
+        status = service.get_sync_status("user-001")
+
+        assert status["titling_needs_attestation"] is False
+        assert status["event_titling"] == "full"
+
+    def test_a_retitle_uses_the_honoured_style_not_the_stored_one(
+        self,
+        service: GoogleCalendarService,
+        token_repo: MagicMock,
+        appointment_repo: MagicMock,
+    ) -> None:
+        """The rewrite must not put back the names the mismatch withdrew."""
+        token_repo.get.return_value.event_titling = "full"
+        token_repo.get.return_value.titling_attested_account = "old-account@gmail.com"
+        token_repo.get.return_value.calendar_id = "new-account@gmail.com"
+        appointment_repo.list_by_range.return_value = [
+            _appointment("p1", start=NOW + timedelta(days=1), event_id="evt-1"),
+        ]
+        fake = _FakeCalendar()
+
+        with _with_calendar(service, fake):
+            service.retitle_future_events("user-001")
+
+        assert fake.events_resource.patched[0]["body"]["summary"] == "Z.Q."
 
 
 # Routes
@@ -402,6 +492,27 @@ class TestTitlingRoute:
         changes = audit_spy.log.call_args.kwargs["changes"]
         assert changes["calendar_account"] == "jane@x.test"
         assert changes["event_titling"] == "full"
+        # The row has to say what was agreed to, not just that something was.
+        assert changes["attestation_statement_version"] == CURRENT_ATTESTATION_VERSION
+        assert "business associate agreement (BAA)" in changes["attestation_statement"]
+        assert (
+            changes["attestation_statement"] == ATTESTATION_STATEMENTS[CURRENT_ATTESTATION_VERSION]
+        )
+
+    def test_the_attested_account_is_stored_so_it_can_be_checked_later(
+        self,
+        client: TestClient,
+    ) -> None:
+        gcal = self._wire(
+            {"connected": True, "event_titling": "initials", "calendar_id": "jane@x.test"}
+        )
+
+        client.put(
+            "/api/google-calendar/event-titling",
+            json={"style": "full", "attested": True},
+        )
+
+        assert gcal.set_event_titling.call_args.kwargs["attested_account"] == "jane@x.test"
 
     def test_the_lower_rungs_need_no_attestation_and_record_none(
         self,

@@ -28,7 +28,11 @@ from ..auth.service import (
 )
 from ..calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from ..calendar_providers.consent_copy import capability_promise
-from ..calendar_providers.event_titles import EventTitleStyle
+from ..calendar_providers.event_titles import (
+    ATTESTATION_STATEMENTS,
+    CURRENT_ATTESTATION_VERSION,
+    EventTitleStyle,
+)
 from ..calendar_providers.oauth_state import OAuthStateError
 from ..db import release_db_connection
 from ..models import (
@@ -1173,7 +1177,8 @@ def set_google_calendar_event_titling(
         raise NotFoundError("Google Calendar not connected")
     previous = _parse_titling(status_info.get("event_titling") or EventTitleStyle.GENERIC.value)
 
-    if not service.set_event_titling(ctx.user_id, style):
+    attested_account = str(status_info.get("calendar_id") or "")
+    if not service.set_event_titling(ctx.user_id, style, attested_account=attested_account):
         raise NotFoundError("Google Calendar not connected")
 
     if style is EventTitleStyle.FULL:
@@ -1185,11 +1190,17 @@ def set_google_calendar_event_titling(
             user,
             http_request,
             resource_type=ResourceType.APPOINTMENT,
-            resource_id=str(status_info.get("calendar_id") or "unknown"),
+            resource_id=attested_account or "unknown",
             changes={
-                "calendar_account": status_info.get("calendar_id"),
+                "calendar_account": attested_account,
                 "event_titling": style.value,
                 "previous_event_titling": previous.value,
+                # Both the version and the wording it stands for, so the
+                # row says what was agreed to without needing the table it
+                # came from — and so a later copy change cannot rewrite
+                # what a past attestation appears to have said.
+                "attestation_statement_version": CURRENT_ATTESTATION_VERSION,
+                "attestation_statement": ATTESTATION_STATEMENTS[CURRENT_ATTESTATION_VERSION],
             },
         )
 

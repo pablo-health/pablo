@@ -62,6 +62,7 @@ const DISCONNECTED: GoogleCalendarStatus = {
   last_synced_at: null,
   write_target: null,
   event_titling: null,
+  titling_needs_attestation: false,
 }
 
 const CONSENT_OPTIONS: GoogleCalendarConsentOptions = {
@@ -99,6 +100,7 @@ const CONNECTED: GoogleCalendarStatus = {
   last_synced_at: null,
   write_target: "app_calendar",
   event_titling: null,
+  titling_needs_attestation: false,
 }
 
 function proposalWith(overrides: Partial<ImportProposal> = {}): ImportProposal {
@@ -232,6 +234,7 @@ describe("CalendarSetupWizard", () => {
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: null,
+      titling_needs_attestation: false,
     })
     disconnect.mockResolvedValue({ status: "disconnected" })
     const user = userEvent.setup()
@@ -377,6 +380,7 @@ describe("CalendarSetupWizard event titling", () => {
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: "initials",
+      titling_needs_attestation: false,
     })
     const user = userEvent.setup()
     renderWizard()
@@ -396,6 +400,23 @@ describe("CalendarSetupWizard event titling", () => {
     expect(nav()).not.toBeDisabled()
   })
 
+  it("says so when the full-name choice was confirmed for another account", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "new-account@example.test",
+      last_synced_at: null,
+      write_target: "app_calendar",
+      event_titling: "initials",
+      titling_needs_attestation: true,
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    expect(screen.getByText(/chose full names for a different Google account/i)).toBeInTheDocument()
+    expect(screen.getByRole("radio", { name: /initials/i })).toBeChecked()
+  })
+
   it("saves a change on an already-connected calendar without asking Google again", async () => {
     getStatus.mockResolvedValue({
       connected: true,
@@ -403,6 +424,7 @@ describe("CalendarSetupWizard event titling", () => {
       last_synced_at: null,
       write_target: "app_calendar",
       event_titling: "initials",
+      titling_needs_attestation: false,
     })
     setTitling.mockResolvedValue({ style: "generic", events_retitled: 3, events_not_retitled: 0 })
     const user = userEvent.setup()

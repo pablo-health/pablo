@@ -173,6 +173,11 @@ _CASELOAD_PAGE_SIZE = 500
 # someone who does not already know the caseload.
 DEFAULT_EVENT_TITLING = EventTitleStyle.INITIALS
 
+# Where full names land when the attestation behind them no longer covers
+# the connected account. Initials rather than the floor: the attestation
+# permitted names, so losing it takes back the names and nothing else.
+UNATTESTED_FALLBACK_TITLING = EventTitleStyle.INITIALS
+
 # Page size for events().list. Google's default is 250 but it is not
 # contractual — ask for a size we've sized the page loop around.
 _SYNC_PAGE_SIZE = 250
@@ -592,7 +597,7 @@ class GoogleCalendarService:
 
         event_body = self._appointment_to_event(
             appointment,
-            self._summary_for(user_id, appointment, parse_style(token_doc.event_titling)),
+            self._summary_for(user_id, appointment, self._effective_style(token_doc)),
         )
         service = _build_calendar_service(credentials)
 
@@ -738,13 +743,15 @@ class GoogleCalendarService:
                 "last_synced_at": None,
                 "write_target": None,
                 "event_titling": None,
+                "titling_needs_attestation": False,
             }
         return {
             "connected": True,
             "calendar_id": token_doc.calendar_id,
             "last_synced_at": token_doc.last_synced_at,
             "write_target": token_doc.write_target,
-            "event_titling": token_doc.event_titling,
+            "event_titling": self._effective_style(token_doc).value,
+            "titling_needs_attestation": self._needs_reattestation(token_doc),
         }
 
     def list_busy_windows(
@@ -970,6 +977,34 @@ class GoogleCalendarService:
         if CalendarCapability.IMPORT.value not in _split_capabilities(granted):
             raise CalendarImportNotAuthorizedError(self.provider_id)
 
+    @staticmethod
+    def _effective_style(token_doc: GoogleCalendarTokenDoc) -> EventTitleStyle:
+        """The style actually honoured, which is not always the one stored.
+
+        Full names rest on the therapist having confirmed that this
+        calendar account is covered. That confirmation is about one
+        account, so a connection now pointing at a different one is not
+        covered by it and must not keep writing names — it drops to
+        initials, which needs no attestation, rather than to the floor: the
+        confirmation permitted names, so withdrawing it withdraws exactly
+        the names.
+        """
+        style = parse_style(token_doc.event_titling)
+        if style is not EventTitleStyle.FULL:
+            return style
+        attested = token_doc.titling_attested_account
+        if attested and attested == (token_doc.calendar_id or ""):
+            return style
+        return UNATTESTED_FALLBACK_TITLING
+
+    @staticmethod
+    def _needs_reattestation(token_doc: GoogleCalendarTokenDoc) -> bool:
+        """Whether a stored preference is being held back for want of one."""
+        return (
+            parse_style(token_doc.event_titling) is EventTitleStyle.FULL
+            and GoogleCalendarService._effective_style(token_doc) is not EventTitleStyle.FULL
+        )
+
     def _caseload(self, user_id: str) -> list[Patient]:
         """The therapist's patients, for working out initials.
 
@@ -1000,8 +1035,18 @@ class GoogleCalendarService:
         patient = next((p for p in roster if p.id == appointment.patient_id), None)
         return summary_for(style, patient, initials=initials_by_patient(roster))
 
-    def set_event_titling(self, user_id: str, style: EventTitleStyle) -> bool:
+    def set_event_titling(
+        self,
+        user_id: str,
+        style: EventTitleStyle,
+        *,
+        attested_account: str | None = None,
+    ) -> bool:
         """Store how this connection's sessions should read. False if unconnected.
+
+        ``attested_account`` is the account the therapist confirmed was
+        covered, stored so a later connection to a different account stops
+        honouring it rather than inheriting the permission.
 
         Narrowing is applied to events already pushed by a separate
         retitle pass, so the stored choice takes effect for new sessions
@@ -1011,6 +1056,8 @@ class GoogleCalendarService:
         if not token_doc:
             return False
         token_doc.event_titling = style.value
+        if style is EventTitleStyle.FULL:
+            token_doc.titling_attested_account = attested_account or ""
         self._token_repo.save(token_doc)
         logger.info("Calendar event titling set to %s", style.value)
         return True
@@ -1031,7 +1078,7 @@ class GoogleCalendarService:
         if not credentials or not token_doc or not token_doc.calendar_id:
             return RetitleOutcome(0, 0, 0)
 
-        style = parse_style(token_doc.event_titling)
+        style = self._effective_style(token_doc)
         caseload = self._caseload(user_id)
         now = _now()
         upcoming = [
