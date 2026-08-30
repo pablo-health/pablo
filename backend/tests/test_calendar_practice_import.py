@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+from dataclasses import fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,7 +28,7 @@ from app.calendar_providers.practice_import import (
     SeriesStatus,
     build_proposal,
 )
-from app.calendar_providers.provider import ImportCandidate
+from app.calendar_providers.provider import BusyWindow, ImportCandidate
 from app.main import app
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.routes.patients import get_patient_repository
@@ -36,6 +37,7 @@ from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRe
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 from app.services.google_calendar_service import (
+    CalendarBusyNotAuthorizedError,
     CalendarImportNotAuthorizedError,
     GoogleCalendarService,
 )
@@ -540,6 +542,129 @@ class TestScan:
         )
 
 
+# Free/busy — the anonymous week grid's data source
+
+
+class _FakeFreeBusy:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+        self.calls: list[dict[str, Any]] = []
+
+    def query(self, body: dict[str, Any]) -> _FakeRequest:
+        self.calls.append(body)
+        return _FakeRequest(self.payload)
+
+
+class _FakeFreeBusyCalendarService:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.freebusy_resource = _FakeFreeBusy(payload)
+
+    def freebusy(self) -> _FakeFreeBusy:
+        return self.freebusy_resource
+
+
+def _run_busy(
+    calendar_service: GoogleCalendarService,
+    payload: dict[str, Any],
+    *,
+    start: datetime = NOW,
+    end: datetime = NOW + timedelta(days=7),
+) -> tuple[list[BusyWindow], _FakeFreeBusyCalendarService]:
+    fake = _FakeFreeBusyCalendarService(payload)
+    creds = MagicMock(expired=False)
+    with (
+        patch("app.services.google_calendar_service.decrypt_tokens", return_value={}),
+        patch("app.services.google_calendar_service._make_credentials", return_value=creds),
+        patch("app.services.google_calendar_service._build_calendar_service", return_value=fake),
+    ):
+        windows = calendar_service.list_busy_windows("user-001", start, end)
+    return windows, fake
+
+
+class TestBusyWindows:
+    def test_busy_blocks_come_back_as_start_and_end_only(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="primary@gmail.com",
+            granted_capabilities="push,busy",
+        )
+        payload = {
+            "calendars": {
+                "primary": {
+                    "busy": [
+                        {"start": "2026-09-01T14:00:00Z", "end": "2026-09-01T15:00:00Z"},
+                        {"start": "2026-09-02T09:00:00Z", "end": "2026-09-02T09:30:00Z"},
+                    ]
+                }
+            }
+        }
+
+        windows, fake = _run_busy(calendar_service, payload)
+
+        assert len(windows) == 2
+        assert all(isinstance(w, BusyWindow) for w in windows)
+        assert {f.name for f in fields(BusyWindow)} == {"start", "end"}
+        assert windows[0].start == datetime(2026, 9, 1, 14, 0, tzinfo=UTC)
+        assert windows[0].end == datetime(2026, 9, 1, 15, 0, tzinfo=UTC)
+        # Queried the therapist's own calendar, not wherever PUSH writes to.
+        assert fake.freebusy_resource.calls[0]["items"] == [{"id": "primary"}]
+
+    def test_an_empty_calendar_reports_no_busy_time(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="primary@gmail.com",
+            granted_capabilities="push,busy",
+        )
+
+        windows, _ = _run_busy(calendar_service, {"calendars": {"primary": {"busy": []}}})
+
+        assert windows == []
+
+    def test_reading_busy_time_without_the_grant_is_refused_before_any_read(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """Declining "Also check when I'm busy" at connect lands here — not
+        a failure, the caller falls back to the scan-only grid."""
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="primary@gmail.com",
+            granted_capabilities="push,import",
+        )
+
+        with patch("app.services.google_calendar_service._build_calendar_service") as build:
+            with pytest.raises(CalendarBusyNotAuthorizedError):
+                calendar_service.list_busy_windows("user-001", NOW, NOW + timedelta(days=7))
+            build.assert_not_called()
+
+    def test_a_connection_predating_the_busy_choice_is_also_refused(
+        self,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """The pre-capability default (`push,import`) never included busy."""
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="primary@gmail.com",
+        )
+
+        with pytest.raises(CalendarBusyNotAuthorizedError):
+            calendar_service.list_busy_windows("user-001", NOW, NOW + timedelta(days=7))
+
+
 # Routes
 
 _REDIRECT = "http://localhost:3000/dashboard/settings/calendar"
@@ -652,6 +777,68 @@ class TestScanRoute:
         response = client.post(
             "/api/calendar/import/scan",
             params={"redirect_uri": "https://not-ours.example.com/callback"},
+        )
+
+        assert response.status_code == 400, response.text
+
+
+class TestBusyWindowsRoute:
+    """The pre-scan week grid's data source: intervals only, never a title."""
+
+    def test_busy_windows_carry_only_start_and_end(self, client: TestClient) -> None:
+        gcal = MagicMock()
+        gcal.list_busy_windows.return_value = [
+            BusyWindow(
+                start=datetime(2026, 9, 1, 14, 0, tzinfo=UTC),
+                end=datetime(2026, 9, 1, 15, 0, tzinfo=UTC),
+            )
+        ]
+        app.dependency_overrides[get_google_calendar_service] = lambda: gcal
+
+        response = client.get(
+            "/api/calendar/import/busy",
+            params={
+                "start": NOW.isoformat(),
+                "end": (NOW + timedelta(days=7)).isoformat(),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["windows"] == [{"start": "2026-09-01T14:00:00Z", "end": "2026-09-01T15:00:00Z"}]
+        # The response shape has no field a summary could ever land in.
+        assert set(body["windows"][0].keys()) == {"start", "end"}
+        assert "summary" not in body["windows"][0]
+
+    def test_busy_windows_without_the_grant_return_a_typed_not_granted_response(
+        self, client: TestClient
+    ) -> None:
+        """Declining the busy checkbox at connect is not a 500."""
+        gcal = MagicMock()
+        gcal.list_busy_windows.side_effect = CalendarBusyNotAuthorizedError("google")
+        app.dependency_overrides[get_google_calendar_service] = lambda: gcal
+
+        response = client.get(
+            "/api/calendar/import/busy",
+            params={
+                "start": NOW.isoformat(),
+                "end": (NOW + timedelta(days=7)).isoformat(),
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"granted": False}
+
+    def test_an_inverted_window_is_refused(self, client: TestClient) -> None:
+        gcal = MagicMock()
+        app.dependency_overrides[get_google_calendar_service] = lambda: gcal
+
+        response = client.get(
+            "/api/calendar/import/busy",
+            params={
+                "start": NOW.isoformat(),
+                "end": (NOW - timedelta(days=1)).isoformat(),
+            },
         )
 
         assert response.status_code == 400, response.text

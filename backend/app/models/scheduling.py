@@ -472,6 +472,33 @@ class ConfirmImportResponse(BaseModel):
     )
 
 
+class BusyWindowResponse(BaseModel):
+    """One stretch of time the calendar shows as busy.
+
+    Times only — the BUSY grant is structurally incapable of carrying a
+    title, attendee, or any other content.
+    """
+
+    start: datetime
+    end: datetime
+
+
+class BusyWindowsResponse(BaseModel):
+    """Busy windows over a requested range."""
+
+    windows: list[BusyWindowResponse]
+
+
+class BusyWindowsNotGrantedResponse(BaseModel):
+    """BUSY was never granted for this connection — declined at connect, or
+    the connection predates the choice. Unlike IMPORT, BUSY is never asked
+    for incrementally, so there is no consent URL to hand back; the caller
+    falls back to whatever it can build without this endpoint.
+    """
+
+    granted: bool = False
+
+
 # --- iCal sync models ---
 
 

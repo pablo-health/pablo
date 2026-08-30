@@ -1506,6 +1506,75 @@ def test_callback_binds_the_connection_to_the_chosen_calendar(client: TestClient
     assert CalendarCapability.IMPORT not in kwargs["capabilities"]
 
 
+def test_an_incremental_capability_grant_asks_for_only_that_capability(
+    client: TestClient,
+) -> None:
+    """The import wizard's "Look at my week" round trip lands here — it
+    must ask for import alone, never the connect-time set."""
+    gcal_service = _capture_gcal_service()
+    gcal_service.get_sync_status.return_value = {"write_target": "primary"}
+
+    response = client.get(
+        "/api/google-calendar/callback",
+        params={
+            "code": "auth-code",
+            "redirect_uri": _GCAL_REDIRECT,
+            "state": "signed-state",
+            "capability": "import",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    kwargs = gcal_service.handle_callback.call_args.kwargs
+    assert list(kwargs["capabilities"]) == [CalendarCapability.IMPORT]
+
+
+def test_an_incremental_grant_binds_to_the_existing_calendar_not_the_default(
+    client: TestClient,
+) -> None:
+    """An incremental grant must never silently rebind PUSH to a different
+    calendar mid-flow — the write target comes from the live connection,
+    not the endpoint's connect-time default."""
+    gcal_service = _capture_gcal_service()
+    gcal_service.get_sync_status.return_value = {"write_target": "primary"}
+
+    response = client.get(
+        "/api/google-calendar/callback",
+        params={
+            "code": "auth-code",
+            "redirect_uri": _GCAL_REDIRECT,
+            "state": "signed-state",
+            "capability": "import",
+            # A default-shaped write_target arrives on the URL too (the
+            # frontend doesn't know better on this round trip) — it must
+            # be ignored in favor of what's actually connected.
+            "write_target": "app_calendar",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert (
+        gcal_service.handle_callback.call_args.kwargs["write_target"] is CalendarWriteTarget.PRIMARY
+    )
+
+
+def test_an_unsupported_incremental_capability_is_rejected(client: TestClient) -> None:
+    gcal_service = _capture_gcal_service()
+
+    response = client.get(
+        "/api/google-calendar/callback",
+        params={
+            "code": "auth-code",
+            "redirect_uri": _GCAL_REDIRECT,
+            "state": "signed-state",
+            "capability": "not-a-real-capability",
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    gcal_service.handle_callback.assert_not_called()
+
+
 def test_callback_without_state_is_refused(client: TestClient) -> None:
     """A code arriving with no state is never exchanged."""
     gcal_service = _capture_gcal_service()

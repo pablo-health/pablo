@@ -5,8 +5,11 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type {
+  ConfirmImportResult,
   GoogleCalendarConsentOptions,
   GoogleCalendarStatus,
+  ImportConsentRequired,
+  ImportProposal,
 } from "@/lib/api/scheduling"
 import { CalendarSetupWizard } from "../CalendarSetupWizard"
 
@@ -27,14 +30,29 @@ const getConsentOptions = vi.fn<() => Promise<GoogleCalendarConsentOptions>>()
 const getAuthUrl = vi.fn()
 const completeConnect = vi.fn()
 const disconnect = vi.fn()
+const getBusyWindows = vi.fn()
+const scanForImport = vi.fn<(...args: unknown[]) => Promise<ImportProposal | ImportConsentRequired>>()
+const completeImportConsent = vi.fn()
+const confirmImport = vi.fn<(...args: unknown[]) => Promise<ConfirmImportResult>>()
 
-vi.mock("@/lib/api/scheduling", () => ({
-  getGoogleCalendarStatus: () => getStatus(),
-  getGoogleCalendarConsentOptions: () => getConsentOptions(),
-  getGoogleCalendarAuthUrl: (...args: unknown[]) => getAuthUrl(...args),
-  completeGoogleCalendarConnect: (...args: unknown[]) => completeConnect(...args),
-  disconnectGoogleCalendar: () => disconnect(),
-}))
+vi.mock("@/lib/api/scheduling", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/api/scheduling")>("@/lib/api/scheduling")
+  return {
+    // Pure helpers — the real implementations, not mocked away.
+    importNeedsConsent: actual.importNeedsConsent,
+    busyWindowsGranted: actual.busyWindowsGranted,
+    getGoogleCalendarStatus: () => getStatus(),
+    getGoogleCalendarConsentOptions: () => getConsentOptions(),
+    getGoogleCalendarAuthUrl: (...args: unknown[]) => getAuthUrl(...args),
+    completeGoogleCalendarConnect: (...args: unknown[]) => completeConnect(...args),
+    disconnectGoogleCalendar: () => disconnect(),
+    getCalendarBusyWindows: (...args: unknown[]) => getBusyWindows(...args),
+    scanCalendarForImport: (...args: unknown[]) => scanForImport(...args),
+    completeGoogleCalendarImportConsent: (...args: unknown[]) => completeImportConsent(...args),
+    confirmCalendarImport: (...args: unknown[]) => confirmImport(...args),
+  }
+})
 
 const DISCONNECTED: GoogleCalendarStatus = {
   connected: false,
@@ -67,6 +85,64 @@ async function goToSessionsStep(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByText("Where your sessions go")
 }
 
+async function goToClientsStep(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("button", { name: /your clients/i }))
+  await screen.findByText("Bring over your week")
+}
+
+const CONNECTED: GoogleCalendarStatus = {
+  connected: true,
+  calendar_id: "pablo-made@group.calendar.google.com",
+  last_synced_at: null,
+  write_target: "app_calendar",
+}
+
+function proposalWith(overrides: Partial<ImportProposal> = {}): ImportProposal {
+  return {
+    series: [
+      {
+        candidate_key: "a",
+        summary: "Jane Miller",
+        weekday: 0,
+        local_start_time: "09:00",
+        duration_minutes: 50,
+        cadence: "weekly",
+        occurrences_in_window: 8,
+        occurrences_ahead: 4,
+        first_future_start: "2026-09-07T09:00:00Z",
+        last_seen: "2026-08-31T09:00:00Z",
+        recurrence_rule: "RRULE:FREQ=WEEKLY",
+        status: "active",
+        confidence: 0.9,
+        preselected: true,
+      },
+      {
+        candidate_key: "b",
+        summary: "Standup",
+        weekday: 2,
+        local_start_time: "10:00",
+        duration_minutes: 30,
+        cadence: "weekly",
+        occurrences_in_window: 8,
+        occurrences_ahead: 4,
+        first_future_start: "2026-09-09T10:00:00Z",
+        last_seen: "2026-08-31T10:00:00Z",
+        recurrence_rule: "RRULE:FREQ=WEEKLY",
+        status: "active",
+        confidence: 0.4,
+        preselected: false,
+      },
+    ],
+    left_alone: 3,
+    events_read: 40,
+    partial: false,
+    lookback_days: 90,
+    horizon_days: 90,
+    timezone: "UTC",
+    ...overrides,
+  }
+}
+
 describe("CalendarSetupWizard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -74,6 +150,7 @@ describe("CalendarSetupWizard", () => {
     getStatus.mockResolvedValue(DISCONNECTED)
     getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
     getAuthUrl.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?x=1" })
+    getBusyWindows.mockResolvedValue({ windows: [] })
     Object.defineProperty(window, "location", {
       value: { origin: "https://app.example.test", assign: vi.fn() },
       writable: true,
@@ -172,6 +249,73 @@ describe("CalendarSetupWizard", () => {
 
     expect(await screen.findByText("Google is unreachable")).toBeInTheDocument()
   })
+
+  it("skipping the week completes the wizard without ever scanning", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: /skip, i.ll add them myself/i }))
+
+    expect(routerPush).toHaveBeenCalledWith("/dashboard/settings")
+    expect(scanForImport).not.toHaveBeenCalled()
+  })
+
+  it("scans, reviews, and confirms only the checked series", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    scanForImport.mockResolvedValue(proposalWith())
+    confirmImport.mockResolvedValue({
+      confirmed: [{ candidate_key: "a", patient_id: "p-1", appointments_created: 4 }],
+      patients_created: 1,
+      appointments_created: 4,
+      skipped: [],
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+    await waitFor(() => expect(scanForImport).toHaveBeenCalled())
+    await screen.findByTestId("qualifying-count")
+
+    // Advance to Review via the wizard's own Continue, now that a scan exists.
+    await user.click(screen.getByRole("button", { name: /continue/i }))
+    await screen.findByText("Which of these are clients?")
+
+    // "Jane Miller" was preselected (confidence 0.9); "Standup" was not
+    // (confidence 0.4) — confirming must carry only the one still checked.
+    expect(screen.getByText("Jane Miller")).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Standup" })).not.toBeChecked()
+
+    await user.click(screen.getByRole("button", { name: /add 1 client/i }))
+
+    await waitFor(() => expect(confirmImport).toHaveBeenCalled())
+    const [series] = confirmImport.mock.calls[0] as unknown as [Array<{ candidate_key: string }>]
+    expect(series.map((item) => item.candidate_key)).toEqual(["a"])
+    expect(await screen.findByText(/1 client added/i)).toBeInTheDocument()
+  })
+
+  it("asks for incremental import consent before it can scan", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    scanForImport.mockResolvedValue({
+      needs_consent: true,
+      capability: "import",
+      auth_url: "https://accounts.google.com/o/oauth2/auth?scope=readonly",
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: "Look at my week" }))
+
+    await waitFor(() =>
+      expect(window.location.assign).toHaveBeenCalledWith(
+        "https://accounts.google.com/o/oauth2/auth?scope=readonly"
+      )
+    )
+    expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBe("1")
+  })
 })
 
 describe("CalendarSetupWizard returning from Google", () => {
@@ -209,5 +353,31 @@ describe("CalendarSetupWizard returning from Google", () => {
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendar")
     )
+  })
+
+  it("completes an incremental import grant and finishes what 'Look at my week' started", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    completeImportConsent.mockResolvedValue({ status: "connected" })
+    scanForImport.mockResolvedValue(proposalWith())
+    getBusyWindows.mockResolvedValue({ windows: [] })
+    window.sessionStorage.setItem("pablo.calendar-import.pending", "1")
+
+    renderWizard()
+
+    await waitFor(() => expect(completeImportConsent).toHaveBeenCalled())
+    const [code, state, redirectUri] = completeImportConsent.mock.calls[0]
+    expect(code).toBe("auth-code")
+    expect(state).toBe("state-from-google")
+    expect(redirectUri).toBe("https://app.example.test/dashboard/settings/calendar")
+
+    // The scan the button asked for runs automatically once the grant lands
+    // — the therapist never has to press it a second time.
+    await waitFor(() => expect(scanForImport).toHaveBeenCalled())
+    await screen.findByText("Bring over your week")
+    await screen.findByTestId("qualifying-count")
+
+    expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBeNull()
+    // Never mistaken for a fresh connect.
+    expect(completeConnect).not.toHaveBeenCalled()
   })
 })

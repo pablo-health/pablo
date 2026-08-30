@@ -206,6 +206,9 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("get", "/api/google-calendar/callback"),  # OAuth token exchange, no events
         ("get", "/api/google-calendar/status"),  # calendar connection status
         ("delete", "/api/google-calendar/disconnect"),  # removes calendar tokens
+        # calendar_import.py — busy/free times only, no event content (scan/confirm
+        # below DO carry event content and are audited, not exempted)
+        ("get", "/api/calendar/import/busy"),  # freebusy start/end blocks, never titles
         # users.py — caller's OWN account/profile, not patient data
         ("get", "/api/users/baa"),  # current BAA document text
         ("get", "/api/users/baa/{version}"),  # versioned BAA document text

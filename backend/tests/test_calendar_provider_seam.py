@@ -40,6 +40,7 @@ from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.services.google_calendar_service import (
     GOOGLE_CAPABILITIES,
     GOOGLE_PROVIDER_ID,
+    CalendarBusyNotAuthorizedError,
     GoogleCalendarService,
     google_capabilities,
     google_registration,
@@ -368,14 +369,15 @@ class TestGoogleCapabilityRequests:
                 capabilities=[CalendarCapability.IMPORT],
             )
 
-    def test_an_unwired_capability_is_a_seam_not_a_silent_success(
+    def test_busy_without_the_grant_is_a_seam_not_a_silent_success(
         self,
         google_service: GoogleCalendarService,
     ) -> None:
-        """Free/busy has its own scope and nothing requests it yet, so no
-        stored connection can serve it."""
+        """Free/busy is opt-in at connect. A connection that never asked for
+        it — or one whose token repo has nothing at all — gets a typed
+        refusal, never a guess at what the calendar says."""
         now = datetime.now(UTC)
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(CalendarBusyNotAuthorizedError):
             google_service.list_busy_windows("user-001", now, now)
 
 

@@ -35,7 +35,7 @@ from ..calendar_providers.practice_import import (
     DEFAULT_LOOKBACK_DAYS,
     build_proposal,
 )
-from ..calendar_providers.provider import ConsentSurface, ImportCandidate
+from ..calendar_providers.provider import BusyWindow, ConsentSurface, ImportCandidate
 from ..calendar_providers.registry import ProviderRegistration
 from ..reliability import HTTP_REQUEST, Idempotency, call_with_retry
 from ..repositories.google_calendar_token import (
@@ -51,7 +51,6 @@ if TYPE_CHECKING:
     from google.oauth2.credentials import Credentials
 
     from ..calendar_providers.practice_import import ImportProposal
-    from ..calendar_providers.provider import BusyWindow
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..settings import Settings
@@ -266,6 +265,20 @@ class CalendarImportNotAuthorizedError(Exception):
 
     def __init__(self, provider_id: str) -> None:
         super().__init__(f"{provider_id} connection has not granted event content access")
+        self.provider_id = provider_id
+
+
+class CalendarBusyNotAuthorizedError(Exception):
+    """Free/busy was never granted for this connection.
+
+    Not a failure: BUSY is an opt-in choice at connect ("Also check when
+    I'm busy"), never asked for incrementally, so a connection that
+    declined it — or predates the choice — is expected to land here. The
+    caller falls back to whatever it can build without this endpoint.
+    """
+
+    def __init__(self, provider_id: str) -> None:
+        super().__init__(f"{provider_id} connection has not granted busy/free access")
         self.provider_id = provider_id
 
 
@@ -682,13 +695,52 @@ class GoogleCalendarService:
         start: datetime,
         end: datetime,
     ) -> list[BusyWindow]:
-        """Free/busy windows for the connected calendar.
+        """Free/busy windows over a window, from the therapist's own calendar.
 
-        BUSY carries its own scope and nothing requests it yet, so no stored
-        connection can serve this. The flow that asks for the capability is
-        what fills it in; the shape it fills in is fixed here.
+        Reads against "primary" regardless of where PUSH writes sessions —
+        busy time describes the whole account, not just a calendar Pablo
+        may have made for its own events. freebusy.query answers in blocks
+        of start/end only; there is no title or attendee field to leak.
+
+        Raises CalendarBusyNotAuthorizedError when BUSY was never granted —
+        it is opt-in at connect and not requested again later.
         """
-        raise NotImplementedError
+        self._require_busy_grant(user_id)
+
+        credentials = self._get_credentials(user_id)
+        if not credentials:
+            return []
+
+        service = _build_calendar_service(credentials)
+        body = {
+            "timeMin": start.isoformat(),
+            "timeMax": end.isoformat(),
+            "items": [{"id": "primary"}],
+        }
+        result: dict[str, Any] = _with_calendar_retry(
+            lambda: service.freebusy().query(body=body).execute()
+        )
+        busy = result.get("calendars", {}).get("primary", {}).get("busy", [])
+        windows: list[BusyWindow] = []
+        for block in busy:
+            block_start = block.get("start")
+            block_end = block.get("end")
+            if not block_start or not block_end:
+                continue
+            windows.append(
+                BusyWindow(
+                    start=datetime.fromisoformat(block_start),
+                    end=datetime.fromisoformat(block_end),
+                )
+            )
+        return windows
+
+    def _require_busy_grant(self, user_id: str) -> None:
+        """Refuse to read free/busy without the grant that permits it."""
+        token_doc = self._token_repo.get(user_id)
+        granted = token_doc.granted_capabilities if token_doc else ""
+        if CalendarCapability.BUSY.value not in _split_capabilities(granted):
+            raise CalendarBusyNotAuthorizedError(self.provider_id)
 
     def scan_importable_events(
         self,

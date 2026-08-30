@@ -285,3 +285,138 @@ export async function getGoogleCalendarStatus(): Promise<GoogleCalendarStatus> {
 export async function disconnectGoogleCalendar(): Promise<{ status: string }> {
   return del<{ status: string }>("/api/google-calendar/disconnect")
 }
+
+/** Complete an incremental capability grant — currently only "import",
+ * asked for from the practice-import wizard rather than at connect. Reuses
+ * the connect callback, but must never carry a write_target: an
+ * incremental grant is read back from the existing connection server-side,
+ * so it can't silently rebind PUSH to a different calendar mid-flow. */
+export async function completeGoogleCalendarImportConsent(
+  code: string,
+  state: string,
+  redirectUri: string
+): Promise<{ status: string }> {
+  return get<{ status: string }>(
+    `/api/google-calendar/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(redirectUri)}&capability=import`
+  )
+}
+
+// --- Calendar practice import (scan an existing calendar, propose, confirm) ---
+//
+// A scan reads and proposes; nothing is written until a confirmation names
+// the subset to keep. `summary` is the calendar's own wording and belongs
+// on screen for the therapist to read — never logged, matched, or sent
+// anywhere else.
+
+export interface ProposedSeries {
+  candidate_key: string
+  summary: string
+  /** Monday is 0, matching Python's weekday(). */
+  weekday: number
+  /** HH:MM in the calendar's own timezone. */
+  local_start_time: string
+  duration_minutes: number
+  cadence: "weekly" | "biweekly"
+  occurrences_in_window: number
+  /** Occurrences still to come — the importable ones. */
+  occurrences_ahead: number
+  first_future_start: string | null
+  last_seen: string
+  recurrence_rule: string
+  status: "active" | "looks_finished"
+  confidence: number
+  preselected: boolean
+}
+
+export interface ImportProposal {
+  series: ProposedSeries[]
+  /** Events that matched nothing — a count, never their titles. */
+  left_alone: number
+  events_read: number
+  partial: boolean
+  lookback_days: number
+  horizon_days: number
+  timezone: string
+}
+
+export interface ImportConsentRequired {
+  needs_consent: true
+  capability: "import"
+  auth_url: string
+}
+
+export function importNeedsConsent(
+  result: ImportProposal | ImportConsentRequired
+): result is ImportConsentRequired {
+  return "needs_consent" in result && result.needs_consent === true
+}
+
+export async function scanCalendarForImport(
+  redirectUri: string
+): Promise<ImportProposal | ImportConsentRequired> {
+  return post<ImportProposal | ImportConsentRequired>(
+    `/api/calendar/import/scan?redirect_uri=${encodeURIComponent(redirectUri)}`,
+    {}
+  )
+}
+
+export interface ConfirmImportSeriesInput {
+  candidate_key: string
+  display_name: string
+  /** First occurrence to create — must be in the future. */
+  start_at: string
+  duration_minutes: number
+  cadence: string
+  occurrences: number
+  timezone: string
+}
+
+export interface ConfirmedSeries {
+  candidate_key: string
+  patient_id: string
+  appointments_created: number
+}
+
+export interface ConfirmImportResult {
+  confirmed: ConfirmedSeries[]
+  patients_created: number
+  appointments_created: number
+  /** Candidate keys whose chart was created but whose recurring series
+   * collided with something already booked. Keys only, never titles. */
+  skipped: string[]
+}
+
+export async function confirmCalendarImport(
+  series: ConfirmImportSeriesInput[]
+): Promise<ConfirmImportResult> {
+  return post<ConfirmImportResult>("/api/calendar/import/confirm", { series })
+}
+
+// --- Busy windows — the anonymous pre-scan week grid's data source ---
+
+export interface BusyWindow {
+  start: string
+  end: string
+}
+
+export interface BusyWindowsGranted {
+  windows: BusyWindow[]
+}
+
+export interface BusyWindowsNotGranted {
+  granted: false
+}
+
+export function busyWindowsGranted(
+  result: BusyWindowsGranted | BusyWindowsNotGranted
+): result is BusyWindowsGranted {
+  return "windows" in result
+}
+
+export async function getCalendarBusyWindows(
+  start: string,
+  end: string
+): Promise<BusyWindowsGranted | BusyWindowsNotGranted> {
+  const params = new URLSearchParams({ start, end })
+  return get<BusyWindowsGranted | BusyWindowsNotGranted>(`/api/calendar/import/busy?${params}`)
+}
