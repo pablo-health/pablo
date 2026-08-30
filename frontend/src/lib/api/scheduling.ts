@@ -14,7 +14,7 @@ import type {
   EditSeriesRequest,
   UpdateAppointmentRequest,
 } from "@/types/scheduling"
-import { apiClient, del, get, patch, post } from "./client"
+import { apiClient, del, get, patch, post, put } from "./client"
 
 // --- iCal sync types ---
 
@@ -221,10 +221,15 @@ export async function importClients(
 /** Which calendar Pablo writes sessions to. */
 export type CalendarWriteTarget = "app_calendar" | "primary"
 
+/** How much of a client's identity a pushed event carries. */
+export type EventTitling = "generic" | "initials" | "full"
+
 export interface GoogleCalendarSelection {
   write_target: CalendarWriteTarget
   /** Whether to also ask for the therapist's busy times. */
   busy: boolean
+  /** How the pushed events should read. */
+  event_titling: EventTitling
 }
 
 export interface GoogleCalendarConsentOption {
@@ -245,10 +250,39 @@ export interface GoogleCalendarStatus {
   calendar_id: string | null
   last_synced_at: string | null
   write_target: CalendarWriteTarget | null
+  /** How events will actually read — the stored choice, unless it is being
+   * held back for want of a fresh confirmation. */
+  event_titling: EventTitling | null
+  /** The connection holds a full-name choice confirmed for a different
+   * Google account, so names are not being written until it is confirmed
+   * again for this one. */
+  titling_needs_attestation: boolean
 }
 
 function selectionParams(selection: GoogleCalendarSelection): string {
-  return `write_target=${encodeURIComponent(selection.write_target)}&busy=${selection.busy}`
+  return (
+    `write_target=${encodeURIComponent(selection.write_target)}` +
+    `&busy=${selection.busy}` +
+    `&event_titling=${encodeURIComponent(selection.event_titling)}`
+  )
+}
+
+export interface SetEventTitlingResult {
+  style: EventTitling
+  events_retitled: number
+  events_not_retitled: number
+}
+
+/** Change how sessions read on an already-connected calendar.
+ *
+ * `attested` is the therapist confirming the connected account is covered
+ * by an agreement their own practice holds — required for full names, and
+ * recorded on the backend as evidence rather than as a preference. */
+export async function setGoogleCalendarEventTitling(
+  style: EventTitling,
+  attested: boolean
+): Promise<SetEventTitlingResult> {
+  return put<SetEventTitlingResult>("/api/google-calendar/event-titling", { style, attested })
 }
 
 export async function getGoogleCalendarConsentOptions(): Promise<GoogleCalendarConsentOptions> {

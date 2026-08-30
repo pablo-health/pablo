@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { SetupStepHead } from "@/components/setup"
 import type {
   CalendarWriteTarget,
+  EventTitling,
   GoogleCalendarConsentOptions,
   GoogleCalendarSelection,
   GoogleCalendarStatus,
@@ -33,6 +34,34 @@ const BUSY_COPY = {
   does: "Pablo looks at your calendar before offering a time, so you aren't double-booked.",
 }
 
+/** The three rungs, each with what an event actually ends up saying.
+ *
+ * The preview is the point: "initials" means nothing until you see "J.M."
+ * sitting where the event title goes. */
+const TITLING_COPY: Record<
+  EventTitling,
+  { label: string; does: string; preview: string; recommended?: boolean }
+> = {
+  generic: {
+    label: "Therapy Session",
+    does: "Nothing identifying leaves Pablo.",
+    preview: "Therapy Session",
+  },
+  initials: {
+    label: "Initials",
+    does: "Enough for you to recognise. Nothing for anyone reading over your shoulder.",
+    preview: "J.M.",
+    recommended: true,
+  },
+  full: {
+    label: "Full name",
+    does: "Only if this Google account is covered by your practice's own agreement.",
+    preview: "Jane Miller",
+  },
+}
+
+const TITLING_ORDER: EventTitling[] = ["generic", "initials", "full"]
+
 interface CalendarSessionsStepProps {
   status: GoogleCalendarStatus | undefined
   options: GoogleCalendarConsentOptions | undefined
@@ -41,6 +70,10 @@ interface CalendarSessionsStepProps {
   connecting: boolean
   error: string | null
   onConnect: () => void
+  /** True once the therapist has confirmed the account is covered. Only
+   * meaningful for the full-name choice, which is gated on it. */
+  attested: boolean
+  onAttestedChange: (attested: boolean) => void
 }
 
 export function CalendarSessionsStep({
@@ -51,6 +84,8 @@ export function CalendarSessionsStep({
   connecting,
   error,
   onConnect,
+  attested,
+  onAttestedChange,
 }: CalendarSessionsStepProps) {
   const promiseFor = (id: string) =>
     options?.write_targets.find((option) => option.id === id)?.promise
@@ -116,6 +151,70 @@ export function CalendarSessionsStep({
           ) : null}
         </span>
       </label>
+
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-medium text-neutral-900">
+          How should those events read?
+        </legend>
+        <p className="text-sm text-muted-foreground">
+          Whatever you pick is what shows on your phone&rsquo;s lock screen, and in any calendar you
+          share.
+        </p>
+        {TITLING_ORDER.map((style) => {
+          const copy = TITLING_COPY[style]
+          return (
+            <label
+              key={style}
+              className="flex cursor-pointer gap-3 rounded-lg border border-border p-4 hover:bg-muted/40"
+            >
+              <input
+                type="radio"
+                name="calendar-event-titling"
+                className="mt-1"
+                checked={selection.event_titling === style}
+                onChange={() => onSelectionChange({ ...selection, event_titling: style })}
+              />
+              <span className="space-y-1">
+                <span className="flex items-center gap-2 text-sm font-medium text-neutral-900">
+                  {copy.label}
+                  {copy.recommended ? (
+                    <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[11px] font-medium text-primary-700">
+                      Recommended
+                    </span>
+                  ) : null}
+                </span>
+                <span className="block text-sm text-muted-foreground">{copy.does}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {copy.preview} &middot; 3:00&ndash;3:50 PM
+                </span>
+              </span>
+            </label>
+          )
+        })}
+
+        {status?.titling_needs_attestation ? (
+          <p className="rounded-lg border border-amber-300 bg-amber-50/60 p-3 text-sm text-neutral-900">
+            You chose full names for a different Google account. Events are reading as initials
+            until you confirm this account is covered too.
+          </p>
+        ) : null}
+
+        {selection.event_titling === "full" ? (
+          <label className="flex cursor-pointer gap-3 rounded-lg border border-amber-300 bg-amber-50/60 p-4">
+            <Checkbox
+              className="mt-1"
+              checked={attested}
+              onCheckedChange={(checked) => onAttestedChange(checked === true)}
+              aria-label="Confirm this Google account is covered by your practice's agreement"
+            />
+            <span className="text-sm text-neutral-900">
+              I confirm this Google account is covered by a business associate agreement my practice
+              holds. <strong>Pablo&rsquo;s agreement does not cover your Google account</strong> — a
+              personal Gmail address never qualifies.
+            </span>
+          </label>
+        ) : null}
+      </fieldset>
 
       <div className="space-y-2">
         {status?.connected ? (

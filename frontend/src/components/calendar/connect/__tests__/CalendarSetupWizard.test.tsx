@@ -30,6 +30,7 @@ const getConsentOptions = vi.fn<() => Promise<GoogleCalendarConsentOptions>>()
 const getAuthUrl = vi.fn()
 const completeConnect = vi.fn()
 const disconnect = vi.fn()
+const setTitling = vi.fn()
 const getBusyWindows = vi.fn()
 const scanForImport = vi.fn<(...args: unknown[]) => Promise<ImportProposal | ImportConsentRequired>>()
 const completeImportConsent = vi.fn()
@@ -47,6 +48,7 @@ vi.mock("@/lib/api/scheduling", async () => {
     getGoogleCalendarAuthUrl: (...args: unknown[]) => getAuthUrl(...args),
     completeGoogleCalendarConnect: (...args: unknown[]) => completeConnect(...args),
     disconnectGoogleCalendar: () => disconnect(),
+  setGoogleCalendarEventTitling: (...args: unknown[]) => setTitling(...args),
     getCalendarBusyWindows: (...args: unknown[]) => getBusyWindows(...args),
     scanCalendarForImport: (...args: unknown[]) => scanForImport(...args),
     completeGoogleCalendarImportConsent: (...args: unknown[]) => completeImportConsent(...args),
@@ -59,6 +61,8 @@ const DISCONNECTED: GoogleCalendarStatus = {
   calendar_id: null,
   last_synced_at: null,
   write_target: null,
+  event_titling: null,
+  titling_needs_attestation: false,
 }
 
 const CONSENT_OPTIONS: GoogleCalendarConsentOptions = {
@@ -95,6 +99,8 @@ const CONNECTED: GoogleCalendarStatus = {
   calendar_id: "pablo-made@group.calendar.google.com",
   last_synced_at: null,
   write_target: "app_calendar",
+  event_titling: null,
+  titling_needs_attestation: false,
 }
 
 function proposalWith(overrides: Partial<ImportProposal> = {}): ImportProposal {
@@ -164,7 +170,7 @@ describe("CalendarSetupWizard", () => {
     await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
-    expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "app_calendar", busy: true })
+    expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "app_calendar", busy: true, event_titling: "initials" })
     expect(window.location.assign).toHaveBeenCalledWith(
       "https://accounts.google.com/o/oauth2/auth?x=1"
     )
@@ -179,7 +185,7 @@ describe("CalendarSetupWizard", () => {
     await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
-    expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "primary", busy: true })
+    expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "primary", busy: true, event_titling: "initials" })
   })
 
   it("does not ask for busy times when that is unchecked", async () => {
@@ -191,7 +197,7 @@ describe("CalendarSetupWizard", () => {
     await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
 
     await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
-    expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "app_calendar", busy: false })
+    expect(getAuthUrl.mock.calls[0][1]).toEqual({ write_target: "app_calendar", busy: false, event_titling: "initials" })
   })
 
   it("shows each choice's promise as the API generated it", async () => {
@@ -227,6 +233,8 @@ describe("CalendarSetupWizard", () => {
       calendar_id: "pablo-made@group.calendar.google.com",
       last_synced_at: null,
       write_target: "app_calendar",
+      event_titling: null,
+      titling_needs_attestation: false,
     })
     disconnect.mockResolvedValue({ status: "disconnected" })
     const user = userEvent.setup()
@@ -318,6 +326,119 @@ describe("CalendarSetupWizard", () => {
   })
 })
 
+describe("CalendarSetupWizard event titling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+    getStatus.mockResolvedValue(DISCONNECTED)
+    getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
+    getAuthUrl.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?x=1" })
+    Object.defineProperty(window, "location", {
+      value: { origin: "https://app.example.test", assign: vi.fn() },
+      writable: true,
+    })
+  })
+
+  it("shows what each choice makes an event actually say", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    expect(screen.getByText(/Therapy Session · 3:00–3:50 PM/)).toBeInTheDocument()
+    expect(screen.getByText(/J\.M\. · 3:00–3:50 PM/)).toBeInTheDocument()
+    expect(screen.getByText(/Jane Miller · 3:00–3:50 PM/)).toBeInTheDocument()
+  })
+
+  it("defaults a new connection to initials", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    expect(screen.getByRole("radio", { name: /initials/i })).toBeChecked()
+
+    await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
+    await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
+    expect(getAuthUrl.mock.calls[0][1].event_titling).toBe("initials")
+  })
+
+  it("carries the chosen wording through to the connect", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    await user.click(screen.getByRole("radio", { name: /therapy session/i }))
+    await user.click(screen.getByRole("button", { name: /connect google calendar/i }))
+
+    await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
+    expect(getAuthUrl.mock.calls[0][1].event_titling).toBe("generic")
+  })
+
+  it("asks for a confirmation before full names, and blocks Finish until given", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "jane@example.test",
+      last_synced_at: null,
+      write_target: "app_calendar",
+      event_titling: "initials",
+      titling_needs_attestation: false,
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    await user.click(screen.getByRole("radio", { name: /full name/i }))
+
+    const attestation = screen.getByRole("checkbox", {
+      name: /covered by your practice's agreement/i,
+    })
+    expect(attestation).toBeInTheDocument()
+    // The wizard's own nav button, not the step's connect action.
+    const nav = () => screen.getAllByRole("button", { name: /continue|finish/i }).at(-1)!
+    expect(nav()).toBeDisabled()
+
+    await user.click(attestation)
+    expect(nav()).not.toBeDisabled()
+  })
+
+  it("says so when the full-name choice was confirmed for another account", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "new-account@example.test",
+      last_synced_at: null,
+      write_target: "app_calendar",
+      event_titling: "initials",
+      titling_needs_attestation: true,
+    })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    expect(screen.getByText(/chose full names for a different Google account/i)).toBeInTheDocument()
+    expect(screen.getByRole("radio", { name: /initials/i })).toBeChecked()
+  })
+
+  it("saves a change on an already-connected calendar without asking Google again", async () => {
+    getStatus.mockResolvedValue({
+      connected: true,
+      calendar_id: "jane@example.test",
+      last_synced_at: null,
+      write_target: "app_calendar",
+      event_titling: "initials",
+      titling_needs_attestation: false,
+    })
+    setTitling.mockResolvedValue({ style: "generic", events_retitled: 3, events_not_retitled: 0 })
+    const user = userEvent.setup()
+    renderWizard()
+    await goToSessionsStep(user)
+
+    await user.click(screen.getByRole("radio", { name: /therapy session/i }))
+    await user.click(screen.getByRole("button", { name: /ask google again/i }))
+
+    await waitFor(() => expect(setTitling).toHaveBeenCalledWith("generic", false))
+    expect(getAuthUrl).not.toHaveBeenCalled()
+  })
+})
+
 describe("CalendarSetupWizard returning from Google", () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -336,7 +457,7 @@ describe("CalendarSetupWizard returning from Google", () => {
   it("exchanges the code with the choice that was made before the redirect", async () => {
     window.sessionStorage.setItem(
       "pablo.calendar-connect.selection",
-      JSON.stringify({ write_target: "primary", busy: false })
+      JSON.stringify({ write_target: "primary", busy: false, event_titling: "generic" })
     )
 
     renderWizard()
@@ -348,7 +469,11 @@ describe("CalendarSetupWizard returning from Google", () => {
     // to survive the round trip rather than being dropped here.
     expect(state).toBe("state-from-google")
     expect(redirectUri).toBe("https://app.example.test/dashboard/settings/calendar")
-    expect(selection).toEqual({ write_target: "primary", busy: false })
+    expect(selection).toEqual({
+      write_target: "primary",
+      busy: false,
+      event_titling: "generic",
+    })
     // The one-time code must not survive a refresh.
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith("/dashboard/settings/calendar")

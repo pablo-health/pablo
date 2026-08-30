@@ -29,6 +29,13 @@ from ..calendar_providers.capabilities import (
     UnsupportedCapabilityError,
     scopes_for,
 )
+from ..calendar_providers.event_titles import (
+    DEFAULT_EVENT_SUMMARY,
+    EventTitleStyle,
+    initials_by_patient,
+    parse_style,
+    summary_for,
+)
 from ..calendar_providers.oauth_state import mint_state, verify_state
 from ..calendar_providers.practice_import import (
     DEFAULT_HORIZON_DAYS,
@@ -51,6 +58,8 @@ if TYPE_CHECKING:
     from google.oauth2.credentials import Credentials
 
     from ..calendar_providers.practice_import import ImportProposal
+    from ..models.patient import Patient
+    from ..repositories.patient import PatientRepository
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..settings import Settings
@@ -146,8 +155,28 @@ _STATE_PURPOSE = "google-calendar-oauth-state"
 _MAX_SCAN_EVENTS = 2500
 _MAX_SCAN_SERIES = 200
 
-# HIPAA: generic summary avoids leaking patient names to Google
-_DEFAULT_EVENT_SUMMARY = "Therapy Session"
+# The floor, and the fallback whenever a chosen style can't be rendered.
+_DEFAULT_EVENT_SUMMARY = DEFAULT_EVENT_SUMMARY
+
+# How far ahead a retitle looks. Past the horizon any recurring series
+# reaches, so "future events" means all of them, while still bounding the
+# work rather than walking a calendar with no end.
+_RETITLE_HORIZON_DAYS = 730
+_RETITLE_MAX_EVENTS = 2000
+
+# One page big enough to hold a solo practice's whole caseload.
+_CASELOAD_PAGE_SIZE = 500
+
+# What a new connection reads as unless the therapist says otherwise.
+# Initials rather than the floor: a column of identical blocks is the
+# problem the choice exists to solve, and initials disclose nothing to
+# someone who does not already know the caseload.
+DEFAULT_EVENT_TITLING = EventTitleStyle.INITIALS
+
+# Where full names land when the attestation behind them no longer covers
+# the connected account. Initials rather than the floor: the attestation
+# permitted names, so losing it takes back the names and nothing else.
+UNATTESTED_FALLBACK_TITLING = EventTitleStyle.INITIALS
 
 # Page size for events().list. Google's default is 250 but it is not
 # contractual — ask for a size we've sized the page loop around.
@@ -161,6 +190,15 @@ _HTTP_TOO_MANY_REQUESTS = 429
 
 def _now() -> datetime:
     return utc_now()
+
+
+class RetitleOutcome(NamedTuple):
+    """What a retitle pass managed to do."""
+
+    retitled: int
+    failed: int
+    skipped: int
+    """Events past the per-pass ceiling, left for a further pass."""
 
 
 class _EventPage(NamedTuple):
@@ -316,6 +354,17 @@ def _with_calendar_retry[T](call: Callable[[], T]) -> T:
     )
 
 
+def _patch_event_summary(service: Any, calendar_id: str, event_id: str, summary: str) -> None:
+    """Change one event's title, leaving everything else about it alone."""
+    _with_calendar_retry(
+        lambda: (
+            service.events()
+            .patch(calendarId=calendar_id, eventId=event_id, body={"summary": summary})
+            .execute()
+        )
+    )
+
+
 def _read_event(service: Any, calendar_id: str, event_id: str) -> dict[str, Any]:
     """Read one event by id, backing off if Google asks us to."""
     page: dict[str, Any] = _with_calendar_retry(
@@ -375,9 +424,14 @@ class GoogleCalendarService:
         *,
         client_id: str,
         client_secret: str,
+        patient_repo: PatientRepository | None = None,
     ) -> None:
         self._token_repo = token_repo
         self._appointment_repo = appointment_repo
+        # Only the naming styles above the floor need it. Without one, a
+        # session falls back to the generic wording rather than failing —
+        # the floor is always renderable.
+        self._patient_repo = patient_repo
         self._surface = ConsentSurface(
             provider_id=GOOGLE_PROVIDER_ID,
             client_id=client_id,
@@ -391,6 +445,7 @@ class GoogleCalendarService:
         *,
         token_repo: GoogleCalendarTokenRepository,
         appointment_repo: AppointmentRepository,
+        patient_repo: PatientRepository | None = None,
     ) -> GoogleCalendarService:
         """Build from a configured consent surface rather than loose credentials."""
         service = cls(
@@ -398,6 +453,7 @@ class GoogleCalendarService:
             appointment_repo,
             client_id=surface.client_id,
             client_secret=surface.client_secret,
+            patient_repo=patient_repo,
         )
         service._surface = surface
         return service
@@ -478,6 +534,7 @@ class GoogleCalendarService:
         state: str,
         capabilities: Collection[CalendarCapability] | None = None,
         write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
+        event_titling: EventTitleStyle = DEFAULT_EVENT_TITLING,
     ) -> None:
         """Exchange OAuth authorization code for tokens, encrypt and store.
 
@@ -519,6 +576,7 @@ class GoogleCalendarService:
             last_synced_at=now,
             provider=GOOGLE_PROVIDER_ID,
             write_target=write_target.value,
+            event_titling=event_titling.value,
             granted_capabilities=granted,
         )
         self._token_repo.save(token_doc)
@@ -537,7 +595,10 @@ class GoogleCalendarService:
         if not token_doc or not token_doc.calendar_id:
             return None
 
-        event_body = self._appointment_to_event(appointment)
+        event_body = self._appointment_to_event(
+            appointment,
+            self._summary_for(user_id, appointment, self._effective_style(token_doc)),
+        )
         service = _build_calendar_service(credentials)
 
         if appointment.google_event_id:
@@ -681,12 +742,16 @@ class GoogleCalendarService:
                 "calendar_id": None,
                 "last_synced_at": None,
                 "write_target": None,
+                "event_titling": None,
+                "titling_needs_attestation": False,
             }
         return {
             "connected": True,
             "calendar_id": token_doc.calendar_id,
             "last_synced_at": token_doc.last_synced_at,
             "write_target": token_doc.write_target,
+            "event_titling": self._effective_style(token_doc).value,
+            "titling_needs_attestation": self._needs_reattestation(token_doc),
         }
 
     def list_busy_windows(
@@ -912,6 +977,148 @@ class GoogleCalendarService:
         if CalendarCapability.IMPORT.value not in _split_capabilities(granted):
             raise CalendarImportNotAuthorizedError(self.provider_id)
 
+    @staticmethod
+    def _effective_style(token_doc: GoogleCalendarTokenDoc) -> EventTitleStyle:
+        """The style actually honoured, which is not always the one stored.
+
+        Full names rest on the therapist having confirmed that this
+        calendar account is covered. That confirmation is about one
+        account, so a connection now pointing at a different one is not
+        covered by it and must not keep writing names — it drops to
+        initials, which needs no attestation, rather than to the floor: the
+        confirmation permitted names, so withdrawing it withdraws exactly
+        the names.
+        """
+        style = parse_style(token_doc.event_titling)
+        if style is not EventTitleStyle.FULL:
+            return style
+        attested = token_doc.titling_attested_account
+        if attested and attested == (token_doc.calendar_id or ""):
+            return style
+        return UNATTESTED_FALLBACK_TITLING
+
+    @staticmethod
+    def _needs_reattestation(token_doc: GoogleCalendarTokenDoc) -> bool:
+        """Whether a stored preference is being held back for want of one."""
+        return (
+            parse_style(token_doc.event_titling) is EventTitleStyle.FULL
+            and GoogleCalendarService._effective_style(token_doc) is not EventTitleStyle.FULL
+        )
+
+    def _caseload(self, user_id: str) -> list[Patient]:
+        """The therapist's patients, for working out initials.
+
+        Fetched whole rather than a first page: two clients who collide on
+        initials might sit on either side of a page boundary, and a
+        collision that depends on pagination is a collision that shows up
+        later, in production, as two identical labels.
+        """
+        if self._patient_repo is None:
+            return []
+        patients, _ = self._patient_repo.list_by_user(
+            user_id, page=1, page_size=_CASELOAD_PAGE_SIZE
+        )
+        return list(patients)
+
+    def _summary_for(
+        self,
+        user_id: str,
+        appointment: Appointment,
+        style: EventTitleStyle,
+        *,
+        caseload: list[Patient] | None = None,
+    ) -> str:
+        """What one appointment should read as on the calendar."""
+        if style is EventTitleStyle.GENERIC or self._patient_repo is None:
+            return _DEFAULT_EVENT_SUMMARY
+        roster = self._caseload(user_id) if caseload is None else caseload
+        patient = next((p for p in roster if p.id == appointment.patient_id), None)
+        return summary_for(style, patient, initials=initials_by_patient(roster))
+
+    def set_event_titling(
+        self,
+        user_id: str,
+        style: EventTitleStyle,
+        *,
+        attested_account: str | None = None,
+    ) -> bool:
+        """Store how this connection's sessions should read. False if unconnected.
+
+        ``attested_account`` is the account the therapist confirmed was
+        covered, stored so a later connection to a different account stops
+        honouring it rather than inheriting the permission.
+
+        Narrowing is applied to events already pushed by a separate
+        retitle pass, so the stored choice takes effect for new sessions
+        immediately even if that pass has more to do.
+        """
+        token_doc = self._token_repo.get(user_id)
+        if not token_doc:
+            return False
+        token_doc.event_titling = style.value
+        if style is EventTitleStyle.FULL:
+            token_doc.titling_attested_account = attested_account or ""
+        self._token_repo.save(token_doc)
+        logger.info("Calendar event titling set to %s", style.value)
+        return True
+
+    def retitle_future_events(self, user_id: str) -> RetitleOutcome:
+        """Rewrite the titles of this connection's future events.
+
+        Called when a therapist narrows what their calendar says. Without
+        it the control is a lie: the setting would change while the names
+        already written stayed sitting in Google, which is the disclosure
+        they were trying to withdraw.
+
+        Past events are left alone. They are a record of what happened,
+        and rewriting history is not what was asked for.
+        """
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if not credentials or not token_doc or not token_doc.calendar_id:
+            return RetitleOutcome(0, 0, 0)
+
+        style = self._effective_style(token_doc)
+        caseload = self._caseload(user_id)
+        now = _now()
+        upcoming = [
+            appointment
+            for appointment in self._appointment_repo.list_by_range(
+                user_id, now, now + timedelta(days=_RETITLE_HORIZON_DAYS)
+            )
+            if appointment.google_event_id
+        ]
+        capped = len(upcoming) > _RETITLE_MAX_EVENTS
+        upcoming = upcoming[:_RETITLE_MAX_EVENTS]
+
+        service = _build_calendar_service(credentials)
+        retitled = 0
+        failed = 0
+        for appointment in upcoming:
+            summary = self._summary_for(user_id, appointment, style, caseload=caseload)
+            try:
+                _patch_event_summary(
+                    service, token_doc.calendar_id, str(appointment.google_event_id), summary
+                )
+            except Exception:
+                # One event that won't take the change must not strand the
+                # rest. The count comes back so a caller can say so and try
+                # again — the pass is idempotent, so a retry is free.
+                logger.warning("Could not retitle a Google Calendar event")
+                failed += 1
+                continue
+            retitled += 1
+
+        # HIPAA: counts only. What the events now say never reaches a log.
+        logger.info(
+            "Retitled %d Google Calendar event(s), %d could not be updated",
+            retitled,
+            failed,
+        )
+        return RetitleOutcome(
+            retitled=retitled, failed=failed, skipped=len(upcoming) if capped else 0
+        )
+
     def _get_credentials(self, user_id: str) -> Credentials | None:
         """Load and refresh OAuth credentials for a user."""
         token_doc = self._token_repo.get(user_id)
@@ -982,13 +1189,17 @@ class GoogleCalendarService:
         return str(calendar_id)
 
     @staticmethod
-    def _appointment_to_event(appointment: Appointment) -> dict[str, Any]:
+    def _appointment_to_event(
+        appointment: Appointment, summary: str | None = None
+    ) -> dict[str, Any]:
         """Map a Pablo appointment to a Google Calendar event body.
 
-        HIPAA: Uses generic summary. Patient name is NOT sent to Google.
+        ``summary`` is what the therapist chose this to read as. Without
+        one it is the generic wording — a caller that hasn't worked out a
+        title never accidentally sends a name.
         """
         event: dict[str, Any] = {
-            "summary": _DEFAULT_EVENT_SUMMARY,
+            "summary": summary or _DEFAULT_EVENT_SUMMARY,
             "start": {
                 "dateTime": appointment.start_at.isoformat(),
                 "timeZone": "UTC",

@@ -357,6 +357,49 @@ class GoogleCalendarStatusResponse(BaseModel):
     calendar_id: str | None = None
     last_synced_at: datetime | None = None
     write_target: str | None = None
+    event_titling: str | None = Field(
+        default=None,
+        description=(
+            "How sessions will actually read — the stored choice, unless it "
+            "is being held back for want of a fresh confirmation"
+        ),
+    )
+    titling_needs_attestation: bool = Field(
+        default=False,
+        description=(
+            "The connection holds a full-name preference attested for a "
+            "different Google account, so names are not being written until "
+            "it is confirmed again for this one"
+        ),
+    )
+
+
+class SetEventTitlingRequest(BaseModel):
+    """How the therapist wants their sessions to read on the calendar."""
+
+    style: str = Field(description="generic, initials, or full")
+    attested: bool = Field(
+        default=False,
+        description=(
+            "Set when choosing 'full': the therapist confirming the connected "
+            "account is covered by an agreement their own practice holds. "
+            "Required for that choice and recorded as evidence."
+        ),
+    )
+
+
+class SetEventTitlingResponse(BaseModel):
+    """The stored choice, and what changing it did to events already pushed."""
+
+    style: str
+    events_retitled: int = Field(
+        default=0,
+        description="Future events rewritten because the choice narrowed what they say",
+    )
+    events_not_retitled: int = Field(
+        default=0,
+        description="Future events the calendar would not update — retrying is safe",
+    )
 
 
 class GoogleCalendarConsentOption(BaseModel):

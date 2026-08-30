@@ -19,6 +19,7 @@ import {
   getGoogleCalendarAuthUrl,
   getGoogleCalendarConsentOptions,
   getGoogleCalendarStatus,
+  setGoogleCalendarEventTitling,
   importNeedsConsent,
   scanCalendarForImport,
   type ConfirmImportResult,
@@ -37,7 +38,13 @@ const CONNECT_INDEX = 0
 const CLIENTS_INDEX = 2
 const REVIEW_INDEX = 3
 
-const DEFAULT_SELECTION: GoogleCalendarSelection = { write_target: "app_calendar", busy: true }
+const DEFAULT_SELECTION: GoogleCalendarSelection = {
+  write_target: "app_calendar",
+  busy: true,
+  // Initials, not the generic wording: a column of identical blocks is the
+  // problem the choice exists to solve.
+  event_titling: "initials",
+}
 
 /** Google requires the redirect URI to match one registered on the OAuth
  * client exactly, so the selection can't ride back on the URL. It waits
@@ -66,6 +73,10 @@ function recallSelection(): GoogleCalendarSelection {
     return {
       write_target: parsed.write_target === "primary" ? "primary" : "app_calendar",
       busy: parsed.busy !== false,
+      event_titling:
+        parsed.event_titling === "generic" || parsed.event_titling === "full"
+          ? parsed.event_titling
+          : "initials",
     }
   } catch {
     return DEFAULT_SELECTION
@@ -122,6 +133,8 @@ export function CalendarSetupWizard() {
 
   const [activeIndex, setActiveIndex] = useState(0)
   const [selection, setSelection] = useState<GoogleCalendarSelection>(DEFAULT_SELECTION)
+  const [attested, setAttested] = useState(false)
+  const [applying, setApplying] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -161,6 +174,14 @@ export function CalendarSetupWizard() {
     if (!grantedWriteTarget) return
     setSelection((current) => ({ ...current, write_target: grantedWriteTarget }))
   }, [grantedWriteTarget])
+
+  // Show what the connection is actually set to, not the default.
+  const storedTitling = status?.connected ? status.event_titling : null
+  useEffect(() => {
+    if (!storedTitling) return
+    setSelection((current) => ({ ...current, event_titling: storedTitling }))
+    setAttested(storedTitling === "full")
+  }, [storedTitling])
 
   // Once a proposal comes in, seed the review step's checkboxes from what
   // the API preselected — never all-checked, never all-unchecked.
@@ -265,6 +286,22 @@ export function CalendarSetupWizard() {
     }
   }, [code, state, redirectUri, queryClient, router, runScan])
 
+  // Changing how events read on an already-connected calendar does not
+  // need Google again — it is Pablo's own record of what to write, and
+  // narrowing it rewrites what has already been written.
+  const applyTitling = useCallback(async () => {
+    setError(null)
+    setApplying(true)
+    try {
+      await setGoogleCalendarEventTitling(selection.event_titling, attested)
+      queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
+    } catch (err) {
+      setError(message(err, "Could not save how your events should read."))
+    } finally {
+      setApplying(false)
+    }
+  }, [attested, queryClient, selection.event_titling])
+
   const handleDisconnect = useCallback(async () => {
     setError(null)
     setDisconnecting(true)
@@ -311,6 +348,7 @@ export function CalendarSetupWizard() {
     }
   }, [proposal, checked])
 
+  const titlingSettled = selection.event_titling !== "full" || attested
   const isLastStep = activeIndex === STEPS.length - 1
   const onReviewStep = activeIndex === REVIEW_INDEX
 
@@ -335,7 +373,10 @@ export function CalendarSetupWizard() {
                 ? true
                 : activeIndex === CLIENTS_INDEX
                   ? proposal !== null
-                  : !isLastStep || Boolean(status?.connected)
+                  : // Full names are the therapist's disclosure to make, so
+                    // this step doesn't move on until they've said the
+                    // account is covered.
+                    titlingSettled && (!isLastStep || Boolean(status?.connected))
             }
             isLastStep={isLastStep}
           />
@@ -358,9 +399,11 @@ export function CalendarSetupWizard() {
           options={options}
           selection={selection}
           onSelectionChange={setSelection}
-          connecting={connecting}
+          connecting={connecting || applying}
           error={error}
-          onConnect={startConnect}
+          onConnect={status?.connected ? applyTitling : startConnect}
+          attested={attested}
+          onAttestedChange={setAttested}
         />
       ) : activeIndex === CLIENTS_INDEX ? (
         <CalendarClientsStep
