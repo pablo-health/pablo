@@ -182,6 +182,7 @@ describe("CalendarSetupWizard returning from Google", () => {
     getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
     completeConnect.mockResolvedValue({ status: "connected" })
     searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
     Object.defineProperty(window, "location", {
       value: { origin: "https://app.example.test", assign: vi.fn() },
       writable: true,
@@ -197,8 +198,11 @@ describe("CalendarSetupWizard returning from Google", () => {
     renderWizard()
 
     await waitFor(() => expect(completeConnect).toHaveBeenCalled())
-    const [code, redirectUri, selection] = completeConnect.mock.calls[0]
+    const [code, state, redirectUri, selection] = completeConnect.mock.calls[0]
     expect(code).toBe("auth-code")
+    // The backend checks this was minted for the signed-in user, so it has
+    // to survive the round trip rather than being dropped here.
+    expect(state).toBe("state-from-google")
     expect(redirectUri).toBe("https://app.example.test/dashboard/settings/calendar")
     expect(selection).toEqual({ write_target: "primary", busy: false })
     // The one-time code must not survive a refresh.

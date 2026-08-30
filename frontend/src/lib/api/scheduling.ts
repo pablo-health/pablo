@@ -264,13 +264,17 @@ export async function getGoogleCalendarAuthUrl(
   )
 }
 
+/** `state` is the value Google handed back with the code. The backend
+ * requires it and checks it was minted for the signed-in user, so the
+ * callback cannot be driven with a code obtained anywhere else. */
 export async function completeGoogleCalendarConnect(
   code: string,
+  state: string,
   redirectUri: string,
   selection: GoogleCalendarSelection
 ): Promise<{ status: string }> {
   return get<{ status: string }>(
-    `/api/google-calendar/callback?code=${encodeURIComponent(code)}&redirect_uri=${encodeURIComponent(redirectUri)}&${selectionParams(selection)}`
+    `/api/google-calendar/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(redirectUri)}&${selectionParams(selection)}`
   )
 }
 

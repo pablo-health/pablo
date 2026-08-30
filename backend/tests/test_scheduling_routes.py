@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from app.calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
+from app.calendar_providers.oauth_state import OAuthStateError
 from app.main import app
 from app.models import Patient, SessionStatus, UserPreferences
 from app.models.session import TherapySession, Transcript
@@ -1490,13 +1491,44 @@ def test_callback_binds_the_connection_to_the_chosen_calendar(client: TestClient
 
     response = client.get(
         "/api/google-calendar/callback",
-        params={"code": "auth-code", "redirect_uri": _GCAL_REDIRECT, "write_target": "primary"},
+        params={
+            "code": "auth-code",
+            "redirect_uri": _GCAL_REDIRECT,
+            "state": "signed-state",
+            "write_target": "primary",
+        },
     )
 
     assert response.status_code == 200, response.text
     kwargs = gcal_service.handle_callback.call_args.kwargs
+    assert kwargs["state"] == "signed-state"
     assert kwargs["write_target"] is CalendarWriteTarget.PRIMARY
     assert CalendarCapability.IMPORT not in kwargs["capabilities"]
+
+
+def test_callback_without_state_is_refused(client: TestClient) -> None:
+    """A code arriving with no state is never exchanged."""
+    gcal_service = _capture_gcal_service()
+
+    response = client.get(
+        "/api/google-calendar/callback",
+        params={"code": "auth-code", "redirect_uri": _GCAL_REDIRECT},
+    )
+
+    assert response.status_code == 400, response.text
+    gcal_service.handle_callback.assert_not_called()
+
+
+def test_callback_with_an_unusable_state_is_refused(client: TestClient) -> None:
+    gcal_service = _capture_gcal_service()
+    gcal_service.handle_callback.side_effect = OAuthStateError("state signature does not verify")
+
+    response = client.get(
+        "/api/google-calendar/callback",
+        params={"code": "auth-code", "redirect_uri": _GCAL_REDIRECT, "state": "forged"},
+    )
+
+    assert response.status_code == 400, response.text
 
 
 def test_consent_options_carry_each_choices_promise(client: TestClient) -> None:

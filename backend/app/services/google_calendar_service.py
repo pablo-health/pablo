@@ -31,6 +31,7 @@ from ..calendar_providers.capabilities import (
     UnsupportedCapabilityError,
     scopes_for,
 )
+from ..calendar_providers.oauth_state import mint_state, verify_state
 from ..calendar_providers.provider import ConsentSurface
 from ..calendar_providers.registry import ProviderRegistration
 from ..repositories.google_calendar_token import (
@@ -38,7 +39,7 @@ from ..repositories.google_calendar_token import (
     GoogleCalendarTokenRepository,
 )
 from ..utcnow import utc_now, utc_now_iso
-from .token_encryption import decrypt_tokens, encrypt_tokens
+from .token_encryption import decrypt_tokens, derive_subkey, encrypt_tokens
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
@@ -130,6 +131,10 @@ _CONNECT_CAPABILITIES = frozenset({CalendarCapability.PUSH, CalendarCapability.B
 # is how the calendar is found again on a later connect, so changing it
 # strands the one already on the account.
 _APP_CALENDAR_SUMMARY = "Pablo Sessions"
+
+# Names the key that signs the OAuth state, keeping it distinct from the
+# key that encrypts stored tokens.
+_STATE_PURPOSE = "google-calendar-oauth-state"
 
 # HIPAA: generic summary avoids leaking patient names to Google
 _DEFAULT_EVENT_SUMMARY = "Therapy Session"
@@ -326,7 +331,7 @@ class GoogleCalendarService:
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             prompt="consent",
-            state=user_id,
+            state=mint_state(derive_subkey(_STATE_PURPOSE), user_id),
         )
         # HIPAA: log action without user-identifying details
         logger.info("Generated Google Calendar OAuth URL for authorization")
@@ -338,10 +343,16 @@ class GoogleCalendarService:
         code: str,
         redirect_uri: str,
         *,
+        state: str,
         capabilities: Collection[CalendarCapability] | None = None,
         write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
     ) -> None:
-        """Exchange OAuth authorization code for tokens, encrypt and store."""
+        """Exchange OAuth authorization code for tokens, encrypt and store.
+
+        The state minted at authorization is checked first, so a code is
+        only ever exchanged for the user the authorization was started by.
+        """
+        verify_state(derive_subkey(_STATE_PURPOSE), state, user_id)
         scopes = self._scopes_for_request(capabilities, write_target)
         flow = _build_flow(
             self._surface.client_id,

@@ -28,6 +28,7 @@ from ..auth.service import (
 )
 from ..calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from ..calendar_providers.consent_copy import capability_promise
+from ..calendar_providers.oauth_state import OAuthStateError
 from ..db import release_db_connection
 from ..models import (
     AuditAction,
@@ -1183,6 +1184,7 @@ def google_calendar_authorize(
 def google_calendar_callback(
     code: str = Query(..., description="OAuth authorization code"),
     redirect_uri: str = Query(..., description="OAuth redirect URI"),
+    state: str = Query("", description="The state minted when authorization started"),
     write_target: str = Query(
         DEFAULT_WRITE_TARGET.value,
         description="The write target the authorization URL was built with",
@@ -1193,21 +1195,32 @@ def google_calendar_callback(
 ) -> dict[str, str]:
     """Handle Google OAuth callback — exchange code for tokens.
 
-    The selection has to match the one the authorization URL carried: it
-    decides both the grant being exchanged and which calendar the
-    connection is bound to.
+    Requires the state minted at authorization and bound to the caller, so
+    a code can only be exchanged by the person whose authorization request
+    produced it. Declared with an empty default rather than as a required
+    parameter so a missing one is answered the same way as a bad one.
+
+    The rest of the selection has to match what the authorization URL
+    carried: it decides both the grant being exchanged and which calendar
+    the connection is bound to.
     """
     if not _is_valid_gcal_redirect_uri(redirect_uri):
         raise BadRequestError("Invalid redirect_uri")
+    if not state:
+        raise BadRequestError("Missing state")
     target = _parse_write_target(write_target)
     try:
         service.handle_callback(
             ctx.user_id,
             code,
             redirect_uri,
+            state=state,
             capabilities=_connect_capabilities(busy=busy),
             write_target=target,
         )
+    except OAuthStateError as e:
+        logger.warning("Google Calendar OAuth callback rejected an unusable state")
+        raise BadRequestError("Invalid state") from e
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e

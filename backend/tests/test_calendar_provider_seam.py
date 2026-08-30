@@ -4,9 +4,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import base64
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 import pytest
 from app.calendar_providers.capabilities import (
@@ -18,6 +24,12 @@ from app.calendar_providers.capabilities import (
     scopes_for,
 )
 from app.calendar_providers.consent_copy import capability_promise, consent_promises
+from app.calendar_providers.oauth_state import (
+    MAX_STATE_AGE_SECONDS,
+    OAuthStateError,
+    mint_state,
+    verify_state,
+)
 from app.calendar_providers.provider import CalendarProvider, ConsentSurface
 from app.calendar_providers.registry import (
     CalendarProviderRegistry,
@@ -38,6 +50,16 @@ _APP_CREATED_SCOPE = "https://www.googleapis.com/auth/calendar.app.created"
 _EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 _READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 _FREEBUSY_SCOPE = "https://www.googleapis.com/auth/calendar.freebusy"
+
+
+@pytest.fixture(autouse=True)
+def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Building an authorization URL signs its state with a key derived from
+    this secret, so the connect tests need one configured."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -193,6 +215,50 @@ class TestConsentCopy:
         only_push = {CalendarCapability.PUSH: GOOGLE_CAPABILITIES[CalendarCapability.PUSH]}
         with pytest.raises(UnsupportedCapabilityError):
             consent_promises("Some Calendar", only_push, [CalendarCapability.BUSY])
+
+
+# Signed OAuth state
+
+
+class TestOAuthState:
+    """The value that ties an authorization code back to the person who
+    started the flow."""
+
+    KEY = b"a" * 32
+    OTHER_KEY = b"b" * 32
+
+    def test_a_freshly_minted_state_verifies(self) -> None:
+        verify_state(self.KEY, mint_state(self.KEY, "user-001"), "user-001")
+
+    def test_two_requests_never_produce_the_same_state(self) -> None:
+        assert mint_state(self.KEY, "user-001") != mint_state(self.KEY, "user-001")
+
+    def test_a_state_signed_with_another_key_is_refused(self) -> None:
+        """Signed by a deployment that is not this one, or by nobody."""
+        with pytest.raises(OAuthStateError, match="signature does not verify"):
+            verify_state(self.KEY, mint_state(self.OTHER_KEY, "user-001"), "user-001")
+
+    def test_a_state_for_another_user_is_refused(self) -> None:
+        with pytest.raises(OAuthStateError, match="different user"):
+            verify_state(self.KEY, mint_state(self.KEY, "someone-else"), "user-001")
+
+    @pytest.mark.parametrize("minted_at_offset", [-MAX_STATE_AGE_SECONDS - 1, 3600])
+    def test_a_state_outside_the_window_is_refused(self, minted_at_offset: int) -> None:
+        """Too old to still be in flight, or dated far enough ahead to be
+        something other than clock drift."""
+        minted_at = datetime.now(UTC) + timedelta(seconds=minted_at_offset)
+        with patch("app.calendar_providers.oauth_state.utc_now", return_value=minted_at):
+            state = mint_state(self.KEY, "user-001")
+
+        with pytest.raises(OAuthStateError, match="expired"):
+            verify_state(self.KEY, state, "user-001")
+
+    def test_a_state_still_inside_the_window_verifies(self) -> None:
+        minted_at = datetime.now(UTC) - timedelta(seconds=MAX_STATE_AGE_SECONDS - 30)
+        with patch("app.calendar_providers.oauth_state.utc_now", return_value=minted_at):
+            state = mint_state(self.KEY, "user-001")
+
+        verify_state(self.KEY, state, "user-001")
 
 
 # Registry

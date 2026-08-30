@@ -110,6 +110,7 @@ export function CalendarSetupWizard() {
   }, [redirectUri, selection])
 
   const code = searchParams.get("code")
+  const state = searchParams.get("state") ?? ""
   // An authorization code is single-use, and a re-rendered effect would
   // spend it a second time — which Google rejects.
   const exchangedCode = useRef<string | null>(null)
@@ -121,7 +122,7 @@ export function CalendarSetupWizard() {
     const granted = recallSelection()
     setSelection(granted)
     setConnecting(true)
-    completeGoogleCalendarConnect(code, redirectUri, granted)
+    completeGoogleCalendarConnect(code, state, redirectUri, granted)
       .then(() => {
         if (cancelled) return
         queryClient.invalidateQueries({ queryKey: ["google-calendar"] })
@@ -139,7 +140,7 @@ export function CalendarSetupWizard() {
     return () => {
       cancelled = true
     }
-  }, [code, redirectUri, queryClient, router])
+  }, [code, state, redirectUri, queryClient, router])
 
   const handleDisconnect = useCallback(async () => {
     setError(null)

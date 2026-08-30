@@ -105,10 +105,15 @@ class CalendarProvider(Protocol):
         code: str,
         redirect_uri: str,
         *,
+        state: str,
         capabilities: Collection[CalendarCapability] | None = None,
         write_target: CalendarWriteTarget = ...,
     ) -> None:
         """Exchange an authorization code for tokens and store them encrypted.
+
+        ``state`` is the value the provider handed back with the code, and
+        must be the one this user's authorization request minted; an
+        implementation checks it before spending the code.
 
         The write target has to match the one the authorization URL was
         built with: it decides both the grant asked for and which calendar

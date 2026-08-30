@@ -282,6 +282,8 @@ ignore = [
 "backend/app/calendar_providers/**/*.py" = [
     "PLC0415",  # The registry imports provider implementations lazily: they import
                 # the vocabulary defined here, so a module-level import is a cycle
+    "PLR0913",  # An OAuth callback carries the code, the redirect, the state and the
+                # selection that was consented to — the protocol names them all
 ]
 "backend/app/services/**/*.py" = [
     "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
