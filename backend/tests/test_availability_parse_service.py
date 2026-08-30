@@ -25,6 +25,7 @@ from app.services.structured_llm_gateway import (
     StructuredCompletion,
     StructuredOutputTruncatedError,
 )
+from app.settings import get_settings
 
 REFERENCE_DATE = date(2026, 8, 26)  # Wednesday
 
@@ -65,6 +66,7 @@ class TestSingleProposal:
                     "enforcement": "hard",
                     "day_of_week": 4,
                     "human_summary": "No appointments on Fridays.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -91,6 +93,7 @@ class TestMultipleProposals:
                     "start": "09:00",
                     "end": "17:00",
                     "human_summary": "Working 9-5.",
+                    "confidence": 0.95,
                 }
                 for day in range(5)
             ],
@@ -119,6 +122,7 @@ class TestDateIntentResolution:
                         "range": False,
                     },
                     "human_summary": "Blocked next Friday.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -143,6 +147,7 @@ class TestDateIntentResolution:
                         "range": True,
                     },
                     "human_summary": "Blocked Friday through Monday.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -177,6 +182,7 @@ class TestRejectedProposals:
                         "start_date": "2026-09-01",
                         "end_date": "2026-09-05",
                         "human_summary": "Blocked next week.",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -194,6 +200,7 @@ class TestRejectedProposals:
                             "range": False,
                         },
                         "human_summary": "Blocked next Friday.",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -210,6 +217,7 @@ class TestRejectedProposals:
                         "rule_type": "frobnicate_schedule",
                         "enforcement": "hard",
                         "human_summary": "??",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -224,6 +232,7 @@ class TestRejectedProposals:
                         "enforcement": "hard",
                         "day_of_week": 7,
                         "human_summary": "Blocked.",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -239,6 +248,7 @@ class TestRejectedProposals:
                         "start": "17:00",
                         "end": "09:00",
                         "human_summary": "Blocked.",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -253,6 +263,7 @@ class TestRejectedProposals:
                         "enforcement": "hard",
                         "minutes": -5,
                         "human_summary": "Buffer.",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -267,6 +278,7 @@ class TestRejectedProposals:
                         "enforcement": "hard",
                         "max": 0,
                         "human_summary": "Limit.",
+                        "confidence": 0.95,
                     }
                 ]
             }
@@ -318,6 +330,7 @@ class TestPromptContract:
                     "enforcement": "hard",
                     "day_of_week": 4,
                     "human_summary": "No Fridays.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -354,6 +367,7 @@ class TestExclusivity:
                     "start": "13:00",
                     "end": "15:00",
                     "human_summary": "Mondays 1-3.",
+                    "confidence": 0.95,
                 },
                 {
                     "rule_type": "working_hours",
@@ -362,6 +376,7 @@ class TestExclusivity:
                     "start": "14:00",
                     "end": "16:00",
                     "human_summary": "Tuesdays 2-4.",
+                    "confidence": 0.95,
                 },
             ],
             "could_not_parse": None,
@@ -382,6 +397,7 @@ class TestExclusivity:
                     "enforcement": "hard",
                     "day_of_week": 4,
                     "human_summary": "No Fridays.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -389,3 +405,139 @@ class TestExclusivity:
         result = _fake_service(response).parse("No appointments on Fridays")
 
         assert result.exclusive is False
+
+
+class TestRefusalReason:
+    """A refusal says which kind it is, so a caller can be specific."""
+
+    @pytest.mark.parametrize(
+        "reason",
+        ["ambiguous", "out_of_scope", "multi_intent"],
+    )
+    def test_a_named_refusal_reason_is_carried_through(self, reason: str) -> None:
+        service = _fake_service(
+            {
+                "proposals": [],
+                "could_not_parse": "Not an availability rule.",
+                "refusal_reason": reason,
+            }
+        )
+
+        result = service.parse("no new patients on Fridays", reference_date=REFERENCE_DATE)
+
+        assert result.proposals == []
+        assert result.refusal_reason == reason
+        assert result.could_not_parse == "Not an availability rule."
+
+    def test_an_unrecognised_reason_is_dropped_rather_than_passed_on(self) -> None:
+        """The set is closed; a caller branching on it must not meet a new member."""
+        service = _fake_service(
+            {"proposals": [], "could_not_parse": "No.", "refusal_reason": "vibes"}
+        )
+
+        result = service.parse("something", reference_date=REFERENCE_DATE)
+
+        assert result.refusal_reason is None
+
+    def test_a_successful_parse_carries_no_reason(self) -> None:
+        service = _fake_service(
+            {
+                "proposals": [
+                    {
+                        "rule_type": "max_per_day",
+                        "enforcement": "hard",
+                        "max": 6,
+                        "human_summary": "Six a day.",
+                        "confidence": 0.95,
+                    }
+                ]
+            }
+        )
+
+        result = service.parse("max 6 a day", reference_date=REFERENCE_DATE)
+
+        assert len(result.proposals) == 1
+        assert result.refusal_reason is None
+
+
+class TestConfidenceFloor:
+    """An unsure proposal is dropped, never shown and never repaired."""
+
+    @staticmethod
+    def _response(confidence: object) -> dict[str, Any]:
+        return {
+            "proposals": [
+                {
+                    "rule_type": "block_day_of_week",
+                    "enforcement": "hard",
+                    "day_of_week": 4,
+                    "human_summary": "No Fridays.",
+                    "confidence": confidence,
+                }
+            ]
+        }
+
+    def test_a_proposal_below_the_floor_becomes_a_refusal(self) -> None:
+        service = _fake_service(self._response(0.4))
+
+        result = service.parse("maybe no Fridays?", reference_date=REFERENCE_DATE)
+
+        assert result.proposals == []
+        assert result.refusal_reason == "ambiguous"
+        assert result.could_not_parse
+
+    def test_a_proposal_at_the_floor_is_kept(self) -> None:
+        service = _fake_service(self._response(0.8))
+
+        result = service.parse("no Fridays", reference_date=REFERENCE_DATE)
+
+        assert [p.rule_type for p in result.proposals] == ["block_day_of_week"]
+        assert result.proposals[0].confidence == 0.8
+
+    @pytest.mark.parametrize("confidence", [None, "high", True])
+    def test_an_unusable_confidence_fails_closed(self, confidence: object) -> None:
+        """Missing is not the same as certain — it is no answer at all."""
+        service = _fake_service(self._response(confidence))
+
+        result = service.parse("no Fridays", reference_date=REFERENCE_DATE)
+
+        assert result.proposals == []
+
+    def test_one_unsure_proposal_refuses_the_whole_sentence(self) -> None:
+        """Showing the confident half would hide which rule was withheld, and
+        the missing one is what leaves time open."""
+        service = _fake_service(
+            {
+                "proposals": [
+                    {
+                        "rule_type": "buffer_before",
+                        "enforcement": "hard",
+                        "minutes": 15,
+                        "human_summary": "Buffer before.",
+                        "confidence": 0.95,
+                    },
+                    {
+                        "rule_type": "buffer_after",
+                        "enforcement": "hard",
+                        "minutes": 15,
+                        "human_summary": "Buffer after.",
+                        "confidence": 0.2,
+                    },
+                ]
+            }
+        )
+
+        result = service.parse("15 minutes between clients", reference_date=REFERENCE_DATE)
+
+        assert result.proposals == []
+
+    def test_the_floor_is_configurable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("AVAILABILITY_PARSE_CONFIDENCE_FLOOR", "0.3")
+        get_settings.cache_clear()
+        try:
+            service = _fake_service(self._response(0.4))
+            result = service.parse("no Fridays", reference_date=REFERENCE_DATE)
+        finally:
+            get_settings.cache_clear()
+
+        assert [p.rule_type for p in result.proposals] == ["block_day_of_week"]

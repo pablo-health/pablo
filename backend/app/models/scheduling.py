@@ -245,6 +245,16 @@ class ParseAvailabilityRulesResponse(BaseModel):
 
     proposals: list[ProposedAvailabilityRule]
     could_not_parse: str | None = None
+    refusal_reason: str | None = Field(
+        default=None,
+        description=(
+            "Why a sentence was refused, when it was: 'ambiguous' (no "
+            "boundary to write down), 'out_of_scope' (about who may book "
+            "rather than when slots exist), or 'multi_intent' (an "
+            "availability rule bundled with an unrelated request). Lets a "
+            "caller say something specific instead of a generic failure."
+        ),
+    )
     exclusive: bool = False
     existing_conflicting_rules: list[AvailabilityRuleResponse] = Field(default_factory=list)
 

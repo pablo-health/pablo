@@ -71,6 +71,11 @@ _ENFORCEMENT_LEVELS = frozenset({"hard", "soft"})
 
 _MAX_OUTPUT_TOKENS = 2048
 
+_LOW_CONFIDENCE_COULD_NOT_PARSE = (
+    "I was not confident enough about that one to suggest a rule. Try "
+    "saying it more precisely, or use the form below."
+)
+
 _DEFAULT_COULD_NOT_PARSE = (
     "Could not map that description to a supported availability rule. Try "
     "describing working hours, a blocked day or time range, a daily "
@@ -122,10 +127,43 @@ _SYSTEM_PROMPT = (
     'Mondays and Tuesdays"), meaning the working_hours proposals in your '
     "response together fully describe when they work. Otherwise leave it "
     "false.\n\n"
-    "If nothing in the sentence maps to a covered rule type, return an "
-    "empty proposals list and a short could_not_parse reason a therapist "
-    "would understand."
+    "Give every proposal a confidence: your own calibrated probability "
+    "(0.0-1.0) that this exact rule is what the therapist meant. Use low "
+    "values honestly -- a low-confidence proposal is dropped rather than "
+    "shown, which is the outcome you want when you are unsure.\n\n"
+    "REFUSING\n\n"
+    "Some sentences must not be parsed at all. Return an empty proposals "
+    "list, a short could_not_parse reason a therapist would understand, "
+    "and a refusal_reason naming which of these applies:\n"
+    '- "ambiguous": the sentence has no concrete boundary you could write '
+    'down -- a vague time of day, or a hedge with no stated cutoff ("not '
+    'too early", "afternoons I guess"). Guessing the boundary would '
+    "silently block time the therapist meant to keep open.\n"
+    '- "out_of_scope": the sentence is about something other than WHEN '
+    "slots exist. Rules about WHO may book or WHICH clients are booking "
+    'and intake policy, not availability: "no new patients on Fridays" '
+    'limits who books, not when the therapist works, and "I only take '
+    'insurance clients on Mondays" is the same. Judge by intent, not by '
+    'surface form: a day name sitting next to the word "no" is not '
+    "enough to make a sentence an availability rule, and these sentences "
+    "deliberately look like one.\n"
+    '- "multi_intent": the sentence bundles a real availability rule with '
+    "an unrelated request or an immediate action -- sending an invoice, "
+    "cancelling a specific appointment, anything else to be done. Refuse "
+    "the whole sentence. Parsing the availability half and dropping the "
+    "rest is still a guess about what was wanted, and the dropped half "
+    "leaves no trace for the therapist to notice.\n\n"
+    "If nothing in the sentence maps to a covered rule type for any other "
+    'reason, refuse the same way with refusal_reason "ambiguous".\n\n'
+    "When genuinely unsure whether something is encodable, refuse rather "
+    "than guess. A confident wrong rule silently blocks or opens a "
+    "therapist's calendar, which is worse than falling through to the "
+    "form."
 )
+
+# The reasons a refusal can carry. Kept as an explicit tuple so the schema
+# enum, the validator and the response model can't drift apart.
+REFUSAL_REASONS: tuple[str, ...] = ("ambiguous", "out_of_scope", "multi_intent")
 
 _RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -161,11 +199,17 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                         },
                     },
                     "human_summary": {"type": "string"},
+                    "confidence": {"type": "number"},
                 },
-                "required": ["rule_type", "enforcement", "human_summary"],
+                "required": ["rule_type", "enforcement", "human_summary", "confidence"],
             },
         },
         "could_not_parse": {"type": "string", "nullable": True},
+        "refusal_reason": {
+            "type": "string",
+            "nullable": True,
+            "enum": [*REFUSAL_REASONS],
+        },
         "exclusive": {"type": "boolean"},
     },
     "required": ["proposals"],
@@ -180,6 +224,9 @@ class ProposedRule:
     enforcement: str
     params: dict[str, Any]
     human_summary: str
+    confidence: float = 1.0
+    """The model's own probability that this is what was meant. A proposal
+    below the configured floor is dropped rather than shown."""
 
 
 @dataclass(frozen=True)
@@ -189,6 +236,12 @@ class AvailabilityParseResult:
     proposals: list[ProposedRule] = field(default_factory=list)
     could_not_parse: str | None = None
     exclusive: bool = False
+    refusal_reason: str | None = None
+    """Which kind of refusal this is, when there are no proposals.
+
+    ``could_not_parse`` says it in the therapist's words; this says it in
+    a form a caller can branch on. ``None`` on a successful parse, and on
+    a refusal whose reason the model didn't name."""
 
 
 _TIME_STRING_LENGTH = 5
@@ -300,6 +353,17 @@ def _parse_date_token(raw: object) -> DateToken | None:
     )
 
 
+def _coerce_confidence(raw: object) -> float:
+    """Read the model's stated confidence, treating anything unusable as 0.
+
+    A missing or malformed value is not "certain" — it is no answer at all,
+    and the floor should catch it the same way it catches a low one.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        return 0.0
+    return min(max(float(raw), 0.0), 1.0)
+
+
 def _parse_date_intent(raw: object) -> DateIntent | None:
     if not isinstance(raw, dict):
         return None
@@ -385,7 +449,8 @@ class AvailabilityRuleParseService:
                 could_not_parse=(
                     "That description was too long to parse in one go -- try a "
                     "shorter sentence or the form below."
-                )
+                ),
+                refusal_reason="ambiguous",
             )
 
         result = self._coerce(completion.data, reference_date)
@@ -408,21 +473,46 @@ class AvailabilityRuleParseService:
             except _DateIntentUnresolvableError as exc:
                 # Unlike a malformed proposal, an unresolvable-but-well-formed
                 # date_intent gets its specific reason surfaced verbatim.
-                return AvailabilityParseResult(could_not_parse=exc.reason)
+                return AvailabilityParseResult(
+                    could_not_parse=exc.reason, refusal_reason="ambiguous"
+                )
             if proposal is None:
                 # Fail closed: one schema-violating proposal rejects the
                 # whole response rather than silently dropping just that
                 # one -- never pass a bad payload through as a proposal.
-                return AvailabilityParseResult(could_not_parse=_DEFAULT_COULD_NOT_PARSE)
+                return AvailabilityParseResult(
+                    could_not_parse=_DEFAULT_COULD_NOT_PARSE, refusal_reason="ambiguous"
+                )
             proposals.append(proposal)
 
         could_not_parse = data.get("could_not_parse")
         if not isinstance(could_not_parse, str) or not could_not_parse.strip():
             could_not_parse = None
+        refusal_reason = data.get("refusal_reason")
+        if refusal_reason not in REFUSAL_REASONS:
+            refusal_reason = None
+
+        floor = self._confidence_floor()
+        unsure = [p for p in proposals if p.confidence < floor]
+        if unsure:
+            # All or nothing: one unsure proposal refuses the sentence rather
+            # than showing the confident half of it. A therapist reading a
+            # partial list has no way to see what was withheld, and the rule
+            # they didn't get is the one that leaves time open.
+            logger.info(
+                "Availability parse below confidence floor: %d of %d proposal(s)",
+                len(unsure),
+                len(proposals),
+            )
+            return AvailabilityParseResult(
+                could_not_parse=could_not_parse or _LOW_CONFIDENCE_COULD_NOT_PARSE,
+                refusal_reason=refusal_reason or "ambiguous",
+            )
 
         if not proposals:
             return AvailabilityParseResult(
-                could_not_parse=could_not_parse or _DEFAULT_COULD_NOT_PARSE
+                could_not_parse=could_not_parse or _DEFAULT_COULD_NOT_PARSE,
+                refusal_reason=refusal_reason,
             )
 
         return AvailabilityParseResult(
@@ -430,6 +520,9 @@ class AvailabilityRuleParseService:
             could_not_parse=None,
             exclusive=bool(data.get("exclusive", False)),
         )
+
+    def _confidence_floor(self) -> float:
+        return get_settings().availability_parse_confidence_floor
 
     def _coerce_one(self, raw: dict[str, Any], reference_date: date | None) -> ProposedRule | None:
         rule_type = raw.get("rule_type")
@@ -453,4 +546,5 @@ class AvailabilityRuleParseService:
             enforcement=enforcement,
             params=params,
             human_summary=human_summary,
+            confidence=_coerce_confidence(raw.get("confidence")),
         )
