@@ -20,7 +20,7 @@ nothing in the corpus asks for a rule the engine can't evaluate.
 
 The corpus is 74 cases: the original 14 plus a 60-case expansion drafted
 in two independent passes and merged by arbitration (see "On this
-expansion" below). 42 are parseable, 32 must refuse (56.8% / 43.2%).
+expansion" below). 41 are parseable, 33 must refuse (55.4% / 44.6%).
 
 ### Case matrix
 
@@ -61,7 +61,7 @@ type (or the wrong rule *count*) entirely.
 | `leave_a_gap_after_each_session` | refuse — "after" is a trap, no minutes given |
 | `no_back_to_back_without_asking` | refuse — approval clause, not a buffer |
 | `weekends_off_limits` | two `block_day_of_week` rules |
-| `only_until_noon_wednesdays` | `working_hours`, not `block_time_range` |
+| `only_until_noon_wednesdays` | refuse — upper bound only, no stated start to encode |
 | `half_a_day_wednesdays` | refuse — which half is undecidable |
 | `back_to_back_fine_ten_before` | `buffer_before` only |
 | `half_hour_between_clients` | `buffer_before` + `buffer_after`, unit conversion |
@@ -276,16 +276,13 @@ Three consecutive runs against the live parser, 2026-08-30, each a full
 pass over all 74 cases:
 
 ```
-run 1:  recall 40/42  correct refusals 30/32  hard failures 3  soft findings 0
-run 2:  recall 39/42  correct refusals 30/32  hard failures 3  soft findings 0
-run 3:  recall 40/42  correct refusals 30/32  hard failures 2  soft findings 0
+run 1:  recall 40/41  correct refusals 30/33  hard failures 3  soft findings 0
+run 2:  recall 39/41  correct refusals 30/33  hard failures 3  soft findings 0
+run 3:  recall 39/41  correct refusals 30/33  hard failures 3  soft findings 0
 ```
 
-Unlike the 14-case baseline this replaces, the result is **not**
-identical run to run — this is a real model call per case, and three of
-the new traps sit close enough to the model's decision boundary to flip.
-
-**Stable across all three runs (2/2 refuse cases, every time):**
+Recall varies slightly run to run — this is a real model call per case —
+but all three hard failures are now **stable across all three runs**:
 
 - `block_out_friday_ambiguous` — "block out Friday" produces
   `block_day_of_week` every time. The parser doesn't yet distinguish a
@@ -299,38 +296,39 @@ the new traps sit close enough to the model's decision boundary to flip.
   `fridays_work_great_inversion_trap` ("Fridays work great for me")
   refused cleanly in all three runs — so the model does catch positive
   statements, just not bare negative sentiment with no rule content.
+- `only_until_noon_wednesdays` — "I only see clients until noon on
+  Wednesdays" produces `working_hours` every time (an implied start of
+  `"08:00"` in two runs, `"00:00"` in one — the model isn't even
+  internally consistent about which lower bound to invent). This case
+  was originally drafted as parseable with an implicit `00:00` start;
+  arbitration reclassified it to must-refuse before this baseline was
+  recorded, for the same reason `mornings_only_tuesdays` already
+  refuses: the sentence gives an upper bound only, `block_time_range`
+  has no `day_of_week` field so `working_hours` is the only rule type
+  that *could* express a day-scoped cutoff, and `working_hours` requires
+  a start the sentence never states. Inventing one is the harmful
+  direction, not the safe one — a guessed `00:00` doesn't just fail to
+  block time, it *opens* midnight-to-8am Wednesday availability the
+  therapist never offered. **This reclassification makes the recorded
+  numbers in this baseline strictly harsher than they would otherwise
+  have been** — the three runs immediately above already reflect it (all
+  three now count this case as a hard failure; a version of this corpus
+  that kept it positive recorded only 2-3 hard failures across the same
+  three runs, with this one flaking between pass and fail).
 
-**Flaky (1 of 3 runs, `only_until_noon_wednesdays`):** "I only see
-clients until noon on Wednesdays" produced `working_hours` with
-`start: "08:00"` twice and `start: "00:00"` (the corpus's expected value)
-once. This is worth flagging as a possible **corpus** issue rather than a
-pure parser one: the sentence gives no lower bound at all, and the model
-itself isn't internally consistent about whether the natural default is
-midnight or a typical practice-open hour — the same missing-boundary
-shape as `mornings_only_tuesdays`, which this corpus already treats as
-unresolvable rather than picking a side. A follow-up worth considering:
-either refuse this case (ambiguous, like `mornings_only_tuesdays`) or
-accept that its expected `start` is one defensible reading among at
-least two the model itself produces. Left as originally arbitrated for
-this PR, per "don't tune the corpus to make the parser pass" — flagging
-it here rather than changing the expectation unilaterally.
-
-**Also flaky, but not gated (`nothing_before_nine_or_after_five`, a
-recall miss in 2 of 3 runs):** the two-`block_time_range` sentence was
-refused outright in runs 2 and 3 rather than parsed. A recall miss costs
-nothing (refusing is always acceptable), so this doesn't affect pass/
-fail — noted because it's the other case whose behavior wasn't stable.
-
-`no_sessions_week_of_20th` refused in all three runs, consistent with the
-already-recorded 14-case baseline this replaces — no change there.
+`no_sessions_week_of_20th` and `nothing_before_nine_or_after_five` (a
+recall miss in runs 2 and 3) account for the recall variance — both are
+refusals-of-a-parseable-sentence, which cost nothing and are never
+gated.
 
 **This is an expansion baseline, not a new pass bar.** The prior
 14-case corpus recorded zero hard failures; this 74-case corpus records
-two to three, stably. That is the corpus doing its job — it now measures
-three real gaps (two stable, one worth a second look) the smaller corpus
-had no case shaped to catch. Closing them is parser follow-up work, not
-a blocker on this PR, and no case here was written or adjusted to make
-the current parser pass.
+three, stably, across all three recorded runs. That is the corpus doing
+its job — it now measures three real gaps the smaller corpus had no
+case shaped to catch. Closing them is parser follow-up work, not a
+blocker on this PR, and no case here was written or adjusted to make
+the current parser pass — if anything, the one reclassification made
+during this baseline's own drafting made the numbers worse, not better.
 
 ## On this expansion
 

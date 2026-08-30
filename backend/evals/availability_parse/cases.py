@@ -267,13 +267,20 @@ def all_cases() -> list[EvalCase]:
             ExpectedRule("block_day_of_week", {"day_of_week": 5}),
             ExpectedRule("block_day_of_week", {"day_of_week": 6}),
         ),
-        _positive(
+        _refuse(
             "only_until_noon_wednesdays",
             "I only see clients until noon on Wednesdays",
-            "working_hours, not block_time_range — block_time_range has no day_of_week "
-            "field, so a day-scoped cutoff can only be expressed as working_hours with "
-            "an implicit 00:00 lower bound",
-            ExpectedRule("working_hours", {"day_of_week": 2, "start": "00:00", "end": "12:00"}),
+            "gives an upper bound only. block_time_range has no day_of_week field, so "
+            "the only rule type that could express a day-scoped cutoff is working_hours "
+            "— but working_hours requires a start too, and none is stated. Inventing "
+            "one is the harmful direction here, not the safe one: guessing 00:00 "
+            "doesn't just fail to block time, it OPENS midnight-to-8am Wednesday slots "
+            "the therapist never offered. The live parser is internally inconsistent "
+            "about the guess (00:00 vs. 08:00 across runs), which is the empirical "
+            "signature of exactly this: two readings, not one. Same unstated-boundary "
+            "shape as mornings_only_tuesdays; the corpus shouldn't hold the two to "
+            "different standards",
+            "ambiguous",
         ),
         _refuse(
             "half_a_day_wednesdays",
