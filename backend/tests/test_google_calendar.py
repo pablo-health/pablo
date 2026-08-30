@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 import pytest
+from app.calendar_providers.capabilities import CalendarWriteTarget
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
 from app.services.google_calendar_service import GoogleCalendarService
@@ -78,6 +79,17 @@ def sample_appointment() -> Appointment:
         session_type="individual",
         created_at=now,
     )
+
+
+def _oauth_credentials() -> MagicMock:
+    """Stand-in for the credentials a completed OAuth flow hands back."""
+    credentials = MagicMock()
+    credentials.token = "ya29.access"
+    credentials.refresh_token = "1//refresh"
+    credentials.token_uri = "https://oauth2.googleapis.com/token"
+    credentials.client_id = "test-client-id"
+    credentials.client_secret = "test-client-secret"
+    return credentials
 
 
 # Token Encryption Tests
@@ -194,16 +206,75 @@ class TestOAuthFlow:
         mock_service.calendars().get().execute.return_value = {"id": "primary@gmail.com"}
         mock_build_svc.return_value = mock_service
 
-        calendar_service.handle_callback("user-001", "auth-code", "http://localhost/callback")
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            write_target=CalendarWriteTarget.PRIMARY,
+        )
 
         token_repo.save.assert_called_once()
         saved_doc = token_repo.save.call_args[0][0]
         assert saved_doc.user_id == "user-001"
         assert saved_doc.calendar_id == "primary@gmail.com"
+        assert saved_doc.write_target == "primary"
         assert saved_doc.encrypted_tokens != ""
         decrypted = decrypt_tokens(saved_doc.encrypted_tokens)
         assert decrypted["token"] == "ya29.access"
         assert decrypted["refresh_token"] == "1//refresh"
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_handle_callback_creates_the_pablo_owned_calendar(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """The default choice binds the connection to a calendar Pablo makes."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+
+        mock_service = MagicMock()
+        mock_service.calendarList().list().execute.return_value = {"items": []}
+        mock_service.calendars().insert().execute.return_value = {
+            "id": "pablo-made@group.calendar.google.com"
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback("user-001", "auth-code", "http://localhost/callback")
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "pablo-made@group.calendar.google.com"
+        assert saved_doc.write_target == "app_calendar"
+        mock_service.calendars().get.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_reconnecting_reuses_the_calendar_pablo_already_made(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """A second connect must not leave a second calendar on the account."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+
+        mock_service = MagicMock()
+        mock_service.calendarList().list().execute.return_value = {
+            "items": [
+                {"id": "someone-elses", "summary": "Family"},
+                {"id": "already-made@group.calendar.google.com", "summary": "Pablo Sessions"},
+            ]
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback("user-001", "auth-code", "http://localhost/callback")
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "already-made@group.calendar.google.com"
+        mock_service.calendars().insert.assert_not_called()
 
 
 # Appointment -> Google Event Mapping Tests
@@ -318,6 +389,40 @@ class TestPushAppointment:
 
         event_id = calendar_service.push_appointment("user-001", sample_appointment)
         assert event_id == "gcal-event-123"
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service.decrypt_tokens")
+    @patch("app.services.google_calendar_service._make_credentials")
+    def test_push_writes_to_the_calendar_pablo_made(
+        self,
+        mock_make_creds: Mock,
+        mock_decrypt: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        sample_appointment: Appointment,
+    ) -> None:
+        """A connection bound to Pablo's own calendar writes there, not to
+        the therapist's main calendar — and still with a generic title."""
+        mock_decrypt.return_value = {"token": "ya29.access", "refresh_token": "1//refresh"}
+        mock_make_creds.return_value = MagicMock(expired=False)
+
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="pablo-made@group.calendar.google.com",
+            write_target="app_calendar",
+        )
+
+        mock_service = MagicMock()
+        mock_service.events().insert().execute.return_value = {"id": "gcal-event-123"}
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.push_appointment("user-001", sample_appointment)
+
+        kwargs = mock_service.events().insert.call_args.kwargs
+        assert kwargs["calendarId"] == "pablo-made@group.calendar.google.com"
+        assert kwargs["body"]["summary"] == "Therapy Session"
 
     def test_push_returns_none_when_not_connected(
         self,

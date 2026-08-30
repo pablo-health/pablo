@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from app.calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from app.main import app
 from app.models import Patient, SessionStatus, UserPreferences
 from app.models.session import TherapySession, Transcript
@@ -34,6 +35,7 @@ from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 from app.services.availability_parse_service import AvailabilityRuleParseService
+from app.services.google_calendar_service import GoogleCalendarService
 from app.services.structured_llm_gateway import FakeStructuredLLMGateway, StructuredCompletion
 from fastapi import HTTPException, status
 
@@ -1398,3 +1400,129 @@ def test_parse_reads_preferences_before_releasing_db_connection(
 
     assert response.status_code == 200, response.text
     assert events == ["get_preferences", "release_db_connection"]
+
+
+# --- Google Calendar connect: one grant per capability ---
+#
+# The wizard asks Google for exactly what the therapist selected. These
+# assert the route turns that selection into a capability request; the
+# capability -> scope mapping itself is covered in the provider seam tests.
+
+_GCAL_REDIRECT = "http://localhost:3000/dashboard/settings/calendar"
+
+
+def _capture_gcal_service() -> MagicMock:
+    gcal_service = MagicMock()
+    gcal_service.get_auth_url.return_value = "https://accounts.google.com/o/oauth2/auth?x=1"
+    app.dependency_overrides[get_google_calendar_service] = lambda: gcal_service
+    return gcal_service
+
+
+def test_connect_defaults_to_the_calendar_pablo_makes(client: TestClient) -> None:
+    """The recommended choice writes only to a calendar Pablo owns."""
+    gcal_service = _capture_gcal_service()
+
+    response = client.get("/api/google-calendar/authorize", params={"redirect_uri": _GCAL_REDIRECT})
+
+    assert response.status_code == 200, response.text
+    kwargs = gcal_service.get_auth_url.call_args.kwargs
+    assert kwargs["write_target"] is CalendarWriteTarget.APP_CALENDAR
+    assert kwargs["capabilities"] == {CalendarCapability.PUSH, CalendarCapability.BUSY}
+
+
+def test_connect_can_write_to_the_therapists_own_calendar(client: TestClient) -> None:
+    gcal_service = _capture_gcal_service()
+
+    response = client.get(
+        "/api/google-calendar/authorize",
+        params={"redirect_uri": _GCAL_REDIRECT, "write_target": "primary"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert gcal_service.get_auth_url.call_args.kwargs["write_target"] is CalendarWriteTarget.PRIMARY
+
+
+def test_declining_busy_times_does_not_ask_for_them(client: TestClient) -> None:
+    gcal_service = _capture_gcal_service()
+
+    response = client.get(
+        "/api/google-calendar/authorize",
+        params={"redirect_uri": _GCAL_REDIRECT, "busy": "false"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert gcal_service.get_auth_url.call_args.kwargs["capabilities"] == {CalendarCapability.PUSH}
+
+
+@pytest.mark.parametrize("write_target", ["app_calendar", "primary"])
+@pytest.mark.parametrize("busy", ["true", "false"])
+def test_connecting_never_asks_to_read_event_content(
+    client: TestClient,
+    write_target: str,
+    busy: str,
+) -> None:
+    """Reading events belongs to importing a practice, which asks for it
+    then. No combination of connect choices requests it."""
+    gcal_service = _capture_gcal_service()
+
+    client.get(
+        "/api/google-calendar/authorize",
+        params={"redirect_uri": _GCAL_REDIRECT, "write_target": write_target, "busy": busy},
+    )
+
+    capabilities = gcal_service.get_auth_url.call_args.kwargs["capabilities"]
+    assert CalendarCapability.IMPORT not in capabilities
+
+
+def test_unknown_write_target_is_rejected(client: TestClient) -> None:
+    _capture_gcal_service()
+
+    response = client.get(
+        "/api/google-calendar/authorize",
+        params={"redirect_uri": _GCAL_REDIRECT, "write_target": "somebody-elses"},
+    )
+
+    assert response.status_code == 400, response.text
+
+
+def test_callback_binds_the_connection_to_the_chosen_calendar(client: TestClient) -> None:
+    gcal_service = _capture_gcal_service()
+
+    response = client.get(
+        "/api/google-calendar/callback",
+        params={"code": "auth-code", "redirect_uri": _GCAL_REDIRECT, "write_target": "primary"},
+    )
+
+    assert response.status_code == 200, response.text
+    kwargs = gcal_service.handle_callback.call_args.kwargs
+    assert kwargs["write_target"] is CalendarWriteTarget.PRIMARY
+    assert CalendarCapability.IMPORT not in kwargs["capabilities"]
+
+
+def test_consent_options_carry_each_choices_promise(client: TestClient) -> None:
+    """The wizard renders its guarantees from these, so they must come from
+    the provider's declarations and must not leak scope names into copy."""
+    app.dependency_overrides[get_google_calendar_service] = lambda: GoogleCalendarService(
+        MagicMock(),
+        MagicMock(),
+        client_id="test-client-id",
+        client_secret="test-client-secret",  # noqa: S106
+    )
+
+    response = client.get("/api/google-calendar/consent-options")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["default_write_target"] == "app_calendar"
+    assert body["busy_default"] is True
+
+    promises = {option["id"]: option["promise"] for option in body["write_targets"]}
+    assert set(promises) == {"app_calendar", "primary"}
+    # The calendar Pablo makes is unreachable by grant; the therapist's own
+    # calendar is not, and its copy must not claim otherwise.
+    assert "cannot reach further" in promises["app_calendar"]
+    assert "cannot reach further" not in promises["primary"]
+    assert "cannot reach further" in body["busy"]["promise"]
+
+    assert "googleapis.com" not in response.text
+    assert "calendar.readonly" not in response.text

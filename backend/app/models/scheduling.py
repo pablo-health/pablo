@@ -346,6 +346,28 @@ class GoogleCalendarStatusResponse(BaseModel):
     connected: bool
     calendar_id: str | None = None
     last_synced_at: datetime | None = None
+    write_target: str | None = None
+
+
+class GoogleCalendarConsentOption(BaseModel):
+    """One choice a therapist can make about what Pablo may do.
+
+    ``promise`` is generated from the provider's own declaration of how the
+    underlying grant is limited, so a choice whose grant reaches further
+    than the feature cannot be described as though it doesn't.
+    """
+
+    id: str
+    promise: str
+
+
+class GoogleCalendarConsentOptionsResponse(BaseModel):
+    """The choices offered on connect, and the promise each one carries."""
+
+    write_targets: list[GoogleCalendarConsentOption]
+    busy: GoogleCalendarConsentOption
+    default_write_target: str
+    busy_default: bool
 
 
 # --- iCal sync models ---

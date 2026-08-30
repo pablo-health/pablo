@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from ..calendar_providers.capabilities import (
     CalendarCapability,
+    CalendarWriteTarget,
     NarrowingEnforcement,
     ProviderCapability,
     UnsupportedCapabilityError,
@@ -53,42 +54,82 @@ logger = logging.getLogger(__name__)
 
 GOOGLE_PROVIDER_ID = "google"
 
-# How Google satisfies each capability. Data, not branching: a second
-# provider is another mapping, not another code path here.
-GOOGLE_CAPABILITIES: Mapping[CalendarCapability, ProviderCapability] = MappingProxyType(
+# Writing to a calendar Google let Pablo create is reachable with a grant
+# that cannot touch anything else on the account, so the narrowing is
+# Google's to enforce and the wizard may say so.
+_PUSH_TO_APP_CALENDAR = ProviderCapability(
+    capability=CalendarCapability.PUSH,
+    scopes=("https://www.googleapis.com/auth/calendar.app.created",),
+    incremental=False,
+    enforcement=NarrowingEnforcement.PROVIDER_ENFORCED,
+    reach="the calendar Pablo creates for your sessions",
+)
+
+# Writing to the therapist's own calendar has no such grant: the narrowest
+# scope that can do it reaches every event on the calendar, so the limit is
+# Pablo's discipline and the copy has to say that instead.
+_PUSH_TO_PRIMARY = ProviderCapability(
+    capability=CalendarCapability.PUSH,
+    scopes=("https://www.googleapis.com/auth/calendar.events",),
+    incremental=False,
+    enforcement=NarrowingEnforcement.PABLO_ENFORCED,
+    reach="the sessions you book in Pablo",
+)
+
+_PUSH_BY_TARGET: Mapping[CalendarWriteTarget, ProviderCapability] = MappingProxyType(
     {
-        CalendarCapability.PUSH: ProviderCapability(
-            capability=CalendarCapability.PUSH,
-            scopes=("https://www.googleapis.com/auth/calendar.events",),
-            incremental=False,
-            # calendar.events reaches every event on the therapist's calendars,
-            # not only the ones Pablo wrote. Google has a narrower grant for
-            # app-created calendars; adopting it is a behaviour change, so this
-            # declaration says what today's grant actually is.
-            enforcement=NarrowingEnforcement.PABLO_ENFORCED,
-            reach="the sessions you book in Pablo",
-        ),
-        CalendarCapability.BUSY: ProviderCapability(
-            capability=CalendarCapability.BUSY,
-            scopes=("https://www.googleapis.com/auth/calendar.freebusy",),
-            incremental=False,
-            enforcement=NarrowingEnforcement.PROVIDER_ENFORCED,
-            reach="when you are busy — start and end times, never titles or guests",
-        ),
-        CalendarCapability.IMPORT: ProviderCapability(
-            capability=CalendarCapability.IMPORT,
-            scopes=("https://www.googleapis.com/auth/calendar.readonly",),
-            incremental=True,
-            enforcement=NarrowingEnforcement.PABLO_ENFORCED,
-            reach="reading the window you pick, once, to propose your existing practice",
-        ),
+        CalendarWriteTarget.APP_CALENDAR: _PUSH_TO_APP_CALENDAR,
+        CalendarWriteTarget.PRIMARY: _PUSH_TO_PRIMARY,
     }
 )
 
-# What connecting asks for today. IMPORT is declared incremental and belongs
-# at import time rather than here; moving it is a behaviour change the
-# connect flow owns, so this preserves the scope set already in the wild.
-_CONNECT_CAPABILITIES = frozenset({CalendarCapability.PUSH, CalendarCapability.IMPORT})
+_BUSY = ProviderCapability(
+    capability=CalendarCapability.BUSY,
+    scopes=("https://www.googleapis.com/auth/calendar.freebusy",),
+    incremental=False,
+    enforcement=NarrowingEnforcement.PROVIDER_ENFORCED,
+    reach="when you are busy — start and end times, never titles or guests",
+)
+
+_IMPORT = ProviderCapability(
+    capability=CalendarCapability.IMPORT,
+    scopes=("https://www.googleapis.com/auth/calendar.readonly",),
+    incremental=True,
+    enforcement=NarrowingEnforcement.PABLO_ENFORCED,
+    reach="reading the window you pick, once, to propose your existing practice",
+)
+
+DEFAULT_WRITE_TARGET = CalendarWriteTarget.APP_CALENDAR
+
+
+def google_capabilities(
+    write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
+) -> Mapping[CalendarCapability, ProviderCapability]:
+    """How Google satisfies each capability, for a given write target.
+
+    Data, not branching: a second provider is another set of declarations,
+    not another code path here.
+    """
+    return MappingProxyType(
+        {
+            CalendarCapability.PUSH: _PUSH_BY_TARGET[write_target],
+            CalendarCapability.BUSY: _BUSY,
+            CalendarCapability.IMPORT: _IMPORT,
+        }
+    )
+
+
+GOOGLE_CAPABILITIES = google_capabilities()
+
+# IMPORT is declared incremental and is deliberately absent: reading event
+# content is asked for when an import is run, so a therapist who never
+# imports never grants it.
+_CONNECT_CAPABILITIES = frozenset({CalendarCapability.PUSH, CalendarCapability.BUSY})
+
+# Summary of the calendar Pablo creates under the app-calendar choice. It
+# is how the calendar is found again on a later connect, so changing it
+# strands the one already on the account.
+_APP_CALENDAR_SUMMARY = "Pablo Sessions"
 
 # HIPAA: generic summary avoids leaking patient names to Google
 _DEFAULT_EVENT_SUMMARY = "Therapy Session"
@@ -241,12 +282,17 @@ class GoogleCalendarService:
         service._surface = surface
         return service
 
-    def capability_declarations(self) -> Mapping[CalendarCapability, ProviderCapability]:
-        return GOOGLE_CAPABILITIES
+    def capability_declarations(
+        self,
+        *,
+        write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
+    ) -> Mapping[CalendarCapability, ProviderCapability]:
+        return google_capabilities(write_target)
 
     def _scopes_for_request(
         self,
         capabilities: Collection[CalendarCapability] | None,
+        write_target: CalendarWriteTarget,
     ) -> tuple[str, ...]:
         """Resolve a capability request to Google scopes, or refuse it.
 
@@ -259,7 +305,7 @@ class GoogleCalendarService:
         if not_allowed:
             names = ", ".join(sorted(capability.value for capability in not_allowed))
             raise UnsupportedCapabilityError(f"consent surface does not allow: {names}")
-        return scopes_for(GOOGLE_CAPABILITIES, requested)
+        return scopes_for(google_capabilities(write_target), requested)
 
     def get_auth_url(
         self,
@@ -267,9 +313,10 @@ class GoogleCalendarService:
         redirect_uri: str,
         *,
         capabilities: Collection[CalendarCapability] | None = None,
+        write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
     ) -> str:
         """Generate Google OAuth authorization URL for the requested capabilities."""
-        scopes = self._scopes_for_request(capabilities)
+        scopes = self._scopes_for_request(capabilities, write_target)
         flow = _build_flow(
             self._surface.client_id,
             self._surface.client_secret,
@@ -292,9 +339,10 @@ class GoogleCalendarService:
         redirect_uri: str,
         *,
         capabilities: Collection[CalendarCapability] | None = None,
+        write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
     ) -> None:
         """Exchange OAuth authorization code for tokens, encrypt and store."""
-        scopes = self._scopes_for_request(capabilities)
+        scopes = self._scopes_for_request(capabilities, write_target)
         flow = _build_flow(
             self._surface.client_id,
             self._surface.client_secret,
@@ -314,8 +362,7 @@ class GoogleCalendarService:
 
         encrypted = encrypt_tokens(token_data)
 
-        # Get primary calendar ID
-        calendar_id = self._get_primary_calendar_id(credentials)
+        calendar_id = self._resolve_calendar_id(credentials, write_target)
 
         now = _now()
         token_doc = GoogleCalendarTokenDoc(
@@ -325,6 +372,7 @@ class GoogleCalendarService:
             connected_at=now,
             last_synced_at=now,
             provider=GOOGLE_PROVIDER_ID,
+            write_target=write_target.value,
         )
         self._token_repo.save(token_doc)
         logger.info("Google Calendar connected and tokens stored (encrypted)")
@@ -478,18 +526,20 @@ class GoogleCalendarService:
         return deleted
 
     def get_sync_status(self, user_id: str) -> dict[str, Any]:
-        """Check connection status and last sync time."""
+        """Check connection status, last sync time, and what was granted."""
         token_doc = self._token_repo.get(user_id)
         if not token_doc:
             return {
                 "connected": False,
                 "calendar_id": None,
                 "last_synced_at": None,
+                "write_target": None,
             }
         return {
             "connected": True,
             "calendar_id": token_doc.calendar_id,
             "last_synced_at": token_doc.last_synced_at,
+            "write_target": token_doc.write_target,
         }
 
     def list_busy_windows(
@@ -551,11 +601,43 @@ class GoogleCalendarService:
 
         return credentials
 
+    def _resolve_calendar_id(
+        self,
+        credentials: Credentials,
+        write_target: CalendarWriteTarget,
+    ) -> str:
+        """Find the calendar this connection writes to, creating it if it's ours."""
+        if write_target is CalendarWriteTarget.PRIMARY:
+            return self._get_primary_calendar_id(credentials)
+        return self._get_or_create_app_calendar_id(credentials)
+
     def _get_primary_calendar_id(self, credentials: Credentials) -> str:
         """Get the user's primary Google Calendar ID."""
         service = _build_calendar_service(credentials)
         calendar = service.calendars().get(calendarId="primary").execute()
         return calendar.get("id", "primary")  # type: ignore[no-any-return]
+
+    def _get_or_create_app_calendar_id(self, credentials: Credentials) -> str:
+        """Get the calendar Pablo owns on this account, creating it once.
+
+        Under the app-calendar grant the calendar list only contains
+        calendars this app created, so matching on the summary cannot pick
+        up one of the therapist's own. Reconnecting finds the existing
+        calendar rather than leaving a second one behind.
+        """
+        service = _build_calendar_service(credentials)
+        listed = service.calendarList().list().execute()
+        for entry in listed.get("items", []):
+            if entry.get("summary") == _APP_CALENDAR_SUMMARY and entry.get("id"):
+                logger.info("Reusing the existing Pablo-owned Google calendar")
+                return str(entry["id"])
+
+        created = service.calendars().insert(body={"summary": _APP_CALENDAR_SUMMARY}).execute()
+        calendar_id = created.get("id")
+        if not calendar_id:
+            raise GoogleCalendarError("Google did not return an id for the created calendar")
+        logger.info("Created a Pablo-owned Google calendar for session events")
+        return str(calendar_id)
 
     @staticmethod
     def _appointment_to_event(appointment: Appointment) -> dict[str, Any]:

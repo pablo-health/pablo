@@ -21,6 +21,11 @@ class GoogleCalendarTokenDoc:
     provider seam are Google's, which is why that is the default here and
     the server default in the database."""
 
+    write_target: str = "primary"
+    """Which calendar this connection writes to — a calendar Pablo owns, or
+    the therapist's own. Connections made before the choice existed wrote to
+    the therapist's own calendar, so that is the default."""
+
     calendar_id: str | None = None
     sync_token: str | None = None
     last_synced_at: datetime | None = None
@@ -33,6 +38,7 @@ class GoogleCalendarTokenDoc:
             "user_id": self.user_id,
             "encrypted_tokens": self.encrypted_tokens,
             "provider": self.provider,
+            "write_target": self.write_target,
             "calendar_id": self.calendar_id,
             "sync_token": self.sync_token,
             "last_synced_at": self.last_synced_at,
@@ -47,6 +53,7 @@ class GoogleCalendarTokenDoc:
             user_id=data["user_id"],
             encrypted_tokens=data["encrypted_tokens"],
             provider=data.get("provider") or "google",
+            write_target=data.get("write_target") or "primary",
             calendar_id=data.get("calendar_id"),
             sync_token=data.get("sync_token"),
             last_synced_at=data.get("last_synced_at"),

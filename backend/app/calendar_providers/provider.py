@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from ..scheduling_engine.models.appointment import Appointment
-    from .capabilities import ProviderCapability
+    from .capabilities import CalendarWriteTarget, ProviderCapability
 
 
 @dataclass(frozen=True)
@@ -72,8 +72,16 @@ class CalendarProvider(Protocol):
     provider_id: ClassVar[str]
     display_name: ClassVar[str]
 
-    def capability_declarations(self) -> Mapping[CalendarCapability, ProviderCapability]:
-        """How this provider satisfies each capability it supports."""
+    def capability_declarations(
+        self,
+        *,
+        write_target: CalendarWriteTarget = ...,
+    ) -> Mapping[CalendarCapability, ProviderCapability]:
+        """How this provider satisfies each capability it supports.
+
+        PUSH is declared per write target, because whether a provider can
+        narrow a write to a calendar it owns is a fact about the provider.
+        """
         ...
 
     def get_auth_url(
@@ -82,6 +90,7 @@ class CalendarProvider(Protocol):
         redirect_uri: str,
         *,
         capabilities: Collection[CalendarCapability] | None = None,
+        write_target: CalendarWriteTarget = ...,
     ) -> str:
         """Authorization URL granting exactly the requested capabilities.
 
@@ -97,8 +106,14 @@ class CalendarProvider(Protocol):
         redirect_uri: str,
         *,
         capabilities: Collection[CalendarCapability] | None = None,
+        write_target: CalendarWriteTarget = ...,
     ) -> None:
-        """Exchange an authorization code for tokens and store them encrypted."""
+        """Exchange an authorization code for tokens and store them encrypted.
+
+        The write target has to match the one the authorization URL was
+        built with: it decides both the grant asked for and which calendar
+        the connection is bound to.
+        """
         ...
 
     def push_appointment(self, user_id: str, appointment: Appointment) -> str | None:
