@@ -12,7 +12,7 @@ HIPAA Compliance:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -40,9 +40,48 @@ SCOPES = [
 # HIPAA: generic summary avoids leaking patient names to Google
 _DEFAULT_EVENT_SUMMARY = "Therapy Session"
 
+# Page size for events().list. Google's default is 250 but it is not
+# contractual — ask for a size we've sized the page loop around.
+_SYNC_PAGE_SIZE = 250
+
+# Google answers a syncToken it no longer honours with 410 Gone.
+_HTTP_GONE = 410
+
 
 def _now() -> datetime:
     return utc_now()
+
+
+class _EventPage(NamedTuple):
+    """The result of walking every page of one events().list call."""
+
+    changes: list[dict[str, Any]]
+    next_sync_token: str | None
+    page_count: int
+
+
+def _is_expired_sync_token(exc: Exception) -> bool:
+    """Report whether an API error is Google's expired-syncToken 410.
+
+    Duck-typed rather than caught by class: googleapiclient is a lazy
+    import here, and its HttpError exposes the status two different ways
+    depending on version.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return status == _HTTP_GONE
+
+
+def _event_to_change(event: dict[str, Any]) -> dict[str, Any]:
+    """Map a Google event to the change dict the sync scheduler consumes."""
+    return {
+        "google_event_id": event.get("id"),
+        "summary": event.get("summary", ""),
+        "start": event.get("start", {}),
+        "end": event.get("end", {}),
+        "status": event.get("status", ""),
+    }
 
 
 def _build_flow(
@@ -238,42 +277,74 @@ class GoogleCalendarService:
             return []
 
         service = _build_calendar_service(credentials)
-        changes: list[dict[str, Any]] = []
 
         try:
-            kwargs: dict[str, Any] = {
-                "calendarId": token_doc.calendar_id,
-                "singleEvents": True,
-            }
-            if token_doc.sync_token:
-                kwargs["syncToken"] = token_doc.sync_token
-            else:
-                # First sync: only get future events
-                kwargs["timeMin"] = utc_now_iso()
-
-            result = service.events().list(**kwargs).execute()
-            next_sync_token = result.get("nextSyncToken")
-
-            for event in result.get("items", []):
-                changes.append(
-                    {
-                        "google_event_id": event.get("id"),
-                        "summary": event.get("summary", ""),
-                        "start": event.get("start", {}),
-                        "end": event.get("end", {}),
-                        "status": event.get("status", ""),
-                    }
+            try:
+                page = self._list_all_events(
+                    service,
+                    token_doc.calendar_id,
+                    sync_token=token_doc.sync_token,
                 )
+            except Exception as exc:
+                if not _is_expired_sync_token(exc):
+                    raise
+                # Google has aged out the stored token. Drop it and start over
+                # from a fresh window rather than failing the scheduled run.
+                logger.info("Google Calendar sync token expired; re-syncing from a fresh window")
+                token_doc.sync_token = None
+                self._token_repo.save(token_doc)
+                page = self._list_all_events(service, token_doc.calendar_id, sync_token=None)
 
-            if next_sync_token:
-                self._token_repo.update_sync_token(user_id, next_sync_token)
+            if page.next_sync_token:
+                self._token_repo.update_sync_token(user_id, page.next_sync_token)
 
-            logger.info("Synced %d changes from Google Calendar", len(changes))
+            logger.info(
+                "Synced %d changes from Google Calendar over %d page(s)",
+                len(page.changes),
+                page.page_count,
+            )
         except Exception:
             # HIPAA: don't log response bodies that might contain PHI
             logger.exception("Google Calendar sync failed")
+            return []
 
-        return changes
+        return page.changes
+
+    @staticmethod
+    def _list_all_events(
+        service: Any,
+        calendar_id: str,
+        *,
+        sync_token: str | None,
+    ) -> _EventPage:
+        """Walk every page of events().list, collecting changes and the sync token.
+
+        Google splits large result sets across pages and only returns
+        nextSyncToken on the final one, so reading a single page both drops
+        changes and leaves the next poll with nothing to resume from.
+        """
+        kwargs: dict[str, Any] = {
+            "calendarId": calendar_id,
+            "singleEvents": True,
+            "maxResults": _SYNC_PAGE_SIZE,
+        }
+        if sync_token:
+            kwargs["syncToken"] = sync_token
+        else:
+            # First sync: only get future events
+            kwargs["timeMin"] = utc_now_iso()
+
+        changes: list[dict[str, Any]] = []
+        page_count = 0
+        while True:
+            result = service.events().list(**kwargs).execute()
+            page_count += 1
+            changes.extend(_event_to_change(event) for event in result.get("items", []))
+
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                return _EventPage(changes, result.get("nextSyncToken"), page_count)
+            kwargs["pageToken"] = page_token
 
     def disconnect(self, user_id: str) -> bool:
         """Remove stored tokens, disconnecting Google Calendar."""
