@@ -28,6 +28,7 @@ from ..auth.service import (
 )
 from ..calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
 from ..calendar_providers.consent_copy import capability_promise
+from ..calendar_providers.event_titles import EventTitleStyle
 from ..calendar_providers.oauth_state import OAuthStateError
 from ..db import release_db_connection
 from ..models import (
@@ -36,6 +37,7 @@ from ..models import (
     SessionResponse,
     User,
 )
+from ..models.audit import ResourceType
 from ..models.enums import SessionSource, SessionType, VideoPlatform
 from ..models.scheduling import (
     AppointmentListResponse,
@@ -60,6 +62,8 @@ from ..models.scheduling import (
     ParseAvailabilityRulesRequest,
     ParseAvailabilityRulesResponse,
     ProposedAvailabilityRule,
+    SetEventTitlingRequest,
+    SetEventTitlingResponse,
     StartSessionFromAppointmentRequest,
     TimeSlotResponse,
     UpdateAppointmentRequest,
@@ -117,8 +121,10 @@ from ..services import (
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService
 from ..services.google_calendar_service import (
+    DEFAULT_EVENT_TITLING,
     DEFAULT_WRITE_TARGET,
     GoogleCalendarService,
+    RetitleOutcome,
     google_consent_surface,
 )
 from ..settings import get_settings
@@ -248,6 +254,7 @@ def get_google_calendar_service(
         google_consent_surface(get_settings()),
         token_repo=_gcal_token_repo_factory(),
         appointment_repo=_appt_repo_factory(),
+        patient_repo=_patient_repo_factory(),
     )
 
 
@@ -1118,6 +1125,86 @@ def _connect_capabilities(*, busy: bool) -> set[CalendarCapability]:
     return capabilities
 
 
+def _parse_titling(value: str) -> EventTitleStyle:
+    """Read a requested naming style, or refuse it.
+
+    Deliberately not the parser that falls back to the floor: a stored
+    value gone bad should degrade quietly, but a caller asking for
+    something that isn't a style has made a mistake worth hearing about.
+    """
+    try:
+        return EventTitleStyle(value)
+    except ValueError as exc:
+        raise BadRequestError("Invalid event_titling") from exc
+
+
+def _narrows(previous: EventTitleStyle, style: EventTitleStyle) -> bool:
+    """Whether the new choice says less about a patient than the old one."""
+    rungs = {EventTitleStyle.GENERIC: 0, EventTitleStyle.INITIALS: 1, EventTitleStyle.FULL: 2}
+    return rungs[style] < rungs[previous]
+
+
+@router.put(
+    "/api/google-calendar/event-titling",
+    response_model=SetEventTitlingResponse,
+)
+def set_google_calendar_event_titling(
+    http_request: Request,
+    request: SetEventTitlingRequest,
+    ctx: TenantContext = Depends(get_tenant_context),
+    user: User = Depends(require_baa_acceptance),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
+    audit: AuditService = Depends(get_audit_service),
+) -> SetEventTitlingResponse:
+    """Choose how sessions read on the connected calendar.
+
+    Writing a patient's name onto a calendar Pablo holds no agreement for
+    is the therapist's disclosure to make, so the top rung requires them
+    to say the account is covered and records that they did. Narrowing the
+    choice rewrites what is already sitting in the calendar — otherwise
+    the control would change the setting and leave the names behind.
+    """
+    style = _parse_titling(request.style)
+    if style is EventTitleStyle.FULL and not request.attested:
+        raise BadRequestError("Full names require confirming the account is covered")
+
+    status_info = service.get_sync_status(ctx.user_id)
+    if not status_info.get("connected"):
+        raise NotFoundError("Google Calendar not connected")
+    previous = _parse_titling(status_info.get("event_titling") or EventTitleStyle.GENERIC.value)
+
+    if not service.set_event_titling(ctx.user_id, style):
+        raise NotFoundError("Google Calendar not connected")
+
+    if style is EventTitleStyle.FULL:
+        # Evidence, not a preference: who said it, when, and which account
+        # it covered. It outlives the connection deliberately — a later
+        # disconnect does not unsay it.
+        audit.log(
+            AuditAction.CALENDAR_NAME_DISCLOSURE_ATTESTED,
+            user,
+            http_request,
+            resource_type=ResourceType.APPOINTMENT,
+            resource_id=str(status_info.get("calendar_id") or "unknown"),
+            changes={
+                "calendar_account": status_info.get("calendar_id"),
+                "event_titling": style.value,
+                "previous_event_titling": previous.value,
+            },
+        )
+
+    outcome = (
+        service.retitle_future_events(ctx.user_id)
+        if _narrows(previous, style)
+        else RetitleOutcome(0, 0, 0)
+    )
+    return SetEventTitlingResponse(
+        style=style.value,
+        events_retitled=outcome.retitled,
+        events_not_retitled=outcome.failed + outcome.skipped,
+    )
+
+
 @router.get(
     "/api/google-calendar/consent-options",
     response_model=GoogleCalendarConsentOptionsResponse,
@@ -1199,6 +1286,10 @@ def google_calendar_callback(
         description="The write target the authorization URL was built with",
     ),
     busy: bool = Query(True, description="Whether free/busy was part of that request"),
+    event_titling: str = Query(
+        DEFAULT_EVENT_TITLING.value,
+        description="How sessions should read on the calendar, for a connect",
+    ),
     capability: str | None = Query(
         None,
         description=(
@@ -1234,9 +1325,14 @@ def google_calendar_callback(
         capabilities: Collection[CalendarCapability] = [_parse_incremental_capability(capability)]
         existing = service.get_sync_status(ctx.user_id)
         target = _parse_write_target(existing.get("write_target") or DEFAULT_WRITE_TARGET.value)
+        # Read back for the same reason as the write target: adding a
+        # capability must not quietly re-decide what the therapist's
+        # events say about their clients.
+        titling = _parse_titling(existing.get("event_titling") or DEFAULT_EVENT_TITLING.value)
     else:
         capabilities = _connect_capabilities(busy=busy)
         target = _parse_write_target(write_target)
+        titling = _parse_titling(event_titling)
 
     try:
         service.handle_callback(
@@ -1246,6 +1342,7 @@ def google_calendar_callback(
             state=state,
             capabilities=capabilities,
             write_target=target,
+            event_titling=titling,
         )
     except OAuthStateError as e:
         logger.warning("Google Calendar OAuth callback rejected an unusable state")

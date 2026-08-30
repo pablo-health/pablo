@@ -41,6 +41,7 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
         row.encrypted_tokens = token_doc.encrypted_tokens
         row.provider = token_doc.provider
         row.write_target = token_doc.write_target
+        row.event_titling = token_doc.event_titling
         row.granted_capabilities = token_doc.granted_capabilities
         row.calendar_id = token_doc.calendar_id
         row.sync_token = token_doc.sync_token
@@ -75,6 +76,7 @@ def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
         encrypted_tokens=row.encrypted_tokens,
         provider=row.provider,
         write_target=row.write_target,
+        event_titling=row.event_titling,
         granted_capabilities=row.granted_capabilities,
         calendar_id=row.calendar_id,
         sync_token=row.sync_token,
