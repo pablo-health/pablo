@@ -622,6 +622,9 @@ class GoogleCalendarTokenRow(Base):
     encrypted_tokens: Mapped[str] = mapped_column(Text, nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default="google")
     write_target: Mapped[str] = mapped_column(String(32), nullable=False, server_default="primary")
+    granted_capabilities: Mapped[str] = mapped_column(
+        String(255), nullable=False, server_default="push,import"
+    )
     calendar_id: Mapped[str | None] = mapped_column(String(255))
     sync_token: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

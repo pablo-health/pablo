@@ -17,11 +17,9 @@ HIPAA Compliance:
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
-
-if TYPE_CHECKING:
-    from datetime import datetime
 
 from ..calendar_providers.capabilities import (
     CalendarCapability,
@@ -32,8 +30,14 @@ from ..calendar_providers.capabilities import (
     scopes_for,
 )
 from ..calendar_providers.oauth_state import mint_state, verify_state
-from ..calendar_providers.provider import ConsentSurface
+from ..calendar_providers.practice_import import (
+    DEFAULT_HORIZON_DAYS,
+    DEFAULT_LOOKBACK_DAYS,
+    build_proposal,
+)
+from ..calendar_providers.provider import ConsentSurface, ImportCandidate
 from ..calendar_providers.registry import ProviderRegistration
+from ..reliability import HTTP_REQUEST, Idempotency, call_with_retry
 from ..repositories.google_calendar_token import (
     GoogleCalendarTokenDoc,
     GoogleCalendarTokenRepository,
@@ -42,11 +46,12 @@ from ..utcnow import utc_now, utc_now_iso
 from .token_encryption import decrypt_tokens, derive_subkey, encrypt_tokens
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Mapping, Sequence
+    from collections.abc import Callable, Collection, Mapping, Sequence
 
     from google.oauth2.credentials import Credentials
 
-    from ..calendar_providers.provider import BusyWindow, ImportCandidate
+    from ..calendar_providers.practice_import import ImportProposal
+    from ..calendar_providers.provider import BusyWindow
     from ..scheduling_engine.models.appointment import Appointment
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..settings import Settings
@@ -136,6 +141,12 @@ _APP_CALENDAR_SUMMARY = "Pablo Sessions"
 # key that encrypts stored tokens.
 _STATE_PURPOSE = "google-calendar-oauth-state"
 
+# Ceilings on one import scan. A calendar big enough to reach either of
+# these gets a proposal that says so — truncating quietly would leave a
+# therapist believing a client simply wasn't there.
+_MAX_SCAN_EVENTS = 2500
+_MAX_SCAN_SERIES = 200
+
 # HIPAA: generic summary avoids leaking patient names to Google
 _DEFAULT_EVENT_SUMMARY = "Therapy Session"
 
@@ -145,6 +156,8 @@ _SYNC_PAGE_SIZE = 250
 
 # Google answers a syncToken it no longer honours with 410 Gone.
 _HTTP_GONE = 410
+_HTTP_FORBIDDEN = 403
+_HTTP_TOO_MANY_REQUESTS = 429
 
 
 def _now() -> datetime:
@@ -243,6 +256,95 @@ class GoogleCalendarError(Exception):
     """Raised when a Google Calendar operation fails."""
 
 
+class CalendarImportNotAuthorizedError(Exception):
+    """Reading event content was never granted for this connection.
+
+    Not a failure: importing asks for that grant when an import is run, so
+    the first scan on a new connection is expected to land here and be
+    answered with a consent prompt.
+    """
+
+    def __init__(self, provider_id: str) -> None:
+        super().__init__(f"{provider_id} connection has not granted event content access")
+        self.provider_id = provider_id
+
+
+def _split_capabilities(granted: str) -> frozenset[str]:
+    return frozenset(part.strip() for part in granted.split(",") if part.strip())
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    """Whether Google is asking us to slow down rather than refusing us.
+
+    A 403 means either quota or permission depending on its reason, so the
+    reason is what decides: retrying an insufficient-permission 403 would
+    just spend the budget on an answer that will not change.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    if status == _HTTP_TOO_MANY_REQUESTS:
+        return True
+    if status != _HTTP_FORBIDDEN:
+        return False
+    return any(reason in str(exc) for reason in ("rateLimitExceeded", "userRateLimitExceeded"))
+
+
+def _with_calendar_retry[T](call: Callable[[], T]) -> T:
+    """Run a read against Google, backing off when it asks us to.
+
+    Reads are side-effect free, so a retry can only cost time.
+    """
+    return call_with_retry(
+        call,
+        policy=HTTP_REQUEST,
+        idempotency=Idempotency.SAFE,
+        retryable=_is_rate_limited,
+    )
+
+
+def _read_event(service: Any, calendar_id: str, event_id: str) -> dict[str, Any]:
+    """Read one event by id, backing off if Google asks us to."""
+    page: dict[str, Any] = _with_calendar_retry(
+        lambda: service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    )
+    return page
+
+
+def _event_to_candidate(event: dict[str, Any]) -> ImportCandidate | None:
+    """Map one expanded occurrence, skipping anything without real times.
+
+    All-day events carry a date rather than a dateTime and are not
+    sessions, so they drop out here.
+    """
+    start = _parse_event_time(event.get("start", {}))
+    end = _parse_event_time(event.get("end", {}))
+    event_id = event.get("id")
+    if start is None or end is None or not event_id:
+        return None
+    attendees = event.get("attendees") or []
+    return ImportCandidate(
+        provider_event_id=str(event_id),
+        start=start,
+        end=end,
+        summary=str(event.get("summary", "")),
+        # The therapist's own invitation slot is not another person on it.
+        attendee_count=sum(1 for attendee in attendees if not attendee.get("self")),
+        series_id=event.get("recurringEventId"),
+    )
+
+
+def _parse_event_time(slot: dict[str, Any]) -> datetime | None:
+    raw = slot.get("dateTime")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 class GoogleCalendarService:
     """Google Calendar as a CalendarProvider.
 
@@ -294,12 +396,11 @@ class GoogleCalendarService:
     ) -> Mapping[CalendarCapability, ProviderCapability]:
         return google_capabilities(write_target)
 
-    def _scopes_for_request(
+    def _resolve_request(
         self,
         capabilities: Collection[CalendarCapability] | None,
-        write_target: CalendarWriteTarget,
-    ) -> tuple[str, ...]:
-        """Resolve a capability request to Google scopes, or refuse it.
+    ) -> frozenset[CalendarCapability]:
+        """Settle what is being asked for, or refuse it.
 
         A surface may be configured to offer fewer capabilities than Google
         can satisfy; asking for one it doesn't allow is an error here rather
@@ -310,7 +411,15 @@ class GoogleCalendarService:
         if not_allowed:
             names = ", ".join(sorted(capability.value for capability in not_allowed))
             raise UnsupportedCapabilityError(f"consent surface does not allow: {names}")
-        return scopes_for(google_capabilities(write_target), requested)
+        return requested
+
+    def _scopes_for_request(
+        self,
+        capabilities: Collection[CalendarCapability] | None,
+        write_target: CalendarWriteTarget,
+    ) -> tuple[str, ...]:
+        """Resolve a capability request to Google scopes, or refuse it."""
+        return scopes_for(google_capabilities(write_target), self._resolve_request(capabilities))
 
     def get_auth_url(
         self,
@@ -321,17 +430,27 @@ class GoogleCalendarService:
         write_target: CalendarWriteTarget = DEFAULT_WRITE_TARGET,
     ) -> str:
         """Generate Google OAuth authorization URL for the requested capabilities."""
-        scopes = self._scopes_for_request(capabilities, write_target)
+        requested = self._resolve_request(capabilities)
+        declarations = google_capabilities(write_target)
         flow = _build_flow(
             self._surface.client_id,
             self._surface.client_secret,
             redirect_uri,
-            scopes,
+            scopes_for(declarations, requested),
+        )
+        # A request made entirely of capabilities the provider declares
+        # incremental is one asked for later, alongside grants already held —
+        # so it has to add to them rather than replace them. A connect-time
+        # request must NOT: there, the selection is the whole answer, and
+        # carrying old grants forward would stop a therapist narrowing one.
+        incremental = bool(requested) and all(
+            declarations[capability].incremental for capability in requested
         )
         auth_url, _ = flow.authorization_url(
             access_type="offline",
             prompt="consent",
             state=mint_state(derive_subkey(_STATE_PURPOSE), user_id),
+            include_granted_scopes="true" if incremental else "false",
         )
         # HIPAA: log action without user-identifying details
         logger.info("Generated Google Calendar OAuth URL for authorization")
@@ -353,7 +472,9 @@ class GoogleCalendarService:
         only ever exchanged for the user the authorization was started by.
         """
         verify_state(derive_subkey(_STATE_PURPOSE), state, user_id)
-        scopes = self._scopes_for_request(capabilities, write_target)
+        requested = self._resolve_request(capabilities)
+        declarations = google_capabilities(write_target)
+        scopes = scopes_for(declarations, requested)
         flow = _build_flow(
             self._surface.client_id,
             self._surface.client_secret,
@@ -374,6 +495,7 @@ class GoogleCalendarService:
         encrypted = encrypt_tokens(token_data)
 
         calendar_id = self._resolve_calendar_id(credentials, write_target)
+        granted = self._granted_after(user_id, requested, declarations)
 
         now = _now()
         token_doc = GoogleCalendarTokenDoc(
@@ -384,6 +506,7 @@ class GoogleCalendarService:
             last_synced_at=now,
             provider=GOOGLE_PROVIDER_ID,
             write_target=write_target.value,
+            granted_capabilities=granted,
         )
         self._token_repo.save(token_doc)
         logger.info("Google Calendar connected and tokens stored (encrypted)")
@@ -573,13 +696,169 @@ class GoogleCalendarService:
         start: datetime,
         end: datetime,
     ) -> list[ImportCandidate]:
-        """Events over a window a therapist could import as appointments.
+        """Occurrences over a window a therapist could import as appointments.
 
-        Reading event content is what IMPORT is for, and it is granted at
-        import time rather than at connect. The import flow is what fills
-        this in; the shape it fills in is fixed here.
+        Asks for expanded instances rather than recurring masters. The
+        window is documented against an event's own start and end, and a
+        long-running series carries the start and end of its FIRST
+        occurrence — so a lookback bound would drop exactly the established
+        clients this is for. Instances have real times, so the window means
+        what it says; the series' own rule is fetched separately.
         """
-        raise NotImplementedError
+        occurrences, _ = self._scan_occurrences(user_id, start, end)
+        return occurrences
+
+    def _scan_occurrences(
+        self,
+        user_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> tuple[list[ImportCandidate], bool]:
+        """Read every occurrence in the window. Returns (occurrences, truncated)."""
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if not credentials or not token_doc or not token_doc.calendar_id:
+            return [], False
+
+        service = _build_calendar_service(credentials)
+        kwargs: dict[str, Any] = {
+            "calendarId": token_doc.calendar_id,
+            "singleEvents": True,
+            "showDeleted": False,
+            "orderBy": "startTime",
+            "maxResults": _SYNC_PAGE_SIZE,
+            "timeMin": start.isoformat(),
+            "timeMax": end.isoformat(),
+        }
+
+        occurrences: list[ImportCandidate] = []
+        pages = 0
+        truncated = False
+        while True:
+            page: dict[str, Any] = _with_calendar_retry(
+                lambda: service.events().list(**kwargs).execute()
+            )
+            pages += 1
+            for event in page.get("items", []):
+                if len(occurrences) >= _MAX_SCAN_EVENTS:
+                    truncated = True
+                    break
+                candidate = _event_to_candidate(event)
+                if candidate is not None:
+                    occurrences.append(candidate)
+
+            page_token = page.get("nextPageToken")
+            if truncated or not page_token:
+                break
+            kwargs["pageToken"] = page_token
+
+        # HIPAA: counts and pages only. What the events say never gets here.
+        logger.info(
+            "Read %d calendar occurrences over %d page(s) for an import scan",
+            len(occurrences),
+            pages,
+        )
+        return occurrences, truncated
+
+    def _series_recurrence(
+        self,
+        user_id: str,
+        series_ids: Collection[str],
+    ) -> dict[str, list[str]]:
+        """Fetch each series' own recurrence rule.
+
+        The rule is both better fidelity than one inferred from spacing and
+        a better staleness signal: a rule that has already run out is the
+        therapist's own statement that the series finished.
+        """
+        credentials = self._get_credentials(user_id)
+        token_doc = self._token_repo.get(user_id)
+        if not credentials or not token_doc or not token_doc.calendar_id:
+            return {}
+
+        service = _build_calendar_service(credentials)
+        rules: dict[str, list[str]] = {}
+        for series_id in series_ids:
+            try:
+                master = _read_event(service, token_doc.calendar_id, series_id)
+            except Exception:
+                # A series whose master can't be read still gets proposed,
+                # with a rule built from its observed cadence.
+                logger.warning("Could not read a recurrence rule during an import scan")
+                continue
+            recurrence = master.get("recurrence")
+            if recurrence:
+                rules[series_id] = list(recurrence)
+        return rules
+
+    def scan_for_practice_import(
+        self,
+        user_id: str,
+        *,
+        lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+        horizon_days: int = DEFAULT_HORIZON_DAYS,
+        timezone: str = "UTC",
+    ) -> ImportProposal:
+        """Read the calendar once and propose the practice it describes.
+
+        The window looks two ways for two reasons: back far enough for a
+        pattern to be visible, forward because only occurrences ahead of now
+        are records worth creating.
+
+        Raises CalendarImportNotAuthorizedError when reading event content was
+        never granted — the caller turns that into a consent prompt.
+        """
+        self._require_import_grant(user_id)
+
+        now = _now()
+        start = now - timedelta(days=lookback_days)
+        end = now + timedelta(days=horizon_days)
+
+        occurrences, truncated = self._scan_occurrences(user_id, start, end)
+        series_ids = {c.series_id for c in occurrences if c.series_id}
+        recurrence = self._series_recurrence(user_id, series_ids) if series_ids else {}
+
+        return build_proposal(
+            occurrences,
+            now=now,
+            timezone=timezone,
+            series_recurrence=recurrence,
+            lookback_days=lookback_days,
+            horizon_days=horizon_days,
+            max_series=_MAX_SCAN_SERIES,
+            events_read=len(occurrences),
+            truncated=truncated,
+        )
+
+    def _granted_after(
+        self,
+        user_id: str,
+        requested: Collection[CalendarCapability],
+        declarations: Mapping[CalendarCapability, ProviderCapability],
+    ) -> str:
+        """What the connection holds once this grant lands.
+
+        An incremental grant adds to what was already held — Google keeps
+        the earlier scopes, so the record has to as well. A connect-time
+        grant replaces it, because the selection made there is the whole
+        answer.
+        """
+        names = {capability.value for capability in requested}
+        incremental = bool(requested) and all(
+            declarations[capability].incremental for capability in requested
+        )
+        if incremental:
+            existing = self._token_repo.get(user_id)
+            if existing:
+                names |= _split_capabilities(existing.granted_capabilities)
+        return ",".join(sorted(names))
+
+    def _require_import_grant(self, user_id: str) -> None:
+        """Refuse to scan without the grant that permits reading events."""
+        token_doc = self._token_repo.get(user_id)
+        granted = token_doc.granted_capabilities if token_doc else ""
+        if CalendarCapability.IMPORT.value not in _split_capabilities(granted):
+            raise CalendarImportNotAuthorizedError(self.provider_id)
 
     def _get_credentials(self, user_id: str) -> Credentials | None:
         """Load and refresh OAuth credentials for a user."""

@@ -368,18 +368,15 @@ class TestGoogleCapabilityRequests:
                 capabilities=[CalendarCapability.IMPORT],
             )
 
-    @pytest.mark.parametrize(
-        "method_name",
-        ["list_busy_windows", "scan_importable_events"],
-    )
-    def test_unwired_capabilities_are_seams_not_silent_successes(
+    def test_an_unwired_capability_is_a_seam_not_a_silent_success(
         self,
-        method_name: str,
         google_service: GoogleCalendarService,
     ) -> None:
+        """Free/busy has its own scope and nothing requests it yet, so no
+        stored connection can serve it."""
         now = datetime.now(UTC)
         with pytest.raises(NotImplementedError):
-            getattr(google_service, method_name)("user-001", now, now)
+            google_service.list_busy_windows("user-001", now, now)
 
 
 # Provider discriminator on the stored token row
