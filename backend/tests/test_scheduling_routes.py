@@ -1123,6 +1123,7 @@ def test_parse_availability_rules_returns_proposals_creates_nothing(
                     "enforcement": "hard",
                     "day_of_week": 4,
                     "human_summary": "No Fridays.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -1178,6 +1179,7 @@ def test_parse_exclusive_with_no_existing_rules_has_no_conflicts(
                     "start": "13:00",
                     "end": "15:00",
                     "human_summary": "Mondays 1-3.",
+                    "confidence": 0.95,
                 },
                 {
                     "rule_type": "working_hours",
@@ -1186,6 +1188,7 @@ def test_parse_exclusive_with_no_existing_rules_has_no_conflicts(
                     "start": "14:00",
                     "end": "16:00",
                     "human_summary": "Tuesdays 2-4.",
+                    "confidence": 0.95,
                 },
             ],
             "could_not_parse": None,
@@ -1231,6 +1234,7 @@ def test_parse_exclusive_surfaces_existing_conflicting_rule(
                     "start": "13:00",
                     "end": "15:00",
                     "human_summary": "Mondays 1-3.",
+                    "confidence": 0.95,
                 },
                 {
                     "rule_type": "working_hours",
@@ -1239,6 +1243,7 @@ def test_parse_exclusive_surfaces_existing_conflicting_rule(
                     "start": "14:00",
                     "end": "16:00",
                     "human_summary": "Tuesdays 2-4.",
+                    "confidence": 0.95,
                 },
             ],
             "could_not_parse": None,
@@ -1271,6 +1276,7 @@ def _date_intent_proposal(items: list[dict[str, Any]], *, range_: bool = False) 
         "enforcement": "hard",
         "date_intent": {"items": items, "range": range_},
         "human_summary": "Blocked.",
+        "confidence": 0.95,
     }
 
 
@@ -1345,6 +1351,7 @@ def test_parse_invalid_timezone_preference_falls_back_to_utc_without_500(
                     "enforcement": "hard",
                     "day_of_week": 4,
                     "human_summary": "No Fridays.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,
@@ -1374,6 +1381,7 @@ def test_parse_reads_preferences_before_releasing_db_connection(
                     "enforcement": "hard",
                     "day_of_week": 4,
                     "human_summary": "No Fridays.",
+                    "confidence": 0.95,
                 }
             ],
             "could_not_parse": None,

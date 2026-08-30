@@ -912,6 +912,18 @@ class Settings(BaseSettings):
         ge=1,
         description="Max natural-language availability-rule parse calls per user per day",
     )
+    availability_parse_confidence_floor: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Least confidence a parsed availability-rule proposal may carry "
+            "and still be shown. Below it the parse degrades to a refusal "
+            "and the therapist uses the form — a proposal the model is "
+            "unsure of is worse than no proposal, because a wrong rule "
+            "silently blocks or opens a calendar."
+        ),
+    )
 
     # Per-user burst rate limits. These guard the expensive LLM- and
     # transcription-backed endpoints against a single authenticated caller

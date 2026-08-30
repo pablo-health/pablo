@@ -998,6 +998,7 @@ def parse_availability_rules(
     return ParseAvailabilityRulesResponse(
         proposals=proposals,
         could_not_parse=result.could_not_parse,
+        refusal_reason=result.refusal_reason,
         exclusive=result.exclusive,
         existing_conflicting_rules=existing_conflicting_rules,
     )
