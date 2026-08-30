@@ -39,6 +39,7 @@ class PostgresGoogleCalendarTokenRepository(GoogleCalendarTokenRepository):
             row = GoogleCalendarTokenRow(user_id=token_doc.user_id)
             self._session.add(row)
         row.encrypted_tokens = token_doc.encrypted_tokens
+        row.provider = token_doc.provider
         row.calendar_id = token_doc.calendar_id
         row.sync_token = token_doc.sync_token
         row.last_synced_at = token_doc.last_synced_at
@@ -70,6 +71,7 @@ def _row_to_doc(row: GoogleCalendarTokenRow) -> GoogleCalendarTokenDoc:
     return GoogleCalendarTokenDoc(
         user_id=row.user_id,
         encrypted_tokens=row.encrypted_tokens,
+        provider=row.provider,
         calendar_id=row.calendar_id,
         sync_token=row.sync_token,
         last_synced_at=row.last_synced_at,

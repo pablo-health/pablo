@@ -68,7 +68,10 @@ from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
 from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
-from ..services.google_calendar_service import GoogleCalendarService
+from ..services.google_calendar_service import (
+    GoogleCalendarService,
+    google_consent_surface,
+)
 from ..settings import get_settings
 from ..utcnow import utc_now
 from .scheduling import _sync_appointment_to_google
@@ -168,12 +171,10 @@ def get_public_gcal_service(
     token_repo: GoogleCalendarTokenRepository = Depends(get_google_calendar_token_repository),
     appt_repo: AppointmentRepository = Depends(get_appointment_repository),
 ) -> GoogleCalendarService:
-    settings = get_settings()
-    return GoogleCalendarService(
+    return GoogleCalendarService.from_surface(
+        google_consent_surface(get_settings()),
         token_repo=token_repo,
         appointment_repo=appt_repo,
-        client_id=settings.google_calendar_client_id,
-        client_secret=settings.google_calendar_client_secret.get_secret_value(),
     )
 
 

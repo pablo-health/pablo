@@ -111,7 +111,10 @@ from ..services import (
     get_audit_service,
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService
-from ..services.google_calendar_service import GoogleCalendarService
+from ..services.google_calendar_service import (
+    GoogleCalendarService,
+    google_consent_surface,
+)
 from ..settings import get_settings
 from ..utcnow import utc_now
 
@@ -235,14 +238,10 @@ def get_google_calendar_service(
     _ctx: TenantContext = Depends(get_tenant_context),
 ) -> GoogleCalendarService:
     """Get Google Calendar service with injected dependencies."""
-    token_repo = _gcal_token_repo_factory()
-    appt_repo = _appt_repo_factory()
-    settings = get_settings()
-    return GoogleCalendarService(
-        token_repo=token_repo,
-        appointment_repo=appt_repo,
-        client_id=settings.google_calendar_client_id,
-        client_secret=settings.google_calendar_client_secret.get_secret_value(),
+    return GoogleCalendarService.from_surface(
+        google_consent_surface(get_settings()),
+        token_repo=_gcal_token_repo_factory(),
+        appointment_repo=_appt_repo_factory(),
     )
 
 

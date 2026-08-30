@@ -279,6 +279,10 @@ ignore = [
                 # app/services/__init__ imports the whole service layer eagerly, so a
                 # module-level import here is a cycle
 ]
+"backend/app/calendar_providers/**/*.py" = [
+    "PLC0415",  # The registry imports provider implementations lazily: they import
+                # the vocabulary defined here, so a module-level import is a cycle
+]
 "backend/app/services/**/*.py" = [
     "PLR0913",  # Allow many arguments (service functions with multiple dependencies)
     "PLC0415",  # Allow lazy imports for optional ML libraries (spacy, sentence_transformers, etc.)
