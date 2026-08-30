@@ -20,6 +20,8 @@ from app.models.audit import (
     ACTOR_TYPE_ANONYMOUS,
     ACTOR_TYPE_CLINICIAN,
     ACTOR_TYPE_PATIENT,
+    ACTOR_TYPE_PLATFORM_STAFF,
+    ACTOR_TYPE_SYSTEM,
     ACTOR_TYPES,
     AuditLogEntry,
 )
@@ -82,8 +84,14 @@ class TestAnonymous:
 
 
 class TestVocabulary:
-    def test_the_three_kinds_are_the_whole_vocabulary(self) -> None:
-        assert ACTOR_TYPES == (ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, ACTOR_TYPE_ANONYMOUS)
+    def test_the_five_kinds_are_the_whole_vocabulary(self) -> None:
+        assert ACTOR_TYPES == (
+            ACTOR_TYPE_CLINICIAN,
+            ACTOR_TYPE_PATIENT,
+            ACTOR_TYPE_ANONYMOUS,
+            ACTOR_TYPE_SYSTEM,
+            ACTOR_TYPE_PLATFORM_STAFF,
+        )
 
     def test_the_values_are_the_stored_strings(self) -> None:
         # The migration writes these literals into a server default; a rename
@@ -91,6 +99,58 @@ class TestVocabulary:
         assert ACTOR_TYPE_CLINICIAN == "clinician"
         assert ACTOR_TYPE_PATIENT == "patient"
         assert ACTOR_TYPE_ANONYMOUS == "anonymous"
+        assert ACTOR_TYPE_SYSTEM == "system"
+        assert ACTOR_TYPE_PLATFORM_STAFF == "platform_staff"
+
+
+class TestNonHumanActors:
+    """The two kinds that stop the log claiming a practitioner acted."""
+
+    def test_automated_work_is_not_recorded_as_a_clinician(self) -> None:
+        # A background job reading a chart to compose an email is not the
+        # therapist opening that chart, and the six-year record has to be
+        # able to tell a reader which one happened.
+        entry = AuditLogEntry(
+            user_id="0198f3a1-0000-7000-8000-000000000001",
+            action="patient_viewed",
+            actor_type=ACTOR_TYPE_SYSTEM,
+            actor_component="inbox.draft_worker",
+        )
+        assert entry.actor_type != ACTOR_TYPE_CLINICIAN
+        assert entry.actor_component == "inbox.draft_worker"
+
+    def test_a_system_row_scopes_to_the_practice_rather_than_naming_an_actor(self) -> None:
+        # Same shape as anonymous: user_id is the principal whose data was
+        # touched, not somebody who clicked anything.
+        scope = "0198f3a1-0000-7000-8000-000000000002"
+        job = AuditLogEntry(user_id=scope, action="patient_viewed", actor_type=ACTOR_TYPE_SYSTEM)
+        human = AuditLogEntry(user_id=scope, action="patient_viewed")
+        assert job.user_id == human.user_id
+        assert job.actor_type != human.actor_type
+
+    def test_operator_access_is_its_own_kind(self) -> None:
+        # Someone operating the deployment reading a practice's data is
+        # neither the practice's clinician nor an unattended job; a human is
+        # individually accountable, so user_id really is the actor here.
+        entry = AuditLogEntry(
+            user_id="0198f3a1-0000-7000-8000-000000000003",
+            action="patient_viewed",
+            actor_type=ACTOR_TYPE_PLATFORM_STAFF,
+        )
+        assert entry.actor_type not in (ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_SYSTEM)
+
+
+class TestActorComponent:
+    def test_it_defaults_to_absent_for_every_human_kind(self) -> None:
+        # Naming a component for a human actor would be noise: user_id
+        # already says who acted.
+        for kind in (ACTOR_TYPE_CLINICIAN, ACTOR_TYPE_PATIENT, ACTOR_TYPE_PLATFORM_STAFF):
+            assert AuditLogEntry(action="patient_viewed", actor_type=kind).actor_component is None
+
+    def test_an_entry_that_never_mentions_it_is_unchanged(self) -> None:
+        # The whole column is additive; a caller that never learns about it
+        # must keep writing exactly the row it wrote before.
+        assert AuditLogEntry(action="patient_viewed").actor_component is None
 
 
 class TestDisambiguation:

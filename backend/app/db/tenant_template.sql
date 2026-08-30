@@ -140,7 +140,8 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
     ip_address character varying(45),
     user_agent text,
     changes jsonb,
-    actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL
+    actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL,
+    actor_component character varying(64)
 );
 
 

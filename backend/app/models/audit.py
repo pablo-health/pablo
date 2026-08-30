@@ -260,9 +260,7 @@ PHI_FIELD_NAMES: frozenset[str] = frozenset(
 
 # What kind of principal performed an audited action.
 #
-# ``clinician`` is every actor the system had until a patient principal existed:
-# a signed-in practitioner, and also system/service actions and unauthenticated
-# probes, which are recorded rather than rejected (see AuditLogRow.user_id).
+# ``clinician`` is a signed-in practitioner acting in their own practice.
 # ``patient`` is a patient principal acting for themselves — consent decisions
 # above all, which is what makes the distinction legally load-bearing rather
 # than cosmetic.
@@ -270,14 +268,40 @@ PHI_FIELD_NAMES: frozenset[str] = frozenset(
 # (today: a booking link). For this kind, ``user_id`` names the SCOPE principal
 # — the clinician whose RLS context the write happened under — not the actor;
 # the actor is identified by ``ip_address`` plus the provenance in ``changes``.
+# ``system`` is automated work with no human in the loop: a cron, a queue
+# worker, a background agent. ``user_id`` again names the SCOPE principal (the
+# clinician whose data was touched), NOT an actor — nobody clicked anything.
+# ``actor_component`` says which part of the system acted, and rows of this
+# kind should always carry it.
+# ``platform_staff`` is an operator of this deployment reading or changing a
+# practice's data from outside that practice — support and break-glass access.
+# Here ``user_id`` IS the actor: the staff member is individually accountable.
+#
+# The last two exist because a reader years later has to be able to tell
+# "the therapist opened this chart" from "a background job read it to compose
+# an email" from "someone at the vendor looked". Folding all three into
+# ``clinician`` made the log claim a practitioner did things they never did.
 ACTOR_TYPE_CLINICIAN = "clinician"
 ACTOR_TYPE_PATIENT = "patient"
 ACTOR_TYPE_ANONYMOUS = "anonymous"
+ACTOR_TYPE_SYSTEM = "system"
+ACTOR_TYPE_PLATFORM_STAFF = "platform_staff"
 ACTOR_TYPES: tuple[str, ...] = (
     ACTOR_TYPE_CLINICIAN,
     ACTOR_TYPE_PATIENT,
     ACTOR_TYPE_ANONYMOUS,
+    ACTOR_TYPE_SYSTEM,
+    ACTOR_TYPE_PLATFORM_STAFF,
 )
+
+# Which part of the system acted, for ``actor_type == "system"`` rows.
+#
+# Deliberately a free string with constants rather than a DB-constrained enum:
+# a new background job should not need a schema migration to be able to audit
+# itself, and overlays that live outside this package need to name their own
+# components without dragging values through here. Consumers treat it as an
+# opaque label for filtering. Dotted, stable, and never PHI.
+ACTOR_COMPONENT_MAX_LENGTH = 64
 
 
 @dataclass
@@ -314,6 +338,10 @@ class AuditLogEntry:
     # every caller that does not set it, keeps exactly the meaning it had.
     user_id: str = ""
     actor_type: str = ACTOR_TYPE_CLINICIAN
+    # Which part of the system acted. Only meaningful for ``system`` rows,
+    # where ``user_id`` names the scope rather than an actor; ``None`` for
+    # every human kind, whose actor is already named by ``user_id``.
+    actor_component: str | None = None
 
     # What action was performed
     action: str = ""  # AuditAction value
