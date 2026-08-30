@@ -211,3 +211,77 @@ export async function importClients(
     }
   )
 }
+
+// --- Google Calendar connect ---
+//
+// The wizard speaks in choices, never in Google permission names: the
+// backend turns a choice into the narrowest grant that satisfies it, and
+// hands back the promise that choice can honestly make.
+
+/** Which calendar Pablo writes sessions to. */
+export type CalendarWriteTarget = "app_calendar" | "primary"
+
+export interface GoogleCalendarSelection {
+  write_target: CalendarWriteTarget
+  /** Whether to also ask for the therapist's busy times. */
+  busy: boolean
+}
+
+export interface GoogleCalendarConsentOption {
+  id: string
+  /** What the underlying grant is limited to, and who holds that limit. */
+  promise: string
+}
+
+export interface GoogleCalendarConsentOptions {
+  write_targets: GoogleCalendarConsentOption[]
+  busy: GoogleCalendarConsentOption
+  default_write_target: CalendarWriteTarget
+  busy_default: boolean
+}
+
+export interface GoogleCalendarStatus {
+  connected: boolean
+  calendar_id: string | null
+  last_synced_at: string | null
+  write_target: CalendarWriteTarget | null
+}
+
+function selectionParams(selection: GoogleCalendarSelection): string {
+  return `write_target=${encodeURIComponent(selection.write_target)}&busy=${selection.busy}`
+}
+
+export async function getGoogleCalendarConsentOptions(): Promise<GoogleCalendarConsentOptions> {
+  return get<GoogleCalendarConsentOptions>("/api/google-calendar/consent-options")
+}
+
+export async function getGoogleCalendarAuthUrl(
+  redirectUri: string,
+  selection: GoogleCalendarSelection
+): Promise<{ auth_url: string }> {
+  return get<{ auth_url: string }>(
+    `/api/google-calendar/authorize?redirect_uri=${encodeURIComponent(redirectUri)}&${selectionParams(selection)}`
+  )
+}
+
+/** `state` is the value Google handed back with the code. The backend
+ * requires it and checks it was minted for the signed-in user, so the
+ * callback cannot be driven with a code obtained anywhere else. */
+export async function completeGoogleCalendarConnect(
+  code: string,
+  state: string,
+  redirectUri: string,
+  selection: GoogleCalendarSelection
+): Promise<{ status: string }> {
+  return get<{ status: string }>(
+    `/api/google-calendar/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(redirectUri)}&${selectionParams(selection)}`
+  )
+}
+
+export async function getGoogleCalendarStatus(): Promise<GoogleCalendarStatus> {
+  return get<GoogleCalendarStatus>("/api/google-calendar/status")
+}
+
+export async function disconnectGoogleCalendar(): Promise<{ status: string }> {
+  return del<{ status: string }>("/api/google-calendar/disconnect")
+}

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
 import pytest
+from app.calendar_providers.capabilities import CalendarWriteTarget
+from app.calendar_providers.oauth_state import OAuthStateError, mint_state, verify_state
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
 from app.services.google_calendar_service import GoogleCalendarService
@@ -22,6 +25,7 @@ from app.services.reminder_service import ReminderService
 from app.services.token_encryption import (
     TokenEncryptionError,
     decrypt_tokens,
+    derive_subkey,
     encrypt_tokens,
     generate_encryption_key,
 )
@@ -78,6 +82,26 @@ def sample_appointment() -> Appointment:
         session_type="individual",
         created_at=now,
     )
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _state_for(user_id: str) -> str:
+    """A state value as get_auth_url would have minted for this user."""
+    return mint_state(derive_subkey("google-calendar-oauth-state"), user_id)
+
+
+def _oauth_credentials() -> MagicMock:
+    """Stand-in for the credentials a completed OAuth flow hands back."""
+    credentials = MagicMock()
+    credentials.token = "ya29.access"
+    credentials.refresh_token = "1//refresh"
+    credentials.token_uri = "https://oauth2.googleapis.com/token"
+    credentials.client_id = "test-client-id"
+    credentials.client_secret = "test-client-secret"
+    return credentials
 
 
 # Token Encryption Tests
@@ -165,11 +189,28 @@ class TestOAuthFlow:
         url = calendar_service.get_auth_url("user-001", "http://localhost:3000/callback")
 
         assert url.startswith("https://accounts.google.com/")
-        mock_flow.authorization_url.assert_called_once_with(
-            access_type="offline",
-            prompt="consent",
-            state="user-001",
-        )
+        kwargs = mock_flow.authorization_url.call_args.kwargs
+        assert kwargs["access_type"] == "offline"
+        assert kwargs["prompt"] == "consent"
+        # The state binds the request to this user and is not the user id
+        # itself, which anyone could have guessed.
+        assert kwargs["state"] != "user-001"
+        verify_state(derive_subkey("google-calendar-oauth-state"), kwargs["state"], "user-001")
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_each_authorization_gets_its_own_state(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+    ) -> None:
+        mock_build_flow.return_value.authorization_url.return_value = ("https://url", "state")
+
+        calendar_service.get_auth_url("user-001", "http://localhost/callback")
+        calendar_service.get_auth_url("user-001", "http://localhost/callback")
+
+        calls = mock_build_flow.return_value.authorization_url.call_args_list
+        first, second = (call.kwargs["state"] for call in calls)
+        assert first != second
 
     @patch("app.services.google_calendar_service._build_calendar_service")
     @patch("app.services.google_calendar_service._build_flow")
@@ -194,16 +235,189 @@ class TestOAuthFlow:
         mock_service.calendars().get().execute.return_value = {"id": "primary@gmail.com"}
         mock_build_svc.return_value = mock_service
 
-        calendar_service.handle_callback("user-001", "auth-code", "http://localhost/callback")
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+            write_target=CalendarWriteTarget.PRIMARY,
+        )
 
         token_repo.save.assert_called_once()
         saved_doc = token_repo.save.call_args[0][0]
         assert saved_doc.user_id == "user-001"
         assert saved_doc.calendar_id == "primary@gmail.com"
+        assert saved_doc.write_target == "primary"
         assert saved_doc.encrypted_tokens != ""
         decrypted = decrypt_tokens(saved_doc.encrypted_tokens)
         assert decrypted["token"] == "ya29.access"
         assert decrypted["refresh_token"] == "1//refresh"
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_handle_callback_creates_the_pablo_owned_calendar(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """The default choice binds the connection to a calendar Pablo makes."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+
+        mock_service = MagicMock()
+        mock_service.calendarList().list().execute.return_value = {"items": []}
+        mock_service.calendars().insert().execute.return_value = {
+            "id": "pablo-made@group.calendar.google.com"
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "pablo-made@group.calendar.google.com"
+        assert saved_doc.write_target == "app_calendar"
+        mock_service.calendars().get.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_reconnecting_reuses_the_calendar_pablo_already_made(
+        self,
+        mock_build_flow: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """A second connect must not leave a second calendar on the account."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+
+        mock_service = MagicMock()
+        mock_service.calendarList().list().execute.return_value = {
+            "items": [
+                {"id": "someone-elses", "summary": "Family"},
+                {"id": "already-made@group.calendar.google.com", "summary": "Pablo Sessions"},
+            ]
+        }
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.handle_callback(
+            "user-001",
+            "auth-code",
+            "http://localhost/callback",
+            state=_state_for("user-001"),
+        )
+
+        saved_doc = token_repo.save.call_args[0][0]
+        assert saved_doc.calendar_id == "already-made@group.calendar.google.com"
+        mock_service.calendars().insert.assert_not_called()
+
+
+class TestCallbackStateValidation:
+    """The callback only exchanges a code for the user who started the flow.
+
+    Without this, a code obtained elsewhere could be handed to a signed-in
+    therapist's browser and spent under their session, attaching somebody
+    else's calendar to their account.
+    """
+
+    @staticmethod
+    def _reject(
+        calendar_service: GoogleCalendarService,
+        mock_build_flow: Mock,
+        token_repo: MagicMock,
+        state: str,
+        reason: str,
+    ) -> None:
+        """Assert a state value is refused, for the stated reason, before the
+        authorization code is spent."""
+        mock_build_flow.return_value.credentials = _oauth_credentials()
+
+        with pytest.raises(OAuthStateError, match=reason):
+            calendar_service.handle_callback(
+                "user-001",
+                "auth-code",
+                "http://localhost/callback",
+                state=state,
+            )
+
+        mock_build_flow.return_value.fetch_token.assert_not_called()
+        token_repo.save.assert_not_called()
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_missing_state_is_refused(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        self._reject(calendar_service, mock_build_flow, token_repo, "", "missing state")
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_state_minted_for_another_user_is_refused(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        self._reject(
+            calendar_service,
+            mock_build_flow,
+            token_repo,
+            _state_for("someone-else"),
+            "minted for a different user",
+        )
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_tampered_state_is_refused(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """Re-pointing a valid state at another user breaks its signature."""
+        _, _, signature = _state_for("someone-else").partition(".")
+        forged_body = _b64url(
+            json.dumps(
+                {"u": "user-001", "n": "nonce", "t": int(datetime.now(UTC).timestamp())},
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        )
+        self._reject(
+            calendar_service,
+            mock_build_flow,
+            token_repo,
+            f"{forged_body}.{signature}",
+            "signature does not verify",
+        )
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_unsigned_state_is_refused(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        """The old shape — a bare user id — no longer gets through."""
+        self._reject(calendar_service, mock_build_flow, token_repo, "user-001", "malformed state")
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_expired_state_is_refused(
+        self,
+        mock_build_flow: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+    ) -> None:
+        an_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+        with patch("app.calendar_providers.oauth_state.utc_now", return_value=an_hour_ago):
+            stale = _state_for("user-001")
+
+        self._reject(calendar_service, mock_build_flow, token_repo, stale, "expired")
 
 
 # Appointment -> Google Event Mapping Tests
@@ -318,6 +532,40 @@ class TestPushAppointment:
 
         event_id = calendar_service.push_appointment("user-001", sample_appointment)
         assert event_id == "gcal-event-123"
+
+    @patch("app.services.google_calendar_service._build_calendar_service")
+    @patch("app.services.google_calendar_service.decrypt_tokens")
+    @patch("app.services.google_calendar_service._make_credentials")
+    def test_push_writes_to_the_calendar_pablo_made(
+        self,
+        mock_make_creds: Mock,
+        mock_decrypt: Mock,
+        mock_build_svc: Mock,
+        calendar_service: GoogleCalendarService,
+        token_repo: MagicMock,
+        sample_appointment: Appointment,
+    ) -> None:
+        """A connection bound to Pablo's own calendar writes there, not to
+        the therapist's main calendar — and still with a generic title."""
+        mock_decrypt.return_value = {"token": "ya29.access", "refresh_token": "1//refresh"}
+        mock_make_creds.return_value = MagicMock(expired=False)
+
+        token_repo.get.return_value = GoogleCalendarTokenDoc(
+            user_id="user-001",
+            encrypted_tokens="encrypted",
+            calendar_id="pablo-made@group.calendar.google.com",
+            write_target="app_calendar",
+        )
+
+        mock_service = MagicMock()
+        mock_service.events().insert().execute.return_value = {"id": "gcal-event-123"}
+        mock_build_svc.return_value = mock_service
+
+        calendar_service.push_appointment("user-001", sample_appointment)
+
+        kwargs = mock_service.events().insert.call_args.kwargs
+        assert kwargs["calendarId"] == "pablo-made@group.calendar.google.com"
+        assert kwargs["body"]["summary"] == "Therapy Session"
 
     def test_push_returns_none_when_not_connected(
         self,

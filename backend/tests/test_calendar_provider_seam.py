@@ -4,19 +4,32 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import base64
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 import pytest
 from app.calendar_providers.capabilities import (
     CalendarCapability,
+    CalendarWriteTarget,
     NarrowingEnforcement,
     ProviderCapability,
     UnsupportedCapabilityError,
     scopes_for,
 )
 from app.calendar_providers.consent_copy import capability_promise, consent_promises
+from app.calendar_providers.oauth_state import (
+    MAX_STATE_AGE_SECONDS,
+    OAuthStateError,
+    mint_state,
+    verify_state,
+)
 from app.calendar_providers.provider import CalendarProvider, ConsentSurface
 from app.calendar_providers.registry import (
     CalendarProviderRegistry,
@@ -28,13 +41,25 @@ from app.services.google_calendar_service import (
     GOOGLE_CAPABILITIES,
     GOOGLE_PROVIDER_ID,
     GoogleCalendarService,
+    google_capabilities,
     google_registration,
 )
 from app.settings import get_settings
 
+_APP_CREATED_SCOPE = "https://www.googleapis.com/auth/calendar.app.created"
 _EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 _READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 _FREEBUSY_SCOPE = "https://www.googleapis.com/auth/calendar.freebusy"
+
+
+@pytest.fixture(autouse=True)
+def _set_encryption_key(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """Building an authorization URL signs its state with a key derived from
+    this secret, so the connect tests need one configured."""
+    monkeypatch.setenv("GOOGLE_CALENDAR_ENCRYPTION_KEY", base64.b64encode(os.urandom(32)).decode())
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -56,7 +81,7 @@ class TestCapabilityScopeMapping:
     @pytest.mark.parametrize(
         ("capability", "expected"),
         [
-            (CalendarCapability.PUSH, (_EVENTS_SCOPE,)),
+            (CalendarCapability.PUSH, (_APP_CREATED_SCOPE,)),
             (CalendarCapability.BUSY, (_FREEBUSY_SCOPE,)),
             (CalendarCapability.IMPORT, (_READONLY_SCOPE,)),
         ],
@@ -68,13 +93,30 @@ class TestCapabilityScopeMapping:
     ) -> None:
         assert scopes_for(GOOGLE_CAPABILITIES, [capability]) == expected
 
+    @pytest.mark.parametrize(
+        ("write_target", "expected"),
+        [
+            (CalendarWriteTarget.APP_CALENDAR, (_APP_CREATED_SCOPE,)),
+            (CalendarWriteTarget.PRIMARY, (_EVENTS_SCOPE,)),
+        ],
+    )
+    def test_push_scope_follows_the_write_target(
+        self,
+        write_target: CalendarWriteTarget,
+        expected: tuple[str, ...],
+    ) -> None:
+        """Writing to a calendar Pablo owns and writing to the therapist's
+        own calendar are reached by different grants."""
+        declarations = google_capabilities(write_target)
+        assert scopes_for(declarations, [CalendarCapability.PUSH]) == expected
+
     def test_google_declares_every_capability(self) -> None:
         assert set(GOOGLE_CAPABILITIES) == set(CalendarCapability)
 
     def test_scopes_are_deduplicated_and_ordered_by_declaration(self) -> None:
         push_first = [CalendarCapability.PUSH, CalendarCapability.IMPORT]
         import_first = [CalendarCapability.IMPORT, CalendarCapability.PUSH]
-        expected = (_EVENTS_SCOPE, _READONLY_SCOPE)
+        expected = (_APP_CREATED_SCOPE, _READONLY_SCOPE)
         assert scopes_for(GOOGLE_CAPABILITIES, push_first) == expected
         assert scopes_for(GOOGLE_CAPABILITIES, import_first) == expected
 
@@ -137,15 +179,21 @@ class TestConsentCopy:
         promise = capability_promise("Some Calendar", declaration)
         assert "cannot reach further" in promise
 
-    def test_google_push_copy_matches_the_grant_google_actually_issues(self) -> None:
-        """calendar.events reaches every event, so the copy must not claim
-        Google is what keeps Pablo to Pablo's own sessions."""
-        promise = capability_promise(
+    def test_push_copy_follows_the_grant_each_write_target_needs(self) -> None:
+        """The calendar Pablo makes is unreachable-by-grant and may say so.
+        The therapist's own calendar is reached by a scope covering every
+        event on it, so its copy must not claim Google holds the line."""
+        app_calendar = capability_promise(
             GoogleCalendarService.display_name,
-            GOOGLE_CAPABILITIES[CalendarCapability.PUSH],
+            google_capabilities(CalendarWriteTarget.APP_CALENDAR)[CalendarCapability.PUSH],
         )
-        assert "cannot reach further" not in promise
-        assert "the limit is Pablo's own" in promise
+        primary = capability_promise(
+            GoogleCalendarService.display_name,
+            google_capabilities(CalendarWriteTarget.PRIMARY)[CalendarCapability.PUSH],
+        )
+        assert "cannot reach further" in app_calendar
+        assert "cannot reach further" not in primary
+        assert "the limit is Pablo's own" in primary
 
     def test_google_busy_copy_may_claim_the_narrower_guarantee(self) -> None:
         promise = capability_promise(
@@ -167,6 +215,50 @@ class TestConsentCopy:
         only_push = {CalendarCapability.PUSH: GOOGLE_CAPABILITIES[CalendarCapability.PUSH]}
         with pytest.raises(UnsupportedCapabilityError):
             consent_promises("Some Calendar", only_push, [CalendarCapability.BUSY])
+
+
+# Signed OAuth state
+
+
+class TestOAuthState:
+    """The value that ties an authorization code back to the person who
+    started the flow."""
+
+    KEY = b"a" * 32
+    OTHER_KEY = b"b" * 32
+
+    def test_a_freshly_minted_state_verifies(self) -> None:
+        verify_state(self.KEY, mint_state(self.KEY, "user-001"), "user-001")
+
+    def test_two_requests_never_produce_the_same_state(self) -> None:
+        assert mint_state(self.KEY, "user-001") != mint_state(self.KEY, "user-001")
+
+    def test_a_state_signed_with_another_key_is_refused(self) -> None:
+        """Signed by a deployment that is not this one, or by nobody."""
+        with pytest.raises(OAuthStateError, match="signature does not verify"):
+            verify_state(self.KEY, mint_state(self.OTHER_KEY, "user-001"), "user-001")
+
+    def test_a_state_for_another_user_is_refused(self) -> None:
+        with pytest.raises(OAuthStateError, match="different user"):
+            verify_state(self.KEY, mint_state(self.KEY, "someone-else"), "user-001")
+
+    @pytest.mark.parametrize("minted_at_offset", [-MAX_STATE_AGE_SECONDS - 1, 3600])
+    def test_a_state_outside_the_window_is_refused(self, minted_at_offset: int) -> None:
+        """Too old to still be in flight, or dated far enough ahead to be
+        something other than clock drift."""
+        minted_at = datetime.now(UTC) + timedelta(seconds=minted_at_offset)
+        with patch("app.calendar_providers.oauth_state.utc_now", return_value=minted_at):
+            state = mint_state(self.KEY, "user-001")
+
+        with pytest.raises(OAuthStateError, match="expired"):
+            verify_state(self.KEY, state, "user-001")
+
+    def test_a_state_still_inside_the_window_verifies(self) -> None:
+        minted_at = datetime.now(UTC) - timedelta(seconds=MAX_STATE_AGE_SECONDS - 30)
+        with patch("app.calendar_providers.oauth_state.utc_now", return_value=minted_at):
+            state = mint_state(self.KEY, "user-001")
+
+        verify_state(self.KEY, state, "user-001")
 
 
 # Registry
@@ -210,17 +302,35 @@ class TestProviderRegistry:
 
 class TestGoogleCapabilityRequests:
     @patch("app.services.google_calendar_service._build_flow")
-    def test_connecting_requests_the_same_scopes_as_before_the_seam(
+    def test_connecting_asks_for_the_default_choice_only(
         self,
         mock_build_flow: MagicMock,
         google_service: GoogleCalendarService,
     ) -> None:
-        """Regression guard: the seam must not change what a connect asks for."""
+        """Connecting writes to a calendar Pablo makes and reads busy times.
+        Reading event content is not part of connecting."""
         mock_build_flow.return_value.authorization_url.return_value = ("https://url", "state")
 
         google_service.get_auth_url("user-001", "http://localhost/callback")
 
-        assert mock_build_flow.call_args[0][3] == (_EVENTS_SCOPE, _READONLY_SCOPE)
+        assert mock_build_flow.call_args[0][3] == (_APP_CREATED_SCOPE, _FREEBUSY_SCOPE)
+
+    @patch("app.services.google_calendar_service._build_flow")
+    def test_writing_to_the_main_calendar_asks_for_the_wider_scope(
+        self,
+        mock_build_flow: MagicMock,
+        google_service: GoogleCalendarService,
+    ) -> None:
+        mock_build_flow.return_value.authorization_url.return_value = ("https://url", "state")
+
+        google_service.get_auth_url(
+            "user-001",
+            "http://localhost/callback",
+            capabilities=[CalendarCapability.PUSH],
+            write_target=CalendarWriteTarget.PRIMARY,
+        )
+
+        assert mock_build_flow.call_args[0][3] == (_EVENTS_SCOPE,)
 
     @patch("app.services.google_calendar_service._build_flow")
     def test_a_capability_can_be_requested_on_its_own(

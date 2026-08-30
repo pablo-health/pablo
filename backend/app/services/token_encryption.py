@@ -10,6 +10,8 @@ at rest with AES-256-GCM before storage in the database.
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -45,6 +47,16 @@ def _get_encryption_key() -> bytes:
     if len(key) != AES_KEY_BYTES:
         raise TokenEncryptionError(f"Encryption key must be {AES_KEY_BYTES} bytes, got {len(key)}")
     return key
+
+
+def derive_subkey(purpose: str) -> bytes:
+    """Derive a key for a specific use from the configured calendar secret.
+
+    Separated by purpose so the value that signs something can never also
+    be the value that encrypts something, even though one configured
+    secret is behind both.
+    """
+    return hmac.new(_get_encryption_key(), purpose.encode("utf-8"), hashlib.sha256).digest()
 
 
 def encrypt_tokens(token_data: dict[str, str]) -> str:

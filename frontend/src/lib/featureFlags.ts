@@ -11,6 +11,8 @@ const FLAGS = {
   session_defaults: true,
   transcription: false,
   calendar_integrations: true,
+  // Off until a deployment has a Google OAuth client configured for calendar.
+  google_calendar: false,
   audio_retention: false,
   companion_mac: true,
 } as const satisfies Record<string, boolean>

@@ -29,6 +29,22 @@ class CalendarCapability(Enum):
     """Read event content once, to propose an existing practice."""
 
 
+class CalendarWriteTarget(Enum):
+    """Which calendar PUSH writes to.
+
+    It belongs in the capability request rather than in a preference saved
+    afterwards, because it changes the grant being asked for: a provider
+    may be able to narrow a write to a calendar it owns and not be able to
+    narrow a write to the therapist's own.
+    """
+
+    APP_CALENDAR = "app_calendar"
+    """A calendar Pablo creates and is the only writer of."""
+
+    PRIMARY = "primary"
+    """The therapist's main calendar, alongside everything else on it."""
+
+
 class NarrowingEnforcement(Enum):
     """Who guarantees a capability cannot reach past what it is for.
 

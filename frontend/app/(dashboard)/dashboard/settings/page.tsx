@@ -12,6 +12,7 @@ import { ProviderTypeSettings } from "@/components/settings/ProviderTypeSettings
 import { SessionDefaults } from "@/components/settings/SessionDefaults"
 import { CalendarDensitySettings } from "@/components/settings/CalendarDensitySettings"
 import { IntegrationSettings } from "@/components/settings/IntegrationSettings"
+import { GoogleCalendarSettings } from "@/components/settings/GoogleCalendarSettings"
 import { TranscriptionSettings } from "@/components/settings/TranscriptionSettings"
 import { AudioRetentionSettings } from "@/components/settings/AudioRetentionSettings"
 import { PasskeySettings } from "@/components/settings/PasskeySettings"
@@ -181,6 +182,16 @@ export default function SettingsPage() {
           description="Phishing-resistant sign-in using your device's biometrics or security key."
         >
           <PasskeySettings />
+        </SettingsSection>
+      )}
+
+      {isEnabled("google_calendar") && (
+        <SettingsSection
+          icon={Calendar}
+          title="Google Calendar"
+          description="Put the sessions you book in Pablo onto your Google Calendar."
+        >
+          <GoogleCalendarSettings />
         </SettingsSection>
       )}
 

@@ -26,6 +26,9 @@ from ..auth.service import (
     require_active_subscription,
     require_baa_acceptance,
 )
+from ..calendar_providers.capabilities import CalendarCapability, CalendarWriteTarget
+from ..calendar_providers.consent_copy import capability_promise
+from ..calendar_providers.oauth_state import OAuthStateError
 from ..db import release_db_connection
 from ..models import (
     AuditAction,
@@ -51,6 +54,8 @@ from ..models.scheduling import (
     EditSeriesRequest,
     FreeSlotsResponse,
     GoogleCalendarAuthResponse,
+    GoogleCalendarConsentOption,
+    GoogleCalendarConsentOptionsResponse,
     GoogleCalendarStatusResponse,
     ParseAvailabilityRulesRequest,
     ParseAvailabilityRulesResponse,
@@ -112,6 +117,7 @@ from ..services import (
 )
 from ..services.availability_parse_service import AvailabilityRuleParseService
 from ..services.google_calendar_service import (
+    DEFAULT_WRITE_TARGET,
     GoogleCalendarService,
     google_consent_surface,
 )
@@ -1091,19 +1097,86 @@ def delete_appointment_type(
 # --- Google Calendar endpoints ---
 
 
+def _parse_write_target(value: str) -> CalendarWriteTarget:
+    """Turn the query parameter into the seam's write target, or reject it."""
+    try:
+        return CalendarWriteTarget(value)
+    except ValueError as exc:
+        raise BadRequestError("Invalid write_target") from exc
+
+
+def _connect_capabilities(*, busy: bool) -> set[CalendarCapability]:
+    """What connecting asks Google for.
+
+    Reading event content is not here and must not be: it is asked for when
+    an import is run, so a therapist who never imports never grants it.
+    """
+    capabilities = {CalendarCapability.PUSH}
+    if busy:
+        capabilities.add(CalendarCapability.BUSY)
+    return capabilities
+
+
+@router.get(
+    "/api/google-calendar/consent-options",
+    response_model=GoogleCalendarConsentOptionsResponse,
+)
+def google_calendar_consent_options(
+    _ctx: TenantContext = Depends(get_tenant_context),
+    service: GoogleCalendarService = Depends(get_google_calendar_service),
+) -> GoogleCalendarConsentOptionsResponse:
+    """The choices connecting offers, each with the promise it can honestly make.
+
+    Every promise is generated from the provider's own declaration of how
+    the underlying grant is limited, so a choice the grant does not narrow
+    can never be presented as one it does.
+    """
+    return GoogleCalendarConsentOptionsResponse(
+        write_targets=[
+            GoogleCalendarConsentOption(
+                id=target.value,
+                promise=capability_promise(
+                    service.display_name,
+                    service.capability_declarations(write_target=target)[CalendarCapability.PUSH],
+                ),
+            )
+            for target in CalendarWriteTarget
+        ],
+        busy=GoogleCalendarConsentOption(
+            id=CalendarCapability.BUSY.value,
+            promise=capability_promise(
+                service.display_name,
+                service.capability_declarations()[CalendarCapability.BUSY],
+            ),
+        ),
+        default_write_target=DEFAULT_WRITE_TARGET.value,
+        busy_default=True,
+    )
+
+
 @router.get(
     "/api/google-calendar/authorize",
     response_model=GoogleCalendarAuthResponse,
 )
 def google_calendar_authorize(
     redirect_uri: str = Query(..., description="OAuth redirect URI"),
+    write_target: str = Query(
+        DEFAULT_WRITE_TARGET.value,
+        description="Which calendar Pablo writes sessions to",
+    ),
+    busy: bool = Query(True, description="Also ask when the therapist is booked"),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> GoogleCalendarAuthResponse:
-    """Get Google OAuth authorization URL to connect calendar."""
+    """Get the Google OAuth URL for exactly the selected permissions."""
     if not _is_valid_gcal_redirect_uri(redirect_uri):
         raise BadRequestError("Invalid redirect_uri")
-    auth_url = service.get_auth_url(ctx.user_id, redirect_uri)
+    auth_url = service.get_auth_url(
+        ctx.user_id,
+        redirect_uri,
+        capabilities=_connect_capabilities(busy=busy),
+        write_target=_parse_write_target(write_target),
+    )
     return GoogleCalendarAuthResponse(auth_url=auth_url)
 
 
@@ -1111,14 +1184,43 @@ def google_calendar_authorize(
 def google_calendar_callback(
     code: str = Query(..., description="OAuth authorization code"),
     redirect_uri: str = Query(..., description="OAuth redirect URI"),
+    state: str = Query("", description="The state minted when authorization started"),
+    write_target: str = Query(
+        DEFAULT_WRITE_TARGET.value,
+        description="The write target the authorization URL was built with",
+    ),
+    busy: bool = Query(True, description="Whether free/busy was part of that request"),
     ctx: TenantContext = Depends(get_tenant_context),
     service: GoogleCalendarService = Depends(get_google_calendar_service),
 ) -> dict[str, str]:
-    """Handle Google OAuth callback — exchange code for tokens."""
+    """Handle Google OAuth callback — exchange code for tokens.
+
+    Requires the state minted at authorization and bound to the caller, so
+    a code can only be exchanged by the person whose authorization request
+    produced it. Declared with an empty default rather than as a required
+    parameter so a missing one is answered the same way as a bad one.
+
+    The rest of the selection has to match what the authorization URL
+    carried: it decides both the grant being exchanged and which calendar
+    the connection is bound to.
+    """
     if not _is_valid_gcal_redirect_uri(redirect_uri):
         raise BadRequestError("Invalid redirect_uri")
+    if not state:
+        raise BadRequestError("Missing state")
+    target = _parse_write_target(write_target)
     try:
-        service.handle_callback(ctx.user_id, code, redirect_uri)
+        service.handle_callback(
+            ctx.user_id,
+            code,
+            redirect_uri,
+            state=state,
+            capabilities=_connect_capabilities(busy=busy),
+            write_target=target,
+        )
+    except OAuthStateError as e:
+        logger.warning("Google Calendar OAuth callback rejected an unusable state")
+        raise BadRequestError("Invalid state") from e
     except Exception as e:
         logger.exception("Google Calendar OAuth callback failed")
         raise BadRequestError("OAuth callback failed") from e
