@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from ..models.audit import (
     ACTOR_COMPONENT_MAX_LENGTH,
     ACTOR_TYPE_CLINICIAN,
+    ACTOR_TYPE_PATIENT,
     PHI_FIELD_NAMES,
     AuditAction,
     AuditLogEntry,
@@ -48,6 +49,17 @@ _COALESCED_READ_ACTIONS: frozenset[AuditAction] = frozenset(
     }
 )
 _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COALESCED_READ_ACTIONS)
+
+
+def _action_value(action: AuditAction | str) -> str:
+    """The stored string for an action.
+
+    Typed to accept a plain string as well as the enum: a deployment can
+    define its own action codes in its own enum, and the column is free
+    text of bounded width, so the door is deliberately open. Passing the
+    enum stays the ordinary case.
+    """
+    return action.value if isinstance(action, AuditAction) else str(action)
 
 
 class AuditService:
@@ -144,7 +156,7 @@ class AuditService:
 
     def log(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request | None,
         resource_type: ResourceType,
@@ -173,7 +185,7 @@ class AuditService:
             user_id=user.id,
             actor_type=actor_type,
             actor_component=actor_component,
-            action=action.value,
+            action=_action_value(action),
             resource_type=resource_type.value,
             resource_id=resource_id,
             patient_id=patient.id if patient else None,
@@ -185,9 +197,52 @@ class AuditService:
         self._persist(entry)
         return entry
 
+    def log_patient_principal_action(
+        self,
+        action: AuditAction | str,
+        request: Request | None,
+        patient_id: str,
+        resource_type: ResourceType,
+        resource_id: str,
+        session_id: str | None = None,
+        changes: dict[str, Any] | None = None,
+    ) -> AuditLogEntry:
+        """Record something a PATIENT did, acting as themselves.
+
+        Distinct from :meth:`log_patient_action`, which records a clinician
+        acting ON a patient. Here the patient is the actor, so their id is
+        what the row is scoped to — ``user_id`` holds whoever acted, and on
+        this path that is the patient. ``patient_id`` carries the subject,
+        which for a self-action is the same person; keeping both columns
+        populated means a query for "everything about this patient" and a
+        query for "everything this actor did" both find the row.
+
+        There is no ``user`` argument because there is no clinician in the
+        room. A patient principal arms a different GUC and has no ``User``
+        record, which is exactly why :meth:`log` cannot serve this path.
+
+        ``changes`` stays PHI-free like everywhere else: it records that a
+        disclosure or a write happened, never what was said.
+        """
+        ip_address, user_agent = extract_request_context(request)
+        entry = AuditLogEntry(
+            user_id=patient_id,
+            actor_type=ACTOR_TYPE_PATIENT,
+            action=_action_value(action),
+            resource_type=resource_type.value,
+            resource_id=resource_id,
+            patient_id=patient_id,
+            session_id=session_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            changes=changes,
+        )
+        self._persist(entry)
+        return entry
+
     def log_patient_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         patient: Patient,
@@ -209,7 +264,7 @@ class AuditService:
 
     def log_session_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request | None,
         session: TherapySession,
@@ -229,7 +284,7 @@ class AuditService:
 
     def log_note_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         note_id: str,
@@ -250,7 +305,7 @@ class AuditService:
             _assert_changes_phi_free(changes)
         entry = AuditLogEntry(
             user_id=user.id,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.SESSION.value,
             resource_id=note_id,
             patient_id=patient_id,
@@ -264,7 +319,7 @@ class AuditService:
 
     def log_chat_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         conversation_id: str,
@@ -284,7 +339,7 @@ class AuditService:
             _assert_changes_phi_free(changes)
         entry = AuditLogEntry(
             user_id=user.id,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.CHAT_CONVERSATION.value,
             resource_id=conversation_id,
             patient_id=patient_id,
@@ -297,7 +352,7 @@ class AuditService:
 
     def log_patient_document_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         document_id: str,
@@ -331,7 +386,7 @@ class AuditService:
             changes["category"] = category
         entry = AuditLogEntry(
             user_id=user.id,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.PATIENT_DOCUMENT.value,
             resource_id=document_id,
             patient_id=patient_id,
@@ -376,7 +431,7 @@ class AuditService:
 
     def log_appointment_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         appointment_id: str,
@@ -390,7 +445,7 @@ class AuditService:
             user_id=user.id,
             actor_type=actor_type,
             actor_component=actor_component,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.APPOINTMENT.value,
             resource_id=appointment_id,
             patient_id=patient_id,
@@ -411,7 +466,7 @@ class AuditService:
 
     def log_onboarding_milestone(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         changes: dict[str, Any] | None = None,
@@ -425,7 +480,7 @@ class AuditService:
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.SELF.value,
             resource_id=user.id,
             ip_address=ip_address,
@@ -437,7 +492,7 @@ class AuditService:
 
     def log_account_security_event(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user_id: str,
         request: Request,
     ) -> AuditLogEntry:
@@ -451,7 +506,7 @@ class AuditService:
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user_id,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.SELF.value,
             resource_id=user_id,
             ip_address=ip_address,
@@ -482,7 +537,7 @@ class AuditService:
 
     def log_admin_action(
         self,
-        action: AuditAction,
+        action: AuditAction | str,
         user: User,
         request: Request,
         resource_id: str = "",
@@ -491,7 +546,7 @@ class AuditService:
         ip_address, user_agent = extract_request_context(request)
         entry = AuditLogEntry(
             user_id=user.id,
-            action=action.value,
+            action=_action_value(action),
             resource_type=ResourceType.SESSION.value,
             resource_id=resource_id,
             ip_address=ip_address,

@@ -1091,10 +1091,16 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     (not the literal ``user_id``), so it gets the same direct-ownership
     shape keyed on that column.
 
+    ``audit_logs`` gets a branch of its own. It carries ``user_id``, so
+    it would otherwise take the direct-ownership policy — which refuses
+    every row a patient principal's own action produces, because that
+    principal arms a different GUC. Its policy splits on ``actor_type``
+    instead: see the branch for what each half permits.
+
     Two kinds of tables are deliberately NOT given a row policy:
       * Tables with none of ``user_id`` / ``patient_id`` / ``id`` (e.g.
-        audit_logs, ehr_prompts) never reach the loop — the column
-        query above doesn't select them.
+        ehr_prompts) never reach the loop — the column query above
+        doesn't select them.
       * Tables that DO carry an ``id`` but aren't owned by a single
         user — ``ehr_routes`` (tenant-level EHR config) and the
         vestigial per-tenant ``users`` table — are listed in
@@ -1349,6 +1355,59 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                 )
             )
             logger.info("RLS (patient_access split policies) enabled on %s", qualified)
+        elif table_name == "audit_logs":
+            # audit_logs carries user_id, so without this branch it would
+            # take the generic clinician policy below — and that policy
+            # compares against ``app.current_user_id``, which a patient
+            # principal never arms. Every audit row a patient's own action
+            # produced would be refused at INSERT, which under
+            # § 164.312(b) is the one failure this table cannot have: the
+            # action still happens, and nothing records it.
+            #
+            # So the policy splits by who acted. Anything that is not a
+            # patient keeps exactly the predicate it has today, which is
+            # what keeps clinician rows, anonymous public-booking rows and
+            # system rows writing unchanged — they are all scoped to a
+            # user_id and arm the user GUC. A patient actor is checked
+            # against the patient GUC instead, and against their own id,
+            # so one patient cannot write a row in another's name.
+            insert_check = (
+                "(actor_type IS DISTINCT FROM 'patient' AND "
+                "user_id::text = current_setting('app.current_user_id', true)) OR "
+                "(actor_type = 'patient' AND "
+                "user_id::text = current_setting('app.current_patient_id', true))"
+            )
+            # Reads are unchanged: an actor reads the rows they are the
+            # actor of, and nothing else. A clinician therefore does NOT
+            # read a patient's audit records, and a patient principal reads
+            # nothing at all — patient-actor rows are written for
+            # accountability and read by no one here.
+            #
+            # That is deliberate. The audit log is a compliance record, not
+            # a read-surface for observing what a patient did. When a
+            # clinically meaningful signal matters — that an intake packet
+            # was completed, and when — it belongs in a domain column that
+            # says so, queried like any other clinical fact. Deriving it
+            # from audit rows would make the compliance record load-bearing
+            # for product behaviour, and quietly turn "who accessed what"
+            # into a feed.
+            select_using = "user_id::text = current_setting('app.current_user_id', true)"
+            # One ALL policy, the same shape the generic branch uses, so
+            # UPDATE and DELETE keep a predicate. Splitting this into
+            # SELECT-only and INSERT-only policies would leave those two
+            # commands with no policy at all — under RLS that is not a
+            # refusal, it is a silent match against zero rows, which would
+            # turn a tampering attempt from a loud trigger error into a
+            # quiet no-op and would strand the retention purge.
+            session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
+            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_actor_access ON {qualified}"))
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_audit_actor_access ON {qualified} "
+                    f"USING ({select_using}) WITH CHECK ({insert_check})"
+                )
+            )
+            logger.info("RLS (audit actor access) enabled on %s", qualified)
         elif "user_id" in columns:
             # Tables where a row has a direct owning clinician
             # (therapy_sessions, appointments, audit_logs, etc.).
