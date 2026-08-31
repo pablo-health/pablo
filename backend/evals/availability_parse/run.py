@@ -110,7 +110,8 @@ def main(argv: list[str] | None = None) -> int:
     results: list[dict[str, Any]] = []
     for case in cases:
         try:
-            produced = _produced_rules(_parse_one(case.phrasing))
+            result = _parse_one(case.phrasing)
+            produced = _produced_rules(result)
         except Exception as exc:  # a model/auth failure is setup, not a verdict
             print(f"\nparse failed on {case.name!r}: {exc}", file=sys.stderr)
             print(
@@ -119,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        results.append(_grade(case, produced))
+        results.append(_grade(case, produced, result.exclusive))
         if not args.json:
             _print_case(results[-1])
 
@@ -131,7 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if summary["overall_pass"] else 1
 
 
-def _grade(case: EvalCase, produced: list[ExpectedRule] | None) -> dict[str, Any]:
+def _grade(
+    case: EvalCase, produced: list[ExpectedRule] | None, produced_exclusive: bool
+) -> dict[str, Any]:
     hard: list[str] = []
     soft: list[str] = []
     refused_parseable = False
@@ -153,6 +156,14 @@ def _grade(case: EvalCase, produced: list[ExpectedRule] | None) -> dict[str, Any
             produced_enf = sorted((_canonical_key(r), r.enforcement) for r in produced)
             if expected_enf != produced_enf:
                 soft.append("rule set correct, enforcement (hard/soft) mismatched")
+            if (
+                case.expected_exclusive is not None
+                and produced_exclusive != case.expected_exclusive
+            ):
+                soft.append(
+                    "rule set correct, exclusive flag mismatched: expected "
+                    f"{case.expected_exclusive}, got {produced_exclusive}"
+                )
 
     return {
         "case": case.name,
