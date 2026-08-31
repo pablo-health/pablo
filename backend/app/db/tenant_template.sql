@@ -141,7 +141,8 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
     user_agent text,
     changes jsonb,
     actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL,
-    actor_component character varying(64)
+    actor_component character varying(64),
+    CONSTRAINT audit_logs_user_id_not_empty CHECK (((user_id)::text <> ''::text))
 );
 
 
