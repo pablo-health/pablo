@@ -51,7 +51,7 @@ CREATE FUNCTION __TENANT_SCHEMA__.has_patient_access(p_patient_id uuid, p_user_i
     LANGUAGE sql STABLE
     AS $$
         SELECT EXISTS (
-            SELECT 1 FROM patient_clinicians
+            SELECT 1 FROM __TENANT_SCHEMA__.patient_clinicians
             WHERE patient_id = p_patient_id
               AND user_id::text = p_user_id
               AND (expires_at IS NULL OR expires_at > now())
