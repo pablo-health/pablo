@@ -54,10 +54,10 @@ _COALESCED_READ_ACTION_VALUES: frozenset[str] = frozenset(a.value for a in _COAL
 def _action_value(action: AuditAction | str) -> str:
     """The stored string for an action.
 
-    Typed to accept a plain string as well as the enum: a deployment's own
-    overlay defines its action codes in its own enum, and the column is
-    free text of bounded width, so the door is deliberately open. Passing
-    the enum stays the ordinary case.
+    Typed to accept a plain string as well as the enum: a deployment can
+    define its own action codes in its own enum, and the column is free
+    text of bounded width, so the door is deliberately open. Passing the
+    enum stays the ordinary case.
     """
     return action.value if isinstance(action, AuditAction) else str(action)
 

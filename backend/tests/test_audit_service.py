@@ -650,19 +650,19 @@ class TestPatientPrincipalActions:
         assert entry.patient_id == "patient-1"
 
     def test_a_deployment_specific_action_code_is_accepted(self) -> None:
-        """Overlay vocabularies define their own codes; the column is text."""
+        """A deployment defines its own codes; the column is bounded text."""
         repo = MagicMock()
         service = AuditService(repo)
 
         entry = service.log_patient_principal_action(
-            "companion_chat_turn",
+            "deployment_specific_action",
             None,
             patient_id="patient-1",
             resource_type=ResourceType.PATIENT,
             resource_id="conversation-1",
         )
 
-        assert entry.action == "companion_chat_turn"
+        assert entry.action == "deployment_specific_action"
 
     def test_phi_in_changes_is_still_refused(self) -> None:
         """The guard lives in _persist, which every path goes through — so a
