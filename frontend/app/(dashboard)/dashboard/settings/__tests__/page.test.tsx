@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import type { UserPreferences } from "@/lib/api/users"
 import { ThemeProvider } from "@/components/theme/ThemeProvider"
@@ -32,8 +32,16 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: { practice_id: "practice-1", provider_type: "therapist" } }),
 }))
 
+// Mutable so a test can flip a deployment toggle; hoisted because vi.mock
+// factories run before the module body.
+const runtimeConfig = vi.hoisted(() => ({
+  passkeysEnabled: false,
+  publicBookingEnabled: false,
+  googleCalendarEnabled: false,
+}))
+
 vi.mock("@/lib/config", () => ({
-  useConfig: () => ({ passkeysEnabled: false, publicBookingEnabled: false }),
+  useConfig: () => runtimeConfig,
 }))
 
 vi.mock("@/lib/api/users", () => ({
@@ -74,6 +82,10 @@ vi.mock("@/components/settings/AudioRetentionSettings", () => ({
 }))
 
 describe("SettingsPage", () => {
+  beforeEach(() => {
+    runtimeConfig.googleCalendarEnabled = false
+  })
+
   it("shows the calendar density control inside the Appearance section, alongside the theme switcher", () => {
     render(
       <ThemeProvider>
@@ -91,5 +103,27 @@ describe("SettingsPage", () => {
     expect(
       appearanceSection.querySelector('[role="radiogroup"][aria-label="Color theme"]'),
     ).not.toBeNull()
+  })
+
+  it("hides the Google Calendar section when the deployment has not enabled it", () => {
+    render(
+      <ThemeProvider>
+        <SettingsPage />
+      </ThemeProvider>,
+    )
+
+    expect(screen.queryByRole("heading", { name: "Google Calendar" })).toBeNull()
+  })
+
+  it("shows the Google Calendar section once the deployment enables it", () => {
+    runtimeConfig.googleCalendarEnabled = true
+
+    render(
+      <ThemeProvider>
+        <SettingsPage />
+      </ThemeProvider>,
+    )
+
+    expect(screen.getByRole("heading", { name: "Google Calendar" })).toBeInTheDocument()
   })
 })
