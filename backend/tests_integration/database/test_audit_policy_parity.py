@@ -172,26 +172,53 @@ class TestBothProvisioningPathsAgree:
 
         assert migrated == provisioned
 
-    def test_audit_logs_carries_exactly_one_policy(
+    def test_the_actor_policy_covers_all_commands_and_the_purge_ones_do_not(
         self, engine: Engine, migrated_schema: str, provisioned_schema: str
     ) -> None:
-        """The single-``ALL``-policy decision is load-bearing and easy to
-        undo by accident.
+        """Three policies, and the split between them is the design.
 
-        Splitting it into SELECT-only and INSERT-only policies would
-        leave UPDATE and DELETE with no policy at all, and a command
-        with no policy does not error — it matches no rows. A tampering
-        attempt would stop being a loud trigger error and become a
-        quiet no-op. A leftover ``rls_user_isolation`` from an
-        incomplete drop would be just as bad in the other direction:
-        policies are OR'd, so the old permissive one would widen the
-        new one back out.
+        ``rls_audit_actor_access`` must stay ``FOR ALL``. Narrowing it to
+        SELECT and INSERT would leave UPDATE and DELETE with no policy,
+        and a command with no policy does not error — it matches no
+        rows, which turns a tampering attempt from a loud trigger error
+        into a quiet no-op.
+
+        The two purge policies must stay narrow for the opposite reason.
+        They are gated on a GUC rather than on an identity, so a
+        ``FOR ALL`` version would let a purge-context session INSERT
+        forged rows and UPDATE existing ones. DELETE and SELECT are the
+        whole of what the retention job needs.
+
+        And ``rls_user_isolation`` must be gone: policies are OR'd, so a
+        leftover from an incomplete drop would widen the actor policy
+        straight back out.
         """
         for schema in (migrated_schema, provisioned_schema):
-            policies = _policies(engine, schema)
-            assert [p["policyname"] for p in policies] == ["rls_audit_actor_access"], schema
-            assert policies[0]["cmd"] == "ALL", schema
-            assert policies[0]["permissive"] == "PERMISSIVE", schema
+            by_name = {p["policyname"]: p for p in _policies(engine, schema)}
+            assert sorted(by_name) == [
+                "rls_audit_actor_access",
+                "rls_audit_purge_delete",
+                "rls_audit_purge_select",
+            ], schema
+            assert by_name["rls_audit_actor_access"]["cmd"] == "ALL", schema
+            assert by_name["rls_audit_purge_delete"]["cmd"] == "DELETE", schema
+            assert by_name["rls_audit_purge_select"]["cmd"] == "SELECT", schema
+            for policy in by_name.values():
+                assert policy["permissive"] == "PERMISSIVE", schema
+
+    def test_the_purge_policies_gate_on_the_purge_guc_and_nothing_else(
+        self, engine: Engine, migrated_schema: str, provisioned_schema: str
+    ) -> None:
+        """Their whole authorization is the GUC the append-only trigger
+        already requires. If either ever grew an identity term it would
+        stop matching the job that has no identity; if either lost the
+        GUC term it would become an unconditional grant."""
+        for schema in (migrated_schema, provisioned_schema):
+            for name in ("rls_audit_purge_delete", "rls_audit_purge_select"):
+                qual = _policy(engine, schema, name)["qual"] or ""
+                assert "app.allow_audit_purge" in qual, f"{schema}/{name}"
+                assert "app.current_user_id" not in qual, f"{schema}/{name}"
+                assert "app.current_patient_id" not in qual, f"{schema}/{name}"
 
     def test_the_policy_states_its_with_check_rather_than_inheriting_it(
         self, engine: Engine, migrated_schema: str, provisioned_schema: str
@@ -204,11 +231,17 @@ class TestBothProvisioningPathsAgree:
         the distinction.
         """
         for schema in (migrated_schema, provisioned_schema):
-            policy = _policies(engine, schema)[0]
+            policy = _policy(engine, schema, "rls_audit_actor_access")
             assert policy["with_check"] is not None, schema
             assert policy["qual"] != policy["with_check"], schema
             assert "app.current_patient_id" in policy["with_check"], schema
             assert "app.current_patient_id" not in (policy["qual"] or ""), schema
+
+
+def _policy(engine: Engine, schema: str, name: str) -> dict:
+    match = [p for p in _policies(engine, schema) if p["policyname"] == name]
+    assert match, f"{name} missing on {schema}"
+    return match[0]
 
 
 def _rls_flags(engine: Engine, schema: str) -> dict:
@@ -267,6 +300,8 @@ class TestWhereThePolicyIsActuallyInForce:
         flags = _rls_flags(engine, "practice")
         assert flags["relrowsecurity"] is False
         assert flags["relforcerowsecurity"] is False
-        assert [p["policyname"] for p in _policies(engine, "practice")] == [
-            "rls_audit_actor_access"
+        assert sorted(p["policyname"] for p in _policies(engine, "practice")) == [
+            "rls_audit_actor_access",
+            "rls_audit_purge_delete",
+            "rls_audit_purge_select",
         ]

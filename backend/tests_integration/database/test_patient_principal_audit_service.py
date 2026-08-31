@@ -311,7 +311,7 @@ class TestPatientRowsDoNotPoseAsClinicianRows:
     such, whichever way they are reached.
     """
 
-    def test_a_patient_self_action_is_not_flagged_as_novel_clinician_access(
+    def test_a_patient_self_action_is_absent_from_the_clinician_review(
         self, engine: Engine, tenant_schema: str
     ) -> None:
         from app.repositories.postgres.audit import PostgresAuditRepository  # noqa: PLC0415
@@ -341,9 +341,13 @@ class TestPatientRowsDoNotPoseAsClinicianRows:
                     text(f"ALTER TABLE {tenant_schema}.audit_logs FORCE ROW LEVEL SECURITY")
                 )
 
-        mine = [row for row in payload if row["user_id"] == patient_id]
-        assert mine, "the window row should be in the payload at all"
-        assert not any(row["is_novel_user_patient"] for row in mine)
+        # Absent, not merely unflagged. "Present but never novel" was the
+        # weaker contract this test first asserted, and it is the wrong
+        # one: a patient reading their own chart is not clinician access,
+        # so it does not belong in the clinician review surface at all.
+        # Leaving the rows in and trusting every future flag to remember
+        # to exclude them is how the first flag got it wrong.
+        assert [row for row in payload if row["user_id"] == patient_id] == []
 
 
 def _insert_patient_row(session: Session, patient_id: str, days_ago: float) -> None:

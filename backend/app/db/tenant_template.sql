@@ -1241,4 +1241,12 @@ CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((us
 
 
 
+CREATE POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs FOR DELETE USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
+
+
+
+CREATE POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
+
+
+
 CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text <> ALL ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));

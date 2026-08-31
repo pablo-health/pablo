@@ -66,10 +66,20 @@ def _as_of_timestamp(as_of: datetime) -> str:
 def _count_expired(engine: Engine, schema: str, as_of: datetime) -> int:
     """Count audit_logs rows that *would* be deleted at ``as_of``."""
     _validate_schema_name(schema)
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         # Operator job: schema validated by _validate_schema_name(); not web-reachable.
         # nosemgrep
         conn.execute(text(f"SET search_path = {schema}, {PLATFORM_SCHEMA}, public"))
+        # The dry run is this job in read-only mode and has to declare the
+        # same intent to see the same rows: audit_logs' row policy scopes a
+        # SELECT to the acting principal, and this job has no principal to
+        # arm. Without the purge GUC the count reads through the actor
+        # policy, matches nothing, and reports "no work to do" while the
+        # real run deletes thousands — the one answer worse than zero,
+        # because it corroborates an empty purge instead of contradicting
+        # it. ``engine.begin()`` rather than ``connect()`` because SET
+        # LOCAL outside a transaction is a no-op.
+        conn.execute(text("SET LOCAL app.allow_audit_purge = 'on'"))
         result = conn.execute(
             text("SELECT COUNT(*) FROM audit_logs WHERE expires_at < :as_of"),
             {"as_of": as_of},
