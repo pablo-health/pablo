@@ -34,6 +34,7 @@ const TEST_CONFIG: RuntimeConfig = {
   passkeysEnabled: false,
   resubscribeUrl: "",
   publicBookingEnabled: false,
+  googleCalendarEnabled: false,
 }
 
 describe("renderWithProviders", () => {

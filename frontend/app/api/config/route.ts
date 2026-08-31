@@ -33,5 +33,11 @@ export async function GET() {
     // containers so a deployment flips one value to turn on client
     // self-booking end to end.
     publicBookingEnabled: process.env.PUBLIC_BOOKING_ENABLED === 'true',
+    // Runtime toggle for the "Google Calendar" Settings section. Read from
+    // container env rather than baked in at build time, so one image can be
+    // dark in one deployment and live in another. Turn it on once the
+    // backend has GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET
+    // set — without those the connect flow has nothing to send Google.
+    googleCalendarEnabled: process.env.GOOGLE_CALENDAR_ENABLED === 'true',
   })
 }

@@ -21,6 +21,7 @@ export interface RuntimeConfig {
   passkeysEnabled: boolean
   resubscribeUrl: string
   publicBookingEnabled: boolean
+  googleCalendarEnabled: boolean
 }
 
 interface ConfigContextValue {

@@ -27,7 +27,7 @@ import { useConfig } from "@/lib/config"
 import { getUserStatus, type UserPreferences } from "@/lib/api/users"
 
 export default function SettingsPage() {
-  const { passkeysEnabled, publicBookingEnabled } = useConfig()
+  const { passkeysEnabled, publicBookingEnabled, googleCalendarEnabled } = useConfig()
   const { data: preferences, isLoading, error } = usePreferences()
   const saveMutation = useSavePreferences()
   const { data: userStatus } = useQuery({
@@ -185,7 +185,7 @@ export default function SettingsPage() {
         </SettingsSection>
       )}
 
-      {isEnabled("google_calendar") && (
+      {googleCalendarEnabled && (
         <SettingsSection
           icon={Calendar}
           title="Google Calendar"
