@@ -22,11 +22,17 @@ So the policy splits on ``actor_type``, added by ``a91c5d3e7b28``:
   * a patient actor is checked against the patient GUC, and against
     their own id, so one patient cannot write a row in another's name.
 
-Reads stay clinician-side: a clinician sees rows they are the actor of,
-plus patient-actor rows for patients they treat (``has_patient_access``,
-the same predicate the rest of the patient surfaces use). A patient
-principal reads nothing here. Showing someone their own audit trail is a
-surface in its own right, and this migration does not open it.
+Reads are unchanged: an actor reads the rows they are the actor of. A
+clinician does not read a patient's audit records, and a patient
+principal reads nothing at all — patient-actor rows are written for
+accountability and read by no one here.
+
+That is deliberate. The audit log is a compliance record, not a
+read-surface for observing what a patient did. When a clinically
+meaningful signal matters — that an intake packet was completed, and
+when — it belongs in a domain column that says so, queried like any
+other clinical fact. Deriving it from audit rows would make the
+compliance record load-bearing for product behaviour.
 
 It stays one ALL-command policy, like the one it replaces: giving SELECT
 and INSERT their own policies would leave UPDATE and DELETE with none,
@@ -72,12 +78,7 @@ _INSERT_CHECK = (
     "user_id::text = current_setting('app.current_patient_id', true))"
 )
 
-_SELECT_USING = (
-    "user_id::text = current_setting('app.current_user_id', true) OR "
-    "(actor_type = 'patient' AND has_patient_access("
-    "  patient_id, current_setting('app.current_user_id', true)"
-    "))"
-)
+_SELECT_USING = "user_id::text = current_setting('app.current_user_id', true)"
 
 _LEGACY_USER_ISOLATION = "user_id::text = current_setting('app.current_user_id', true)"
 

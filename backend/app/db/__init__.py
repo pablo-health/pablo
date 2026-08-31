@@ -1377,18 +1377,21 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                 "(actor_type = 'patient' AND "
                 "user_id::text = current_setting('app.current_patient_id', true))"
             )
-            # Reads stay clinician-side. A clinician sees the rows they are
-            # the actor of, and — because a patient's own activity is part
-            # of that patient's record — the patient-actor rows for
-            # patients they treat. A patient principal reads nothing here;
-            # showing someone their own audit trail is a surface in its own
-            # right, not a side effect of being able to write to it.
-            select_using = (
-                "user_id::text = current_setting('app.current_user_id', true) OR "
-                "(actor_type = 'patient' AND has_patient_access("
-                "  patient_id, current_setting('app.current_user_id', true)"
-                "))"
-            )
+            # Reads are unchanged: an actor reads the rows they are the
+            # actor of, and nothing else. A clinician therefore does NOT
+            # read a patient's audit records, and a patient principal reads
+            # nothing at all — patient-actor rows are written for
+            # accountability and read by no one here.
+            #
+            # That is deliberate. The audit log is a compliance record, not
+            # a read-surface for observing what a patient did. When a
+            # clinically meaningful signal matters — that an intake packet
+            # was completed, and when — it belongs in a domain column that
+            # says so, queried like any other clinical fact. Deriving it
+            # from audit rows would make the compliance record load-bearing
+            # for product behaviour, and quietly turn "who accessed what"
+            # into a feed.
+            select_using = "user_id::text = current_setting('app.current_user_id', true)"
             # One ALL policy, the same shape the generic branch uses, so
             # UPDATE and DELETE keep a predicate. Splitting this into
             # SELECT-only and INSERT-only policies would leave those two

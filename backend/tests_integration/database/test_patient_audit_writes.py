@@ -226,11 +226,19 @@ class TestPatientPrincipalCanBeAudited:
 
 
 class TestWhoCanReadPatientActorRows:
-    """Reads stay clinician-side, and only for the treating clinician."""
+    """Nobody, in this schema. The rows are written for accountability.
 
-    def test_a_treating_clinician_sees_their_patients_rows(
+    An actor reads the rows they are the actor of and nothing else, so a
+    patient-actor row is readable by no one here — not by the patient, and
+    not by the clinician treating them. A clinically meaningful signal
+    belongs in a domain column that says so, not in the compliance record.
+    """
+
+    def test_a_treating_clinician_does_not_read_their_patients_rows(
         self, engine: Engine, tenant_schema: str
     ) -> None:
+        """Even with a treating relationship. The audit log is not a feed of
+        what a patient did."""
         patient_id = str(uuid.uuid4())
         clinician_id = str(uuid.uuid4())
         _grant_access(engine, tenant_schema, patient_id, clinician_id)
@@ -247,65 +255,29 @@ class TestWhoCanReadPatientActorRows:
                 text("SELECT id FROM audit_logs WHERE id = CAST(:id AS uuid)"), {"id": row_id}
             ).fetchall()
 
-        assert len(found) == 1
+        assert found == []
 
-    def test_a_stranger_clinician_sees_nothing_of_them(
+    def test_a_clinician_still_reads_their_own_rows(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        patient_id = str(uuid.uuid4())
-        treating = str(uuid.uuid4())
-        stranger = str(uuid.uuid4())
-        _grant_access(engine, tenant_schema, patient_id, treating)
+        """Narrowing the patient arm must not have cost anyone their own."""
+        clinician_id = str(uuid.uuid4())
 
         with engine.begin() as conn:
-            _as_patient(conn, tenant_schema, patient_id)
-            row_id = _insert_audit_row(
-                conn, user_id=patient_id, actor_type="patient", patient_id=patient_id
-            )
+            _as_clinician(conn, tenant_schema, clinician_id)
+            row_id = _insert_audit_row(conn, user_id=clinician_id, actor_type="clinician")
 
         with engine.begin() as conn:
-            _as_clinician(conn, tenant_schema, stranger)
+            _as_clinician(conn, tenant_schema, clinician_id)
             found = conn.execute(
                 text("SELECT id FROM audit_logs WHERE id = CAST(:id AS uuid)"), {"id": row_id}
             ).fetchall()
 
-        assert found == []
-
-    def test_two_patients_are_isolated_from_each_other(
-        self, engine: Engine, tenant_schema: str
-    ) -> None:
-        first = str(uuid.uuid4())
-        second = str(uuid.uuid4())
-        clinician = str(uuid.uuid4())
-        _grant_access(engine, tenant_schema, first, clinician)
-
-        with engine.begin() as conn:
-            _as_patient(conn, tenant_schema, first)
-            first_row = _insert_audit_row(
-                conn, user_id=first, actor_type="patient", patient_id=first
-            )
-        with engine.begin() as conn:
-            _as_patient(conn, tenant_schema, second)
-            _insert_audit_row(conn, user_id=second, actor_type="patient", patient_id=second)
-
-        # The clinician treats only the first patient.
-        with engine.begin() as conn:
-            _as_clinician(conn, tenant_schema, clinician)
-            visible = {
-                str(r[0])
-                for r in conn.execute(
-                    text("SELECT id FROM audit_logs WHERE actor_type = 'patient'")
-                )
-            }
-
-        assert first_row in visible
-        assert len(visible) == 1
+        assert len(found) == 1
 
     def test_a_patient_principal_reads_no_audit_rows(
         self, engine: Engine, tenant_schema: str
     ) -> None:
-        """Self-accounting is a surface of its own; being able to write here
-        does not open reading."""
         patient_id = str(uuid.uuid4())
 
         with engine.begin() as conn:
@@ -318,13 +290,60 @@ class TestWhoCanReadPatientActorRows:
 
         assert found == []
 
-
-class TestAppendOnlyStillHolds:
-    """The new rows are as immutable as every other row in this table."""
-
-    def test_a_patient_actor_row_cannot_be_updated_or_deleted(
+    def test_two_patients_read_neither_their_own_rows_nor_each_others(
         self, engine: Engine, tenant_schema: str
     ) -> None:
+        first = str(uuid.uuid4())
+        second = str(uuid.uuid4())
+
+        for patient_id in (first, second):
+            with engine.begin() as conn:
+                _as_patient(conn, tenant_schema, patient_id)
+                _insert_audit_row(
+                    conn, user_id=patient_id, actor_type="patient", patient_id=patient_id
+                )
+
+        for patient_id in (first, second):
+            with engine.begin() as conn:
+                _as_patient(conn, tenant_schema, patient_id)
+                visible = conn.execute(
+                    text("SELECT id FROM audit_logs WHERE actor_type = 'patient'")
+                ).fetchall()
+            assert visible == []
+
+
+class TestAppendOnlyStillHolds:
+    """Nothing here became mutable, though the two halves get there
+    differently now."""
+
+    def test_the_trigger_still_fires_on_a_row_the_actor_can_see(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        """A clinician's own row is visible to them, so a mutation reaches
+        the append-only trigger and fails loudly — which is the behaviour
+        worth keeping."""
+        clinician_id = str(uuid.uuid4())
+
+        with engine.begin() as conn:
+            _as_clinician(conn, tenant_schema, clinician_id)
+            row_id = _insert_audit_row(conn, user_id=clinician_id, actor_type="clinician")
+
+        for statement in (
+            "UPDATE audit_logs SET action = 'tamper' WHERE id = CAST(:id AS uuid)",
+            "DELETE FROM audit_logs WHERE id = CAST(:id AS uuid)",
+        ):
+            with engine.begin() as conn:
+                _as_clinician(conn, tenant_schema, clinician_id)
+                with pytest.raises(_RLS_DENIED):
+                    conn.execute(text(statement), {"id": row_id})
+
+    def test_a_patient_actor_row_cannot_be_reached_to_be_mutated(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        """Since the narrowing, nobody can see a patient-actor row — so a
+        clinician's UPDATE or DELETE matches nothing at all rather than
+        being refused by the trigger. Either way the row stands; this
+        asserts the reach, which is the part that changed."""
         patient_id = str(uuid.uuid4())
         clinician_id = str(uuid.uuid4())
         _grant_access(engine, tenant_schema, patient_id, clinician_id)
@@ -341,5 +360,5 @@ class TestAppendOnlyStillHolds:
         ):
             with engine.begin() as conn:
                 _as_clinician(conn, tenant_schema, clinician_id)
-                with pytest.raises(_RLS_DENIED):
-                    conn.execute(text(statement), {"id": row_id})
+                result = conn.execute(text(statement), {"id": row_id})
+                assert result.rowcount == 0
