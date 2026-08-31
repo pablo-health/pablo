@@ -25,6 +25,7 @@ renders both through the same deparser.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import uuid
 from pathlib import Path
@@ -52,7 +53,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
-    """``practice`` is the migrated schema: alembic ran the policy DDL on it."""
+    """Migrate to head so the alembic chain and the tenant template exist."""
     backend_dir = Path(__file__).resolve().parents[2]
     cfg = Config(str(backend_dir / "alembic.ini"))
     cfg.set_main_option("script_location", str(backend_dir / "alembic"))
@@ -79,6 +80,59 @@ def provisioned_schema(engine: Engine) -> Iterator[str]:
         conn.commit()
 
 
+@pytest.fixture(scope="module")
+def migrated_schema(engine: Engine) -> Iterator[str]:
+    """A tenant schema carrying the MIGRATION's policy, under forced RLS.
+
+    ``practice`` is the obvious migrated exemplar and the wrong one:
+    ``enable_rls_on_schema`` returns early for the default schema, so
+    ``practice`` has the policy row and RLS switched off, and comparing
+    against it would assert the parity guarantee on the one schema where
+    the predicate cannot fire.
+
+    So: provision a tenant the ordinary way (which forces RLS), drop the
+    policy ``enable_rls_on_schema`` just wrote, and re-create it from the
+    migration module's own SQL constants. What remains is a schema whose
+    policy came from the migration path, enforcing, and comparable to one
+    whose policy came from the provisioning path.
+    """
+    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+
+    # Loaded by path: ``alembic/versions`` is a script directory, not an
+    # importable package, and a bare ``alembic.versions`` resolves to the
+    # installed alembic library instead.
+    migration_path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "b2d6f83a4c19_audit_logs_actor_split_policy.py"
+    )
+    spec = importlib.util.spec_from_file_location("_audit_split_policy", migration_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with engine.connect() as conn:
+        conn.execute(text("SET search_path = practice, platform, public"))
+        conn.commit()
+
+    schema = f"practice_test_migrated_{uuid.uuid4().hex[:8]}"
+    create_practice_schema(engine, schema)
+    with engine.begin() as conn:
+        conn.execute(text(f"DROP POLICY IF EXISTS rls_audit_actor_access ON {schema}.audit_logs"))
+        conn.execute(
+            text(
+                f"CREATE POLICY rls_audit_actor_access ON {schema}.audit_logs "
+                f"USING ({module._SELECT_USING}) WITH CHECK ({module._INSERT_CHECK})"
+            )
+        )
+    yield schema
+    with engine.connect() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        conn.commit()
+
+
 def _policies(engine: Engine, schema: str, table: str = "audit_logs") -> list[dict]:
     with engine.connect() as conn:
         rows = (
@@ -99,21 +153,27 @@ def _policies(engine: Engine, schema: str, table: str = "audit_logs") -> list[di
 
 class TestBothProvisioningPathsAgree:
     def test_the_migrated_and_provisioned_policies_are_identical(
-        self, engine: Engine, provisioned_schema: str
+        self, engine: Engine, migrated_schema: str, provisioned_schema: str
     ) -> None:
         """Same name, same command, same USING, same WITH CHECK.
 
         If this fails, one of the three copies of the predicate was
         edited and the others were not — and the failure message names
         which arm moved.
+
+        Both sides are schemas with RLS forced, deliberately. An earlier
+        version of this test used ``practice`` as the migrated side,
+        where RLS is off — which compared the two predicates honestly
+        enough but read as though it also proved the migrated path was
+        protected, on the one schema where it is not.
         """
-        migrated = _policies(engine, "practice")
+        migrated = _policies(engine, migrated_schema)
         provisioned = _policies(engine, provisioned_schema)
 
         assert migrated == provisioned
 
     def test_audit_logs_carries_exactly_one_policy(
-        self, engine: Engine, provisioned_schema: str
+        self, engine: Engine, migrated_schema: str, provisioned_schema: str
     ) -> None:
         """The single-``ALL``-policy decision is load-bearing and easy to
         undo by accident.
@@ -127,14 +187,14 @@ class TestBothProvisioningPathsAgree:
         policies are OR'd, so the old permissive one would widen the
         new one back out.
         """
-        for schema in ("practice", provisioned_schema):
+        for schema in (migrated_schema, provisioned_schema):
             policies = _policies(engine, schema)
             assert [p["policyname"] for p in policies] == ["rls_audit_actor_access"], schema
             assert policies[0]["cmd"] == "ALL", schema
             assert policies[0]["permissive"] == "PERMISSIVE", schema
 
     def test_the_policy_states_its_with_check_rather_than_inheriting_it(
-        self, engine: Engine, provisioned_schema: str
+        self, engine: Engine, migrated_schema: str, provisioned_schema: str
     ) -> None:
         """A ``WITH CHECK`` left off an ``ALL`` policy silently defaults to
         the ``USING`` expression — which on this table would mean the
@@ -143,7 +203,7 @@ class TestBothProvisioningPathsAgree:
         are deliberately different here; asserting that they are pins
         the distinction.
         """
-        for schema in ("practice", provisioned_schema):
+        for schema in (migrated_schema, provisioned_schema):
             policy = _policies(engine, schema)[0]
             assert policy["with_check"] is not None, schema
             assert policy["qual"] != policy["with_check"], schema
