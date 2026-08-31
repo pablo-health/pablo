@@ -1236,4 +1236,8 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 
+CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING ((((user_id)::text = current_setting('app.current_user_id'::text, true)) OR (((actor_type)::text = 'patient'::text) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)))) WITH CHECK (((((actor_type)::text IS DISTINCT FROM 'patient'::text) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))) OR (((actor_type)::text = 'patient'::text) AND ((user_id)::text = current_setting('app.current_patient_id'::text, true)))));
+
+
+
 CREATE POLICY rls_patient_doc_access ON __TENANT_SCHEMA__.patient_documents USING (((((category)::text <> ALL ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND __TENANT_SCHEMA__.has_patient_access(patient_id, (current_setting('app.current_user_id'::text, true))::character varying)) OR (((category)::text = ANY ((ARRAY['therapist_private'::character varying, 'psychotherapy_notes'::character varying])::text[])) AND ((user_id)::text = current_setting('app.current_user_id'::text, true)))));

@@ -11,6 +11,7 @@ from app.models import Patient, User
 from app.models.audit import (
     ACTOR_TYPE_ANONYMOUS,
     ACTOR_TYPE_CLINICIAN,
+    ACTOR_TYPE_PATIENT,
     AUDIT_LOG_RETENTION_DAYS,
     AuditAction,
     AuditLogEntry,
@@ -624,3 +625,75 @@ class TestCloudLoggingWriter:
         assert captured["timestamp"] == entry.timestamp
         assert captured["expires_at"] == entry.expires_at
         assert captured["__severity__"] == "NOTICE"
+
+
+class TestPatientPrincipalActions:
+    """A patient acting as themselves, not a clinician acting on them."""
+
+    def test_the_patient_is_recorded_as_the_actor(self) -> None:
+        repo = MagicMock()
+        service = AuditService(repo)
+
+        entry = service.log_patient_principal_action(
+            AuditAction.PATIENT_VIEWED,
+            None,
+            patient_id="patient-1",
+            resource_type=ResourceType.PATIENT,
+            resource_id="patient-1",
+        )
+
+        assert entry.actor_type == ACTOR_TYPE_PATIENT
+        # user_id is who acted; patient_id is the subject. For a self-action
+        # they are the same person, and both are populated so a query for
+        # either finds the row.
+        assert entry.user_id == "patient-1"
+        assert entry.patient_id == "patient-1"
+
+    def test_a_deployment_specific_action_code_is_accepted(self) -> None:
+        """Overlay vocabularies define their own codes; the column is text."""
+        repo = MagicMock()
+        service = AuditService(repo)
+
+        entry = service.log_patient_principal_action(
+            "companion_chat_turn",
+            None,
+            patient_id="patient-1",
+            resource_type=ResourceType.PATIENT,
+            resource_id="conversation-1",
+        )
+
+        assert entry.action == "companion_chat_turn"
+
+    def test_phi_in_changes_is_still_refused(self) -> None:
+        """The guard lives in _persist, which every path goes through — so a
+        new logging method inherits it rather than having to remember it."""
+        repo = MagicMock()
+        service = AuditService(repo)
+
+        with pytest.raises(ValueError, match="PHI field name"):
+            service.log_patient_principal_action(
+                AuditAction.PATIENT_VIEWED,
+                None,
+                patient_id="patient-1",
+                resource_type=ResourceType.PATIENT,
+                resource_id="patient-1",
+                changes={"first_name": "Zorbulax"},
+            )
+
+    def test_a_clinician_entry_is_unchanged(self) -> None:
+        """The default path still records exactly what it did before."""
+        repo = MagicMock()
+        service = AuditService(repo)
+        user = MagicMock()
+        user.id = "clinician-1"
+
+        entry = service.log(
+            AuditAction.PATIENT_VIEWED,
+            user,
+            None,
+            resource_type=ResourceType.PATIENT,
+            resource_id="patient-1",
+        )
+
+        assert entry.actor_type == ACTOR_TYPE_CLINICIAN
+        assert entry.user_id == "clinician-1"
