@@ -1039,6 +1039,19 @@ class AuditLogRow(Base):
     user_agent: Mapped[str | None] = mapped_column(Text)
     changes: Mapped[dict | None] = mapped_column(JSONB)
 
+    __table_args__ = (
+        # Disarming a principal sets its GUC to '' rather than dropping it, so
+        # every request runs with one of the two identity GUCs empty. Every
+        # other principal column in the schema is a uuid, where '' fails the
+        # cast and the comparison is a no-match; this one is VARCHAR for the
+        # reasons above it, so '' is storable and '' = '' is true. Without
+        # this constraint the empty id is a bucket shared by every principal
+        # whose other GUC is cleared — readable and writable across the
+        # clinician/patient boundary, invisible to legitimate readers, and
+        # unreachable by the retention purge.
+        CheckConstraint("user_id <> ''", name="audit_logs_user_id_not_empty"),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Prescribing encounter context (prescribing rules-engine input)

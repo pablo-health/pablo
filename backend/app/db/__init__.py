@@ -1399,15 +1399,55 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             # refusal, it is a silent match against zero rows, which would
             # turn a tampering attempt from a loud trigger error into a
             # quiet no-op and would strand the retention purge.
+            # The retention purge is not a principal and has no identity to
+            # arm: ``_delete_expired`` sets ``search_path``, arms
+            # ``app.allow_audit_purge`` and issues one DELETE across every
+            # actor's rows. Under the actor policy alone that DELETE compares
+            # ``user_id`` against an unset GUC and matches nothing — silently,
+            # rowcount 0, a cron reporting a successful run having purged
+            # nothing while rows outlive ``expires_at`` forever.
+            #
+            # So the purge gets its own permissive policies, gated on the same
+            # GUC the append-only trigger already treats as the authorization
+            # to delete. No new trust boundary: anything that can set that GUC
+            # can already get a DELETE past the trigger, and RLS was only
+            # hiding the rows by accident.
+            #
+            # SELECT as well as DELETE, because ``_count_expired`` backs
+            # ``--dry-run`` and reads through the same predicate. Without it an
+            # operator asking whether the purge has work is told "none" while
+            # the real run deletes thousands — a worse failure than both
+            # reporting zero. Both are gated on the purge GUC, so an ordinary
+            # request (which never sets it) sees exactly what it saw before.
+            #
+            # Deliberately NOT ``FOR ALL``: that would also admit INSERT and
+            # UPDATE under the purge GUC, letting a purge-context session
+            # forge or rewrite rows. The trigger blocks UPDATE, but the policy
+            # should not be the thing relying on it.
+            purge_armed = "current_setting('app.allow_audit_purge', true) = 'on'"
             session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
             session.execute(text(f"DROP POLICY IF EXISTS rls_audit_actor_access ON {qualified}"))
+            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_delete ON {qualified}"))
+            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_select ON {qualified}"))
             session.execute(
                 text(
                     f"CREATE POLICY rls_audit_actor_access ON {qualified} "
                     f"USING ({select_using}) WITH CHECK ({insert_check})"
                 )
             )
-            logger.info("RLS (audit actor access) enabled on %s", qualified)
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_audit_purge_delete ON {qualified} "
+                    f"FOR DELETE USING ({purge_armed})"
+                )
+            )
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_audit_purge_select ON {qualified} "
+                    f"FOR SELECT USING ({purge_armed})"
+                )
+            )
+            logger.info("RLS (audit actor access + retention purge) enabled on %s", qualified)
         elif "user_id" in columns:
             # Tables where a row has a direct owning clinician
             # (therapy_sessions, appointments, audit_logs, etc.).

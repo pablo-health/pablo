@@ -141,7 +141,8 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
     user_agent text,
     changes jsonb,
     actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL,
-    actor_component character varying(64)
+    actor_component character varying(64),
+    CONSTRAINT audit_logs_user_id_not_empty CHECK (((user_id)::text <> ''::text))
 );
 
 
@@ -1237,6 +1238,14 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((((actor_type)::text IS DISTINCT FROM 'patient'::text) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))) OR (((actor_type)::text = 'patient'::text) AND ((user_id)::text = current_setting('app.current_patient_id'::text, true)))));
+
+
+
+CREATE POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs FOR DELETE USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
+
+
+
+CREATE POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
 
 
 
