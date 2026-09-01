@@ -3,13 +3,28 @@
 "use client"
 
 import Image from "next/image"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { buildApiUrl } from "@/lib/api/client"
+
+const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js"
+const CAPTCHA_FAILED_MESSAGE = "Verification failed. Please refresh and try again."
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        container: HTMLElement,
+        options: { sitekey: string; callback: (token: string) => void },
+      ) => string
+      reset: (widgetId: string) => void
+    }
+  }
+}
 
 /**
  * Public booking page (docs/design/public-booking.md).
@@ -27,6 +42,7 @@ interface BookingLinkCard {
   title: string
   description: string | null
   duration_minutes: number
+  captcha_site_key: string | null
 }
 
 interface Slot {
@@ -164,6 +180,39 @@ export default function PublicBookingPage({
     retry: false,
   })
 
+  const captchaSiteKey = linkQuery.data?.captcha_site_key ?? null
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const captchaContainerRef = useRef<HTMLDivElement | null>(null)
+  const captchaWidgetIdRef = useRef<string | null>(null)
+  // The widget's container only exists once the booking form renders
+  // (selectedSlot truthy), so re-run the mount effect when that flips.
+  const captchaContainerMayExist = selectedSlot !== null
+
+  useEffect(() => {
+    if (!captchaSiteKey) return
+
+    function mount() {
+      if (!captchaContainerRef.current || !window.turnstile) return
+      captchaWidgetIdRef.current = window.turnstile.render(captchaContainerRef.current, {
+        sitekey: captchaSiteKey!,
+        callback: setCaptchaToken,
+      })
+    }
+
+    if (window.turnstile) {
+      mount()
+      return
+    }
+    const script = document.createElement("script")
+    script.src = TURNSTILE_SCRIPT_SRC
+    script.async = true
+    script.onload = mount
+    document.body.appendChild(script)
+    return () => {
+      document.body.removeChild(script)
+    }
+  }, [captchaSiteKey, captchaContainerMayExist])
+
   async function submitBooking(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedSlot || !slug) return
@@ -172,7 +221,10 @@ export default function PublicBookingPage({
     try {
       const resp = await fetch(buildApiUrl(`/api/public/booking-links/${slug}/bookings`), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(captchaToken ? { "X-Captcha-Token": captchaToken } : {}),
+        },
         body: JSON.stringify({
           start_at: selectedSlot.start,
           first_name: firstName,
@@ -188,6 +240,15 @@ export default function PublicBookingPage({
         return
       }
       if (resp.status === 403) {
+        const body = await resp.json().catch(() => null)
+        if (body?.error?.message === CAPTCHA_FAILED_MESSAGE) {
+          setSubmitError(CAPTCHA_FAILED_MESSAGE)
+          setCaptchaToken(null)
+          if (captchaWidgetIdRef.current) {
+            window.turnstile?.reset(captchaWidgetIdRef.current)
+          }
+          return
+        }
         setSubmitError(
           "This practice isn't accepting online bookings right now. " +
             "Please contact them directly.",
@@ -401,8 +462,13 @@ export default function PublicBookingPage({
                 rows={3}
               />
             </div>
+            {captchaSiteKey && <div ref={captchaContainerRef} className="mb-4" />}
             {submitError && <p className="mb-3 text-sm text-red-600">{submitError}</p>}
-            <Button type="submit" disabled={submitting} className="w-full">
+            <Button
+              type="submit"
+              disabled={submitting || (captchaSiteKey !== null && !captchaToken)}
+              className="w-full"
+            >
               {submitting ? "Booking…" : "Confirm booking"}
             </Button>
           </form>

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from ..api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from ..auth.route_access import AccessLevel, resolve_access_level
@@ -51,6 +51,7 @@ from ..models.booking_link import (
 from ..models.enums import PracticeEdition
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
 from ..rate_limit import (
+    get_client_ip,
     require_public_booking_rate_limit,
     require_public_booking_write_rate_limit,
 )
@@ -67,6 +68,7 @@ from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
+from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
 from ..services.google_calendar_service import (
     GoogleCalendarService,
@@ -215,6 +217,23 @@ _BOOKING_CLOSED = (
 )
 _CONFIRMATION_INVALID = "This confirmation link is not valid."
 _SLOT_TAKEN = "That time was taken while you were confirming. Please pick another slot."
+_CAPTCHA_FAILED = "Verification failed. Please refresh and try again."
+
+
+def require_captcha(
+    http_request: Request,
+    verifier: CaptchaVerifier = Depends(get_captcha_verifier),
+    x_captcha_token: str | None = Header(None, alias="X-Captcha-Token"),
+) -> None:
+    """Refuse the booking write unless the CAPTCHA token verifies.
+
+    A no-op under the default ``NoneCaptchaVerifier``. A missing token is
+    refused identically to an invalid one — the message never reveals
+    which. Runs after the write rate limit, so a bot burning verify calls
+    burns its per-IP write budget too.
+    """
+    if not verifier.verify(x_captcha_token, get_client_ip(http_request)):
+        raise ForbiddenError(_CAPTCHA_FAILED)
 
 
 def _require_owner_may_accept_bookings(owner: User) -> None:
@@ -273,6 +292,7 @@ def _parse_booking_date(value: str) -> date:
 @router.get("/api/public/booking-links/{slug}", response_model=PublicBookingLinkResponse)
 def get_public_booking_link(
     ctx: PublicBookingContext = Depends(get_public_booking_context),
+    verifier: CaptchaVerifier = Depends(get_captcha_verifier),
 ) -> PublicBookingLinkResponse:
     """The link's public display card — everything a visitor may see."""
     return PublicBookingLinkResponse(
@@ -281,6 +301,7 @@ def get_public_booking_link(
         title=ctx.link.title,
         description=ctx.link.description,
         duration_minutes=ctx.link.duration_minutes,
+        captcha_site_key=verifier.site_key,
     )
 
 
@@ -519,7 +540,11 @@ def _place_hold(
     "/api/public/booking-links/{slug}/bookings",
     response_model=PublicBookingConfirmation,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_public_booking_write_rate_limit), Depends(sweep_expired_holds)],
+    dependencies=[
+        Depends(require_public_booking_write_rate_limit),
+        Depends(require_captcha),
+        Depends(sweep_expired_holds),
+    ],
 )
 def create_public_booking(
     request: CreatePublicBookingRequest,
