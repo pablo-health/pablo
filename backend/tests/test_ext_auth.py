@@ -278,7 +278,7 @@ def test_check_allowlist_e2etest_prefix_bypasses(
     patch_db_session: MagicMock,
 ) -> None:
     """Reserved e2etest-<8hex>@pablo.health bypasses allowlist + tenant lookup."""
-    patch_settings.return_value = _dev_settings()
+    patch_settings.return_value = _dev_settings(allow_test_identity_signup=True)
     result = check_allowlist(
         CheckAllowlistRequest(email="e2etest-deadbeef@pablo.health"), _make_request()
     )
@@ -294,7 +294,7 @@ def test_check_allowlist_pentestuser_prefix_bypasses(
     patch_db_session: MagicMock,
 ) -> None:
     """Reserved pentestuser-<8hex>@pablo.health also bypasses (parity check)."""
-    patch_settings.return_value = _dev_settings()
+    patch_settings.return_value = _dev_settings(allow_test_identity_signup=True)
     result = check_allowlist(
         CheckAllowlistRequest(email="pentestuser-cafebabe@pablo.health"),
         _make_request(),
@@ -302,6 +302,36 @@ def test_check_allowlist_pentestuser_prefix_bypasses(
     assert result.allowed is True
     patch_allowlist_repo.assert_not_called()
     patch_db_session.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "email",
+    ["e2etest-deadbeef@pablo.health", "pentestuser-cafebabe@pablo.health"],
+)
+def test_check_allowlist_test_identity_signup_is_shut_by_default(
+    patch_settings: MagicMock,
+    patch_allowlist_repo: MagicMock,
+    patch_db_session: MagicMock,
+    email: str,
+) -> None:
+    """Without the explicit opt-in, a reserved address is just another stranger.
+
+    A project id that merely lacks a -prod suffix (the setup wizard's own
+    default naming) must not be enough to let anyone register a test-shaped
+    address as a clinician.
+    """
+    patch_settings.return_value = _dev_settings(gcp_project_id="pablo-x7k2m9")
+    repo = MagicMock()
+    repo.is_allowed.return_value = False
+    patch_allowlist_repo.return_value = repo
+    session = MagicMock()
+    session.get.return_value = None
+    patch_db_session.return_value = session
+
+    result = check_allowlist(CheckAllowlistRequest(email=email), _make_request())
+
+    assert result.allowed is False
+    repo.is_allowed.assert_called_once()
 
 
 def test_check_allowlist_e2etest_lookalike_does_not_bypass(
@@ -391,7 +421,9 @@ def test_check_allowlist_e2etest_prefix_still_bypasses_in_pentest_project(
     patch_allowlist_repo: MagicMock,
     patch_db_session: MagicMock,
 ) -> None:
-    patch_settings.return_value = _dev_settings(gcp_project_id="pablohealth-pentest")
+    patch_settings.return_value = _dev_settings(
+        gcp_project_id="pablohealth-pentest", allow_test_identity_signup=True
+    )
     result = check_allowlist(
         CheckAllowlistRequest(email="e2etest-deadbeef@pablo.health"),
         _make_request(),

@@ -152,11 +152,16 @@ def check_allowlist(
     if not settings.restrict_signups:
         return CheckAllowlistResponse(allowed=True)
 
-    # Reserved test-identity prefixes bypass the allowlist in non-prod
-    # only — must mirror the same guard in auth/service.py, otherwise
-    # the blocking function would reject the test users before signUp.
+    # Reserved test-identity prefixes may self-register only when the
+    # deployment has opted in AND the project is non-production. The
+    # first-login bypass in auth/service.py stays gated on the project
+    # alone: the pentest job creates its users with the Admin SDK, which
+    # never reaches this check, and still needs to sign in afterwards.
+    # This is the self-signup door, and by default it is shut — otherwise
+    # any project whose id happens not to end in -prod would let a
+    # stranger register a test-shaped address as a clinician.
     email_lower = request.email.lower()
-    if not settings.is_prod_project and (
+    if settings.test_identity_signup_armed and (
         PENTEST_EMAIL_PATTERN.match(email_lower) or E2E_EMAIL_PATTERN.match(email_lower)
     ):
         return CheckAllowlistResponse(allowed=True)
