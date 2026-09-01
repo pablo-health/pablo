@@ -143,6 +143,10 @@ class PublicBookingLinkResponse(BaseModel):
     title: str
     description: str | None
     duration_minutes: int
+    # Cloudflare Turnstile site key, present only when CAPTCHA_PROVIDER is
+    # configured. A site key is public by definition — it is rendered into
+    # the page — so exposing it on the card is not a disclosure.
+    captcha_site_key: str | None = None
 
 
 class CreatePublicBookingRequest(BaseModel):

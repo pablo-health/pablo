@@ -194,7 +194,7 @@ def _get_preauth_limiter() -> RateLimiter:
     return _preauth_limiter
 
 
-def _get_client_ip(request: Request) -> str:
+def get_client_ip(request: Request) -> str:
     """Extract the real client IP from X-Forwarded-For when behind a proxy.
 
     The client controls the *leftmost* X-Forwarded-For entries (it can send
@@ -218,7 +218,7 @@ def _get_client_ip(request: Request) -> str:
 
 def require_rate_limit(request: Request) -> None:
     """FastAPI dependency that enforces rate limiting by client IP."""
-    _get_preauth_limiter().check(_get_client_ip(request))
+    _get_preauth_limiter().check(get_client_ip(request))
 
 
 # Public booking (docs/design/public-booking.md): the anonymous booking
@@ -262,7 +262,7 @@ def _get_public_booking_write_limiter() -> RateLimiter:
 
 def require_public_booking_rate_limit(request: Request) -> None:
     """Browse-surface limit for the public booking endpoints, by client IP."""
-    _get_public_booking_browse_limiter().check(f"public-booking:{_get_client_ip(request)}")
+    _get_public_booking_browse_limiter().check(f"public-booking:{get_client_ip(request)}")
 
 
 def require_public_booking_write_rate_limit(request: Request) -> None:
@@ -272,7 +272,7 @@ def require_public_booking_write_rate_limit(request: Request) -> None:
     create through a link. Applied on top of the browse limit, which
     still provides the burst window.
     """
-    _get_public_booking_write_limiter().check(f"public-booking-write:{_get_client_ip(request)}")
+    _get_public_booking_write_limiter().check(f"public-booking-write:{get_client_ip(request)}")
 
 
 # EHR navigate: per-user daily rate limit (lazily initialized from settings)

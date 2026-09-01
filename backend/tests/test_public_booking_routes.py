@@ -66,6 +66,7 @@ from app.scheduling_engine.services.availability import AvailabilityEngine
 from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 from app.services.audit_service import AuditService
+from app.services.captcha import CaptchaVerifier, NoneCaptchaVerifier, get_captcha_verifier
 from app.services.email_sender import (
     EmailSender,
     InMemoryEmailSender,
@@ -116,6 +117,19 @@ class _FailingEmailSender:
 
     def send(self, message: Any) -> None:
         raise RuntimeError("smtp down")
+
+
+class _FakeCaptchaVerifier:
+    """Records every ``verify`` call; passes only a configured valid token."""
+
+    def __init__(self, *, site_key: str | None = "fake-site-key") -> None:
+        self.site_key = site_key
+        self.calls: list[tuple[str | None, str | None]] = []
+        self.valid_token = "valid-captcha-token"
+
+    def verify(self, token: str | None, remote_ip: str | None) -> bool:
+        self.calls.append((token, remote_ip))
+        return token == self.valid_token
 
 
 def _owner() -> User:
@@ -203,6 +217,7 @@ def _public_app(
     link_repo: InMemoryBookingLinkRepository,
     audit: Any = None,
     email_sender: EmailSender | None = None,
+    captcha_verifier: CaptchaVerifier | None = None,
 ) -> Any:
     """A TestClient over an app that mounts only the public router.
 
@@ -210,13 +225,16 @@ def _public_app(
     to assert on the rows that actually land in a repository. ``email_sender``
     defaults to an ``InMemoryEmailSender`` that can always deliver; pass a
     ``NoneEmailSender`` or a failing double to exercise the refuse-to-arm and
-    cleanup-on-failure paths.
+    cleanup-on-failure paths. ``captcha_verifier`` defaults to a no-op
+    ``NoneCaptchaVerifier``; pass a ``_FakeCaptchaVerifier`` to exercise the
+    verification gate on the booking POST.
     """
     appt_repo = InMemoryAppointmentRepository()
     rule_repo = InMemoryAvailabilityRuleRepository()
     patient_repo = InMemoryPatientRepository()
     fake_audit = audit if audit is not None else _FakeAudit()
     fake_email = email_sender if email_sender is not None else InMemoryEmailSender()
+    fake_captcha = captcha_verifier if captcha_verifier is not None else NoneCaptchaVerifier()
 
     gcal = MagicMock()
     gcal.push_appointment.return_value = None
@@ -239,6 +257,7 @@ def _public_app(
     app.dependency_overrides[get_public_gcal_service] = lambda: gcal
     app.dependency_overrides[get_audit_service] = lambda: fake_audit
     app.dependency_overrides[get_email_sender] = lambda: fake_email
+    app.dependency_overrides[get_captcha_verifier] = lambda: fake_captcha
 
     client = TestClient(app)
     client.rule_repo = rule_repo  # type: ignore[attr-defined]  # test-only stash, keeps fixtures to one object
@@ -247,6 +266,7 @@ def _public_app(
     client.audit = fake_audit  # type: ignore[attr-defined]  # test-only stash
     client.email = fake_email  # type: ignore[attr-defined]  # test-only stash
     client.gcal = gcal  # type: ignore[attr-defined]  # test-only stash
+    client.captcha = fake_captcha  # type: ignore[attr-defined]  # test-only stash
     return client
 
 
@@ -261,6 +281,7 @@ def _book(
     start_at: str,
     email: str = "jane@example.com",
     note: str | None = None,
+    captcha_token: str | None = None,
 ) -> Any:
     payload = {
         "start_at": start_at,
@@ -270,18 +291,23 @@ def _book(
     }
     if note is not None:
         payload["note"] = note
-    return client.post(f"/api/public/booking-links/{slug}/bookings", json=payload)
+    headers = {"X-Captcha-Token": captcha_token} if captcha_token is not None else None
+    return client.post(f"/api/public/booking-links/{slug}/bookings", json=payload, headers=headers)
 
 
 def _hold(
-    client: Any, slug: str, start_at: str, email: str = "jane@example.com"
+    client: Any,
+    slug: str,
+    start_at: str,
+    email: str = "jane@example.com",
+    captcha_token: str | None = None,
 ) -> tuple[Any, str]:
     """Book a slot on a default (born-true) link and return (response, token).
 
     The token is parsed out of the confirmation email the hold sends —
     the same thing a real booker would click through from their inbox.
     """
-    resp = _book(client, slug, start_at, email=email)
+    resp = _book(client, slug, start_at, email=email, captcha_token=captcha_token)
     match = re.search(r"token=(\S+)", client.email.sent[-1].text)
     assert match is not None
     return resp, match.group(1)
@@ -303,6 +329,7 @@ def test_public_link_card_returns_display_fields(
         "title": "Intro call",
         "description": "A get-to-know-you call.",
         "duration_minutes": 30,
+        "captcha_site_key": None,
     }
 
 
@@ -595,6 +622,100 @@ def test_booking_off_slot_time_is_refused(
 
     resp = _book(public_client, "intro-call", f"{date_str}T09:07:00Z")
     assert resp.status_code == 409
+
+
+# -------------------------------------------------------------- public: captcha
+
+
+def test_booking_refuses_missing_captcha_token_when_active(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    captcha = _FakeCaptchaVerifier()
+    client = _public_app(link_repo, captcha_verifier=captcha)
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book(client, "intro-call", f"{date_str}T09:30:00Z")
+
+    assert resp.status_code == 403
+    assert resp.json()["error"]["message"] == "Verification failed. Please refresh and try again."
+    assert list(client.appt_repo._appointments.values()) == []
+    assert client.patient_repo.find_by_email("jane@example.com", OWNER_ID) is None
+
+
+def test_booking_refuses_invalid_captcha_token(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    captcha = _FakeCaptchaVerifier()
+    client = _public_app(link_repo, captcha_verifier=captcha)
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    missing = _book(client, "intro-call", f"{date_str}T09:30:00Z")
+    invalid = _book(
+        client,
+        "intro-call",
+        f"{date_str}T09:30:00Z",
+        captcha_token="wrong-token",  # noqa: S106 — dummy test token
+    )
+
+    assert invalid.status_code == 403
+    assert invalid.json() == missing.json()
+    assert list(client.appt_repo._appointments.values()) == []
+
+
+def test_booking_accepts_valid_captcha_token(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    captcha = _FakeCaptchaVerifier()
+    client = _public_app(link_repo, captcha_verifier=captcha)
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book(client, "intro-call", f"{date_str}T09:30:00Z", captcha_token=captcha.valid_token)
+
+    assert resp.status_code == 201
+    assert client.patient_repo.find_by_email("jane@example.com", OWNER_ID) is not None
+    assert len(captcha.calls) == 1
+    assert captcha.calls[0][0] == captcha.valid_token
+
+
+def test_card_carries_captcha_site_key_when_active(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    captcha = _FakeCaptchaVerifier(site_key="turnstile-site-key")
+    client = _public_app(link_repo, captcha_verifier=captcha)
+    link_repo.create(_link())
+
+    resp = client.get("/api/public/booking-links/intro-call")
+
+    assert resp.json()["captcha_site_key"] == "turnstile-site-key"
+
+
+def test_card_slots_and_confirm_never_call_verify(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    captcha = _FakeCaptchaVerifier()
+    client = _public_app(link_repo, captcha_verifier=captcha)
+    link_repo.create(_link(require_email_confirmation=True))
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    client.get("/api/public/booking-links/intro-call")
+    client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+    _, token = _hold(
+        client, "intro-call", f"{date_str}T09:30:00Z", captcha_token=captcha.valid_token
+    )
+    captcha.calls.clear()  # the hold-creating POST is the write surface; reset before confirm
+    client.post(
+        "/api/public/booking-links/intro-call/confirm",
+        json={"token": token},
+    )
+
+    assert captcha.calls == []
 
 
 # ------------------------------------------------ public: email-confirmation hold

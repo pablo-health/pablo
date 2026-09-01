@@ -792,6 +792,29 @@ class Settings(BaseSettings):
     smtp_password: SecretStr = Field(default=SecretStr(""), description="SMTP auth password")
     smtp_from: str = Field(default="", description="From address for outbound email")
 
+    # CAPTCHA verification for the public booking write surface
+    # (docs/design/public-booking.md). 'none' accepts every request — a
+    # bare deployment behaves exactly as it does today, and no vendor
+    # script is ever requested by the booker's browser.
+    captcha_provider: Literal["none", "turnstile"] = Field(
+        default="none",
+        description=(
+            "CAPTCHA provider for the public booking write surface. "
+            "'none' = no verification, every request passes (default) — a "
+            "bare deployment behaves exactly as it does today. "
+            "'turnstile' = Cloudflare Turnstile; requires turnstile_site_key "
+            "and turnstile_secret_key."
+        ),
+    )
+    turnstile_site_key: str = Field(
+        default="",
+        description="Cloudflare Turnstile site key, rendered into the public booking card.",
+    )
+    turnstile_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Cloudflare Turnstile secret key, used server-side to verify a token.",
+    )
+
     # Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
     # Both project and processor id are optional — leave unset and the
     # client derives them at first use. Set allow_document_ai_ocr=False
