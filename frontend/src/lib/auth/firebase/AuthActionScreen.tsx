@@ -19,6 +19,7 @@ import {
   verifyPasswordResetCode,
 } from "firebase/auth"
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
+import { safeContinuePath } from "@/lib/auth/returnTo"
 import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from "@/components/auth"
 
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
@@ -41,6 +42,13 @@ function AuthActionContent() {
   const [confirmPassword, setConfirmPassword] = useState("")
   const [resetEmail, setResetEmail] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  // Resolved on the client, where the page's own origin is known. The server
+  // render carries the fallback so the two never disagree.
+  const [continueHref, setContinueHref] = useState("/login")
+
+  useEffect(() => {
+    setContinueHref(safeContinuePath(continueUrl, window.location.origin))
+  }, [continueUrl])
 
   useEffect(() => {
     if (!oobCode || !mode) {
@@ -190,7 +198,8 @@ function AuthActionContent() {
             {message}
           </AuthFeedback>
           <a
-            href={continueUrl || "/login"}
+            href={continueHref}
+            rel="noopener noreferrer"
             className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
           >
             Continue to Sign In
