@@ -79,11 +79,31 @@ export function useAuthMutation<TData, TVariables = void, TCached = unknown>(
       : invalidateKeys
   }
 
-  const invalidate = (variables: TVariables, data?: TData) => {
-    for (const key of resolveKeys(variables, data)) {
-      queryClient.invalidateQueries({ queryKey: key })
-    }
-  }
+  const invalidate = (variables: TVariables, data?: TData) =>
+    Promise.all(
+      resolveKeys(variables, data).map((key) => queryClient.invalidateQueries({ queryKey: key })),
+    )
+
+  /**
+   * Stop any fetch already in flight for the keys this mutation is about to
+   * write and invalidate.
+   *
+   * A list request issued BEFORE the mutation carries a response that predates
+   * its result. Left running, it lands afterwards and overwrites what onSuccess
+   * just wrote — and because the query is still fetching, the invalidation
+   * below is deduped against that outstanding request rather than starting a
+   * fresh one. The mutation's result is then simply absent until something else
+   * refetches, and nothing does: staleTime is 60s and refetchOnWindowFocus is
+   * off, so there is no second chance.
+   *
+   * The optimistic path has always cancelled in onMutate for exactly this
+   * reason. This gives the non-optimistic path — which hand-writes the cache in
+   * onSuccess — the same protection.
+   */
+  const cancelInFlight = (variables: TVariables, data?: TData) =>
+    Promise.all(
+      resolveKeys(variables, data).map((key) => queryClient.cancelQueries({ queryKey: key })),
+    )
 
   return useMutation<
     TData,
@@ -116,9 +136,10 @@ export function useAuthMutation<TData, TVariables = void, TCached = unknown>(
         }
       : undefined,
 
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
+      if (!options.optimistic) await cancelInFlight(variables, data)
       options.onSuccess?.(data, variables, queryClient)
-      if (!options.optimistic) invalidate(variables, data)
+      if (!options.optimistic) await invalidate(variables, data)
     },
 
     onSettled: options.optimistic
