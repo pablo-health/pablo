@@ -211,6 +211,20 @@ class Settings(BaseSettings):
             "allowlist."
         ),
     )
+    allow_test_identity_signup: bool = Field(
+        default=False,
+        description=(
+            "Let the reserved test-identity addresses "
+            "(pentestuser-<hex>@ and e2etest-<hex>@pablo.health) register "
+            "themselves through the beforeCreate allowlist check. Off by "
+            "default: the weekly pentest creates its users with the Admin SDK "
+            "and never needs it, so a deployment that leaves this off cannot "
+            "have a stranger register a test-shaped address just because the "
+            "project id lacks a -prod suffix. Only honored on a non-production "
+            "project (see is_prod_project); a hosted dev environment that runs "
+            "browser e2e against fresh users sets it explicitly."
+        ),
+    )
 
     # API Settings
     api_title: str = Field(
@@ -1275,6 +1289,17 @@ class Settings(BaseSettings):
         if self.gcp_project_id:
             return bool(_PROD_PROJECT_PATTERN.search(self.gcp_project_id))
         return self.environment == "production"
+
+    @property
+    def test_identity_signup_armed(self) -> bool:
+        """True when a reserved test-identity address may self-register.
+
+        Requires the explicit opt-in AND a non-production project, so the
+        default deployment is disarmed no matter what the project is
+        called. Consumed by the beforeCreate allowlist check and by the
+        startup posture log.
+        """
+        return self.allow_test_identity_signup and not self.is_prod_project
 
     @property
     def effective_firebase_project_id(self) -> str:
