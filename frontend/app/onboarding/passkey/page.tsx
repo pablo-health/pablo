@@ -22,12 +22,12 @@ import { redirect } from "next/navigation"
 import { getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
 import { getOnboardingSurface } from "@/lib/onboarding/surface"
+import { IS_DEV_MODE } from "@/lib/devMode"
 import { OnboardingStepShell } from "@/components/onboarding/OnboardingStepShell"
 import { OnboardingPasskeyForm } from "@/components/onboarding/OnboardingPasskeyForm"
 
 export const dynamic = "force-dynamic"
 
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
 const PASSKEYS_ENABLED = process.env.PASSKEYS_ENABLED === "true"
 
 export default async function OnboardingPasskeyPage() {

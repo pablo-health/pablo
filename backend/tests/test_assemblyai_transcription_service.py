@@ -578,6 +578,47 @@ class TestCheckJobStatus:
             AssemblyAiTranscriptionService.check_job_status("api-key-1", "missing-id")
 
 
+# --- delete_transcript -------------------------------------------------------
+
+
+class TestDeleteTranscript:
+    def test_deletes_transcript(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_delete(url: str, *, headers: dict[str, str], timeout: float) -> httpx.Response:
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["timeout"] = timeout
+            return httpx.Response(
+                200, json={"status": "deleted"}, request=httpx.Request("DELETE", url)
+            )
+
+        monkeypatch.setattr(httpx, "delete", fake_delete)
+
+        AssemblyAiTranscriptionService.delete_transcript("api-key-1", "transcript-1")
+
+        assert captured["url"] == "https://api.assemblyai.com/v2/transcript/transcript-1"
+        assert captured["headers"]["Authorization"] == "api-key-1"
+        assert captured["timeout"] == 30
+
+    def test_already_deleted_is_tolerated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_delete(url: str, *, headers: dict[str, str], timeout: float) -> httpx.Response:
+            return httpx.Response(404, request=httpx.Request("DELETE", url))
+
+        monkeypatch.setattr(httpx, "delete", fake_delete)
+
+        AssemblyAiTranscriptionService.delete_transcript("api-key-1", "missing-id")
+
+    def test_other_http_error_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_delete(url: str, *, headers: dict[str, str], timeout: float) -> httpx.Response:
+            return httpx.Response(500, request=httpx.Request("DELETE", url))
+
+        monkeypatch.setattr(httpx, "delete", fake_delete)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            AssemblyAiTranscriptionService.delete_transcript("api-key-1", "transcript-1")
+
+
 # --- process_completed_jobs / merge utilities -------------------------------
 
 

@@ -23,7 +23,6 @@ import {
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
-import { mockSessionListResponse, mockSessionResponses } from "@/lib/mockData"
 import { useAuthMutation } from "./useAuthQuery"
 
 // Query hooks — mock-aware, so they use raw useQuery instead of useAuthQuery.
@@ -38,8 +37,13 @@ export function useSessionList(
 
   return useQuery({
     queryKey: queryKeys.sessions.list(),
-    queryFn: () =>
-      isMock ? Promise.resolve(mockSessionListResponse) : listSessions(token),
+    queryFn: async () => {
+      if (isMock) {
+        const { mockSessionListResponse } = await import("@/lib/mockData")
+        return mockSessionListResponse
+      }
+      return listSessions(token)
+    },
     staleTime: isMock ? Infinity : 60 * 1000,
     enabled: (options?.enabled ?? true) && (isMock || !loading),
     ...options,
@@ -118,12 +122,12 @@ export function useSession(
 
   return useQuery({
     queryKey: queryKeys.sessions.detail(sessionId),
-    queryFn: () => {
+    queryFn: async () => {
       if (isMock) {
+        const { mockSessionResponses } = await import("@/lib/mockData")
         const session = mockSessionResponses.find((s) => s.id === sessionId)
-        if (!session)
-          return Promise.reject(new Error(`Session ${sessionId} not found`))
-        return Promise.resolve(session)
+        if (!session) throw new Error(`Session ${sessionId} not found`)
+        return session
       }
       return getSession(sessionId, token)
     },

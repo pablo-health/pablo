@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { NextResponse } from 'next/server'
+import { IS_DEV_MODE } from '@/lib/devMode'
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
@@ -9,8 +10,8 @@ export async function GET() {
   // to prevent exposing internal configuration to unauthenticated users
   return NextResponse.json({
     apiUrl: process.env.API_URL || 'http://localhost:8000',
-    devMode: IS_PRODUCTION ? false : process.env.DEV_MODE === 'true',
-    dataMode: IS_PRODUCTION ? 'api' : (process.env.DATA_MODE || 'mock'),
+    devMode: IS_DEV_MODE,
+    dataMode: IS_PRODUCTION ? 'api' : (process.env.DATA_MODE || 'api'),
     enableLocalAuth: IS_PRODUCTION ? false : process.env.ENABLE_LOCAL_AUTH === 'true',
     pabloEdition: process.env.PABLO_EDITION || 'core',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',

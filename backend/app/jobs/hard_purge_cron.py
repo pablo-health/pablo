@@ -227,6 +227,24 @@ def _delete_audio_blobs(objects: list[str]) -> None:
         storage.delete(bucket=bucket, object_name=object_name)
 
 
+def _delete_speech_sibling_blobs(objects: list[str]) -> None:
+    """Delete staged speech-derivative siblings of the given audio objects.
+
+    ``assemblyai_submit`` stages a speech-only copy of each channel next to
+    its source object, named ``"<object>.speech.<ext>"``. The transcription
+    poller deletes its own copy once the job completes, but this sweeps
+    whatever that path missed — a session that never finished polling, for
+    instance — by listing each object's prefix rather than relying on a
+    name that is never recorded on the row.
+    """
+    if not objects:
+        return
+    storage, bucket = _resolve_audio_storage()
+    for object_name in objects:
+        for sibling in storage.list_names(bucket=bucket, prefix=f"{object_name}.speech."):
+            storage.delete(bucket=bucket, object_name=sibling)
+
+
 def _document_objects_for_patient(conn: Any, schema: str, patient_id: str) -> list[str]:
     """Return GCS object names for the patient's uploaded documents.
 
@@ -353,6 +371,7 @@ def run(argv: list[str] | None = None) -> int:
                     _append_purge_audit(conn, schema_name, patient_id)
                     audio_objects = _audio_objects_for_patient(conn, schema_name, patient_id)
                     _delete_audio_blobs(audio_objects)
+                    _delete_speech_sibling_blobs(audio_objects)
                     document_objects = _document_objects_for_patient(conn, schema_name, patient_id)
                     _delete_document_blobs(document_objects)
                     _delete_clinical_rows(conn, schema_name, patient_id)

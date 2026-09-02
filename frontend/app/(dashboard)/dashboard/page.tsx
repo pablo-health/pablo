@@ -3,6 +3,7 @@
 import { mockUser } from "@/lib/mockData"
 import { getServerSession } from "@/lib/auth/server"
 import { getCachedUserStatus } from "@/lib/api/users.server"
+import { IS_DEV_MODE } from "@/lib/devMode"
 import { CompliancePanel } from "@/components/compliance/CompliancePanel"
 import { AwaitingReviewPanel } from "@/components/dashboard/AwaitingReviewPanel"
 import { DashboardBanners } from "@/components/dashboard/DashboardBanners"
@@ -11,11 +12,6 @@ import { DashboardHomeSlot } from "@/components/dashboard/DashboardHomeSlot"
 import { OperationalPanels } from "@/components/dashboard/OperationalPanels"
 import { TodayPanel } from "@/components/dashboard/TodayPanel"
 import { WeekPanel } from "@/components/dashboard/WeekPanel"
-
-// Gated on NODE_ENV so DEV_MODE can never bypass auth in a production
-// build (see app/(dashboard)/layout.tsx for the rationale).
-const IS_DEV_MODE =
-  process.env.DEV_MODE === "true" && process.env.NODE_ENV !== "production"
 
 export default async function DashboardPage() {
   let user

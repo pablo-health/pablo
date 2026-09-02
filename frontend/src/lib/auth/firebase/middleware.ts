@@ -12,8 +12,7 @@ import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
 import { assertHttpsOrigin, generateNonce, NONCE_HEADER, requestHeadersWithNonce } from "@/lib/auth/csp"
-
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
+import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...extraPublicPaths()]
 

@@ -20,8 +20,7 @@ import { auth } from "./config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
 import { assertHttpsOrigin, generateNonce, requestHeadersWithNonce } from "@/lib/auth/csp"
-
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
+import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = [
   "/login",
