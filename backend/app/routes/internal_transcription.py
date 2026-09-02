@@ -770,7 +770,7 @@ def transcription_poll(
     transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
 
     try:
-        return process_transcription_result(
+        result = process_transcription_result(
             session_id=request.session_id,
             user_id=request.user_id,
             transcript_content=transcript,
@@ -792,3 +792,23 @@ def transcription_poll(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="SOAP generation failed after transcription",
         ) from None
+
+    _delete_completed_jobs(api_key, jobs)
+    return result
+
+
+def _delete_completed_jobs(api_key: str, jobs: list[dict]) -> None:
+    """Delete each job's transcript now that its utterances are merged in.
+
+    Best-effort: the session already has the merged transcript by this
+    point, so a delete failure here doesn't affect the session -- it just
+    leaves that job's transcript in AssemblyAI-side storage a bit longer.
+    """
+    for job in jobs:
+        transcript_id = job["transcript_id"]
+        try:
+            AssemblyAiTranscriptionService.delete_transcript(api_key, transcript_id)
+        except httpx.HTTPError:
+            logger.warning(
+                "Transcription poll: could not delete AssemblyAI transcript %s", transcript_id
+            )

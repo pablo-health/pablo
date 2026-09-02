@@ -433,6 +433,23 @@ class AssemblyAiTranscriptionService:
         return ("processing", None)
 
     @staticmethod
+    def delete_transcript(api_key: str, transcript_id: str) -> None:
+        """Delete a transcript from AssemblyAI (synchronous).
+
+        Called once a job's utterances are merged into the session, so the
+        submitted audio and transcript text don't sit in AssemblyAI-side
+        storage past that point. A transcript that's already gone (e.g. a
+        retried delete) is not an error; any other non-2xx is raised.
+        """
+        import httpx as httpx_sync
+
+        url = f"{ASSEMBLYAI_API_BASE}/transcript/{transcript_id}"
+        response = httpx_sync.delete(url, headers={"Authorization": api_key}, timeout=30)
+        if response.status_code == httpx_sync.codes.NOT_FOUND:
+            return
+        response.raise_for_status()
+
+    @staticmethod
     def parse_result(job_meta: _JsonDict, result: _JsonDict) -> list[_JsonDict]:
         """Turn one job's AssemblyAI result into utterances on the original timeline.
 

@@ -333,6 +333,75 @@ class TestTranscriptionPoll:
         assert mock_process.call_args.kwargs["transcript_format"] == "google_meet"
         assert "Therapist: hi" in mock_process.call_args.kwargs["transcript_content"]
 
+    def test_completion_deletes_the_transcript_after_the_merge_hands_off(self) -> None:
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(
+                it.AssemblyAiTranscriptionService,
+                "check_job_status",
+                return_value=("completed", {"text": "hi", "words": []}),
+            ),
+            patch.object(
+                it,
+                "process_transcription_result",
+                return_value={"id": "s1", "status": "processing", "message": "ok"},
+            ) as mock_process,
+            patch.object(it.AssemblyAiTranscriptionService, "delete_transcript") as mock_delete,
+        ):
+            it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        mock_process.assert_called_once()
+        mock_delete.assert_called_once_with("key", "t1")
+
+    def test_delete_failure_is_logged_and_does_not_fail_the_poll(self) -> None:
+        session_row = types.SimpleNamespace(
+            transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            status="transcribing",
+            error=None,
+        )
+        cm, _db = _fake_session_db(session_row)
+
+        with (
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=cm),
+            patch.object(it, "get_settings", return_value=_poll_settings()),
+            patch.object(
+                it.AssemblyAiTranscriptionService,
+                "check_job_status",
+                return_value=("completed", {"text": "hi", "words": []}),
+            ),
+            patch.object(
+                it,
+                "process_transcription_result",
+                return_value={"id": "s1", "status": "processing", "message": "ok"},
+            ),
+            patch.object(
+                it.AssemblyAiTranscriptionService,
+                "delete_transcript",
+                side_effect=httpx.HTTPStatusError(
+                    "boom", request=MagicMock(), response=MagicMock(status_code=500)
+                ),
+            ),
+        ):
+            result = it.transcription_poll(
+                it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
+                _invoker=None,
+            )
+
+        assert result["status"] == "processing"
+
     def test_incomplete_persists_progress_and_reenqueues_with_delay(self) -> None:
         """Fetch-once: a completed job's utterances are persisted so later
         cycles only poll the pending job, and the next cycle is scheduled
