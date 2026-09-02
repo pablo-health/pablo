@@ -31,7 +31,6 @@ function AuthActionContent() {
   const mode = searchParams.get("mode") as ActionMode | null
   const oobCode = searchParams.get("oobCode")
   const continueUrl = searchParams.get("continueUrl")
-  const apiKey = searchParams.get("apiKey")
 
   const [status, setStatus] = useState<Status>("loading")
   const [message, setMessage] = useState("")
@@ -60,14 +59,13 @@ function AuthActionContent() {
     const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || ""
     const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID || ""
     initFirebase({
-      apiKey: apiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
+      apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
       authDomain,
       projectId,
       appId,
     })
 
     handleAction(mode, oobCode)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, oobCode])
 
   async function handleAction(actionMode: ActionMode, code: string) {
