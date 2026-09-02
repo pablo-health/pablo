@@ -34,3 +34,39 @@ export function safeReturnTo(value: string | null | undefined): string {
   }
   return value
 }
+
+/**
+ * Where the email-action page sends the user once the action succeeds.
+ *
+ * Firebase's action emails carry a `continueUrl` that the app itself set when
+ * it asked for the email (an absolute URL on our own origin, such as
+ * `https://app.example/mfa-enrollment`). But the page is reachable straight
+ * from a link, so the parameter is attacker-writable: a crafted reset or
+ * verification link would otherwise put a Pablo-branded "Continue" button in
+ * front of a login page on someone else's domain, right after the user has
+ * proven they own the account.
+ *
+ * Accepted: a bare same-origin path, or an absolute http(s) URL whose origin
+ * matches `origin`. Either way only the path, query and hash are returned, so
+ * the link can never leave the site. Everything else, including the
+ * protocol-relative `//host` form and non-http schemes, falls back.
+ */
+export function safeContinuePath(
+  value: string | null | undefined,
+  origin: string,
+  fallback = "/login",
+): string {
+  if (!value) return fallback
+  if (value.startsWith("/")) {
+    return value.startsWith("//") ? fallback : value
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return fallback
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return fallback
+  if (parsed.origin !== origin) return fallback
+  return `${parsed.pathname}${parsed.search}${parsed.hash}`
+}
