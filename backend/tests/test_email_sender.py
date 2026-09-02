@@ -10,6 +10,7 @@ network, no real socket.
 from __future__ import annotations
 
 import logging
+import ssl
 from typing import Any
 
 import pytest
@@ -36,10 +37,12 @@ class _FakeSmtp:
 
     def __init__(self, *, fail_on: str | None = None) -> None:
         self.calls: list[str] = []
+        self.starttls_context: ssl.SSLContext | None = None
         self._fail_on = fail_on
 
-    def starttls(self) -> None:
+    def starttls(self, context: ssl.SSLContext | None = None) -> None:
         self.calls.append("starttls")
+        self.starttls_context = context
         if self._fail_on == "starttls":
             raise ConnectionError("starttls failed")
 
@@ -57,14 +60,19 @@ class _FakeSmtp:
         self.calls.append("quit")
 
 
-def _smtp_sender(*, fake: _FakeSmtp) -> SmtpEmailSender:
+def _smtp_sender(*, fake: _FakeSmtp, factory_timeouts: list[int] | None = None) -> SmtpEmailSender:
+    def factory(timeout: int) -> _FakeSmtp:
+        if factory_timeouts is not None:
+            factory_timeouts.append(timeout)
+        return fake
+
     return SmtpEmailSender(
         host="smtp.example.com",
         port=587,
         username="user",
         password="secret",  # noqa: S106 — dummy test credential
         from_addr="notifications@example.com",
-        client_factory=lambda: fake,
+        client_factory=factory,
     )
 
 
@@ -115,6 +123,18 @@ class TestSmtpEmailSender:
 
     def test_can_deliver(self) -> None:
         assert _smtp_sender(fake=_FakeSmtp()).can_deliver is True
+
+    def test_starttls_verifies_the_server_certificate(self) -> None:
+        fake = _FakeSmtp()
+        _smtp_sender(fake=fake).send(_MESSAGE)
+        assert fake.starttls_context is not None
+        assert fake.starttls_context.verify_mode == ssl.CERT_REQUIRED
+
+    def test_connects_with_a_bounded_timeout(self) -> None:
+        fake = _FakeSmtp()
+        factory_timeouts: list[int] = []
+        _smtp_sender(fake=fake, factory_timeouts=factory_timeouts).send(_MESSAGE)
+        assert factory_timeouts == [15]
 
 
 class TestInMemoryEmailSender:

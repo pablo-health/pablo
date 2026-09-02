@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import TYPE_CHECKING, Any, Protocol
@@ -98,6 +99,12 @@ class NoneEmailSender:
 class SmtpEmailSender:
     """SMTP backend with STARTTLS.
 
+    The connection is bounded by a fifteen-second timeout so a stalled
+    provider can't hang the caller indefinitely, and STARTTLS negotiates
+    with the platform's default certificate store — the same verification
+    a browser applies — rather than accepting whatever certificate the
+    server happens to present.
+
     ``client_factory`` is a test seam, mirroring the pattern in
     ``file_storage.py`` — production connects a real ``smtplib.SMTP``
     lazily so importing this module never opens a socket.
@@ -113,7 +120,7 @@ class SmtpEmailSender:
         username: str,
         password: str,
         from_addr: str,
-        client_factory: Callable[[], Any] | None = None,
+        client_factory: Callable[[int], Any] | None = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -124,8 +131,8 @@ class SmtpEmailSender:
 
     def _client(self) -> Any:
         if self._client_factory is not None:
-            return self._client_factory()
-        return smtplib.SMTP(self._host, self._port)
+            return self._client_factory(15)
+        return smtplib.SMTP(self._host, self._port, timeout=15)
 
     def send(self, message: OutboundEmail) -> None:
         email_message = EmailMessage()
@@ -136,7 +143,7 @@ class SmtpEmailSender:
 
         server = self._client()
         try:
-            server.starttls()
+            server.starttls(context=ssl.create_default_context())
             server.login(self._username, self._password)
             server.send_message(email_message)
         except Exception:
