@@ -125,7 +125,7 @@ const nextConfig: NextConfig = {
         // helper (/__/auth/handler, /__/auth/iframe) — but those two paths
         // are mirrored verbatim from <project>.firebaseapp.com and must stay
         // otherwise untouched, so this rule sends HSTS alone.
-        source: "/((?!__/auth/(handler|iframe)).*)",
+        source: "/((?!__/auth/(?:handler|iframe)).*)",
         headers: [
           {
             key: "Strict-Transport-Security",
