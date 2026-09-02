@@ -189,6 +189,10 @@ class FileStorageProvider(ABC):
     def delete(self, *, bucket: str, object_name: str) -> None:
         """Delete an object; already-gone is a success."""
 
+    @abstractmethod
+    def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        """Return every object name in ``bucket`` starting with ``prefix``."""
+
 
 class GcsFileStorage(FileStorageProvider):
     """Google Cloud Storage backend.
@@ -313,6 +317,11 @@ class GcsFileStorage(FileStorageProvider):
         from .signed_upload import delete_blob
 
         delete_blob(client=self._client(), bucket=bucket, object_name=object_name)
+
+    def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        from .signed_upload import list_blob_names
+
+        return list_blob_names(client=self._client(), bucket=bucket, prefix=prefix)
 
 
 class S3FileStorage(FileStorageProvider):
@@ -456,6 +465,14 @@ class S3FileStorage(FileStorageProvider):
         # returns 204, matching the GCS backend's swallow-NotFound behavior.
         self._client().delete_object(Bucket=bucket, Key=object_name)
 
+    def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        client = self._client()
+        names: list[str] = []
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            names.extend(obj["Key"] for obj in page.get("Contents", []))
+        return names
+
 
 class LocalFileStorage(FileStorageProvider):
     """Local-filesystem backend (self-hosted deployments; e.g. an EFS mount).
@@ -544,6 +561,19 @@ class LocalFileStorage(FileStorageProvider):
 
     def delete(self, *, bucket: str, object_name: str) -> None:
         (Path(bucket) / object_name).unlink(missing_ok=True)
+
+    def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        base = Path(bucket)
+        prefix_path = base / prefix
+        parent = prefix_path.parent
+        if not parent.is_dir():
+            return []
+        stem = prefix_path.name
+        return [
+            str((parent / entry.name).relative_to(base))
+            for entry in parent.iterdir()
+            if entry.is_file() and entry.name.startswith(stem)
+        ]
 
 
 def file_storage_from_settings(settings: Settings) -> FileStorageProvider:

@@ -143,6 +143,45 @@ def test_delete_audio_blobs_propagates_errors() -> None:
         hard_purge_cron._delete_audio_blobs(["obj.wav"])
 
 
+def test_delete_speech_sibling_blobs_noop_when_empty() -> None:
+    with patch("app.jobs.hard_purge_cron._resolve_audio_storage") as resolver:
+        hard_purge_cron._delete_speech_sibling_blobs([])
+        resolver.assert_not_called()
+
+
+def test_delete_speech_sibling_blobs_lists_by_prefix_and_deletes_matches() -> None:
+    storage = MagicMock()
+    storage.list_names.side_effect = [
+        ["obj-a.wav.speech.wav"],
+        [],
+    ]
+    with patch(
+        "app.jobs.hard_purge_cron._resolve_audio_storage",
+        return_value=(storage, "audio-bucket"),
+    ):
+        hard_purge_cron._delete_speech_sibling_blobs(["obj-a.wav", "obj-b.wav"])
+    assert storage.list_names.call_args_list == [
+        call(bucket="audio-bucket", prefix="obj-a.wav.speech."),
+        call(bucket="audio-bucket", prefix="obj-b.wav.speech."),
+    ]
+    storage.delete.assert_called_once_with(
+        bucket="audio-bucket", object_name="obj-a.wav.speech.wav"
+    )
+
+
+def test_delete_speech_sibling_blobs_propagates_errors() -> None:
+    storage = MagicMock()
+    storage.list_names.side_effect = RuntimeError("storage timeout")
+    with (
+        patch(
+            "app.jobs.hard_purge_cron._resolve_audio_storage",
+            return_value=(storage, "audio-bucket"),
+        ),
+        pytest.raises(RuntimeError, match="storage timeout"),
+    ):
+        hard_purge_cron._delete_speech_sibling_blobs(["obj.wav"])
+
+
 # ─── PABLO-1w0: chat-row + document-blob cleanup on hard purge ─────────────
 
 
@@ -287,6 +326,9 @@ class _RecordingStorage:
 
     def delete(self, *, bucket: str, object_name: str) -> None:
         self._events.append(f"blob_delete:{self._label}:{object_name}")
+
+    def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        return []
 
 
 def test_hard_purge_cron_deletes_blobs_before_referencing_rows() -> None:

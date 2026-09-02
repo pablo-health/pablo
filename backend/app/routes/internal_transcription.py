@@ -382,6 +382,37 @@ def transcription_complete(
         ) from None
 
 
+def _delete_staged_speech_objects(audio_gcs_path: str | None, session_id: str) -> None:
+    """Delete the per-channel staged speech-only object once polling is done.
+
+    ``assemblyai_submit`` stages a speech-only copy of each channel next to
+    its source object, named ``"<object>.speech.<ext>"`` — the extension
+    follows the sniffed audio container and isn't recorded anywhere, so this
+    lists by prefix rather than guessing it. Best-effort: a failure here
+    leaves the object for ``hard_purge_cron``'s sibling sweep to catch later,
+    so it only logs a warning instead of failing the poll.
+    """
+    if not audio_gcs_path or "," not in audio_gcs_path:
+        return
+    settings = get_settings()
+    bucket = settings.transcription_audio_bucket
+    storage = file_storage_from_settings(settings)
+    parts = [part.strip() for part in audio_gcs_path.split(",", 1)]
+    for part_index, object_name in enumerate(parts):
+        if not object_name:
+            continue
+        try:
+            for sibling in storage.list_names(bucket=bucket, prefix=f"{object_name}.speech."):
+                storage.delete(bucket=bucket, object_name=sibling)
+        except Exception:
+            logger.warning(
+                "transcription-poll: failed to delete staged speech object session=%s part=%d",
+                session_id,
+                part_index,
+                exc_info=True,
+            )
+
+
 def _find_segment(metadata: dict[str, Any], segment_index: int) -> dict[str, Any] | None:
     """Look up one segment's manifest entry by index."""
     segments: list[dict[str, Any]] = metadata.get("segments") or []
@@ -701,6 +732,7 @@ def transcription_poll(
                 detail=f"Session {request.session_id} not found",
             )
 
+        audio_gcs_path = session_row.audio_gcs_path
         job_metadata = session_row.transcription_job_metadata
         if not job_metadata or not job_metadata.get("jobs"):
             raise HTTPException(
@@ -768,6 +800,7 @@ def transcription_poll(
         db.commit()
 
     transcript = AssemblyAiTranscriptionService.merge_utterances(jobs)
+    _delete_staged_speech_objects(audio_gcs_path, request.session_id)
 
     try:
         return process_transcription_result(

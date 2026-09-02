@@ -11,7 +11,7 @@ mocked — no HTTP client, no tenant fixtures.
 from __future__ import annotations
 
 import types
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 from app.routes import internal_transcription as it
@@ -305,6 +305,7 @@ class TestTranscriptionPoll:
         """
         session_row = types.SimpleNamespace(
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
             error=None,
         )
@@ -324,6 +325,7 @@ class TestTranscriptionPoll:
                 "process_transcription_result",
                 return_value={"id": "s1", "status": "processing", "message": "ok"},
             ) as mock_process,
+            patch.object(it, "_delete_staged_speech_objects") as mock_cleanup,
         ):
             it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
@@ -332,6 +334,7 @@ class TestTranscriptionPoll:
 
         assert mock_process.call_args.kwargs["transcript_format"] == "google_meet"
         assert "Therapist: hi" in mock_process.call_args.kwargs["transcript_content"]
+        mock_cleanup.assert_called_once_with("audio/s1/therapist.pcm,audio/s1/client.pcm", "s1")
 
     def test_incomplete_persists_progress_and_reenqueues_with_delay(self) -> None:
         """Fetch-once: a completed job's utterances are persisted so later
@@ -345,6 +348,7 @@ class TestTranscriptionPoll:
                     {"transcript_id": "t2", "speaker": "Client", "original_offset": 0.0},
                 ],
             },
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -398,6 +402,7 @@ class TestTranscriptionPoll:
                 ],
                 "poll_cycles": 1,
             },
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -430,6 +435,7 @@ class TestTranscriptionPoll:
                 "jobs": [dict(_JOB)],
                 "poll_cycles": it._MAX_POLL_CYCLES - 1,
             },
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -465,6 +471,7 @@ class TestTranscriptionPoll:
         """
         session_row = types.SimpleNamespace(
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -506,6 +513,7 @@ class TestTranscriptionPoll:
         """Same tolerance as the 5xx case, for a network-level timeout."""
         session_row = types.SimpleNamespace(
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -560,6 +568,7 @@ class TestTranscriptionPoll:
                 "segments": [{"index": 0, "offset_seconds": 0.0, "therapist": "a", "client": "b"}],
                 "jobs": [completed_job],
             },
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -602,6 +611,7 @@ class TestTranscriptionPoll:
                 ],
                 "jobs": [completed_job],
             },
+            audio_gcs_path=None,
             status="transcribing",
             error=None,
         )
@@ -652,6 +662,7 @@ class TestTranscriptionPoll:
                 ],
                 "jobs": [job_segment_1, job_segment_0],
             },
+            audio_gcs_path="audio/s1/base-therapist.pcm,audio/s1/base-client.pcm",
             status="transcribing",
             error=None,
         )
@@ -676,6 +687,7 @@ class TestTranscriptionPoll:
                 "process_transcription_result",
                 return_value={"id": "s1", "status": "processing", "message": "ok"},
             ) as mock_process,
+            patch.object(it, "_delete_staged_speech_objects"),
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
@@ -685,3 +697,51 @@ class TestTranscriptionPoll:
         assert result["status"] == "processing"
         transcript = mock_process.call_args.kwargs["transcript_content"]
         assert transcript.index("earlier") < transcript.index("later")
+
+
+class TestDeleteStagedSpeechObjects:
+    def test_deletes_the_staged_sibling_for_each_channel(self) -> None:
+        fake_storage = MagicMock()
+        fake_storage.list_names.side_effect = [
+            ["audio/s1/therapist.pcm.speech.wav"],
+            ["audio/s1/client.pcm.speech.aac"],
+        ]
+        settings = types.SimpleNamespace(transcription_audio_bucket="bucket")
+
+        with (
+            patch.object(it, "get_settings", return_value=settings),
+            patch.object(it, "file_storage_from_settings", return_value=fake_storage),
+        ):
+            it._delete_staged_speech_objects("audio/s1/therapist.pcm,audio/s1/client.pcm", "s1")
+
+        assert fake_storage.list_names.call_args_list == [
+            call(bucket="bucket", prefix="audio/s1/therapist.pcm.speech."),
+            call(bucket="bucket", prefix="audio/s1/client.pcm.speech."),
+        ]
+        assert fake_storage.delete.call_args_list == [
+            call(bucket="bucket", object_name="audio/s1/therapist.pcm.speech.wav"),
+            call(bucket="bucket", object_name="audio/s1/client.pcm.speech.aac"),
+        ]
+
+    def test_noop_when_path_missing_or_single_object(self) -> None:
+        with patch.object(it, "file_storage_from_settings") as resolver:
+            it._delete_staged_speech_objects(None, "s1")
+            it._delete_staged_speech_objects("audio/s1/only.pcm", "s1")
+        resolver.assert_not_called()
+
+    def test_storage_failure_is_logged_without_the_object_name_and_does_not_raise(self) -> None:
+        fake_storage = MagicMock()
+        fake_storage.list_names.side_effect = RuntimeError("storage timeout")
+        settings = types.SimpleNamespace(transcription_audio_bucket="bucket")
+
+        with (
+            patch.object(it, "get_settings", return_value=settings),
+            patch.object(it, "file_storage_from_settings", return_value=fake_storage),
+            patch.object(it, "logger") as mock_logger,
+        ):
+            it._delete_staged_speech_objects("audio/s1/therapist.pcm,audio/s1/client.pcm", "s1")
+
+        logged = " | ".join(str(c) for c in mock_logger.warning.call_args_list)
+        assert "audio/s1/therapist.pcm" not in logged
+        assert "audio/s1/client.pcm" not in logged
+        assert mock_logger.warning.call_count == 2
