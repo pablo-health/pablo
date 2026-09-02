@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-"""Tenant-wide PHI export — streams a tar.gz of every clinical row in the tenant.
+"""Tenant-wide PHI export — a tar.gz of records visible to this admin under row-level security.
 
 Drives :func:`backend.app.routes.admin.tenant_export` (POST
 /api/admin/tenant-export). Used by:
@@ -16,10 +16,13 @@ Design notes:
   that never seeks). A custom :class:`_PipeWriter` collects ``write``
   calls into a queue; the route's StreamingResponse drains the queue.
   The full archive is never materialized in memory.
-* **Schema-scoped, not user-scoped.** All queries hit the request's
-  schema directly (no per-user filter). The tenant is identified by
-  the session's ``search_path``; cross-tenant isolation is the
-  middleware's job.
+* **Records visible to this admin under row-level security.** Queries
+  run through the request's session, so each table's export reflects
+  whatever that session's row-level security policy allows through —
+  not necessarily every row in the schema. The manifest and the audit
+  row record what actually shipped (``visible_count``) rather than
+  asserting a schema-wide total; a full-schema total isn't computed
+  here.
 * **PHI-free audit.** The completion audit log records counts and
   ``size_bytes`` only — never row contents.
 * **Audio is out of scope (v1).** ``include_audio`` requests are
@@ -72,12 +75,24 @@ class TenantExportSummary:
     """Result emitted after the archive stream completes.
 
     ``size_bytes`` is the on-the-wire archive size (post-gzip).
-    ``counts`` maps each row type to the number of rows shipped.
-    Both fields are PHI-free and safe for the audit log payload.
+    ``counts`` maps each row type to the number of rows actually
+    shipped — the rows visible to the exporting session, not a
+    schema-wide total. Both fields are PHI-free and safe for the
+    audit log payload.
     """
 
     size_bytes: int
     counts: dict[str, int]
+
+
+def visible_counts_payload(counts: dict[str, int]) -> dict[str, dict[str, int | None]]:
+    """Shape per-table counts for the manifest and the audit payload.
+
+    Each table reports ``visible_count`` (rows this session could see
+    and wrote) alongside ``total_count: null`` — the row total isn't
+    computed, so we don't imply completeness by omission.
+    """
+    return {table: {"visible_count": count, "total_count": None} for table, count in counts.items()}
 
 
 @dataclass
@@ -256,7 +271,8 @@ def stream_tenant_archive(
             "exported_at": exported_at,
             "format": export_format,
             "include_audio": False,
-            "counts": counts,
+            "partial_possible": True,
+            "counts": visible_counts_payload(counts),
         }
         manifest_bytes = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
         info = tarfile.TarInfo(name="manifest.json")
