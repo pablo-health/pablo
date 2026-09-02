@@ -12,9 +12,8 @@
 
 import { redirect } from "next/navigation"
 import { getServerSession } from "@/lib/auth/server"
+import { IS_DEV_MODE } from "@/lib/devMode"
 import { MFAEnrollmentForm } from "./MFAEnrollmentForm"
-
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
 export default async function MFAEnrollmentPage() {
   // In dev mode, skip MFA entirely

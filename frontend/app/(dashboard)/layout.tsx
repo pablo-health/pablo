@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/api/client"
 import { getBAAStatus } from "@/lib/api/users"
 import { getCachedUserStatus } from "@/lib/api/users.server"
 import { getServerSession } from "@/lib/auth/server"
+import { IS_DEV_MODE } from "@/lib/devMode"
 import { getOnboardingSurface } from "@/lib/onboarding/surface"
 import { firstIncompleteRequiredStep } from "@/lib/onboarding/types"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
@@ -17,12 +18,6 @@ import { errorCode } from "@/lib/errors/errorCode"
 
 export const dynamic = "force-dynamic"
 
-// DEV_MODE bypasses auth and renders with a mock user. Gate it on
-// NODE_ENV too so a stray DEV_MODE=true on a production revision can
-// never disable the auth/MFA/BAA gate — the bypass branch is dead code
-// in a production build.
-const IS_DEV_MODE =
-  process.env.DEV_MODE === "true" && process.env.NODE_ENV !== "production"
 const IS_OSS_EDITION = (process.env.PABLO_EDITION || "core") === "core"
 
 export default async function DashboardLayout({
