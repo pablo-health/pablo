@@ -31,6 +31,7 @@ import {
   CredentialBlock,
 } from "@/components/auth"
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher"
+import { errorCode } from "@/lib/errors/errorCode"
 
 function getUrlParam(name: string): string {
   if (typeof window === "undefined") return ""
@@ -129,7 +130,7 @@ export function FirebaseLoginScreen() {
         // Token expired or invalid — user types email manually. Logged so
         // backend exchange failures (e.g. the tenant-isolation trigger fires
         // on /api/auth/exchange-setup-token) surface in the user's console.
-        console.error("exchange-setup-token failed:", err)
+        console.error("exchange-setup-token failed:", errorCode(err))
       })
   }, [])
 

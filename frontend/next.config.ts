@@ -5,6 +5,14 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   // Suppress X-Powered-By: Next.js — version disclosure aids fingerprinting.
   poweredByHeader: false,
+  // Strip console.log/debug/warn from production bundles, but keep
+  // console.error — those calls carry the failure signal support needs
+  // when a user reports a broken page.
+  compiler: {
+    removeConsole: {
+      exclude: ["error"],
+    },
+  },
   // Standalone output for Docker/Cloud Run deployments
   // This creates a minimal production build with only necessary files
   output: "standalone",

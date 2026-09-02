@@ -13,6 +13,7 @@ import { firstIncompleteRequiredStep } from "@/lib/onboarding/types"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
+import { errorCode } from "@/lib/errors/errorCode"
 
 export const dynamic = "force-dynamic"
 
@@ -81,7 +82,7 @@ export default async function DashboardLayout({
       }
     } catch (error) {
       if (error && typeof error === "object" && "digest" in error) throw error
-      console.error("Failed to check user status — blocking access:", error)
+      console.error("Failed to check user status — blocking access:", errorCode(error))
       // A dead session (backend idle timeout / revoked token) must land on
       // /login carrying a reason: the auth cookie is still cryptographically
       // valid at this point (an RSC redirect can't clear it), and without
@@ -110,7 +111,7 @@ export default async function DashboardLayout({
         }
       } catch (error) {
         if (error && typeof error === "object" && "digest" in error) throw error
-        console.error("Failed to check BAA status — blocking access:", error)
+        console.error("Failed to check BAA status — blocking access:", errorCode(error))
         redirect("/baa-acceptance")
       }
     }

@@ -32,6 +32,7 @@ import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { AuthFeedback, AuthInput, AuthPrimaryButton } from "@/components/auth"
 import type { MfaEnrollmentFormProps } from "@/lib/auth/types"
 import { safeReturnTo } from "@/lib/auth/returnTo"
+import { errorCode } from "@/lib/errors/errorCode"
 
 export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollmentFormProps = {}) {
   const router = useRouter()
@@ -83,7 +84,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
         setTotpSecret(secret)
       } catch (err) {
         const errCode = (err as { code?: string }).code
-        console.error("MFA secret generation error:", errCode)
+        console.error("MFA secret generation error:", errorCode(err))
         if (errCode === "auth/maximum-second-factor-count-exceeded") {
           // Already has max factors — sync backend and redirect
           const currentUser = auth.currentUser
@@ -143,7 +144,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
       setTotpSecret(secret)
     } catch (err) {
       const errCode = (err as { code?: string }).code
-      console.error("Reauthentication/MFA error:", errCode)
+      console.error("Reauthentication/MFA error:", errorCode(err))
       if (
         errCode === "auth/popup-closed-by-user" ||
         errCode === "auth/cancelled-popup-request"
@@ -248,7 +249,7 @@ export function FirebaseMfaEnrollmentForm({ returnTo: returnToProp }: MfaEnrollm
                   setVerificationEmailSent(true)
                   setError("")
                 } catch (err) {
-                  console.error("sendEmailVerification failed:", err)
+                  console.error("sendEmailVerification failed:", errorCode(err))
                   const outcome = firebaseAuthErrorOutcome(err, "verify-email")
                   if (outcome.kind === "message") setError(outcome.message)
                 }
