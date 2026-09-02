@@ -369,3 +369,19 @@ jobs:
       - name: Test
         if: steps.classify.outputs.substantive != 'false'
         run: npm run test -- --run
+
+      # The same command Dockerfile.production runs, with the same
+      # placeholder key (the real one is injected at runtime on Cloud Run).
+      # Until this step existed, `next build` ran for the first time in
+      # release.yml, AFTER merge — so a config or module-graph error left
+      # main red and the image unbuildable rather than failing the PR that
+      # introduced it. That is exactly how #868 shipped a route source Next
+      # refuses to parse, and four more merges landed on top before anyone
+      # looked at the release run. tsc/lint/vitest cannot cover this: none of
+      # them evaluate next.config.ts or resolve the graph the way the build
+      # does.
+      - name: Build
+        if: steps.classify.outputs.substantive != 'false'
+        run: npm run build
+        env:
+          AUTH_COOKIE_SIGNATURE_KEY: build-time-placeholder-replaced-at-runtime
