@@ -339,6 +339,7 @@ class TestTranscriptionPoll:
     def test_completion_deletes_the_transcript_after_the_merge_hands_off(self) -> None:
         session_row = types.SimpleNamespace(
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
             error=None,
         )
@@ -359,6 +360,7 @@ class TestTranscriptionPoll:
                 return_value={"id": "s1", "status": "processing", "message": "ok"},
             ) as mock_process,
             patch.object(it.AssemblyAiTranscriptionService, "delete_transcript") as mock_delete,
+            patch.object(it, "_delete_staged_speech_objects"),
         ):
             it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
@@ -371,6 +373,7 @@ class TestTranscriptionPoll:
     def test_delete_failure_is_logged_and_does_not_fail_the_poll(self) -> None:
         session_row = types.SimpleNamespace(
             transcription_job_metadata={"provider": "assemblyai", "jobs": [dict(_JOB)]},
+            audio_gcs_path="audio/s1/therapist.pcm,audio/s1/client.pcm",
             status="transcribing",
             error=None,
         )
@@ -397,6 +400,7 @@ class TestTranscriptionPoll:
                     "boom", request=MagicMock(), response=MagicMock(status_code=500)
                 ),
             ),
+            patch.object(it, "_delete_staged_speech_objects"),
         ):
             result = it.transcription_poll(
                 it.TranscriptionPollRequest(session_id="s1", user_id="u1"),
