@@ -21,13 +21,10 @@ import {
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
 import { safeContinuePath } from "@/lib/auth/returnTo"
 import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from "@/components/auth"
+import { errorCode } from "@/lib/errors/errorCode"
 
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
 type Status = "loading" | "success" | "error" | "reset-form"
-
-function errorCode(err: unknown): string {
-  return (err as { code?: string })?.code || "unknown"
-}
 
 function AuthActionContent() {
   const searchParams = useSearchParams()
@@ -83,7 +80,7 @@ function AuthActionContent() {
           setStatus("success")
           setMessage("Your email has been verified.")
         } catch (err) {
-          console.error("verifyEmail action failed:", err)
+          console.error("verifyEmail action failed:", errorCode(err))
           setStatus("error")
           setMessage(
             `This verification link has expired or already been used (${errorCode(err)}).`
@@ -97,7 +94,7 @@ function AuthActionContent() {
           setResetEmail(email)
           setStatus("reset-form")
         } catch (err) {
-          console.error("resetPassword action failed:", err)
+          console.error("resetPassword action failed:", errorCode(err))
           setStatus("error")
           setMessage(
             `This password reset link has expired or already been used (${errorCode(err)}).`
@@ -114,7 +111,7 @@ function AuthActionContent() {
             `Your email has been reverted to ${info.data.email}. If you didn't request this change, consider resetting your password.`
           )
         } catch (err) {
-          console.error("recoverEmail action failed:", err)
+          console.error("recoverEmail action failed:", errorCode(err))
           setStatus("error")
           setMessage(
             `This email recovery link has expired or already been used (${errorCode(err)}).`
@@ -130,7 +127,7 @@ function AuthActionContent() {
             "Two-factor authentication has been removed from your account. If you didn't request this, secure your account immediately."
           )
         } catch (err) {
-          console.error("revertSecondFactorAddition action failed:", err)
+          console.error("revertSecondFactorAddition action failed:", errorCode(err))
           setStatus("error")
           setMessage(`This link has expired or already been used (${errorCode(err)}).`)
         }
@@ -162,7 +159,7 @@ function AuthActionContent() {
       setStatus("success")
       setMessage("Your password has been reset.")
     } catch (err) {
-      console.error("confirmPasswordReset failed:", err)
+      console.error("confirmPasswordReset failed:", errorCode(err))
       setStatus("error")
       setMessage(`Failed to reset password. The link may have expired (${errorCode(err)}).`)
     } finally {

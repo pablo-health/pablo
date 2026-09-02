@@ -23,6 +23,7 @@ import { useAuth } from "@/lib/auth-context"
 import { useConfig } from "@/lib/config"
 import { Loader2, RefreshCw } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
+import { errorCode } from "@/lib/errors/errorCode"
 
 function toEditorialView(raw: string | undefined): EditorialView | undefined {
   if (raw === "timeGridDay") return "day"
@@ -84,7 +85,7 @@ export default function CalendarPage() {
     getICalSyncStatus()
       .then((s) => setSyncStatus(s.connections))
       .catch((err) => {
-        console.error("getICalSyncStatus failed:", err)
+        console.error("getICalSyncStatus failed:", errorCode(err))
       })
   }, [authLoading])
 

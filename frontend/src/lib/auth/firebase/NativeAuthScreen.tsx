@@ -20,6 +20,7 @@ import {
   CredentialBlock,
 } from "@/components/auth"
 import { completionPathAfterHandoff } from "./nativeAuthCompletion"
+import { errorCode as httpErrorCode } from "@/lib/errors/errorCode"
 
 const ALLOWED_SCHEMES = ["pablohealth", "therapyrecorder"]
 
@@ -76,7 +77,7 @@ export function FirebaseNativeAuthScreen() {
 
         if (!res.ok) {
           const data = await res.json().catch((err) => {
-            console.error("authorize response was not JSON:", err)
+            console.error("authorize response was not JSON:", httpErrorCode(err))
             return null
           })
           const errorCode = data?.detail?.error?.code ?? data?.error?.code
