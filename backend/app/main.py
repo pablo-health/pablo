@@ -63,7 +63,7 @@ from .routes import (
     supervision,
     users,
 )
-from .settings import get_settings
+from .settings import get_settings, log_startup_posture
 from .version_check import get_min_versions, get_server_version
 
 configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -91,6 +91,8 @@ if settings.test_identity_signup_armed:
     )
 else:
     logger.info("Test-identity self-signup is disarmed.")
+
+log_startup_posture(settings, logger)
 
 
 @asynccontextmanager
