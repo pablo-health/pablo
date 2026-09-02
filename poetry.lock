@@ -1321,6 +1321,25 @@ testing = ["aiohttp (>=3.8.0,<4.0.0) ; python_version < \"3.14\"", "aiohttp (>=3
 urllib3 = ["packaging (>=20.0)", "urllib3 (>=1.26.15,<3.0.0)"]
 
 [[package]]
+name = "google-auth-oauthlib"
+version = "1.4.1"
+description = "Google Authentication Library"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "google_auth_oauthlib-1.4.1-py3-none-any.whl", hash = "sha256:a1be43ec69fe563ac9b2c4d6fc4334b323b21cbdc59a638b5fa34dd4d5a2a348"},
+    {file = "google_auth_oauthlib-1.4.1.tar.gz", hash = "sha256:1a83f5f2a8421dedadaa3caf25b3a710dddf85a33a63144be41c2fc79174b106"},
+]
+
+[package.dependencies]
+google-auth = ">=2.15.0,<2.43.0 || >2.43.0,<2.44.0 || >2.44.0,<2.45.0 || >2.45.0,<3.0.0"
+requests-oauthlib = ">=0.7.0"
+
+[package.extras]
+tool = ["click (>=6.0.0)"]
+
+[[package]]
 name = "google-cloud-appengine-logging"
 version = "1.9.0"
 description = "Google Cloud Appengine Logging API client library"
@@ -3093,6 +3112,23 @@ files = [
 ]
 
 [[package]]
+name = "oauthlib"
+version = "3.3.1"
+description = "A generic, spec-compliant, thorough implementation of the OAuth request-signing logic"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1"},
+    {file = "oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9"},
+]
+
+[package.extras]
+rsa = ["cryptography (>=3.0.0)"]
+signals = ["blinker (>=1.4.0)"]
+signedtoken = ["cryptography (>=3.0.0)", "pyjwt (>=2.0.0,<3)"]
+
+[[package]]
 name = "onnxruntime"
 version = "1.29.0"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
@@ -4317,6 +4353,25 @@ test = ["PySocks (>=1.5.6,!=1.5.7)", "pytest (>=3)", "pytest-cov", "pytest-httpb
 use-chardet-on-py3 = ["chardet (>=3.0.2,<8)"]
 
 [[package]]
+name = "requests-oauthlib"
+version = "2.0.0"
+description = "OAuthlib authentication support for Requests."
+optional = false
+python-versions = ">=3.4"
+groups = ["main"]
+files = [
+    {file = "requests-oauthlib-2.0.0.tar.gz", hash = "sha256:b3dffaebd884d8cd778494369603a9e7b58d29111bf6b41bdc2dcd87203af4e9"},
+    {file = "requests_oauthlib-2.0.0-py2.py3-none-any.whl", hash = "sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36"},
+]
+
+[package.dependencies]
+oauthlib = ">=3.0.0"
+requests = ">=2.0.0"
+
+[package.extras]
+rsa = ["oauthlib[signedtoken] (>=3.0.0)"]
+
+[[package]]
 name = "rpds-py"
 version = "0.30.0"
 description = "Python bindings to Rust's persistent data structures (rpds)"
@@ -5480,4 +5535,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.15"
-content-hash = "91e20baa5e5d1e8485deedca6b40db4ad31b18aadb5dc2c88ff8456f0a7ade17"
+content-hash = "30b3363d5e56c3fed96fc798e19f607e273e6b0518b5fb0333b363af9774f75c"

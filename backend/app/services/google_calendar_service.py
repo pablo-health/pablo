@@ -240,7 +240,7 @@ def _build_flow(
     scopes: Sequence[str],
 ) -> Any:
     """Lazily import and construct a google_auth_oauthlib Flow."""
-    from google_auth_oauthlib.flow import Flow  # type: ignore[import-not-found]
+    from google_auth_oauthlib.flow import Flow
 
     return Flow.from_client_config(
         {

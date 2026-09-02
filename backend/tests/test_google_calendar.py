@@ -20,7 +20,7 @@ from app.calendar_providers.capabilities import CalendarWriteTarget
 from app.calendar_providers.oauth_state import OAuthStateError, mint_state, verify_state
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
-from app.services.google_calendar_service import GoogleCalendarService
+from app.services.google_calendar_service import GoogleCalendarService, _build_flow
 from app.services.reminder_service import ReminderService
 from app.services.token_encryption import (
     TokenEncryptionError,
@@ -962,3 +962,29 @@ class TestReminderService:
         assert result["24h_sent"] == 0
         assert result["1h_sent"] == 0
         appointment_repo.update.assert_not_called()
+
+
+class TestBuildFlowIsReachable:
+    """`_build_flow` imports google_auth_oauthlib lazily, at call time.
+
+    Every other test in the suite patches `_build_flow`, so nothing
+    exercised that import — and a lazy import of an undeclared dependency
+    fails nowhere until a therapist clicks Connect, which is how it reached
+    a deployment as a 500 on /api/google-calendar/authorize
+    (`ModuleNotFoundError: No module named 'google_auth_oauthlib'`).
+
+    This calls the real thing. No network: `authorization_url` builds the
+    consent URL locally from the client config.
+    """
+
+    def test_builds_a_consent_url_without_the_import_failing(self) -> None:
+        flow = _build_flow(
+            "cid.apps.googleusercontent.com",
+            "client-secret",
+            "https://app.example.test/dashboard/calendar",
+            ["https://www.googleapis.com/auth/calendar.events"],
+        )
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+
+        assert auth_url.startswith("https://accounts.google.com/o/oauth2/auth")
+        assert "dashboard%2Fcalendar" in auth_url
