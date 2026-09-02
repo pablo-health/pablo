@@ -76,6 +76,10 @@ class _FakeGcsClient:
     def bucket(self, name: str) -> _FakeBucket:
         return self._buckets.setdefault(name, _FakeBucket(name))
 
+    def list_blobs(self, bucket_name: str, prefix: str = "") -> list[_FakeBlob]:
+        bucket = self.bucket(bucket_name)
+        return [blob for name, blob in bucket._blobs.items() if name.startswith(prefix)]
+
 
 @pytest.fixture
 def fake_gcs() -> _FakeGcsClient:
@@ -143,6 +147,19 @@ class TestGcsFileStorage:
         blob = fake_gcs.bucket("b").blob("t/lic.pdf")
         assert blob.download_as_bytes() == b"pdf"
         assert blob.content_type == "application/pdf"
+
+    def test_list_names_filters_by_prefix(
+        self, gcs_storage: GcsFileStorage, fake_gcs: _FakeGcsClient
+    ) -> None:
+        fake_gcs.bucket("b").blob("obj.speech.wav").upload_from_string(
+            b"x", content_type="audio/wav"
+        )
+        fake_gcs.bucket("b").blob("obj.speech.aac").upload_from_string(
+            b"y", content_type="audio/aac"
+        )
+        fake_gcs.bucket("b").blob("other.wav").upload_from_string(b"z", content_type="audio/wav")
+        names = gcs_storage.list_names(bucket="b", prefix="obj.speech.")
+        assert sorted(names) == ["obj.speech.aac", "obj.speech.wav"]
 
 
 # ---- S3 ---------------------------------------------------------------
@@ -245,6 +262,22 @@ class TestS3FileStorage:
             Bucket="b", Key="t/lic.pdf", Body=b"pdf", ContentType="application/pdf"
         )
 
+    def test_list_names_paginates_and_extracts_keys(self) -> None:
+        client = MagicMock()
+        paginator = MagicMock()
+        paginator.paginate.return_value = [
+            {"Contents": [{"Key": "a.speech.wav"}, {"Key": "a.speech.aac"}]},
+            {"Contents": []},
+        ]
+        client.get_paginator.return_value = paginator
+        storage = S3FileStorage(client_factory=lambda: client)
+        assert storage.list_names(bucket="b", prefix="a.speech.") == [
+            "a.speech.wav",
+            "a.speech.aac",
+        ]
+        client.get_paginator.assert_called_once_with("list_objects_v2")
+        paginator.paginate.assert_called_once_with(Bucket="b", Prefix="a.speech.")
+
 
 # ---- local filesystem ---------------------------------------------------
 
@@ -279,6 +312,25 @@ class TestLocalFileStorage:
             )
         with pytest.raises(NotImplementedError):
             storage.make_download_url(bucket="/x", object_name="k", ttl_seconds=1)
+
+    def test_list_names_filters_siblings_by_prefix(self, tmp_path: Any) -> None:
+        storage = LocalFileStorage()
+        base = str(tmp_path)
+        storage.upload_bytes(
+            bucket=base, object_name="audio/obj.speech.wav", data=b"x", content_type="audio/wav"
+        )
+        storage.upload_bytes(
+            bucket=base, object_name="audio/obj.speech.aac", data=b"y", content_type="audio/aac"
+        )
+        storage.upload_bytes(
+            bucket=base, object_name="audio/other.wav", data=b"z", content_type="audio/wav"
+        )
+        names = storage.list_names(bucket=base, prefix="audio/obj.speech.")
+        assert sorted(names) == ["audio/obj.speech.aac", "audio/obj.speech.wav"]
+
+    def test_list_names_missing_dir_returns_empty(self, tmp_path: Any) -> None:
+        storage = LocalFileStorage()
+        assert storage.list_names(bucket=str(tmp_path), prefix="nope/obj.speech.") == []
 
 
 # ---- settings factory ---------------------------------------------------
