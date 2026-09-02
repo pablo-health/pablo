@@ -75,11 +75,11 @@ const CONSENT_OPTIONS: GoogleCalendarConsentOptions = {
   busy_default: true,
 }
 
-function renderWizard() {
+function renderWizard(props: React.ComponentProps<typeof CalendarSetupWizard> = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <CalendarSetupWizard />
+      <CalendarSetupWizard {...props} />
     </QueryClientProvider>
   )
 }
@@ -504,5 +504,78 @@ describe("CalendarSetupWizard returning from Google", () => {
     expect(window.sessionStorage.getItem("pablo.calendar-import.pending")).toBeNull()
     // Never mistaken for a fresh connect.
     expect(completeConnect).not.toHaveBeenCalled()
+  })
+})
+
+describe("CalendarSetupWizard hosted on another page", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.sessionStorage.clear()
+    searchParams.delete("code")
+    searchParams.delete("state")
+    getStatus.mockResolvedValue(DISCONNECTED)
+    getConsentOptions.mockResolvedValue(CONSENT_OPTIONS)
+    getAuthUrl.mockResolvedValue({ auth_url: "https://accounts.google.com/o/oauth2/auth?x=1" })
+    getBusyWindows.mockResolvedValue({ windows: [] })
+    Object.defineProperty(window, "location", {
+      value: { origin: "https://app.example.test", assign: vi.fn() },
+      writable: true,
+    })
+  })
+
+  it("sends Google back to the page it is mounted on", async () => {
+    const user = userEvent.setup()
+    renderWizard({ returnPath: "/dashboard/calendar" })
+
+    await user.click(await screen.findByRole("button", { name: /connect google calendar/i }))
+
+    await waitFor(() => expect(getAuthUrl).toHaveBeenCalled())
+    expect(getAuthUrl.mock.calls[0][0]).toBe("https://app.example.test/dashboard/calendar")
+  })
+
+  it("exchanges the code against that page and scrubs it from there", async () => {
+    completeConnect.mockResolvedValue({ status: "connected" })
+    searchParams.set("code", "auth-code")
+    searchParams.set("state", "state-from-google")
+
+    renderWizard({ returnPath: "/dashboard/calendar" })
+
+    await waitFor(() => expect(completeConnect).toHaveBeenCalled())
+    expect(completeConnect.mock.calls[0][2]).toBe("https://app.example.test/dashboard/calendar")
+    await waitFor(() => expect(routerReplace).toHaveBeenCalledWith("/dashboard/calendar"))
+    expect(routerReplace).not.toHaveBeenCalledWith("/dashboard/settings/calendar")
+  })
+
+  it("hands 'Finish later' to the host instead of leaving for Settings", async () => {
+    const onFinishLater = vi.fn()
+    const user = userEvent.setup()
+    renderWizard({ onFinishLater })
+
+    await user.click(await screen.findByRole("button", { name: /finish later/i }))
+
+    expect(onFinishLater).toHaveBeenCalled()
+    expect(routerPush).not.toHaveBeenCalled()
+  })
+
+  it("hands skipping the week to the host instead of leaving for Settings", async () => {
+    getStatus.mockResolvedValue(CONNECTED)
+    const onDone = vi.fn()
+    const user = userEvent.setup()
+    renderWizard({ onDone })
+    await goToClientsStep(user)
+
+    await user.click(screen.getByRole("button", { name: /skip, i.ll add them myself/i }))
+
+    expect(onDone).toHaveBeenCalled()
+    expect(routerPush).not.toHaveBeenCalled()
+  })
+
+  it("still leaves for Settings when nobody is hosting it", async () => {
+    const user = userEvent.setup()
+    renderWizard()
+
+    await user.click(await screen.findByRole("button", { name: /finish later/i }))
+
+    expect(routerPush).toHaveBeenCalledWith("/dashboard/settings")
   })
 })

@@ -126,7 +126,29 @@ function busyWindowRange(): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() }
 }
 
-export function CalendarSetupWizard() {
+/** The full-page home of the wizard, and where it sends the browser back to
+ * after Google unless a host says otherwise. */
+export const CALENDAR_SETUP_PATH = "/dashboard/settings/calendar"
+
+interface CalendarSetupWizardProps {
+  /** The route this wizard is mounted on. Google sends the browser back
+   * here after consent, and the one-time code is scrubbed from here
+   * afterwards — so it has to be a route the wizard actually renders on,
+   * and one registered on the OAuth client. Defaults to the Settings page. */
+  returnPath?: string
+  /** "Finish later". Defaults to leaving for Settings. */
+  onFinishLater?: () => void
+  /** The wizard has run its course — last step continued, the week skipped,
+   * or the import confirmed. Defaults to leaving for Settings (or the
+   * Calendar, after an import). */
+  onDone?: () => void
+}
+
+export function CalendarSetupWizard({
+  returnPath = CALENDAR_SETUP_PATH,
+  onFinishLater,
+  onDone,
+}: CalendarSetupWizardProps = {}) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const queryClient = useQueryClient()
@@ -192,8 +214,7 @@ export function CalendarSetupWizard() {
     )
   }, [proposal])
 
-  const redirectUri =
-    typeof window === "undefined" ? "" : `${window.location.origin}/dashboard/settings/calendar`
+  const redirectUri = typeof window === "undefined" ? "" : `${window.location.origin}${returnPath}`
 
   const startConnect = useCallback(async () => {
     setError(null)
@@ -256,7 +277,7 @@ export function CalendarSetupWizard() {
         .finally(() => {
           if (cancelled) return
           setScanning(false)
-          router.replace("/dashboard/settings/calendar")
+          router.replace(returnPath)
         })
       return () => {
         cancelled = true
@@ -279,12 +300,12 @@ export function CalendarSetupWizard() {
         if (cancelled) return
         setConnecting(false)
         // Drop the one-time code so a refresh doesn't try to reuse it.
-        router.replace("/dashboard/settings/calendar")
+        router.replace(returnPath)
       })
     return () => {
       cancelled = true
     }
-  }, [code, state, redirectUri, queryClient, router, runScan])
+  }, [code, state, redirectUri, returnPath, queryClient, router, runScan])
 
   // Changing how events read on an already-connected calendar does not
   // need Google again — it is Pablo's own record of what to write, and
@@ -315,9 +336,22 @@ export function CalendarSetupWizard() {
     }
   }, [queryClient])
 
+  const finishLater = useCallback(() => {
+    if (onFinishLater) onFinishLater()
+    else router.push("/dashboard/settings")
+  }, [onFinishLater, router])
+
   const finishWizard = useCallback(() => {
-    router.push("/dashboard/settings")
-  }, [router])
+    if (onDone) onDone()
+    else router.push("/dashboard/settings")
+  }, [onDone, router])
+
+  // An import just landed clients on the calendar; the natural place to
+  // look next is the calendar itself, not Settings.
+  const finishAfterImport = useCallback(() => {
+    if (onDone) onDone()
+    else router.push("/dashboard/calendar")
+  }, [onDone, router])
 
   const handleToggleSeries = useCallback((candidateKey: string) => {
     setChecked((current) => ({ ...current, [candidateKey]: !current[candidateKey] }))
@@ -360,14 +394,12 @@ export function CalendarSetupWizard() {
       reachable={() => true}
       title="Google Calendar"
       lede="Put the sessions you book in Pablo onto your calendar."
-      onFinishLater={onReviewStep ? undefined : () => router.push("/dashboard/settings")}
+      onFinishLater={onReviewStep ? undefined : finishLater}
       footer={
         onReviewStep ? null : (
           <SetupNav
             onBack={activeIndex > 0 ? () => setActiveIndex(activeIndex - 1) : undefined}
-            onContinue={() =>
-              isLastStep ? router.push("/dashboard/settings") : setActiveIndex(activeIndex + 1)
-            }
+            onContinue={() => (isLastStep ? finishWizard() : setActiveIndex(activeIndex + 1))}
             canContinue={
               activeIndex === CONNECT_INDEX
                 ? true
@@ -427,7 +459,7 @@ export function CalendarSetupWizard() {
           confirming={confirming}
           error={confirmError}
           result={confirmResult}
-          onFinish={() => router.push("/dashboard/calendar")}
+          onFinish={finishAfterImport}
         />
       )}
     </SetupWizardShell>

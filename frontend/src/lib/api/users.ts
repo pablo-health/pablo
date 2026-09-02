@@ -221,6 +221,10 @@ export interface UserPreferences {
   timezone: string
   theme: ThemeId
   calendar_density: "gentle" | "balanced" | "compact"
+  /** Set once the first-visit calendar setup wizard has been finished or
+   * waved away. Optional because a response from before the flag existed
+   * simply lacks it, which reads as "not yet". */
+  calendar_setup_complete?: boolean
 }
 
 export async function getPreferences(

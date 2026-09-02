@@ -81,6 +81,10 @@ class UserPreferences(BaseModel):
     )
     theme: ThemeName = "warm-paper"
     calendar_density: CalendarDensity = "balanced"
+    # Set once the therapist has walked (or waved away) the first-visit
+    # calendar setup wizard, so the Calendar page stops opening on it.
+    # Settings keeps its own way back into the wizard regardless.
+    calendar_setup_complete: bool = False
 
 
 class UpdateThemeRequest(BaseModel):
