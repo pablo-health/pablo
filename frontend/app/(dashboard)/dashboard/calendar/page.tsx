@@ -2,13 +2,15 @@
 
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { AppointmentModal } from "@/components/calendar/AppointmentModal"
+import { CalendarSetupWizard } from "@/components/calendar/connect/CalendarSetupWizard"
 import {
   EditorialCalendar,
   type EditorialView,
 } from "@/components/calendar/editorial"
 import { useTheme } from "@/components/theme/ThemeProvider"
+import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
 import {
@@ -18,6 +20,7 @@ import {
   type ICalSyncResponse,
 } from "@/lib/api/scheduling"
 import { useAuth } from "@/lib/auth-context"
+import { useConfig } from "@/lib/config"
 import { Loader2, RefreshCw } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
 
@@ -32,12 +35,36 @@ function fromEditorialView(v: EditorialView): string {
   return v === "day" ? "timeGridDay" : v === "week" ? "timeGridWeek" : "dayGridMonth"
 }
 
+/** Where Google sends the browser back when the wizard runs on this page. */
+const CALENDAR_PATH = "/dashboard/calendar"
+
 export default function CalendarPage() {
   const { loading: authLoading } = useAuth()
   const { theme } = useTheme()
   const { data: preferences } = usePreferences()
   const { readOnly } = useReadOnlyMode()
   const saveMutation = useSavePreferences()
+  const { googleCalendarEnabled } = useConfig()
+
+  // First visit opens on the setup wizard, in this surface with the nav
+  // still around it — the same shape as a first-run inbox. An empty
+  // calendar is the moment the import is worth the most, and Settings is
+  // only found by people already looking. The gate is the preference
+  // alone, not the connection: connecting happens inside the wizard, and
+  // the round trip back from Google lands here mid-flow, so keying on
+  // "connected" would unmount the wizard at its second step. Someone who
+  // connected from Settings before this existed walks it once, sees
+  // "connected" on the first step, and is done.
+  const setupSettled = !googleCalendarEnabled || preferences !== undefined
+  const showWizard =
+    googleCalendarEnabled && preferences !== undefined && !preferences.calendar_setup_complete
+
+  // Either way out of the wizard — finished or "later" — is an answer;
+  // Settings keeps its own door back in.
+  const markSetupComplete = useCallback(() => {
+    if (!preferences) return
+    saveMutation.mutate({ ...preferences, calendar_setup_complete: true })
+  }, [preferences, saveMutation])
   const lastSavedView = useRef<string | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(false)
   const [selectedAppointment, setSelectedAppointment] = useState<AppointmentResponse | null>(null)
@@ -143,6 +170,31 @@ export default function CalendarPage() {
     (v: EditorialView) => handleViewChange(fromEditorialView(v)),
     [handleViewChange],
   )
+
+  if (!setupSettled) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-3xl font-display font-semibold text-neutral-900">Calendar</h1>
+        <Skeleton className="h-96 w-full" />
+      </div>
+    )
+  }
+
+  if (showWizard) {
+    return (
+      <div className="max-w-3xl">
+        {/* The wizard reads the OAuth code out of the query string, so it
+            needs a boundary to suspend behind. */}
+        <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+          <CalendarSetupWizard
+            returnPath={CALENDAR_PATH}
+            onFinishLater={markSetupComplete}
+            onDone={markSetupComplete}
+          />
+        </Suspense>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
