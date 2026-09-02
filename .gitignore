@@ -70,3 +70,12 @@ docs/pentest/*_pentest_report*.md
 
 # Standalone Epic/MyChart puller output (FHIR JSON exports — may contain PHI)
 epic_export/
+
+# Local GCP/Firebase service-account keys and certs — never commit a real one,
+# but keep any shipped .example template trackable.
+serviceAccountKey.json
+*firebase-adminsdk*.json
+credentials.json
+*.pem
+*.p12
+!*.example
