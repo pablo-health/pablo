@@ -10,6 +10,7 @@ HIPAA Compliance: Manages security settings including TLS enforcement
 and environment-specific configurations for PHI protection.
 """
 
+import logging
 import re
 from functools import lru_cache
 from typing import Literal
@@ -456,6 +457,23 @@ class Settings(BaseSettings):
                     f"oidc_issuer is set but {', '.join(missing)} must also be "
                     "set to enable the OIDC auth backend"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_deployment_posture(self) -> "Settings":
+        """Keep debug mode and MFA bypass scoped to local development.
+
+        ``debug=True`` turns on FastAPI's interactive tracebacks and
+        ``require_mfa=False`` drops the second factor entirely — both are
+        meant for a laptop checkout, never a reachable deployment. Refusing
+        to boot with either set outside ``ENVIRONMENT=development`` catches
+        a stray env var before it becomes the running posture.
+        """
+        if not self.is_development:
+            if self.debug:
+                raise ValueError("DEBUG must not be enabled outside ENVIRONMENT=development")
+            if not self.require_mfa:
+                raise ValueError("REQUIRE_MFA must not be disabled outside ENVIRONMENT=development")
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -1311,6 +1329,28 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached application settings."""
     return Settings()
+
+
+def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
+    """Log a one-line summary of the security-relevant startup posture.
+
+    An operator scanning boot logs should be able to see at a glance
+    whether MFA, the signup allowlist, Redis-backed shared state, DPoP
+    proof enforcement, and the test-identity bypass are on, without
+    grepping for each setting individually. Booleans and a count only —
+    no PHI, no secrets.
+    """
+    cors_origin_count = len([o for o in settings.cors_origins.split(",") if o.strip()])
+    logger.info(
+        "startup posture: mfa=%s restrict_signups=%s use_redis=%s "
+        "test_identity_signup=%s dpop=%s cors_origins=%d",
+        settings.require_mfa,
+        settings.restrict_signups,
+        settings.use_redis,
+        settings.test_identity_signup_armed,
+        settings.enable_dpop_validation,
+        cors_origin_count,
+    )
 
 
 # Global settings instance for backwards compatibility
