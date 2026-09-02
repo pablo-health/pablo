@@ -44,7 +44,24 @@ from app.services.google_calendar_service import (
 from app.services.token_encryption import derive_subkey
 from app.settings import get_settings
 
+# A fixed instant for the SCAN side, where every occurrence is deliberately in
+# the past and is only ever compared against an explicitly passed `now=`.
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
+
+
+def _ahead(days: int) -> datetime:
+    """A start time genuinely in the future, on the real clock.
+
+    The confirm route refuses an occurrence that has already passed, and it
+    reads the wall clock to decide — there is no `now=` to pass it. Anchoring
+    confirm fixtures to NOW instead made them expire: NOW + 3 days went by on
+    2026-09-02 at 12:00 UTC and every confirm test failed from then on, on
+    every branch. Offsets here are from the real clock, so they stay ahead of
+    it.
+    """
+    return datetime.now(UTC) + timedelta(days=days)
+
+
 # A distinctive stand-in for the kind of wording a therapist actually uses.
 # Every "did this leak" assertion looks for exactly this string.
 CLIENT_TITLE = "Zorbulax Quintwhistle weekly"
@@ -848,7 +865,7 @@ def _confirm_item(**overrides: Any) -> dict[str, Any]:
     item = {
         "candidate_key": "key-1",
         "display_name": CLIENT_TITLE,
-        "start_at": (NOW + timedelta(days=3)).isoformat(),
+        "start_at": _ahead(3).isoformat(),
         "duration_minutes": 50,
         "cadence": "weekly",
         "occurrences": 4,
@@ -872,7 +889,7 @@ class TestConfirmRoute:
                     _confirm_item(
                         candidate_key="key-2",
                         display_name="Second client",
-                        start_at=(NOW + timedelta(days=4)).isoformat(),
+                        start_at=_ahead(4).isoformat(),
                     ),
                 ]
             },
@@ -912,7 +929,7 @@ class TestConfirmRoute:
         """The past supplies the pattern. Only what is ahead becomes a record."""
         response = import_client.post(
             "/api/calendar/import/confirm",
-            json={"series": [_confirm_item(start_at=(NOW - timedelta(days=7)).isoformat())]},
+            json={"series": [_confirm_item(start_at=_ahead(-7).isoformat())]},
         )
 
         assert response.status_code == 400, response.text
