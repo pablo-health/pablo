@@ -206,3 +206,13 @@ def delete_blob(
         blob.delete()
     except NotFound:
         return
+
+
+def list_blob_names(
+    *,
+    client: Any,
+    bucket: str,
+    prefix: str,
+) -> list[str]:
+    """Return the names of every object in ``bucket`` starting with ``prefix``."""
+    return [blob.name for blob in client.list_blobs(bucket, prefix=prefix)]

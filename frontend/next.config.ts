@@ -89,6 +89,50 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      {
+        // `/__/auth/action` is rewritten to the local `/auth/action` page
+        // above, not proxied to Firebase, but the route-protection
+        // middleware's matcher excludes the whole `__/` namespace so its
+        // response never passes through `addSecurityHeaders`. Give this one
+        // real page the same set the middleware applies to every other
+        // route, so it isn't the only page served without them.
+        source: "/__/auth/action",
+        headers: [
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains; preload",
+          },
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            key: "Permissions-Policy",
+            value: "geolocation=(), microphone=(), camera=()",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        // HSTS belongs on every response, including the proxied Firebase
+        // helper (/__/auth/handler, /__/auth/iframe) — but those two paths
+        // are mirrored verbatim from <project>.firebaseapp.com and must stay
+        // otherwise untouched, so this rule sends HSTS alone.
+        source: "/((?!__/auth/(handler|iframe)).*)",
+        headers: [
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains; preload",
+          },
+        ],
+      },
     ];
   },
 };

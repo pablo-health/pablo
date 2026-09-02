@@ -27,6 +27,7 @@ from ..services import AuditService, get_audit_service
 from ..services.tenant_export_service import (
     TenantExportState,
     stream_tenant_archive,
+    visible_counts_payload,
 )
 
 logger = logging.getLogger(__name__)
@@ -195,12 +196,14 @@ def tenant_export(
     db: Session = Depends(get_db_session),
     audit: AuditService = Depends(get_audit_service),
 ) -> StreamingResponse:
-    """Stream a tar.gz of every clinical row in the practice schema.
+    """Stream a tar.gz of the records visible to this admin under row-level security.
 
     Practice-admin only. Returns a tar.gz containing one file per
     row-type (patients, therapy_sessions, notes, audit_logs) plus a
-    manifest. Audio export is out of scope in v1; ``include_audio`` is
-    accepted from the client but coerced to False.
+    manifest. Each table's file holds whatever rows this admin's
+    session can see, not a schema-wide total. Audio export is out of
+    scope in v1; ``include_audio`` is accepted from the client but
+    coerced to False.
 
     The TENANT_EXPORTED audit row is emitted from a ``BackgroundTask``
     that Starlette runs after the response body is fully sent. If the
@@ -229,7 +232,8 @@ def tenant_export(
                 "format": body.format,
                 "include_audio": False,
                 "size_bytes": state.summary.size_bytes,
-                "counts": state.summary.counts,
+                "partial_possible": True,
+                "counts": visible_counts_payload(state.summary.counts),
             },
         )
         logger.info(

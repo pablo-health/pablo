@@ -4,7 +4,8 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { getClientAuthProvider } from "@/lib/auth/provider"
+import { useQueryClient } from "@tanstack/react-query"
+import { signOutAndClear } from "@/lib/auth/signOutAndClear"
 import Image from "next/image"
 import { UserCircle, LogOut } from "lucide-react"
 import { ThemeMenu } from "@/components/theme/ThemeMenu"
@@ -19,15 +20,11 @@ interface HeaderProps {
 
 export function Header({ user }: HeaderProps) {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   const handleSignOut = async () => {
-    try {
-      await getClientAuthProvider().signOut()
-    } catch {
-      // Provider not initialized (dev mode) — just redirect.
-    }
-    router.push("/login")
+    await signOutAndClear(queryClient, router, "/login")
   }
 
   return (

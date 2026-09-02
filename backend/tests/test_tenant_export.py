@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
 import tarfile
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -39,6 +40,7 @@ from app.services.tenant_export_service import (
     TenantExportState,
     TenantExportSummary,
     stream_tenant_archive,
+    visible_counts_payload,
 )
 from app.settings import Settings
 from fastapi import FastAPI
@@ -211,11 +213,12 @@ class TestTenantExportHappyPath:
         assert changes["format"] == "json"
         assert changes["include_audio"] is False
         assert changes["size_bytes"] == 64
+        assert changes["partial_possible"] is True
         assert changes["counts"] == {
-            "patients": 3,
-            "therapy_sessions": 5,
-            "notes": 4,
-            "audit_logs": 12,
+            "patients": {"visible_count": 3, "total_count": None},
+            "therapy_sessions": {"visible_count": 5, "total_count": None},
+            "notes": {"visible_count": 4, "total_count": None},
+            "audit_logs": {"visible_count": 12, "total_count": None},
         }
 
     def test_include_audio_request_is_coerced_to_false(
@@ -253,6 +256,48 @@ class TestTenantExportHappyPath:
         entry = captured_audit_entries[0]
         assert entry["changes"]["format"] == "csv"
         assert entry["changes"]["include_audio"] is False
+
+    def test_audit_changes_carry_visible_counts_and_partial_flag(
+        self, client: TestClient, captured_audit_entries: list
+    ) -> None:
+        """The audit payload reports what shipped, not a schema total."""
+
+        def _fake_stream(db, *, export_format, state):  # type: ignore[no-untyped-def]
+            yield b"\x1f\x8b\x08\x00"
+            state.summary = TenantExportSummary(
+                size_bytes=4,
+                counts={
+                    "patients": 3,
+                    "therapy_sessions": 5,
+                    "notes": 4,
+                    "audit_logs": 12,
+                },
+            )
+
+        with (
+            patch(
+                "app.routes.admin.stream_tenant_archive",
+                side_effect=_fake_stream,
+            ),
+            client.stream(
+                "POST",
+                "/api/admin/tenant-export",
+                json={"format": "json"},
+            ) as resp,
+        ):
+            assert resp.status_code == 200
+            for _ in resp.iter_bytes():
+                pass
+
+        changes = captured_audit_entries[0]["changes"]
+        assert changes["partial_possible"] is True
+        assert changes["counts"]["patients"] == {"visible_count": 3, "total_count": None}
+        assert changes["counts"]["therapy_sessions"] == {
+            "visible_count": 5,
+            "total_count": None,
+        }
+        assert changes["counts"]["notes"] == {"visible_count": 4, "total_count": None}
+        assert changes["counts"]["audit_logs"] == {"visible_count": 12, "total_count": None}
 
     def test_audit_skipped_when_stream_aborts(
         self, client: TestClient, captured_audit_entries: list
@@ -324,6 +369,7 @@ class TestTenantExportService:
         # Round-trip through tarfile to confirm the archive is valid.
         with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
             names = sorted(tar.getnames())
+            manifest = json.loads(tar.extractfile("manifest.json").read())
         assert names == sorted(
             [
                 "patients.json",
@@ -345,7 +391,19 @@ class TestTenantExportService:
         # Sanity: the archive really is gzip-decodable.
         gzip.decompress(archive)
 
+        assert manifest["partial_possible"] is True
+        assert manifest["counts"]["patients"] == {"visible_count": 0, "total_count": None}
+        assert manifest["counts"]["audit_logs"] == {"visible_count": 0, "total_count": None}
+
     def test_unknown_format_rejected_at_schema_layer(self) -> None:
         """Pydantic rejects format values outside the literal."""
         with pytest.raises(ValidationError):
             TenantExportRequest(format="xml")  # type: ignore[arg-type]
+
+    def test_visible_counts_payload_reports_no_total(self) -> None:
+        """Each table gets its shipped count; the schema-wide total stays null."""
+        payload = visible_counts_payload({"patients": 3, "notes": 0})
+        assert payload == {
+            "patients": {"visible_count": 3, "total_count": None},
+            "notes": {"visible_count": 0, "total_count": None},
+        }

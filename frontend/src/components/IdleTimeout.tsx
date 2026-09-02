@@ -4,7 +4,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
-import { getClientAuthProvider } from "@/lib/auth/provider"
+import { useQueryClient } from "@tanstack/react-query"
+import { signOutAndClear } from "@/lib/auth/signOutAndClear"
 import { handleTerminalAuthLogout, returnToParam } from "@/lib/api/client"
 import { getSessionStatus, touchSession } from "@/lib/api/session"
 import {
@@ -57,6 +58,7 @@ const THROTTLE_MS = 1000
 
 export function IdleTimeout() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const lastActivityRef = useRef(0)
   const throttleRef = useRef(0)
@@ -80,13 +82,8 @@ export function IdleTimeout() {
   const performLocalSignOut = useCallback(async () => {
     if (signingOutRef.current) return
     signingOutRef.current = true
-    try {
-      await getClientAuthProvider().signOut()
-    } catch {
-      // Provider not initialized (dev mode) — still redirect.
-    }
-    router.push(`/login?reason=idle_timeout${returnToParam()}`)
-  }, [router])
+    await signOutAndClear(queryClient, router, `/login?reason=idle_timeout${returnToParam()}`)
+  }, [router, queryClient])
 
   /**
    * Ask the backend whether this session is still alive. Read-only — the
