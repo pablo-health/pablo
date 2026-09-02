@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import type { Metadata } from "next"
+import { headers } from "next/headers"
 import { DM_Sans, Fraunces } from "next/font/google"
 import "./globals.css"
 import { Providers } from "@/components/providers"
 import { DEFAULT_THEME } from "@/lib/theme"
+import { NONCE_HEADER } from "@/lib/auth/csp"
 
 // Static no-FOUC bootstrap: applies the saved theme (localStorage key
 // "pablo-theme" — must match THEME_STORAGE_KEY) before first paint, falling
@@ -28,15 +30,17 @@ export const metadata: Metadata = {
   description: "HIPAA-compliant therapy session management platform",
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined
+
   return (
     <html lang="en" data-default-theme={DEFAULT_THEME} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className={`${dmSans.variable} ${fraunces.variable} font-sans`}>
         <Providers>{children}</Providers>
