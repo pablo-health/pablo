@@ -2,6 +2,7 @@
 
 import { useId } from "react"
 import type { ReactNode } from "react"
+import { cn } from "@/lib/utils"
 
 interface SettingsCardProps {
   title?: string
@@ -9,6 +10,7 @@ interface SettingsCardProps {
   /** Skip the body padding so the card can hold flush rows edge to edge. */
   flush?: boolean
   children: ReactNode
+  className?: string
 }
 
 /**
@@ -17,13 +19,13 @@ interface SettingsCardProps {
  * Deliberately not the global `.card` utility: that one carries its own padding
  * and a hover lift, both wrong for a static settings panel holding flush rows.
  */
-export function SettingsCard({ title, description, flush, children }: SettingsCardProps) {
+export function SettingsCard({ title, description, flush, children, className }: SettingsCardProps) {
   const titleId = useId()
 
   return (
     <section
       aria-labelledby={title ? titleId : undefined}
-      className="mb-[18px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm"
+      className={cn("mb-[18px] overflow-hidden rounded-2xl border border-border bg-card shadow-sm", className)}
     >
       {title && (
         <div className="px-[22px] pt-[18px]">
@@ -33,7 +35,7 @@ export function SettingsCard({ title, description, flush, children }: SettingsCa
           {description && <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{description}</p>}
         </div>
       )}
-      {flush ? children : <div className={title ? "px-[22px] pb-5 pt-3.5" : "px-[22px] pb-5 pt-2"}>{children}</div>}
+      {flush ? children : <div className={cn("px-[22px] pb-5", title ? "pt-3.5" : "pt-2")}>{children}</div>}
     </section>
   )
 }

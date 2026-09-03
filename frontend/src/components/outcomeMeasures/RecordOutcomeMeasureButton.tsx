@@ -205,8 +205,8 @@ export function RecordOutcomeMeasureButton({
               onClick={() => setMode("items")}
               className={
                 mode === "items"
-                  ? "rounded-md bg-neutral-900 px-3 py-1 font-medium text-white"
-                  : "rounded-md px-3 py-1 text-neutral-600 hover:bg-neutral-100"
+                  ? "rounded-md bg-primary px-3 py-1 font-medium text-primary-foreground"
+                  : "rounded-md px-3 py-1 text-muted-foreground hover:bg-foreground/5"
               }
             >
               Per-item
@@ -216,8 +216,8 @@ export function RecordOutcomeMeasureButton({
               onClick={() => setMode("total")}
               className={
                 mode === "total"
-                  ? "rounded-md bg-neutral-900 px-3 py-1 font-medium text-white"
-                  : "rounded-md px-3 py-1 text-neutral-600 hover:bg-neutral-100"
+                  ? "rounded-md bg-primary px-3 py-1 font-medium text-primary-foreground"
+                  : "rounded-md px-3 py-1 text-muted-foreground hover:bg-foreground/5"
               }
             >
               Known total

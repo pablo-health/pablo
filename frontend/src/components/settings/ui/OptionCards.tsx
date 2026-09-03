@@ -3,6 +3,7 @@
 "use client"
 
 import type { ReactNode } from "react"
+import { cn } from "@/lib/utils"
 
 export interface CardOption<T extends string> {
   value: T
@@ -30,7 +31,7 @@ export function OptionCards<T extends string>({
   const grid = { 2: "sm:grid-cols-2", 3: "sm:grid-cols-3", 4: "sm:grid-cols-2 lg:grid-cols-4" }[columns]
 
   return (
-    <div role="radiogroup" aria-label={label} className={`grid grid-cols-1 gap-2.5 ${grid}`}>
+    <div role="radiogroup" aria-label={label} className={cn("grid grid-cols-1 gap-2.5", grid)}>
       {options.map((option) => {
         const selected = option.value === value
         return (
@@ -40,13 +41,13 @@ export function OptionCards<T extends string>({
             role="radio"
             aria-checked={selected}
             onClick={() => onChange(option.value)}
-            className={[
+            className={cn(
               "rounded-xl border-[1.5px] bg-card px-3.5 py-3 text-left transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
                 ? "border-foreground bg-foreground/[0.03] ring-1 ring-inset ring-foreground"
-                : "border-border hover:border-muted-foreground",
-            ].join(" ")}
+                : "border-border hover:border-muted-foreground"
+            )}
           >
             <span className="block text-[13.5px] font-semibold text-foreground">{option.label}</span>
             <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">{option.hint}</span>

@@ -3,6 +3,7 @@
 "use client"
 
 import type { UserPreferences } from "@/lib/api/users"
+import { cn } from "@/lib/utils"
 
 interface CalendarDensitySettingsProps {
   preferences: UserPreferences
@@ -33,14 +34,17 @@ export function CalendarDensitySettings({ preferences, onSave, isSaving }: Calen
             aria-checked={active}
             disabled={isSaving}
             onClick={() => onSave({ ...preferences, calendar_density: d.value })}
-            className={`rounded-lg border p-3 text-left transition-colors ${
+            className={cn(
+              "rounded-lg border p-3 text-left transition-colors",
               active
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-300 text-neutral-700 hover:bg-neutral-100"
-            }`}
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border text-foreground hover:bg-foreground/5"
+            )}
           >
             <div className="text-sm font-medium">{d.label}</div>
-            <div className={`text-xs ${active ? "text-neutral-300" : "text-neutral-500"}`}>{d.hint}</div>
+            <div className={cn("text-xs", active ? "text-primary-foreground/70" : "text-muted-foreground")}>
+              {d.hint}
+            </div>
           </button>
         )
       })}

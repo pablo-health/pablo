@@ -6,6 +6,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Search } from "lucide-react"
 import { useMemo, useState } from "react"
+import { cn } from "@/lib/utils"
 import { useFeaturePredicate } from "@/lib/featureGates"
 import { settingsGroups } from "./registry"
 
@@ -82,15 +83,15 @@ export function SettingsNav() {
                   key={item.id}
                   href={`${BASE}/${item.id}`}
                   aria-current={isActive ? "page" : undefined}
-                  className={[
+                  className={cn(
                     "flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13.5px] transition-colors",
                     isActive
                       ? "bg-card font-semibold text-foreground shadow-sm ring-1 ring-inset ring-border"
-                      : "font-medium text-muted-foreground hover:bg-foreground/[0.07] hover:text-foreground",
-                  ].join(" ")}
+                      : "font-medium text-muted-foreground hover:bg-foreground/[0.07] hover:text-foreground"
+                  )}
                 >
                   <Icon
-                    className={`h-4 w-4 shrink-0 ${isActive ? "text-primary-600" : "opacity-80"}`}
+                    className={cn("h-4 w-4 shrink-0", isActive ? "text-primary-600" : "opacity-80")}
                     aria-hidden="true"
                   />
                   {item.label}

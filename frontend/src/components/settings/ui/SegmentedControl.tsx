@@ -2,6 +2,8 @@
 
 "use client"
 
+import { cn } from "@/lib/utils"
+
 export interface SegmentedOption<T extends string> {
   value: T
   label: string
@@ -32,11 +34,11 @@ export function SegmentedControl<T extends string>({
             role="radio"
             aria-checked={selected}
             onClick={() => onChange(option.value)}
-            className={[
+            className={cn(
               "rounded-full px-[13px] py-1.5 text-[12.5px] font-semibold transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              selected ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-            ].join(" ")}
+              selected ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            )}
           >
             {option.label}
           </button>

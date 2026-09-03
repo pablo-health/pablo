@@ -3,6 +3,7 @@
 "use client"
 
 import { Check } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 const VISIBLE_MS = 1800
@@ -32,9 +33,10 @@ export function SavedIndicator({ saved }: { saved: boolean }) {
   return (
     <div
       aria-live="polite"
-      className={`flex shrink-0 items-center gap-1.5 text-[12.5px] font-semibold text-secondary-600 transition-opacity duration-300 ${
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 text-[12.5px] font-semibold text-secondary-600 transition-opacity duration-300",
         saved ? "opacity-100" : "opacity-0"
-      }`}
+      )}
     >
       {saved && (
         <>

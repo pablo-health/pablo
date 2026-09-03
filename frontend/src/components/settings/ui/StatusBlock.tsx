@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
+import { cn } from "@/lib/utils"
 
 type Tone = "sage" | "honey" | "sky" | "mute"
 
@@ -24,7 +25,7 @@ interface StatusBlockProps {
 export function StatusBlock({ icon: Icon, tone = "sage", title, description, children }: StatusBlockProps) {
   return (
     <div className="flex items-start gap-3">
-      <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-[10px] ${TONES[tone]}`}>
+      <div className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-[10px]", TONES[tone])}>
         <Icon className="h-[18px] w-[18px]" aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
