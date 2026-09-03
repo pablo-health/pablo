@@ -49,6 +49,18 @@ export function SchedulingEmailReplies(): ReactNode {
   return null
 }
 
+/**
+ * Extra cards on Practice > Scheduling, above the public booking pages.
+ *
+ * Where a deployment's own booking policy lives — what patients may do to a
+ * calendar without the clinician in the loop is a different promise from what
+ * Pablo may propose, and a deployment that offers the former needs somewhere to
+ * say so.
+ */
+export function SchedulingExtras(): ReactNode {
+  return null
+}
+
 /** Extra rows on You > Sign-in & security, below the second-factor rows. */
 export function SecurityLegalRows(): ReactNode {
   return null

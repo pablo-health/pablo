@@ -3,7 +3,7 @@
 "use client"
 
 import { BookingLinkSettings } from "../BookingLinkSettings"
-import { SchedulingEmailReplies } from "../settingsSlots.extensions"
+import { SchedulingEmailReplies, SchedulingExtras } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
 import { useConfig } from "@/lib/config"
 
@@ -17,24 +17,18 @@ import { useConfig } from "@/lib/config"
 export function SchedulingPage() {
   const { publicBookingEnabled } = useConfig()
 
-  if (!publicBookingEnabled) {
-    return (
-      <SettingsCard title="Public booking pages">
-        <p className="text-sm text-muted-foreground">
-          Public booking is turned off for this deployment.
-        </p>
-      </SettingsCard>
-    )
-  }
-
   return (
     <>
-      <SettingsCard
-        title="Public booking pages"
-        description="Pages where patients pick a time. Each page books at a fixed length."
-      >
-        <BookingLinkSettings />
-      </SettingsCard>
+      <SchedulingExtras />
+
+      {publicBookingEnabled && (
+        <SettingsCard
+          title="Public booking pages"
+          description="Pages where patients pick a time. Each page books at a fixed length."
+        >
+          <BookingLinkSettings />
+        </SettingsCard>
+      )}
 
       <SchedulingEmailReplies />
     </>
