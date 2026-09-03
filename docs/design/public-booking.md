@@ -308,7 +308,23 @@ once the previous one is being beaten:
 `app/book/[slug]/page.tsx` — an unauthenticated page: day picker
 (next 14 days), slot grid for the selected day, name/email form,
 confirmation card with `.ics` download. Styled with the standard brand
-tokens; no dashboard chrome.
+tokens; no dashboard chrome. When the booking POST comes back
+`pending_confirmation` (a link with `require_email_confirmation` on),
+the page shows a "check your email" message with the hold's expiry
+instead of the `.ics` card — there is nothing to add to a calendar yet.
+
+`app/book/[slug]/confirm/page.tsx` — where the confirmation email's
+link lands. It reads `token` off the query string and POSTs it to the
+confirm endpoint on mount, never on a click: a GET here is exactly what
+a mail scanner or link previewer fetches before a person ever sees the
+message, and either would burn the one-time token before the booker
+gets to it. The four outcomes are a confirmed card, the invalid-link
+copy (bad, reused, or another link's token), the slot-taken copy with a
+link back to `/book/{slug}` (someone else grabbed the slot while the
+hold sat unconfirmed), and a network-error state with a retry button.
+The confirmed card itself — brand mark, appointment summary, `.ics`
+download — is `BookingConfirmedCard`, shared with the instant-booking
+path on the page above so the two surfaces never drift.
 
 Owners manage links through authed CRUD at `/api/booking-links`
 (create, list, update copy/duration, activate/deactivate, delete).
