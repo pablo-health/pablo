@@ -33,12 +33,13 @@ from app.db.provisioning import (
 from sqlalchemy import create_engine, text
 
 _db_url = os.environ.get("DATABASE_URL", "")
-pytestmark = pytest.mark.skip(
-    reason=(
-        "THERAPY-n0ac: pre-existing breakage. Tenant-fan-out semantics "
-        "moved without these tests being updated. "
-        "Exposed when pablo CI switched to ``make test-integration``."
-    ),
+_skip_reason = (
+    "PostgreSQL not configured. Set DATABASE_URL and DATABASE_BACKEND=postgres. "
+    "Start proxy with: make db-dev-proxy"
+)
+pytestmark = pytest.mark.skipif(
+    not _db_url or os.environ.get("DATABASE_BACKEND") != "postgres",
+    reason=_skip_reason,
 )
 
 
@@ -76,7 +77,7 @@ def tenant_factory(engine):
                         f"INSERT INTO {PLATFORM_SCHEMA}.practices"  # noqa: S608
                         " (id, name, schema_name, owner_email, owner_user_id,"
                         "  product, status, is_active, created_at, is_pentest)"
-                        " VALUES (:id, :name, :schema, '', '', 'pablo',"
+                        " VALUES (:id, :name, :schema, '', NULL, 'pablo',"
                         "         'active', TRUE, :ts, FALSE)"
                     ),
                     {
