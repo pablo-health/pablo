@@ -196,6 +196,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/rules/parse"),  # NL rule proposals, no client attached
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/scheduling/policy"),  # practice booking policy; no patient data
+        ("patch", "/api/scheduling/policy"),  # practice booking policy; no patient data
         ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
         ("post", "/api/appointment-types"),  # creates an appointment type
         ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type

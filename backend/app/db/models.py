@@ -24,6 +24,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -701,6 +702,85 @@ class AppointmentTypeRow(Base):
         CheckConstraint("horizon > 0", name="ck_appointment_types_horizon"),
         CheckConstraint(
             "horizon_unit IN ('business', 'days')", name="ck_appointment_types_horizon_unit"
+        ),
+    )
+
+
+class SchedulingPolicyRow(Base):
+    """The practice's standing scheduling policy. One row per tenant.
+
+    Answers the questions an appointment type does not: how late a patient may
+    cancel, how a new enquiry starts, whether patients may book at all. A type
+    says what an appointment IS; this says what the practice will allow to
+    happen to its calendar.
+
+    Singleton, pinned by ``CHECK (id = 1)``, so a save upserts the one row.
+
+    Every gate defaults off or strict. ``self_book_existing`` and
+    ``self_book_new`` are both false, and ``self_book_mode`` is ``request`` (a
+    pending appointment the clinician confirms) rather than ``auto``. A
+    practice upgrading into this code must not discover that patients can
+    suddenly book it.
+
+    Whether a PARTICULAR type may be self-booked lives on
+    ``appointment_types.self_bookable``, not here. Two switches, deliberately:
+    this one is the practice saying "self-booking is a thing I allow at all",
+    the per-type one is "and this type in particular". Both must be on.
+
+    Storing policy is all this does. Enforcing it at booking time is separate
+    and not yet built.
+    """
+
+    __tablename__ = "scheduling_policy"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+
+    #: Least notice for any new booking, in hours. A type may demand more via
+    #: ``appointment_types.min_notice_hours``; none may demand less.
+    min_notice_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    #: The furthest ahead anything may be booked, whatever a type says.
+    max_horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    cancel_cutoff_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    reschedule_cutoff_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    #: How long a request-mode booking holds its slot before the sweep releases it.
+    pending_hold_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=72)
+
+    #: May existing patients book from the portal at all.
+    self_book_existing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: May people who are not patients yet. A separate switch on purpose: it
+    #: lets a stranger put a first appointment on the calendar, which is a
+    #: different decision from letting a known patient rebook.
+    self_book_new: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: ``request`` holds the slot pending confirmation; ``auto`` books it outright.
+    self_book_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="request")
+
+    #: How a new enquiry starts: ``consult`` offers a short call first,
+    #: ``intake`` offers the full first appointment straight away.
+    new_patient_flow: Mapped[str] = mapped_column(String(10), nullable=False, default="consult")
+    #: How far before an intake the paperwork must be back, in hours.
+    intake_forms_due_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=48)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_scheduling_policy_singleton"),
+        CheckConstraint(
+            "self_book_mode IN ('request', 'auto')", name="ck_scheduling_policy_self_book_mode"
+        ),
+        CheckConstraint(
+            "new_patient_flow IN ('consult', 'intake')",
+            name="ck_scheduling_policy_new_patient_flow",
+        ),
+        CheckConstraint("min_notice_hours >= 0", name="ck_scheduling_policy_min_notice"),
+        CheckConstraint("max_horizon_days > 0", name="ck_scheduling_policy_max_horizon"),
+        CheckConstraint("cancel_cutoff_hours >= 0", name="ck_scheduling_policy_cancel_cutoff"),
+        CheckConstraint(
+            "reschedule_cutoff_hours >= 0", name="ck_scheduling_policy_reschedule_cutoff"
+        ),
+        CheckConstraint("pending_hold_hours > 0", name="ck_scheduling_policy_pending_hold"),
+        CheckConstraint(
+            "intake_forms_due_hours >= 0", name="ck_scheduling_policy_intake_forms_due"
         ),
     )
 

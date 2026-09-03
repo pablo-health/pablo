@@ -1102,7 +1102,9 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         ehr_prompts) never reach the loop — the column query above
         doesn't select them.
       * Tables that DO carry an ``id`` but aren't owned by a single
-        user — ``ehr_routes`` (tenant-level EHR config) and the
+        user — ``ehr_routes`` (tenant-level EHR config),
+        ``scheduling_policy`` (practice-level booking policy, a
+        singleton with no ``user_id``/``patient_id``) and the
         vestigial per-tenant ``users`` table — are listed in
         ``not_row_scoped`` and have RLS left off explicitly. Their
         isolation boundary is the tenant schema (search_path), not a
@@ -1198,7 +1200,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     # ``register_overlay_not_row_scoped``; merge them so deployment-
     # specific tables take this same RLS-off path instead of tripping the
     # deny-all guard below.
-    not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
+    not_row_scoped = {"ehr_routes", "scheduling_policy", "users"} | _OVERLAY_NOT_ROW_SCOPED
 
     # Which patient-scoped registrations actually got a policy, checked
     # against the registry after the loop. The loop only iterates tables
@@ -1582,7 +1584,7 @@ def rls_forced_tenant_tables() -> set[str]:
     """
     from app.db.models import Base  # lazy import — avoid circular import
 
-    not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
+    not_row_scoped = {"ehr_routes", "scheduling_policy", "users"} | _OVERLAY_NOT_ROW_SCOPED
     scoping_cols = {"user_id", "patient_id", "id"}
     result: set[str] = set()
     for table_name, table in Base.metadata.tables.items():
