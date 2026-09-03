@@ -25,12 +25,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from app.api_errors import NotFoundError
 from app.models.scheduling import (
     CreateAppointmentTypeRequest,
     UpdateAppointmentTypeRequest,
 )
+from app.routes.scheduling import _apply_appointment_type
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.appointment_type import AppointmentType
+from app.scheduling_engine.repositories.appointment_type import (
+    InMemoryAppointmentTypeRepository,
+)
 from pydantic import ValidationError
 
 
@@ -209,3 +214,62 @@ class TestAppointmentsPointAtTheirType:
         del legacy["appointment_type_id"]
 
         assert Appointment.from_dict(legacy).appointment_type_id is None
+
+
+class TestBookingAgainstAType:
+    """A chosen type speaks for the appointment's label.
+
+    Bug classes covered:
+      * the id and session_type drifting apart, so a row says it is a
+        Consultation while pointing at the Intake type;
+      * one clinician in a shared practice booking against another's type,
+        which would import the wrong fee;
+      * a type id that does not exist being accepted and then failing at the
+        foreign key, far from the caller.
+    """
+
+    def _repo(self) -> InMemoryAppointmentTypeRepository:
+        repo = InMemoryAppointmentTypeRepository()
+        repo.create(AppointmentType(id="t1", user_id="u1", name="Intake", duration_minutes=60))
+        repo.create(
+            AppointmentType(id="t2", user_id="u2", name="Someone else's", duration_minutes=30)
+        )
+        return repo
+
+    def test_the_type_overrides_whatever_label_the_caller_sent(self) -> None:
+        data: dict[str, object] = {"appointment_type_id": "t1", "session_type": "individual"}
+
+        _apply_appointment_type(data, user_id="u1", type_repo=self._repo())
+
+        assert data["session_type"] == "Intake"
+
+    def test_no_type_leaves_the_caller_s_label_alone(self) -> None:
+        # Booking without naming a type stays legal; it just goes unlinked.
+        data: dict[str, object] = {"appointment_type_id": None, "session_type": "individual"}
+
+        _apply_appointment_type(data, user_id="u1", type_repo=self._repo())
+
+        assert data["session_type"] == "individual"
+
+    def test_another_clinicians_type_is_refused(self) -> None:
+        # Not a permissions nicety: booking against someone else's type would
+        # resolve the wrong fee and the wrong length.
+        data: dict[str, object] = {"appointment_type_id": "t2", "session_type": "individual"}
+
+        with pytest.raises(NotFoundError):
+            _apply_appointment_type(data, user_id="u1", type_repo=self._repo())
+
+    def test_an_unknown_type_is_refused_here_rather_than_at_the_foreign_key(self) -> None:
+        data: dict[str, object] = {"appointment_type_id": "nope", "session_type": "individual"}
+
+        with pytest.raises(NotFoundError):
+            _apply_appointment_type(data, user_id="u1", type_repo=self._repo())
+
+    def test_the_duration_is_not_inferred_from_the_type(self) -> None:
+        # A clinician may book a longer-than-usual session of a type, so the
+        # caller's duration stands. Only the label is taken from the type.
+        data: dict[str, object] = {"appointment_type_id": "t1", "duration_minutes": 90}
+
+        _apply_appointment_type(data, user_id="u1", type_repo=self._repo())
+
+        assert data["duration_minutes"] == 90

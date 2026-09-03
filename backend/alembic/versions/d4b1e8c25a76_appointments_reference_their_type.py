@@ -60,9 +60,7 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
-    op.create_index(
-        "ix_appointments_appointment_type_id", "appointments", ["appointment_type_id"]
-    )
+    op.create_index("ix_appointments_appointment_type_id", "appointments", ["appointment_type_id"])
 
     # Match on name within the same clinician, which is what the unique
     # constraint on appointment_types already guarantees is unambiguous.

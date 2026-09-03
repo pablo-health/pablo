@@ -202,6 +202,32 @@ def get_appointment_type_repository(
     return _appt_type_repo_factory()
 
 
+def _apply_appointment_type(
+    data: dict[str, object],
+    *,
+    user_id: str,
+    type_repo: AppointmentTypeRepository,
+) -> None:
+    """Let a chosen appointment type speak for the appointment's label.
+
+    When the caller names a type, that type is authoritative: ``session_type``
+    is overwritten with its name so the id and the label cannot drift apart.
+    Nothing else is inferred — the caller still sends its own duration, because
+    a clinician may legitimately book a longer-than-usual session of a type.
+
+    Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
+    this clinician's, which also stops one clinician booking against another's
+    type inside a shared practice.
+    """
+    appointment_type_id = data.get("appointment_type_id")
+    if not appointment_type_id:
+        return
+    appointment_type = type_repo.get(str(appointment_type_id), user_id)
+    if appointment_type is None:
+        raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
+    data["session_type"] = appointment_type.name
+
+
 def get_availability_engine(
     rule_repo: AvailabilityRuleRepository = Depends(get_availability_rule_repository),
     appt_repo: AppointmentRepository = Depends(get_appointment_repository),
@@ -378,13 +404,16 @@ def create_appointment(
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Create a new appointment."""
+    data = request.model_dump()
+    _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
     try:
         appt = service.create_appointment(
             user.id,
-            data=request.model_dump(),
+            data=data,
             tz=tz,
         )
     except InvalidAppointmentError as e:

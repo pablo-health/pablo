@@ -65,6 +65,10 @@ class CreateAppointmentRequest(BaseModel):
     start_at: datetime
     end_at: datetime
     duration_minutes: int = Field(ge=1, le=480)
+    #: Which appointment type this books. When given it is authoritative:
+    #: ``session_type`` is taken from the type's name rather than the caller's,
+    #: so the id and the label cannot disagree.
+    appointment_type_id: str | None = None
     session_type: str = "individual"
     video_link: str | None = None
     video_platform: str | None = None
@@ -115,6 +119,9 @@ class UpdateAppointmentRequest(VisitCodingFields):
     start_at: datetime | None = None
     end_at: datetime | None = None
     duration_minutes: int | None = Field(default=None, ge=1, le=480)
+    #: Re-type a booked appointment. Authoritative when given: ``session_type``
+    #: follows the type's name so the two cannot drift apart.
+    appointment_type_id: str | None = None
     session_type: str | None = None
     video_link: str | None = None
     video_platform: str | None = None
