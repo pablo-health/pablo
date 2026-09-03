@@ -50,7 +50,13 @@ class Appointment:
     end_at: datetime
     duration_minutes: int
     status: str  # AppointmentStatus value
-    session_type: str  # individual | couples | group
+    session_type: str  # the type's name as booked; see appointment_type_id
+    #: Which ``appointment_types`` row this is an instance of.
+    #:
+    #: None when the type was deleted, or when a legacy row's ``session_type``
+    #: matched no type at backfill time. Both mean "we cannot tell which type
+    #: this was", which is worth surfacing rather than guessing.
+    appointment_type_id: str | None = None
     video_link: str | None = None
     video_platform: str | None = None
     notes: str | None = None
@@ -121,6 +127,7 @@ class Appointment:
             duration_minutes=data["duration_minutes"],
             status=data["status"],
             session_type=data["session_type"],
+            appointment_type_id=data.get("appointment_type_id"),
             video_link=data.get("video_link"),
             video_platform=data.get("video_platform"),
             notes=data.get("notes"),
@@ -162,6 +169,7 @@ class Appointment:
             "duration_minutes": self.duration_minutes,
             "status": self.status,
             "session_type": self.session_type,
+            "appointment_type_id": self.appointment_type_id,
             "video_link": self.video_link,
             "video_platform": self.video_platform,
             "notes": self.notes,

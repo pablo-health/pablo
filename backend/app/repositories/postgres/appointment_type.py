@@ -63,21 +63,35 @@ class PostgresAppointmentTypeRepository(AppointmentTypeRepository):
         return True
 
 
+# Mapped in both directions from one list, so a column added to the model
+# cannot be silently dropped on read or on write — the previous shape had the
+# field list written out twice and would have needed both edited by hand.
+_SCHEDULING_FIELDS = (
+    "name",
+    "default_fee_cents",
+    "duration_minutes",
+    "audience",
+    "min_notice_hours",
+    "earliest_offer_business_days",
+    "horizon",
+    "horizon_unit",
+    "self_bookable",
+    "offerable",
+    "created_at",
+    "updated_at",
+)
+
+
 def _row_to_appointment_type(row: AppointmentTypeRow) -> AppointmentType:
     return AppointmentType(
         id=row.id,
         user_id=row.user_id,
-        name=row.name,
-        default_fee_cents=row.default_fee_cents,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
+        **{name: getattr(row, name) for name in _SCHEDULING_FIELDS},
     )
 
 
 def _appointment_type_to_row(appointment_type: AppointmentType, row: AppointmentTypeRow) -> None:
     row.id = appointment_type.id
     row.user_id = appointment_type.user_id
-    row.name = appointment_type.name
-    row.default_fee_cents = appointment_type.default_fee_cents
-    row.created_at = appointment_type.created_at
-    row.updated_at = appointment_type.updated_at
+    for name in _SCHEDULING_FIELDS:
+        setattr(row, name, getattr(appointment_type, name))

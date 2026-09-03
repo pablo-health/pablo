@@ -570,6 +570,14 @@ class BookingLinkRow(PlatformBase):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The appointment type this link books, by NAME rather than by id.
+    #:
+    #: ``appointment_types`` is per-tenant and this table is platform-scoped
+    #: (see the class docstring: a public slug must resolve before a tenant
+    #: schema can be selected). A platform table cannot hold a foreign key
+    #: into one of N tenant schemas, so this stays a string. Resolve it to a
+    #: real type after the tenant is known, and treat a name that no longer
+    #: matches as a link that needs attention rather than a hard error.
     session_type: Mapped[str] = mapped_column(String(20), nullable=False, default="individual")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

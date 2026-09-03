@@ -81,7 +81,21 @@ CREATE TABLE __TENANT_SCHEMA__.appointment_types (
     name character varying(100) NOT NULL,
     default_fee_cents integer,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    duration_minutes integer DEFAULT 50 NOT NULL,
+    audience character varying(10) DEFAULT 'existing'::character varying NOT NULL,
+    min_notice_hours integer,
+    earliest_offer_business_days integer DEFAULT 1 NOT NULL,
+    horizon integer DEFAULT 10 NOT NULL,
+    horizon_unit character varying(10) DEFAULT 'business'::character varying NOT NULL,
+    self_bookable boolean DEFAULT false NOT NULL,
+    offerable boolean DEFAULT true NOT NULL,
+    CONSTRAINT ck_appointment_types_audience CHECK (((audience)::text = ANY ((ARRAY['new'::character varying, 'existing'::character varying, 'both'::character varying])::text[]))),
+    CONSTRAINT ck_appointment_types_duration CHECK (((duration_minutes >= 5) AND (duration_minutes <= 480))),
+    CONSTRAINT ck_appointment_types_earliest_offer CHECK ((earliest_offer_business_days >= 0)),
+    CONSTRAINT ck_appointment_types_horizon CHECK ((horizon > 0)),
+    CONSTRAINT ck_appointment_types_horizon_unit CHECK (((horizon_unit)::text = ANY ((ARRAY['business'::character varying, 'days'::character varying])::text[]))),
+    CONSTRAINT ck_appointment_types_min_notice CHECK (((min_notice_hours IS NULL) OR (min_notice_hours >= 0)))
 );
 
 
@@ -122,7 +136,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     place_of_service character varying(2),
     diagnosis_codes jsonb,
     note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
-    confirmation_token_hash character varying(64)
+    confirmation_token_hash character varying(64),
+    appointment_type_id uuid
 );
 
 
@@ -813,6 +828,10 @@ CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types
 
 
 
+CREATE INDEX ix_appointments_appointment_type_id ON __TENANT_SCHEMA__.appointments USING btree (appointment_type_id);
+
+
+
 CREATE INDEX ix_appointments_confirmation_token_hash ON __TENANT_SCHEMA__.appointments USING btree (confirmation_token_hash) WHERE (confirmation_token_hash IS NOT NULL);
 
 
@@ -1139,6 +1158,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
     ADD CONSTRAINT diagnostic_assessments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT fk_appointments_appointment_type FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE SET NULL;
 
 
 
