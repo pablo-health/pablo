@@ -90,6 +90,39 @@ async function fillAndSelectSlot() {
   await userEvent.type(screen.getByLabelText(/email/i), "jane@example.com")
 }
 
+describe("PublicBookingPage — pending confirmation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it("renders the check-your-email copy and hides the .ics button when a hold is pending", async () => {
+    const { fetchMock } = mockFetch({
+      postBody: {
+        host_name: CARD.host_name,
+        title: CARD.title,
+        start_at: SLOTS.slots[0].start,
+        end_at: SLOTS.slots[0].end,
+        duration_minutes: CARD.duration_minutes,
+        status: "pending_confirmation",
+      },
+      postStatus: 201,
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+    await fillAndSelectSlot()
+    await userEvent.click(screen.getByRole("button", { name: /confirm booking/i }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/check your email to confirm.*your hold expires in 15 minutes/i),
+      ).toBeInTheDocument()
+    })
+    expect(screen.queryByRole("button", { name: /add to calendar/i })).not.toBeInTheDocument()
+  })
+})
+
 describe("PublicBookingPage — CAPTCHA", () => {
   beforeEach(() => {
     delete (window as { turnstile?: unknown }).turnstile
