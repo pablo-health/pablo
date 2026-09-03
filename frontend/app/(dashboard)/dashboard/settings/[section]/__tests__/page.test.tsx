@@ -18,15 +18,16 @@ vi.mock("next/navigation", () => ({
 }))
 
 vi.mock("@/lib/featureGates", () => ({
-  useFeatureGate: () => gate.allow,
-  useFeatureGatePredicate: () => () => gate.allow,
+  useFeature: () => gate.allow,
+  useFeaturePredicate: () => () => gate.allow,
 }))
 
-vi.mock("@/components/settings/pages", () => ({
-  settingsPages: {
-    appearance: () => <div data-testid="appearance-page" />,
-    portal: () => <div data-testid="portal-page" />,
-  },
+vi.mock("@/components/settings/registry", () => ({
+  findSettingsItem: (id: string) =>
+    ({
+      appearance: { id: "appearance", page: () => <div data-testid="appearance-page" /> },
+      portal: { id: "portal", feature: "patient_portal", page: () => <div data-testid="portal-page" /> },
+    })[id],
 }))
 
 import SettingsSectionPage from "../page"
@@ -65,11 +66,4 @@ describe("SettingsSectionPage", () => {
     expect(notFound).toHaveBeenCalled()
   })
 
-  it("404s when a registry item has no page wired to it", () => {
-    // Catches the likeliest mistake: adding a nav item and forgetting the page.
-    routeParams.section = "sessions"
-
-    expect(() => render(<SettingsSectionPage />)).toThrow("NEXT_NOT_FOUND")
-    expect(notFound).toHaveBeenCalled()
-  })
 })

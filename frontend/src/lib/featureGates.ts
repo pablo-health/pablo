@@ -3,52 +3,59 @@
 "use client"
 
 /**
- * Whether a gated surface may render for the current account.
+ * Whether an optional feature is on for the person looking at the screen.
  *
- * Two sources, in order:
+ * Two sources, most specific first:
  *
- * 1. The deployment's gate slot (`featureGates.extensions.ts`). A downstream
- *    build answers per account and per environment there. A key it reports as
- *    `false` is off, full stop.
- * 2. The build-time flags in `featureFlags.ts`, for keys the deployment has no
- *    opinion about. This is what keeps a self-hosted install working with no
- *    backend to ask: set `NEXT_PUBLIC_FF_<KEY>=true` and the surface appears.
+ * 1. The account's own answer, from `featureGates.extensions.ts`. The base
+ *    build has none — everyone in a deployment sees the same features. A
+ *    downstream build fills that slot to answer per practice, which is how one
+ *    customer gets an early look at something the rest of the deployment does
+ *    not have.
+ * 2. The deployment's answer, from `FEATURES_ENABLED` on the container, served
+ *    through `/api/config`. This is what a self-hosted install uses, and what
+ *    makes a feature live in one environment and dark in the next without a
+ *    rebuild.
  *
- * Fail closed while the slot is still resolving, so an unreleased page never
- * flashes into view and then disappears.
+ * Anything not named by either is off. New features are therefore dark until
+ * somebody turns them on, rather than dark until somebody remembers to hide
+ * them.
  */
 
-import { isEnabled, isKnownFlag } from "./featureFlags"
-import { useFeatureGates } from "./featureGates.extensions"
+import { useConfig } from "./config"
+import { useAccountFeatures } from "./featureGates.extensions"
 
-/** Build-flag lookup for a key that may or may not be a known build flag. */
-function buildFlag(key: string): boolean {
-  const envVal = process.env[`NEXT_PUBLIC_FF_${key.toUpperCase()}`]
-  if (envVal === "true") return true
-  if (envVal === "false") return false
-  // An undeclared key is off unless a deployment grants it. That is what makes
-  // a newly added gated surface dark by default rather than dark by accident.
-  return isKnownFlag(key) ? isEnabled(key) : false
+export interface AccountFeatures {
+  /** Feature name → on. A name that is absent defers to the deployment. */
+  features: Record<string, boolean>
+  /**
+   * False while an async implementation is still fetching. Until it settles,
+   * only the deployment's answer counts, so nothing unreleased can flash into
+   * view and then vanish.
+   */
+  resolved: boolean
 }
 
-export function useFeatureGate(key: string | undefined): boolean {
-  const { gates, resolved } = useFeatureGates()
-  if (!key) return true
-  if (!resolved) return false
-  if (key in gates) return gates[key]
-  return buildFlag(key)
+export function useFeature(name: string | undefined): boolean {
+  const { features: deploymentFeatures } = useConfig()
+  const { features: accountFeatures, resolved } = useAccountFeatures()
+
+  if (!name) return true
+  if (resolved && name in accountFeatures) return accountFeatures[name]
+  return deploymentFeatures?.[name] ?? false
 }
 
 /**
  * Predicate form, for filtering a list in one render. Same rules as
- * `useFeatureGate`; call this once rather than calling the hook in a loop.
+ * `useFeature`; call this once rather than calling the hook per item.
  */
-export function useFeatureGatePredicate(): (key: string | undefined) => boolean {
-  const { gates, resolved } = useFeatureGates()
-  return (key) => {
-    if (!key) return true
-    if (!resolved) return false
-    if (key in gates) return gates[key]
-    return buildFlag(key)
+export function useFeaturePredicate(): (name: string | undefined) => boolean {
+  const { features: deploymentFeatures } = useConfig()
+  const { features: accountFeatures, resolved } = useAccountFeatures()
+
+  return (name) => {
+    if (!name) return true
+    if (resolved && name in accountFeatures) return accountFeatures[name]
+    return deploymentFeatures?.[name] ?? false
   }
 }

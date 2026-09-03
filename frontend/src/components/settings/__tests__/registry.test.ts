@@ -64,9 +64,9 @@ describe("settings registry merge", () => {
   it("honours insertBefore and insertAfter when appending items", async () => {
     extensions.appendGroups = []
     extensions.appendItems = [
-      { id: "plan", label: "Plan", icon: () => null, desc: "", group: "billing", insertBefore: "superbills" },
-      { id: "payments", label: "Patient payments", icon: () => null, desc: "", group: "billing", insertAfter: "plan" },
-      { id: "notifications", label: "Notifications", icon: () => null, desc: "", group: "you" },
+      { id: "plan", label: "Plan", icon: () => null, page: () => null, desc: "", group: "billing", insertBefore: "superbills" },
+      { id: "payments", label: "Patient payments", icon: () => null, page: () => null, desc: "", group: "billing", insertAfter: "plan" },
+      { id: "notifications", label: "Notifications", icon: () => null, page: () => null, desc: "", group: "you" },
     ]
 
     const { settingsGroups } = await load()
@@ -82,7 +82,7 @@ describe("settings registry merge", () => {
 
   it("ignores an item aimed at a group this build does not have", async () => {
     extensions.appendItems = [
-      { id: "ghost", label: "Ghost", icon: () => null, desc: "", group: "no-such-group" },
+      { id: "ghost", label: "Ghost", icon: () => null, page: () => null, desc: "", group: "no-such-group" },
     ]
 
     const { findSettingsItem } = await load()
@@ -97,5 +97,13 @@ describe("settings registry merge", () => {
 
     expect(settingsItems.every((item) => item.groupLabel.length > 0)).toBe(true)
     expect(settingsItems.find((item) => item.id === "sessions")?.groupLabel).toBe("Practice")
+  })
+
+  it("gives every item a page, because the item carries its own", async () => {
+    // The page used to live in a second map that could drift from this one.
+    // Now a nav entry cannot exist without something to render.
+    const { settingsItems } = await load()
+
+    expect(settingsItems.every((item) => typeof item.page === "function")).toBe(true)
   })
 })

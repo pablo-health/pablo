@@ -6,7 +6,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Search } from "lucide-react"
 import { useMemo, useState } from "react"
-import { useFeatureGatePredicate } from "@/lib/featureGates"
+import { useFeaturePredicate } from "@/lib/featureGates"
 import { settingsGroups } from "./registry"
 
 const BASE = "/dashboard/settings"
@@ -20,7 +20,7 @@ const BASE = "/dashboard/settings"
  */
 export function SettingsNav() {
   const pathname = usePathname()
-  const allows = useFeatureGatePredicate()
+  const isOn = useFeaturePredicate()
   const [query, setQuery] = useState("")
 
   const active = pathname?.startsWith(`${BASE}/`) ? pathname.slice(BASE.length + 1).split("/")[0] : ""
@@ -31,13 +31,13 @@ export function SettingsNav() {
       .map((group) => ({
         ...group,
         items: group.items.filter((item) => {
-          if (!allows(item.flag)) return false
+          if (!isOn(item.feature)) return false
           if (!needle) return true
           return `${item.label} ${item.desc} ${group.label}`.toLowerCase().includes(needle)
         }),
       }))
       .filter((group) => group.items.length > 0)
-  }, [query, allows])
+  }, [query, isOn])
 
   return (
     <aside aria-label="Settings sections" className="flex min-h-0 flex-col border-r border-border bg-foreground/[0.03]">

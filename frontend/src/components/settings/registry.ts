@@ -12,6 +12,16 @@ import {
   Users,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
+import type { ComponentType } from "react"
+import { AppearancePage } from "./pages/AppearancePage"
+import { AvailabilityPage } from "./pages/AvailabilityPage"
+import { CalendarsPage } from "./pages/CalendarsPage"
+import { PatientPortalPage } from "./pages/PatientPortalPage"
+import { ProfilePage } from "./pages/ProfilePage"
+import { SchedulingPage } from "./pages/SchedulingPage"
+import { SecurityPage } from "./pages/SecurityPage"
+import { SessionsPage } from "./pages/SessionsPage"
+import { SuperbillsPage } from "./pages/SuperbillsPage"
 import { settingsExtensions } from "./registry.extensions"
 
 /**
@@ -35,11 +45,13 @@ export interface SettingsItem {
   icon: LucideIcon
   /** One line, shown under the page title and searched by the nav filter. */
   desc: string
+  /** What renders at `/dashboard/settings/<id>`. */
+  page: ComponentType
   /**
-   * Names a gate in `featureGates`. While it resolves false the item is absent
-   * from the nav *and* its route 404s — a hidden nav link is not a gate.
+   * Names an optional feature (see `useFeature`). While it is off the item is
+   * absent from the nav *and* its route 404s — a hidden nav link is not a gate.
    */
-  flag?: string
+  feature?: string
 }
 
 export interface SettingsGroup {
@@ -82,9 +94,9 @@ const baseGroups: SettingsGroup[] = [
     id: "you",
     label: "You",
     items: [
-      { id: "profile", label: "Profile", icon: User, desc: "Your name, timezone and clinician type." },
-      { id: "appearance", label: "Appearance", icon: Palette, desc: "How your workspace looks." },
-      { id: "security", label: "Sign-in & security", icon: ShieldCheck, desc: "Passkeys and second factors." },
+      { id: "profile", label: "Profile", icon: User, page: ProfilePage, desc: "Your name, timezone and clinician type." },
+      { id: "appearance", label: "Appearance", icon: Palette, page: AppearancePage, desc: "How your workspace looks." },
+      { id: "security", label: "Sign-in & security", icon: ShieldCheck, page: SecurityPage, desc: "Passkeys and second factors." },
     ],
   },
   {
@@ -95,31 +107,36 @@ const baseGroups: SettingsGroup[] = [
         id: "availability",
         label: "Availability",
         icon: Clock,
+        page: AvailabilityPage,
         desc: "When you see patients. Drives booking, reminders and your calendar view.",
       },
       {
         id: "scheduling",
         label: "Scheduling",
         icon: CalendarClock,
+        page: SchedulingPage,
         desc: "Which appointments exist, how new patients start, and what Pablo may offer versus what patients may book.",
       },
       {
         id: "calendars",
         label: "Calendars",
         icon: Calendar,
+        page: CalendarsPage,
         desc: "Google Calendar and EHR calendars synced into Pablo.",
       },
       {
         id: "sessions",
         label: "Sessions & recording",
         icon: Mic,
+        page: SessionsPage,
         desc: "Defaults for new appointments and how recordings are handled.",
       },
       {
         id: "portal",
         label: "Patient portal",
         icon: Users,
-        flag: "patient_portal",
+        page: PatientPortalPage,
+        feature: "patient_portal",
         desc: "Intake forms, self-report measures and patient sign-in.",
       },
     ],
@@ -132,7 +149,8 @@ const baseGroups: SettingsGroup[] = [
         id: "superbills",
         label: "Superbills & rates",
         icon: Receipt,
-        flag: "superbills",
+        page: SuperbillsPage,
+        feature: "superbills",
         desc: "Out-of-network receipts generated from the chart.",
       },
     ],

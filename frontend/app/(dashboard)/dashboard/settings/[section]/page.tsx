@@ -3,9 +3,8 @@
 "use client"
 
 import { notFound, useParams } from "next/navigation"
-import { useFeatureGate } from "@/lib/featureGates"
+import { useFeature } from "@/lib/featureGates"
 import { findSettingsItem } from "@/components/settings/registry"
-import { settingsPages } from "@/components/settings/pages"
 
 /**
  * One settings page, addressed by its registry id.
@@ -18,16 +17,12 @@ export default function SettingsSectionPage() {
   const params = useParams<{ section: string }>()
   const section = typeof params?.section === "string" ? params.section : ""
   const item = findSettingsItem(section)
-  const allowed = useFeatureGate(item?.flag)
+  const enabled = useFeature(item?.feature)
 
-  if (!item || !allowed) {
+  if (!item || !enabled) {
     notFound()
   }
 
-  const Page = settingsPages[item.id]
-  if (!Page) {
-    notFound()
-  }
-
+  const Page = item.page
   return <Page />
 }

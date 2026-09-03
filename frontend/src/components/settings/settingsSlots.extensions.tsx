@@ -27,22 +27,11 @@
 
 import type { ReactNode } from "react"
 
-/** Props shared by slots that decorate a specific appointment type row. */
-export interface AppointmentTypeSlotProps {
-  typeId: string
-  typeName: string
-}
-
 /** Extra cards on Practice > Availability, below the working-hours grid. */
 export function AvailabilityExtras(): ReactNode {
   return null
 }
 
-
-/** Extra controls on one appointment-type row in Practice > Scheduling. */
-export function SchedulingTypeExtras(_props: AppointmentTypeSlotProps): ReactNode {
-  return null
-}
 
 /** An extra card on Practice > Scheduling, below the new-patient flow. */
 export function SchedulingEmailReplies(): ReactNode {

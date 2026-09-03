@@ -17,17 +17,6 @@ const FLAGS = {
 
 export type FeatureFlag = keyof typeof FLAGS
 
-/**
- * Whether `key` is a flag this build declares.
- *
- * `isEnabled` indexes FLAGS directly, so an unrecognised key yields `undefined`
- * rather than raising — check membership first when the key comes from data
- * (a settings registry entry, a URL) instead of a literal.
- */
-export function isKnownFlag(key: string): key is FeatureFlag {
-  return Object.hasOwn(FLAGS, key)
-}
-
 export function isEnabled(flag: FeatureFlag): boolean {
   const envKey = `NEXT_PUBLIC_FF_${flag.toUpperCase()}`
   const envVal = process.env[envKey]
