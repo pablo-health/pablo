@@ -5,6 +5,26 @@ import { IS_DEV_MODE } from '@/lib/devMode'
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
+/**
+ * Features this deployment has turned on, from FEATURES_ENABLED (a
+ * comma-separated list of keys).
+ *
+ * Read at request time from container env rather than baked in at build time,
+ * so one image can be live in one deployment and dark in another. That is the
+ * whole reason this is not a NEXT_PUBLIC_ build flag: an image built once and
+ * promoted between environments carries the same baked value everywhere.
+ */
+function enabledFeatures(): Record<string, boolean> {
+  const raw = process.env.FEATURES_ENABLED || ''
+  return Object.fromEntries(
+    raw
+      .split(',')
+      .map((key) => key.trim())
+      .filter(Boolean)
+      .map((key) => [key, true])
+  )
+}
+
 export async function GET() {
   // In production, force safe defaults for dev/mock flags
   // to prevent exposing internal configuration to unauthenticated users
@@ -24,6 +44,8 @@ export async function GET() {
     // Runtime toggle (no client rebuild) for the WebAuthn passkey UI, dark
     // until the egm.4 cutover. Set PASSKEYS_ENABLED=true on the container.
     passkeysEnabled: process.env.PASSKEYS_ENABLED === 'true',
+    // Which optional features this deployment has turned on. Absent means off.
+    features: enabledFeatures(),
     // Where the app sends someone whose subscription has ended when they
     // choose to start again. Deployment-specific (a hosted deployment
     // points at its own reactivation/checkout page); empty means the UI

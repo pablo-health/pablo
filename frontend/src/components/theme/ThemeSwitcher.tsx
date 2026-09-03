@@ -4,6 +4,7 @@
 
 import { THEMES, type ThemeId } from "@/lib/theme"
 import { useTheme } from "./ThemeProvider"
+import { cn } from "@/lib/utils"
 
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme()
@@ -24,11 +25,12 @@ export function ThemeSwitcher() {
             aria-checked={active}
             title={t.description}
             onClick={() => setTheme(t.id as ThemeId)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            className={cn(
+              "rounded-full px-3 py-1 text-xs font-medium transition-colors",
               active
-                ? "bg-neutral-900 text-white"
-                : "text-neutral-600 hover:bg-neutral-100"
-            }`}
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-foreground/5"
+            )}
           >
             {t.label}
           </button>

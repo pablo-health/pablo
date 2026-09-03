@@ -22,6 +22,13 @@ export interface RuntimeConfig {
   resubscribeUrl: string
   publicBookingEnabled: boolean
   googleCalendarEnabled: boolean
+  /** The edition this deployment runs. */
+  pabloEdition: string
+  /**
+   * Optional features this deployment has turned on, keyed by feature name.
+   * A key that is absent is off. See `useFeature`.
+   */
+  features: Record<string, boolean>
 }
 
 interface ConfigContextValue {
