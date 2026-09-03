@@ -543,6 +543,25 @@ class AppointmentRow(Base):
     confirmation_token_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
+    #: Which ``appointment_types`` row this is an instance of.
+    #:
+    #: Nullable because an appointment can outlive its type: deleting a type
+    #: sets this to NULL rather than refusing, since the appointment still
+    #: happened and its record should survive the type being tidied away.
+    #: ``session_type`` below keeps the name it was booked under, so history
+    #: reads correctly even after the link is gone.
+    appointment_type_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("appointment_types.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: The type's name as it stood when this was booked.
+    #:
+    #: Denormalised on purpose, and NOT redundant with the id above. A
+    #: clinician can rename a type, and a past appointment should still read
+    #: as what it was called at the time — the id says which type it is now,
+    #: this says what it was called then.
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
@@ -606,9 +625,16 @@ class AppointmentTypeRow(Base):
     ``default_fee_cents`` remains the fee absent a per-patient override — see
     :mod:`app.scheduling_engine.services.rate_resolver`.
 
-    Note ``appointments.session_type`` is still a free-form string with no
-    foreign key here. Making it one is a separate change with a data migration
-    behind it; do not "finish the job" opportunistically.
+    ``appointments.appointment_type_id`` references this table, so renaming a
+    type no longer orphans the appointments booked under it. Two places
+    deliberately still hold a plain string instead:
+
+    * ``appointments.session_type`` — kept as the name the appointment was
+      booked under, so history reads correctly after a rename.
+    * ``booking_links.session_type`` — that table is PLATFORM-scoped, because
+      a public slug has to resolve before any tenant schema can be selected.
+      A platform table cannot hold a foreign key into one of N per-tenant
+      schemas, so this one cannot be converted and should not be attempted.
     """
 
     __tablename__ = "appointment_types"

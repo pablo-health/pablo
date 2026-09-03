@@ -311,6 +311,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         duration_minutes=row.duration_minutes,
         status=row.status,
         session_type=row.session_type,
+        appointment_type_id=row.appointment_type_id,
         video_link=row.video_link,
         video_platform=row.video_platform,
         notes=row.notes,
@@ -351,6 +352,7 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.duration_minutes = appt.duration_minutes
     row.status = appt.status
     row.session_type = appt.session_type
+    row.appointment_type_id = appt.appointment_type_id
     row.video_link = appt.video_link
     row.video_platform = appt.video_platform
     row.notes = appt.notes

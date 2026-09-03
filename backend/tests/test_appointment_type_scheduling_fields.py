@@ -22,11 +22,14 @@ Bug classes these cover:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from app.models.scheduling import (
     CreateAppointmentTypeRequest,
     UpdateAppointmentTypeRequest,
 )
+from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from pydantic import ValidationError
 
@@ -153,3 +156,56 @@ class TestPartialUpdate:
         assert appointment_type.duration_minutes == 90
         assert appointment_type.horizon == 21
         assert appointment_type.name == "Intake"
+
+
+class TestAppointmentsPointAtTheirType:
+    """The link that survives a rename.
+
+    Before this, an appointment recorded its type as a name. The settings UI
+    lets a clinician rename a type, and every appointment booked under the old
+    name was then orphaned — nothing matched, and fee resolution by name
+    silently found nothing.
+    """
+
+    def _appointment(self, **overrides: object) -> Appointment:
+        base: dict[str, object] = {
+            "id": "a1",
+            "user_id": "u1",
+            "patient_id": "p1",
+            "title": "Session",
+            "start_at": datetime(2026, 9, 3, 15, 0, tzinfo=UTC),
+            "end_at": datetime(2026, 9, 3, 15, 50, tzinfo=UTC),
+            "duration_minutes": 50,
+            "status": "scheduled",
+            "session_type": "Individual",
+        }
+        base.update(overrides)
+        return Appointment(**base)  # type: ignore[arg-type]
+
+    def test_the_link_survives_a_round_trip(self) -> None:
+        appointment = self._appointment(appointment_type_id="t1")
+
+        assert Appointment.from_dict(appointment.to_dict()).appointment_type_id == "t1"
+
+    def test_a_renamed_type_keeps_the_name_it_was_booked_under(self) -> None:
+        # The id says which type this is now; session_type says what it was
+        # called then. A past appointment should not silently re-label itself
+        # because the clinician renamed the type in March.
+        appointment = self._appointment(appointment_type_id="t1", session_type="Individual")
+
+        renamed = AppointmentType(id="t1", user_id="u1", name="Individual therapy")
+
+        assert appointment.appointment_type_id == renamed.id
+        assert appointment.session_type == "Individual"
+
+    def test_an_unlinked_appointment_is_expressible(self) -> None:
+        # None means "we cannot tell which type this was" — a deleted type, or
+        # a legacy row whose name matched nothing at backfill. Worth surfacing
+        # rather than guessing.
+        assert self._appointment().appointment_type_id is None
+
+    def test_a_legacy_row_without_the_key_reads_as_unlinked(self) -> None:
+        legacy = self._appointment().to_dict()
+        del legacy["appointment_type_id"]
+
+        assert Appointment.from_dict(legacy).appointment_type_id is None

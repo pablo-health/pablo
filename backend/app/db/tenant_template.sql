@@ -136,7 +136,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     place_of_service character varying(2),
     diagnosis_codes jsonb,
     note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
-    confirmation_token_hash character varying(64)
+    confirmation_token_hash character varying(64),
+    appointment_type_id uuid
 );
 
 
@@ -827,6 +828,10 @@ CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types
 
 
 
+CREATE INDEX ix_appointments_appointment_type_id ON __TENANT_SCHEMA__.appointments USING btree (appointment_type_id);
+
+
+
 CREATE INDEX ix_appointments_confirmation_token_hash ON __TENANT_SCHEMA__.appointments USING btree (confirmation_token_hash) WHERE (confirmation_token_hash IS NOT NULL);
 
 
@@ -1153,6 +1158,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
     ADD CONSTRAINT diagnostic_assessments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT fk_appointments_appointment_type FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE SET NULL;
 
 
 
