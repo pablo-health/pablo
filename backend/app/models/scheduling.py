@@ -383,6 +383,46 @@ class AppointmentTypeListResponse(BaseModel):
     total: int
 
 
+# --- Scheduling policy models ---
+
+
+class SchedulingPolicyResponse(BaseModel):
+    """The practice's scheduling policy.
+
+    Always complete: an unconfigured practice gets the defaults rather than
+    nulls, so a client never has to know which fields have been saved.
+    """
+
+    min_notice_hours: int
+    max_horizon_days: int
+    cancel_cutoff_hours: int
+    reschedule_cutoff_hours: int
+    pending_hold_hours: int
+    self_book_existing: bool
+    self_book_new: bool
+    self_book_mode: str
+    new_patient_flow: str
+    intake_forms_due_hours: int
+
+
+class UpdateSchedulingPolicyRequest(BaseModel):
+    """Partial update. An omitted field keeps its current value."""
+
+    min_notice_hours: int | None = Field(None, ge=0)
+    max_horizon_days: int | None = Field(None, gt=0)
+    cancel_cutoff_hours: int | None = Field(None, ge=0)
+    reschedule_cutoff_hours: int | None = Field(None, ge=0)
+    pending_hold_hours: int | None = Field(None, gt=0)
+    self_book_existing: bool | None = None
+    #: Separate from ``self_book_existing`` on purpose: letting a stranger put
+    #: a first appointment on the calendar is a different decision from
+    #: letting a known patient rebook.
+    self_book_new: bool | None = None
+    self_book_mode: Literal["request", "auto"] | None = None
+    new_patient_flow: Literal["consult", "intake"] | None = None
+    intake_forms_due_hours: int | None = Field(None, ge=0)
+
+
 # --- Google Calendar models ---
 
 

@@ -34,7 +34,7 @@ from ..calendar_providers.event_titles import (
     EventTitleStyle,
 )
 from ..calendar_providers.oauth_state import OAuthStateError
-from ..db import release_db_connection
+from ..db import get_db_session, release_db_connection
 from ..models import (
     AuditAction,
     ScheduleSessionRequest,
@@ -66,6 +66,7 @@ from ..models.scheduling import (
     ParseAvailabilityRulesRequest,
     ParseAvailabilityRulesResponse,
     ProposedAvailabilityRule,
+    SchedulingPolicyResponse,
     SetEventTitlingRequest,
     SetEventTitlingResponse,
     StartSessionFromAppointmentRequest,
@@ -73,6 +74,7 @@ from ..models.scheduling import (
     UpdateAppointmentRequest,
     UpdateAppointmentTypeRequest,
     UpdateAvailabilityRuleRequest,
+    UpdateSchedulingPolicyRequest,
 )
 from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
 from ..rate_limit import get_availability_parse_limiter
@@ -115,6 +117,7 @@ from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
+from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
 from ..services import (
     AuditService,
     NoteService,
@@ -1064,6 +1067,39 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         created_at=appointment_type.created_at,
         updated_at=appointment_type.updated_at,
     )
+
+
+@router.get("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
+def get_scheduling_policy(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> SchedulingPolicyResponse:
+    """The practice's scheduling policy.
+
+    A practice that has never opened the settings has no stored row; it gets
+    the defaults, which are uniformly off or strict. Reading never creates a
+    row, so this stays safe to call from anywhere.
+    """
+    # Taken from the request-scoped session rather than injected: the tenant
+    # context dependency above has already pointed the search path at this
+    # practice, and every other read in this module resolves its session the
+    # same way.
+    return SchedulingPolicyResponse(**load_policy(get_db_session()))  # type: ignore[arg-type]
+
+
+@router.patch("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
+def update_scheduling_policy(
+    request: UpdateSchedulingPolicyRequest,
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> SchedulingPolicyResponse:
+    """Change part of the scheduling policy.
+
+    Partial: a field the caller did not send keeps its current value, so a
+    settings page can save one row without resending the rest.
+    """
+    session = get_db_session()
+    merged = update_policy(session, request.model_dump(exclude_unset=True))
+    session.commit()
+    return SchedulingPolicyResponse(**merged)  # type: ignore[arg-type]
 
 
 @router.get("/api/appointment-types", response_model=AppointmentTypeListResponse)

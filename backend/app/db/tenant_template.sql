@@ -591,6 +591,47 @@ CREATE TABLE __TENANT_SCHEMA__.prescriptions (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.scheduling_policy (
+    id smallint NOT NULL,
+    min_notice_hours integer DEFAULT 24 NOT NULL,
+    max_horizon_days integer DEFAULT 60 NOT NULL,
+    cancel_cutoff_hours integer DEFAULT 24 NOT NULL,
+    reschedule_cutoff_hours integer DEFAULT 24 NOT NULL,
+    pending_hold_hours integer DEFAULT 72 NOT NULL,
+    self_book_existing boolean DEFAULT false NOT NULL,
+    self_book_new boolean DEFAULT false NOT NULL,
+    self_book_mode character varying(10) DEFAULT 'request'::character varying NOT NULL,
+    new_patient_flow character varying(10) DEFAULT 'consult'::character varying NOT NULL,
+    intake_forms_due_hours integer DEFAULT 48 NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_scheduling_policy_cancel_cutoff CHECK ((cancel_cutoff_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_intake_forms_due CHECK ((intake_forms_due_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_max_horizon CHECK ((max_horizon_days > 0)),
+    CONSTRAINT ck_scheduling_policy_min_notice CHECK ((min_notice_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_new_patient_flow CHECK (((new_patient_flow)::text = ANY ((ARRAY['consult'::character varying, 'intake'::character varying])::text[]))),
+    CONSTRAINT ck_scheduling_policy_pending_hold CHECK ((pending_hold_hours > 0)),
+    CONSTRAINT ck_scheduling_policy_reschedule_cutoff CHECK ((reschedule_cutoff_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_self_book_mode CHECK (((self_book_mode)::text = ANY ((ARRAY['request'::character varying, 'auto'::character varying])::text[]))),
+    CONSTRAINT ck_scheduling_policy_singleton CHECK ((id = 1))
+);
+
+
+
+CREATE SEQUENCE __TENANT_SCHEMA__.scheduling_policy_id_seq
+    AS smallint
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+
+ALTER SEQUENCE __TENANT_SCHEMA__.scheduling_policy_id_seq OWNED BY __TENANT_SCHEMA__.scheduling_policy.id;
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
     id uuid NOT NULL,
     supervision_relationship_id uuid NOT NULL,
@@ -656,6 +697,10 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     deleted_at timestamp with time zone,
     transcription_job_metadata jsonb
 );
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy ALTER COLUMN id SET DEFAULT nextval('__TENANT_SCHEMA__.scheduling_policy_id_seq'::regclass);
 
 
 
@@ -796,6 +841,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_encounters
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
     ADD CONSTRAINT prescriptions_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy
+    ADD CONSTRAINT scheduling_policy_pkey PRIMARY KEY (id);
 
 
 
