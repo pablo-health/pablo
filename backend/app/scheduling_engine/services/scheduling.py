@@ -170,7 +170,8 @@ class SchedulingService:
         """Create a single appointment.
 
         Required keys in data: patient_id, title, start_at, end_at, duration_minutes.
-        Optional: session_type, video_link, video_platform, notes.
+        Optional: appointment_type_id, session_type, video_link, video_platform,
+        notes.
 
         ``tz`` is the zone availability rules are evaluated in — see
         ``AvailabilityEngine.check_conflicts``. Defaults to UTC.
@@ -214,6 +215,7 @@ class SchedulingService:
             pending_expires_at=pending_expires_at,
             confirmation_token_hash=data.get("confirmation_token_hash"),  # type: ignore[arg-type]
             session_type=str(data.get("session_type", "individual")),
+            appointment_type_id=data.get("appointment_type_id"),  # type: ignore[arg-type]
             video_link=data.get("video_link"),  # type: ignore[arg-type]
             video_platform=data.get("video_platform"),  # type: ignore[arg-type]
             notes=data.get("notes"),  # type: ignore[arg-type]
@@ -262,6 +264,7 @@ class SchedulingService:
             "end_at",
             "duration_minutes",
             "patient_id",
+            "appointment_type_id",
             "session_type",
             "video_link",
             "video_platform",
