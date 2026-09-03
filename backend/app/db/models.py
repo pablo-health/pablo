@@ -596,11 +596,19 @@ class AvailabilityRuleRow(Base):
 
 
 class AppointmentTypeRow(Base):
-    """Practice-level default fee for a named appointment type.
+    """A kind of appointment: how long it runs, who it is for, when it may be offered.
 
-    ``default_fee_cents`` is the fee a clinician charges for this type of
-    session (e.g. "individual", "intake") absent a per-patient override —
-    see :mod:`app.scheduling_engine.services.rate_resolver`.
+    This started as a fee table and is now the unit of scheduling. A type
+    carries its own length and its own booking window, because a fifteen-minute
+    consultation and a sixty-minute intake do not want the same notice, the
+    same lead time, or the same horizon.
+
+    ``default_fee_cents`` remains the fee absent a per-patient override — see
+    :mod:`app.scheduling_engine.services.rate_resolver`.
+
+    Note ``appointments.session_type`` is still a free-form string with no
+    foreign key here. Making it one is a separate change with a data migration
+    behind it; do not "finish the job" opportunistically.
     """
 
     __tablename__ = "appointment_types"
@@ -609,10 +617,66 @@ class AppointmentTypeRow(Base):
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     default_fee_cents: Mapped[int | None] = mapped_column(Integer)
+
+    #: How long this appointment runs. The practice-wide default in
+    #: ``session_defaults`` still seeds new appointments; this is what the type
+    #: itself is worth when times are proposed for it.
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50")
+
+    #: Who may be offered this type: ``new``, ``existing`` or ``both``. A
+    #: consultation is for people who are not patients yet; a standard session
+    #: is not.
+    audience: Mapped[str] = mapped_column(String(10), nullable=False, server_default="existing")
+
+    #: Least notice this type needs, in hours. ``None`` means "use the
+    #: practice default" and is deliberately distinct from ``0``, which means
+    #: "no notice required".
+    min_notice_hours: Mapped[int | None] = mapped_column(Integer)
+
+    #: How far out the first offerable day is, in working days. ``0`` allows
+    #: same-day; ``1`` means "not today". Which days count comes from the
+    #: availability rules, never from here.
+    earliest_offer_business_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+
+    #: How far ahead this type may be offered, in ``horizon_unit`` units.
+    horizon: Mapped[int] = mapped_column(Integer, nullable=False, server_default="10")
+
+    #: ``business`` counts only days the practice works; ``days`` is calendar
+    #: days. "Ten business days" and "two weeks" are different promises.
+    horizon_unit: Mapped[str] = mapped_column(String(10), nullable=False, server_default="business")
+
+    #: Whether a patient may take a slot of this type themselves. Off by
+    #: default: booking without the clinician in the loop is opt-in per type
+    #: AND gated by the practice policy.
+    self_bookable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    #: Whether Pablo may propose times for this type when it suggests times.
+    #: On by default — a type that exists is normally one you want offered.
+    offerable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_appointment_types_user_name"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_appointment_types_user_name"),
+        CheckConstraint("duration_minutes BETWEEN 5 AND 480", name="ck_appointment_types_duration"),
+        CheckConstraint(
+            "audience IN ('new', 'existing', 'both')", name="ck_appointment_types_audience"
+        ),
+        CheckConstraint(
+            "min_notice_hours IS NULL OR min_notice_hours >= 0",
+            name="ck_appointment_types_min_notice",
+        ),
+        CheckConstraint(
+            "earliest_offer_business_days >= 0", name="ck_appointment_types_earliest_offer"
+        ),
+        CheckConstraint("horizon > 0", name="ck_appointment_types_horizon"),
+        CheckConstraint(
+            "horizon_unit IN ('business', 'days')", name="ck_appointment_types_horizon_unit"
+        ),
+    )
 
 
 class GoogleCalendarTokenRow(Base):

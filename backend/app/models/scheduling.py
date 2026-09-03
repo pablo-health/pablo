@@ -310,17 +310,44 @@ class FreeSlotsResponse(BaseModel):
 
 
 class CreateAppointmentTypeRequest(BaseModel):
-    """Request to create an appointment type with an optional default fee."""
+    """Request to create an appointment type.
+
+    Every scheduling field has a default that reproduces a standard session,
+    so a caller that only knows a name still gets a usable type.
+    """
 
     name: str = Field(min_length=1, max_length=100)
     default_fee_cents: int | None = Field(None, ge=0)
+    duration_minutes: int = Field(50, ge=5, le=480)
+    audience: Literal["new", "existing", "both"] = "existing"
+    #: None means "use the practice default"; 0 means "no notice needed".
+    min_notice_hours: int | None = Field(None, ge=0)
+    earliest_offer_business_days: int = Field(1, ge=0)
+    horizon: int = Field(10, gt=0)
+    horizon_unit: Literal["business", "days"] = "business"
+    self_bookable: bool = False
+    offerable: bool = True
 
 
 class UpdateAppointmentTypeRequest(BaseModel):
-    """Request to update an appointment type."""
+    """Request to update an appointment type.
+
+    Every field is optional; an omitted field is left alone. Note this makes
+    ``min_notice_hours`` ambiguous between "unchanged" and "clear it back to
+    the practice default" — callers clear it by sending ``null`` explicitly,
+    which the route distinguishes via ``exclude_unset``.
+    """
 
     name: str | None = Field(None, min_length=1, max_length=100)
     default_fee_cents: int | None = Field(None, ge=0)
+    duration_minutes: int | None = Field(None, ge=5, le=480)
+    audience: Literal["new", "existing", "both"] | None = None
+    min_notice_hours: int | None = Field(None, ge=0)
+    earliest_offer_business_days: int | None = Field(None, ge=0)
+    horizon: int | None = Field(None, gt=0)
+    horizon_unit: Literal["business", "days"] | None = None
+    self_bookable: bool | None = None
+    offerable: bool | None = None
 
 
 class AppointmentTypeResponse(BaseModel):
@@ -330,6 +357,14 @@ class AppointmentTypeResponse(BaseModel):
     user_id: str
     name: str
     default_fee_cents: int | None = None
+    duration_minutes: int = 50
+    audience: str = "existing"
+    min_notice_hours: int | None = None
+    earliest_offer_business_days: int = 1
+    horizon: int = 10
+    horizon_unit: str = "business"
+    self_bookable: bool = False
+    offerable: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

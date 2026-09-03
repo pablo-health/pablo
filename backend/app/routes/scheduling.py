@@ -1024,6 +1024,14 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         user_id=appointment_type.user_id,
         name=appointment_type.name,
         default_fee_cents=appointment_type.default_fee_cents,
+        duration_minutes=appointment_type.duration_minutes,
+        audience=appointment_type.audience,
+        min_notice_hours=appointment_type.min_notice_hours,
+        earliest_offer_business_days=appointment_type.earliest_offer_business_days,
+        horizon=appointment_type.horizon,
+        horizon_unit=appointment_type.horizon_unit,
+        self_bookable=appointment_type.self_bookable,
+        offerable=appointment_type.offerable,
         created_at=appointment_type.created_at,
         updated_at=appointment_type.updated_at,
     )
@@ -1052,13 +1060,26 @@ def create_appointment_type(
     ctx: TenantContext = Depends(get_tenant_context),
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
 ) -> AppointmentTypeResponse:
-    """Create a new appointment type with an optional default fee."""
+    """Create a new appointment type.
+
+    Unspecified scheduling fields take the request model's defaults, which
+    describe a standard session, so a caller that only sends a name gets a
+    usable type rather than one that can never be offered.
+    """
     now = utc_now()
     appointment_type = AppointmentType(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
         name=request.name,
         default_fee_cents=request.default_fee_cents,
+        duration_minutes=request.duration_minutes,
+        audience=request.audience,
+        min_notice_hours=request.min_notice_hours,
+        earliest_offer_business_days=request.earliest_offer_business_days,
+        horizon=request.horizon,
+        horizon_unit=request.horizon_unit,
+        self_bookable=request.self_bookable,
+        offerable=request.offerable,
         created_at=now,
         updated_at=now,
     )
@@ -1076,15 +1097,20 @@ def update_appointment_type(
     ctx: TenantContext = Depends(get_tenant_context),
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
 ) -> AppointmentTypeResponse:
-    """Update an existing appointment type."""
+    """Update an existing appointment type.
+
+    Only fields the caller actually sent are touched. That distinction matters
+    for ``min_notice_hours``, where ``null`` is a real value meaning "defer to
+    the practice default" — an omitted field leaves it alone, an explicit null
+    clears it. ``exclude_unset`` is what separates the two, so do not simplify
+    this to an ``is not None`` check per field.
+    """
     appointment_type = type_repo.get(appointment_type_id, ctx.user_id)
     if not appointment_type:
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
 
-    if request.name is not None:
-        appointment_type.name = request.name
-    if request.default_fee_cents is not None:
-        appointment_type.default_fee_cents = request.default_fee_cents
+    for name, value in request.model_dump(exclude_unset=True).items():
+        setattr(appointment_type, name, value)
 
     appointment_type.updated_at = utc_now()
     updated = type_repo.update(appointment_type)
