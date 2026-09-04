@@ -354,9 +354,36 @@ jobs:
       # globbing, say) would otherwise block product changes while npm's only
       # suggested remedy is a --force major downgrade of the linter.
       # Dependabot still opens PRs for dev dependencies.
+      #
+      # Retried, because the advisory endpoint being down is not a finding.
+      # `npm audit` exits 1 for a 503 from registry.npmjs.org exactly as it
+      # does for a real high-severity advisory, so an npm outage blocks merges
+      # on changes that never touch the frontend — it took out two runs on
+      # 2026-09-04, one of them a one-line Python fix.
+      #
+      # Only "audit endpoint returned an error" is retried; a real advisory
+      # still fails the step on the first try. If the endpoint is still
+      # unreachable after the retries the step warns instead of failing: an
+      # audit that never ran is no evidence either way, and Dependabot watches
+      # the same dependency tree independently, so this is not the only place
+      # an advisory would surface.
       - name: Audit npm dependencies
         if: steps.classify.outputs.substantive != 'false'
-        run: npm audit --audit-level=high --omit=dev
+        run: |
+          for attempt in 1 2 3; do
+            if out=$(npm audit --audit-level=high --omit=dev 2>&1); then
+              printf '%s\n' "$out"
+              exit 0
+            fi
+            if printf '%s' "$out" | grep -q 'audit endpoint returned an error'; then
+              echo "npm advisory endpoint unavailable (attempt ${attempt}/3)"
+              sleep $((attempt * 20))
+              continue
+            fi
+            printf '%s\n' "$out"
+            exit 1
+          done
+          echo "::warning::npm advisory endpoint unavailable after 3 attempts; audit did not run"
 
       - name: Type check
         if: steps.classify.outputs.substantive != 'false'
