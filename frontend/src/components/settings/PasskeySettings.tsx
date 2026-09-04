@@ -15,7 +15,7 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { startRegistration, WebAuthnError } from "@simplewebauthn/browser"
-import { Fingerprint, KeyRound, Loader2, Trash2 } from "lucide-react"
+import { Fingerprint, Loader2, Trash2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,6 +27,7 @@ import {
   revokePasskey,
   type PasskeyCredentialSummary,
 } from "@/lib/api/passkey"
+import { ListRow } from "./ui"
 
 const PASSKEYS_QUERY_KEY = ["passkeys"] as const
 
@@ -95,20 +96,14 @@ export function PasskeySettings() {
   })
 
   return (
-    <div className="space-y-5">
-      <p className="text-sm text-neutral-600">
-        Passkeys let you sign in with your device&apos;s fingerprint, face, or
-        screen lock instead of a code from an authenticator app — and they
-        can&apos;t be phished.
-      </p>
-
+    <div className="space-y-4">
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-neutral-500">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading passkeys…
         </div>
       ) : passkeys && passkeys.length > 0 ? (
-        <ul className="divide-y divide-neutral-200 rounded-lg border border-neutral-200">
+        <ul>
           {passkeys.map((passkey) => (
             <PasskeyRow
               key={passkey.credential_id}
@@ -122,12 +117,12 @@ export function PasskeySettings() {
           ))}
         </ul>
       ) : (
-        <p className="text-sm text-neutral-500">No passkeys yet.</p>
+        <p className="text-sm text-muted-foreground">No passkeys yet.</p>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+      <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-end">
         <div className="flex-1">
-          <label htmlFor="passkey-label" className="mb-1.5 block text-sm font-medium text-neutral-700">
+          <label htmlFor="passkey-label" className="mb-1.5 block text-sm font-medium text-foreground">
             Name (optional)
           </label>
           <Input
@@ -153,8 +148,12 @@ export function PasskeySettings() {
         </Button>
       </div>
 
+      <p className="text-[12.5px] text-muted-foreground">
+        Adding or removing a passkey asks you to verify an existing one first.
+      </p>
+
       {error && (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
@@ -172,25 +171,17 @@ function PasskeyRow({
   isRevoking: boolean
 }) {
   return (
-    <li className="flex items-center justify-between gap-4 p-4">
-      <div className="flex items-center gap-3">
-        <KeyRound className="h-5 w-5 shrink-0 text-primary-600" />
-        <div>
-          <p className="text-sm font-medium text-neutral-900">
-            {passkey.device_label || "Passkey"}
-          </p>
-          <p className="text-xs text-neutral-500">
-            Added {formatDate(passkey.created_at)} · Last used{" "}
-            {formatDate(passkey.last_used_at)}
-          </p>
-        </div>
-      </div>
+    <ListRow
+      icon={Fingerprint}
+      title={passkey.device_label || "Passkey"}
+      subtitle={`Added ${formatDate(passkey.created_at)} · Last used ${formatDate(passkey.last_used_at)}`}
+    >
       <Button
         variant="ghost"
-        size="sm"
+        size="icon-sm"
         onClick={onRevoke}
         disabled={isRevoking}
-        className="text-red-600 hover:bg-red-50 hover:text-red-700"
+        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
         aria-label={`Remove ${passkey.device_label || "passkey"}`}
       >
         {isRevoking ? (
@@ -199,6 +190,6 @@ function PasskeyRow({
           <Trash2 className="h-4 w-4" />
         )}
       </Button>
-    </li>
+    </ListRow>
   )
 }

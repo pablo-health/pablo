@@ -38,6 +38,9 @@ export interface UserStatusBase {
   is_platform_admin: boolean
   name: string
   email: string
+  /** Version of the security & privacy guide the user last acknowledged. */
+  security_guide_version: string | null
+  security_guide_acknowledged_at: string | null
   /**
    * Practice id for the current user, when multi-tenancy is enabled.
    * Undefined in single-tenant deployments.
