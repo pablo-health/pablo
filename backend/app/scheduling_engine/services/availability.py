@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import TYPE_CHECKING
 
-from ..models.availability import RuleType
+from ..models.availability import EnforcementLevel, RuleType
 from ..models.conflict import Conflict, ConflictCheckResult, FreeSlotsResult, TimeSlot
 
 if TYPE_CHECKING:
@@ -172,9 +172,16 @@ class AvailabilityEngine:
         )
         blocked_minutes = blocked_minutes | appt_blocked
 
+        over_cap = False
         max_per_day = self._get_max_per_day(rules)
-        if max_per_day is not None and len(active) >= max_per_day:
-            return FreeSlotsResult(configured=True, slots=[], duration_minutes=resolved_duration)
+        if max_per_day is not None:
+            cap, enforcement = max_per_day
+            if len(active) >= cap:
+                if enforcement != EnforcementLevel.SOFT:
+                    return FreeSlotsResult(
+                        configured=True, slots=[], duration_minutes=resolved_duration
+                    )
+                over_cap = True
 
         alignment_step = self._get_alignment_step(rules)
 
@@ -190,6 +197,7 @@ class AvailabilityEngine:
                     slot = TimeSlot(
                         start=_minute_to_utc_iso(day, minute, tz),
                         end=_minute_to_utc_iso(day, minute + resolved_duration, tz),
+                        over_cap=over_cap,
                     )
                     slots.append(slot)
                     minute += resolved_duration + buffer_before + buffer_after
@@ -469,15 +477,30 @@ class AvailabilityEngine:
             return 0
         return _ALIGNMENT_STEP_MINUTES.get(alignment, 0)
 
-    def _get_max_per_day(self, rules: list[AvailabilityRule]) -> int | None:
-        """Get the most restrictive max_per_day value."""
+    def _get_max_per_day(self, rules: list[AvailabilityRule]) -> tuple[int, str] | None:
+        """Get the most restrictive max_per_day cap and its enforcement level.
+
+        The smallest cap wins, as before. But if any MAX_PER_DAY rule is
+        HARD, HARD wins the day-closing decision even when a lower SOFT cap
+        is the one that set the number — a hard limit isn't softened by a
+        softer rule also being present.
+        """
         result: int | None = None
+        enforcement: str | None = None
+        hard_present = False
         for rule in rules:
             if rule.rule_type == RuleType.MAX_PER_DAY:
                 max_val = rule.params["max"]
                 if result is None or max_val < result:
                     result = max_val
-        return result
+                    enforcement = rule.enforcement
+                if rule.enforcement == EnforcementLevel.HARD:
+                    hard_present = True
+        if result is None or enforcement is None:
+            return None
+        if hard_present:
+            enforcement = EnforcementLevel.HARD
+        return result, enforcement
 
     def _appointments_to_blocked_minutes(
         self,
