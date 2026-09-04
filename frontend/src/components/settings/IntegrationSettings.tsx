@@ -37,11 +37,13 @@ const URL_HINTS: Record<string, string> = {
 export function IntegrationSettings() {
   const [connections, setConnections] = useState<ICalConnectionStatus[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedEhr, setSelectedEhr] = useState<string>(EHR_OPTIONS[0].value)
   const [feedUrl, setFeedUrl] = useState("")
   const [connecting, setConnecting] = useState(false)
   const [connectResult, setConnectResult] = useState<string | null>(null)
   const [connectError, setConnectError] = useState<string | null>(null)
+  const [disconnectError, setDisconnectError] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<ImportClientsResponse | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -50,8 +52,11 @@ export function IntegrationSettings() {
     try {
       const status = await getICalSyncStatus()
       setConnections(status.connections)
-    } catch {
-      // Silently fail — not critical
+      setLoadError(null)
+    } catch (err) {
+      setLoadError(
+        err instanceof Error ? err.message : "Could not load calendar connections."
+      )
     }
     setLoaded(true)
   }, [])
@@ -81,9 +86,12 @@ export function IntegrationSettings() {
   const handleDisconnect = async (ehrSystem: string) => {
     try {
       await disconnectICalSync(ehrSystem)
+      setDisconnectError(null)
       loadStatus()
-    } catch {
-      // Handle silently
+    } catch (err) {
+      setDisconnectError(
+        err instanceof Error ? err.message : "Could not disconnect."
+      )
     }
   }
 
@@ -118,6 +126,20 @@ export function IntegrationSettings() {
 
   return (
     <div className="space-y-5">
+      {loadError && (
+        <div className="flex items-center gap-1.5 text-sm text-red-600">
+          <AlertCircle className="h-4 w-4" />
+          {loadError}
+        </div>
+      )}
+
+      {disconnectError && (
+        <div className="flex items-center gap-1.5 text-sm text-red-600">
+          <AlertCircle className="h-4 w-4" />
+          {disconnectError}
+        </div>
+      )}
+
       {/* Active connections */}
       {connections.length > 0 && (
         <div className="space-y-3">
