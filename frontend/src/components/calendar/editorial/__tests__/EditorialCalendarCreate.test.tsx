@@ -20,6 +20,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { createAppQueryClient } from "@/components/providers"
 import { EditorialCalendar } from "../EditorialCalendar"
+import { ToastProvider } from "@/components/ui/Toast"
 import { useCreateAppointment } from "@/hooks/useAppointments"
 import type { AppointmentResponse } from "@/types/scheduling"
 
@@ -66,7 +67,7 @@ function makeAppointment(): AppointmentResponse {
 function Harness() {
   const create = useCreateAppointment()
   return (
-    <>
+    <ToastProvider>
       <button onClick={() => create.mutate({} as never)}>book</button>
       <EditorialCalendar
         theme={"light" as never}
@@ -74,7 +75,7 @@ function Harness() {
         onSelectAppointment={vi.fn()}
         onCreateNew={vi.fn()}
       />
-    </>
+    </ToastProvider>
   )
 }
 

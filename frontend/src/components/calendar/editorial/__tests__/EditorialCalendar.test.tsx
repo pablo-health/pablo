@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { EditorialCalendar } from "../EditorialCalendar"
+import { ToastProvider } from "@/components/ui/Toast"
+import { ApiError } from "@/lib/api/client"
 import type { AppointmentResponse } from "@/types/scheduling"
 
 const APPOINTMENTS: AppointmentResponse[] = []
@@ -32,7 +34,9 @@ vi.mock("@/lib/config", () => ({
 function wrap() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    <QueryClientProvider client={qc}>
+      <ToastProvider>{children}</ToastProvider>
+    </QueryClientProvider>
   )
   Wrapper.displayName = "TestQueryClientWrapper"
   return Wrapper
@@ -49,7 +53,7 @@ function defaults() {
 
 beforeEach(() => {
   APPOINTMENTS.length = 0
-  updateMutate.mockClear()
+  updateMutate.mockReset()
 })
 
 describe("EditorialCalendar", () => {
@@ -160,7 +164,7 @@ describe("EditorialCalendar", () => {
     fireEvent.click(screen.getByRole("menuitemradio", { name: /no-show/i }))
 
     expect(updateMutate).toHaveBeenCalledTimes(1)
-    expect(updateMutate).toHaveBeenCalledWith({
+    expect(updateMutate.mock.calls[0][0]).toEqual({
       appointmentId: "a1",
       data: { status: "no_show" },
     })
@@ -273,5 +277,78 @@ describe("EditorialCalendar", () => {
     rerender(<EditorialCalendar {...defaults()} defaultView="week" density="compact" />)
     event = document.querySelector('[data-event="1"]') as HTMLElement
     expect(event.style.top).toBe(`${3 * 44}px`)
+  })
+
+  it("shows the conflict copy when a drag-to-reschedule is rejected with a 409", () => {
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a1",
+      patient_id: "p1",
+      title: "Jane Doe — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    updateMutate.mockImplementation((_variables, options) => {
+      options?.onError?.(new ApiError("CONFLICT", "conflict", undefined, 409))
+    })
+
+    render(
+      <EditorialCalendar {...defaults()} defaultView="day" />,
+      { wrapper: wrap() },
+    )
+
+    const event = document.querySelector('[data-event="1"]') as HTMLElement
+    fireEvent.pointerDown(event, { clientX: 0, clientY: 0, pointerId: 1, button: 0 })
+    fireEvent.pointerMove(window, { clientX: 0, clientY: 54, pointerId: 1 })
+    fireEvent.pointerUp(window, { clientX: 0, clientY: 54, pointerId: 1 })
+
+    expect(updateMutate).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByText("That time conflicts with another appointment."),
+    ).toBeInTheDocument()
+  })
+
+  it("shows the generic copy when a status change is rejected with a non-conflict error", () => {
+    const start = new Date()
+    start.setHours(10, 0, 0, 0)
+    const end = new Date(start.getTime() + 50 * 60_000)
+    APPOINTMENTS.push({
+      id: "a1",
+      patient_id: "p1",
+      title: "Jane Doe — Individual",
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      duration_minutes: 50,
+      status: "confirmed",
+      session_type: "individual",
+      video_link: null,
+      notes: null,
+    } as AppointmentResponse)
+
+    updateMutate.mockImplementation((_variables, options) => {
+      options?.onError?.(new ApiError("SERVER_ERROR", "boom", undefined, 500))
+    })
+
+    render(
+      <EditorialCalendar {...defaults()} defaultView="day" />,
+      { wrapper: wrap() },
+    )
+
+    const event = document.querySelector('[data-event="1"]') as HTMLElement
+    fireEvent.contextMenu(event)
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /no-show/i }))
+
+    expect(updateMutate).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByText("Couldn't update the appointment. Please try again."),
+    ).toBeInTheDocument()
   })
 })
