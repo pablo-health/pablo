@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from ..api_errors import BadRequestError, NotFoundError, ServerError
+from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
 from ..auth.service import (
@@ -32,8 +32,10 @@ from ..auth.service import (
 from ..models import (
     AcceptBAARequest,
     AcknowledgeSecurityGuideRequest,
+    AudioRetentionResponse,
     BAAStatusResponse,
     SecurityGuideStatusResponse,
+    UpdateAudioRetentionRequest,
     UpdateProfessionalInfoRequest,
     UpdateThemeRequest,
     UpdateUserRequest,
@@ -54,6 +56,7 @@ from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now, utc_now_iso
 
 if TYPE_CHECKING:
+    from ..db.platform_models import PracticeRow
     from ..services.companion_device_service import CompanionDeviceService
 
 logger = logging.getLogger(__name__)
@@ -187,6 +190,14 @@ def get_user_status(
         practice = _resolve_practice_from_email(user.email)
         if practice:
             result["practice_id"] = practice[0]
+
+            from ..db import get_db_session
+            from ..db.platform_models import PracticeRow
+
+            practice_row = get_db_session().get(PracticeRow, practice[0])
+            if practice_row is not None:
+                result["practice_name"] = practice_row.name
+                result["practice_phone"] = practice_row.phone
 
     # Include subscription/trial info when subscription enforcement is enabled.
     if settings.is_saas:
@@ -544,7 +555,11 @@ def update_professional_info(
             npi_number=request.npi_number,
         )
 
-    if request.business_address is not None:
+    if (
+        request.business_address is not None
+        or request.practice_name is not None
+        or request.practice_phone is not None
+    ):
         practice_id = _resolve_practice_id_for(user)
         if practice_id is not None:
             from ..db import get_db_session
@@ -553,11 +568,16 @@ def update_professional_info(
             session = get_db_session()
             practice = session.get(PracticeRow, practice_id)
             if practice is not None:
-                practice.address = request.business_address
+                if request.business_address is not None:
+                    practice.address = request.business_address
+                if request.practice_name is not None:
+                    practice.name = request.practice_name
+                if request.practice_phone is not None:
+                    practice.phone = request.practice_phone
                 session.flush()
         else:
             logger.warning(
-                "Skipping practice address write for user_id=%s: no practice mapping",
+                "Skipping practice write for user_id=%s: no practice mapping",
                 user.id,
             )
 
@@ -568,7 +588,80 @@ def update_professional_info(
         "dea_number": request.dea_number,
         "npi_number": request.npi_number,
         "business_address": request.business_address,
+        "practice_name": request.practice_name,
+        "practice_phone": request.practice_phone,
     }
+
+
+def _get_own_practice_as_owner(user: User) -> "PracticeRow":
+    """Resolve the caller's own practice row, gated to the practice owner.
+
+    Ownership is ``practice.owner_email`` matching the caller's email
+    (case-insensitively) — the field the SaaS signup path stamps with the
+    founding clinician's email. The OSS boot-time default practice never
+    goes through a signup flow and leaves ``owner_email`` blank, so a
+    blank value is treated as "no distinct owner configured" and lets any
+    mapped clinician through, rather than locking a self-hosted
+    single-practice install out of its own retention setting.
+    """
+    from ..db import get_db_session
+    from ..db.platform_models import PracticeRow
+
+    practice_id = _resolve_practice_id_for(user)
+    if practice_id is None:
+        raise NotFoundError("No practice mapping for this account", code="NO_PRACTICE")
+
+    practice = get_db_session().get(PracticeRow, practice_id)
+    if practice is None:
+        raise NotFoundError("Practice not found", {"practice_id": practice_id})
+
+    if practice.owner_email and practice.owner_email.lower() != user.email.lower():
+        raise ForbiddenError(
+            "Only the practice owner can view or change this setting",
+            code="NOT_PRACTICE_OWNER",
+        )
+
+    return practice
+
+
+@router.get("/me/practice/audio-retention")
+def get_practice_audio_retention(
+    user: User = Depends(get_current_user_no_mfa),
+) -> AudioRetentionResponse:
+    """Get the caller's own practice's audio retention window (days).
+
+    Self-service counterpart to the platform-admin PUT — scoped to the
+    caller's own practice and gated to the practice owner. A freshly
+    provisioned practice returns the DB column default (365) rather than
+    erroring.
+    """
+    practice = _get_own_practice_as_owner(user)
+    return AudioRetentionResponse(
+        practice_id=practice.id,
+        audio_retention_days=practice.audio_retention_days,
+    )
+
+
+@router.put("/me/practice/audio-retention")
+def update_practice_audio_retention(
+    request: UpdateAudioRetentionRequest,
+    user: User = Depends(get_current_user_no_mfa),
+) -> AudioRetentionResponse:
+    """Set the caller's own practice's audio retention window (days).
+
+    422 on an out-of-range value (Pydantic — mirrors the DB CHECK of
+    30..2555 days so a bad value never reaches the database). 403 if the
+    caller isn't the practice owner.
+    """
+    from ..db import get_db_session
+
+    practice = _get_own_practice_as_owner(user)
+    practice.audio_retention_days = request.audio_retention_days
+    get_db_session().flush()
+    return AudioRetentionResponse(
+        practice_id=practice.id,
+        audio_retention_days=practice.audio_retention_days,
+    )
 
 
 @router.get("/me/baa-status")

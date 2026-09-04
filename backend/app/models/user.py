@@ -113,11 +113,32 @@ class UpdateProfessionalInfoRequest(BaseModel):
     license_number: str | None = Field(None, min_length=1, max_length=100)
     license_state: str | None = Field(None, min_length=2, max_length=2)
     business_address: str | None = Field(None, min_length=1, max_length=500)
+    practice_name: str | None = Field(None, min_length=1, max_length=255)
+    practice_phone: str | None = Field(None, min_length=1, max_length=50)
     # Prescriber credential identifiers — optional, only relevant to
     # provider types that prescribe. Stored once so downstream surfaces
     # can reuse them instead of re-typing per encounter.
     dea_number: str | None = Field(None, min_length=1, max_length=50)
     npi_number: str | None = Field(None, pattern=r"^\d{10}$")
+
+
+# Keep in sync with the DB CHECK constraint added by
+# d7a3f1c8e2b4_practices_retention_offboard_columns.py.
+AUDIO_RETENTION_MIN_DAYS = 30
+AUDIO_RETENTION_MAX_DAYS = 2555
+
+
+class AudioRetentionResponse(BaseModel):
+    """Response for the caller's own practice audio retention window."""
+
+    practice_id: str
+    audio_retention_days: int
+
+
+class UpdateAudioRetentionRequest(BaseModel):
+    """Request to set the caller's own practice audio retention window."""
+
+    audio_retention_days: int = Field(..., ge=AUDIO_RETENTION_MIN_DAYS, le=AUDIO_RETENTION_MAX_DAYS)
 
 
 class BAAStatusResponse(BaseModel):

@@ -95,6 +95,34 @@ class TestUpdateProfile:
         assert response.status_code == 200
         assert response.json()["provider_type"] is None
 
+    def test_user_status_includes_practice_name_and_phone(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """GET /api/users/me/status surfaces practice_name and
+        practice_phone so the Profile page needs one request, not three."""
+        mock_user_repo.update(mock_user)
+        practice = SimpleNamespace(name="Renamed Practice", phone="555-010-0100")
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+
+        with (
+            patch("app.settings.get_settings") as mock_settings,
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            mock_settings.return_value.multi_tenancy_enabled = True
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["practice_id"] == "practice-1"
+        assert body["practice_name"] == "Renamed Practice"
+        assert body["practice_phone"] == "555-010-0100"
+
 
 class TestTitleAndCredentials:
     """Test that PATCH /me persists title/credentials onto the per-practice
@@ -722,6 +750,166 @@ class TestProfessionalInfo:
             )
         assert response.status_code == 200
         assert practice.address == "5 Oak Ave, Town, NY 10001"
+
+    def test_practice_name_and_phone_persist_on_practice(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = SimpleNamespace(name="Old Name", phone=None)
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.patch(
+                "/api/users/me/professional-info",
+                json={"practice_name": "New Name Counseling", "practice_phone": "555-010-0100"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["practice_name"] == "New Name Counseling"
+        assert body["practice_phone"] == "555-010-0100"
+        assert practice.name == "New Name Counseling"
+        assert practice.phone == "555-010-0100"
+
+
+class TestAudioRetentionSelfService:
+    """GET/PUT /api/users/me/practice/audio-retention — self-service
+    counterpart to the platform-admin PUT, scoped to the caller's own
+    practice and gated to the practice owner.
+    """
+
+    def _practice(self, **overrides: Any) -> SimpleNamespace:
+        defaults = {
+            "id": "practice-1",
+            "owner_email": "test@example.com",
+            "audio_retention_days": 365,
+        }
+        defaults.update(overrides)
+        return SimpleNamespace(**defaults)
+
+    def test_get_returns_default_for_fresh_practice(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        fake_session = MagicMock()
+        fake_session.get.return_value = self._practice()
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.get("/api/users/me/practice/audio-retention")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["practice_id"] == "practice-1"
+        assert body["audio_retention_days"] == 365
+
+    def test_owner_can_write_own_value(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice()
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.put(
+                "/api/users/me/practice/audio-retention",
+                json={"audio_retention_days": 90},
+            )
+        assert response.status_code == 200
+        assert response.json()["audio_retention_days"] == 90
+        assert practice.audio_retention_days == 90
+
+    def test_non_owner_gets_403_on_read_and_write(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        practice = self._practice(owner_email="someone-else@example.com")
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            get_response = client.get("/api/users/me/practice/audio-retention")
+            put_response = client.put(
+                "/api/users/me/practice/audio-retention",
+                json={"audio_retention_days": 90},
+            )
+        assert get_response.status_code == 403
+        assert put_response.status_code == 403
+        # Not mutated by the rejected write.
+        assert practice.audio_retention_days == 365
+
+    def test_blank_owner_email_falls_back_to_allow(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """The OSS boot-time default practice never runs a signup flow and
+        leaves ``owner_email`` blank — that must not lock every clinician
+        out of their own practice's retention setting."""
+        mock_user_repo.update(mock_user)
+        practice = self._practice(owner_email="")
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            response = client.get("/api/users/me/practice/audio-retention")
+        assert response.status_code == 200
+
+    def test_out_of_range_value_rejected_422(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        fake_session = MagicMock()
+        fake_session.get.return_value = self._practice()
+        with (
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            too_low = client.put(
+                "/api/users/me/practice/audio-retention",
+                json={"audio_retention_days": 29},
+            )
+            too_high = client.put(
+                "/api/users/me/practice/audio-retention",
+                json={"audio_retention_days": 2556},
+            )
+        assert too_low.status_code == 422
+        assert too_high.status_code == 422
+        # No DB write attempted for an out-of-range value.
+        fake_session.flush.assert_not_called()
+
+    def test_no_practice_mapping_returns_404(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        with patch("app.auth.service._resolve_practice_from_email", return_value=None):
+            response = client.get("/api/users/me/practice/audio-retention")
+        assert response.status_code == 404
 
 
 class TestAcceptBaaSnapshot:
