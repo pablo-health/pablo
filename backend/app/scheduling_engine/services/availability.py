@@ -179,7 +179,6 @@ class AvailabilityEngine:
         alignment_step = self._get_alignment_step(rules)
 
         slots: list[TimeSlot] = []
-        remaining_capacity = max_per_day - len(active) if max_per_day is not None else None
 
         for work_start, work_end in working_ranges:
             minute = (
@@ -193,12 +192,6 @@ class AvailabilityEngine:
                         end=_minute_to_utc_iso(day, minute + resolved_duration, tz),
                     )
                     slots.append(slot)
-                    if remaining_capacity is not None:
-                        remaining_capacity -= 1
-                        if remaining_capacity <= 0:
-                            return FreeSlotsResult(
-                                configured=True, slots=slots, duration_minutes=resolved_duration
-                            )
                     minute += resolved_duration + buffer_before + buffer_after
                     if alignment_step:
                         minute = _next_aligned_minute(minute, alignment_step)
