@@ -151,7 +151,6 @@ class TestTenantExportAuth:
 class TestTenantExportHappyPath:
     """Stream open + audit emission."""
 
-    @pytest.mark.skip(reason="Flaky in CI — THERAPY-5ex (StreamConsumed).")
     def test_stream_opens_with_correct_headers(
         self, client: TestClient, captured_audit_entries: list
     ) -> None:
@@ -196,12 +195,16 @@ class TestTenantExportHappyPath:
                 resp.headers["content-disposition"] == 'attachment; filename="tenant-export.tar.gz"'
             )
             # Stream actually starts: read at least the first chunk
-            # without buffering the whole archive.
-            first_chunk = next(resp.iter_bytes())
+            # without buffering the whole archive. Pull one iterator
+            # and drain the rest from it — a second call to
+            # iter_bytes() on the same response reads the body twice
+            # and raises httpx.StreamConsumed.
+            body = resp.iter_bytes()
+            first_chunk = next(body)
             assert first_chunk.startswith(b"\x1f\x8b")
             # Drain the rest so Starlette runs the BackgroundTask that
             # emits the audit row.
-            for _ in resp.iter_bytes():
+            for _ in body:
                 pass
 
         # Exactly one TENANT_EXPORTED audit, with PHI-free changes.
