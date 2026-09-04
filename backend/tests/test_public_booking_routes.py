@@ -1154,6 +1154,47 @@ def test_hold_participates_in_buffers_max_per_day_and_free_slots(
     assert slots["slots"] == []
 
 
+def test_public_slots_never_offer_over_cap_slots(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """A soft max-per-day cap can let an in-app view flex a day open past
+    its usual limit, but nobody reviews the public booking surface — it's
+    reached without an account — so that flexibility must never be
+    spendable there, even though the engine itself offers the slots."""
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    public_client.rule_repo.create(
+        AvailabilityRule(
+            id=str(uuid.uuid4()),
+            user_id=OWNER_ID,
+            rule_type=RuleType.MAX_PER_DAY,
+            enforcement="soft",
+            params={"max": 1},
+        )
+    )
+    public_client.appt_repo.create(
+        Appointment(
+            id=str(uuid.uuid4()),
+            user_id=OWNER_ID,
+            patient_id="patient-1",
+            title="Session",
+            start_at=datetime.fromisoformat(f"{date_str}T09:00:00+00:00"),
+            end_at=datetime.fromisoformat(f"{date_str}T09:50:00+00:00"),
+            duration_minutes=50,
+            status="confirmed",
+            session_type="individual",
+        )
+    )
+
+    engine = AvailabilityEngine(public_client.rule_repo, public_client.appt_repo)
+    engine_slots = engine.get_free_slots(OWNER_ID, date_str, 50).slots
+    assert any(s.over_cap for s in engine_slots)
+
+    resp = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}")
+    assert resp.json()["slots"] == []
+
+
 def test_expired_hold_releases_slot_and_sweeps_placeholder(
     public_client: Any, link_repo: InMemoryBookingLinkRepository
 ) -> None:
