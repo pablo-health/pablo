@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from app.money import DollarAmount, cents_to_dollars, dollars_to_cents, format_money
+from ...money import DollarAmount, cents_to_dollars, dollars_to_cents, format_money
 
 Audience = Literal["new", "existing", "both"]
 HorizonUnit = Literal["business", "days"]
