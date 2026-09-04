@@ -50,6 +50,9 @@ backend/data/nli-therapy-*
 # Claude Code: worktree-isolated sub-agents materialize here at runtime;
 # transient by design, never committed.
 .claude/worktrees/
+# Same thing at the repo root, which is where `git worktree add` lands by
+# convention here. Unignored, a stray `git add -A` commits whole checkouts.
+.worktrees/
 
 # Operator-local scripts and notes (never committed; common convention
 # for keeping environment-specific automation alongside the checkout).
