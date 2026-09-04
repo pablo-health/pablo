@@ -15,10 +15,11 @@ or polluting ``pytest.ini`` with a new marker.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import UTC, datetime
 
 import pytest
-from app.models import ChatConversation, QuotaStatus
+from app.models import ChatConversation, ChatMessage, QuotaStatus
 from app.repositories import (
     InMemoryChatRepository,
     InMemoryLlmUsageRepository,
@@ -33,10 +34,14 @@ from app.services.chat_llm_gateway import (
     UserAssistantTurn,
 )
 from app.services.chat_turn_service import (
+    ELIDED_HISTORY_MARKER,
+    PRIOR_TURNS_HEAD,
+    PRIOR_TURNS_TAIL,
     ChatTurnService,
     TurnConcurrencyError,
     TurnContext,
     _compose_system_prompt,
+    _first_window_gap_sequence,
     _StreamOutcome,
 )
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
@@ -810,3 +815,124 @@ class TestRetrievalSpanAndContentHook:
         events = _drain(service, _pasted_context())
         # The turn still completes — a misbehaving hook never breaks delivery.
         assert events[-1].kind == "done"
+
+
+# ---------------------------------------------------------------------------
+# Prior-turn window (_load_prior_turns / _first_window_gap_sequence)
+# ---------------------------------------------------------------------------
+
+
+def _seed_message(chat_repo: InMemoryChatRepository, *, role: str, content: str) -> ChatMessage:
+    return chat_repo.add_message(
+        ChatMessage(
+            id=str(uuid.uuid4()),
+            conversation_id=CONVERSATION_ID,
+            sequence=chat_repo.next_sequence(CONVERSATION_ID),
+            role=role,
+            content=content,
+            created_at=datetime.now(UTC),
+        )
+    )
+
+
+def _seed_turns(chat_repo: InMemoryChatRepository, count: int) -> None:
+    """Seed ``count`` alternating user/assistant rows with distinct content."""
+    for i in range(count):
+        role = "user" if i % 2 == 0 else "assistant"
+        _seed_message(chat_repo, role=role, content=f"turn {i}")
+
+
+def _message_at(seq: int) -> ChatMessage:
+    return ChatMessage(
+        id=str(uuid.uuid4()),
+        conversation_id=CONVERSATION_ID,
+        sequence=seq,
+        role="user",
+        content="x",
+        created_at=datetime.now(UTC),
+    )
+
+
+class TestPriorTurnWindow:
+    def test_short_conversation_returns_every_turn_with_no_marker(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        service, _ = _make_service(chat_repo, notes_repo)
+        _seed_turns(chat_repo, PRIOR_TURNS_HEAD + 2)
+
+        prior = service._load_prior_turns(
+            CONVERSATION_ID, user_id=OWNER_USER_ID, exclude_message_ids=set()
+        )
+
+        assert len(prior) == PRIOR_TURNS_HEAD + 2
+        assert all(turn.content != ELIDED_HISTORY_MARKER for turn in prior)
+
+    def test_long_conversation_windows_to_head_plus_tail_with_one_marker(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        service, _ = _make_service(chat_repo, notes_repo)
+        _seed_turns(chat_repo, PRIOR_TURNS_HEAD + PRIOR_TURNS_TAIL + 10)
+
+        prior = service._load_prior_turns(
+            CONVERSATION_ID, user_id=OWNER_USER_ID, exclude_message_ids=set()
+        )
+
+        assert len(prior) == PRIOR_TURNS_HEAD + PRIOR_TURNS_TAIL + 1
+        marker_positions = [
+            i for i, turn in enumerate(prior) if turn.content == ELIDED_HISTORY_MARKER
+        ]
+        assert marker_positions == [PRIOR_TURNS_HEAD]
+
+    def test_current_turn_rows_excluded_via_exclude_message_ids(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        service, _ = _make_service(chat_repo, notes_repo)
+        _seed_turns(chat_repo, PRIOR_TURNS_HEAD)
+        current_user_msg = _seed_message(chat_repo, role="user", content="current question")
+        current_assistant_msg = _seed_message(chat_repo, role="assistant", content="")
+
+        prior = service._load_prior_turns(
+            CONVERSATION_ID,
+            user_id=OWNER_USER_ID,
+            exclude_message_ids={current_user_msg.id, current_assistant_msg.id},
+        )
+
+        assert len(prior) == PRIOR_TURNS_HEAD
+        assert all(turn.content != "current question" for turn in prior)
+
+    def test_empty_content_and_non_dialogue_rows_are_skipped(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+    ) -> None:
+        service, _ = _make_service(chat_repo, notes_repo)
+        _seed_message(chat_repo, role="user", content="hello")
+        _seed_message(chat_repo, role="assistant", content="")
+        _seed_message(chat_repo, role="system", content="tool ran")
+        _seed_message(chat_repo, role="assistant", content="hi back")
+
+        prior = service._load_prior_turns(
+            CONVERSATION_ID, user_id=OWNER_USER_ID, exclude_message_ids=set()
+        )
+
+        assert [turn.content for turn in prior] == ["hello", "hi back"]
+
+
+class TestFirstWindowGapSequence:
+    def test_contiguous_sequence_has_no_gap(self) -> None:
+        messages = [_message_at(seq) for seq in range(1, 5)]
+        assert _first_window_gap_sequence(messages) is None
+
+    def test_gap_returns_head_side_boundary_sequence(self) -> None:
+        messages = [_message_at(1), _message_at(2), _message_at(40), _message_at(41)]
+        assert _first_window_gap_sequence(messages) == 2
+
+    def test_empty_and_single_message_lists_have_no_gap(self) -> None:
+        assert _first_window_gap_sequence([]) is None
+        assert _first_window_gap_sequence([_message_at(1)]) is None
