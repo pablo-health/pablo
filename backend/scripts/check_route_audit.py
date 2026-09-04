@@ -96,6 +96,10 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # not on the route signature; both handlers delegate to it.
         ("post", "/api/internal/transcription-complete"),  # audited in helper
         ("post", "/api/internal/transcription-poll"),  # delegates to the audited helper
+        # users.py — practice-level retention *policy* (a day count), not
+        # audio content; matches the "/audio" marker on path text alone.
+        ("get", "/api/users/me/practice/audio-retention"),
+        ("put", "/api/users/me/practice/audio-retention"),
     }
 )
 

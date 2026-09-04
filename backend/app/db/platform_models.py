@@ -86,6 +86,9 @@ class PracticeRow(PlatformBase):
     )
     # Business address for the practice (set at professional-info onboarding step).
     address: Mapped[str | None] = mapped_column(String(500))
+    # Practice phone number (set at professional-info onboarding step, or later
+    # via the Profile settings page). No format validation at this layer.
+    phone: Mapped[str | None] = mapped_column(String(50))
     # BAA snapshot — written once at acceptance time and immutable thereafter.
     # These are the legal record: who signed, under what credentials, on what text.
     baa_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
