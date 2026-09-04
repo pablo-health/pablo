@@ -289,6 +289,17 @@ def _parse_booking_date(value: str) -> date:
     return parsed
 
 
+def _public_slots(slots: list[TimeSlot]) -> list[TimeSlot]:
+    """Slots a booking link may show or accept.
+
+    A soft max-per-day cap surfaces the day's remaining slots flagged
+    ``over_cap`` so an in-app view can offer them deliberately. Nobody
+    reviews this unauthenticated path, so it must never hand out that
+    flexibility on its own — every slot list read here is filtered.
+    """
+    return [s for s in slots if not s.over_cap]
+
+
 @router.get("/api/public/booking-links/{slug}", response_model=PublicBookingLinkResponse)
 def get_public_booking_link(
     ctx: PublicBookingContext = Depends(get_public_booking_context),
@@ -322,11 +333,12 @@ def get_public_free_slots(
     """
     parsed = _parse_booking_date(date_param)
     result = engine.get_free_slots(ctx.link.user_id, parsed.isoformat(), ctx.link.duration_minutes)
+    slots = _public_slots(result.slots)
     return FreeSlotsResponse(
         date=parsed.isoformat(),
         duration_minutes=ctx.link.duration_minutes,
-        slots=[TimeSlotResponse(start=s.start, end=s.end) for s in result.slots],
-        total=len(result.slots),
+        slots=[TimeSlotResponse(start=s.start, end=s.end) for s in slots],
+        total=len(slots),
         configured=result.configured,
     )
 
@@ -573,8 +585,8 @@ def create_public_booking(
     date_str = request.start_at[:10]
     _parse_booking_date(date_str)
 
-    slots = engine.get_free_slots(ctx.link.user_id, date_str, ctx.link.duration_minutes)
-    slot = next((s for s in slots.slots if s.start == request.start_at), None)
+    result = engine.get_free_slots(ctx.link.user_id, date_str, ctx.link.duration_minutes)
+    slot = next((s for s in _public_slots(result.slots) if s.start == request.start_at), None)
     if slot is None:
         raise ConflictError("That time is no longer available. Please pick another slot.")
 
@@ -794,10 +806,10 @@ def confirm_public_booking(
         # Found by its hash, which only a lapsed hold still carries — a
         # clinician-cancelled hold has its hash cleared and would never
         # have matched the lookup above.
-        slots = engine.get_free_slots(
+        result = engine.get_free_slots(
             ctx.link.user_id, appt.start_at.date().isoformat(), ctx.link.duration_minutes
         )
-        still_free = any(s.start == _slot_start_iso(appt) for s in slots.slots)
+        still_free = any(s.start == _slot_start_iso(appt) for s in _public_slots(result.slots))
         restored = patient_repo.restore(appt.patient_id, ctx.link.user_id) if still_free else None
         if not still_free or restored is None:
             raise ConflictError(_SLOT_TAKEN)
