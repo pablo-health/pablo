@@ -22,8 +22,12 @@ from app.payments.provider import (
 )
 from pydantic import SecretStr
 
-_CONFIGURED_KEY = "sk_test_configured"
-_CUSTOM_KEY = "sk_test_custom"
+# Deliberately not shaped like a real key. Nothing here parses the value — it
+# only has to round-trip through the provider — and a fixture that imitated a
+# credential would be indistinguishable from a leaked one to a secret scanner,
+# which is exactly the judgement we want the scanner making on a public repo.
+_CONFIGURED_KEY = "configured-key-for-tests"
+_CUSTOM_KEY = "provider-supplied-key-for-tests"
 
 
 class _Settings:

@@ -60,7 +60,12 @@ _OTHER_PATIENT_ID = "22222222-2222-4222-8222-222222222222"
 _APPOINTMENT_ID = "33333333-3333-4333-8333-333333333333"
 _TYPE_ID = "44444444-4444-4444-8444-444444444444"
 _PI_ID = "pi_created"
-_SECRET_KEY = "sk_test_dummy"
+# Deliberately not shaped like real credentials: the fake transport never
+# parses any of these, and a fixture imitating a credential would be
+# indistinguishable from a leaked one to a secret scanner.
+_SECRET_KEY = "secret-key-for-tests"
+_CLIENT_SECRET = "setup-intent-client-secret-for-tests"
+_SECOND_CLIENT_SECRET = "another-setup-intent-client-secret"
 
 
 # ---------------------------------------------------------------------------
@@ -410,14 +415,14 @@ class TestCardSetup:
         def _responder(method: str, url: str) -> tuple[int, dict[str, Any]]:
             if url.endswith("/v1/customers"):
                 return 200, {"id": "cus_new"}
-            return 200, {"client_secret": "seti_1_secret_x"}
+            return 200, {"client_secret": _CLIENT_SECRET}
 
         seen = _install_stripe(monkeypatch, _responder)
 
         response = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup")
 
         assert response.status_code == 200
-        assert response.json() == {"client_secret": "seti_1_secret_x", "stripe_account_id": None}
+        assert response.json() == {"client_secret": _CLIENT_SECRET, "stripe_account_id": None}
         assert payments.card is not None
         assert payments.card.stripe_customer_id == "cus_new"
         # Not chargeable yet: the payment-method id only exists once the
@@ -435,7 +440,9 @@ class TestCardSetup:
     def test_setup_reuses_an_existing_customer(self, monkeypatch: pytest.MonkeyPatch) -> None:
         payments = _FakePayments(_stored_card())
         client = _client(payments, _FakePatients())
-        seen = _install_stripe(monkeypatch, lambda *_: (200, {"client_secret": "seti_2"}))
+        seen = _install_stripe(
+            monkeypatch, lambda *_: (200, {"client_secret": _SECOND_CLIENT_SECRET})
+        )
 
         response = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup")
 
@@ -453,7 +460,9 @@ class TestCardSetup:
             _FakePatients(),
             credentials=PaymentCredentials(secret_key=_SECRET_KEY, account_id="acct_x"),
         )
-        seen = _install_stripe(monkeypatch, lambda *_: (200, {"client_secret": "seti_2"}))
+        seen = _install_stripe(
+            monkeypatch, lambda *_: (200, {"client_secret": _SECOND_CLIENT_SECRET})
+        )
 
         response = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup")
 

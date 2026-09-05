@@ -65,8 +65,12 @@ The discriminator is our own metadata. ``app.routes.patient_payments`` stamps
 the ledger row id, the acting clinician and the practice onto every
 PaymentIntent it creates, and Stripe copies PaymentIntent metadata onto the
 charge it creates, so every handled event type carries it back whenever the
-charge is ours — ``charge.refunded`` included. No metadata therefore means the
-practice's own charge: record it and 200.
+charge is ours. That includes ``charge.refunded``, which is the case the whole
+refund path rests on and the one that is not obvious from the event shape: it
+delivers a Charge, not a PaymentIntent, and its ``data.object.metadata`` was
+checked against Stripe test mode to carry the PaymentIntent's metadata
+verbatim. No metadata therefore means the practice's own charge: record it
+and 200.
 
 Logs here carry the event id, our own charge id and a status token. Never a
 client identifier, never an amount, never a name.

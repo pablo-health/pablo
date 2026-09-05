@@ -39,8 +39,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-_SECRET = "whsec_test_secret"
-_OLD_SECRET = "whsec_previous_secret"
+# Deliberately not shaped like a real signing secret: these are only ever fed
+# to hmac.new(), so any bytes do, and a fixture imitating a credential would be
+# indistinguishable from a leaked one to a secret scanner.
+_SECRET = "webhook-signing-secret-for-tests"
+_OLD_SECRET = "previous-webhook-signing-secret-for-tests"
 _PRACTICE_ID = "practice-1"
 _SCHEMA = "practice_abc123"
 _USER_ID = "user-1"
