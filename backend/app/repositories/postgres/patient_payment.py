@@ -181,3 +181,14 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             .all()
         )
         return [_to_charge(row) for row in rows]
+
+    def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
+        if not appointment_ids:
+            return set()
+        rows = self._session.execute(
+            select(PatientChargeRow.appointment_id).where(
+                PatientChargeRow.appointment_id.in_(appointment_ids),
+                PatientChargeRow.status == "succeeded",
+            )
+        ).scalars()
+        return {row for row in rows if row is not None}

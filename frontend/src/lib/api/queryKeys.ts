@@ -276,6 +276,12 @@ const baseQueryKeys = {
       ] as const,
   },
 
+  // Billing (unbilled-sessions queue) query keys
+  billing: {
+    all: ["billing"] as const,
+    unbilledQueue: () => [...baseQueryKeys.billing.all, "unbilledQueue"] as const,
+  },
+
   // Booking link query keys
   bookingLinks: {
     all: ["bookingLinks"] as const,

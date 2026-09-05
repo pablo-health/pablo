@@ -140,6 +140,26 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
+        if not session_ids:
+            return {}
+        rows = (
+            self._session.execute(
+                select(AppointmentRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == AppointmentRow.patient_id,
+                )
+                .where(
+                    AppointmentRow.session_id.in_(session_ids),
+                    *_grant_filters(user_id),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {row.session_id: _row_to_appointment(row) for row in rows if row.session_id}
+
     def count_by_range(self, user_id: str, start: str | datetime, end: str | datetime) -> int:
         """Aggregate variant of :meth:`list_by_range` — one COUNT, no rows
         materialised, valid under column-scoped grants."""

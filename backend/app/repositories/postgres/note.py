@@ -152,6 +152,30 @@ class PostgresNotesRepository(NotesRepository):
         rows = self._session.execute(query).scalars().all()
         return [_row_to_note(r) for r in rows]
 
+    def list_finalized(self, user_id: str, *, limit: int | None = None) -> list[Note]:
+        query = (
+            select(NoteRow)
+            .join(
+                PatientClinicianRow,
+                PatientClinicianRow.patient_id == NoteRow.patient_id,
+            )
+            .where(
+                NoteRow.session_id.is_not(None),
+                NoteRow.finalized_at.is_not(None),
+                NoteRow.deleted_at.is_(None),
+                PatientClinicianRow.user_id == user_id,
+                or_(
+                    PatientClinicianRow.expires_at.is_(None),
+                    PatientClinicianRow.expires_at > utc_now(),
+                ),
+            )
+            .order_by(NoteRow.finalized_at.desc())
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        rows = self._session.execute(query).scalars().all()
+        return [_row_to_note(r) for r in rows]
+
     def count_unfinalized(self, user_id: str) -> int:
         # Single-query join through patient_clinicians so the count covers
         # exactly the notes the user is granted on. session_id IS NOT NULL

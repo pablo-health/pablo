@@ -89,6 +89,16 @@ class AppointmentRepository(ABC):
         return [a.start_at for a in self.list_by_patient(user_id, patient_id)]
 
     @abstractmethod
+    def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
+        """The appointment each session started from, keyed by ``session_id``.
+
+        A session with no appointment (or one the user can't access) is
+        simply absent from the result. Backs the unbilled queue, which needs
+        each finalized session's appointment to resolve a rate and to check
+        the charge ledger.
+        """
+
+    @abstractmethod
     def list_by_recurring_id(
         self,
         user_id: str,
@@ -224,6 +234,14 @@ class InMemoryAppointmentRepository(AppointmentRepository):
             [a for a in self._appointments.values() if a.patient_id == patient_id],
             key=lambda a: a.start_at,
         )
+
+    def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
+        wanted = set(session_ids)
+        return {
+            a.session_id: a
+            for a in self._appointments.values()
+            if a.session_id in wanted and self._can_access(a.patient_id, user_id)
+        }
 
     def list_overlapping(
         self,
