@@ -257,6 +257,25 @@ const baseQueryKeys = {
     list: () => [...baseQueryKeys.availabilityRules.all, "list"] as const,
   },
 
+  // Self-pay card payment query keys
+  payments: {
+    all: ["payments"] as const,
+    // Patient-level prefix — invalidate this to clear the card, the resolved
+    // amount and the ledger in one go after a card change or a charge.
+    byPatientAll: (patientId: string) =>
+      [...baseQueryKeys.payments.all, "byPatient", patientId] as const,
+    card: (patientId: string) =>
+      [...baseQueryKeys.payments.byPatientAll(patientId), "card"] as const,
+    charges: (patientId: string) =>
+      [...baseQueryKeys.payments.byPatientAll(patientId), "charges"] as const,
+    amount: (patientId: string, appointmentId?: string) =>
+      [
+        ...baseQueryKeys.payments.byPatientAll(patientId),
+        "amount",
+        appointmentId ?? null,
+      ] as const,
+  },
+
   // Booking link query keys
   bookingLinks: {
     all: ["bookingLinks"] as const,

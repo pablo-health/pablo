@@ -2,15 +2,18 @@
 
 """Where a practice's card-processing credentials come from.
 
-Charging a card needs two things: a Stripe secret key, and — for some
+Collecting and charging a card needs three things: a Stripe secret key, the
+publishable key the browser posts card details with, and — for some
 deployments — the id of the Stripe account the objects should belong to when
-that is not simply the account the key itself belongs to. Both are deployment
-configuration, so they are read through a small provider rather than baked into
-the routes.
+that is not simply the account the key itself belongs to. All three are
+deployment configuration, so they are read through a small provider rather than
+baked into the routes, and they are resolved together because they have to
+agree with one another.
 
 :class:`SettingsPaymentCredentialProvider` is the default and is what a bare
-deployment gets: the key configured as ``STRIPE_SECRET_KEY``, charging directly
-on the account that key belongs to, with no ``account_id``. A deployment that
+deployment gets: the keys configured as ``STRIPE_SECRET_KEY`` and
+``STRIPE_PUBLISHABLE_KEY``, charging directly on the account they belong to,
+with no ``account_id``. A deployment that
 needs something else — one key authorised to act for several Stripe accounts,
 credentials fetched from a secret store per practice, a key that rotates on its
 own schedule — implements the protocol and installs it at startup with
@@ -43,10 +46,19 @@ class PaymentCredentials:
     to act for and the header is omitted entirely. It exists because a
     deployment may hold one key that is authorised to act for more than one
     Stripe account, in which case every call has to say which.
+
+    ``publishable_key`` is the browser's half of the same pair. It is not a
+    secret — it is meant to reach the client, which is the only place it does
+    anything — and it lives here rather than being read separately so that
+    whatever resolves the secret key also resolves the publishable key that has
+    to match it. Split across two sources they drift silently: a live secret
+    key with a test publishable key collects cards that can never be charged,
+    and neither side reports anything wrong.
     """
 
     secret_key: str
     account_id: str | None = None
+    publishable_key: str = ""
 
 
 class PaymentCredentialProvider(Protocol):
@@ -79,10 +91,14 @@ class SettingsPaymentCredentialProvider:
         self,
         practice_id: str | None,  # noqa: ARG002 — argument documents the protocol's shape
     ) -> PaymentCredentials | None:
-        secret_key = get_settings().stripe_secret_key.get_secret_value()
+        settings = get_settings()
+        secret_key = settings.stripe_secret_key.get_secret_value()
         if not secret_key:
             return None
-        return PaymentCredentials(secret_key=secret_key)
+        return PaymentCredentials(
+            secret_key=secret_key,
+            publishable_key=settings.stripe_publishable_key,
+        )
 
 
 @dataclass

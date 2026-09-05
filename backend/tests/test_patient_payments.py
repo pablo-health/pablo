@@ -34,6 +34,7 @@ from typing import Any
 import httpx
 import pytest
 from app.auth.service import TenantContext, get_tenant_context, require_baa_acceptance
+from app.db.models import DEFAULT_CHARGE_CURRENCY
 from app.models import User
 from app.models.patient import Patient
 from app.models.payments import CardOnFile, PatientCharge
@@ -64,6 +65,7 @@ _PI_ID = "pi_created"
 # parses any of these, and a fixture imitating a credential would be
 # indistinguishable from a leaked one to a secret scanner.
 _SECRET_KEY = "secret-key-for-tests"
+_PUBLISHABLE_KEY = "publishable-key-for-tests"
 _CLIENT_SECRET = "setup-intent-client-secret-for-tests"
 _SECOND_CLIENT_SECRET = "another-setup-intent-client-secret"
 
@@ -262,7 +264,9 @@ def _client(
     *,
     appointments: _FakeAppointments | None = None,
     appointment_types: _FakeAppointmentTypes | None = None,
-    credentials: PaymentCredentials | None = PaymentCredentials(secret_key=_SECRET_KEY),
+    credentials: PaymentCredentials | None = PaymentCredentials(
+        secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY
+    ),
     practice_id: str | None = _PRACTICE_ID,
 ) -> TestClient:
     register_payment_credential_provider(_FixedProvider(credentials))
@@ -352,7 +356,9 @@ class TestPreconditions:
         assert payments.charges == []
 
     def test_provider_is_asked_about_the_callers_practice(self) -> None:
-        provider = _FixedProvider(PaymentCredentials(secret_key=_SECRET_KEY))
+        provider = _FixedProvider(
+            PaymentCredentials(secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY)
+        )
         register_payment_credential_provider(provider)
         payments = _FakePayments(_stored_card())
         client = _client(payments, _FakePatients())
@@ -422,7 +428,11 @@ class TestCardSetup:
         response = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup")
 
         assert response.status_code == 200
-        assert response.json() == {"client_secret": _CLIENT_SECRET, "stripe_account_id": None}
+        assert response.json() == {
+            "client_secret": _CLIENT_SECRET,
+            "publishable_key": _PUBLISHABLE_KEY,
+            "stripe_account_id": None,
+        }
         assert payments.card is not None
         assert payments.card.stripe_customer_id == "cus_new"
         # Not chargeable yet: the payment-method id only exists once the
@@ -458,7 +468,11 @@ class TestCardSetup:
         client = _client(
             payments,
             _FakePatients(),
-            credentials=PaymentCredentials(secret_key=_SECRET_KEY, account_id="acct_x"),
+            credentials=PaymentCredentials(
+                secret_key=_SECRET_KEY,
+                publishable_key=_PUBLISHABLE_KEY,
+                account_id="acct_x",
+            ),
         )
         seen = _install_stripe(
             monkeypatch, lambda *_: (200, {"client_secret": _SECOND_CLIENT_SECRET})
@@ -468,6 +482,55 @@ class TestCardSetup:
 
         assert response.json()["stripe_account_id"] == "acct_x"
         assert {c["headers"]["Stripe-Account"] for c in seen} == {"acct_x"}
+
+    def test_setup_hands_the_browser_the_key_it_must_initialise_with(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The publishable key travels with the client secret it belongs to.
+
+        The browser needs the key, the account and the client secret to agree
+        with the secret key the resulting card will be charged with. Resolving
+        all of them from the same credentials is what makes that true by
+        construction rather than by matching configuration on two containers.
+        """
+        client = _client(
+            _FakePayments(_stored_card()),
+            _FakePatients(),
+            credentials=PaymentCredentials(
+                secret_key=_SECRET_KEY,
+                publishable_key=_PUBLISHABLE_KEY,
+                account_id="acct_x",
+            ),
+        )
+        _install_stripe(monkeypatch, lambda *_: (200, {"client_secret": _SECOND_CLIENT_SECRET}))
+
+        body = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup").json()
+
+        assert body["publishable_key"] == _PUBLISHABLE_KEY
+        assert body["stripe_account_id"] == "acct_x"
+
+    def test_setup_without_a_publishable_key_is_503_and_creates_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No key means the browser cannot collect a card, so nothing is minted.
+
+        Half-working is the failure to avoid: without this the deployment would
+        create a customer and a SetupIntent in the practice's Stripe account for
+        a flow that could never finish.
+        """
+        payments = _FakePayments(card=None)
+        client = _client(
+            payments,
+            _FakePatients(),
+            credentials=PaymentCredentials(secret_key=_SECRET_KEY),
+        )
+        seen = _install_stripe(monkeypatch, lambda *_: (200, {"client_secret": _CLIENT_SECRET}))
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup")
+
+        assert response.status_code == 503
+        assert payments.card is None
+        assert seen == []
 
     def test_complete_setup_persists_the_payment_method_and_display_fields(
         self, monkeypatch: pytest.MonkeyPatch
@@ -885,3 +948,69 @@ class TestLedgerRead:
     def test_no_card_on_file_is_404(self) -> None:
         client = _client(_FakePayments(card=None), _FakePatients())
         assert client.get(f"/api/patients/{_PATIENT_ID}/payment-method").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# What the clinician is shown before charging
+# ---------------------------------------------------------------------------
+
+
+class TestChargeAmountPreview:
+    def test_previews_the_clients_own_rate(self) -> None:
+        client = _client(_FakePayments(_stored_card()), _FakePatients(rate_cents=17500))
+
+        response = client.get(f"/api/patients/{_PATIENT_ID}/charge-amount")
+
+        assert response.status_code == 200
+        assert response.json() == {"amount_cents": 17500, "currency": DEFAULT_CHARGE_CURRENCY}
+
+    def test_previews_the_appointment_types_default_fee(self) -> None:
+        client = _client(
+            _FakePayments(_stored_card()),
+            _FakePatients(rate_cents=None),
+            appointments=_FakeAppointments(_appointment()),
+            appointment_types=_FakeAppointmentTypes(
+                AppointmentType(
+                    id=_TYPE_ID, user_id=_USER_ID, name="Standard", default_fee_cents=12000
+                )
+            ),
+        )
+
+        response = client.get(
+            f"/api/patients/{_PATIENT_ID}/charge-amount",
+            params={"appointment_id": _APPOINTMENT_ID},
+        )
+
+        assert response.json()["amount_cents"] == 12000
+
+    def test_the_preview_is_the_amount_the_charge_would_use(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Preview and charge must agree — a figure shown and then not charged
+        is worse than no figure at all."""
+        payments = _FakePayments(_stored_card())
+        client = _client(payments, _FakePatients(rate_cents=15000))
+        previewed = client.get(f"/api/patients/{_PATIENT_ID}/charge-amount").json()["amount_cents"]
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        charged = client.post(f"/api/patients/{_PATIENT_ID}/charges", json={}).json()
+
+        assert charged["amount_cents"] == previewed
+
+    def test_no_rate_anywhere_previews_as_unset_not_zero(self) -> None:
+        """``None``, so the UI asks for an amount rather than offering to
+        charge nothing."""
+        client = _client(_FakePayments(_stored_card()), _FakePatients(rate_cents=None))
+
+        response = client.get(f"/api/patients/{_PATIENT_ID}/charge-amount")
+
+        assert response.status_code == 200
+        assert response.json()["amount_cents"] is None
+
+    def test_foreign_client_is_404(self) -> None:
+        client = _client(_FakePayments(_stored_card()), _FakePatients(visible=False))
+        assert client.get(f"/api/patients/{_PATIENT_ID}/charge-amount").status_code == 404
+
+    def test_unconfigured_deployment_is_503(self) -> None:
+        client = _client(_FakePayments(_stored_card()), _FakePatients(), credentials=None)
+        assert client.get(f"/api/patients/{_PATIENT_ID}/charge-amount").status_code == 503

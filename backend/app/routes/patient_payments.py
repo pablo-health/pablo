@@ -18,6 +18,8 @@ Routes
   confirmed SetupIntent back from Stripe and store what actually got attached.
 * ``GET /api/patients/{patient_id}/payment-method`` — what is on file, so the
   charge button knows whether to enable itself.
+* ``GET /api/patients/{patient_id}/charge-amount`` — what a charge would come
+  to, so the clinician sees the figure before authorising it rather than after.
 * ``POST /api/patients/{patient_id}/charges`` — charge the card on file. One
   click, one charge: there is no scheduler, nothing charges on session
   completion, and a decline is never retried automatically.
@@ -75,6 +77,7 @@ from ..models.payments import (
     CardOnFileResponse,
     CardSetupConfirmation,
     CardSetupResponse,
+    ChargeAmountResponse,
     ChargeResponse,
     CreateChargeRequest,
     PatientCharge,
@@ -167,6 +170,31 @@ def _require_credentials(practice_id: str | None) -> PaymentCredentials:
     return credentials
 
 
+def _effective_rate_cents(
+    patient: Patient,
+    appointment_id: str | None,
+    user_id: str,
+    appointments: AppointmentRepository,
+    appointment_types: AppointmentTypeRepository,
+) -> int | None:
+    """What this client's sessions cost: their own rate, else the type's default.
+
+    ``None`` when neither is set — a legitimate answer meaning "nobody has said
+    what this costs", never zero. The precedence itself lives in one place
+    (:func:`resolve_rate_cents`) and is not re-derived here.
+
+    Shared by the charge route and the preview so the figure a clinician is
+    shown is the figure that would actually be charged, rather than two
+    derivations that can drift apart.
+    """
+    appointment_type = None
+    if appointment_id is not None:
+        appointment = appointments.get(appointment_id, user_id)
+        if appointment is not None and appointment.appointment_type_id is not None:
+            appointment_type = appointment_types.get(appointment.appointment_type_id, user_id)
+    return resolve_rate_cents(patient.rate_cents, appointment_type)
+
+
 def _resolve_amount_cents(
     payload: CreateChargeRequest,
     patient: Patient,
@@ -176,24 +204,15 @@ def _resolve_amount_cents(
 ) -> int:
     """What to charge: the caller's amount, else the client's effective rate.
 
-    Absent an explicit amount the charge is for what this client's sessions
-    cost — their own rate override, falling back to the default fee of the
-    appointment's type. That precedence lives in one place
-    (:func:`resolve_rate_cents`) and is not re-derived here.
-
     422 when neither an amount nor a rate is available: charging a guessed
     amount, or zero, is worse than refusing.
     """
     if payload.amount_cents is not None:
         return payload.amount_cents
 
-    appointment_type = None
-    if payload.appointment_id is not None:
-        appointment = appointments.get(payload.appointment_id, user_id)
-        if appointment is not None and appointment.appointment_type_id is not None:
-            appointment_type = appointment_types.get(appointment.appointment_type_id, user_id)
-
-    amount_cents = resolve_rate_cents(patient.rate_cents, appointment_type)
+    amount_cents = _effective_rate_cents(
+        patient, payload.appointment_id, user_id, appointments, appointment_types
+    )
     if amount_cents is None or amount_cents <= 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -214,11 +233,22 @@ def start_card_setup(
 ) -> CardSetupResponse:
     """Mint the client's Stripe customer (once) and a SetupIntent to collect a card.
 
-    Returns the client secret for Stripe.js. Nothing chargeable exists yet — the
-    payment-method id only arrives once the browser confirms, which is what
+    Returns the client secret for Stripe.js, together with the publishable key
+    and account it must be initialised with. Nothing chargeable exists yet —
+    the payment-method id only arrives once the browser confirms, which is what
     ``POST .../payment-method`` records.
+
+    503 when no publishable key is configured, before anything is created: the
+    browser could not collect a card with what we would hand it, and minting a
+    Stripe customer and a SetupIntent for a flow that cannot finish leaves
+    litter in the practice's Stripe account for nothing.
     """
     credentials = _require_credentials(tenant.practice_id)
+    if not credentials.publishable_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Card payments are not configured.",
+        )
     _require_patient(patients, patient_id, user.id)
 
     card = payments.get_card_on_file(patient_id)
@@ -269,6 +299,7 @@ def start_card_setup(
     logger.info("patient_payment_setup_started")
     return CardSetupResponse(
         client_secret=str(intent["client_secret"]),
+        publishable_key=credentials.publishable_key,
         stripe_account_id=credentials.account_id,
     )
 
@@ -385,6 +416,45 @@ def get_card_on_file(
         resource_id=patient_id,
     )
     return _to_card_response(card)
+
+
+@router.get("/{patient_id}/charge-amount", response_model=ChargeAmountResponse)
+def get_charge_amount(
+    patient_id: str,
+    request: Request,
+    user: CurrentUser,
+    tenant: Tenant,
+    patients: PatientsRepo,
+    appointments: AppointmentsRepo,
+    appointment_types: AppointmentTypesRepo,
+    audit: AuditService = Depends(get_audit_service),
+    appointment_id: str | None = None,
+) -> ChargeAmountResponse:
+    """What a charge with no explicit amount would come to, before it is made.
+
+    The clinician has to see the figure before authorising it, and the amount
+    is resolved on this side — so without this the only way to learn it would
+    be to charge the card and read the receipt.
+
+    ``amount_cents`` is ``None`` when no rate is set anywhere, which is the
+    same condition the charge route refuses on; the UI asks for an amount
+    rather than offering a one-click charge for a number nobody chose.
+    """
+    _require_credentials(tenant.practice_id)
+    patient = _require_patient(patients, patient_id, user.id)
+
+    amount_cents = _effective_rate_cents(
+        patient, appointment_id, user.id, appointments, appointment_types
+    )
+
+    audit.log(
+        AuditAction.PATIENT_CHARGE_AMOUNT_VIEWED,
+        user,
+        request,
+        resource_type=ResourceType.PATIENT,
+        resource_id=patient_id,
+    )
+    return ChargeAmountResponse(amount_cents=amount_cents, currency=DEFAULT_CHARGE_CURRENCY)
 
 
 @router.post("/{patient_id}/charges", response_model=ChargeResponse)

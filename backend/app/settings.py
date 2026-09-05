@@ -244,6 +244,21 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="Stripe API secret key used to charge self-pay cards",
     )
+    # The other half of the same credential pair, and deliberately NOT a
+    # SecretStr: a publishable key is public by design — it ends up in the
+    # browser, because that is the only place it is any use. It is kept beside
+    # the secret key because the two must name the same Stripe account and the
+    # same mode; a live secret key with a test publishable key collects cards
+    # that can never be charged, and nothing about that failure says so.
+    stripe_publishable_key: str = Field(
+        default="",
+        description=(
+            "Stripe publishable key handed to the browser so it can post card "
+            "details straight to Stripe. Must belong to the same account and "
+            "mode as STRIPE_SECRET_KEY. Unset means the card-collection route "
+            "reports 503 rather than handing the browser a key it cannot use."
+        ),
+    )
     stripe_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(
