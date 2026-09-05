@@ -181,6 +181,29 @@ def _ours(obj: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _ours_dispute(obj: dict[str, Any], *, payment_intent: str = "pi_ours") -> dict[str, Any]:
+    """Stamp a Dispute object so it resolves to our charge.
+
+    Real Stripe never copies a PaymentIntent's metadata onto a Dispute — it is
+    raised by the cardholder's bank, not by a call this application makes — so
+    the discriminator lives one level down, on the charge the webhook endpoint
+    is configured to expand.
+    """
+    return {
+        **obj,
+        "payment_intent": payment_intent,
+        "charge": {
+            "id": "ch_1",
+            "payment_intent": payment_intent,
+            "metadata": {
+                "pablo_charge_id": _CHARGE_ID,
+                "pablo_user_id": _USER_ID,
+                "pablo_practice_id": _PRACTICE_ID,
+            },
+        },
+    }
+
+
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Wire the handler onto fakes and hand back the pieces to assert on.
@@ -440,8 +463,9 @@ class TestReconciliation:
         _, params = _update_call(harness["conn"])
         assert params["new_status"] == "succeeded"
         assert params["pi"] == "pi_ours"
-        # Only a still-open row may be flipped — a refund is never un-refunded.
-        assert params["allowed"] == ["pending", "failed"]
+        # Only a still-open (or won-back) row may be flipped — a refund is
+        # never un-refunded.
+        assert params["allowed"] == ["pending", "failed", "disputed"]
 
         # The practice schema is bound and the row policy armed before the write.
         seen = [sql for sql, _ in harness["conn"].statements]
@@ -570,3 +594,170 @@ class TestProcessedEventRow:
         assert row.event_type == "payment_intent.succeeded"
         assert row.event_created_at == datetime.fromtimestamp(1_760_000_000, tz=UTC)
         assert row.processed_at is not None
+
+
+# ---------------------------------------------------------------------------
+# Disputes
+# ---------------------------------------------------------------------------
+
+
+class TestDisputes:
+    def test_a_dispute_created_event_marks_the_row_disputed(self, harness: dict[str, Any]) -> None:
+        harness["conn"].current_status = "succeeded"
+        event = _event(
+            "charge.dispute.created", _ours_dispute({"id": "dp_1", "reason": "fraudulent"})
+        )
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["new_status"] == "disputed"
+        assert params["status_detail"] == "fraudulent"
+        assert params["pi"] == "pi_ours"
+        # A dispute can only ever open against a charge that succeeded — never
+        # un-refund or re-dispute a row.
+        assert params["allowed"] == ["succeeded"]
+
+    def test_a_dispute_closed_won_returns_the_row_to_succeeded(
+        self, harness: dict[str, Any]
+    ) -> None:
+        """Won is still a successful payment — the row must not stay
+        ``disputed`` or, worse, read as ``refunded``."""
+        harness["conn"].current_status = "disputed"
+        event = _event("charge.dispute.closed", _ours_dispute({"id": "dp_1", "status": "won"}))
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["new_status"] == "succeeded"
+        assert params["status_detail"] == "won"
+
+    def test_a_dispute_closed_lost_records_funds_gone(self, harness: dict[str, Any]) -> None:
+        """Lost is money gone, but it is not a refund: nobody at the practice
+        issued one, and the ledger should say so distinctly."""
+        harness["conn"].current_status = "disputed"
+        event = _event("charge.dispute.closed", _ours_dispute({"id": "dp_1", "status": "lost"}))
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["new_status"] == "dispute_lost"
+        assert params["status_detail"] == "lost"
+        assert params["allowed"] == ["disputed"]
+
+    def test_a_dispute_on_a_foreign_charge_is_recorded_and_200s(
+        self, harness: dict[str, Any]
+    ) -> None:
+        """A dispute with no expanded charge (or one that carries none of our
+        metadata) discloses no owner — the cardholder's bank raised it, not a
+        call this application made — so it reads exactly like any other charge
+        this application never touched."""
+        response = _post(
+            harness,
+            _event("charge.dispute.created", {"id": "dp_1", "payment_intent": "pi_theirs"}),
+        )
+
+        assert response.status_code == 200
+        assert [row.event_id for row in harness["session"].added] == ["evt_1"]
+        assert harness["conn"].statements == []
+
+    def test_a_dispute_matching_no_ledger_row_is_not_recorded(
+        self, harness: dict[str, Any]
+    ) -> None:
+        harness["conn"].current_status = None
+        event = _event(
+            "charge.dispute.created", _ours_dispute({"id": "dp_1", "reason": "duplicate"})
+        )
+
+        response = _post(harness, event)
+
+        assert response.status_code == 503
+        assert harness["session"].added == []
+
+
+# ---------------------------------------------------------------------------
+# Processor fees
+# ---------------------------------------------------------------------------
+
+
+class TestFees:
+    def test_a_success_event_captures_the_fee_when_the_balance_transaction_is_expanded(
+        self, harness: dict[str, Any]
+    ) -> None:
+        event = _event(
+            "payment_intent.succeeded",
+            _ours(
+                {
+                    "id": "pi_ours",
+                    "latest_charge": {
+                        "balance_transaction": {"amount": 15000, "fee": 465, "net": 14535},
+                    },
+                }
+            ),
+        )
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["fee_cents"] == 465
+        assert params["net_cents"] == 14535
+
+    def test_a_success_event_leaves_the_fee_null_when_not_yet_settled(
+        self, harness: dict[str, Any]
+    ) -> None:
+        """Some payment methods settle their balance transaction after the
+        charge itself succeeds. That must not be recorded as a zero fee, and
+        must not fail the reconciliation — the charge really did succeed."""
+        event = _event(
+            "payment_intent.succeeded", _ours({"id": "pi_ours", "latest_charge": "ch_pending"})
+        )
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["new_status"] == "succeeded"
+        assert params["fee_cents"] is None
+        assert params["net_cents"] is None
+
+    def test_a_refund_event_captures_the_fee_from_its_own_balance_transaction(
+        self, harness: dict[str, Any]
+    ) -> None:
+        """``charge.refunded``'s ``data.object`` already is the Charge, so the
+        balance transaction is one level shallower than on a PaymentIntent
+        event."""
+        harness["conn"].current_status = "succeeded"
+        event = _event(
+            "charge.refunded",
+            _ours(
+                {
+                    "id": "ch_1",
+                    "payment_intent": "pi_ours",
+                    "balance_transaction": {"amount": 15000, "fee": 465, "net": 14535},
+                }
+            ),
+        )
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["fee_cents"] == 465
+        assert params["net_cents"] == 14535
+
+    def test_a_dispute_event_does_not_touch_the_fee(self, harness: dict[str, Any]) -> None:
+        harness["conn"].current_status = "succeeded"
+        event = _event(
+            "charge.dispute.created", _ours_dispute({"id": "dp_1", "reason": "fraudulent"})
+        )
+
+        response = _post(harness, event)
+
+        assert response.status_code == 200
+        _, params = _update_call(harness["conn"])
+        assert params["fee_cents"] is None
+        assert params["net_cents"] is None
