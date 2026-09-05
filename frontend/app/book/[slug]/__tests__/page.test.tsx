@@ -123,6 +123,62 @@ describe("PublicBookingPage — pending confirmation", () => {
   })
 })
 
+describe("PublicBookingPage — availability errors", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it("shows a practice-wide message and no slot grid when the host hasn't configured availability", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.includes("/slots")) {
+        return jsonResponse({ date: "2026-09-02", slots: [], configured: false })
+      }
+      if (url.includes("/booking-links/")) {
+        return jsonResponse({ ...CARD, captcha_site_key: null })
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /this host hasn.t published their availability yet\. please contact them directly to schedule/i,
+        ),
+      ).toBeInTheDocument()
+    })
+    expect(screen.queryByRole("button", { name: /9:30 AM/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/pick a day/i)).not.toBeInTheDocument()
+  })
+
+  it("renders the too-many-requests copy and a retry affordance on a 429 slots response", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if (url.includes("/slots")) {
+        return jsonResponse({ error: { code: "RATE_LIMITED" } }, 429)
+      }
+      if (url.includes("/booking-links/")) {
+        return jsonResponse({ ...CARD, captcha_site_key: null })
+      }
+      return jsonResponse({})
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    renderPage()
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/too many requests\. please wait a moment and try again\./i),
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument()
+  })
+})
+
 describe("PublicBookingPage — CAPTCHA", () => {
   beforeEach(() => {
     delete (window as { turnstile?: unknown }).turnstile
