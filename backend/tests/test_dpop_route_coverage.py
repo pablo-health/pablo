@@ -108,6 +108,10 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     "GET /api/users/baa": "public: serves the current BAA document text, no user",
     # --- Liveness probe: no user, no PHI. ---
     "GET /api/health": "health probe: liveness only, no authenticated user",
+    # --- Card-processor callback. The caller is Stripe, not a companion, so
+    # there is no install_id to bind a proof to; the request is authenticated
+    # by a constant-time HMAC over the raw body instead. ---
+    "POST /api/webhooks/payments/stripe": "processor callback: signature-authenticated, no user",
 }
 
 

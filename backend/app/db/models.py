@@ -1568,3 +1568,144 @@ class PrescribingChecklistItemRow(Base):
             name="ck_prescribing_checklist_items_requirement_level",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Self-pay card payments
+# ---------------------------------------------------------------------------
+
+#: Ledger statuses for a card charge. ``pending`` is written before the card
+#: processor is called at all; the outcome moves the row to ``succeeded`` or
+#: ``failed``; a refund the practice issues from its own Stripe dashboard
+#: arrives by webhook as ``refunded``. A ``failed`` row STAYS failed —
+#: retrying is a fresh charge the clinician explicitly asks for, never an
+#: automatic one.
+CHARGE_STATUSES: tuple[str, ...] = ("pending", "succeeded", "failed", "refunded")
+
+#: The currency the ledger column defaults to. It exists so a row records what
+#: the processor was actually told, not so a caller can pick one per charge.
+DEFAULT_CHARGE_CURRENCY = "usd"
+
+
+class PatientPaymentMethodRow(Base):
+    """The card a practice keeps on file for one client — processor ids only.
+
+    A card number must never be able to reach this database, and that is a
+    property of the schema rather than of the routes above it: there is no
+    column here a PAN or CVC could be written into. The browser posts the card
+    straight to Stripe against a SetupIntent and hands the backend a ``pm_…``
+    id; what is stored is that id, the customer id, and the display triple the
+    UI renders ("Visa ···· 4242, exp 4/2029").
+
+    One row per client (``patient_id`` is unique). Re-running setup replaces
+    the card in place rather than accumulating stale ones the clinician would
+    then have to choose between; several cards per client is a client-portal
+    concern, not a charge-for-the-session one.
+
+    ``stripe_payment_method_id`` is nullable for exactly one window: the row is
+    created when the SetupIntent is minted (the customer id is known then) and
+    completed when the browser confirms and Stripe reports which payment method
+    got attached. A row with a NULL payment-method id is a setup that was
+    started and never finished — it is not chargeable, and the charge route
+    treats it as "no card on file".
+    """
+
+    __tablename__ = "patient_payment_methods"
+    __table_args__ = (Index("ux_patient_payment_methods_patient_id", "patient_id", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # Native uuid so the schema's ``has_patient_access`` policy applies
+    # directly, the same way it does for notes and outcome measures.
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+
+    # Stripe ids only. WHICH Stripe account they belong to is a deployment
+    # question answered by ``app.payments.provider``, not recorded here.
+    stripe_customer_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    stripe_payment_method_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # The display triple, straight off Stripe's ``card`` object. These are the
+    # only card-shaped values that may ever be stored.
+    card_brand: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    card_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    card_exp_month: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    card_exp_year: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+    # Which clinician put the card on file. Deliberately NOT named ``user_id``:
+    # ``enable_rls_on_schema`` checks for ``user_id`` BEFORE ``patient_id``, so
+    # that name would silently swap the patient-access policy for direct
+    # ownership — the clinician who took the payment would be the only one who
+    # could ever see the row, and a covering clinician would not. This column
+    # records who acted, not who owns the row.
+    created_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PatientChargeRow(Base):
+    """One charge attempt against a client's card on file — the ledger row.
+
+    Written FIRST, as ``pending``, before Stripe is called. That ordering is
+    the point of the table: if the call times out, or the process dies between
+    the call and the response, the practice still has a row saying a charge was
+    attempted, and the webhook (or a human reading the Stripe dashboard) can
+    reconcile it by ``stripe_payment_intent_id``. A ledger written only on
+    success would lose exactly the cases somebody needs to look at.
+
+    ``appointment_id`` is nullable: a charge need not hang off an appointment (a
+    late-cancellation fee, or a balance), and an appointment can be deleted
+    while the money record must not be. Soft reference, no foreign key.
+    """
+
+    __tablename__ = "patient_charges"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_in_list(CHARGE_STATUSES)})",
+            name="ck_patient_charges_status",
+        ),
+        # Money is integer minor units and a charge is for a positive amount; a
+        # refund is a status transition on this row, never a negative charge.
+        CheckConstraint("amount_cents > 0", name="ck_patient_charges_amount_positive"),
+        # The ledger read is "this client's charges, newest first".
+        Index("ix_patient_charges_patient_created", "patient_id", "created_at"),
+        # The webhook finds its row by the PaymentIntent id; unique so a
+        # replayed event can never fan out across two rows. Partial, because
+        # many rows legitimately sit at NULL between the insert and the call.
+        Index(
+            "ux_patient_charges_payment_intent",
+            "stripe_payment_intent_id",
+            unique=True,
+            postgresql_where=text("stripe_payment_intent_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # Native uuid so the schema's ``has_patient_access`` policy applies.
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+
+    # Soft reference to ``appointments.id``, nullable — see the docstring.
+    appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default=DEFAULT_CHARGE_CURRENCY
+    )
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Stripe's machine-readable reason the attempt ended where it did — the
+    # ``decline_code`` when there is one (``insufficient_funds``), else the
+    # coarser ``code`` (``card_declined``). A token, never prose and never
+    # clinical content; the UI maps it to copy on its side.
+    status_detail: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Which clinician asked for the charge. NOT ``user_id`` — see
+    # ``PatientPaymentMethodRow.created_by_user_id``.
+    created_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

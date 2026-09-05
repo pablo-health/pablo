@@ -604,3 +604,40 @@ class BookingLinkRow(PlatformBase):
         ),
         {"schema": PLATFORM_SCHEMA},
     )
+
+
+class ProcessedPaymentEventRow(PlatformBase):
+    """One row per card-processor webhook event this deployment has handled.
+
+    The dedupe ledger behind ``app.routes.payment_webhooks``. Stripe redelivers
+    an event until it gets a 2xx, so without this a retry would re-apply the
+    same outcome; with it, a redelivery short-circuits before any practice
+    schema is touched.
+
+    Platform-scoped rather than per-practice for two reasons. Most events on
+    the deployment's Stripe account are not this application's business at all
+    (a charge the practice raised in the Stripe dashboard, a payment link, an
+    invoice) and carry nothing that names a practice — those still have to be
+    recorded so Stripe stops retrying them, and there is no practice schema to
+    record them in. And an event id is unique across the whole account, so one
+    table with the id as its primary key is the shape that actually enforces
+    "handled once".
+
+    ``practice_id`` is therefore nullable: set when the event belonged to one
+    of this deployment's charges, NULL when it did not.
+
+    A row here is a promise that redelivery may stop, so it is written only
+    once the event has genuinely been dealt with — see the receiver's module
+    docstring for the one case that is deliberately left unrecorded.
+    """
+
+    __tablename__ = "processed_payment_events"
+    __table_args__ = {"schema": PLATFORM_SCHEMA}
+
+    #: The processor's own event id (``evt_…``) — the idempotency key.
+    event_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    practice_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: When the processor says the event happened, when it told us.
+    event_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

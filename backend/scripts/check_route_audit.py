@@ -154,6 +154,12 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)
         ("post", "/api/launch/intent"),  # mints opaque launch intent, no PHI disclosed
+        # payment_webhooks.py — signature-verified processor callback. It moves
+        # a ledger row's status from an event the processor signed; there is no
+        # authenticated principal to attribute an access to, and it discloses
+        # nothing to anybody. The clinician-initiated side of every charge IS
+        # audited, on the routes in patient_payments.py.
+        ("post", "/api/webhooks/payments/stripe"),  # processor callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
         ("get", "/api/booking-links"),  # lists caller's own booking links
