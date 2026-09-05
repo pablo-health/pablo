@@ -459,6 +459,25 @@ class TestCardSetup:
         assert response.status_code == 200
         assert [c["url"] for c in seen] == ["https://api.stripe.com/v1/setup_intents"]
 
+    def test_setup_asks_for_cards_and_nothing_else(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Card-on-file is charged off-session, so the SetupIntent must name
+        `card` explicitly.
+
+        Omitting the type does not default to cards — it defers to whatever the
+        account has enabled, which included redirect-based methods. Stripe then
+        refuses to confirm without a return_url, and a saved redirect method
+        could not be charged later with nobody present anyway.
+        """
+        payments = _FakePayments(_stored_card())
+        client = _client(payments, _FakePatients())
+        seen = _install_stripe(monkeypatch, lambda *_: (200, {"client_secret": _CLIENT_SECRET}))
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/payment-method/setup")
+
+        assert response.status_code == 200
+        assert seen[0]["data"]["payment_method_types[0]"] == "card"
+        assert "automatic_payment_methods[enabled]" not in seen[0]["data"]
+
     def test_configured_account_id_is_sent_as_a_header(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
