@@ -42,6 +42,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    billing_queue,
     booking_links,
     calendar_import,
     chat,
@@ -200,6 +201,7 @@ app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(patients.router)
+app.include_router(billing_queue.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
 app.include_router(internal_transcription.router)

@@ -103,3 +103,12 @@ class PatientPaymentRepository(ABC):
     @abstractmethod
     def list_charges(self, patient_id: str) -> list[PatientCharge]:
         """This client's ledger, newest first."""
+
+    @abstractmethod
+    def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
+        """Which of these appointments have at least one succeeded charge.
+
+        Backs the unbilled queue: an appointment absent from the result has
+        no succeeded charge, whether that's no attempt at all or a decline
+        (``failed``) — either way it belongs in the queue.
+        """
