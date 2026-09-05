@@ -92,8 +92,8 @@ def _candidate_secrets(settings: Settings) -> list[str]:
     mode for a deployment that has not configured the endpoint.
     """
     secrets = [
-        settings.stripe_webhook_secret.get_secret_value(),
-        settings.stripe_webhook_secret_previous.get_secret_value(),
+        settings.stripe_patient_billing_webhook_secret.get_secret_value(),
+        settings.stripe_patient_billing_webhook_secret_previous.get_secret_value(),
     ]
     return [secret for secret in secrets if secret]
 

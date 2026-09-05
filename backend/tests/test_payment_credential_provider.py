@@ -34,7 +34,7 @@ _PUBLISHABLE_KEY = "configured-publishable-key-for-tests"
 class _Settings:
     def __init__(self, key: str, publishable_key: str = "") -> None:
         self.stripe_secret_key = SecretStr(key)
-        self.stripe_publishable_key = publishable_key
+        self.stripe_patient_billing_publishable_key = publishable_key
 
 
 @pytest.fixture(autouse=True)

@@ -244,36 +244,58 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         description="Stripe API secret key used to charge self-pay cards",
     )
-    # The other half of the same credential pair, and deliberately NOT a
-    # SecretStr: a publishable key is public by design — it ends up in the
-    # browser, because that is the only place it is any use. It is kept beside
-    # the secret key because the two must name the same Stripe account and the
-    # same mode; a live secret key with a test publishable key collects cards
-    # that can never be charged, and nothing about that failure says so.
-    stripe_publishable_key: str = Field(
+    # The three settings below are named for the *integration* they belong to,
+    # not just for Stripe, because a deployment may well run more than one —
+    # its own subscription billing alongside patient card payments, say. Every
+    # Stripe webhook endpoint has its own signing secret, so a field called
+    # `stripe_webhook_secret` invites someone to point two endpoints at one
+    # value, and that mistake is silent: a mismatched signature rejects every
+    # delivery with a 401, so charges succeed at Stripe while the local ledger
+    # never reconciles and nothing surfaces but a log line. The name is the
+    # control. The publishable key carries the same prefix so the three read as
+    # one set.
+    #
+    # The publishable key is the other half of the secret key's credential
+    # pair, and deliberately NOT a SecretStr: a publishable key is public by
+    # design — it ends up in the browser, because that is the only place it is
+    # any use. It is kept beside the secret key because the two must name the
+    # same Stripe account and the same mode; a live secret key with a test
+    # publishable key collects cards that can never be charged, and nothing
+    # about that failure says so.
+    stripe_patient_billing_publishable_key: str = Field(
         default="",
         description=(
             "Stripe publishable key handed to the browser so it can post card "
             "details straight to Stripe. Must belong to the same account and "
             "mode as STRIPE_SECRET_KEY. Unset means the card-collection route "
-            "reports 503 rather than handing the browser a key it cannot use."
+            "reports 503 rather than handing the browser a key it cannot use. "
+            "Named for the patient-billing integration so a deployment running "
+            "a second Stripe integration cannot confuse the two."
         ),
     )
-    stripe_webhook_secret: SecretStr = Field(
+    stripe_patient_billing_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(
             "Signing secret for the Stripe webhook endpoint that reconciles "
             "card-charge outcomes. Unset means every delivery is rejected, "
             "which is the right posture for a deployment that has not "
-            "configured the endpoint."
+            "configured the endpoint. This is the secret of one specific "
+            "endpoint, not of Stripe as a whole: if the deployment also runs "
+            "another Stripe integration, that endpoint has a different secret "
+            "and must be configured separately. Reusing one value across two "
+            "endpoints fails silently — the mismatched deliveries are simply "
+            "rejected, so money moves at Stripe and the local records never "
+            "catch up."
         ),
     )
-    stripe_webhook_secret_previous: SecretStr = Field(
+    stripe_patient_billing_webhook_secret_previous: SecretStr = Field(
         default=SecretStr(""),
         description=(
-            "Optional second signing secret, accepted alongside the current "
-            "one. Fill this with the outgoing secret while rotating so no "
-            "delivery is dropped mid-rotation, then clear it."
+            "Optional second signing secret for the same patient-billing "
+            "endpoint, accepted alongside the current one. Fill this with the "
+            "outgoing secret while rotating so no delivery is dropped "
+            "mid-rotation, then clear it. Not a slot for a different Stripe "
+            "integration's secret — each endpoint gets its own setting."
         ),
     )
     app_url: str = Field(
