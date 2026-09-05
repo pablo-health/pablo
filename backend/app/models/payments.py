@@ -66,12 +66,22 @@ class PatientCharge(BaseModel):
 class CardSetupResponse(BaseModel):
     """What the browser needs in order to collect a card.
 
+    All three fields configure the same Stripe.js instance, which is why they
+    are returned together rather than assembled from separate sources: the
+    publishable key and the account have to match the secret key the resulting
+    card will eventually be charged with, and a mismatch produces a card that
+    saves and then never charges.
+
+    ``publishable_key`` is public by design — it is the key the browser posts
+    card details with, and it does nothing else.
+
     ``stripe_account_id`` is present only when the deployment's credential
     provider named an account; Stripe.js has to be initialised with it as
     ``stripeAccount`` in that case, and must not be in the default one.
     """
 
     client_secret: str
+    publishable_key: str
     stripe_account_id: str | None = None
 
 
@@ -111,6 +121,23 @@ class CreateChargeRequest(BaseModel):
 
     amount_cents: int | None = Field(default=None, gt=0, le=MAX_CHARGE_CENTS)
     appointment_id: str | None = None
+
+
+class ChargeAmountResponse(BaseModel):
+    """What a charge sent without an explicit amount would come to.
+
+    Exists so the clinician sees the figure *before* committing to it. The
+    charge route resolves the same value from the same helper; asking for it
+    first is a read, and reading it changes nothing.
+
+    ``amount_cents`` is ``None`` when neither the client nor the appointment
+    type sets a rate. That is not zero and must not be rendered as free — it
+    means the UI has to ask for an amount, exactly as the charge route would
+    refuse without one.
+    """
+
+    amount_cents: int | None = None
+    currency: str
 
 
 class ChargeResponse(BaseModel):

@@ -3,7 +3,7 @@
 "use client"
 
 import Link from "next/link"
-import { Activity, FileText, Folder, Pill, Stethoscope } from "lucide-react"
+import { Activity, CreditCard, FileText, Folder, Pill, Stethoscope } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
@@ -11,11 +11,13 @@ import { PatientDocuments } from "@/components/patients/PatientDocuments"
 import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasuresTab"
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
 import { MedicationsTab } from "@/components/medications/MedicationsTab"
+import { PaymentsTab } from "@/components/payments/PaymentsTab"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
 import { usePatientOutcomeMeasures } from "@/hooks/useOutcomeMeasures"
 import { usePatientDiagnoses } from "@/hooks/useDiagnoses"
 import { usePatientMedications } from "@/hooks/useMedications"
+import { usePatientCharges } from "@/hooks/usePayments"
 import { formatNoteDateTime, noteHref, noteStatus } from "@/lib/noteDisplay"
 
 const PREVIEW_LIMIT = 3
@@ -120,6 +122,7 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
   const { data: measures } = usePatientOutcomeMeasures(patientId)
   const { data: diagnoses } = usePatientDiagnoses(patientId)
   const { data: medications } = usePatientMedications(patientId)
+  const { data: charges } = usePatientCharges(patientId)
 
   const noteCount = notes?.total ?? 0
   const documentCount = documents?.total ?? 0
@@ -127,6 +130,7 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
   const diagnosisCount = diagnoses?.total ?? 0
   const medicationCount =
     medications?.data.filter((m) => m.status === "active").length ?? 0
+  const chargeCount = charges?.length ?? 0
 
   return (
     <div className="card">
@@ -160,6 +164,11 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
             Medications
             <CountBadge count={medicationCount} />
           </TabsTrigger>
+          <TabsTrigger value="payments">
+            <CreditCard className="h-4 w-4" />
+            Payments
+            <CountBadge count={chargeCount} />
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="notes" className="pt-4">
           <NotesTab patientId={patientId} />
@@ -175,6 +184,9 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
         </TabsContent>
         <TabsContent value="medications" className="pt-4">
           <MedicationsTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="payments" className="pt-4">
+          <PaymentsTab patientId={patientId} />
         </TabsContent>
       </Tabs>
     </div>

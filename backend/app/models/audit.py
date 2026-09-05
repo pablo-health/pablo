@@ -235,6 +235,10 @@ class AuditAction(StrEnum):
     PATIENT_PAYMENT_METHOD_VIEWED = "patient_payment_method_viewed"
     PATIENT_CHARGE_CREATED = "patient_charge_created"
     PATIENT_CHARGES_VIEWED = "patient_charges_viewed"
+    # Reading what a client would be charged discloses their rate — a
+    # financial fact about a named person — so the preview is audited like
+    # any other read of the record, separately from the charge itself.
+    PATIENT_CHARGE_AMOUNT_VIEWED = "patient_charge_amount_viewed"
 
 
 class ResourceType(StrEnum):

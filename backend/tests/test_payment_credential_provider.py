@@ -28,11 +28,13 @@ from pydantic import SecretStr
 # which is exactly the judgement we want the scanner making on a public repo.
 _CONFIGURED_KEY = "configured-key-for-tests"
 _CUSTOM_KEY = "provider-supplied-key-for-tests"
+_PUBLISHABLE_KEY = "configured-publishable-key-for-tests"
 
 
 class _Settings:
-    def __init__(self, key: str) -> None:
+    def __init__(self, key: str, publishable_key: str = "") -> None:
         self.stripe_secret_key = SecretStr(key)
+        self.stripe_publishable_key = publishable_key
 
 
 @pytest.fixture(autouse=True)
@@ -49,12 +51,18 @@ class TestDefaultProvider:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
-            "app.payments.provider.get_settings", lambda: _Settings(_CONFIGURED_KEY)
+            "app.payments.provider.get_settings",
+            lambda: _Settings(_CONFIGURED_KEY, _PUBLISHABLE_KEY),
         )
 
         credentials = SettingsPaymentCredentialProvider().credentials_for_practice("practice-1")
 
-        assert credentials == PaymentCredentials(secret_key=_CONFIGURED_KEY)
+        # The publishable key rides along with the secret key it has to
+        # match, rather than being configured somewhere else and hoped
+        # to agree.
+        assert credentials == PaymentCredentials(
+            secret_key=_CONFIGURED_KEY, publishable_key=_PUBLISHABLE_KEY
+        )
         # No account named: the key is the account's own, so nothing is charged
         # on behalf of anybody else.
         assert credentials is not None
