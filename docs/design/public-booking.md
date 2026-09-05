@@ -163,13 +163,14 @@ The invariant holds through two layers that fail safe independently:
    CAPTCHA rung at multi-practice rollout.
 
    *The write race.* Two submissions for the same slot in the same
-   instant beat any re-validate-then-insert sequence (a window that
-   exists, small, in phase 1 today). The backstop is a partial unique
-   index on `(user_id, start_at)` over non-cancelled appointments:
-   public bookings are grid-aligned to the link's duration, so the
-   same-slot race is always an exact-start collision — the loser's
-   insert fails and surfaces as the same 409 "just taken" response.
-   Ships with the confirmation work at the latest.
+   instant beat any re-validate-then-insert sequence — the
+   check-then-insert query the scheduling engine already runs can't
+   see a competing request that hasn't committed yet. The backstop is
+   `uq_appointments_user_start_active`, a partial unique index on
+   `(user_id, start_at)` over non-cancelled appointments: public
+   bookings are grid-aligned to the link's duration, so the same-slot
+   race is always an exact-start collision — the loser's insert fails
+   and surfaces as the same 409 "just taken" response.
 
 2. **The chart invariant, independent of the flag.** An unverified
    email never attaches a booking to an existing chart. On a link that

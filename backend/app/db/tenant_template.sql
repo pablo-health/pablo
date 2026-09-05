@@ -1150,6 +1150,10 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 
+CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appointments USING btree (user_id, start_at) WHERE ((status)::text <> 'cancelled'::text);
+
+
+
 CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.chat_messages USING btree (conversation_id, sequence);
 
 

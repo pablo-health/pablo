@@ -248,8 +248,12 @@ class PostgresAppointmentRepository(AppointmentRepository):
     def create(self, appointment: Appointment) -> Appointment:
         row = AppointmentRow()
         _appointment_to_row(appointment, row)
-        self._session.add(row)
-        self._session.flush()
+        # SAVEPOINT, not a bare flush: a slot collision (unique active-slot
+        # index) must undo this INSERT and nothing else, leaving the caller's
+        # session usable to translate the error rather than stuck aborted.
+        with self._session.begin_nested():
+            self._session.add(row)
+            self._session.flush()
         return appointment
 
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:
