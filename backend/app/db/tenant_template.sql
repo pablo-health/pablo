@@ -423,8 +423,10 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
     created_by_user_id character varying(128) NOT NULL,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone,
+    fee_cents integer,
+    net_cents integer,
     CONSTRAINT ck_patient_charges_amount_positive CHECK ((amount_cents > 0)),
-    CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying])::text[])))
+    CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[])))
 );
 
 

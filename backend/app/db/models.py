@@ -1579,8 +1579,17 @@ class PrescribingChecklistItemRow(Base):
 #: ``failed``; a refund the practice issues from its own Stripe dashboard
 #: arrives by webhook as ``refunded``. A ``failed`` row STAYS failed —
 #: retrying is a fresh charge the clinician explicitly asks for, never an
-#: automatic one.
-CHARGE_STATUSES: tuple[str, ...] = ("pending", "succeeded", "failed", "refunded")
+#: automatic one. ``disputed`` is a chargeback the cardholder's bank raised —
+#: NOT a refund, because it is not yet decided: it resolves to ``succeeded``
+#: (the practice keeps the money) or ``dispute_lost`` (it does not).
+CHARGE_STATUSES: tuple[str, ...] = (
+    "pending",
+    "succeeded",
+    "failed",
+    "refunded",
+    "disputed",
+    "dispute_lost",
+)
 
 #: The currency the ledger column defaults to. It exists so a row records what
 #: the processor was actually told, not so a caller can pick one per charge.
@@ -1709,3 +1718,12 @@ class PatientChargeRow(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # What the practice actually receives, straight off the charge's balance
+    # transaction: ``fee_cents`` is what the processor kept, ``net_cents`` is
+    # ``amount_cents - fee_cents``. Both NULL until the webhook receiver sees
+    # the balance transaction — for some payment methods it settles slightly
+    # after the charge succeeds, so NULL here means "not known yet", never
+    # zero.
+    fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    net_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
