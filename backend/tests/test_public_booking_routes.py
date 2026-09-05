@@ -76,6 +76,7 @@ from app.services.email_sender import (
 from app.utcnow import utc_now
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 OWNER_ID = "test-user-123"
 
@@ -467,6 +468,34 @@ def test_booked_slot_is_no_longer_offered_or_bookable(
 
     second = _book(public_client, "intro-call", f"{date_str}T09:00:00Z", email="other@example.com")
     assert second.status_code == 409
+
+
+class _RacingAppointmentRepository(InMemoryAppointmentRepository):
+    """Simulates two requests racing past the free-slot check at once.
+
+    ``create`` always raises the same ``IntegrityError`` the unique
+    active-slot index would raise in Postgres when a second insert lands
+    for a slot another request just took — the scenario the app-level
+    check-then-insert query in ``SchedulingService`` can't see coming.
+    """
+
+    def create(self, appointment: Appointment) -> Appointment:
+        raise IntegrityError("INSERT", {}, Exception("duplicate key value"))
+
+
+def test_racing_insert_conflict_surfaces_as_409(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+    public_client.app.dependency_overrides[get_public_scheduling_service] = lambda: (
+        SchedulingService(_RacingAppointmentRepository())
+    )
+
+    resp = _book(public_client, "intro-call", f"{date_str}T09:30:00Z")
+    assert resp.status_code == 409
+    assert resp.json()["error"]["message"] == public_booking_module._SLOT_NO_LONGER_AVAILABLE
 
 
 def test_repeat_booker_reuses_patient_record(
