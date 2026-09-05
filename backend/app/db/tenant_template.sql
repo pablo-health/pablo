@@ -411,6 +411,24 @@ CREATE TABLE __TENANT_SCHEMA__.outcome_measures (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_charges (
+    id character varying(128) NOT NULL,
+    patient_id uuid NOT NULL,
+    appointment_id uuid,
+    amount_cents integer NOT NULL,
+    currency character varying(3) DEFAULT 'usd'::character varying NOT NULL,
+    status character varying(16) NOT NULL,
+    stripe_payment_intent_id character varying(255),
+    status_detail character varying(128),
+    created_by_user_id character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone,
+    CONSTRAINT ck_patient_charges_amount_positive CHECK ((amount_cents > 0)),
+    CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
     patient_id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -461,6 +479,22 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     deleted_at timestamp with time zone,
     stop_reason text,
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
+    id character varying(128) NOT NULL,
+    patient_id uuid NOT NULL,
+    stripe_customer_id character varying(255) NOT NULL,
+    stripe_payment_method_id character varying(255),
+    card_brand character varying(32),
+    card_last4 character varying(4),
+    card_exp_month smallint,
+    card_exp_year smallint,
+    created_by_user_id character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone
 );
 
 
@@ -799,6 +833,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
+    ADD CONSTRAINT patient_charges_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_pkey PRIMARY KEY (patient_id, user_id);
 
@@ -811,6 +850,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
+    ADD CONSTRAINT patient_payment_methods_pkey PRIMARY KEY (id);
 
 
 
@@ -1042,6 +1086,10 @@ CREATE INDEX ix_outcome_measures_session_id ON __TENANT_SCHEMA__.outcome_measure
 
 
 
+CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id, created_at);
+
+
+
 CREATE INDEX ix_patient_clinicians_user_id ON __TENANT_SCHEMA__.patient_clinicians USING btree (user_id);
 
 
@@ -1159,6 +1207,14 @@ CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.
 
 
 CREATE UNIQUE INDEX ux_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (session_id) WHERE (session_id IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX ux_patient_charges_payment_intent ON __TENANT_SCHEMA__.patient_charges USING btree (stripe_payment_intent_id) WHERE (stripe_payment_intent_id IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX ux_patient_payment_methods_patient_id ON __TENANT_SCHEMA__.patient_payment_methods USING btree (patient_id);
 
 
 

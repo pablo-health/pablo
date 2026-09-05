@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .ical_client_mapping import ICalClientMappingRepository
     from .ical_sync_config import ICalSyncConfigRepository
     from .outcome_measure import OutcomeMeasureRepository
+    from .patient_payment import PatientPaymentRepository
     from .postgres.compliance_document import PostgresComplianceDocumentRepository
     from .postgres.compliance_item import PostgresComplianceItemRepository
     from .postgres.supervision import PostgresSupervisionRepository
@@ -125,6 +126,13 @@ def get_patient_repository() -> PatientRepository:
     from .postgres.patient import PostgresPatientRepository
 
     return PostgresPatientRepository(_get_pg_session())
+
+
+def get_patient_payment_repository() -> PatientPaymentRepository:
+    """Get card-on-file / charge-ledger repository instance."""
+    from .postgres.patient_payment import PostgresPatientPaymentRepository
+
+    return PostgresPatientPaymentRepository(_get_pg_session())
 
 
 def get_session_repository() -> TherapySessionRepository:
@@ -329,6 +337,7 @@ __all__ = [
     "get_notes_repository",
     "get_outcome_measure_repository",
     "get_patient_document_repository",
+    "get_patient_payment_repository",
     "get_patient_repository",
     "get_session_repository",
     "get_supervision_repository",

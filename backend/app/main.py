@@ -56,7 +56,9 @@ from .routes import (
     notes,
     passkey,
     patient_documents,
+    patient_payments,
     patients,
+    payment_webhooks,
     public_booking,
     scheduling,
     sessions,
@@ -208,6 +210,8 @@ app.include_router(notes.internal_jobs_router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
+app.include_router(patient_payments.router)
+app.include_router(payment_webhooks.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)

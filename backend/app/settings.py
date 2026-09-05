@@ -237,10 +237,29 @@ class Settings(BaseSettings):
         description="API description",
     )
 
-    # Stripe Settings (used by the optional billing overlay)
+    # Stripe settings. The secret key is what the default payment-credential
+    # provider charges self-pay cards with (see app.payments.provider); leave
+    # it empty and the card-payment routes report 503 rather than half-working.
     stripe_secret_key: SecretStr = Field(
         default=SecretStr(""),
-        description="Stripe API secret key for billing portal session creation",
+        description="Stripe API secret key used to charge self-pay cards",
+    )
+    stripe_webhook_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Signing secret for the Stripe webhook endpoint that reconciles "
+            "card-charge outcomes. Unset means every delivery is rejected, "
+            "which is the right posture for a deployment that has not "
+            "configured the endpoint."
+        ),
+    )
+    stripe_webhook_secret_previous: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Optional second signing secret, accepted alongside the current "
+            "one. Fill this with the outgoing secret while rotating so no "
+            "delivery is dropped mid-rotation, then clear it."
+        ),
     )
     app_url: str = Field(
         default="http://localhost:3000",
