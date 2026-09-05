@@ -856,111 +856,17 @@ class TestDisconnect:
 class TestReminderService:
     """Background reminder logic."""
 
-    def _make_appointment(
-        self,
-        appt_id: str,
-        hours_from_now: float,
-        *,
-        reminder_24h_sent: bool = False,
-        reminder_1h_sent: bool = False,
-        appt_status: str = "confirmed",
-    ) -> Appointment:
-        now = datetime.now(UTC)
-        start = now + timedelta(hours=hours_from_now)
-        end = start + timedelta(hours=1)
-        return Appointment(
-            id=appt_id,
-            user_id="user-001",
-            patient_id="patient-001",
-            title="Session",
-            start_at=start,
-            end_at=end,
-            duration_minutes=60,
-            status=appt_status,
-            session_type="individual",
-            reminder_24h_sent=reminder_24h_sent,
-            reminder_1h_sent=reminder_1h_sent,
-            created_at=now,
-        )
-
-    def test_does_not_mark_24h_reminder_while_delivery_unimplemented(
-        self, appointment_repo: MagicMock
-    ) -> None:
-        # Delivery is not yet wired up; the pass must be a no-op so appointments
-        # are not permanently marked sent before any notification reaches the patient.
-        appt = self._make_appointment("appt-1", 24)
-        appointment_repo.list_by_range.side_effect = [
-            [appt],  # 24h window
-            [],  # 1h window
-        ]
-
+    def test_returns_zero_counts(self, appointment_repo: MagicMock) -> None:
         service = ReminderService(appointment_repo)
         result = service.check_and_send_reminders("user-001")
 
-        assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-        assert appt.reminder_24h_sent is False
+        assert result == {"24h_sent": 0, "1h_sent": 0}
 
-    def test_does_not_mark_1h_reminder_while_delivery_unimplemented(
-        self, appointment_repo: MagicMock
-    ) -> None:
-        appt = self._make_appointment("appt-1", 1)
-        appointment_repo.list_by_range.side_effect = [
-            [],  # 24h window
-            [appt],  # 1h window
-        ]
-
+    def test_does_not_touch_the_repository(self, appointment_repo: MagicMock) -> None:
         service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
+        service.check_and_send_reminders("user-001")
 
-        assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-        assert appt.reminder_1h_sent is False
-
-    def test_skips_already_sent_reminders(self, appointment_repo: MagicMock) -> None:
-        appt = self._make_appointment("appt-1", 24, reminder_24h_sent=True)
-        appointment_repo.list_by_range.side_effect = [
-            [appt],  # 24h window
-            [],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-
-    def test_skips_cancelled_appointments(self, appointment_repo: MagicMock) -> None:
-        appt = self._make_appointment("appt-1", 24, appt_status="cancelled")
-        appointment_repo.list_by_range.side_effect = [
-            [appt],  # 24h window
-            [],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-
-    def test_returns_zero_counts_while_delivery_unimplemented(
-        self,
-        appointment_repo: MagicMock,
-    ) -> None:
-        appt_24h = self._make_appointment("appt-24", 24)
-        appt_1h = self._make_appointment("appt-1", 1)
-        appointment_repo.list_by_range.side_effect = [
-            [appt_24h],  # 24h window
-            [appt_1h],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 0
+        appointment_repo.list_by_range.assert_not_called()
         appointment_repo.update.assert_not_called()
 
 
