@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
+from sqlalchemy.exc import IntegrityError
 
 from ..api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from ..auth.route_access import AccessLevel, resolve_access_level
@@ -217,6 +218,7 @@ _BOOKING_CLOSED = (
 )
 _CONFIRMATION_INVALID = "This confirmation link is not valid."
 _SLOT_TAKEN = "That time was taken while you were confirming. Please pick another slot."
+_SLOT_NO_LONGER_AVAILABLE = "That time is no longer available. Please pick another slot."
 _CAPTCHA_FAILED = "Verification failed. Please refresh and try again."
 
 
@@ -518,6 +520,8 @@ def _place_hold(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except IntegrityError as e:
+        raise ConflictError(_SLOT_NO_LONGER_AVAILABLE) from e
 
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
@@ -588,7 +592,7 @@ def create_public_booking(
     result = engine.get_free_slots(ctx.link.user_id, date_str, ctx.link.duration_minutes)
     slot = next((s for s in _public_slots(result.slots) if s.start == request.start_at), None)
     if slot is None:
-        raise ConflictError("That time is no longer available. Please pick another slot.")
+        raise ConflictError(_SLOT_NO_LONGER_AVAILABLE)
 
     note_lines = [f"Booked via booking link /{ctx.link.slug}."]
     if request.note:
@@ -616,6 +620,12 @@ def create_public_booking(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except IntegrityError as e:
+        # The check above and this insert are two separate statements — a
+        # second booking for the same slot can slip in between them. The
+        # unique active-slot index is the backstop; this is where its
+        # violation surfaces as the same "slot taken" response.
+        raise ConflictError(_SLOT_NO_LONGER_AVAILABLE) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         ctx.owner,
