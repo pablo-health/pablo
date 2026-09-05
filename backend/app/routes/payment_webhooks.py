@@ -18,6 +18,23 @@ cannot cover:
   would be a second, worse refund UI. So this event is the only way the ledger
   learns about one. Any refund, partial or full, flips the row to ``refunded``;
   the exact amounts live at the processor.
+* ``charge.dispute.created`` / ``charge.dispute.closed`` — a chargeback the
+  cardholder's bank raised. A dispute is not a refund: nothing has moved yet,
+  so the row moves to ``disputed`` rather than ``refunded``, and closing it
+  resolves to ``succeeded`` (won — the practice keeps the money) or
+  ``dispute_lost`` (it does not). This application does not handle dispute
+  evidence or deadlines; Stripe's own dashboard stays authoritative for that,
+  and this receiver only keeps the ledger's status honest.
+
+Fees, alongside the same events
+--------------------------------
+
+``payment_intent.succeeded`` and ``charge.refunded`` also carry the charge's
+balance transaction when the webhook endpoint is configured to expand it, and
+this receiver reads ``fee``/``net`` off it onto the ledger row. Both stay
+``NULL`` until then — some payment methods settle their balance transaction
+after the charge itself succeeds, so a charge can be genuinely ``succeeded``
+with its fee still unknown, and that is never treated as a zero fee.
 
 Authentication
 --------------
@@ -72,6 +89,11 @@ checked against Stripe test mode to carry the PaymentIntent's metadata
 verbatim. No metadata therefore means the practice's own charge: record it
 and 200.
 
+A dispute is the one exception. It is raised by the cardholder's bank, not by
+a call this application makes, so Stripe never populates a Dispute's own
+``metadata`` field — see ``app.payments.reconcile.event_metadata`` for where
+the discriminator moves to instead for those two event types.
+
 Logs here carry the event id, our own charge id and a status token. Never a
 client identifier, never an amount, never a name.
 """
@@ -93,6 +115,8 @@ from ..payments.reconcile import (
     ChargeOutcome,
     apply_charge_outcome,
     event_already_processed,
+    event_metadata,
+    extract_balance_transaction,
     extract_charge_fields,
     log_unreconciled,
     record_processed_event,
@@ -108,9 +132,17 @@ router = APIRouter(tags=["payment-webhooks"])
 PAYMENT_WEBHOOK_PATH = "/api/webhooks/payments/stripe"
 
 #: Event types this receiver acts on. Anything else is acknowledged and
-#: ignored.
+#: ignored. The two dispute events are not delivered until the endpoint's
+#: subscription is updated in the Stripe dashboard — that list is deployment
+#: configuration, not something this code controls.
 _HANDLED_EVENTS = frozenset(
-    {"payment_intent.succeeded", "payment_intent.payment_failed", "charge.refunded"}
+    {
+        "payment_intent.succeeded",
+        "payment_intent.payment_failed",
+        "charge.refunded",
+        "charge.dispute.created",
+        "charge.dispute.closed",
+    }
 )
 
 
@@ -168,7 +200,7 @@ async def payment_webhook(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "missing data.object")
 
     new_status, status_detail, payment_intent_id = extract_charge_fields(event_type, obj)
-    metadata = obj.get("metadata") or {}
+    metadata = event_metadata(event_type, obj)
     acting_user_id = str(metadata.get(METADATA_USER_ID) or "")
     charge_id = str(metadata.get(METADATA_CHARGE_ID) or "")
     practice_id = str(metadata.get(METADATA_PRACTICE_ID) or "") or None
@@ -201,12 +233,15 @@ async def payment_webhook(
         return {"status": "ok"}
     resolved_practice_id, schema_name = resolved
 
+    fee_cents, net_cents = extract_balance_transaction(event_type, obj)
     applied: ChargeApply = apply_charge_outcome(
         schema_name=schema_name,
         payment_intent_id=payment_intent_id,
         new_status=new_status,
         status_detail=status_detail,
         acting_user_id=acting_user_id,
+        fee_cents=fee_cents,
+        net_cents=net_cents,
     )
 
     if applied.outcome is ChargeOutcome.NOT_FOUND:

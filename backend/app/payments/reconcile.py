@@ -54,10 +54,20 @@ METADATA_PRACTICE_ID = "pablo_practice_id"
 #: out-of-order delivery regressing a row: a late failure must not un-succeed a
 #: charge, and nothing may un-refund one.
 _ALLOWED_PRIOR_STATUS: dict[str, tuple[str, ...]] = {
-    "succeeded": ("pending", "failed"),
+    "succeeded": ("pending", "failed", "disputed"),
     "failed": ("pending",),
     "refunded": ("succeeded", "failed", "refunded"),
+    # A dispute only ever opens against a charge that succeeded.
+    "disputed": ("succeeded",),
+    # Only a currently-disputed charge can be lost.
+    "dispute_lost": ("disputed",),
 }
+
+#: The two dispute lifecycle events this receiver acts on. A Dispute is raised
+#: by the cardholder's bank, never by a call this application makes, so Stripe
+#: never copies our metadata onto it the way it does for a Charge — see
+#: :func:`event_metadata`.
+_DISPUTE_EVENTS = frozenset({"charge.dispute.created", "charge.dispute.closed"})
 
 
 # ---------------------------------------------------------------------------
@@ -145,13 +155,49 @@ def verify_signature(
 # ---------------------------------------------------------------------------
 
 
+def _dispute_payment_intent_id(obj: dict[str, Any]) -> str:
+    """The PaymentIntent a Dispute event points at.
+
+    ``payment_intent`` is a direct field on the Dispute itself, present
+    whenever the disputed charge went through one — which is every charge this
+    application creates. It falls back to the expanded charge's own field only
+    because that expansion, when configured, is a strictly richer payload.
+    """
+    payment_intent = obj.get("payment_intent")
+    if isinstance(payment_intent, str) and payment_intent:
+        return payment_intent
+    charge = obj.get("charge")
+    if isinstance(charge, dict):
+        nested = charge.get("payment_intent")
+        if isinstance(nested, str):
+            return nested
+    return ""
+
+
 def extract_charge_fields(event_type: str, obj: dict[str, Any]) -> tuple[str, str | None, str]:
     """Return ``(new_status, status_detail, payment_intent_id)`` for an event.
 
     ``payment_intent.*`` events carry the PaymentIntent itself; a
     ``charge.refunded`` event carries a Charge, whose ``payment_intent`` field
-    points back at the object the ledger row is keyed on.
+    points back at the object the ledger row is keyed on. ``charge.dispute.*``
+    events carry a Dispute, whose own ``payment_intent`` field does the same.
     """
+    if event_type == "charge.dispute.created":
+        # Contested, not returned — see the ``disputed`` status's docstring in
+        # ``app.db.models``. ``reason`` is the cardholder's bank's own
+        # classification (``fraudulent``, ``duplicate``, ...).
+        reason = obj.get("reason")
+        return "disputed", (str(reason) if reason else None), _dispute_payment_intent_id(obj)
+
+    if event_type == "charge.dispute.closed":
+        # ``status`` is the dispute's terminal state: ``lost`` is the only one
+        # that moves money. Everything else — ``won``, or an inquiry
+        # (``warning_closed``) that never became a real chargeback — leaves the
+        # original payment standing.
+        outcome = str(obj.get("status") or "")
+        new_status = "dispute_lost" if outcome == "lost" else "succeeded"
+        return new_status, (outcome or None), _dispute_payment_intent_id(obj)
+
     if event_type == "charge.refunded":
         # Partial and full refunds both land here. The ledger records that a
         # refund happened and leaves the amounts to the processor, which is
@@ -164,6 +210,59 @@ def extract_charge_fields(event_type: str, obj: dict[str, Any]) -> tuple[str, st
     error = obj.get("last_payment_error") or {}
     detail = error.get("decline_code") or error.get("code")
     return "failed", (str(detail) if detail else None), str(obj.get("id") or "")
+
+
+def event_metadata(event_type: str, obj: dict[str, Any]) -> dict[str, Any]:
+    """Where an event's ``metadata`` actually lives.
+
+    ``payment_intent.*`` and ``charge.refunded`` carry it directly on
+    ``data.object`` — Stripe copies a PaymentIntent's metadata onto every
+    Charge it creates. A Dispute does not: it is raised by the cardholder's
+    bank rather than by a call this application makes, so Stripe never
+    populates a Dispute's own ``metadata``. The one place ours still reaches a
+    dispute event is the charge it disputes, when the webhook endpoint is
+    configured to expand ``data.object.charge`` — then ``obj["charge"]`` is the
+    Charge object itself, carrying the same metadata a ``charge.refunded``
+    event would. Unexpanded, a dispute has no discoverable owner and is
+    treated exactly like any other charge that carries no metadata: not ours.
+    """
+    if event_type in _DISPUTE_EVENTS:
+        charge = obj.get("charge")
+        metadata = charge.get("metadata") if isinstance(charge, dict) else None
+        return metadata if isinstance(metadata, dict) else {}
+    metadata = obj.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def extract_balance_transaction(
+    event_type: str, obj: dict[str, Any]
+) -> tuple[int | None, int | None]:
+    """Return ``(fee_cents, net_cents)`` from the charge's balance transaction.
+
+    Stripe only inlines a balance transaction when the webhook endpoint is
+    configured to expand it: ``data.object.latest_charge.balance_transaction``
+    for a ``payment_intent.succeeded`` event, ``data.object.balance_transaction``
+    for a ``charge.refunded`` one (its ``data.object`` already is the Charge).
+    Absent that configuration — or when the payment method settles its balance
+    transaction after the charge succeeds, as some legitimately do — both come
+    back ``None``, which the caller must leave the existing column alone for
+    rather than treat as zero.
+    """
+    charge: Any = obj
+    if event_type == "payment_intent.succeeded":
+        charge = obj.get("latest_charge")
+    if not isinstance(charge, dict):
+        return None, None
+
+    balance_transaction = charge.get("balance_transaction")
+    if not isinstance(balance_transaction, dict):
+        return None, None
+
+    fee = balance_transaction.get("fee")
+    net = balance_transaction.get("net")
+    fee_cents = fee if isinstance(fee, int) else None
+    net_cents = net if isinstance(net, int) else None
+    return fee_cents, net_cents
 
 
 # ---------------------------------------------------------------------------
@@ -241,13 +340,15 @@ class ChargeApply(NamedTuple):
     attributed_to: str | None = None
 
 
-def apply_charge_outcome(
+def apply_charge_outcome(  # noqa: PLR0913 — keyword-only outcome fields, not a call-site burden
     *,
     schema_name: str,
     payment_intent_id: str,
     new_status: str,
     status_detail: str | None,
     acting_user_id: str,
+    fee_cents: int | None = None,
+    net_cents: int | None = None,
 ) -> ChargeApply:
     """Update the practice's ledger row for ``payment_intent_id``.
 
@@ -280,6 +381,12 @@ def apply_charge_outcome(
     transition" (correct, and must not be retried) — and a row count cannot
     tell them apart. ``FOR UPDATE`` makes the check-then-act atomic, so a
     concurrent redelivery cannot slip between the two statements.
+
+    ``fee_cents``/``net_cents`` are written through ``COALESCE`` against the
+    row's current value rather than overwritten outright: most events that
+    reach this function carry neither (a dispute closing has nothing to say
+    about the fee), and a bare overwrite would blow away a fee already
+    recorded from an earlier event.
     """
     _validate_schema_name(schema_name)
     engine = get_engine()
@@ -316,6 +423,8 @@ def apply_charge_outcome(
                 UPDATE patient_charges
                    SET status = :new_status,
                        status_detail = :status_detail,
+                       fee_cents = COALESCE(:fee_cents, fee_cents),
+                       net_cents = COALESCE(:net_cents, net_cents),
                        updated_at = :now
                  WHERE stripe_payment_intent_id = :pi
                    AND status = ANY(:allowed)
@@ -325,6 +434,8 @@ def apply_charge_outcome(
             {
                 "new_status": new_status,
                 "status_detail": status_detail,
+                "fee_cents": fee_cents,
+                "net_cents": net_cents,
                 "now": datetime.now(UTC),
                 "pi": payment_intent_id,
                 "allowed": list(allowed),
