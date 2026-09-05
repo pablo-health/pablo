@@ -304,62 +304,87 @@ export default function PublicBookingPage({
         </div>
 
         <div className="card mb-6">
-          <h2 className="mb-3 text-lg font-display font-semibold text-neutral-900">Pick a day</h2>
-          <div className="flex gap-2 overflow-x-auto pb-2">
-            {dates.map((d) => {
-              const label = dateLabel(d)
-              const selected = d === selectedDate
-              return (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => {
-                    setSelectedDate(d)
-                    setSelectedSlot(null)
-                  }}
-                  className={`flex min-w-16 flex-col items-center rounded-lg border px-3 py-2 transition-colors ${
-                    selected
-                      ? "border-primary-500 bg-primary-50 text-primary-800"
-                      : "border-border bg-card text-neutral-700 hover:border-primary-300"
-                  }`}
-                >
-                  <span className="text-xs">{label.weekday}</span>
-                  <span className="text-lg font-semibold">{label.day}</span>
-                  <span className="text-xs">{label.month}</span>
-                </button>
-              )
-            })}
-          </div>
-
-          <h2 className="mb-3 mt-5 text-lg font-display font-semibold text-neutral-900">
-            Pick a time
-          </h2>
-          {slotsQuery.isLoading && <p className="text-muted-foreground">Checking availability…</p>}
-          {slotsQuery.isSuccess && slotsQuery.data.slots.length === 0 && (
-            <p className="text-muted-foreground">
-              No openings on this day — try another date.
+          {slotsQuery.isSuccess && !slotsQuery.data.configured ? (
+            <p className="text-neutral-700">
+              This host hasn&apos;t published their availability yet. Please contact them
+              directly to schedule.
             </p>
-          )}
-          {slotsQuery.isSuccess && slotsQuery.data.slots.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-              {slotsQuery.data.slots.map((slot) => {
-                const selected = selectedSlot?.start === slot.start
-                return (
-                  <button
-                    key={slot.start}
-                    type="button"
-                    onClick={() => setSelectedSlot(slot)}
-                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
-                      selected
-                        ? "border-primary-500 bg-primary-500 text-white"
-                        : "border-border bg-card text-neutral-700 hover:border-primary-300"
-                    }`}
-                  >
-                    {slotTimeLabel(slot.start)}
-                  </button>
-                )
-              })}
-            </div>
+          ) : (
+            <>
+              <h2 className="mb-3 text-lg font-display font-semibold text-neutral-900">
+                Pick a day
+              </h2>
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                {dates.map((d) => {
+                  const label = dateLabel(d)
+                  const selected = d === selectedDate
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => {
+                        setSelectedDate(d)
+                        setSelectedSlot(null)
+                      }}
+                      className={`flex min-w-16 flex-col items-center rounded-lg border px-3 py-2 transition-colors ${
+                        selected
+                          ? "border-primary-500 bg-primary-50 text-primary-800"
+                          : "border-border bg-card text-neutral-700 hover:border-primary-300"
+                      }`}
+                    >
+                      <span className="text-xs">{label.weekday}</span>
+                      <span className="text-lg font-semibold">{label.day}</span>
+                      <span className="text-xs">{label.month}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              <h2 className="mb-3 mt-5 text-lg font-display font-semibold text-neutral-900">
+                Pick a time
+              </h2>
+              {slotsQuery.isLoading && (
+                <p className="text-muted-foreground">Checking availability…</p>
+              )}
+              {slotsQuery.isError && (
+                <div className="flex flex-col items-start gap-2">
+                  <p className="text-muted-foreground">
+                    {(slotsQuery.error as (Error & { status?: number }) | null)?.status === 429
+                      ? "Too many requests. Please wait a moment and try again."
+                      : "Something went wrong loading availability. Please try again."}
+                  </p>
+                  <Button type="button" variant="outline" onClick={() => slotsQuery.refetch()}>
+                    Try again
+                  </Button>
+                </div>
+              )}
+              {slotsQuery.isSuccess && slotsQuery.data.slots.length === 0 && (
+                <p className="text-muted-foreground">
+                  No openings on this day — try another date.
+                </p>
+              )}
+              {slotsQuery.isSuccess && slotsQuery.data.slots.length > 0 && (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {slotsQuery.data.slots.map((slot) => {
+                    const selected = selectedSlot?.start === slot.start
+                    return (
+                      <button
+                        key={slot.start}
+                        type="button"
+                        onClick={() => setSelectedSlot(slot)}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                          selected
+                            ? "border-primary-500 bg-primary-500 text-white"
+                            : "border-border bg-card text-neutral-700 hover:border-primary-300"
+                        }`}
+                      >
+                        {slotTimeLabel(slot.start)}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </>
           )}
         </div>
 
