@@ -279,6 +279,24 @@ def start_card_setup(
             # off_session, because the saved card is charged later with nobody
             # at the keyboard — that is what card-on-file means.
             "usage": "off_session",
+            # Cards only, stated explicitly rather than left to the account's
+            # payment-method configuration.
+            #
+            # Omitting this does not mean "card". It means "whatever this
+            # connected account has enabled", which in practice was nine
+            # methods including iDEAL, Klarna, Bancontact and Cash App. Several
+            # of those redirect the payer off-page, so Stripe refuses to
+            # confirm the SetupIntent at all without a return_url — a hard 400
+            # that made saving a card impossible.
+            #
+            # Restricting the type is the right fix rather than supplying a
+            # return_url, because `usage=off_session` above is a promise we
+            # have to keep: this card is charged later with nobody present.
+            # Redirect-based methods cannot honour that. Accepting one here
+            # would save something that looks like a card on file and then
+            # fail at the moment of charging, which is the worst possible time
+            # to discover it.
+            "payment_method_types[0]": "card",
             # No metadata: a SetupIntent is single-use scaffolding and its
             # customer already carries the client id. Repeating it would hand
             # Stripe the same identifier twice for nothing.
@@ -525,6 +543,14 @@ def create_charge(
         "payment_method": card.stripe_payment_method_id,
         # off_session: the client is not at the keyboard when this is confirmed.
         "off_session": "true",
+        # Cards only, for the same reason as the SetupIntent above: without it
+        # the account's payment-method configuration decides, and a
+        # redirect-based method cannot be charged with nobody at the keyboard.
+        # This intent already names a specific payment_method, so the account
+        # configuration does not bite today — it is pinned so that enabling a
+        # new method in the Stripe dashboard cannot quietly change what this
+        # charge path will accept.
+        "payment_method_types[0]": "card",
         # Opaque ids only. Stripe copies PaymentIntent metadata onto the charge
         # it creates, so every event type the webhook handles carries these
         # back — which is what lets it tell this application's charges from the
