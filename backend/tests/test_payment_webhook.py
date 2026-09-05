@@ -54,8 +54,8 @@ class _Settings:
     """Only the fields the receiver reads."""
 
     def __init__(self, current: str = _SECRET, previous: str = "") -> None:
-        self.stripe_webhook_secret = SecretStr(current)
-        self.stripe_webhook_secret_previous = SecretStr(previous)
+        self.stripe_patient_billing_webhook_secret = SecretStr(current)
+        self.stripe_patient_billing_webhook_secret_previous = SecretStr(previous)
         self.multi_tenancy_enabled = True
 
 
@@ -257,12 +257,12 @@ class TestSignature:
         assert response.status_code == 401
 
     def test_an_unconfigured_secret_rejects_everything(self, harness: dict[str, Any]) -> None:
-        harness["settings"].stripe_webhook_secret = SecretStr("")
+        harness["settings"].stripe_patient_billing_webhook_secret = SecretStr("")
         response = _post(harness, _event("payment_intent.succeeded", {"id": "pi_1"}))
         assert response.status_code == 401
 
     def test_the_previous_secret_is_accepted_during_rotation(self, harness: dict[str, Any]) -> None:
-        harness["settings"].stripe_webhook_secret_previous = SecretStr(_OLD_SECRET)
+        harness["settings"].stripe_patient_billing_webhook_secret_previous = SecretStr(_OLD_SECRET)
         event = _event("payment_intent.succeeded", _ours({"id": "pi_ours"}))
         body = json.dumps(event).encode()
         response = _post(harness, event, signature=_sign(body, secret=_OLD_SECRET))

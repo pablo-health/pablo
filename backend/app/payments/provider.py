@@ -12,8 +12,8 @@ agree with one another.
 
 :class:`SettingsPaymentCredentialProvider` is the default and is what a bare
 deployment gets: the keys configured as ``STRIPE_SECRET_KEY`` and
-``STRIPE_PUBLISHABLE_KEY``, charging directly on the account they belong to,
-with no ``account_id``. A deployment that
+``STRIPE_PATIENT_BILLING_PUBLISHABLE_KEY``, charging directly on the account
+they belong to, with no ``account_id``. A deployment that
 needs something else — one key authorised to act for several Stripe accounts,
 credentials fetched from a secret store per practice, a key that rotates on its
 own schedule — implements the protocol and installs it at startup with
@@ -97,7 +97,7 @@ class SettingsPaymentCredentialProvider:
             return None
         return PaymentCredentials(
             secret_key=secret_key,
-            publishable_key=settings.stripe_publishable_key,
+            publishable_key=settings.stripe_patient_billing_publishable_key,
         )
 
 
