@@ -971,26 +971,28 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 # isolation rests entirely on each route's own predicates. Anyone writing
 # a patient route in that posture must not treat RLS as the backstop; it
 # is a backstop only where per-practice schemas exist.
-PATIENT_READABLE_TABLES: dict[str, str] = {"patients": "id"}
+PATIENT_READABLE_TABLES: dict[str, str] = {
+    "patients": "id",
+    "outcome_measures": "patient_id",
+}
 
-# Of those, the ones a patient may also WRITE. Deliberately empty in core,
-# and read and write are separate registries so granting one never silently
-# grants the other.
+# Of those, the ones a patient may also WRITE. Read and write stay separate
+# registries so granting one never silently grants the other.
 #
-# Empty here does NOT currently mean "a patient principal can write
-# nothing". ``patients`` carries ``rls_patient_insert ... FOR INSERT WITH
-# CHECK (true)`` — a permissive policy that consults no GUC, added to fix
-# the clinician chicken-and-egg where a brand-new patient has no
-# ``patient_clinicians`` grant yet and so fails ``has_patient_access`` on
-# its own first INSERT. It admits any principal subject to RLS, the
-# patient one included. SELECT/UPDATE/DELETE are all closed to a patient
-# (they key on ``app.current_user_id``, which a patient request leaves
-# empty, and the patient's own read policy is ``FOR SELECT`` only, so it
-# does not widen UPDATE's ``USING``); INSERT is the one gap. Unreachable
-# while no resolver and no patient route exist, and tracked to be closed
-# before the first front door lands. Do not read this registry as the
-# whole answer to "what can a patient write".
-PATIENT_WRITABLE_TABLES: dict[str, str] = {}
+# ``outcome_measures`` is the first write grant: a patient completing a
+# screener records their own scored row and reads their own history back.
+# ``patients`` deliberately stays read-only — a patient reads their
+# demographics; nothing in core lets them write that record.
+#
+# Both commands a patient may use are now policied explicitly. INSERT used
+# to be the gap: ``patients`` carried ``rls_patient_insert ... WITH CHECK
+# (true)``, a policy that consulted no GUC and so admitted any principal
+# subject to RLS. It exists for the clinician chicken-and-egg (a brand-new
+# patient has no ``patient_clinicians`` grant yet, so the clinician fails
+# ``has_patient_access`` on its own first INSERT) and now requires an armed
+# ``app.current_user_id`` — which a patient principal never sets — instead
+# of admitting everyone.
+PATIENT_WRITABLE_TABLES: dict[str, str] = {"outcome_measures": "patient_id"}
 
 
 def register_overlay_patient_scoped(
@@ -1085,6 +1087,20 @@ def _apply_patient_principal_policies(
             text(
                 f"CREATE POLICY rls_patient_self_write ON {qualified} "
                 f"FOR UPDATE USING ({predicate}) WITH CHECK ({predicate})"
+            )
+        )
+        # INSERT needs a policy of its own: an UPDATE policy does not cover
+        # it, and under FORCE ROW LEVEL SECURITY an INSERT with no matching
+        # policy is refused outright — which is why a table registered
+        # ``writable`` was, until this arm existed, still unwritable by the
+        # patient the registration names. ``WITH CHECK`` only, since there
+        # is no prior row for ``USING`` to test: the predicate pins the NEW
+        # row's owning column to the calling patient, and that is what stops
+        # A from writing a row owned by B.
+        session.execute(
+            text(
+                f"CREATE POLICY rls_patient_self_insert ON {qualified} "
+                f"FOR INSERT WITH CHECK ({predicate})"
             )
         )
         logger.info("RLS (patient self-write on %s) enabled on %s", key_column, qualified)
@@ -1257,6 +1273,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         # run, rather than keeping a stale grant nobody is looking for.
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_read ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}"))
 
         # Additive: created before the clinician shape is chosen, because
         # several of those branches ``continue``. Permissive policies OR
@@ -1371,9 +1388,20 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                     f"))"
                 )
             )
+            # The clinician chicken-and-egg: a brand-new patient has no
+            # ``patient_clinicians`` grant yet, so ``has_patient_access``
+            # is false on the very INSERT that creates them. The policy
+            # therefore cannot test patient access — but it must still
+            # name a principal. Requiring an armed ``app.current_user_id``
+            # admits any clinician (which is the point) while refusing a
+            # patient principal, who arms ``app.current_patient_id`` and
+            # leaves this one empty. ``WITH CHECK (true)`` admitted both.
             session.execute(
                 text(
-                    f"CREATE POLICY rls_patient_insert ON {qualified} FOR INSERT WITH CHECK (true)"
+                    f"CREATE POLICY rls_patient_insert ON {qualified} "
+                    f"FOR INSERT WITH CHECK ("
+                    f"coalesce(current_setting('app.current_user_id', true), '') <> ''"
+                    f")"
                 )
             )
             logger.info("RLS (patient_access split policies) enabled on %s", qualified)
