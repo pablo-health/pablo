@@ -453,6 +453,108 @@ _TEMPLATES: tuple[ComplianceTemplate, ...] = (
         sort_order=200,
         severity="critical",
     ),
+    # --- Claim events ---------------------------------------------------
+    # Written automatically by the claims pipeline's default event listener
+    # (``app.claims.events``), one per (event kind, claim control number),
+    # so a rejection, denial or deadline shows up on the same dashboard as a
+    # license renewal. The due date is the payer's deadline when there is
+    # one, otherwise a week from the event. Visible to every role: anyone
+    # who files claims can receive them.
+    ComplianceTemplate(
+        item_type="claim_rejected",
+        label="Claim rejected",
+        description=(
+            "The clearinghouse or payer rejected a claim before adjudication. Fix and resubmit."
+        ),
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=300,
+        severity="critical",
+    ),
+    ComplianceTemplate(
+        item_type="claim_denied",
+        label="Claim denied",
+        description="The payer adjudicated a claim and paid nothing. Appeal or correct.",
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=310,
+        severity="critical",
+    ),
+    ComplianceTemplate(
+        item_type="claim_partial",
+        label="Claim partially paid",
+        description="The payer paid less than billed. Review the adjustment reasons.",
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=320,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="claim_stalled",
+        label="Claim stalled",
+        description=(
+            "No acknowledgement or adjudication within the expected window. "
+            "Follow up with the payer."
+        ),
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=330,
+        severity="routine",
+    ),
+    ComplianceTemplate(
+        item_type="claim_deadline_approaching",
+        label="Claim deadline approaching",
+        description="A filing, correction or appeal deadline is close.",
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=340,
+        severity="critical",
+    ),
+    ComplianceTemplate(
+        item_type="claim_deadline_missed",
+        label="Claim deadline missed",
+        description="A filing, correction or appeal deadline has passed.",
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=350,
+        severity="critical",
+    ),
+    ComplianceTemplate(
+        item_type="claim_enrollment_action_required",
+        label="Payer enrollment needs action",
+        description=(
+            "A payer wants something from you before it will accept claims or send remittances."
+        ),
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=360,
+        severity="critical",
+    ),
+    ComplianceTemplate(
+        item_type="claim_unmatched_remittance",
+        label="Unmatched remittance",
+        description="A payment arrived that could not be matched to a claim. Post it by hand.",
+        cadence_days=None,
+        reminder_windows=(7, 3, 0),
+        multi_instance=True,
+        min_edition="core",
+        sort_order=370,
+        severity="routine",
+    ),
     # --- Escape hatch ---------------------------------------------------
     # Free-form custom reminder. The user supplies their own per-instance
     # label (multi_instance=True); we only enforce a sensible default
