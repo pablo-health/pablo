@@ -14,21 +14,34 @@ export const NONCE_HEADER = "x-nonce"
 /**
  * Stripe.js, for collecting a card without the card touching this application.
  *
- * It belongs in two directives and only two. `script-src` loads the library
- * itself; `frame-src` lets it open the iframe that actually holds the card
- * fields, which is the whole point — the number is typed into a document this
- * origin cannot read.
+ * These are the hosts Stripe documents for a Stripe.js + Elements integration
+ * (https://docs.stripe.com/security/guide — "Content Security Policy"), minus
+ * the ones belonging to products this application does not use: Checkout,
+ * Connect embedded components, Link, the crypto onramp, and the Address
+ * Element (whose `maps.googleapis.com` entries are only needed with a Google
+ * Maps key of our own).
  *
- * Deliberately NOT in `connect-src`. Stripe.js does not call `api.stripe.com`
- * from this page; it routes API traffic through that same iframe, which runs
- * on Stripe's origin under Stripe's own policy rather than ours. Removing
- * `api.stripe.com` from a working policy changes nothing observable, so
- * allowing it here would widen egress on every page in the app in exchange
- * for nothing. If a future flow genuinely needs a host — a 3-D Secure
- * challenge renders from `hooks.stripe.com` — the browser names it in one
- * line, and it gets added then, with the evidence.
+ * The wildcard is not laziness. Stripe.js starts frames on `*.js.stripe.com`
+ * origins "where possible" to improve performance, which means whether it
+ * does so on any given load is Stripe's decision, not ours — an integration
+ * that allows only the apex host works until the day it doesn't. That is
+ * worth stating plainly, because a local probe mounting cleanly without the
+ * wildcard is evidence about one page load and nothing more.
+ *
+ * `hooks.stripe.com` renders a 3-D Secure challenge. Card payments in scope
+ * for SCA get one, so a policy without it collects cards happily and then
+ * fails the first authentication a bank asks for.
+ *
+ * `api.stripe.com` is where `confirmSetup` posts. Mounting an Element does
+ * not need it — the mount path talks to Stripe from inside Stripe's own
+ * frame, under Stripe's policy rather than ours — so this one cannot be
+ * verified by watching a card field appear. It is here because Stripe
+ * documents it for the submit path.
  */
-export const STRIPE_JS = "https://js.stripe.com"
+export const STRIPE_SCRIPT_SRC = "https://js.stripe.com https://*.js.stripe.com"
+export const STRIPE_FRAME_SRC =
+  "https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com"
+export const STRIPE_CONNECT_SRC = "https://api.stripe.com"
 
 // Browsers already treat http://localhost as a potentially trustworthy
 // origin, and local dev points API_URL at a plain-HTTP backend (see
