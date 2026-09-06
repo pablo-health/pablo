@@ -1,0 +1,182 @@
+# The end-to-end stack: the whole product on one machine with no cloud
+# project and no vendor credentials. Design: docs/design/e2e-harness.md.
+#
+#   make e2e-up     build the images, start everything, wait for health
+#   make e2e        run the Playwright suite in frontend/e2e/
+#   make e2e-down   stop the stack and drop its database volume
+#
+# The backend and database mirror docker-compose.yml but are declared here
+# in full: the dev file mounts local cloud credentials and publishes the dev
+# ports, and this stack must do neither. It has its own project name, so it
+# never touches the dev stack's containers or data.
+#
+# Host ports default to the ones the browser-facing design fixes (frontend
+# 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
+# E2E_BACKEND_PORT or E2E_CLEARINGHOUSE_PORT when something already listens
+# there. The emulator port is baked into the frontend bundle at build time,
+# so changing E2E_AUTH_EMULATOR_PORT needs `make e2e-up` to rebuild.
+name: pablo-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pablo
+      POSTGRES_PASSWORD: pablo_dev
+      POSTGRES_DB: pablo
+    volumes:
+      - e2e-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pablo"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    networks:
+      - e2e-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    ports:
+      - "${E2E_BACKEND_PORT:-8000}:8000"
+      # The frontend shares this network namespace (see its network_mode),
+      # so its port is published on this service.
+      - "${E2E_FRONTEND_PORT:-3000}:3000"
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=development
+      - CORS_ORIGINS=http://localhost:${E2E_FRONTEND_PORT:-3000}
+      - CORS_ALLOW_CREDENTIALS=true
+      - DATABASE_BACKEND=postgres
+      - DATABASE_URL=postgresql://pablo:pablo_dev@postgres:5432/pablo
+      - GCP_PROJECT_ID=demo-pablo-e2e
+      - FIREBASE_PROJECT_ID=demo-pablo-e2e
+      # Tokens are verified against the emulator; no credentials needed.
+      - FIREBASE_AUTH_EMULATOR_HOST=firebase-auth:9099
+      - REQUIRE_BAA=false
+      # The audit trail's second copy goes to Cloud Logging; with no cloud
+      # credentials every write would first wait on the credential lookup.
+      - AUDIT_DUAL_WRITE_ENABLED=false
+      # The e2e user never enrolls a second factor. Only honoured together
+      # with ENVIRONMENT=development (see Settings).
+      - REQUIRE_MFA=false
+      - AI_MODEL=google:gemini-3.1-pro-preview
+      - GOOGLE_REGION=global
+      - PRACTICE_ENABLED=true
+      - PRACTICE_DAILY_SESSION_LIMIT=999
+      - PUBLIC_BOOKING_ENABLED=true
+      # Point claim submission and eligibility at the fake clearinghouse.
+      # The key only has to be present; the fake never checks it.
+      - CLEARINGHOUSE_API_KEY=test_e2e_not_a_real_key
+      - CLEARINGHOUSE_BASE_URL=http://fake-clearinghouse:8080
+      - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
+    healthcheck:
+      # curl isn't in the Chainguard base; probe with the stdlib. The image's
+      # own check targets a path the app doesn't serve, so it is replaced.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 20s
+      retries: 30
+    depends_on:
+      postgres:
+        condition: service_healthy
+      firebase-auth:
+        condition: service_healthy
+      fake-clearinghouse:
+        condition: service_healthy
+    networks:
+      - e2e-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.production
+      args:
+        NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST: localhost:${E2E_AUTH_EMULATOR_PORT:-9099}
+    # One API_URL serves both the browser and the server-rendered pages, so
+    # the frontend runs inside the backend's network namespace: from either
+    # side, localhost:<backend port> is the backend. Service names on the
+    # stack's network (firebase-auth) still resolve from here.
+    network_mode: "service:backend"
+    env_file: .env.e2e
+    environment:
+      - API_URL=http://localhost:${E2E_BACKEND_PORT:-8000}
+    healthcheck:
+      # Distroless runtime: no shell, node at a fixed path.
+      test:
+        [
+          "CMD",
+          "/nodejs/bin/node",
+          "-e",
+          "fetch('http://localhost:3000/api/config').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 10s
+      retries: 20
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  firebase-auth:
+    build:
+      context: ./scripts/e2e
+      dockerfile: firebase-auth.Dockerfile
+    ports:
+      - "${E2E_AUTH_EMULATOR_PORT:-9099}:9099"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:9099/').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 10s
+      retries: 30
+    networks:
+      - e2e-net
+
+  fake-clearinghouse:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-clearinghouse.Dockerfile
+    ports:
+      - "${E2E_CLEARINGHOUSE_PORT:-8080}:8080"
+    environment:
+      - FAKE_CLEARINGHOUSE_FIXTURES=/srv/fixtures
+      - FAKE_CLEARINGHOUSE_PUBLIC_URL=http://fake-clearinghouse:8080
+      - FAKE_CLEARINGHOUSE_WEBHOOK_URL=http://backend:8000/api/webhooks/clearinghouse
+      - FAKE_CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/_fake/received').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    networks:
+      - e2e-net
+
+networks:
+  e2e-net:
+    driver: bridge
+
+volumes:
+  e2e-postgres-data:

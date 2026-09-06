@@ -17,6 +17,7 @@ dist
 # Testing
 coverage
 .vitest
+e2e
 vitest.setup.ts
 vitest.config.ts
 **/__tests__

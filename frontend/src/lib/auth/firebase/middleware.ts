@@ -26,6 +26,13 @@ const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollm
 
 const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
 
+// The Firebase Auth emulator serves plain HTTP on a loopback host, so a
+// local end-to-end build must let the SDK reach it; unset (every deployed
+// build) this contributes nothing to the policy.
+const AUTH_EMULATOR_ORIGIN = process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST
+  ? `http://${process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST}`
+  : ""
+
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
@@ -33,7 +40,7 @@ function buildCsp(nonce: string): string {
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} ${AUTH_EMULATOR_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
     `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_FRAME_SRC}`,
     "object-src 'none'",
     "base-uri 'self'",
