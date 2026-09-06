@@ -11,6 +11,25 @@ import type { NextRequest } from "next/server"
 
 export const NONCE_HEADER = "x-nonce"
 
+/**
+ * Stripe.js, for collecting a card without the card touching this application.
+ *
+ * It belongs in two directives and only two. `script-src` loads the library
+ * itself; `frame-src` lets it open the iframe that actually holds the card
+ * fields, which is the whole point — the number is typed into a document this
+ * origin cannot read.
+ *
+ * Deliberately NOT in `connect-src`. Stripe.js does not call `api.stripe.com`
+ * from this page; it routes API traffic through that same iframe, which runs
+ * on Stripe's origin under Stripe's own policy rather than ours. Removing
+ * `api.stripe.com` from a working policy changes nothing observable, so
+ * allowing it here would widen egress on every page in the app in exchange
+ * for nothing. If a future flow genuinely needs a host — a 3-D Secure
+ * challenge renders from `hooks.stripe.com` — the browser names it in one
+ * line, and it gets added then, with the evidence.
+ */
+export const STRIPE_JS = "https://js.stripe.com"
+
 // Browsers already treat http://localhost as a potentially trustworthy
 // origin, and local dev points API_URL at a plain-HTTP backend (see
 // frontend/.env.example), so loopback hosts are exempt from the https

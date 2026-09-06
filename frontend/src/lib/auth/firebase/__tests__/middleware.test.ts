@@ -63,8 +63,12 @@ describe("firebaseAuthMiddleware", () => {
 })
 
 function scriptSrcDirective(csp: string): string {
-  const directive = csp.split(";").find((d) => d.trim().startsWith("script-src"))
-  if (!directive) throw new Error("script-src directive not found in CSP")
+  return namedDirective(csp, "script-src")
+}
+
+function namedDirective(csp: string, name: string): string {
+  const directive = csp.split(";").find((d) => d.trim().startsWith(`${name} `))
+  if (!directive) throw new Error(`${name} directive not found in CSP`)
   return directive.trim()
 }
 
@@ -85,6 +89,25 @@ describe("firebase middleware CSP", () => {
     const scriptSrc = scriptSrcDirective(csp!)
     expect(scriptSrc).not.toMatch(/unsafe-inline/)
     expect(scriptSrc).toMatch(/'nonce-[^']+'/)
+  })
+
+  it("allows Stripe.js to load and to open its card iframe, and nothing more", async () => {
+    // Card collection needs exactly two directives: script-src to fetch the
+    // library, frame-src for the iframe the card number is typed into. It is
+    // deliberately absent from connect-src — Stripe.js talks to its API from
+    // inside that iframe, under Stripe's own policy, so allowing api.stripe.com
+    // here would widen egress on every page of the app and buy nothing. Both
+    // halves are pinned because dropping either one is silent: the dialog still
+    // opens, and the card field simply never appears.
+    const { default: firebaseAuthMiddleware } = await import("../middleware")
+    const request = new NextRequest("https://app.example.com/")
+
+    const response = await firebaseAuthMiddleware(request)
+
+    const csp = response.headers.get("Content-Security-Policy")!
+    expect(namedDirective(csp, "script-src")).toContain("https://js.stripe.com")
+    expect(namedDirective(csp, "frame-src")).toContain("https://js.stripe.com")
+    expect(namedDirective(csp, "connect-src")).not.toContain("stripe.com")
   })
 
   it("threads the same nonce through to the request headers the theme script reads", async () => {
