@@ -77,10 +77,17 @@ e2e user; the flag that requires it is off in the e2e compose profile.
 ### CI
 
 One `e2e` job in `ci.yml`: compose up, `npx playwright test`, upload the
-HTML report and traces on failure, compose down. It runs when the
-frontend, the backend routes, or `frontend/e2e/` change, using the same
-diff classifier as the other jobs. The job is a required check once it
-has run green for a week.
+HTML report and traces on failure, compose down. It runs nightly on
+`main`, on demand, and on pull requests that change the frontend, the
+backend routes, the compose files, the fake clearinghouse, or
+`frontend/e2e/`. Not on every push: a full-stack run costs minutes and
+the nightly catches drift. The job is a required check once it has run
+green for a week.
+
+The live vendor lane (below) is its own workflow: weekly, on demand, and
+on pull requests that touch the clearinghouse adapter, the live suite or
+the recorded fixtures, with the test key held as a repository secret that
+fork pull requests never receive.
 
 ## The live vendor lane
 
