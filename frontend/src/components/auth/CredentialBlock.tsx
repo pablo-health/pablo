@@ -34,6 +34,7 @@ import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
 import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
+import { getUserStatus } from "@/lib/api/users"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
 import { errorCode } from "@/lib/errors/errorCode"
@@ -54,7 +55,10 @@ import { VerifyEmailScreen } from "./VerifyEmailScreen"
 // the clear.
 export type AuthMethod = "google" | "email" | "passkey"
 
-type CredentialStep = "sign-in" | "mfa" | "recovery-code" | "verify-email"
+// "passkey-step-up" is for a resolved FIRST-factor credential on an account
+// that has a passkey: Firebase raised no challenge because the passkey isn't
+// its factor, so we ask for it here before handing the session to the host.
+type CredentialStep = "sign-in" | "mfa" | "passkey-step-up" | "recovery-code" | "verify-email"
 
 // Remember how this device last signed in so we can surface a "Last used"
 // hint on the matching button. We store only the method tag — never the
@@ -156,6 +160,9 @@ export function CredentialBlock({
   // challenge (so we record the right one once the challenge resolves).
   const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
   const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
+  // The first-factor credential held while the passkey is asserted on top of
+  // it. Not a secret beyond the session it already represents.
+  const [pendingCredential, setPendingCredential] = useState<UserCredential | null>(null)
 
   // Only offer passkey sign-in where the browser can actually run the
   // ceremony — resolved client-side after mount to avoid an SSR mismatch.
@@ -177,10 +184,63 @@ export function CredentialBlock({
   }, [showLastUsed])
 
   const resolveCredential = async (credential: UserCredential, method: AuthMethod) => {
+    // A passkey is Pablo's own factor and Firebase knows nothing about it, so
+    // an email/password or Google credential can be perfectly valid and still
+    // carry no second factor — Firebase raises no MFA challenge because, as
+    // far as it is concerned, there is nothing to challenge. Ask for the
+    // passkey here rather than handing the host a session that every PHI
+    // route will refuse.
+    //
+    // Deliberately fail-open: if the check itself fails we hand off anyway.
+    // The dashboard gate makes the same decision server-side and is the layer
+    // that actually enforces it; this one exists to spare the round trip, and
+    // a login should not break because a status read hiccuped.
+    if (method !== "passkey") {
+      try {
+        const status = await getUserStatus(await credential.user.getIdToken())
+        if (!status.session_mfa_satisfied && status.has_passkey) {
+          setPendingCredential(credential)
+          setPendingMethod(method)
+          setStep("passkey-step-up")
+          setError("")
+          return
+        }
+      } catch {
+        // Fall through and let the gate handle it.
+      }
+    }
     await onCredential(credential, method)
     // Recording the hint is tied to surfacing it, so a host that never shows
     // the pill leaves the device's record untouched.
     if (showLastUsed) rememberAuthMethod(method)
+  }
+
+  /**
+   * Assert the enrolled passkey on top of a first-factor credential.
+   *
+   * Hands the host the NEW credential, not the one that got us here: the
+   * minted token is the one carrying the verified factor, and it is what the
+   * host must exchange for a session cookie. The remembered "last used"
+   * method stays the door the user actually chose.
+   */
+  const handlePasskeyStepUp = async () => {
+    if (!pendingCredential) return
+    setError("")
+    setLoading(true)
+    try {
+      const options = await beginAuthentication()
+      const assertion = await startAuthentication({ optionsJSON: options })
+      const { custom_token } = await finishAuthentication(assertion)
+      const upgraded = await signInWithCustomToken(getFirebaseAuth(), custom_token)
+      await upgraded.user.getIdToken(true)
+      await onCredential(upgraded, pendingMethod)
+      if (showLastUsed) rememberAuthMethod(pendingMethod)
+    } catch (err) {
+      if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
+      setError("That didn't work. Try again, or start over and sign in with your passkey.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleMfaRequired = (err: MultiFactorError, method: AuthMethod) => {
@@ -312,6 +372,38 @@ export function CredentialBlock({
           setStep("sign-in")
         }}
       />
+    )
+  }
+
+  if (step === "passkey-step-up") {
+    return (
+      <div className="space-y-5 text-center">
+        <Fingerprint className="mx-auto h-10 w-10 text-primary-600" />
+        <div className="space-y-2">
+          <h2 className="font-display text-xl font-semibold text-neutral-900">
+            One more step
+          </h2>
+          <p className="text-sm text-neutral-600">
+            Your account is protected by a passkey. Confirm it to continue.
+          </p>
+        </div>
+
+        <AuthPrimaryButton onClick={handlePasskeyStepUp} disabled={loading}>
+          {loading ? "Waiting for your passkey…" : "Use passkey"}
+        </AuthPrimaryButton>
+
+        {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
+
+        <AuthLinkButton
+          onClick={() => {
+            setPendingCredential(null)
+            setError("")
+            setStep("sign-in")
+          }}
+        >
+          Start over
+        </AuthLinkButton>
+      </div>
     )
   }
 

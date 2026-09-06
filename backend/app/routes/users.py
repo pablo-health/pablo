@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
+from ..auth.providers import VerifiedIdentity
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
 from ..auth.service import (
@@ -53,6 +54,7 @@ from ..repositories import (
     get_user_repository,
 )
 from ..services import AuditService, get_audit_service
+from ..services.passkey_service import PasskeyService, get_passkey_service
 from ..utcnow import utc_now, utc_now_iso
 
 if TYPE_CHECKING:
@@ -140,22 +142,52 @@ def _resolve_baa_path(version: str) -> Path:
 
 @router.get("/me/status")
 def get_user_status(
+    request: Request,
     user: User = Depends(get_current_user_no_mfa),
     profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     """
     Get current user status without requiring MFA.
 
     Used by dashboard layout and companion app to check MFA enrollment
     and subscription/trial status.
+
+    Reports the SESSION's second-factor state as well as the account's
+    enrolment, because those two answer different questions and the gap
+    between them is a real state a user can sit in. ``mfa_enrolled_at``
+    says the account has a factor *at all* — it is stamped once, at first
+    enrolment, and never cleared. ``session_mfa_satisfied`` says THIS
+    request's token actually carries one. They diverge whenever someone
+    with an enrolled factor signs in through a door that does not exercise
+    it: a passkey is Pablo's factor, invisible to Firebase, so an
+    email/password or Google sign-in returns a perfectly good credential
+    that carries no second factor at all. Gating on enrolment alone lets
+    that session into the dashboard, where every PHI route then refuses it
+    — the backend is right and the UI has already said "come in".
     """
     from ..settings import get_settings
 
     profile = profile_repo.get(user.id)
 
+    identity = getattr(request.state, "verified_identity", None)
+    session_mfa_satisfied = isinstance(identity, VerifiedIdentity) and identity.mfa_satisfied
+
     result: dict = {
         "status": user.status,
         "mfa_enrolled_at": user.mfa_enrolled_at,
+        # Whether THIS session cleared a second factor, as opposed to whether
+        # the account has ever enrolled one (``mfa_enrolled_at`` above). A
+        # caller deciding whether to let someone in wants this one.
+        "session_mfa_satisfied": session_mfa_satisfied,
+        # Whether a passkey is enrolled, read from stored credentials rather
+        # than inferred from ``mfa_enrolled_at`` (which a TOTP enrolment also
+        # stamps). This is what lets a caller offer the RIGHT prompt to an
+        # unsatisfied session: a passkey holder should be asked for their
+        # passkey, not sent to enrolment for a factor they already have.
+        # Firebase raises its own challenge for TOTP, so passkey presence is
+        # the only factor signal the client cannot work out for itself.
+        "has_passkey": bool(passkey_service.list_credentials(user.id)),
         "is_platform_admin": user.is_platform_admin,
         "name": user.name,
         "email": user.email,

@@ -28,7 +28,7 @@ from ..api_errors import (
 )
 from ..auth.providers import VerifiedIdentity
 from ..auth.route_security import truly_public
-from ..auth.service import get_current_user_no_mfa
+from ..auth.service import _verify_request_identity, get_current_user_no_mfa
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models.audit import AuditAction, ResourceType
 from ..models.passkey import (
@@ -62,6 +62,31 @@ router = APIRouter(prefix="/api/auth/passkey", tags=["auth", "passkey"])
 
 # Module-level alias so FastAPI resolves ``User`` at runtime.
 EnrollingUser = Annotated[User, Depends(get_current_user_no_mfa)]
+
+
+def _caller_firebase_uid(request: Request) -> str | None:
+    """The Firebase uid of an already-authenticated caller, if there is one.
+
+    The authenticate routes are ``truly_public`` because passwordless sign-in
+    has no session yet — that is the point of the flow. A STEP-UP, though,
+    arrives with a first-factor session already established, and the assertion
+    must be pinned to it: usernameless discovery would otherwise happily mint a
+    token for whichever account the presented credential belongs to.
+
+    Returns ``None`` for an anonymous caller (ordinary passwordless login) and
+    for a token that does not verify — an unusable bearer must not silently
+    widen the ceremony into the unbound case, but it is also not this route's
+    job to reject it. Verification is cache-backed by the session middleware,
+    so this costs nothing on the common path.
+    """
+    header = request.headers.get("authorization", "")
+    if not header.startswith("Bearer "):
+        return None
+    try:
+        identity = _verify_request_identity(request, header[len("Bearer ") :])
+    except Exception:
+        return None
+    return identity.subject_id or None
 
 
 def _session_mfa_satisfied(request: Request) -> bool:
@@ -204,7 +229,10 @@ def authenticate_finish(
     durable login audit event (HIPAA § 164.308(a)(5)(ii)(C)).
     """
     try:
-        outcome = passkey_service.finish_authentication(credential=payload.credential)
+        outcome = passkey_service.finish_authentication(
+            credential=payload.credential,
+            expected_firebase_uid=_caller_firebase_uid(request),
+        )
     except PasskeyCeremonyError as err:
         raise BadRequestError("Passkey assertion could not be verified.") from err
     except PasskeyAssertionError as err:
