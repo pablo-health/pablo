@@ -18,6 +18,7 @@ const {
   beginAuthentication,
   finishAuthentication,
   useConfig,
+  getUserStatus,
 } = vi.hoisted(() => ({
   signInWithEmailAndPassword: vi.fn(),
   signInWithCustomToken: vi.fn(),
@@ -26,6 +27,7 @@ const {
   beginAuthentication: vi.fn(),
   finishAuthentication: vi.fn(),
   useConfig: vi.fn(),
+  getUserStatus: vi.fn(),
 }))
 
 vi.mock("firebase/auth", () => ({
@@ -42,6 +44,7 @@ vi.mock("firebase/auth", () => ({
 vi.mock("@/lib/firebase", () => ({ getFirebaseAuth: vi.fn() }))
 vi.mock("@/lib/config", () => ({ useConfig }))
 vi.mock("@/lib/api/passkey", () => ({ beginAuthentication, finishAuthentication }))
+vi.mock("@/lib/api/users", () => ({ getUserStatus }))
 vi.mock("@simplewebauthn/browser", () => ({
   startAuthentication,
   browserSupportsWebAuthn,
@@ -78,6 +81,87 @@ beforeEach(() => {
   vi.clearAllMocks()
   useConfig.mockReturnValue({ passkeysEnabled: true })
   browserSupportsWebAuthn.mockReturnValue(true)
+  // Default: the session already cleared a factor, so the step-up branch
+  // stays out of the way of every other test in this file.
+  getUserStatus.mockResolvedValue({ session_mfa_satisfied: true, has_passkey: false })
+})
+
+/** A first-factor credential: signed in, but carrying no second factor. */
+function firstFactorCredential(uid = "u1") {
+  return {
+    user: { uid, getIdToken: vi.fn().mockResolvedValue("id-token"), refreshToken: "r" },
+  } as unknown as UserCredential
+}
+
+async function signInWithPassword(container: HTMLElement) {
+  fireEvent.change(container.querySelector("#email")!, {
+    target: { value: "clinician@example.com" },
+  })
+  fireEvent.change(container.querySelector("#password")!, {
+    target: { value: "correct horse battery" },
+  })
+  fireEvent.submit(container.querySelector("form")!)
+}
+
+describe("CredentialBlock passkey step-up", () => {
+  // A passkey is Pablo's factor, invisible to Firebase, so a password or
+  // Google sign-in raises no MFA challenge and yields a session that every
+  // PHI route then refuses. Ask for the passkey instead of handing that
+  // session to the host.
+  it("asks for the passkey instead of resolving a first-factor credential", async () => {
+    signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
+    getUserStatus.mockResolvedValue({ session_mfa_satisfied: false, has_passkey: true })
+
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+
+    expect(await screen.findByRole("button", { name: "Use passkey" })).not.toBeNull()
+    expect(onCredential).not.toHaveBeenCalled()
+  })
+
+  it("hands the host the UPGRADED credential once the passkey is asserted", async () => {
+    const upgraded = { user: { uid: "u1", getIdToken: vi.fn() } } as unknown as UserCredential
+    signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
+    getUserStatus.mockResolvedValue({ session_mfa_satisfied: false, has_passkey: true })
+    beginAuthentication.mockResolvedValue({ challenge: "c" })
+    startAuthentication.mockResolvedValue({ id: "assertion" })
+    finishAuthentication.mockResolvedValue({ custom_token: "stepped-up" })
+    signInWithCustomToken.mockResolvedValue(upgraded)
+
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+    fireEvent.click(await screen.findByRole("button", { name: "Use passkey" }))
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
+    // The minted token is the one carrying the verified factor — handing back
+    // the original first-factor credential would defeat the whole exercise.
+    expect(onCredential).toHaveBeenCalledWith(upgraded, "email")
+  })
+
+  it("does not interrupt a session that already cleared a factor", async () => {
+    const credential = firstFactorCredential()
+    signInWithEmailAndPassword.mockResolvedValue(credential)
+    getUserStatus.mockResolvedValue({ session_mfa_satisfied: true, has_passkey: true })
+
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+
+    await waitFor(() => expect(onCredential).toHaveBeenCalledWith(credential, "email"))
+    expect(screen.queryByRole("button", { name: "Use passkey" })).toBeNull()
+  })
+
+  it("falls through when the status read fails, leaving the gate to decide", async () => {
+    const credential = firstFactorCredential()
+    signInWithEmailAndPassword.mockResolvedValue(credential)
+    getUserStatus.mockRejectedValue(new Error("network"))
+
+    const { onCredential, container } = renderBlock()
+    await signInWithPassword(container)
+
+    // Fail-open on purpose: a hiccup here must not block sign-in, because the
+    // dashboard gate makes the same call server-side and actually enforces it.
+    await waitFor(() => expect(onCredential).toHaveBeenCalledWith(credential, "email"))
+  })
 })
 
 describe("CredentialBlock passkey gating", () => {

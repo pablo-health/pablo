@@ -70,9 +70,35 @@ export default async function DashboardLayout({
         redirect("/onboarding")
       }
 
-      // MFA not enrolled → redirect to enrollment page
-      // Skip if MFA is not required (local development)
-      if (process.env.REQUIRE_MFA !== "false" && !userStatus.mfa_enrolled_at) {
+      // Second-factor safety net. Gate on whether THIS SESSION cleared a
+      // factor, not on whether the account has ever enrolled one.
+      //
+      // `mfa_enrolled_at` is stamped once at first enrolment and never
+      // cleared, so it answers "has a factor" — and the onboarding step
+      // above already refuses to let anyone past without it. Gating here on
+      // the same field therefore catches nobody: a user who enrolled a
+      // passkey and then signed in with a password or Google carries that
+      // stamp, sails through, and reaches a dashboard where every PHI route
+      // 403s them. A passkey is Pablo's factor and invisible to Firebase, so
+      // no MFA challenge fires on those paths and nothing else notices.
+      //
+      // In UI flows the onboarding step above means an unsatisfied session
+      // here is almost always "has a factor, didn't use it" — so the answer
+      // is to ask for it, not to send them to enrol something they already
+      // have. That gate is a client-side redirect though, not a control: a
+      // programmatic caller can hold a valid first-factor token and never
+      // pass through it. So branch on what we can actually observe about the
+      // account rather than on an assumption about how it got here. The real
+      // enforcement is the backend refusing the token either way.
+      if (process.env.REQUIRE_MFA !== "false" && !userStatus.session_mfa_satisfied) {
+        // A passkey can be asserted right here without signing out.
+        if (userStatus.has_passkey) {
+          redirect("/mfa-step-up")
+        }
+        // No passkey to challenge: `mfa_enrolled_at` is set but nothing backs
+        // it (a self-reported TOTP stamp with no Firebase factor — see the
+        // warning on the /me/mfa-enrolled route). Enrolment is the only
+        // honest destination, and it is where this case landed before.
         redirect("/mfa-enrollment")
       }
     } catch (error) {

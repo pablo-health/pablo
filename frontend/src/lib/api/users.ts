@@ -34,7 +34,27 @@ export interface UserProfile {
 
 export interface UserStatusBase {
   status: string
+  /**
+   * When the account first enrolled a second factor. Stamped once and never
+   * cleared, so it answers "has a factor at all" — NOT "is this session
+   * allowed in". For that, read `session_mfa_satisfied`.
+   */
   mfa_enrolled_at: string | null
+  /**
+   * Whether THIS session's token carries a verified second factor. Diverges
+   * from `mfa_enrolled_at` whenever someone with an enrolled factor signs in
+   * through a door that doesn't exercise it — a passkey is invisible to
+   * Firebase, so email/password and Google sign-ins produce a valid
+   * credential carrying no second factor.
+   */
+  session_mfa_satisfied: boolean
+  /**
+   * Whether a passkey is enrolled, from stored credentials rather than
+   * inferred from `mfa_enrolled_at` (TOTP stamps that too). Tells an
+   * unsatisfied session whether a passkey can be asserted in place, instead
+   * of sending someone to enrol a factor they already have.
+   */
+  has_passkey: boolean
   is_platform_admin: boolean
   name: string
   email: string
