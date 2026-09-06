@@ -8,14 +8,19 @@ Routes
 * ``POST /api/claims/from-session/{appointment_id}`` — snapshot the visit,
   the client's coverage and the practice's billing identity into a
   ``draft`` claim. 422 when the client has no active coverage.
-* ``GET /api/claims/{claim_id}`` — the claim with its lines, every receipt
-  it has collected, the deadline it is under and what to do next (see
-  ``app.routes.claim_tracker`` for the list across clients and the
-  on-demand status check).
+* ``GET /api/claims?state=&from=&to=`` — the tracker: every claim the
+  caller can see, newest first, narrowed by state and service-date range,
+  each with the deadline it is under and what to do next.
+* ``GET /api/claims/{claim_id}`` — the claim with its lines, plus what the
+  detail view derives at read time: the scrub's current findings, the hops
+  it has passed, its deadlines and the names its ids stand for — and
+  every receipt the pipeline recorded (see ``app.routes.claim_status`` for
+  the on-demand status check).
 * ``POST /api/claims/{claim_id}/validate`` — run the scrub. With a blocking
-  finding: 422 carrying every finding, and the claim stays a draft.
-  Without: the claim becomes ``validated`` and the response carries any
-  warnings. 409 unless the claim is a draft.
+  finding: 422 (``CLAIM_VALIDATION_FAILED``) carrying every finding in
+  ``details.findings``, and the claim stays a draft. Without: the claim
+  becomes ``validated`` and the response carries any warnings. 409 unless
+  the claim is a draft.
 * ``POST /api/claims/{claim_id}/correct`` — a replacement claim (frequency
   ``7``) rebuilt from today's sources, naming this one as its parent.
   409 on a draft: a draft is simply rebuilt.
@@ -42,11 +47,13 @@ a log line.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING, Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from ..api_errors import UnprocessableEntityError
 from ..auth.service import require_baa_acceptance
 from ..claims.assembly import (
     AppointmentNotFoundError,
@@ -58,17 +65,23 @@ from ..claims.assembly import (
     build_corrected_claim,
     build_void_claim,
 )
+from ..claims.deadlines import deadlines_for
 from ..claims.scrub import scrub
-from ..claims.tracker import detail_response
+from ..claims.tracker import next_action_for
 from ..claims.transitions import ClaimNotValidError, advance
 from ..db import get_db_session
 from ..models.audit import AuditAction, ResourceType
 from ..models.claims import (
     BuildClaimRequest,
     Claim,
+    ClaimDeadlinesResponse,
     ClaimDetailResponse,
+    ClaimHop,
     ClaimListResponse,
     ClaimResponse,
+    ClaimState,
+    ClaimTrackerItem,
+    ClaimTrackerResponse,
     ClaimValidationFailed,
     FindingResponse,
     ValidateClaimResponse,
@@ -94,6 +107,8 @@ if TYPE_CHECKING:
 
     from ..claims.scrub import Finding
     from ..models import User
+    from ..models.claims import ClaimReceipt
+    from ..models.coverage import Payer
     from ..models.patient import Patient
     from ..repositories.claim_receipts import ClaimReceiptRepository
     from ..repositories.claims import ClaimRepository
@@ -224,6 +239,96 @@ def _to_response(claim: Claim) -> ClaimResponse:
     return ClaimResponse(**claim.model_dump())
 
 
+#: The states at or past each hop, in the order the claim reaches them. A
+#: rejection or a stall keeps whatever hops the claim had already passed,
+#: which its timestamps say; the table only decides the untimestamped one.
+_PAST_CLEARINGHOUSE: frozenset[str] = frozenset(
+    {"ch_accepted", "payer_accepted", "paid", "partial", "denied"}
+)
+
+
+def _hops(claim: Claim, receipts: list[ClaimReceipt]) -> list[ClaimHop]:
+    """Where the claim has been, read off its receipt timestamps.
+
+    The clearinghouse hop has no column of its own on the row; its moment
+    is the ``ch_accepted`` receipt's, when the pipeline recorded one.
+    """
+    clearinghouse_at = next(
+        (
+            r.occurred_at
+            for r in receipts
+            if r.kind == "ch_accepted" and r.to_state == "ch_accepted"
+        ),
+        None,
+    )
+    return [
+        ClaimHop(kind="built", reached=True, at=claim.created_at),
+        ClaimHop(kind="submitted", reached=claim.submitted_at is not None, at=claim.submitted_at),
+        ClaimHop(
+            kind="clearinghouse_accepted",
+            reached=(
+                claim.state in _PAST_CLEARINGHOUSE
+                or claim.payer_accepted_at is not None
+                or clearinghouse_at is not None
+            ),
+            at=clearinghouse_at,
+        ),
+        ClaimHop(
+            kind="payer_accepted",
+            reached=claim.payer_accepted_at is not None,
+            at=claim.payer_accepted_at,
+        ),
+        ClaimHop(
+            kind="adjudicated", reached=claim.adjudicated_at is not None, at=claim.adjudicated_at
+        ),
+    ]
+
+
+def _deadlines(claim: Claim, payer: Payer | None, today: date) -> ClaimDeadlinesResponse:
+    """The claim's clocks; empty when its payer is no longer on file.
+
+    A denial or a partial payment is stamped ``adjudicated_at`` when the
+    remittance is posted, so that is when the correction and appeal clocks
+    started.
+    """
+    if payer is None:
+        return ClaimDeadlinesResponse()
+    remittance_received_at = claim.adjudicated_at if claim.state in ("denied", "partial") else None
+    found = deadlines_for(claim, payer, remittance_received_at, today=today)
+    return ClaimDeadlinesResponse(
+        filing=found.filing,
+        correction=found.correction,
+        appeal=found.appeal,
+        applicable=found.applicable,
+        days_left=found.days_left,
+    )
+
+
+def _to_tracker_item(
+    claim: Claim, patient: Patient, payer: Payer | None, today: date
+) -> ClaimTrackerItem:
+    return ClaimTrackerItem(
+        id=claim.id,
+        control_number=claim.control_number,
+        patient_id=claim.patient_id,
+        patient_name=patient.display_name,
+        payer_id=claim.payer_id,
+        payer_name=payer.name if payer is not None else None,
+        state=claim.state,
+        frequency_code=claim.frequency_code,
+        parent_claim_id=claim.parent_claim_id,
+        service_date=min((line.service_date for line in claim.lines), default=None),
+        total_charge_cents=claim.total_charge_cents,
+        total_paid_cents=claim.total_paid_cents,
+        submitted_at=claim.submitted_at,
+        last_receipt_at=claim.last_receipt_at,
+        created_at=claim.created_at,
+        updated_at=claim.updated_at,
+        deadlines=_deadlines(claim, payer, today),
+        next_action=next_action_for(claim),
+    )
+
+
 @router.post(
     "/from-session/{appointment_id}",
     response_model=ClaimResponse,
@@ -272,6 +377,70 @@ def build_claim(
     return _to_response(created)
 
 
+def _to_detail(
+    claim: Claim, patient: Patient, payer: Payer | None, receipts: ClaimReceiptRepository
+) -> ClaimDetailResponse:
+    """The claim as the detail view sees it, receipts and all."""
+    today = utc_now().date()
+    collected = receipts.list_for_claim(claim.id)
+    return ClaimDetailResponse(
+        **claim.model_dump(),
+        patient_name=patient.display_name,
+        payer_name=payer.name if payer is not None else None,
+        findings=_to_findings(scrub(claim, today=today)),
+        hops=_hops(claim, collected),
+        deadlines=_deadlines(claim, payer, today),
+        receipts=collected,
+        next_action=next_action_for(claim),
+    )
+
+
+@router.get("", response_model=ClaimTrackerResponse)
+def list_claims(
+    request: Request,
+    user: CurrentUser,
+    claims: ClaimsRepo,
+    patients: PatientsRepo,
+    payers: PayersRepo,
+    audit: AuditService = Depends(get_audit_service),
+    state: ClaimState | None = None,
+    from_date: Annotated[date | None, Query(alias="from")] = None,
+    to_date: Annotated[date | None, Query(alias="to")] = None,
+) -> ClaimTrackerResponse:
+    """The tracker: every claim on a client the caller can see, newest first.
+
+    A claim on a client the caller cannot see is left out rather than
+    refused, the same answer the per-claim routes give with their 404.
+    """
+    if from_date is not None and to_date is not None and to_date < from_date:
+        raise UnprocessableEntityError("The range ends before it starts.")
+    selected = claims.list_all(state=state, from_date=from_date, to_date=to_date)
+    visible = patients.get_multiple(list({c.patient_id for c in selected}), user.id)
+    selected = [c for c in selected if c.patient_id in visible]
+    today = utc_now().date()
+    payers_by_id = {payer_id: payers.get(payer_id) for payer_id in {c.payer_id for c in selected}}
+    data = [
+        _to_tracker_item(claim, visible[claim.patient_id], payers_by_id[claim.payer_id], today)
+        for claim in selected
+    ]
+    audit.log(
+        AuditAction.CLAIMS_LISTED,
+        user,
+        request,
+        resource_type=ResourceType.CLAIM,
+        resource_id="tracker",
+        changes={
+            "state": state,
+            "from": from_date.isoformat() if from_date else None,
+            "to": to_date.isoformat() if to_date else None,
+            "count": len(data),
+            "claim_ids": [claim.id for claim in data],
+            "control_numbers": [claim.control_number for claim in data],
+        },
+    )
+    return ClaimTrackerResponse(data=data, total=len(data))
+
+
 @router.get("/{claim_id}", response_model=ClaimDetailResponse)
 def get_claim(
     claim_id: str,
@@ -283,7 +452,6 @@ def get_claim(
     receipts: ReceiptsRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> ClaimDetailResponse:
-    """The claim with every receipt it has collected, its deadline and its next action."""
     claim, patient = _require_claim(claims, patients, claim_id, user.id)
     audit.log(
         AuditAction.CLAIM_VIEWED,
@@ -294,12 +462,7 @@ def get_claim(
         patient=patient,
         changes=_audit_changes(claim),
     )
-    return detail_response(
-        claim,
-        receipts.list_for_claim(claim.id),
-        payers.get(claim.payer_id),
-        today=utc_now().date(),
-    )
+    return _to_detail(claim, patient, payers.get(claim.payer_id), receipts)
 
 
 @router.post("/{claim_id}/validate", response_model=ValidateClaimResponse)
@@ -321,12 +484,10 @@ def validate_claim(
     try:
         validated = advance(claim, "validate", now=utc_now())
     except ClaimNotValidError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=ClaimValidationFailed(
-                message="The claim has blocking findings and stays a draft.",
-                findings=_to_findings(exc.findings),
-            ).model_dump(),
+        raise UnprocessableEntityError(
+            "The claim has blocking findings and stays a draft.",
+            details=ClaimValidationFailed(findings=_to_findings(exc.findings)).model_dump(),
+            code="CLAIM_VALIDATION_FAILED",
         ) from exc
 
     warnings = _to_findings(scrub(validated))

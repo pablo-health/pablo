@@ -264,10 +264,12 @@ class AuditAction(StrEnum):
     CLAIM_CORRECTED = "claim_corrected"
     CLAIM_VOIDED = "claim_voided"
     PATIENT_CLAIMS_VIEWED = "patient_claims_viewed"
-    # The tracker across clients, and a status check the clinician asked
-    # for: the tracker row names every claim it showed, the status row its
-    # one claim and where it stood afterwards.
-    CLAIMS_TRACKER_VIEWED = "claims_tracker_viewed"
+    # The tracker: every claim the clinician can see, in one read. One row
+    # naming the claims it listed (ids and control numbers), like the CSV
+    # export does.
+    CLAIMS_LISTED = "claims_listed"
+    # A status check the clinician asked for: the row names its one claim
+    # and where it stood afterwards.
     CLAIM_STATUS_CHECKED = "claim_status_checked"
     # The biller handoff: a range of claims left the practice as a CSV, or
     # one claim as a CMS-1500-layout PDF. A disclosure, so the CSV row names
@@ -275,6 +277,14 @@ class AuditAction(StrEnum):
     # the count) and the PDF row names its one claim.
     CLAIMS_EXPORTED = "claims_exported"
     CLAIM_EXPORTED = "claim_exported"
+
+    # Superbills. The document hands the client their diagnoses, the
+    # services and the practice's identity to pass on to an insurer, so
+    # issuing one is a disclosure. The `changes` payload carries the period,
+    # the claim, line and charge ids the document was rendered from — or,
+    # when it was refused, the codes and field paths of what was missing.
+    SUPERBILL_GENERATED = "superbill_generated"
+    SUPERBILL_REFUSED = "superbill_refused"
 
 
 class ResourceType(StrEnum):

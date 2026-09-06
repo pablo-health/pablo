@@ -46,7 +46,7 @@ from .routes import (
     booking_links,
     calendar_import,
     chat,
-    claim_tracker,
+    claim_status,
     claim_webhooks,
     claims,
     claims_export,
@@ -69,6 +69,7 @@ from .routes import (
     public_booking,
     scheduling,
     sessions,
+    superbills,
     supervision,
     users,
 )
@@ -221,10 +222,11 @@ app.include_router(coverage.jobs_router)
 # The export router mounts ``/api/claims/export.csv`` and must come before
 # the claims router, whose ``/api/claims/{claim_id}`` would otherwise match it.
 app.include_router(claims_export.router)
-app.include_router(claim_tracker.router)
+app.include_router(claim_status.router)
 app.include_router(claims.router)
 app.include_router(claims.patient_claims_router)
 app.include_router(claim_webhooks.router)
+app.include_router(superbills.router)
 app.include_router(billing_queue.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)

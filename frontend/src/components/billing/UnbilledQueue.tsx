@@ -4,19 +4,25 @@
  * The unbilled-sessions queue — Billing's main content.
  *
  * Every row is a finalized session with no succeeded charge, newest first.
- * Nothing here charges anything: a row links to its session, where the
- * charge action already lives (see `ChargeCardSection`). This is the way
- * back to that action for a clinician who skipped it at signing time.
+ * "Charge card" links to the session, where the charge action already lives
+ * (see `ChargeCardSection`). When the client has coverage on file the row
+ * also offers "File claim", which opens the review step; a row whose claim
+ * is already on its way shows where it stands instead.
  */
 
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { CircleDollarSign } from "lucide-react"
 import { useUnbilledQueue } from "@/hooks/useBilling"
 import { useUserTimeZone, formatInUserTimeZone } from "@/hooks/usePreferences"
 import { formatCents } from "@/lib/money"
+import type { UnbilledSessionItem } from "@/types/billing"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ClaimStateBadge } from "./claims/ClaimBadges"
+import { ClaimReviewDialog } from "./claims/ClaimReviewDialog"
 
 export function UnbilledQueue() {
   const { data, isLoading } = useUnbilledQueue()
@@ -55,32 +61,68 @@ export function UnbilledQueue() {
       </p>
       <ul className="space-y-1">
         {items.map((item) => (
-          <li key={item.session_id}>
-            <Link
-              href={`/dashboard/sessions/${item.session_id}`}
-              className="flex items-center justify-between rounded-md px-3 py-3 -mx-3 hover:bg-neutral-50 transition-colors"
-            >
-              <span className="flex items-center gap-3 min-w-0">
-                <span className="truncate text-sm font-medium text-neutral-900">
-                  {item.patient_name}
-                </span>
-                <span className="shrink-0 text-xs text-neutral-500">
-                  {formatInUserTimeZone(item.session_date, timeZone, {
-                    month: "short",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
-                </span>
-              </span>
-              <span className="shrink-0 text-sm font-medium text-neutral-900">
-                {item.amount_cents !== null
-                  ? formatCents(item.amount_cents, item.currency)
-                  : "No rate set"}
-              </span>
-            </Link>
-          </li>
+          <QueueRow key={item.session_id} item={item} timeZone={timeZone} />
         ))}
       </ul>
     </div>
+  )
+}
+
+/** A claim can be filed when the client is covered, the session was booked, and no claim is on its way. */
+function offersClaim(item: UnbilledSessionItem): boolean {
+  if (!item.has_coverage || item.appointment_id === null) return false
+  return item.claim === null || item.claim.frequency_code === "8"
+}
+
+function QueueRow({ item, timeZone }: { item: UnbilledSessionItem; timeZone: string }) {
+  const [reviewing, setReviewing] = useState(false)
+  const claim = item.claim
+  const draft = claim !== null && claim.state === "draft"
+  const filed = claim !== null && claim.frequency_code !== "8" && !draft
+
+  return (
+    <li
+      data-testid="unbilled-row"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-md px-3 py-3 -mx-3 hover:bg-neutral-50 transition-colors"
+    >
+      <Link href={`/dashboard/sessions/${item.session_id}`} className="flex min-w-0 items-center gap-3">
+        <span className="truncate text-sm font-medium text-neutral-900">{item.patient_name}</span>
+        <span className="shrink-0 text-xs text-neutral-500">
+          {formatInUserTimeZone(item.session_date, timeZone, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </span>
+      </Link>
+
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="text-sm font-medium text-neutral-900">
+          {item.amount_cents !== null ? formatCents(item.amount_cents, item.currency) : "No rate set"}
+        </span>
+        {filed && claim && (
+          <Link href={`/dashboard/billing/claims/${claim.id}`} data-testid="queue-claim-link">
+            <ClaimStateBadge state={claim.state} />
+          </Link>
+        )}
+        <Button asChild variant="outline" size="sm">
+          <Link href={`/dashboard/sessions/${item.session_id}`}>Charge card</Link>
+        </Button>
+        {(offersClaim(item) || draft) && item.appointment_id !== null && (
+          <>
+            <Button size="sm" data-testid="file-claim" onClick={() => setReviewing(true)}>
+              {draft ? "Review and file" : "File claim"}
+            </Button>
+            <ClaimReviewDialog
+              open={reviewing}
+              onOpenChange={setReviewing}
+              appointmentId={item.appointment_id}
+              patientName={item.patient_name}
+              claimId={draft && claim ? claim.id : undefined}
+            />
+          </>
+        )}
+      </div>
+    </li>
   )
 }

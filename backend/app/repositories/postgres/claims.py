@@ -182,6 +182,50 @@ class PostgresClaimRepository(ClaimRepository):
         lines = self._lines_for([row.id for row in rows])
         return [_to_claim(row, lines.get(row.id, [])) for row in rows]
 
+    def list_all(
+        self,
+        *,
+        state: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[Claim]:
+        query = select(ClaimRow)
+        if state is not None:
+            query = query.where(ClaimRow.state == state)
+        if from_date is not None or to_date is not None:
+            dated_in_range = select(ClaimLineRow.claim_id)
+            if from_date is not None:
+                dated_in_range = dated_in_range.where(ClaimLineRow.service_date >= from_date)
+            if to_date is not None:
+                dated_in_range = dated_in_range.where(ClaimLineRow.service_date <= to_date)
+            query = query.where(ClaimRow.id.in_(dated_in_range))
+        rows = (
+            self._session.execute(query.order_by(ClaimRow.created_at.desc(), ClaimRow.id))
+            .scalars()
+            .all()
+        )
+        lines = self._lines_for([row.id for row in rows])
+        return [_to_claim(row, lines.get(row.id, [])) for row in rows]
+
+    def latest_by_appointment(self, appointment_ids: list[str]) -> dict[str, Claim]:
+        if not appointment_ids:
+            return {}
+        pairs = self._session.execute(
+            select(ClaimRow, ClaimLineRow.appointment_id)
+            .join(ClaimLineRow, ClaimLineRow.claim_id == ClaimRow.id)
+            .where(ClaimLineRow.appointment_id.in_(appointment_ids))
+            .order_by(ClaimRow.created_at.desc(), ClaimRow.id)
+        ).all()
+        newest_rows: dict[str, ClaimRow] = {}
+        for row, appointment_id in pairs:
+            if appointment_id is not None and appointment_id not in newest_rows:
+                newest_rows[appointment_id] = row
+        lines = self._lines_for(list({row.id for row in newest_rows.values()}))
+        return {
+            appointment_id: _to_claim(row, lines.get(row.id, []))
+            for appointment_id, row in newest_rows.items()
+        }
+
     def create(self, claim: Claim) -> Claim:
         row = ClaimRow(
             id=claim.id,

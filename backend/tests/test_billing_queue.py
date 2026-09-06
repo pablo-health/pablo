@@ -18,17 +18,25 @@ from typing import TYPE_CHECKING
 import pytest
 from app.main import app
 from app.models import Patient
+from app.models.coverage import PatientCoverage
 from app.models.note import Note
 from app.models.session import TherapySession, Transcript
 from app.repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_repository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
 )
+from app.repositories.claims import InMemoryClaimRepository
+from app.repositories.coverage import InMemoryPatientCoverageRepository
 from app.scheduling_engine.models.appointment import Appointment, AppointmentStatus
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.scheduling_engine.repositories.appointment_type import InMemoryAppointmentTypeRepository
+
+from tests.claims_fixtures import claim as claim_fixture
+from tests.claims_fixtures import line as line_fixture
 
 if TYPE_CHECKING:
     from app.repositories import (
@@ -100,6 +108,8 @@ def _clear_overrides():
     app.dependency_overrides.pop(get_appointment_repository, None)
     app.dependency_overrides.pop(get_appointment_type_repository, None)
     app.dependency_overrides.pop(get_patient_payment_repository, None)
+    app.dependency_overrides.pop(get_patient_coverage_repository, None)
+    app.dependency_overrides.pop(get_claim_repository, None)
 
 
 def _wire(
@@ -107,6 +117,8 @@ def _wire(
     appt_repo: InMemoryAppointmentRepository | None = None,
     type_repo: InMemoryAppointmentTypeRepository | None = None,
     payments: _FakePayments | None = None,
+    coverage: InMemoryPatientCoverageRepository | None = None,
+    claims: InMemoryClaimRepository | None = None,
 ) -> None:
     app.dependency_overrides[get_appointment_repository] = lambda: (
         appt_repo or InMemoryAppointmentRepository()
@@ -115,6 +127,40 @@ def _wire(
         type_repo or InMemoryAppointmentTypeRepository()
     )
     app.dependency_overrides[get_patient_payment_repository] = lambda: payments or _FakePayments()
+    app.dependency_overrides[get_patient_coverage_repository] = lambda: (
+        coverage or InMemoryPatientCoverageRepository()
+    )
+    app.dependency_overrides[get_claim_repository] = lambda: claims or InMemoryClaimRepository()
+
+
+def _covered() -> InMemoryPatientCoverageRepository:
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    coverage = InMemoryPatientCoverageRepository()
+    coverage.create(
+        PatientCoverage(
+            id="cov-1",
+            patient_id=PATIENT_ID,
+            payer_id="payer-1",
+            member_id="123456789",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    return coverage
+
+
+def _claims_on(appointment_id: str, *, state: str, claim_id: str = "claim-1"):
+    claims = InMemoryClaimRepository()
+    claims.create(
+        claim_fixture(
+            id=claim_id,
+            control_number=claim_id,
+            patient_id=PATIENT_ID,
+            state=state,
+            lines=[line_fixture(claim_id=claim_id, appointment_id=appointment_id)],
+        )
+    )
+    return claims
 
 
 def _seed_patient(
@@ -254,3 +300,94 @@ def test_amount_falls_back_to_appointment_type_default(
     resp = client.get("/api/billing/unbilled-sessions")
     items = resp.json()["items"]
     assert items[0]["amount_cents"] == 12000
+
+
+def test_row_says_whether_the_client_has_coverage(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    mock_session_repo.create(
+        _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
+    )
+    mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
+    appt_repo = InMemoryAppointmentRepository()
+    appt_repo.create(_appointment("appt-1", "sess-1", user_id=mock_user_id))
+
+    _wire(appt_repo=appt_repo)
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["has_coverage"] is False
+    assert row["appointment_id"] == "appt-1"
+    assert row["claim"] is None
+
+    _wire(appt_repo=appt_repo, coverage=_covered())
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["has_coverage"] is True
+
+
+def test_row_carries_the_newest_claim_on_the_visit(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    mock_session_repo.create(
+        _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
+    )
+    mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
+    appt_repo = InMemoryAppointmentRepository()
+    appt_repo.create(_appointment("appt-1", "sess-1", user_id=mock_user_id))
+    _wire(appt_repo=appt_repo, coverage=_covered(), claims=_claims_on("appt-1", state="submitted"))
+
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["claim"] == {
+        "id": "claim-1",
+        "control_number": "claim-1",
+        "state": "submitted",
+        "frequency_code": "1",
+    }
+
+
+def test_paid_claim_drops_the_session_from_the_queue(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    mock_session_repo.create(
+        _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
+    )
+    mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
+    appt_repo = InMemoryAppointmentRepository()
+    appt_repo.create(_appointment("appt-1", "sess-1", user_id=mock_user_id))
+    _wire(appt_repo=appt_repo, coverage=_covered(), claims=_claims_on("appt-1", state="paid"))
+
+    assert client.get("/api/billing/unbilled-sessions").json()["items"] == []
+
+
+def test_denied_claim_keeps_the_session_in_the_queue(
+    client,
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> None:
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    mock_session_repo.create(
+        _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
+    )
+    mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
+    appt_repo = InMemoryAppointmentRepository()
+    appt_repo.create(_appointment("appt-1", "sess-1", user_id=mock_user_id))
+    _wire(appt_repo=appt_repo, coverage=_covered(), claims=_claims_on("appt-1", state="denied"))
+
+    items = client.get("/api/billing/unbilled-sessions").json()["items"]
+    assert len(items) == 1
+    assert items[0]["claim"]["state"] == "denied"

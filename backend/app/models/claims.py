@@ -289,16 +289,6 @@ class ClaimListResponse(BaseModel):
     total: int
 
 
-class ClaimDeadlineResponse(BaseModel):
-    """The claim's clocks: the three dates, which one applies, how long is left."""
-
-    filing: date | None = None
-    correction: date | None = None
-    appeal: date | None = None
-    applicable: Literal["filing", "correction", "appeal"] | None = None
-    days_left: int | None = None
-
-
 NextAction = Literal[
     "review_and_file",
     "queued_to_send",
@@ -315,24 +305,6 @@ NextAction = Literal[
 tracker to render. ``None`` on a paid claim: nothing."""
 
 
-class ClaimDetailResponse(ClaimResponse):
-    """A claim with every receipt it has collected and where it stands.
-
-    What the tracker and the claim page render: the hops with their
-    receipt timestamps, the findings behind a rejection (on the claim
-    itself), the deadline the claim is under and what to do next.
-    """
-
-    receipts: list[ClaimReceipt] = Field(default_factory=list)
-    deadline: ClaimDeadlineResponse | None = None
-    next_action: NextAction | None = None
-
-
-class ClaimTrackerResponse(BaseModel):
-    data: list[ClaimDetailResponse]
-    total: int
-
-
 class ValidateClaimResponse(BaseModel):
     """A claim that passed the scrub, with any warnings that came with it."""
 
@@ -341,10 +313,102 @@ class ValidateClaimResponse(BaseModel):
 
 
 class ClaimValidationFailed(BaseModel):
-    """The ``detail`` of a 422 from ``/validate``: the claim stays a draft."""
+    """The ``details`` of a 422 (``CLAIM_VALIDATION_FAILED``) from ``/validate``.
 
-    message: str
+    The claim stays a draft; ``findings`` is every finding the scrub
+    raised, blocking ones first.
+    """
+
     findings: list[FindingResponse]
+
+
+DeadlineKind = Literal["filing", "correction", "appeal"]
+
+
+class ClaimDeadlinesResponse(BaseModel):
+    """The claim's clocks, as :func:`app.claims.deadlines.deadlines_for` reads them.
+
+    ``applicable`` names the one that binds right now and ``days_left``
+    counts down to it (negative once it has passed); both are ``None`` for
+    a claim under no clock — paid, or a void.
+    """
+
+    filing: date | None = None
+    correction: date | None = None
+    appeal: date | None = None
+    applicable: DeadlineKind | None = None
+    days_left: int | None = None
+
+
+HopKind = Literal["built", "submitted", "clearinghouse_accepted", "payer_accepted", "adjudicated"]
+
+
+class ClaimHop(BaseModel):
+    """One stop on the claim's way to the payer, and when it got there.
+
+    ``reached`` says the claim is at or past this hop; ``at`` is the
+    receipt's timestamp when one is recorded on the claim. The
+    clearinghouse hop carries no timestamp of its own on the row, so it
+    is ``reached`` without an ``at`` until the acknowledgement is kept.
+    """
+
+    kind: HopKind
+    reached: bool
+    at: datetime | None = None
+
+
+class ClaimDetailResponse(ClaimResponse):
+    """One claim as the tracker's detail view sees it.
+
+    Everything on the claim, plus what the detail view derives at read
+    time: the scrub's current findings, the hops it has passed, its
+    deadlines, and the names the row only holds ids for — and what the
+    pipeline recorded: every receipt (a hop taken, an alert raised) with
+    its moment, and what a person does next. The findings the
+    clearinghouse or the payer raised are on the claim itself
+    (``submission_findings``).
+    """
+
+    patient_name: str
+    payer_name: str | None = None
+    findings: list[FindingResponse] = Field(default_factory=list)
+    hops: list[ClaimHop] = Field(default_factory=list)
+    deadlines: ClaimDeadlinesResponse = Field(default_factory=ClaimDeadlinesResponse)
+    receipts: list[ClaimReceipt] = Field(default_factory=list)
+    next_action: NextAction | None = None
+
+
+class ClaimTrackerItem(BaseModel):
+    """One row of the claims tracker.
+
+    Slimmer than the claim itself — the tracker lists many claims and
+    needs a name, a date, a state and a deadline for each, not the
+    snapshots. ``service_date`` is the earliest line's.
+    """
+
+    id: str
+    control_number: str
+    patient_id: str
+    patient_name: str
+    payer_id: str
+    payer_name: str | None = None
+    state: ClaimState
+    frequency_code: FrequencyCode
+    parent_claim_id: str | None = None
+    service_date: date | None = None
+    total_charge_cents: int
+    total_paid_cents: int
+    submitted_at: datetime | None = None
+    last_receipt_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    deadlines: ClaimDeadlinesResponse = Field(default_factory=ClaimDeadlinesResponse)
+    next_action: NextAction | None = None
+
+
+class ClaimTrackerResponse(BaseModel):
+    data: list[ClaimTrackerItem]
+    total: int
 
 
 class ClaimExportFinding(BaseModel):
