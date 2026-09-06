@@ -333,7 +333,13 @@ class TestDefaultAppointmentTypeSeeding:
 
         types, migrated = _ensure_default_appointment_types(repo, "u1")
 
-        assert {t.name for t in types} == {"Individual", "Couples", "Group", "Consultation", "Intake"}
+        assert {t.name for t in types} == {
+            "Individual",
+            "Couples",
+            "Group",
+            "Consultation",
+            "Intake",
+        }
         assert migrated is True
         # The pre-existing types are untouched, not overwritten with seed windows.
         individual = next(t for t in types if t.name == "Individual")
