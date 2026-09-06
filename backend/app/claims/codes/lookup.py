@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from typing import Literal, get_args
 
-from app.claims.codes.carc import CARC
-from app.claims.codes.claim_status import CLAIM_STATUS
-from app.claims.codes.groups import GROUPS
-from app.claims.codes.rarc import RARC
+from .carc import CARC
+from .claim_status import CLAIM_STATUS
+from .groups import GROUPS
+from .rarc import RARC
 
 Category = Literal[
     "paid",
