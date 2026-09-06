@@ -12,6 +12,7 @@ and use the standard ``client`` fixture.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import secrets
 import sys
@@ -73,6 +74,7 @@ from app.services.email_sender import (
     NoneEmailSender,
     get_email_sender,
 )
+from app.settings import get_settings
 from app.utcnow import utc_now
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -610,9 +612,21 @@ def test_booking_reveals_nothing_about_existing_patients(
     )
     assert fresh.status_code == reused.status_code == 201
     # Identical shape, link-derived values only — nothing patient-derived.
-    expected_keys = {"host_name", "title", "start_at", "end_at", "duration_minutes", "status"}
+    expected_keys = {
+        "host_name",
+        "title",
+        "start_at",
+        "end_at",
+        "duration_minutes",
+        "status",
+        "manage_url",
+    }
     assert set(fresh.json()) == set(reused.json()) == expected_keys
     assert fresh.json()["status"] == reused.json()["status"] == "confirmed"
+    # An instant booking never gets a confirmation token, so it has nothing
+    # to hang a manage link off.
+    assert fresh.json()["manage_url"] is None
+    assert reused.json()["manage_url"] is None
 
     # Same no-oracle property on a born-true link: both hold, same shape.
     fresh_hold = public_client.post(
@@ -636,6 +650,16 @@ def test_booking_reveals_nothing_about_existing_patients(
     assert fresh_hold.status_code == reused_hold.status_code == 201
     assert set(fresh_hold.json()) == set(reused_hold.json()) == expected_keys
     assert fresh_hold.json()["status"] == reused_hold.json()["status"] == "pending_confirmation"
+
+    # A hold does carry a manage link, and the token it carries redeems.
+    manage_prefix = f"{get_settings().app_url}/book/hold-link/manage?token="
+    fresh_manage_url = fresh_hold.json()["manage_url"]
+    assert fresh_manage_url.startswith(manage_prefix)
+    fresh_token = fresh_manage_url[len(manage_prefix) :]
+    redeemed = public_client.post(
+        "/api/public/booking-links/hold-link/manage", json={"token": fresh_token}
+    )
+    assert redeemed.status_code == 200
 
     unchanged = public_client.patient_repo.get(existing.id, OWNER_ID)
     assert unchanged.first_name == "Realfirst"
@@ -761,7 +785,17 @@ def test_required_link_places_a_hold_and_emails_a_confirmation(
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "pending_confirmation"
-    assert set(body) == {"host_name", "title", "start_at", "end_at", "duration_minutes", "status"}
+    assert set(body) == {
+        "host_name",
+        "title",
+        "start_at",
+        "end_at",
+        "duration_minutes",
+        "status",
+        "manage_url",
+    }
+    manage_prefix = f"{get_settings().app_url}/book/intro-call/manage?token="
+    assert body["manage_url"].startswith(manage_prefix)
 
     appts = list(public_client.appt_repo._appointments.values())
     assert len(appts) == 1
@@ -782,6 +816,7 @@ def test_required_link_places_a_hold_and_emails_a_confirmation(
     token = re.search(r"token=(\S+)", message.text).group(1)  # type: ignore[union-attr]  # match is guaranteed by the assert above
     assert hashlib.sha256(token.encode()).hexdigest() == appt.confirmation_token_hash
     assert "Please call ahead" not in message.text
+    assert body["manage_url"] == f"{manage_prefix}{token}"
 
     patient = public_client.patient_repo.get(appt.patient_id, OWNER_ID)
     assert patient is not None
@@ -1431,6 +1466,212 @@ def test_token_is_bound_to_its_link(link_repo: InMemoryBookingLinkRepository) ->
     assert resp.status_code == 404
     assert resp.json()["error"]["message"] == public_booking_module._CONFIRMATION_INVALID
     assert appt.status == "pending"
+
+
+# ---------------------------------------------------------------- public: manage / cancel
+
+
+def test_manage_returns_the_booking_for_a_valid_token(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    confirm = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": token}
+    )
+    assert confirm.status_code == 200
+
+    resp = public_client.post("/api/public/booking-links/intro-call/manage", json={"token": token})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == {"title", "host_name", "start_at", "end_at", "duration_minutes", "status"}
+    assert body["title"] == "Intro call"
+    assert body["host_name"] == "Test Therapist"
+    assert body["duration_minutes"] == 30
+    assert body["status"] == "confirmed"
+
+
+def test_manage_refuses_every_invalid_reason_with_the_identical_body(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    other_owner = User(
+        id="other-owner-456",
+        email="other@example.com",
+        name="Other Therapist",
+        created_at=datetime.fromisoformat("2024-01-01T00:00:00+00:00"),
+    )
+    client = _public_app(link_repo)
+    client.app.dependency_overrides[get_user_repository] = lambda: _FakeUserRepo(
+        {OWNER_ID: _owner(), other_owner.id: other_owner}
+    )
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+    link_repo.create(_link(slug="link-a", user_id=OWNER_ID))
+    link_repo.create(_link(slug="link-b", user_id=other_owner.id))
+
+    baseline = client.post(
+        "/api/public/booking-links/link-a/manage", json={"token": "never-issued-token"}
+    )
+    assert baseline.status_code == 404
+    assert baseline.json()["error"]["message"] == public_booking_module._MANAGE_LINK_INVALID
+
+    _resp, valid_token = _hold(client, "link-a", f"{date_str}T09:00:00Z")
+    wrong_link = client.post("/api/public/booking-links/link-b/manage", json={"token": valid_token})
+    assert wrong_link.status_code == 404
+    assert wrong_link.json() == baseline.json()
+
+    _resp, cancelled_token = _hold(client, "link-a", f"{date_str}T09:30:00Z")
+    cancelled_appt = next(
+        a
+        for a in client.appt_repo._appointments.values()
+        if a.confirmation_token_hash
+        and hashlib.sha256(cancelled_token.encode()).hexdigest() == a.confirmation_token_hash
+    )
+    SchedulingService(client.appt_repo).cancel_appointment(cancelled_appt.id, OWNER_ID)
+    cancelled_resp = client.post(
+        "/api/public/booking-links/link-a/manage", json={"token": cancelled_token}
+    )
+    assert cancelled_resp.status_code == 404
+    assert cancelled_resp.json() == baseline.json()
+
+    _resp, past_token = _hold(client, "link-a", f"{date_str}T10:00:00Z")
+    client.post("/api/public/booking-links/link-a/confirm", json={"token": past_token})
+    past_appt = next(
+        a
+        for a in client.appt_repo._appointments.values()
+        if hashlib.sha256(past_token.encode()).hexdigest() == a.confirmation_token_hash
+    )
+    past_appt.start_at = utc_now() - timedelta(hours=1)
+    past_resp = client.post("/api/public/booking-links/link-a/manage", json={"token": past_token})
+    assert past_resp.status_code == 404
+    assert past_resp.json() == baseline.json()
+
+
+def test_manage_cancel_frees_the_slot_and_is_single_use(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    confirm = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": token}
+    )
+    assert confirm.status_code == 200
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    appt.google_event_id = "gcal-event-1"
+
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/manage/cancel", json={"token": token}
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"cancelled": True}
+    assert appt.status == "cancelled"
+    assert appt.confirmation_token_hash is None
+
+    slots = public_client.get(f"/api/public/booking-links/intro-call/slots?date={date_str}").json()
+    assert f"{date_str}T09:00:00Z" in [s["start"] for s in slots["slots"]]
+
+    public_client.gcal.delete_event.assert_called_once_with(OWNER_ID, "gcal-event-1")
+
+    cancellations = [
+        c for c in public_client.audit.calls if c["action"] == AuditAction.APPOINTMENT_CANCELLED
+    ]
+    assert len(cancellations) == 1
+    assert cancellations[0]["changes"] == {"source": "public_booking"}
+    assert cancellations[0]["patient_id"] == appt.patient_id
+
+    second = public_client.post(
+        "/api/public/booking-links/intro-call/manage/cancel", json={"token": token}
+    )
+    assert second.status_code == 404
+    assert second.json()["error"]["message"] == public_booking_module._MANAGE_LINK_INVALID
+
+
+def test_manage_cancel_skips_gcal_delete_without_an_event_id(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(public_client, "intro-call", f"{date_str}T09:00:00Z")
+    public_client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+
+    resp = public_client.post(
+        "/api/public/booking-links/intro-call/manage/cancel", json={"token": token}
+    )
+    assert resp.status_code == 200
+    public_client.gcal.delete_event.assert_not_called()
+
+
+def test_manage_cancel_sends_a_cancellation_notice(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    client = _public_app(link_repo)
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(client, "intro-call", f"{date_str}T09:00:00Z", email="jane@example.com")
+    client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+    sent_before = len(client.email.sent)
+
+    resp = client.post("/api/public/booking-links/intro-call/manage/cancel", json={"token": token})
+    assert resp.status_code == 200
+
+    notices = client.email.sent[sent_before:]
+    assert len(notices) == 1
+    assert notices[0].kind == "booking_cancelled"
+    assert notices[0].to == "jane@example.com"
+    assert "Test Therapist" in notices[0].text
+    assert "Note from client" not in notices[0].text
+
+
+def test_manage_cancel_succeeds_when_the_notice_cannot_be_sent(
+    link_repo: InMemoryBookingLinkRepository,
+) -> None:
+    client = _public_app(link_repo)
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(client, "intro-call", f"{date_str}T09:00:00Z")
+    client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+
+    client.app.dependency_overrides[get_email_sender] = NoneEmailSender
+    resp = client.post("/api/public/booking-links/intro-call/manage/cancel", json={"token": token})
+    assert resp.status_code == 200
+    assert resp.json() == {"cancelled": True}
+
+
+def test_manage_cancel_logs_kind_only_when_the_notice_send_fails(
+    link_repo: InMemoryBookingLinkRepository,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _public_app(link_repo)
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    client.rule_repo.create(_working_hours_rule(date_str))
+
+    _resp, token = _hold(client, "intro-call", f"{date_str}T09:00:00Z", email="jane@example.com")
+    client.post("/api/public/booking-links/intro-call/confirm", json={"token": token})
+
+    client.app.dependency_overrides[get_email_sender] = _FailingEmailSender
+    with caplog.at_level(logging.WARNING, logger=public_booking_module.logger.name):
+        resp = client.post(
+            "/api/public/booking-links/intro-call/manage/cancel", json={"token": token}
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {"cancelled": True}
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("booking_cancelled" in m for m in warnings)
+    assert not any("jane@example.com" in m for m in warnings)
 
 
 def test_expired_hold_click_finalizes_when_slot_still_free(
