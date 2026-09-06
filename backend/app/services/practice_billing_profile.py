@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from ..db.models import PracticeBillingProfileRow
-from .token_encryption import encrypt_tokens
+from .token_encryption import decrypt_tokens, encrypt_tokens
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -56,6 +56,21 @@ def load_billing_profile(session: Session) -> dict[str, object]:
     if row is None:
         return _empty_profile()
     return {name: getattr(row, name) for name in _READABLE_FIELDS}
+
+
+def load_billing_tax_id(session: Session) -> str | None:
+    """The practice's full tax id, decrypted, or ``None`` when none is stored.
+
+    The one reader of the encrypted value. A document the practice hands to
+    a client for reimbursement has to carry the whole number — an insurer
+    cannot pay against the last four digits — so this is read at the moment
+    of rendering and goes nowhere else: not into a log, not into an audit
+    payload, not into the API's own profile response.
+    """
+    row = session.get(PracticeBillingProfileRow, SINGLETON_ID)
+    if row is None or not row.tax_id_encrypted:
+        return None
+    return decrypt_tokens(row.tax_id_encrypted).get("tax_id") or None
 
 
 def update_billing_profile(session: Session, patch: dict[str, object]) -> dict[str, object]:

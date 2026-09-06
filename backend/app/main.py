@@ -66,6 +66,7 @@ from .routes import (
     public_booking,
     scheduling,
     sessions,
+    superbills,
     supervision,
     users,
 )
@@ -209,6 +210,7 @@ app.include_router(coverage.payers_router)
 app.include_router(coverage.router)
 app.include_router(claims.router)
 app.include_router(claims.patient_claims_router)
+app.include_router(superbills.router)
 app.include_router(billing_queue.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
