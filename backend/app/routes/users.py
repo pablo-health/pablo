@@ -167,6 +167,7 @@ def get_user_status(
         "license_state": profile.license_state if profile else None,
         "dea_number": profile.dea_number if profile else None,
         "npi_number": profile.npi_number if profile else None,
+        "taxonomy_code": profile.taxonomy_code if profile else None,
         "provider_type": user.provider_type,
         "security_guide_acknowledged_at": user.security_guide_acknowledged_at,
         "security_guide_version": user.security_guide_version,

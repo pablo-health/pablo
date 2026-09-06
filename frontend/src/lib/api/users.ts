@@ -66,6 +66,10 @@ export interface UserStatusBase {
    * dedicated backend field per step.
    */
   onboarding_state: string | null
+  /** The clinician's own (type 1) NPI, from their clinician profile. */
+  npi_number: string | null
+  /** NUCC taxonomy code for the clinician, the specialty a claim's rendering-provider loop carries. */
+  taxonomy_code: string | null
 }
 
 /**
@@ -132,6 +136,24 @@ export async function updateUserProfile(
   token?: string
 ): Promise<UserProfile> {
   return patch<UserProfile>("/api/users/me", data, token)
+}
+
+/**
+ * The clinician's professional identifiers, as a claim's rendering-provider
+ * loop carries them. Partial: an omitted field keeps its stored value.
+ */
+export interface ProfessionalInfoUpdate {
+  /** The clinician's own (type 1) NPI: ten digits. */
+  npi_number?: string
+  /** NUCC taxonomy code, at most ten characters. */
+  taxonomy_code?: string
+}
+
+export async function updateProfessionalInfo(
+  data: ProfessionalInfoUpdate,
+  token?: string
+): Promise<ProfessionalInfoUpdate> {
+  return patch<ProfessionalInfoUpdate>("/api/users/me/professional-info", data, token)
 }
 
 /**
