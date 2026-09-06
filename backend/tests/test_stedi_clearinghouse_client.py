@@ -252,14 +252,50 @@ class TestListEnrollments:
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/2024-09-01/enrollments"
+            assert not request.url.params
             return _json_response({"items": [fixture]})
 
         client = _client_for(handler)
 
-        enrollments = client.list_enrollments(EnrollmentFilters())
+        page = client.list_enrollments(EnrollmentFilters())
 
-        assert len(enrollments) == 1
-        assert enrollments[0].id == "01a0746f-2edf-75c0-a780-555b1231c789"
+        assert len(page.items) == 1
+        assert page.items[0].id == "01a0746f-2edf-75c0-a780-555b1231c789"
+        assert page.nextPageToken is None
+
+    def test_sends_each_filter_as_the_vendors_repeated_query_key(self) -> None:
+        fixture = _fixture("enrollment_create_enrollment_835.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            params = request.url.params
+            assert params.get_list("providerIds") == ["prov-1", "prov-2"]
+            assert params.get_list("payerIds") == ["FRCPB"]
+            assert params.get_list("status") == ["LIVE", "REJECTED"]
+            assert params.get_list("pageSize") == ["50"]
+            assert params.get_list("pageToken") == ["tok-1"]
+            assert set(params.keys()) == {
+                "providerIds",
+                "payerIds",
+                "status",
+                "pageSize",
+                "pageToken",
+            }
+            return _json_response({"items": [fixture], "nextPageToken": "tok-2", "totalCount": 2})
+
+        client = _client_for(handler)
+
+        page = client.list_enrollments(
+            EnrollmentFilters(
+                providerIds=["prov-1", "prov-2"],
+                payerIds=["FRCPB"],
+                statuses=["LIVE", "REJECTED"],
+                pageSize=50,
+                pageToken="tok-1",
+            )
+        )
+
+        assert page.nextPageToken == "tok-2"
+        assert page.totalCount == 2
 
 
 class TestErrorMapping:

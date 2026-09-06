@@ -60,6 +60,7 @@ from ..models.claims_transport import (
     EligibilityResponse,
     Enrollment,
     EnrollmentFilters,
+    EnrollmentPage,
     EnrollmentRequest,
     Payer,
     ProviderRecord,
@@ -374,11 +375,8 @@ class StediClearinghouseClient:
             _raise_for_error_envelope(response)
         return Enrollment.model_validate(response.json())
 
-    def list_enrollments(self, filters: EnrollmentFilters) -> list[Enrollment]:
-        response = self._get(
-            f"{ENROLLMENTS_API_BASE}/enrollments",
-            params=filters.model_dump(exclude_none=True),
-        )
+    def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
+        response = self._get(f"{ENROLLMENTS_API_BASE}/enrollments", params=filters.query_params())
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
-        return [Enrollment.model_validate(item) for item in response.json().get("items", [])]
+        return EnrollmentPage.model_validate(response.json())

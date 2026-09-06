@@ -46,7 +46,7 @@ def test_the_recorded_enrollment_is_the_test_payers_remittance_enrollment() -> N
 
 
 def test_listing_enrollments_is_refused_in_test_mode(live: LiveClient) -> None:
-    filters = EnrollmentFilters(providerId=_platform_provider_id())
+    filters = EnrollmentFilters(providerIds=[_platform_provider_id()])
 
     # No enrollment is created or changed by this call.
     with pytest.raises(ClearinghouseAccessDeniedError):

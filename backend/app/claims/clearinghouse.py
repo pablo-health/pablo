@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         EligibilityResponse,
         Enrollment,
         EnrollmentFilters,
+        EnrollmentPage,
         EnrollmentRequest,
         Payer,
         ProviderRecord,
@@ -164,6 +165,10 @@ class ClearinghouseClient(Protocol):
         """Enroll a provider for a transaction (e.g. claim payment/835) with a payer."""
         ...
 
-    def list_enrollments(self, filters: EnrollmentFilters) -> list[Enrollment]:
-        """List this account's enrollments, optionally filtered."""
+    def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
+        """One page of this account's enrollments, optionally filtered.
+
+        The page's ``nextPageToken`` goes back as ``filters.pageToken`` to
+        read the next; the caller pages, this call does not.
+        """
         ...
