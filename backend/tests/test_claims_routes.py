@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from app.api_errors import register_exception_handlers
 from app.auth.service import require_baa_acceptance
 from app.models import User
 from app.models.coverage import PatientCoverage, Payer
@@ -177,6 +178,7 @@ def harness() -> dict[str, Any]:
     billing_profile = dict(_BILLING_PROFILE)
 
     app = FastAPI()
+    register_exception_handlers(app)
     app.include_router(claims_routes.router)
     app.include_router(claims_routes.patient_claims_router)
     app.dependency_overrides[require_baa_acceptance] = _user
@@ -327,6 +329,126 @@ class TestRead:
     def test_patient_claims_for_an_unknown_client_is_404(self, harness: dict[str, Any]) -> None:
         assert harness["client"].get("/api/patients/nope/claims").status_code == 404
 
+    def test_detail_carries_names_findings_hops_and_deadlines(
+        self, harness: dict[str, Any]
+    ) -> None:
+        built = _build(harness)
+        body = harness["client"].get(f"/api/claims/{built['id']}").json()
+        assert body["patient_name"] == "John Anon"
+        assert body["payer_name"] == "Stedi Test Payer"
+        assert body["findings"] == []
+        assert [(h["kind"], h["reached"]) for h in body["hops"]] == [
+            ("built", True),
+            ("submitted", False),
+            ("clearinghouse_accepted", False),
+            ("payer_accepted", False),
+            ("adjudicated", False),
+        ]
+        assert body["hops"][0]["at"] is not None
+        # A draft is under the filing clock: the payer's default window from
+        # the service date.
+        assert body["deadlines"]["applicable"] == "filing"
+        assert body["deadlines"]["filing"] is not None
+        assert isinstance(body["deadlines"]["days_left"], int)
+
+    def test_detail_reports_the_current_findings_of_a_blocked_draft(
+        self, harness: dict[str, Any]
+    ) -> None:
+        appointment = harness["appointments"].get(_APPOINTMENT_ID, _USER_ID)
+        appointment.diagnosis_codes = ["F41"]
+        harness["appointments"].update(appointment)
+        built = _build(harness)
+        body = harness["client"].get(f"/api/claims/{built['id']}").json()
+        assert [f["code"] for f in body["findings"]] == ["dx_not_specific"]
+
+    def test_detail_hops_follow_the_receipt_timestamps(self, harness: dict[str, Any]) -> None:
+        parent = _validated(harness)
+        stored = harness["claims"].get(parent["id"])
+        harness["claims"].update(
+            stored.model_copy(
+                update={"state": "payer_accepted", "submitted_at": _NOW, "payer_accepted_at": _NOW}
+            )
+        )
+        body = harness["client"].get(f"/api/claims/{parent['id']}").json()
+        assert [(h["kind"], h["reached"]) for h in body["hops"]] == [
+            ("built", True),
+            ("submitted", True),
+            ("clearinghouse_accepted", True),
+            ("payer_accepted", True),
+            ("adjudicated", False),
+        ]
+        # Past the payer's acknowledgement, and not yet adjudicated: no
+        # clock binds.
+        assert body["deadlines"]["applicable"] is None
+
+
+# ---------------------------------------------------------------------------
+# The tracker
+# ---------------------------------------------------------------------------
+
+
+class TestTracker:
+    def test_lists_every_claim_newest_first_with_names_and_deadlines(
+        self, harness: dict[str, Any]
+    ) -> None:
+        first = _build(harness)
+        second = _build(harness)
+        resp = harness["client"].get("/api/claims")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 2
+        assert {row["id"] for row in body["data"]} == {first["id"], second["id"]}
+        row = body["data"][0]
+        assert row["patient_name"] == "John Anon"
+        assert row["payer_name"] == "Stedi Test Payer"
+        assert row["service_date"] == "2026-09-01"
+        assert row["state"] == "draft"
+        assert row["deadlines"]["applicable"] == "filing"
+        assert "subscriber_snapshot" not in row
+        assert "diagnosis_codes" not in row
+
+    def test_narrows_by_state(self, harness: dict[str, Any]) -> None:
+        draft = _build(harness)
+        queued = _validated(harness)
+        body = harness["client"].get("/api/claims", params={"state": "validated"}).json()
+        assert [row["id"] for row in body["data"]] == [queued["id"]]
+        body = harness["client"].get("/api/claims", params={"state": "draft"}).json()
+        assert [row["id"] for row in body["data"]] == [draft["id"]]
+
+    def test_narrows_by_service_date_range(self, harness: dict[str, Any]) -> None:
+        built = _build(harness)
+        inside = harness["client"].get(
+            "/api/claims", params={"from": "2026-09-01", "to": "2026-09-01"}
+        )
+        assert [row["id"] for row in inside.json()["data"]] == [built["id"]]
+        outside = harness["client"].get(
+            "/api/claims", params={"from": "2026-09-02", "to": "2026-09-30"}
+        )
+        assert outside.json()["data"] == []
+
+    def test_range_that_ends_before_it_starts_is_422(self, harness: dict[str, Any]) -> None:
+        resp = harness["client"].get(
+            "/api/claims", params={"from": "2026-09-30", "to": "2026-09-01"}
+        )
+        assert resp.status_code == 422
+
+    def test_leaves_out_another_clinicians_claims(self, harness: dict[str, Any]) -> None:
+        _build(harness)
+        harness["app"].dependency_overrides[require_baa_acceptance] = lambda: _user("other")
+        body = harness["client"].get("/api/claims").json()
+        assert body == {"data": [], "total": 0}
+
+    def test_is_audited_with_identifiers_only(self, harness: dict[str, Any]) -> None:
+        built = _build(harness)
+        harness["client"].get("/api/claims", params={"state": "draft"})
+        row = _audit_rows(harness)[-1]
+        assert row.action == "claims_listed"
+        assert row.resource_type == "claim"
+        assert row.changes["claim_ids"] == [built["id"]]
+        assert row.changes["control_numbers"] == [built["control_number"]]
+        assert row.changes["state"] == "draft"
+        _assert_nothing_off_the_card(_audit_rows(harness))
+
 
 # ---------------------------------------------------------------------------
 # Validating
@@ -367,12 +489,14 @@ class TestValidate:
 
         resp = harness["client"].post(f"/api/claims/{built['id']}/validate")
         assert resp.status_code == 422, resp.text
-        detail = resp.json()["detail"]
-        assert [f["code"] for f in detail["findings"]] == [
+        error = resp.json()["error"]
+        assert error["code"] == "CLAIM_VALIDATION_FAILED"
+        findings = error["details"]["findings"]
+        assert [f["code"] for f in findings] == [
             "pos_telehealth_mismatch",
             "dx_not_specific",
         ]
-        assert all(f["severity"] == "blocking" for f in detail["findings"])
+        assert all(f["severity"] == "blocking" for f in findings)
         assert harness["claims"].get(built["id"]).state == "draft"
         assert [row.action for row in _audit_rows(harness)] == ["claim_created"]
 

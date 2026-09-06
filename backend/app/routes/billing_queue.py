@@ -20,6 +20,12 @@ The amount shown is the resolved rate a charge would use today (client
 override, else appointment-type default), the same resolution the charge
 action itself applies — not a stored or historical figure, so it can move if
 the rate changes before the clinician acts on the row.
+
+A row also says whether the client has coverage on file, so the page can
+offer "File claim" beside "Charge card", and carries the newest claim on the
+visit when there is one. A paid claim settles the visit the way a succeeded
+charge does and drops the row; a claim anywhere short of that keeps the row,
+showing where the claim stands rather than offering to file it again.
 """
 
 from __future__ import annotations
@@ -31,13 +37,19 @@ from fastapi import APIRouter, Depends, Request
 from ..auth.service import require_baa_acceptance
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from ..models import AuditAction, User
-from ..models.billing_queue import UnbilledQueueResponse, UnbilledSessionItem
+from ..models.billing_queue import (
+    UnbilledClaimSummary,
+    UnbilledQueueResponse,
+    UnbilledSessionItem,
+)
 from ..repositories import (
     NotesRepository,
     PatientRepository,
     TherapySessionRepository,
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_repository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
 )
 from ..scheduling_engine.services.rate_resolver import resolve_rate_cents
@@ -45,6 +57,8 @@ from ..services import AuditService, get_audit_service
 from .sessions import get_notes_repository, get_patient_repository, get_session_repository
 
 if TYPE_CHECKING:
+    from ..repositories.claims import ClaimRepository
+    from ..repositories.coverage import PatientCoverageRepository
     from ..repositories.patient_payment import PatientPaymentRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
@@ -62,6 +76,8 @@ def get_unbilled_sessions(
     appointment_repo: AppointmentRepository = Depends(get_appointment_repository),
     appointment_type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     payments_repo: PatientPaymentRepository = Depends(get_patient_payment_repository),
+    coverage_repo: PatientCoverageRepository = Depends(get_patient_coverage_repository),
+    claims_repo: ClaimRepository = Depends(get_claim_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> UnbilledQueueResponse:
     notes = notes_repo.list_finalized(user.id)
@@ -74,9 +90,16 @@ def get_unbilled_sessions(
 
     appointment_ids = [a.id for a in appointments_by_session.values()]
     succeeded_appointment_ids = payments_repo.succeeded_appointment_ids(appointment_ids)
+    # The newest claim on each visit. A paid one settles the visit the way a
+    # succeeded charge does; anything else keeps the row, showing where the
+    # claim stands instead of offering to file it again.
+    claims_by_appointment = claims_repo.latest_by_appointment(appointment_ids)
 
     patient_ids = list({s.patient_id for s in sessions.values()})
     patients = patient_repo.get_multiple(patient_ids, user.id)
+    covered_patient_ids = {
+        patient_id for patient_id in patient_ids if coverage_repo.get_active(patient_id) is not None
+    }
     appointment_types = {t.id: t for t in appointment_type_repo.list_by_user(user.id)}
 
     items: list[UnbilledSessionItem] = []
@@ -89,6 +112,9 @@ def get_unbilled_sessions(
 
         appointment = appointments_by_session.get(note.session_id)
         if appointment is not None and appointment.id in succeeded_appointment_ids:
+            continue
+        claim = claims_by_appointment.get(appointment.id) if appointment is not None else None
+        if claim is not None and claim.state == "paid":
             continue
 
         patient = patients.get(session.patient_id)
@@ -107,6 +133,18 @@ def get_unbilled_sessions(
                 session_date=session.session_date,
                 amount_cents=amount_cents,
                 currency=DEFAULT_CHARGE_CURRENCY,
+                appointment_id=appointment.id if appointment is not None else None,
+                has_coverage=session.patient_id in covered_patient_ids,
+                claim=(
+                    UnbilledClaimSummary(
+                        id=claim.id,
+                        control_number=claim.control_number,
+                        state=claim.state,
+                        frequency_code=claim.frequency_code,
+                    )
+                    if claim is not None
+                    else None
+                ),
             )
         )
         audit.log_session_action(AuditAction.SESSION_VIEWED, user, request, session, patient)

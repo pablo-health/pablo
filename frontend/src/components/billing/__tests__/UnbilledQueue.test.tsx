@@ -4,8 +4,10 @@
  * UnbilledQueue Component Tests
  *
  * Covers the states the queue has to get right: nothing to show, a populated
- * list linking each row to its session, and a row whose amount is unresolved
- * (no rate set anywhere) rendering as unknown rather than free.
+ * list linking each row to its session, a row whose amount is unresolved
+ * (no rate set anywhere) rendering as unknown rather than free, and the
+ * claim affordance — offered beside "Charge card" only when the client has
+ * coverage on file, replaced by the claim's state once one is on its way.
  */
 
 import { describe, expect, it, vi } from "vitest"
@@ -17,6 +19,10 @@ const useUnbilledQueue = vi.hoisted(() => vi.fn())
 
 vi.mock("@/hooks/useBilling", () => ({
   useUnbilledQueue: (...args: unknown[]) => useUnbilledQueue(...args),
+}))
+
+vi.mock("../claims/ClaimReviewDialog", () => ({
+  ClaimReviewDialog: () => null,
 }))
 
 vi.mock("@/hooks/usePreferences", () => ({
@@ -36,6 +42,9 @@ function item(overrides: Partial<UnbilledSessionItem> = {}): UnbilledSessionItem
     session_date: "2026-06-10T14:00:00Z",
     amount_cents: 15000,
     currency: "usd",
+    appointment_id: "appt-1",
+    has_coverage: false,
+    claim: null,
     ...overrides,
   }
 }
@@ -53,8 +62,10 @@ describe("UnbilledQueue", () => {
 
     expect(screen.getByText("Ada Early")).toBeInTheDocument()
     expect(screen.getByText("$150.00")).toBeInTheDocument()
-    const link = screen.getByRole("link")
-    expect(link).toHaveAttribute("href", "/dashboard/sessions/sess-1")
+    expect(screen.getByRole("link", { name: /Ada Early/ })).toHaveAttribute(
+      "href",
+      "/dashboard/sessions/sess-1",
+    )
   })
 
   it("states that amounts are what was charged and Stripe is the source of truth", () => {
@@ -70,5 +81,97 @@ describe("UnbilledQueue", () => {
     })
     render(<UnbilledQueue />)
     expect(screen.getByText("No rate set")).toBeInTheDocument()
+  })
+})
+
+describe("UnbilledQueue claims", () => {
+  it("offers Charge card but not File claim when the client has no coverage", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: false })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+    expect(screen.getByRole("link", { name: "Charge card" })).toHaveAttribute(
+      "href",
+      "/dashboard/sessions/sess-1",
+    )
+    expect(screen.queryByTestId("file-claim")).not.toBeInTheDocument()
+  })
+
+  it("offers File claim beside Charge card when the client has coverage", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: true })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+    expect(screen.getByRole("link", { name: "Charge card" })).toBeInTheDocument()
+    expect(screen.getByTestId("file-claim")).toHaveTextContent("File claim")
+  })
+
+  it("does not offer a claim for a session that was never booked", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: true, appointment_id: null })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+    expect(screen.queryByTestId("file-claim")).not.toBeInTheDocument()
+  })
+
+  it("picks up a draft already on the visit with Review and file", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: {
+        items: [
+          item({
+            has_coverage: true,
+            claim: { id: "c1", control_number: "88659891", state: "draft", frequency_code: "1" },
+          }),
+        ],
+      },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+    expect(screen.getByTestId("file-claim")).toHaveTextContent("Review and file")
+  })
+
+  it("shows where a filed claim stands instead of offering to file again", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: {
+        items: [
+          item({
+            has_coverage: true,
+            claim: {
+              id: "c1",
+              control_number: "88659891",
+              state: "validated",
+              frequency_code: "1",
+            },
+          }),
+        ],
+      },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+    expect(screen.queryByTestId("file-claim")).not.toBeInTheDocument()
+    expect(screen.getByTestId("claim-state")).toHaveTextContent("Queued to send")
+    expect(screen.getByTestId("queue-claim-link")).toHaveAttribute(
+      "href",
+      "/dashboard/billing/claims/c1",
+    )
+  })
+
+  it("offers to file again once the last claim on the visit was voided", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: {
+        items: [
+          item({
+            has_coverage: true,
+            claim: { id: "c2", control_number: "88659892", state: "submitted", frequency_code: "8" },
+          }),
+        ],
+      },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+    expect(screen.getByTestId("file-claim")).toHaveTextContent("File claim")
   })
 })

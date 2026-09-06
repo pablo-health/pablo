@@ -36,6 +36,7 @@
  */
 
 import { queryKeyExtensions } from "./queryKeys.extensions"
+import type { ClaimTrackerFilters } from "@/types/claims"
 import type { PatientListParams } from "@/types/patients"
 
 // --- Extension seam ---------------------------------------------------------
@@ -295,6 +296,15 @@ const baseQueryKeys = {
   billing: {
     all: ["billing"] as const,
     unbilledQueue: () => [...baseQueryKeys.billing.all, "unbilledQueue"] as const,
+  },
+
+  // Claims: the tracker and one claim's detail
+  claims: {
+    all: ["claims"] as const,
+    lists: () => [...baseQueryKeys.claims.all, "list"] as const,
+    list: (filters?: ClaimTrackerFilters) => [...baseQueryKeys.claims.lists(), filters] as const,
+    details: () => [...baseQueryKeys.claims.all, "detail"] as const,
+    detail: (claimId: string) => [...baseQueryKeys.claims.details(), claimId] as const,
   },
 
   // Booking link query keys
