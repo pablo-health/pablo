@@ -720,6 +720,33 @@ class TestProfessionalInfo:
         # Unspecified field preserved — PATCH, not PUT.
         assert stored.license_number == "PSY9001"
 
+    def test_taxonomy_code_persists_on_existing_profile(
+        self,
+        client: Any,
+        mock_user: User,
+        mock_user_repo: InMemoryUserRepository,
+        mock_clinician_profile_repo: InMemoryClinicianProfileRepository,
+    ) -> None:
+        mock_user_repo.update(mock_user)
+        mock_clinician_profile_repo.create(
+            ClinicianProfile(
+                user_id=mock_user.id,
+                practice_id="practice-abc",
+                license_number="PSY9001",
+            )
+        )
+        response = client.patch(
+            "/api/users/me/professional-info",
+            json={"taxonomy_code": "101YM0800X"},
+        )
+        assert response.status_code == 200
+        assert response.json()["taxonomy_code"] == "101YM0800X"
+        stored = mock_clinician_profile_repo.get(mock_user.id)
+        assert stored is not None
+        assert stored.taxonomy_code == "101YM0800X"
+        # Unspecified field preserved — PATCH, not PUT.
+        assert stored.license_number == "PSY9001"
+
     def test_npi_must_be_ten_digits(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:

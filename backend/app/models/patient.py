@@ -25,6 +25,14 @@ class CreatePatientRequest(BaseModel):
     diagnosis: str | None = None
     rate_cents: int | None = Field(None, ge=0)
     sliding_scale_note: str | None = Field(None, max_length=2000)
+    address_line1: str | None = Field(None, max_length=255)
+    address_line2: str | None = Field(None, max_length=255)
+    city: str | None = Field(None, max_length=100)
+    state: str | None = Field(None, max_length=2)
+    postal_code: str | None = Field(None, max_length=10)
+    # X12 DMG03 administrative sex code set (M/F/U) — labeled "Sex on
+    # insurance card" in the UI. Not a gender-identity field.
+    sex: str | None = Field(None, pattern=r"^[MFU]$")
 
     @field_validator("email")
     @classmethod
@@ -63,6 +71,12 @@ class UpdatePatientRequest(BaseModel):
     diagnosis: str | None = None
     rate_cents: int | None = Field(None, ge=0)
     sliding_scale_note: str | None = Field(None, max_length=2000)
+    address_line1: str | None = Field(None, max_length=255)
+    address_line2: str | None = Field(None, max_length=255)
+    city: str | None = Field(None, max_length=100)
+    state: str | None = Field(None, max_length=2)
+    postal_code: str | None = Field(None, max_length=10)
+    sex: str | None = Field(None, pattern=r"^[MFU]$")
 
     @field_validator("email")
     @classmethod
@@ -121,6 +135,12 @@ class PatientResponse(BaseModel):
     # soft-delete: closed charts still appear in list/get responses.
     chart_closed_at: datetime | None = None
     chart_closure_reason: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+    sex: str | None = None
 
     @classmethod
     def from_patient(
@@ -156,6 +176,12 @@ class PatientResponse(BaseModel):
             restore_deadline=restore_deadline,
             chart_closed_at=patient.chart_closed_at,
             chart_closure_reason=patient.chart_closure_reason,
+            address_line1=patient.address_line1,
+            address_line2=patient.address_line2,
+            city=patient.city,
+            state=patient.state,
+            postal_code=patient.postal_code,
+            sex=patient.sex,
         )
 
 
@@ -256,6 +282,12 @@ class Patient:
     rate_cents: int | None = None
     sliding_scale_note: str | None = None
     origin: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+    sex: str | None = None
 
     def __post_init__(self) -> None:
         """Auto-generate search fields if not provided."""
@@ -299,6 +331,12 @@ class Patient:
             chart_closure_reason=data.get("chart_closure_reason"),
             rate_cents=data.get("rate_cents"),
             sliding_scale_note=data.get("sliding_scale_note"),
+            address_line1=data.get("address_line1"),
+            address_line2=data.get("address_line2"),
+            city=data.get("city"),
+            state=data.get("state"),
+            postal_code=data.get("postal_code"),
+            sex=data.get("sex"),
         )
 
     def to_dict(self) -> dict[str, Any]:

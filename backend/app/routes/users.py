@@ -438,6 +438,7 @@ def _upsert_clinician_profile(
     license_state: str | None = None,
     dea_number: str | None = None,
     npi_number: str | None = None,
+    taxonomy_code: str | None = None,
 ) -> None:
     """Upsert profile metadata on the caller's ClinicianProfile row.
 
@@ -499,6 +500,11 @@ def _upsert_clinician_profile(
         npi_number=(
             npi_number if npi_number is not None else (existing.npi_number if existing else None)
         ),
+        taxonomy_code=(
+            taxonomy_code
+            if taxonomy_code is not None
+            else (existing.taxonomy_code if existing else None)
+        ),
     )
     # The RLS app.current_user_id GUC is armed centrally in _resolve_user
     # for every authenticated request (pre-MFA included), so the
@@ -527,8 +533,9 @@ def update_professional_info(
 
     Splits the fields by their natural owner:
     - ``legal_name`` → platform user row (a person attribute).
-    - ``license_number`` / ``license_state`` → tenant clinician profile
-      (professional credentials, alongside title/credentials).
+    - ``license_number`` / ``license_state`` / ``taxonomy_code`` → tenant
+      clinician profile (professional credentials, alongside
+      title/credentials).
     - ``business_address`` → practice row (the covered entity's address,
       reused to build the BAA snapshot at acceptance time).
 
@@ -545,6 +552,7 @@ def update_professional_info(
         or request.license_state is not None
         or request.dea_number is not None
         or request.npi_number is not None
+        or request.taxonomy_code is not None
     ):
         _upsert_clinician_profile(
             profile_repo,
@@ -553,6 +561,7 @@ def update_professional_info(
             license_state=request.license_state,
             dea_number=request.dea_number,
             npi_number=request.npi_number,
+            taxonomy_code=request.taxonomy_code,
         )
 
     if (
@@ -587,6 +596,7 @@ def update_professional_info(
         "license_state": request.license_state,
         "dea_number": request.dea_number,
         "npi_number": request.npi_number,
+        "taxonomy_code": request.taxonomy_code,
         "business_address": request.business_address,
         "practice_name": request.practice_name,
         "practice_phone": request.practice_phone,

@@ -208,6 +208,12 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/check"),  # conflict check, rule messages only
         ("get", "/api/scheduling/policy"),  # practice booking policy; no patient data
         ("patch", "/api/scheduling/policy"),  # practice booking policy; no patient data
+        # practice_billing.py — the practice's own billing identity (legal
+        # name, tax id, billing NPI, address); no patient data. The tax id
+        # is encrypted at rest and the response never carries more than its
+        # last 4 digits, so there is nothing here to disclose either.
+        ("get", "/api/practice/billing-profile"),  # practice billing identity; no patient data
+        ("patch", "/api/practice/billing-profile"),  # practice billing identity; no patient data
         ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
         ("post", "/api/appointment-types"),  # creates an appointment type
         ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type

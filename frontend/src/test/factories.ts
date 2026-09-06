@@ -123,6 +123,12 @@ export function createMockPatient(
     updated_at: "2024-01-15T10:00:00Z",
     deleted_at: null,
     restore_deadline: null,
+    address_line1: null,
+    address_line2: null,
+    city: null,
+    state: null,
+    postal_code: null,
+    sex: null,
     ...overrides,
   }
 }

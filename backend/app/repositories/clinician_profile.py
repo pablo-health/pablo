@@ -31,6 +31,7 @@ class ClinicianProfile:
     license_state: str | None = None
     dea_number: str | None = None
     npi_number: str | None = None
+    taxonomy_code: str | None = None
 
 
 class ClinicianProfileRepository(ABC):

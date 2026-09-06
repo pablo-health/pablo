@@ -719,6 +719,61 @@ def test_update_patient_email_and_phone(
     assert data["phone"] == update_data["phone"]
 
 
+def test_create_patient_with_address_and_sex(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Address and sex on insurance card are settable from intake."""
+    payload = {
+        **sample_patient_data,
+        "address_line1": "123 Main St",
+        "address_line2": "Apt 4",
+        "city": "Springfield",
+        "state": "IL",
+        "postal_code": "62704",
+        "sex": "F",
+    }
+    response = client.post("/api/patients", json=payload)
+
+    assert response.status_code == status.HTTP_201_CREATED
+    data = response.json()
+    assert data["address_line1"] == "123 Main St"
+    assert data["city"] == "Springfield"
+    assert data["sex"] == "F"
+
+
+def test_update_patient_address_and_sex(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Address and sex on insurance card are settable from the chart edit form."""
+    create_response = client.post("/api/patients", json=sample_patient_data)
+    patient_id = create_response.json()["id"]
+
+    update_data = {
+        "address_line1": "456 Oak Ave",
+        "city": "Shelbyville",
+        "state": "IL",
+        "postal_code": "62565",
+        "sex": "M",
+    }
+    response = client.patch(f"/api/patients/{patient_id}", json=update_data)
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["address_line1"] == "456 Oak Ave"
+    assert data["city"] == "Shelbyville"
+    assert data["sex"] == "M"
+
+
+def test_create_patient_rejects_invalid_sex(
+    client: TestClient, sample_patient_data: dict[str, Any]
+) -> None:
+    """Sex on insurance card is the X12 DMG03 set (M/F/U) only."""
+    payload = {**sample_patient_data, "sex": "X"}
+    response = client.post("/api/patients", json=payload)
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
 # Priority X: 30-day undo window for soft-deleted patients (THERAPY-yg2)
 
 

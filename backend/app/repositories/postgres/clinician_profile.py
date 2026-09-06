@@ -37,6 +37,7 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             license_state=row.license_state,
             dea_number=row.dea_number,
             npi_number=row.npi_number,
+            taxonomy_code=row.taxonomy_code,
         )
 
     def create(self, profile: ClinicianProfile) -> ClinicianProfile:
@@ -52,6 +53,7 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             license_state=profile.license_state,
             dea_number=profile.dea_number,
             npi_number=profile.npi_number,
+            taxonomy_code=profile.taxonomy_code,
         )
         self._session.add(row)
         self._session.flush()
@@ -74,5 +76,7 @@ class PostgresClinicianProfileRepository(ClinicianProfileRepository):
             row.dea_number = profile.dea_number
         if profile.npi_number is not None:
             row.npi_number = profile.npi_number
+        if profile.taxonomy_code is not None:
+            row.taxonomy_code = profile.taxonomy_code
         self._session.flush()
         return profile
