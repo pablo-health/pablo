@@ -17,3 +17,10 @@ regexes = [
   # Generic test/dummy/example placeholder tokens.
   '''(?i)(dummy|example|placeholder|changeme|test[-_]?secret)''',
 ]
+paths = [
+  # Recorded clearinghouse polling responses (synthetic test-payer captures,
+  # see the folder README). Their nextPageToken is a base64
+  # "<timestamp>|<uuid>" pagination cursor that trips generic-api-key;
+  # nothing in these files is a credential.
+  '''backend/tests/fixtures/clearinghouse/polling_transactions_[^/]*\.json''',
+]
