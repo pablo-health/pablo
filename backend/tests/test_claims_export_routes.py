@@ -13,9 +13,13 @@ What these pin down:
   404 for an unknown claim or one whose client the caller cannot see;
 * each export writes one audit row carrying claim ids and control numbers
   only — no member id, no date of birth, no diagnosis — and nothing off
-  the card reaches a log line either.
+  the card reaches a log line either;
+* both carry the practice's full tax id, read through the same loader the
+  superbill uses; the audit row says it was disclosed and never carries
+  the number, and neither does any log line.
 
-Hermetic: in-memory repositories throughout, claims seeded directly.
+Hermetic: in-memory repositories throughout, claims seeded directly, the
+tax id loader stubbed.
 """
 
 from __future__ import annotations
@@ -44,11 +48,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tests.claims_fixtures import PATIENT_ID, USER_ID, claim, line
+from tests.test_claim_cms1500 import pdf_text
 
 _NOW = datetime(2026, 9, 2, 15, 0, tzinfo=UTC)
 _MEMBER_ID = "123456789"
 _DOB = "2000-01-01"
 _DX = "F41.1"
+_TAX_ID = "12-3459714"
 _RANGE = {"from": "2026-09-01", "to": "2026-09-30"}
 
 
@@ -80,6 +86,7 @@ def harness() -> dict[str, Any]:
     )
     claims = InMemoryClaimRepository()
     audit_repo = InMemoryAuditRepository()
+    tax_id: dict[str, str | None] = {"value": _TAX_ID}
 
     app = FastAPI()
     register_exception_handlers(app)
@@ -91,8 +98,15 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_patient_repository] = lambda: patients
     app.dependency_overrides[get_claim_repository] = lambda: claims
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
+    app.dependency_overrides[claims_export.get_billing_tax_id_loader] = lambda: tax_id["value"]
     client = TestClient(app, raise_server_exceptions=False)
-    return {"app": app, "client": client, "claims": claims, "audit": audit_repo}
+    return {
+        "app": app,
+        "client": client,
+        "claims": claims,
+        "audit": audit_repo,
+        "tax_id": tax_id,
+    }
 
 
 def _seed(harness: dict[str, Any], **overrides: Any) -> str:
@@ -116,6 +130,7 @@ def _assert_nothing_off_the_card(rows: list[Any]) -> None:
     assert _MEMBER_ID not in text
     assert _DOB not in text
     assert _DX not in text
+    assert _TAX_ID not in text
 
 
 class TestCsv:
@@ -203,8 +218,28 @@ class TestCsv:
             "count": 2,
             "claim_ids": ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "second"],
             "control_numbers": ["88659891", "SECOND1"],
+            "tax_id_disclosed": True,
         }
         _assert_nothing_off_the_card([row])
+
+    def test_carries_the_full_tax_id_with_its_qualifier(self, harness: dict[str, Any]) -> None:
+        _seed(harness)
+        resp = harness["client"].get("/api/claims/export.csv", params=_RANGE)
+        assert resp.status_code == 200
+        (row,) = _rows(resp.text)
+        assert (row["tax_id"], row["tax_id_type"]) == (_TAX_ID, "EIN")
+
+    def test_without_an_id_on_file_the_mask_goes_out_and_no_disclosure_is_recorded(
+        self, harness: dict[str, Any]
+    ) -> None:
+        harness["tax_id"]["value"] = None
+        _seed(harness)
+        resp = harness["client"].get("/api/claims/export.csv", params=_RANGE)
+        assert resp.status_code == 200
+        (row,) = _rows(resp.text)
+        assert row["tax_id"] == "XX-XXX9714"
+        (audit_row,) = _audit_rows(harness)
+        assert audit_row.changes["tax_id_disclosed"] is False
 
     def test_an_empty_range_is_a_header_only_file(self, harness: dict[str, Any]) -> None:
         resp = harness["client"].get("/api/claims/export.csv", params=_RANGE)
@@ -222,6 +257,25 @@ class TestPdf:
         assert resp.headers["content-type"] == "application/pdf"
         assert resp.headers["content-disposition"] == 'attachment; filename="claim-88659891.pdf"'
         assert resp.content.startswith(b"%PDF")
+
+    def test_box_25_carries_the_full_tax_id_with_its_qualifier(
+        self, harness: dict[str, Any]
+    ) -> None:
+        claim_id = _seed(harness)
+        resp = harness["client"].get(f"/api/claims/{claim_id}/cms1500.pdf")
+        assert resp.status_code == 200
+        assert f"{_TAX_ID}  EIN" in pdf_text(resp.content)
+
+    def test_without_an_id_on_file_box_25_is_the_mask_and_no_disclosure_is_recorded(
+        self, harness: dict[str, Any]
+    ) -> None:
+        harness["tax_id"]["value"] = None
+        claim_id = _seed(harness)
+        resp = harness["client"].get(f"/api/claims/{claim_id}/cms1500.pdf")
+        assert resp.status_code == 200
+        assert "XX-XXX9714  EIN" in pdf_text(resp.content)
+        (row,) = _audit_rows(harness)
+        assert row.changes["tax_id_disclosed"] is False
 
     def test_a_draft_is_409(self, harness: dict[str, Any]) -> None:
         claim_id = _seed(harness, state="draft")
@@ -261,6 +315,7 @@ class TestPdf:
             "control_number": "88659891",
             "state": "validated",
             "payer_id": "33333333-3333-4333-8333-333333333333",
+            "tax_id_disclosed": True,
         }
         _assert_nothing_off_the_card([row])
 
@@ -278,6 +333,7 @@ class TestLogs:
         assert _DOB not in caplog.text
         assert _DX not in caplog.text
         assert "F41" not in caplog.text
+        assert _TAX_ID not in caplog.text
 
 
 class TestRouteOrder:
