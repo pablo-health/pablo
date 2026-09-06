@@ -36,6 +36,7 @@ import { useConfig } from "@/lib/config"
 import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
+import { errorCode } from "@/lib/errors/errorCode"
 import { AuthDivider } from "./AuthDivider"
 import { AuthFeedback } from "./AuthFeedback"
 import { AuthGoogleButton } from "./AuthGoogleButton"
@@ -340,7 +341,7 @@ export function CredentialBlock({
         })
         setResendSent(true)
       } catch (err) {
-        console.error("sendEmailVerification failed:", err)
+        console.error("sendEmailVerification failed:", errorCode(err))
         const outcome = firebaseAuthErrorOutcome(err, "verify-email")
         if (outcome.kind === "message") setVerifyEmailError(outcome.message)
       }

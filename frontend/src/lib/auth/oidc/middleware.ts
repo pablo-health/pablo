@@ -19,8 +19,15 @@ import { type NextRequest, NextResponse } from "next/server"
 import { auth } from "./config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
-
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
+import {
+  assertHttpsOrigin,
+  generateNonce,
+  requestHeadersWithNonce,
+  STRIPE_CONNECT_SRC,
+  STRIPE_FRAME_SRC,
+  STRIPE_SCRIPT_SRC,
+} from "@/lib/auth/csp"
+import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = [
   "/login",
@@ -47,20 +54,25 @@ const keycloakOrigin = (() => {
   }
 })()
 
-const CSP_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline'",
-  "font-src 'self' data:",
-  "img-src 'self' https: data:",
-  `connect-src 'self' ${process.env.API_URL || ""} ${keycloakOrigin}`.replace(/\s+/g, " ").trim(),
-  `frame-src 'self' ${keycloakOrigin}`.replace(/\s+/g, " ").trim(),
-  "object-src 'none'",
-  "base-uri 'self'",
-].join("; ")
+const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
 
-function addSecurityHeaders(response: NextResponse): NextResponse {
-  response.headers.set("Content-Security-Policy", CSP_POLICY)
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' ${STRIPE_SCRIPT_SRC}`,
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "img-src 'self' https: data:",
+    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin} ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `frame-src 'self' ${keycloakOrigin} ${STRIPE_FRAME_SRC}`.replace(/\s+/g, " ").trim(),
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://accounts.google.com",
+  ].join("; ")
+}
+
+function addSecurityHeaders(response: NextResponse, nonce: string): NextResponse {
+  response.headers.set("Content-Security-Policy", buildCsp(nonce))
   response.headers.set(
     "Strict-Transport-Security",
     "max-age=31536000; includeSubDomains; preload"
@@ -96,6 +108,7 @@ function isPublicPath(pathname: string): boolean {
  * don't invalidate each other. See the deployment notes.
  */
 const handleProtected = auth((request) => {
+  const nonce = generateNonce()
   const { pathname } = request.nextUrl
   const session = request.auth as { error?: string } | null
   const isAuthenticated = !!session && !session.error
@@ -107,27 +120,31 @@ const handleProtected = auth((request) => {
     // or it loops back into the dead session.
     if (pathname === "/login" && !isForcedLogoutArrival(request.nextUrl.searchParams)) {
       const dashboardUrl = new URL("/dashboard", request.url)
-      return addSecurityHeaders(NextResponse.redirect(dashboardUrl))
+      return addSecurityHeaders(NextResponse.redirect(dashboardUrl), nonce)
     }
-    return addSecurityHeaders(NextResponse.next())
+    const headers = requestHeadersWithNonce(request, buildCsp(nonce), nonce)
+    return addSecurityHeaders(NextResponse.next({ request: { headers } }), nonce)
   }
 
   // Unauthenticated: allow public paths through.
   if (isPublicPath(pathname)) {
-    return addSecurityHeaders(NextResponse.next())
+    const headers = requestHeadersWithNonce(request, buildCsp(nonce), nonce)
+    return addSecurityHeaders(NextResponse.next({ request: { headers } }), nonce)
   }
 
   // Redirect to login, preserving the requested path as `callbackUrl`.
   const loginUrl = new URL("/login", request.url)
   loginUrl.searchParams.set("callbackUrl", request.url)
-  return addSecurityHeaders(NextResponse.redirect(loginUrl))
+  return addSecurityHeaders(NextResponse.redirect(loginUrl), nonce)
 })
 
 export default function oidcAuthMiddleware(request: NextRequest) {
   // Dev mode: skip auth entirely (no IdP configured), just add headers.
   // Done before `auth()` runs so it isn't invoked without a configured secret.
   if (IS_DEV_MODE) {
-    return addSecurityHeaders(NextResponse.next())
+    const nonce = generateNonce()
+    const headers = requestHeadersWithNonce(request, buildCsp(nonce), nonce)
+    return addSecurityHeaders(NextResponse.next({ request: { headers } }), nonce)
   }
   // Delegate to the auth()-wrapped handler so cookie rotation is persisted.
   return (handleProtected as unknown as (req: NextRequest) => Promise<NextResponse>)(request)

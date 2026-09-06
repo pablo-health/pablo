@@ -87,6 +87,16 @@ class NotesRepository(ABC):
         """
 
     @abstractmethod
+    def list_finalized(self, user_id: str, *, limit: int | None = None) -> list[Note]:
+        """Finalized, session-attached notes across every accessible patient.
+
+        Newest first by ``finalized_at``. Session-attached (``session_id IS
+        NOT NULL``) because a standalone note has no session to bill for.
+        Backs the unbilled queue, which reads across the whole practice
+        rather than one patient at a time.
+        """
+
+    @abstractmethod
     def count_unfinalized(self, user_id: str) -> int:
         """Count session-attached notes awaiting signature for accessible patients.
 
@@ -202,6 +212,21 @@ class InMemoryNotesRepository(NotesRepository):
             and n.finalized_at is None
             and self._can_access(n.patient_id, user_id)
         )
+
+    def list_finalized(
+        self, user_id: str = _TEST_DEFAULT_USER, *, limit: int | None = None
+    ) -> list[Note]:
+        notes = [
+            n
+            for n in self._notes.values()
+            if n.session_id is not None
+            and n.finalized_at is not None
+            and self._can_access(n.patient_id, user_id)
+        ]
+        notes.sort(key=lambda n: n.finalized_at or n.created_at, reverse=True)
+        if limit is not None:
+            notes = notes[:limit]
+        return notes
 
     # --- write methods ---
 

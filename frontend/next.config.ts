@@ -5,6 +5,14 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["127.0.0.1"],
   // Suppress X-Powered-By: Next.js — version disclosure aids fingerprinting.
   poweredByHeader: false,
+  // Strip console.log/debug/warn from production bundles, but keep
+  // console.error — those calls carry the failure signal support needs
+  // when a user reports a broken page.
+  compiler: {
+    removeConsole: {
+      exclude: ["error"],
+    },
+  },
   // Standalone output for Docker/Cloud Run deployments
   // This creates a minimal production build with only necessary files
   output: "standalone",
@@ -78,6 +86,50 @@ const nextConfig: NextConfig = {
           {
             key: "Content-Security-Policy",
             value: "frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        // `/__/auth/action` is rewritten to the local `/auth/action` page
+        // above, not proxied to Firebase, but the route-protection
+        // middleware's matcher excludes the whole `__/` namespace so its
+        // response never passes through `addSecurityHeaders`. Give this one
+        // real page the same set the middleware applies to every other
+        // route, so it isn't the only page served without them.
+        source: "/__/auth/action",
+        headers: [
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains; preload",
+          },
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            key: "Permissions-Policy",
+            value: "geolocation=(), microphone=(), camera=()",
+          },
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'none'",
+          },
+        ],
+      },
+      {
+        // HSTS belongs on every response, including the proxied Firebase
+        // helper (/__/auth/handler, /__/auth/iframe) — but those two paths
+        // are mirrored verbatim from <project>.firebaseapp.com and must stay
+        // otherwise untouched, so this rule sends HSTS alone.
+        source: "/((?!__/auth/(?:handler|iframe)).*)",
+        headers: [
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains; preload",
           },
         ],
       },

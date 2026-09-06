@@ -47,6 +47,27 @@ class TestCalendarDensity:
         assert response.status_code == 422
 
 
+class TestCalendarSetupComplete:
+    """The first-visit calendar wizard flag defaults off and round-trips."""
+
+    def test_default_is_false(self) -> None:
+        assert UserPreferences().calendar_setup_complete is False
+
+    def test_a_stored_blob_missing_the_key_loads_with_the_default(self) -> None:
+        assert UserPreferences(**{}).calendar_setup_complete is False
+
+    def test_put_round_trips_true_through_get(self, client: Any) -> None:
+        put_response = client.put(
+            "/api/users/me/preferences", json={"calendar_setup_complete": True}
+        )
+        assert put_response.status_code == 200
+        assert put_response.json()["calendar_setup_complete"] is True
+
+        get_response = client.get("/api/users/me/preferences")
+        assert get_response.status_code == 200
+        assert get_response.json()["calendar_setup_complete"] is True
+
+
 class TestSavePreferences:
     """Test PUT /api/users/me/preferences."""
 
@@ -63,6 +84,7 @@ class TestSavePreferences:
         "timezone": "America/Los_Angeles",
         "theme": "dark",
         "calendar_density": "gentle",
+        "calendar_setup_complete": True,
     }
 
     def test_put_round_trips_a_full_body(self, client: Any) -> None:

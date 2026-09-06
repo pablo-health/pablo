@@ -35,6 +35,8 @@ const TEST_CONFIG: RuntimeConfig = {
   resubscribeUrl: "",
   publicBookingEnabled: false,
   googleCalendarEnabled: false,
+  pabloEdition: "core",
+  features: {},
 }
 
 describe("renderWithProviders", () => {

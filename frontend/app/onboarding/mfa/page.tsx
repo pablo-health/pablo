@@ -17,12 +17,11 @@ import { getTokens } from "next-firebase-auth-edge"
 import { redirect } from "next/navigation"
 import { getUserStatus } from "@/lib/api/users"
 import { authConfig } from "@/lib/auth-config"
+import { IS_DEV_MODE } from "@/lib/devMode"
 import { MFAEnrollmentForm } from "@/app/mfa-enrollment/MFAEnrollmentForm"
 import { OnboardingStepShell } from "@/components/onboarding/OnboardingStepShell"
 
 export const dynamic = "force-dynamic"
-
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
 
 export default async function OnboardingMFAPage() {
   // Dev mode skips MFA entirely (matches the standalone page).

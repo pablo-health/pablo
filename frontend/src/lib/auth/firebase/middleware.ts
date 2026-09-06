@@ -11,25 +11,38 @@ import { authMiddleware, redirectToLogin, redirectToHome } from "next-firebase-a
 import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
-
-const IS_DEV_MODE = process.env.DEV_MODE === "true"
+import {
+  assertHttpsOrigin,
+  generateNonce,
+  NONCE_HEADER,
+  requestHeadersWithNonce,
+  STRIPE_CONNECT_SRC,
+  STRIPE_FRAME_SRC,
+  STRIPE_SCRIPT_SRC,
+} from "@/lib/auth/csp"
+import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...extraPublicPaths()]
 
-const CSP_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://apis.google.com",
-  "style-src 'self' 'unsafe-inline'",
-  "font-src 'self' data:",
-  "img-src 'self' https: data:",
-  `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${process.env.API_URL || ""} wss://*.firebaseio.com`.replace(/\s+/g, " ").trim(),
-  "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com",
-  "object-src 'none'",
-  "base-uri 'self'",
-].join("; ")
+const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
 
-function addSecurityHeaders(response: NextResponse): NextResponse {
-  response.headers.set("Content-Security-Policy", CSP_POLICY)
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' https://apis.google.com ${STRIPE_SCRIPT_SRC}`,
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "img-src 'self' https: data:",
+    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_FRAME_SRC}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://accounts.google.com",
+  ].join("; ")
+}
+
+function addSecurityHeaders(response: NextResponse, nonce: string): NextResponse {
+  response.headers.set("Content-Security-Policy", buildCsp(nonce))
   response.headers.set(
     "Strict-Transport-Security",
     "max-age=31536000; includeSubDomains; preload"
@@ -45,9 +58,12 @@ function addSecurityHeaders(response: NextResponse): NextResponse {
 }
 
 export default async function firebaseAuthMiddleware(request: NextRequest) {
+  const nonce = generateNonce()
+
   // Dev mode: skip auth, just add security headers
   if (IS_DEV_MODE) {
-    return addSecurityHeaders(NextResponse.next())
+    const headers = requestHeadersWithNonce(request, buildCsp(nonce), nonce)
+    return addSecurityHeaders(NextResponse.next({ request: { headers } }), nonce)
   }
 
   return authMiddleware(request, {
@@ -63,11 +79,16 @@ export default async function firebaseAuthMiddleware(request: NextRequest) {
       // dead (idle-timed-out); a forced-logout arrival must render /login
       // or it loops back into the dead session.
       if (pathname === "/login" && !isForcedLogoutArrival(searchParams)) {
-        return addSecurityHeaders(redirectToHome(request, { path: "/dashboard" }))
+        return addSecurityHeaders(redirectToHome(request, { path: "/dashboard" }), nonce)
       }
 
+      // `headers` carries the library's refreshed cookie; layer the nonce
+      // and CSP onto it rather than starting from a fresh copy of the
+      // request headers, so the rotated cookie isn't dropped.
+      headers.set(NONCE_HEADER, nonce)
+      headers.set("Content-Security-Policy", buildCsp(nonce))
       const response = NextResponse.next({ request: { headers } })
-      return addSecurityHeaders(response)
+      return addSecurityHeaders(response, nonce)
     },
 
     handleInvalidToken: async (_reason) => {
@@ -75,17 +96,23 @@ export default async function firebaseAuthMiddleware(request: NextRequest) {
 
       // Allow public paths without auth
       if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-        return addSecurityHeaders(NextResponse.next())
+        const passthroughHeaders = requestHeadersWithNonce(request, buildCsp(nonce), nonce)
+        return addSecurityHeaders(
+          NextResponse.next({ request: { headers: passthroughHeaders } }),
+          nonce
+        )
       }
 
       return addSecurityHeaders(
-        redirectToLogin(request, { path: "/login", publicPaths: PUBLIC_PATHS })
+        redirectToLogin(request, { path: "/login", publicPaths: PUBLIC_PATHS }),
+        nonce
       )
     },
 
     handleError: async (_error) => {
       return addSecurityHeaders(
-        redirectToLogin(request, { path: "/login", publicPaths: PUBLIC_PATHS })
+        redirectToLogin(request, { path: "/login", publicPaths: PUBLIC_PATHS }),
+        nonce
       )
     },
   })

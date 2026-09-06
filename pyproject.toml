@@ -86,6 +86,13 @@ google-cloud-logging = "^3.16.1"
 # THERAPY-71d5 dropped meeting-transcription, so pin explicitly.
 google-genai = "^2.12.0"
 
+# Google OAuth authorization-code flow for the Calendar connect
+# (backend/app/services/google_calendar_service.py::_build_flow). Imported
+# lazily there so an install that never connects a calendar doesn't pay for
+# it — which is also why its absence surfaced as a 500 on the connect button
+# rather than at import time.
+google-auth-oauthlib = "^1.2.2"
+
 # Claude on Vertex AI — the Anthropic structured-output gateway provider
 # (backend/app/services/structured_llm_gateway.py). The "vertex" extra pulls the
 # google-auth bits the AnthropicVertex client needs; the public Anthropic API is
@@ -351,6 +358,7 @@ module = [
     "google.auth.*",
     "google.genai.*",
     "google.oauth2.*",
+    "google_auth_oauthlib.*",
     "google.rpc.*",
     "firebase_admin.*",
     "redis.*",

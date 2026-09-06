@@ -19,6 +19,7 @@
 import NextAuth from "next-auth"
 import Keycloak from "next-auth/providers/keycloak"
 import type { JWT } from "next-auth/jwt"
+import { errorCode } from "@/lib/errors/errorCode"
 
 /** How many seconds before nominal expiry we attempt a proactive refresh. */
 const REFRESH_BUFFER_SECONDS = 60
@@ -76,7 +77,7 @@ async function refreshKeycloakToken(token: JWT): Promise<JWT> {
       error: undefined,
     }
   } catch (err) {
-    console.error("Keycloak token refresh request threw:", err)
+    console.error("Keycloak token refresh request threw:", errorCode(err))
     return { ...token, error: "RefreshTokenError" }
   }
 }

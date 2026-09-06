@@ -20,7 +20,7 @@ from app.calendar_providers.capabilities import CalendarWriteTarget
 from app.calendar_providers.oauth_state import OAuthStateError, mint_state, verify_state
 from app.repositories.google_calendar_token import GoogleCalendarTokenDoc
 from app.scheduling_engine.models.appointment import Appointment
-from app.services.google_calendar_service import GoogleCalendarService
+from app.services.google_calendar_service import GoogleCalendarService, _build_flow
 from app.services.reminder_service import ReminderService
 from app.services.token_encryption import (
     TokenEncryptionError,
@@ -856,109 +856,41 @@ class TestDisconnect:
 class TestReminderService:
     """Background reminder logic."""
 
-    def _make_appointment(
-        self,
-        appt_id: str,
-        hours_from_now: float,
-        *,
-        reminder_24h_sent: bool = False,
-        reminder_1h_sent: bool = False,
-        appt_status: str = "confirmed",
-    ) -> Appointment:
-        now = datetime.now(UTC)
-        start = now + timedelta(hours=hours_from_now)
-        end = start + timedelta(hours=1)
-        return Appointment(
-            id=appt_id,
-            user_id="user-001",
-            patient_id="patient-001",
-            title="Session",
-            start_at=start,
-            end_at=end,
-            duration_minutes=60,
-            status=appt_status,
-            session_type="individual",
-            reminder_24h_sent=reminder_24h_sent,
-            reminder_1h_sent=reminder_1h_sent,
-            created_at=now,
+    def test_returns_zero_counts(self, appointment_repo: MagicMock) -> None:
+        service = ReminderService(appointment_repo)
+        result = service.check_and_send_reminders("user-001")
+
+        assert result == {"24h_sent": 0, "1h_sent": 0}
+
+    def test_does_not_touch_the_repository(self, appointment_repo: MagicMock) -> None:
+        service = ReminderService(appointment_repo)
+        service.check_and_send_reminders("user-001")
+
+        appointment_repo.list_by_range.assert_not_called()
+        appointment_repo.update.assert_not_called()
+
+
+class TestBuildFlowIsReachable:
+    """`_build_flow` imports google_auth_oauthlib lazily, at call time.
+
+    Every other test in the suite patches `_build_flow`, so nothing
+    exercised that import — and a lazy import of an undeclared dependency
+    fails nowhere until a therapist clicks Connect, which is how it reached
+    a deployment as a 500 on /api/google-calendar/authorize
+    (`ModuleNotFoundError: No module named 'google_auth_oauthlib'`).
+
+    This calls the real thing. No network: `authorization_url` builds the
+    consent URL locally from the client config.
+    """
+
+    def test_builds_a_consent_url_without_the_import_failing(self) -> None:
+        flow = _build_flow(
+            "cid.apps.googleusercontent.com",
+            "client-secret",
+            "https://app.example.test/dashboard/calendar",
+            ["https://www.googleapis.com/auth/calendar.events"],
         )
+        auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
 
-    def test_does_not_mark_24h_reminder_while_delivery_unimplemented(
-        self, appointment_repo: MagicMock
-    ) -> None:
-        # Delivery is not yet wired up; the pass must be a no-op so appointments
-        # are not permanently marked sent before any notification reaches the patient.
-        appt = self._make_appointment("appt-1", 24)
-        appointment_repo.list_by_range.side_effect = [
-            [appt],  # 24h window
-            [],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-        assert appt.reminder_24h_sent is False
-
-    def test_does_not_mark_1h_reminder_while_delivery_unimplemented(
-        self, appointment_repo: MagicMock
-    ) -> None:
-        appt = self._make_appointment("appt-1", 1)
-        appointment_repo.list_by_range.side_effect = [
-            [],  # 24h window
-            [appt],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-        assert appt.reminder_1h_sent is False
-
-    def test_skips_already_sent_reminders(self, appointment_repo: MagicMock) -> None:
-        appt = self._make_appointment("appt-1", 24, reminder_24h_sent=True)
-        appointment_repo.list_by_range.side_effect = [
-            [appt],  # 24h window
-            [],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-
-    def test_skips_cancelled_appointments(self, appointment_repo: MagicMock) -> None:
-        appt = self._make_appointment("appt-1", 24, appt_status="cancelled")
-        appointment_repo.list_by_range.side_effect = [
-            [appt],  # 24h window
-            [],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        appointment_repo.update.assert_not_called()
-
-    def test_returns_zero_counts_while_delivery_unimplemented(
-        self,
-        appointment_repo: MagicMock,
-    ) -> None:
-        appt_24h = self._make_appointment("appt-24", 24)
-        appt_1h = self._make_appointment("appt-1", 1)
-        appointment_repo.list_by_range.side_effect = [
-            [appt_24h],  # 24h window
-            [appt_1h],  # 1h window
-        ]
-
-        service = ReminderService(appointment_repo)
-        result = service.check_and_send_reminders("user-001")
-
-        assert result["24h_sent"] == 0
-        assert result["1h_sent"] == 0
-        appointment_repo.update.assert_not_called()
+        assert auth_url.startswith("https://accounts.google.com/o/oauth2/auth")
+        assert "dashboard%2Fcalendar" in auth_url

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import distinct, func, select
 
 from ...db.models import AuditLogRow
+from ...models.audit import ACTOR_TYPE_PATIENT
 from ..audit import (
     DEFAULT_BASELINE_DAYS,
     MIN_USER_BASELINE_DAYS,
@@ -112,10 +113,28 @@ class PostgresAuditRepository(AuditRepository):
         baseline_start = now - timedelta(days=baseline_days)
         min_baseline_cutoff = now - timedelta(days=MIN_USER_BASELINE_DAYS)
 
+        # Patient-actor rows are excluded from all three queries below.
+        # This surface reviews CLINICIAN access — "who looked at a chart
+        # they had no business in" — and it derives that from ``user_id``
+        # alone, with no notion of what kind of principal that id names.
+        # A patient acting on their own record writes a row whose
+        # ``user_id`` is their own patient id, so without this predicate
+        # the review treats the patient as a user who accessed a patient,
+        # and a self-action pairs them with themselves: a pair no
+        # clinician baseline has ever seen, which is exactly what
+        # ``is_novel_user_patient`` means. A patient reading their own
+        # chart would surface as novel clinician access.
+        #
+        # RLS keeps those rows out of a clinician's session today, so the
+        # surface is correct in production for a reason unrelated to this
+        # query being right. Excluding them here makes it true of the
+        # query rather than of the caller's connection.
+        not_patient_actor = AuditLogRow.actor_type != ACTOR_TYPE_PATIENT
+
         window_rows = (
             self._session.execute(
                 select(AuditLogRow)
-                .where(AuditLogRow.timestamp >= window_start)
+                .where(AuditLogRow.timestamp >= window_start, not_patient_actor)
                 .order_by(AuditLogRow.timestamp.asc())
             )
             .scalars()
@@ -130,6 +149,7 @@ class PostgresAuditRepository(AuditRepository):
             row[0]
             for row in self._session.execute(
                 select(AuditLogRow.user_id)
+                .where(not_patient_actor)
                 .group_by(AuditLogRow.user_id)
                 .having(func.min(AuditLogRow.timestamp) < min_baseline_cutoff)
             ).all()
@@ -143,6 +163,7 @@ class PostgresAuditRepository(AuditRepository):
                     AuditLogRow.timestamp >= baseline_start,
                     AuditLogRow.timestamp < window_start,
                     AuditLogRow.patient_id.is_not(None),
+                    not_patient_actor,
                 )
             ).all()
         )

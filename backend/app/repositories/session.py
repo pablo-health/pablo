@@ -23,6 +23,15 @@ class TherapySessionRepository(ABC):
         """List all therapy sessions for a patient, ensuring user has access."""
         pass
 
+    @abstractmethod
+    def get_multiple(self, session_ids: list[str], user_id: str) -> dict[str, TherapySession]:
+        """Get multiple sessions by ID, ensuring the user has patient access.
+
+        One query for many sessions, matching ``PatientRepository.get_multiple``.
+        Sessions the user cannot access are simply absent from the result.
+        """
+        pass
+
     def session_dates_by_patient(self, patient_id: str, user_id: str) -> list[datetime]:
         """Session dates only, same access gate as :meth:`list_by_patient`.
 
@@ -144,6 +153,14 @@ class InMemoryTherapySessionRepository(TherapySessionRepository):
         sessions = [s for s in self._sessions.values() if s.patient_id == patient_id]
         sessions.sort(key=lambda s: s.session_date, reverse=True)
         return sessions
+
+    def get_multiple(self, session_ids: list[str], user_id: str) -> dict[str, TherapySession]:
+        wanted = set(session_ids)
+        return {
+            s.id: s
+            for s in self._sessions.values()
+            if s.id in wanted and self._can_access(s.patient_id, user_id)
+        }
 
     def list_by_user(
         self, user_id: str, *, page: int = 1, page_size: int = 20

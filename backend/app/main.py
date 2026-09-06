@@ -42,6 +42,7 @@ from .routes import (
     admin,
     admin_pentest,
     auth,
+    billing_queue,
     booking_links,
     calendar_import,
     chat,
@@ -56,14 +57,16 @@ from .routes import (
     notes,
     passkey,
     patient_documents,
+    patient_payments,
     patients,
+    payment_webhooks,
     public_booking,
     scheduling,
     sessions,
     supervision,
     users,
 )
-from .settings import get_settings
+from .settings import get_settings, log_startup_posture
 from .version_check import get_min_versions, get_server_version
 
 configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -78,6 +81,21 @@ if settings.is_development:
         "MFA enforcement, admin checks, and HTTPS enforcement are DISABLED. "
         "Do NOT use ENVIRONMENT=development in production."
     )
+
+# Say out loud whether reserved test addresses can register themselves.
+# Off is the default; a deployment that turns it on should see it in the
+# boot log every time, next to the project it applies to.
+if settings.test_identity_signup_armed:
+    logger.warning(
+        "SECURITY: test-identity self-signup is ARMED for project %s — "
+        "reserved pentestuser-/e2etest- addresses can register without an "
+        "allowlist entry (ALLOW_TEST_IDENTITY_SIGNUP=true).",
+        settings.gcp_project_id or "<unset>",
+    )
+else:
+    logger.info("Test-identity self-signup is disarmed.")
+
+log_startup_posture(settings, logger)
 
 
 @asynccontextmanager
@@ -183,6 +201,7 @@ app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(patients.router)
+app.include_router(billing_queue.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
 app.include_router(internal_transcription.router)
@@ -193,6 +212,8 @@ app.include_router(notes.internal_jobs_router)
 app.include_router(patient_documents.patient_documents_router)
 app.include_router(patient_documents.documents_router)
 app.include_router(patient_documents.internal_jobs_router)
+app.include_router(patient_payments.router)
+app.include_router(payment_webhooks.router)
 app.include_router(ehr_routes.route_router)
 app.include_router(ehr_routes.navigate_router)
 app.include_router(ical_sync.router)

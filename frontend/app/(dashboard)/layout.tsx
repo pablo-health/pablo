@@ -8,20 +8,16 @@ import { ApiError } from "@/lib/api/client"
 import { getBAAStatus } from "@/lib/api/users"
 import { getCachedUserStatus } from "@/lib/api/users.server"
 import { getServerSession } from "@/lib/auth/server"
+import { IS_DEV_MODE } from "@/lib/devMode"
 import { getOnboardingSurface } from "@/lib/onboarding/surface"
 import { firstIncompleteRequiredStep } from "@/lib/onboarding/types"
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary"
 import { IdleTimeout } from "@/components/IdleTimeout"
 import { ThemeSync } from "@/components/theme/ThemeSync"
+import { errorCode } from "@/lib/errors/errorCode"
 
 export const dynamic = "force-dynamic"
 
-// DEV_MODE bypasses auth and renders with a mock user. Gate it on
-// NODE_ENV too so a stray DEV_MODE=true on a production revision can
-// never disable the auth/MFA/BAA gate — the bypass branch is dead code
-// in a production build.
-const IS_DEV_MODE =
-  process.env.DEV_MODE === "true" && process.env.NODE_ENV !== "production"
 const IS_OSS_EDITION = (process.env.PABLO_EDITION || "core") === "core"
 
 export default async function DashboardLayout({
@@ -81,7 +77,7 @@ export default async function DashboardLayout({
       }
     } catch (error) {
       if (error && typeof error === "object" && "digest" in error) throw error
-      console.error("Failed to check user status — blocking access:", error)
+      console.error("Failed to check user status — blocking access:", errorCode(error))
       // A dead session (backend idle timeout / revoked token) must land on
       // /login carrying a reason: the auth cookie is still cryptographically
       // valid at this point (an RSC redirect can't clear it), and without
@@ -110,7 +106,7 @@ export default async function DashboardLayout({
         }
       } catch (error) {
         if (error && typeof error === "object" && "digest" in error) throw error
-        console.error("Failed to check BAA status — blocking access:", error)
+        console.error("Failed to check BAA status — blocking access:", errorCode(error))
         redirect("/baa-acceptance")
       }
     }

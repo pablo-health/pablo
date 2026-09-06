@@ -50,6 +50,9 @@ backend/data/nli-therapy-*
 # Claude Code: worktree-isolated sub-agents materialize here at runtime;
 # transient by design, never committed.
 .claude/worktrees/
+# Same thing at the repo root, which is where `git worktree add` lands by
+# convention here. Unignored, a stray `git add -A` commits whole checkouts.
+.worktrees/
 
 # Operator-local scripts and notes (never committed; common convention
 # for keeping environment-specific automation alongside the checkout).
@@ -70,3 +73,12 @@ docs/pentest/*_pentest_report*.md
 
 # Standalone Epic/MyChart puller output (FHIR JSON exports — may contain PHI)
 epic_export/
+
+# Local GCP/Firebase service-account keys and certs — never commit a real one,
+# but keep any shipped .example template trackable.
+serviceAccountKey.json
+*firebase-adminsdk*.json
+credentials.json
+*.pem
+*.p12
+!*.example

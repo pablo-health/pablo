@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from app.rate_limit import _get_client_ip
+from app.rate_limit import get_client_ip
 from app.request_context import extract_request_context
 from starlette.requests import Request
 
@@ -44,30 +44,30 @@ class TestGetClientIp:
         # Real client IP is appended last by the trusted proxy (Cloud Run).
         rl, _ = _patch_hops(1)
         with rl:
-            assert _get_client_ip(_request("203.0.113.7")) == "203.0.113.7"
+            assert get_client_ip(_request("203.0.113.7")) == "203.0.113.7"
 
     def test_spoofed_leftmost_entry_is_ignored(self) -> None:
         # Attacker prepends a forged IP; the proxy appends the real one.
         rl, _ = _patch_hops(1)
         with rl:
-            ip = _get_client_ip(_request("1.2.3.4, 203.0.113.7"))
+            ip = get_client_ip(_request("1.2.3.4, 203.0.113.7"))
         assert ip == "203.0.113.7"
 
     def test_two_hops_reads_second_from_right(self) -> None:
         rl, _ = _patch_hops(2)
         with rl:
-            ip = _get_client_ip(_request("1.2.3.4, 203.0.113.7, 35.0.0.1"))
+            ip = get_client_ip(_request("1.2.3.4, 203.0.113.7, 35.0.0.1"))
         assert ip == "203.0.113.7"
 
     def test_hops_clamped_to_available_entries(self) -> None:
         rl, _ = _patch_hops(5)
         with rl:
-            assert _get_client_ip(_request("203.0.113.7")) == "203.0.113.7"
+            assert get_client_ip(_request("203.0.113.7")) == "203.0.113.7"
 
     def test_no_header_falls_back_to_peer(self) -> None:
         rl, _ = _patch_hops(1)
         with rl:
-            assert _get_client_ip(_request(None, peer="10.0.0.9")) == "10.0.0.9"
+            assert get_client_ip(_request(None, peer="10.0.0.9")) == "10.0.0.9"
 
 
 class TestExtractRequestContext:

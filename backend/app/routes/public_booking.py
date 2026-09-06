@@ -33,7 +33,8 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
+from sqlalchemy.exc import IntegrityError
 
 from ..api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from ..auth.route_access import AccessLevel, resolve_access_level
@@ -51,6 +52,7 @@ from ..models.booking_link import (
 from ..models.enums import PracticeEdition
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
 from ..rate_limit import (
+    get_client_ip,
     require_public_booking_rate_limit,
     require_public_booking_write_rate_limit,
 )
@@ -67,6 +69,7 @@ from ..scheduling_engine.models.appointment import AppointmentStatus
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
+from ..services.captcha import CaptchaVerifier, get_captcha_verifier
 from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
 from ..services.google_calendar_service import (
     GoogleCalendarService,
@@ -215,6 +218,24 @@ _BOOKING_CLOSED = (
 )
 _CONFIRMATION_INVALID = "This confirmation link is not valid."
 _SLOT_TAKEN = "That time was taken while you were confirming. Please pick another slot."
+_SLOT_NO_LONGER_AVAILABLE = "That time is no longer available. Please pick another slot."
+_CAPTCHA_FAILED = "Verification failed. Please refresh and try again."
+
+
+def require_captcha(
+    http_request: Request,
+    verifier: CaptchaVerifier = Depends(get_captcha_verifier),
+    x_captcha_token: str | None = Header(None, alias="X-Captcha-Token"),
+) -> None:
+    """Refuse the booking write unless the CAPTCHA token verifies.
+
+    A no-op under the default ``NoneCaptchaVerifier``. A missing token is
+    refused identically to an invalid one — the message never reveals
+    which. Runs after the write rate limit, so a bot burning verify calls
+    burns its per-IP write budget too.
+    """
+    if not verifier.verify(x_captcha_token, get_client_ip(http_request)):
+        raise ForbiddenError(_CAPTCHA_FAILED)
 
 
 def _require_owner_may_accept_bookings(owner: User) -> None:
@@ -270,9 +291,21 @@ def _parse_booking_date(value: str) -> date:
     return parsed
 
 
+def _public_slots(slots: list[TimeSlot]) -> list[TimeSlot]:
+    """Slots a booking link may show or accept.
+
+    A soft max-per-day cap surfaces the day's remaining slots flagged
+    ``over_cap`` so an in-app view can offer them deliberately. Nobody
+    reviews this unauthenticated path, so it must never hand out that
+    flexibility on its own — every slot list read here is filtered.
+    """
+    return [s for s in slots if not s.over_cap]
+
+
 @router.get("/api/public/booking-links/{slug}", response_model=PublicBookingLinkResponse)
 def get_public_booking_link(
     ctx: PublicBookingContext = Depends(get_public_booking_context),
+    verifier: CaptchaVerifier = Depends(get_captcha_verifier),
 ) -> PublicBookingLinkResponse:
     """The link's public display card — everything a visitor may see."""
     return PublicBookingLinkResponse(
@@ -281,6 +314,7 @@ def get_public_booking_link(
         title=ctx.link.title,
         description=ctx.link.description,
         duration_minutes=ctx.link.duration_minutes,
+        captcha_site_key=verifier.site_key,
     )
 
 
@@ -301,11 +335,12 @@ def get_public_free_slots(
     """
     parsed = _parse_booking_date(date_param)
     result = engine.get_free_slots(ctx.link.user_id, parsed.isoformat(), ctx.link.duration_minutes)
+    slots = _public_slots(result.slots)
     return FreeSlotsResponse(
         date=parsed.isoformat(),
         duration_minutes=ctx.link.duration_minutes,
-        slots=[TimeSlotResponse(start=s.start, end=s.end) for s in result.slots],
-        total=len(result.slots),
+        slots=[TimeSlotResponse(start=s.start, end=s.end) for s in slots],
+        total=len(slots),
         configured=result.configured,
     )
 
@@ -485,6 +520,8 @@ def _place_hold(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except IntegrityError as e:
+        raise ConflictError(_SLOT_NO_LONGER_AVAILABLE) from e
 
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
@@ -519,7 +556,11 @@ def _place_hold(
     "/api/public/booking-links/{slug}/bookings",
     response_model=PublicBookingConfirmation,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_public_booking_write_rate_limit), Depends(sweep_expired_holds)],
+    dependencies=[
+        Depends(require_public_booking_write_rate_limit),
+        Depends(require_captcha),
+        Depends(sweep_expired_holds),
+    ],
 )
 def create_public_booking(
     request: CreatePublicBookingRequest,
@@ -548,10 +589,10 @@ def create_public_booking(
     date_str = request.start_at[:10]
     _parse_booking_date(date_str)
 
-    slots = engine.get_free_slots(ctx.link.user_id, date_str, ctx.link.duration_minutes)
-    slot = next((s for s in slots.slots if s.start == request.start_at), None)
+    result = engine.get_free_slots(ctx.link.user_id, date_str, ctx.link.duration_minutes)
+    slot = next((s for s in _public_slots(result.slots) if s.start == request.start_at), None)
     if slot is None:
-        raise ConflictError("That time is no longer available. Please pick another slot.")
+        raise ConflictError(_SLOT_NO_LONGER_AVAILABLE)
 
     note_lines = [f"Booked via booking link /{ctx.link.slug}."]
     if request.note:
@@ -579,6 +620,12 @@ def create_public_booking(
         )
     except InvalidAppointmentError as e:
         raise BadRequestError(str(e)) from e
+    except IntegrityError as e:
+        # The check above and this insert are two separate statements — a
+        # second booking for the same slot can slip in between them. The
+        # unique active-slot index is the backstop; this is where its
+        # violation surfaces as the same "slot taken" response.
+        raise ConflictError(_SLOT_NO_LONGER_AVAILABLE) from e
     audit.log_appointment_action(
         AuditAction.APPOINTMENT_CREATED,
         ctx.owner,
@@ -769,10 +816,10 @@ def confirm_public_booking(
         # Found by its hash, which only a lapsed hold still carries — a
         # clinician-cancelled hold has its hash cleared and would never
         # have matched the lookup above.
-        slots = engine.get_free_slots(
+        result = engine.get_free_slots(
             ctx.link.user_id, appt.start_at.date().isoformat(), ctx.link.duration_minutes
         )
-        still_free = any(s.start == _slot_start_iso(appt) for s in slots.slots)
+        still_free = any(s.start == _slot_start_iso(appt) for s in _public_slots(result.slots))
         restored = patient_repo.restore(appt.patient_id, ctx.link.user_id) if still_free else None
         if not still_free or restored is None:
             raise ConflictError(_SLOT_TAKEN)

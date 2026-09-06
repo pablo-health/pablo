@@ -86,6 +86,27 @@ class PostgresTherapySessionRepository(TherapySessionRepository):
         )
         return [_row_to_session(r) for r in rows]
 
+    def get_multiple(self, session_ids: list[str], user_id: str) -> dict[str, TherapySession]:
+        if not session_ids:
+            return {}
+        rows = (
+            self._session.execute(
+                select(TherapySessionRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == TherapySessionRow.patient_id,
+                )
+                .where(
+                    TherapySessionRow.id.in_(session_ids),
+                    TherapySessionRow.deleted_at.is_(None),
+                    *_grant_filters(user_id),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {row.id: _row_to_session(row) for row in rows}
+
     def session_dates_by_patient(self, patient_id: str, user_id: str) -> list[datetime]:
         """Timestamp-only variant of :meth:`list_by_patient` — never selects
         transcript or note content, so it stays valid under column-scoped

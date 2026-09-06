@@ -1,0 +1,27 @@
+{
+  "status": "SUCCESS",
+  "controlNumber": "1",
+  "tradingPartnerServiceId": "60054",
+  "claimReference": {
+    "correlationId": "01M1T6140MJEQSJNBSF58SMB12",
+    "patientControlNumber": "88658879",
+    "timeOfResponse": "2026-09-06T01:41:31.182Z",
+    "payerId": "60054",
+    "formatVersion": "5010",
+    "rhclaimNumber": "01M1T6140MJEQSJNBSF58SMB12",
+    "serviceLines": [
+      {
+        "lineItemControlNumber": "886588791"
+      }
+    ]
+  },
+  "meta": {
+    "traceId": "3edc4414-3963-4f7a-a4f8-f0794b3a4393"
+  },
+  "payer": {
+    "payerName": "Aetna",
+    "payerId": "60054"
+  },
+  "x12": "ISA*00*          *00*          *ZZ*STEDITEST      *ZZ*189416354675   *260906*0141*^*00501*385838061*0*T*`~GS*HN*STEDITEST*189416354675*20260906*014131*1*X*005010X214~ST*277*0001*005010X214~BHT*0085*08*01M1T61ECWDJQHRFFCFKDJXCH8*20260906*014131*TH~HL*1**20*1~NM1*AY*2*STEDI INC*****46*117151744~TRN*1*01M1T61ECWDJQHRFFCFKDJXCH8~DTP*050*D8*20260906~DTP*009*D8*20260906~HL*2*1*21*1~NM1*41*2*Pablo Test Practice*****46*0000001~TRN*2*01M1T6140MJEQSJNBSF58SMB12~STC*A1`19`AY*20260906*WQ*150.00~QTY*90*1~AMT*YU*150.00~HL*3*2*19*1~NM1*85*2*Pablo Test Practice*****XX*1999999984~TRN*1*0~REF*TJ*123456789~QTY*QA*1~AMT*YU*150.00~HL*4*3*PT*0~NM1*QC*1*Anon*John****MI*123456789~TRN*2*88658879~STC*A1`16`PR*20260906*WQ*150.00********Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication. Claim/encounter has been forwarded to entity. Payer~DTP*472*RD8*20260901-20260901~SE*25*0001~GE*1*1~IEA*1*385838061~",
+  "httpStatusCode": "200 OK"
+}

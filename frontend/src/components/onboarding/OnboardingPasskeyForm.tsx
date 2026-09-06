@@ -31,6 +31,7 @@ import { ApiError } from "@/lib/api/client"
 import { beginRegistration, finishRegistration } from "@/lib/api/passkey"
 import { trackOnboardingStepCompleted } from "@/lib/analytics/onboarding"
 import { RecoveryCodesPanel } from "@/components/onboarding/RecoveryCodesPanel"
+import { errorCode } from "@/lib/errors/errorCode"
 
 const BENEFITS = [
   "Sign in with Face ID, Touch ID, or your security key",
@@ -60,7 +61,7 @@ async function upgradeSessionWithFactorToken(customToken: string | null | undefi
     const credential = await signInWithCustomToken(getFirebaseAuth(), customToken)
     await credential.user.getIdToken(true)
   } catch (err) {
-    console.error("passkey factor-token exchange failed", err)
+    console.error("passkey factor-token exchange failed", errorCode(err))
   }
 }
 

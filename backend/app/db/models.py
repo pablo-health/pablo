@@ -24,6 +24,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -543,6 +544,25 @@ class AppointmentRow(Base):
     confirmation_token_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
+    #: Which ``appointment_types`` row this is an instance of.
+    #:
+    #: Nullable because an appointment can outlive its type: deleting a type
+    #: sets this to NULL rather than refusing, since the appointment still
+    #: happened and its record should survive the type being tidied away.
+    #: ``session_type`` below keeps the name it was booked under, so history
+    #: reads correctly even after the link is gone.
+    appointment_type_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("appointment_types.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: The type's name as it stood when this was booked.
+    #:
+    #: Denormalised on purpose, and NOT redundant with the id above. A
+    #: clinician can rename a type, and a past appointment should still read
+    #: as what it was called at the time — the id says which type it is now,
+    #: this says what it was called then.
     session_type: Mapped[str] = mapped_column(String(30), nullable=False)
     video_link: Mapped[str | None] = mapped_column(Text)
     video_platform: Mapped[str | None] = mapped_column(String(30))
@@ -596,11 +616,26 @@ class AvailabilityRuleRow(Base):
 
 
 class AppointmentTypeRow(Base):
-    """Practice-level default fee for a named appointment type.
+    """A kind of appointment: how long it runs, who it is for, when it may be offered.
 
-    ``default_fee_cents`` is the fee a clinician charges for this type of
-    session (e.g. "individual", "intake") absent a per-patient override —
-    see :mod:`app.scheduling_engine.services.rate_resolver`.
+    This started as a fee table and is now the unit of scheduling. A type
+    carries its own length and its own booking window, because a fifteen-minute
+    consultation and a sixty-minute intake do not want the same notice, the
+    same lead time, or the same horizon.
+
+    ``default_fee_cents`` remains the fee absent a per-patient override — see
+    :mod:`app.scheduling_engine.services.rate_resolver`.
+
+    ``appointments.appointment_type_id`` references this table, so renaming a
+    type no longer orphans the appointments booked under it. Two places
+    deliberately still hold a plain string instead:
+
+    * ``appointments.session_type`` — kept as the name the appointment was
+      booked under, so history reads correctly after a rename.
+    * ``booking_links.session_type`` — that table is PLATFORM-scoped, because
+      a public slug has to resolve before any tenant schema can be selected.
+      A platform table cannot hold a foreign key into one of N per-tenant
+      schemas, so this one cannot be converted and should not be attempted.
     """
 
     __tablename__ = "appointment_types"
@@ -609,10 +644,145 @@ class AppointmentTypeRow(Base):
     user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     default_fee_cents: Mapped[int | None] = mapped_column(Integer)
+
+    #: How long this appointment runs. The practice-wide default in
+    #: ``session_defaults`` still seeds new appointments; this is what the type
+    #: itself is worth when times are proposed for it.
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50")
+
+    #: Who may be offered this type: ``new``, ``existing`` or ``both``. A
+    #: consultation is for people who are not patients yet; a standard session
+    #: is not.
+    audience: Mapped[str] = mapped_column(String(10), nullable=False, server_default="existing")
+
+    #: Least notice this type needs, in hours. ``None`` means "use the
+    #: practice default" and is deliberately distinct from ``0``, which means
+    #: "no notice required".
+    min_notice_hours: Mapped[int | None] = mapped_column(Integer)
+
+    #: How far out the first offerable day is, in working days. ``0`` allows
+    #: same-day; ``1`` means "not today". Which days count comes from the
+    #: availability rules, never from here.
+    earliest_offer_business_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+
+    #: How far ahead this type may be offered, in ``horizon_unit`` units.
+    horizon: Mapped[int] = mapped_column(Integer, nullable=False, server_default="10")
+
+    #: ``business`` counts only days the practice works; ``days`` is calendar
+    #: days. "Ten business days" and "two weeks" are different promises.
+    horizon_unit: Mapped[str] = mapped_column(String(10), nullable=False, server_default="business")
+
+    #: Whether a patient may take a slot of this type themselves. Off by
+    #: default: booking without the clinician in the loop is opt-in per type
+    #: AND gated by the practice policy.
+    self_bookable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+
+    #: Whether Pablo may propose times for this type when it suggests times.
+    #: On by default — a type that exists is normally one you want offered.
+    offerable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_appointment_types_user_name"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_appointment_types_user_name"),
+        CheckConstraint("duration_minutes BETWEEN 5 AND 480", name="ck_appointment_types_duration"),
+        CheckConstraint(
+            "audience IN ('new', 'existing', 'both')", name="ck_appointment_types_audience"
+        ),
+        CheckConstraint(
+            "min_notice_hours IS NULL OR min_notice_hours >= 0",
+            name="ck_appointment_types_min_notice",
+        ),
+        CheckConstraint(
+            "earliest_offer_business_days >= 0", name="ck_appointment_types_earliest_offer"
+        ),
+        CheckConstraint("horizon > 0", name="ck_appointment_types_horizon"),
+        CheckConstraint(
+            "horizon_unit IN ('business', 'days')", name="ck_appointment_types_horizon_unit"
+        ),
+    )
+
+
+class SchedulingPolicyRow(Base):
+    """The practice's standing scheduling policy. One row per tenant.
+
+    Answers the questions an appointment type does not: how late a patient may
+    cancel, how a new enquiry starts, whether patients may book at all. A type
+    says what an appointment IS; this says what the practice will allow to
+    happen to its calendar.
+
+    Singleton, pinned by ``CHECK (id = 1)``, so a save upserts the one row.
+
+    Every gate defaults off or strict. ``self_book_existing`` and
+    ``self_book_new`` are both false, and ``self_book_mode`` is ``request`` (a
+    pending appointment the clinician confirms) rather than ``auto``. A
+    practice upgrading into this code must not discover that patients can
+    suddenly book it.
+
+    Whether a PARTICULAR type may be self-booked lives on
+    ``appointment_types.self_bookable``, not here. Two switches, deliberately:
+    this one is the practice saying "self-booking is a thing I allow at all",
+    the per-type one is "and this type in particular". Both must be on.
+
+    Storing policy is all this does. Enforcing it at booking time is separate
+    and not yet built.
+    """
+
+    __tablename__ = "scheduling_policy"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+
+    #: Least notice for any new booking, in hours. A type may demand more via
+    #: ``appointment_types.min_notice_hours``; none may demand less.
+    min_notice_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    #: The furthest ahead anything may be booked, whatever a type says.
+    max_horizon_days: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    cancel_cutoff_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    reschedule_cutoff_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    #: How long a request-mode booking holds its slot before the sweep releases it.
+    pending_hold_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=72)
+
+    #: May existing patients book from the portal at all.
+    self_book_existing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: May people who are not patients yet. A separate switch on purpose: it
+    #: lets a stranger put a first appointment on the calendar, which is a
+    #: different decision from letting a known patient rebook.
+    self_book_new: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: ``request`` holds the slot pending confirmation; ``auto`` books it outright.
+    self_book_mode: Mapped[str] = mapped_column(String(10), nullable=False, default="request")
+
+    #: How a new enquiry starts: ``consult`` offers a short call first,
+    #: ``intake`` offers the full first appointment straight away.
+    new_patient_flow: Mapped[str] = mapped_column(String(10), nullable=False, default="consult")
+    #: How far before an intake the paperwork must be back, in hours.
+    intake_forms_due_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=48)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_scheduling_policy_singleton"),
+        CheckConstraint(
+            "self_book_mode IN ('request', 'auto')", name="ck_scheduling_policy_self_book_mode"
+        ),
+        CheckConstraint(
+            "new_patient_flow IN ('consult', 'intake')",
+            name="ck_scheduling_policy_new_patient_flow",
+        ),
+        CheckConstraint("min_notice_hours >= 0", name="ck_scheduling_policy_min_notice"),
+        CheckConstraint("max_horizon_days > 0", name="ck_scheduling_policy_max_horizon"),
+        CheckConstraint("cancel_cutoff_hours >= 0", name="ck_scheduling_policy_cancel_cutoff"),
+        CheckConstraint(
+            "reschedule_cutoff_hours >= 0", name="ck_scheduling_policy_reschedule_cutoff"
+        ),
+        CheckConstraint("pending_hold_hours > 0", name="ck_scheduling_policy_pending_hold"),
+        CheckConstraint(
+            "intake_forms_due_hours >= 0", name="ck_scheduling_policy_intake_forms_due"
+        ),
+    )
 
 
 class GoogleCalendarTokenRow(Base):
@@ -1039,6 +1209,19 @@ class AuditLogRow(Base):
     user_agent: Mapped[str | None] = mapped_column(Text)
     changes: Mapped[dict | None] = mapped_column(JSONB)
 
+    __table_args__ = (
+        # Disarming a principal sets its GUC to '' rather than dropping it, so
+        # every request runs with one of the two identity GUCs empty. Every
+        # other principal column in the schema is a uuid, where '' fails the
+        # cast and the comparison is a no-match; this one is VARCHAR for the
+        # reasons above it, so '' is storable and '' = '' is true. Without
+        # this constraint the empty id is a bucket shared by every principal
+        # whose other GUC is cleared — readable and writable across the
+        # clinician/patient boundary, invisible to legitimate readers, and
+        # unreachable by the retention purge.
+        CheckConstraint("user_id <> ''", name="audit_logs_user_id_not_empty"),
+    )
+
 
 # ---------------------------------------------------------------------------
 # Prescribing encounter context (prescribing rules-engine input)
@@ -1385,3 +1568,162 @@ class PrescribingChecklistItemRow(Base):
             name="ck_prescribing_checklist_items_requirement_level",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Self-pay card payments
+# ---------------------------------------------------------------------------
+
+#: Ledger statuses for a card charge. ``pending`` is written before the card
+#: processor is called at all; the outcome moves the row to ``succeeded`` or
+#: ``failed``; a refund the practice issues from its own Stripe dashboard
+#: arrives by webhook as ``refunded``. A ``failed`` row STAYS failed —
+#: retrying is a fresh charge the clinician explicitly asks for, never an
+#: automatic one. ``disputed`` is a chargeback the cardholder's bank raised —
+#: NOT a refund, because it is not yet decided: it resolves to ``succeeded``
+#: (the practice keeps the money) or ``dispute_lost`` (it does not).
+CHARGE_STATUSES: tuple[str, ...] = (
+    "pending",
+    "succeeded",
+    "failed",
+    "refunded",
+    "disputed",
+    "dispute_lost",
+)
+
+#: The currency the ledger column defaults to. It exists so a row records what
+#: the processor was actually told, not so a caller can pick one per charge.
+DEFAULT_CHARGE_CURRENCY = "usd"
+
+
+class PatientPaymentMethodRow(Base):
+    """The card a practice keeps on file for one client — processor ids only.
+
+    A card number must never be able to reach this database, and that is a
+    property of the schema rather than of the routes above it: there is no
+    column here a PAN or CVC could be written into. The browser posts the card
+    straight to Stripe against a SetupIntent and hands the backend a ``pm_…``
+    id; what is stored is that id, the customer id, and the display triple the
+    UI renders ("Visa ···· 4242, exp 4/2029").
+
+    One row per client (``patient_id`` is unique). Re-running setup replaces
+    the card in place rather than accumulating stale ones the clinician would
+    then have to choose between; several cards per client is a client-portal
+    concern, not a charge-for-the-session one.
+
+    ``stripe_payment_method_id`` is nullable for exactly one window: the row is
+    created when the SetupIntent is minted (the customer id is known then) and
+    completed when the browser confirms and Stripe reports which payment method
+    got attached. A row with a NULL payment-method id is a setup that was
+    started and never finished — it is not chargeable, and the charge route
+    treats it as "no card on file".
+    """
+
+    __tablename__ = "patient_payment_methods"
+    __table_args__ = (Index("ux_patient_payment_methods_patient_id", "patient_id", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # Native uuid so the schema's ``has_patient_access`` policy applies
+    # directly, the same way it does for notes and outcome measures.
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+
+    # Stripe ids only. WHICH Stripe account they belong to is a deployment
+    # question answered by ``app.payments.provider``, not recorded here.
+    stripe_customer_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    stripe_payment_method_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # The display triple, straight off Stripe's ``card`` object. These are the
+    # only card-shaped values that may ever be stored.
+    card_brand: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    card_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    card_exp_month: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    card_exp_year: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+
+    # Which clinician put the card on file. Deliberately NOT named ``user_id``:
+    # ``enable_rls_on_schema`` checks for ``user_id`` BEFORE ``patient_id``, so
+    # that name would silently swap the patient-access policy for direct
+    # ownership — the clinician who took the payment would be the only one who
+    # could ever see the row, and a covering clinician would not. This column
+    # records who acted, not who owns the row.
+    created_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PatientChargeRow(Base):
+    """One charge attempt against a client's card on file — the ledger row.
+
+    Written FIRST, as ``pending``, before Stripe is called. That ordering is
+    the point of the table: if the call times out, or the process dies between
+    the call and the response, the practice still has a row saying a charge was
+    attempted, and the webhook (or a human reading the Stripe dashboard) can
+    reconcile it by ``stripe_payment_intent_id``. A ledger written only on
+    success would lose exactly the cases somebody needs to look at.
+
+    ``appointment_id`` is nullable: a charge need not hang off an appointment (a
+    late-cancellation fee, or a balance), and an appointment can be deleted
+    while the money record must not be. Soft reference, no foreign key.
+    """
+
+    __tablename__ = "patient_charges"
+    __table_args__ = (
+        CheckConstraint(
+            f"status IN ({_sql_in_list(CHARGE_STATUSES)})",
+            name="ck_patient_charges_status",
+        ),
+        # Money is integer minor units and a charge is for a positive amount; a
+        # refund is a status transition on this row, never a negative charge.
+        CheckConstraint("amount_cents > 0", name="ck_patient_charges_amount_positive"),
+        # The ledger read is "this client's charges, newest first".
+        Index("ix_patient_charges_patient_created", "patient_id", "created_at"),
+        # The webhook finds its row by the PaymentIntent id; unique so a
+        # replayed event can never fan out across two rows. Partial, because
+        # many rows legitimately sit at NULL between the insert and the call.
+        Index(
+            "ux_patient_charges_payment_intent",
+            "stripe_payment_intent_id",
+            unique=True,
+            postgresql_where=text("stripe_payment_intent_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+
+    # Native uuid so the schema's ``has_patient_access`` policy applies.
+    patient_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
+
+    # Soft reference to ``appointments.id``, nullable — see the docstring.
+    appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default=DEFAULT_CHARGE_CURRENCY
+    )
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Stripe's machine-readable reason the attempt ended where it did — the
+    # ``decline_code`` when there is one (``insufficient_funds``), else the
+    # coarser ``code`` (``card_declined``). A token, never prose and never
+    # clinical content; the UI maps it to copy on its side.
+    status_detail: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Which clinician asked for the charge. NOT ``user_id`` — see
+    # ``PatientPaymentMethodRow.created_by_user_id``.
+    created_by_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # What the practice actually receives, straight off the charge's balance
+    # transaction: ``fee_cents`` is what the processor kept, ``net_cents`` is
+    # ``amount_cents - fee_cents``. Both NULL until the webhook receiver sees
+    # the balance transaction — for some payment methods it settles slightly
+    # after the charge succeeds, so NULL here means "not known yet", never
+    # zero.
+    fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    net_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -34,7 +34,7 @@ from ..calendar_providers.event_titles import (
     EventTitleStyle,
 )
 from ..calendar_providers.oauth_state import OAuthStateError
-from ..db import release_db_connection
+from ..db import get_db_session, release_db_connection
 from ..models import (
     AuditAction,
     ScheduleSessionRequest,
@@ -66,6 +66,7 @@ from ..models.scheduling import (
     ParseAvailabilityRulesRequest,
     ParseAvailabilityRulesResponse,
     ProposedAvailabilityRule,
+    SchedulingPolicyResponse,
     SetEventTitlingRequest,
     SetEventTitlingResponse,
     StartSessionFromAppointmentRequest,
@@ -73,6 +74,7 @@ from ..models.scheduling import (
     UpdateAppointmentRequest,
     UpdateAppointmentTypeRequest,
     UpdateAvailabilityRuleRequest,
+    UpdateSchedulingPolicyRequest,
 )
 from ..notes import NoteTypeAuthorizer, get_note_type_authorizer
 from ..rate_limit import get_availability_parse_limiter
@@ -115,6 +117,7 @@ from ..scheduling_engine.models.appointment_type import AppointmentType
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
+from ..scheduling_engine.services.scheduling_policy import load_policy, update_policy
 from ..services import (
     AuditService,
     NoteService,
@@ -200,6 +203,32 @@ def get_appointment_type_repository(
 ) -> AppointmentTypeRepository:
     """Get appointment type repository scoped to the tenant's database."""
     return _appt_type_repo_factory()
+
+
+def _apply_appointment_type(
+    data: dict[str, object],
+    *,
+    user_id: str,
+    type_repo: AppointmentTypeRepository,
+) -> None:
+    """Let a chosen appointment type speak for the appointment's label.
+
+    When the caller names a type, that type is authoritative: ``session_type``
+    is overwritten with its name so the id and the label cannot drift apart.
+    Nothing else is inferred — the caller still sends its own duration, because
+    a clinician may legitimately book a longer-than-usual session of a type.
+
+    Mutates ``data`` in place. Raises ``NotFoundError`` for a type that is not
+    this clinician's, which also stops one clinician booking against another's
+    type inside a shared practice.
+    """
+    appointment_type_id = data.get("appointment_type_id")
+    if not appointment_type_id:
+        return
+    appointment_type = type_repo.get(str(appointment_type_id), user_id)
+    if appointment_type is None:
+        raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
+    data["session_type"] = appointment_type.name
 
 
 def get_availability_engine(
@@ -378,13 +407,16 @@ def create_appointment(
     audit: AuditService = Depends(get_audit_service),
     gcal_service: GoogleCalendarService = Depends(get_google_calendar_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
     tz: tzinfo = Depends(get_owner_timezone),
 ) -> AppointmentResponse:
     """Create a new appointment."""
+    data = request.model_dump()
+    _apply_appointment_type(data, user_id=user.id, type_repo=type_repo)
     try:
         appt = service.create_appointment(
             user.id,
-            data=request.model_dump(),
+            data=data,
             tz=tz,
         )
     except InvalidAppointmentError as e:
@@ -1024,9 +1056,50 @@ def _appointment_type_to_response(appointment_type: AppointmentType) -> Appointm
         user_id=appointment_type.user_id,
         name=appointment_type.name,
         default_fee_cents=appointment_type.default_fee_cents,
+        duration_minutes=appointment_type.duration_minutes,
+        audience=appointment_type.audience,
+        min_notice_hours=appointment_type.min_notice_hours,
+        earliest_offer_business_days=appointment_type.earliest_offer_business_days,
+        horizon=appointment_type.horizon,
+        horizon_unit=appointment_type.horizon_unit,
+        self_bookable=appointment_type.self_bookable,
+        offerable=appointment_type.offerable,
         created_at=appointment_type.created_at,
         updated_at=appointment_type.updated_at,
     )
+
+
+@router.get("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
+def get_scheduling_policy(
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> SchedulingPolicyResponse:
+    """The practice's scheduling policy.
+
+    A practice that has never opened the settings has no stored row; it gets
+    the defaults, which are uniformly off or strict. Reading never creates a
+    row, so this stays safe to call from anywhere.
+    """
+    # Taken from the request-scoped session rather than injected: the tenant
+    # context dependency above has already pointed the search path at this
+    # practice, and every other read in this module resolves its session the
+    # same way.
+    return SchedulingPolicyResponse(**load_policy(get_db_session()))  # type: ignore[arg-type]
+
+
+@router.patch("/api/scheduling/policy", response_model=SchedulingPolicyResponse)
+def update_scheduling_policy(
+    request: UpdateSchedulingPolicyRequest,
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> SchedulingPolicyResponse:
+    """Change part of the scheduling policy.
+
+    Partial: a field the caller did not send keeps its current value, so a
+    settings page can save one row without resending the rest.
+    """
+    session = get_db_session()
+    merged = update_policy(session, request.model_dump(exclude_unset=True))
+    session.commit()
+    return SchedulingPolicyResponse(**merged)  # type: ignore[arg-type]
 
 
 @router.get("/api/appointment-types", response_model=AppointmentTypeListResponse)
@@ -1052,13 +1125,26 @@ def create_appointment_type(
     ctx: TenantContext = Depends(get_tenant_context),
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
 ) -> AppointmentTypeResponse:
-    """Create a new appointment type with an optional default fee."""
+    """Create a new appointment type.
+
+    Unspecified scheduling fields take the request model's defaults, which
+    describe a standard session, so a caller that only sends a name gets a
+    usable type rather than one that can never be offered.
+    """
     now = utc_now()
     appointment_type = AppointmentType(
         id=str(uuid.uuid4()),
         user_id=ctx.user_id,
         name=request.name,
         default_fee_cents=request.default_fee_cents,
+        duration_minutes=request.duration_minutes,
+        audience=request.audience,
+        min_notice_hours=request.min_notice_hours,
+        earliest_offer_business_days=request.earliest_offer_business_days,
+        horizon=request.horizon,
+        horizon_unit=request.horizon_unit,
+        self_bookable=request.self_bookable,
+        offerable=request.offerable,
         created_at=now,
         updated_at=now,
     )
@@ -1076,15 +1162,20 @@ def update_appointment_type(
     ctx: TenantContext = Depends(get_tenant_context),
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
 ) -> AppointmentTypeResponse:
-    """Update an existing appointment type."""
+    """Update an existing appointment type.
+
+    Only fields the caller actually sent are touched. That distinction matters
+    for ``min_notice_hours``, where ``null`` is a real value meaning "defer to
+    the practice default" — an omitted field leaves it alone, an explicit null
+    clears it. ``exclude_unset`` is what separates the two, so do not simplify
+    this to an ``is not None`` check per field.
+    """
     appointment_type = type_repo.get(appointment_type_id, ctx.user_id)
     if not appointment_type:
         raise NotFoundError(f"Appointment type not found: {appointment_type_id}")
 
-    if request.name is not None:
-        appointment_type.name = request.name
-    if request.default_fee_cents is not None:
-        appointment_type.default_fee_cents = request.default_fee_cents
+    for name, value in request.model_dump(exclude_unset=True).items():
+        setattr(appointment_type, name, value)
 
     appointment_type.updated_at = utc_now()
     updated = type_repo.update(appointment_type)

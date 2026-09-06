@@ -81,7 +81,21 @@ CREATE TABLE __TENANT_SCHEMA__.appointment_types (
     name character varying(100) NOT NULL,
     default_fee_cents integer,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    duration_minutes integer DEFAULT 50 NOT NULL,
+    audience character varying(10) DEFAULT 'existing'::character varying NOT NULL,
+    min_notice_hours integer,
+    earliest_offer_business_days integer DEFAULT 1 NOT NULL,
+    horizon integer DEFAULT 10 NOT NULL,
+    horizon_unit character varying(10) DEFAULT 'business'::character varying NOT NULL,
+    self_bookable boolean DEFAULT false NOT NULL,
+    offerable boolean DEFAULT true NOT NULL,
+    CONSTRAINT ck_appointment_types_audience CHECK (((audience)::text = ANY ((ARRAY['new'::character varying, 'existing'::character varying, 'both'::character varying])::text[]))),
+    CONSTRAINT ck_appointment_types_duration CHECK (((duration_minutes >= 5) AND (duration_minutes <= 480))),
+    CONSTRAINT ck_appointment_types_earliest_offer CHECK ((earliest_offer_business_days >= 0)),
+    CONSTRAINT ck_appointment_types_horizon CHECK ((horizon > 0)),
+    CONSTRAINT ck_appointment_types_horizon_unit CHECK (((horizon_unit)::text = ANY ((ARRAY['business'::character varying, 'days'::character varying])::text[]))),
+    CONSTRAINT ck_appointment_types_min_notice CHECK (((min_notice_hours IS NULL) OR (min_notice_hours >= 0)))
 );
 
 
@@ -122,7 +136,8 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     place_of_service character varying(2),
     diagnosis_codes jsonb,
     note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
-    confirmation_token_hash character varying(64)
+    confirmation_token_hash character varying(64),
+    appointment_type_id uuid
 );
 
 
@@ -141,7 +156,8 @@ CREATE TABLE __TENANT_SCHEMA__.audit_logs (
     user_agent text,
     changes jsonb,
     actor_type character varying(20) DEFAULT 'clinician'::character varying NOT NULL,
-    actor_component character varying(64)
+    actor_component character varying(64),
+    CONSTRAINT audit_logs_user_id_not_empty CHECK (((user_id)::text <> ''::text))
 );
 
 
@@ -395,6 +411,26 @@ CREATE TABLE __TENANT_SCHEMA__.outcome_measures (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_charges (
+    id character varying(128) NOT NULL,
+    patient_id uuid NOT NULL,
+    appointment_id uuid,
+    amount_cents integer NOT NULL,
+    currency character varying(3) DEFAULT 'usd'::character varying NOT NULL,
+    status character varying(16) NOT NULL,
+    stripe_payment_intent_id character varying(255),
+    status_detail character varying(128),
+    created_by_user_id character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone,
+    fee_cents integer,
+    net_cents integer,
+    CONSTRAINT ck_patient_charges_amount_positive CHECK ((amount_cents > 0)),
+    CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
     patient_id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -445,6 +481,22 @@ CREATE TABLE __TENANT_SCHEMA__.patient_medications (
     deleted_at timestamp with time zone,
     stop_reason text,
     CONSTRAINT ck_patient_medications_status CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'discontinued'::character varying, 'on_hold'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.patient_payment_methods (
+    id character varying(128) NOT NULL,
+    patient_id uuid NOT NULL,
+    stripe_customer_id character varying(255) NOT NULL,
+    stripe_payment_method_id character varying(255),
+    card_brand character varying(32),
+    card_last4 character varying(4),
+    card_exp_month smallint,
+    card_exp_year smallint,
+    created_by_user_id character varying(128) NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone
 );
 
 
@@ -575,6 +627,47 @@ CREATE TABLE __TENANT_SCHEMA__.prescriptions (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.scheduling_policy (
+    id smallint NOT NULL,
+    min_notice_hours integer DEFAULT 24 NOT NULL,
+    max_horizon_days integer DEFAULT 60 NOT NULL,
+    cancel_cutoff_hours integer DEFAULT 24 NOT NULL,
+    reschedule_cutoff_hours integer DEFAULT 24 NOT NULL,
+    pending_hold_hours integer DEFAULT 72 NOT NULL,
+    self_book_existing boolean DEFAULT false NOT NULL,
+    self_book_new boolean DEFAULT false NOT NULL,
+    self_book_mode character varying(10) DEFAULT 'request'::character varying NOT NULL,
+    new_patient_flow character varying(10) DEFAULT 'consult'::character varying NOT NULL,
+    intake_forms_due_hours integer DEFAULT 48 NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_scheduling_policy_cancel_cutoff CHECK ((cancel_cutoff_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_intake_forms_due CHECK ((intake_forms_due_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_max_horizon CHECK ((max_horizon_days > 0)),
+    CONSTRAINT ck_scheduling_policy_min_notice CHECK ((min_notice_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_new_patient_flow CHECK (((new_patient_flow)::text = ANY ((ARRAY['consult'::character varying, 'intake'::character varying])::text[]))),
+    CONSTRAINT ck_scheduling_policy_pending_hold CHECK ((pending_hold_hours > 0)),
+    CONSTRAINT ck_scheduling_policy_reschedule_cutoff CHECK ((reschedule_cutoff_hours >= 0)),
+    CONSTRAINT ck_scheduling_policy_self_book_mode CHECK (((self_book_mode)::text = ANY ((ARRAY['request'::character varying, 'auto'::character varying])::text[]))),
+    CONSTRAINT ck_scheduling_policy_singleton CHECK ((id = 1))
+);
+
+
+
+CREATE SEQUENCE __TENANT_SCHEMA__.scheduling_policy_id_seq
+    AS smallint
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+
+ALTER SEQUENCE __TENANT_SCHEMA__.scheduling_policy_id_seq OWNED BY __TENANT_SCHEMA__.scheduling_policy.id;
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.supervision_hours (
     id uuid NOT NULL,
     supervision_relationship_id uuid NOT NULL,
@@ -640,6 +733,10 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
     deleted_at timestamp with time zone,
     transcription_job_metadata jsonb
 );
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy ALTER COLUMN id SET DEFAULT nextval('__TENANT_SCHEMA__.scheduling_policy_id_seq'::regclass);
 
 
 
@@ -738,6 +835,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.outcome_measures
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
+    ADD CONSTRAINT patient_charges_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
     ADD CONSTRAINT patient_clinicians_pkey PRIMARY KEY (patient_id, user_id);
 
@@ -750,6 +852,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_medications
     ADD CONSTRAINT patient_medications_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
+    ADD CONSTRAINT patient_payment_methods_pkey PRIMARY KEY (id);
 
 
 
@@ -783,6 +890,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescriptions
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy
+    ADD CONSTRAINT scheduling_policy_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.supervision_hours
     ADD CONSTRAINT supervision_hours_pkey PRIMARY KEY (id);
 
@@ -809,6 +921,10 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
 
 
 CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types USING btree (user_id);
+
+
+
+CREATE INDEX ix_appointments_appointment_type_id ON __TENANT_SCHEMA__.appointments USING btree (appointment_type_id);
 
 
 
@@ -972,6 +1088,10 @@ CREATE INDEX ix_outcome_measures_session_id ON __TENANT_SCHEMA__.outcome_measure
 
 
 
+CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id, created_at);
+
+
+
 CREATE INDEX ix_patient_clinicians_user_id ON __TENANT_SCHEMA__.patient_clinicians USING btree (user_id);
 
 
@@ -1080,11 +1200,23 @@ CREATE INDEX ix_therapy_sessions_user_id ON __TENANT_SCHEMA__.therapy_sessions U
 
 
 
+CREATE UNIQUE INDEX uq_appointments_user_start_active ON __TENANT_SCHEMA__.appointments USING btree (user_id, start_at) WHERE ((status)::text <> 'cancelled'::text);
+
+
+
 CREATE UNIQUE INDEX ux_chat_messages_conversation_sequence ON __TENANT_SCHEMA__.chat_messages USING btree (conversation_id, sequence);
 
 
 
 CREATE UNIQUE INDEX ux_notes_session_id ON __TENANT_SCHEMA__.notes USING btree (session_id) WHERE (session_id IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX ux_patient_charges_payment_intent ON __TENANT_SCHEMA__.patient_charges USING btree (stripe_payment_intent_id) WHERE (stripe_payment_intent_id IS NOT NULL);
+
+
+
+CREATE UNIQUE INDEX ux_patient_payment_methods_patient_id ON __TENANT_SCHEMA__.patient_payment_methods USING btree (patient_id);
 
 
 
@@ -1138,6 +1270,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
     ADD CONSTRAINT diagnostic_assessments_session_id_fkey FOREIGN KEY (session_id) REFERENCES __TENANT_SCHEMA__.therapy_sessions(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
+    ADD CONSTRAINT fk_appointments_appointment_type FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE SET NULL;
 
 
 
@@ -1237,6 +1374,14 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.therapy_sessions
 
 
 CREATE POLICY rls_audit_actor_access ON __TENANT_SCHEMA__.audit_logs USING (((user_id)::text = current_setting('app.current_user_id'::text, true))) WITH CHECK (((((actor_type)::text IS DISTINCT FROM 'patient'::text) AND ((user_id)::text = current_setting('app.current_user_id'::text, true))) OR (((actor_type)::text = 'patient'::text) AND ((user_id)::text = current_setting('app.current_patient_id'::text, true)))));
+
+
+
+CREATE POLICY rls_audit_purge_delete ON __TENANT_SCHEMA__.audit_logs FOR DELETE USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
+
+
+
+CREATE POLICY rls_audit_purge_select ON __TENANT_SCHEMA__.audit_logs FOR SELECT USING ((current_setting('app.allow_audit_purge'::text, true) = 'on'::text));
 
 
 

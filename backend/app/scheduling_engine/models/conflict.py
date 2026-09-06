@@ -17,6 +17,7 @@ class TimeSlot:
 
     start: str  # ISO 8601 UTC
     end: str  # ISO 8601 UTC
+    over_cap: bool = False
 
 
 @dataclass

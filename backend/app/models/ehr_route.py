@@ -178,4 +178,5 @@ class GoalNavigationResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     is_on_target_page: bool
     form_fields: dict[str, str] | None = None
+    form_fields_truncated: bool = False
     alternative_plan: str | None = None

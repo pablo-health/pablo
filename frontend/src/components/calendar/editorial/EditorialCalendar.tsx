@@ -8,6 +8,8 @@ import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointment
 import { usePatientList } from "@/hooks/usePatients"
 import { useAvailabilityRules, useFreeSlots } from "@/hooks/useAvailability"
 import { summarize } from "@/components/settings/AvailabilitySettings"
+import { useToast } from "@/components/ui/Toast"
+import { ApiError } from "@/lib/api/client"
 import type {
   AppointmentResponse,
   AppointmentStatus,
@@ -96,6 +98,18 @@ export function EditorialCalendar({
   )
   const { data: patientData } = usePatientList()
   const updateAppointment = useUpdateAppointment()
+  const { showToast } = useToast()
+
+  const handleUpdateError = useCallback(
+    (error: unknown) => {
+      if (error instanceof ApiError && error.status === 409) {
+        showToast("That time conflicts with another appointment.", "error")
+      } else {
+        showToast("Couldn't update the appointment. Please try again.", "error")
+      }
+    },
+    [showToast],
+  )
 
   const { data: availabilityRulesData } = useAvailabilityRules()
   const availabilityRules = useMemo(
@@ -193,14 +207,17 @@ export function EditorialCalendar({
   const handleSetStatus = useCallback(
     (appointment: AppointmentResponse, status: AppointmentStatus) => {
       if (status !== appointment.status) {
-        updateAppointment.mutate({
-          appointmentId: appointment.id,
-          data: { status },
-        })
+        updateAppointment.mutate(
+          {
+            appointmentId: appointment.id,
+            data: { status },
+          },
+          { onError: handleUpdateError },
+        )
       }
       setCtxMenu(null)
     },
-    [updateAppointment],
+    [updateAppointment, handleUpdateError],
   )
 
   const handleMove = useCallback(
@@ -211,12 +228,15 @@ export function EditorialCalendar({
         new Date(newStartIso).getTime() +
           appointment.duration_minutes * 60_000,
       ).toISOString()
-      updateAppointment.mutate({
-        appointmentId: appointment.id,
-        data: { start_at: newStartIso, end_at: newEnd },
-      })
+      updateAppointment.mutate(
+        {
+          appointmentId: appointment.id,
+          data: { start_at: newStartIso, end_at: newEnd },
+        },
+        { onError: handleUpdateError },
+      )
     },
-    [updateAppointment],
+    [updateAppointment, handleUpdateError],
   )
 
   const peekPatientName = peek

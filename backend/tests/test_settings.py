@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
-from app.settings import Settings
+from app.settings import Settings, log_startup_posture
 
 
 def _make(**overrides: object) -> Settings:
@@ -65,6 +67,23 @@ def test_is_prod_project_default_is_false() -> None:
     assert not _make(environment="development").is_prod_project
 
 
+def test_test_identity_signup_is_disarmed_by_default() -> None:
+    # The wizard names projects "pablo-<random>", which is non-prod by the
+    # project-id rule; that alone must not arm self-signup for test addresses.
+    settings = _make(environment="production", gcp_project_id="pablo-x7k2m9")
+    assert not settings.allow_test_identity_signup
+    assert not settings.test_identity_signup_armed
+
+
+def test_test_identity_signup_needs_opt_in_and_non_prod_project() -> None:
+    assert _make(
+        allow_test_identity_signup=True, gcp_project_id="pablo-x7k2m9"
+    ).test_identity_signup_armed
+    assert not _make(
+        allow_test_identity_signup=True, gcp_project_id="pablohealth-prod"
+    ).test_identity_signup_armed
+
+
 def test_internal_actor_user_ids_default_is_empty() -> None:
     assert _make().internal_actor_user_ids == set()
 
@@ -81,3 +100,46 @@ def test_assemblyai_speaker_labels_channels_default_is_empty() -> None:
 def test_assemblyai_speaker_labels_channels_parses_and_strips() -> None:
     settings = _make(assemblyai_speaker_labels_channels=" Client , , ")
     assert settings.assemblyai_speaker_labels_channels == ["Client"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"debug": True},
+        {"require_mfa": False},
+        {"debug": True, "require_mfa": False},
+    ],
+)
+def test_debug_and_mfa_bypass_rejected_outside_development(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="ENVIRONMENT=development"):
+        _make(environment="production", **overrides)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_debug_and_mfa_bypass_rejected_in_staging_too(environment: str) -> None:
+    with pytest.raises(ValueError, match="ENVIRONMENT=development"):
+        _make(environment=environment, debug=True)
+
+
+def test_debug_and_mfa_bypass_allowed_in_development() -> None:
+    settings = _make(environment="development", debug=True, require_mfa=False)
+    assert settings.debug
+    assert not settings.require_mfa
+
+
+def test_log_startup_posture_emits_summary_line(caplog: pytest.LogCaptureFixture) -> None:
+    settings = _make(environment="development")
+    logger = logging.getLogger("app.settings.test_startup_posture")
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        log_startup_posture(settings, logger)
+    [record] = [r for r in caplog.records if r.name == logger.name]
+    message = record.getMessage()
+    assert "startup posture" in message
+    assert "mfa=True" in message
+    assert "restrict_signups=False" in message
+    assert "use_redis=False" in message
+    assert "test_identity_signup=False" in message
+    assert "dpop=False" in message
+    assert "cors_origins=1" in message

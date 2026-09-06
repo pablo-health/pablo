@@ -895,8 +895,40 @@ def create_standalone_session(practice_schema: str | None = None) -> Session:
 # rejected by ``enable_rls_on_schema``'s deny-all guard. Core ships none;
 # a deployment that adds its own non-row-scoped tenant tables registers
 # them here (see ``register_overlay_not_row_scoped``) so the guard treats
-# them exactly like the built-in ``ehr_routes`` / ``users`` entries.
+# them exactly like core's own entries (``_CORE_NOT_ROW_SCOPED``).
 _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
+
+# The tables core itself knows are not row-scoped. Named once, here, rather
+# than spelled inline where it is used: it is needed in two places, and while
+# it was a literal in both, adding an entry meant remembering both — the
+# per-table notes below had already drifted out of step with the set they
+# describe.
+#   * ehr_routes — tenant-level EHR automation config keyed by ``ehr_system``,
+#     with no owning user. Its sibling ``ehr_prompts`` carries none of the
+#     scoping columns so it is never even considered; ehr_routes is only
+#     considered because it carries an ``id``.
+#   * scheduling_policy — practice-level booking policy, a singleton row with
+#     no ``user_id`` / ``patient_id``.
+#   * users — vestigial per-tenant table. Runtime identity lives in the
+#     platform schema; nothing reads this per-tenant copy.
+_CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset({"ehr_routes", "scheduling_policy", "users"})
+
+
+def not_row_scoped_tenant_tables() -> set[str]:
+    """Every tenant table row-level security is deliberately left OFF for.
+
+    The core entries above plus anything a deployment registered through
+    ``register_overlay_not_row_scoped``. Their isolation boundary is the
+    tenant schema (search_path), not a per-row predicate, so forcing RLS on
+    them would leave a table with no policy — a silent deny-all under a
+    NOBYPASSRLS role.
+
+    Exposed as an accessor so that ``enable_rls_on_schema`` (which acts on
+    the set) and ``rls_forced_tenant_tables`` (which reports the complement)
+    read the same answer, and so anything checking the invariant from
+    outside can ask rather than re-derive.
+    """
+    return set(_CORE_NOT_ROW_SCOPED) | _OVERLAY_NOT_ROW_SCOPED
 
 
 def register_overlay_not_row_scoped(*table_names: str) -> None:
@@ -909,8 +941,9 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
     tenant table whose isolation boundary is the tenant schema rather
     than a per-row predicate (e.g. tenant-level config with only an
     ``id``) registers the table name here. Registered tables then take
-    the same code path as the built-in ``ehr_routes`` / ``users``
-    entries: RLS is left disabled rather than the guard raising.
+    the same code path as core's own entries
+    (``_CORE_NOT_ROW_SCOPED``): RLS is left disabled rather than the
+    guard raising.
 
     Core itself registers none — the default registry is empty. This is
     purely a hook for deployment-specific tenant tables.
@@ -938,26 +971,28 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 # isolation rests entirely on each route's own predicates. Anyone writing
 # a patient route in that posture must not treat RLS as the backstop; it
 # is a backstop only where per-practice schemas exist.
-PATIENT_READABLE_TABLES: dict[str, str] = {"patients": "id"}
+PATIENT_READABLE_TABLES: dict[str, str] = {
+    "patients": "id",
+    "outcome_measures": "patient_id",
+}
 
-# Of those, the ones a patient may also WRITE. Deliberately empty in core,
-# and read and write are separate registries so granting one never silently
-# grants the other.
+# Of those, the ones a patient may also WRITE. Read and write stay separate
+# registries so granting one never silently grants the other.
 #
-# Empty here does NOT currently mean "a patient principal can write
-# nothing". ``patients`` carries ``rls_patient_insert ... FOR INSERT WITH
-# CHECK (true)`` — a permissive policy that consults no GUC, added to fix
-# the clinician chicken-and-egg where a brand-new patient has no
-# ``patient_clinicians`` grant yet and so fails ``has_patient_access`` on
-# its own first INSERT. It admits any principal subject to RLS, the
-# patient one included. SELECT/UPDATE/DELETE are all closed to a patient
-# (they key on ``app.current_user_id``, which a patient request leaves
-# empty, and the patient's own read policy is ``FOR SELECT`` only, so it
-# does not widen UPDATE's ``USING``); INSERT is the one gap. Unreachable
-# while no resolver and no patient route exist, and tracked to be closed
-# before the first front door lands. Do not read this registry as the
-# whole answer to "what can a patient write".
-PATIENT_WRITABLE_TABLES: dict[str, str] = {}
+# ``outcome_measures`` is the first write grant: a patient completing a
+# screener records their own scored row and reads their own history back.
+# ``patients`` deliberately stays read-only — a patient reads their
+# demographics; nothing in core lets them write that record.
+#
+# Both commands a patient may use are now policied explicitly. INSERT used
+# to be the gap: ``patients`` carried ``rls_patient_insert ... WITH CHECK
+# (true)``, a policy that consulted no GUC and so admitted any principal
+# subject to RLS. It exists for the clinician chicken-and-egg (a brand-new
+# patient has no ``patient_clinicians`` grant yet, so the clinician fails
+# ``has_patient_access`` on its own first INSERT) and now requires an armed
+# ``app.current_user_id`` — which a patient principal never sets — instead
+# of admitting everyone.
+PATIENT_WRITABLE_TABLES: dict[str, str] = {"outcome_measures": "patient_id"}
 
 
 def register_overlay_patient_scoped(
@@ -1054,6 +1089,20 @@ def _apply_patient_principal_policies(
                 f"FOR UPDATE USING ({predicate}) WITH CHECK ({predicate})"
             )
         )
+        # INSERT needs a policy of its own: an UPDATE policy does not cover
+        # it, and under FORCE ROW LEVEL SECURITY an INSERT with no matching
+        # policy is refused outright — which is why a table registered
+        # ``writable`` was, until this arm existed, still unwritable by the
+        # patient the registration names. ``WITH CHECK`` only, since there
+        # is no prior row for ``USING`` to test: the predicate pins the NEW
+        # row's owning column to the calling patient, and that is what stops
+        # A from writing a row owned by B.
+        session.execute(
+            text(
+                f"CREATE POLICY rls_patient_self_insert ON {qualified} "
+                f"FOR INSERT WITH CHECK ({predicate})"
+            )
+        )
         logger.info("RLS (patient self-write on %s) enabled on %s", key_column, qualified)
 
 
@@ -1102,14 +1151,13 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         ehr_prompts) never reach the loop — the column query above
         doesn't select them.
       * Tables that DO carry an ``id`` but aren't owned by a single
-        user — ``ehr_routes`` (tenant-level EHR config) and the
-        vestigial per-tenant ``users`` table — are listed in
-        ``not_row_scoped`` and have RLS left off explicitly. Their
-        isolation boundary is the tenant schema (search_path), not a
-        per-row predicate. Forcing RLS on them would leave no policy =
-        a silent deny-all under a NOBYPASSRLS role. Deployments can add
-        their own non-row-scoped tenant tables to this set via
-        ``register_overlay_not_row_scoped`` (core registers none).
+        user — ``not_row_scoped_tenant_tables()``, which names core's
+        own and folds in whatever a deployment registered through
+        ``register_overlay_not_row_scoped`` (core registers none) —
+        have RLS left off explicitly. Their isolation boundary is the
+        tenant schema (search_path), not a per-row predicate. Forcing
+        RLS on them would leave no policy = a silent deny-all under a
+        NOBYPASSRLS role.
 
     Any other table that carries one of the scoping columns but matches
     no policy shape raises — refusing to ship a force-RLS'd table with
@@ -1181,24 +1229,14 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
     # this is can see it. Other grants for the same patient are
     # invisible to peers, which matches the v1 "primary clinician owns
     # the relationship" model.
-    # Tables that are NOT owned by a single user: their isolation
-    # boundary is the tenant schema itself (search_path), not a per-row
-    # predicate. They still get caught by the column query above (they
-    # have an ``id``), but forcing RLS on them leaves no policy to
-    # create — a silent deny-all under a NOBYPASSRLS role. Leave RLS off
-    # explicitly, and DISABLE idempotently to heal any schema a prior
-    # run forced it on.
-    #   * ehr_routes — tenant-level EHR automation config keyed by
-    #     ``ehr_system``, with no owning user. Its sibling ``ehr_prompts``
-    #     has no id/user_id/patient_id column so it never reaches this
-    #     loop; ehr_routes only does because it carries an ``id``.
-    #   * users — vestigial per-tenant table. Runtime identity lives in
-    #     the platform schema; nothing reads this per-tenant copy.
-    # Deployments may register their own non-row-scoped tenant tables via
-    # ``register_overlay_not_row_scoped``; merge them so deployment-
-    # specific tables take this same RLS-off path instead of tripping the
-    # deny-all guard below.
-    not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
+    # Tables that are NOT owned by a single user (core's own, plus any a
+    # deployment registered) — see ``not_row_scoped_tenant_tables`` for
+    # which and why. They still get caught by the column query above
+    # because they carry an ``id``, but forcing RLS on them leaves no
+    # policy to create — a silent deny-all under a NOBYPASSRLS role. Leave
+    # RLS off explicitly, and DISABLE idempotently to heal any schema a
+    # prior run forced it on.
+    not_row_scoped = not_row_scoped_tenant_tables()
 
     # Which patient-scoped registrations actually got a policy, checked
     # against the registry after the loop. The loop only iterates tables
@@ -1235,6 +1273,7 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
         # run, rather than keeping a stale grant nobody is looking for.
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_read ON {qualified}"))
         session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_write ON {qualified}"))
+        session.execute(text(f"DROP POLICY IF EXISTS rls_patient_self_insert ON {qualified}"))
 
         # Additive: created before the clinician shape is chosen, because
         # several of those branches ``continue``. Permissive policies OR
@@ -1349,9 +1388,20 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
                     f"))"
                 )
             )
+            # The clinician chicken-and-egg: a brand-new patient has no
+            # ``patient_clinicians`` grant yet, so ``has_patient_access``
+            # is false on the very INSERT that creates them. The policy
+            # therefore cannot test patient access — but it must still
+            # name a principal. Requiring an armed ``app.current_user_id``
+            # admits any clinician (which is the point) while refusing a
+            # patient principal, who arms ``app.current_patient_id`` and
+            # leaves this one empty. ``WITH CHECK (true)`` admitted both.
             session.execute(
                 text(
-                    f"CREATE POLICY rls_patient_insert ON {qualified} FOR INSERT WITH CHECK (true)"
+                    f"CREATE POLICY rls_patient_insert ON {qualified} "
+                    f"FOR INSERT WITH CHECK ("
+                    f"coalesce(current_setting('app.current_user_id', true), '') <> ''"
+                    f")"
                 )
             )
             logger.info("RLS (patient_access split policies) enabled on %s", qualified)
@@ -1399,15 +1449,55 @@ def enable_rls_on_schema(  # noqa: PLR0912,PLR0915 — one policy arm per tenant
             # refusal, it is a silent match against zero rows, which would
             # turn a tampering attempt from a loud trigger error into a
             # quiet no-op and would strand the retention purge.
+            # The retention purge is not a principal and has no identity to
+            # arm: ``_delete_expired`` sets ``search_path``, arms
+            # ``app.allow_audit_purge`` and issues one DELETE across every
+            # actor's rows. Under the actor policy alone that DELETE compares
+            # ``user_id`` against an unset GUC and matches nothing — silently,
+            # rowcount 0, a cron reporting a successful run having purged
+            # nothing while rows outlive ``expires_at`` forever.
+            #
+            # So the purge gets its own permissive policies, gated on the same
+            # GUC the append-only trigger already treats as the authorization
+            # to delete. No new trust boundary: anything that can set that GUC
+            # can already get a DELETE past the trigger, and RLS was only
+            # hiding the rows by accident.
+            #
+            # SELECT as well as DELETE, because ``_count_expired`` backs
+            # ``--dry-run`` and reads through the same predicate. Without it an
+            # operator asking whether the purge has work is told "none" while
+            # the real run deletes thousands — a worse failure than both
+            # reporting zero. Both are gated on the purge GUC, so an ordinary
+            # request (which never sets it) sees exactly what it saw before.
+            #
+            # Deliberately NOT ``FOR ALL``: that would also admit INSERT and
+            # UPDATE under the purge GUC, letting a purge-context session
+            # forge or rewrite rows. The trigger blocks UPDATE, but the policy
+            # should not be the thing relying on it.
+            purge_armed = "current_setting('app.allow_audit_purge', true) = 'on'"
             session.execute(text(f"DROP POLICY IF EXISTS rls_user_isolation ON {qualified}"))
             session.execute(text(f"DROP POLICY IF EXISTS rls_audit_actor_access ON {qualified}"))
+            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_delete ON {qualified}"))
+            session.execute(text(f"DROP POLICY IF EXISTS rls_audit_purge_select ON {qualified}"))
             session.execute(
                 text(
                     f"CREATE POLICY rls_audit_actor_access ON {qualified} "
                     f"USING ({select_using}) WITH CHECK ({insert_check})"
                 )
             )
-            logger.info("RLS (audit actor access) enabled on %s", qualified)
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_audit_purge_delete ON {qualified} "
+                    f"FOR DELETE USING ({purge_armed})"
+                )
+            )
+            session.execute(
+                text(
+                    f"CREATE POLICY rls_audit_purge_select ON {qualified} "
+                    f"FOR SELECT USING ({purge_armed})"
+                )
+            )
+            logger.info("RLS (audit actor access + retention purge) enabled on %s", qualified)
         elif "user_id" in columns:
             # Tables where a row has a direct owning clinician
             # (therapy_sessions, appointments, audit_logs, etc.).
@@ -1534,15 +1624,15 @@ def rls_forced_tenant_tables() -> set[str]:
 
     Mirrors that function's selection: a table is RLS-forced if it carries any
     of user_id / patient_id / id (the columns the provisioning query keys on),
-    excluding alembic_version and the not_row_scoped tables (ehr_routes / users
-    plus any overlay registrations) whose isolation boundary is the schema, not
+    excluding alembic_version and the not_row_scoped tables (see
+    ``not_row_scoped_tenant_tables``) whose isolation boundary is the schema, not
     a per-row policy. Derived from the ORM so a new RLS-bearing table — whether
     patient-access, user-owned, or special-cased — is covered automatically,
     with no hand-maintained list. MUST stay consistent with enable_rls_on_schema.
     """
     from app.db.models import Base  # lazy import — avoid circular import
 
-    not_row_scoped = {"ehr_routes", "users"} | _OVERLAY_NOT_ROW_SCOPED
+    not_row_scoped = not_row_scoped_tenant_tables()
     scoping_cols = {"user_id", "patient_id", "id"}
     result: set[str] = set()
     for table_name, table in Base.metadata.tables.items():

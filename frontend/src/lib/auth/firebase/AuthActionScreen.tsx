@@ -19,21 +19,18 @@ import {
   verifyPasswordResetCode,
 } from "firebase/auth"
 import { getFirebaseAuth, initFirebase } from "@/lib/firebase"
+import { safeContinuePath } from "@/lib/auth/returnTo"
 import { AuthCard, AuthFeedback, AuthFooter, AuthInput, AuthPrimaryButton } from "@/components/auth"
+import { errorCode } from "@/lib/errors/errorCode"
 
 type ActionMode = "verifyEmail" | "resetPassword" | "recoverEmail" | "revertSecondFactorAddition"
 type Status = "loading" | "success" | "error" | "reset-form"
-
-function errorCode(err: unknown): string {
-  return (err as { code?: string })?.code || "unknown"
-}
 
 function AuthActionContent() {
   const searchParams = useSearchParams()
   const mode = searchParams.get("mode") as ActionMode | null
   const oobCode = searchParams.get("oobCode")
   const continueUrl = searchParams.get("continueUrl")
-  const apiKey = searchParams.get("apiKey")
 
   const [status, setStatus] = useState<Status>("loading")
   const [message, setMessage] = useState("")
@@ -41,6 +38,13 @@ function AuthActionContent() {
   const [confirmPassword, setConfirmPassword] = useState("")
   const [resetEmail, setResetEmail] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  // Resolved on the client, where the page's own origin is known. The server
+  // render carries the fallback so the two never disagree.
+  const [continueHref, setContinueHref] = useState("/login")
+
+  useEffect(() => {
+    setContinueHref(safeContinuePath(continueUrl, window.location.origin))
+  }, [continueUrl])
 
   useEffect(() => {
     if (!oobCode || !mode) {
@@ -55,14 +59,13 @@ function AuthActionContent() {
     const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || ""
     const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID || ""
     initFirebase({
-      apiKey: apiKey || process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
+      apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
       authDomain,
       projectId,
       appId,
     })
 
     handleAction(mode, oobCode)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, oobCode])
 
   async function handleAction(actionMode: ActionMode, code: string) {
@@ -75,7 +78,7 @@ function AuthActionContent() {
           setStatus("success")
           setMessage("Your email has been verified.")
         } catch (err) {
-          console.error("verifyEmail action failed:", err)
+          console.error("verifyEmail action failed:", errorCode(err))
           setStatus("error")
           setMessage(
             `This verification link has expired or already been used (${errorCode(err)}).`
@@ -89,7 +92,7 @@ function AuthActionContent() {
           setResetEmail(email)
           setStatus("reset-form")
         } catch (err) {
-          console.error("resetPassword action failed:", err)
+          console.error("resetPassword action failed:", errorCode(err))
           setStatus("error")
           setMessage(
             `This password reset link has expired or already been used (${errorCode(err)}).`
@@ -106,7 +109,7 @@ function AuthActionContent() {
             `Your email has been reverted to ${info.data.email}. If you didn't request this change, consider resetting your password.`
           )
         } catch (err) {
-          console.error("recoverEmail action failed:", err)
+          console.error("recoverEmail action failed:", errorCode(err))
           setStatus("error")
           setMessage(
             `This email recovery link has expired or already been used (${errorCode(err)}).`
@@ -122,7 +125,7 @@ function AuthActionContent() {
             "Two-factor authentication has been removed from your account. If you didn't request this, secure your account immediately."
           )
         } catch (err) {
-          console.error("revertSecondFactorAddition action failed:", err)
+          console.error("revertSecondFactorAddition action failed:", errorCode(err))
           setStatus("error")
           setMessage(`This link has expired or already been used (${errorCode(err)}).`)
         }
@@ -154,7 +157,7 @@ function AuthActionContent() {
       setStatus("success")
       setMessage("Your password has been reset.")
     } catch (err) {
-      console.error("confirmPasswordReset failed:", err)
+      console.error("confirmPasswordReset failed:", errorCode(err))
       setStatus("error")
       setMessage(`Failed to reset password. The link may have expired (${errorCode(err)}).`)
     } finally {
@@ -190,7 +193,8 @@ function AuthActionContent() {
             {message}
           </AuthFeedback>
           <a
-            href={continueUrl || "/login"}
+            href={continueHref}
+            rel="noopener noreferrer"
             className="block w-full text-center bg-primary-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-primary-700 active:scale-[0.98] transition-all duration-200"
           >
             Continue to Sign In

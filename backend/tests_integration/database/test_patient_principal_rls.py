@@ -32,6 +32,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -379,3 +380,176 @@ class TestFailClosed:
                 {"u": patient_b},
             )
             assert patient_b not in _visible_patient_ids(conn)
+
+
+class TestPatientPrincipalWrites:
+    """INSERT — the one command the patient arm does not cover.
+
+    The read arm is ``FOR SELECT`` and the write arm is ``FOR UPDATE``, so
+    nothing in the patient policies mentions INSERT. Two consequences pull
+    in opposite directions and both are asserted here:
+
+    * ``patients`` carries ``rls_patient_insert ... WITH CHECK (true)`` —
+      added for the clinician chicken-and-egg where a brand-new patient
+      has no ``patient_clinicians`` grant yet and so fails
+      ``has_patient_access`` on its own first INSERT. It consults no GUC,
+      so it admits a patient principal too.
+    * A table a deployment registers ``writable=True`` gets ``FOR UPDATE``
+      only, though ``register_overlay_patient_scoped``'s docstring
+      promises "UPDATE/INSERT". A patient cannot write the row the
+      registration says they own.
+
+    Non-vacuity, as everywhere in this file: the "cannot insert for
+    someone else" case is only meaningful because the case above it proves
+    an in-scope INSERT does succeed. Without that control it would pass on
+    a blanket deny.
+    """
+
+    def test_a_patient_principal_cannot_insert_into_patients(
+        self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
+    ) -> None:
+        """A patient principal must not be able to create patient records.
+
+        ``patients`` is registered read-only, so no INSERT should reach it
+        under a patient GUC. The permissive ``WITH CHECK (true)`` insert
+        policy is the hole: it names no principal at all.
+        """
+        patient_a, _ = two_patients
+        intruder = str(uuid.uuid4())
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            with pytest.raises(ProgrammingError) as excinfo:
+                conn.execute(
+                    text(
+                        "INSERT INTO patients (id, first_name, last_name, "
+                        "first_name_lower, last_name_lower, status, "
+                        "session_count, created_at, updated_at) "
+                        "VALUES (CAST(:pid AS uuid), 'Mallory', 'Intruder', "
+                        "'mallory', 'intruder', 'active', 0, now(), now())"
+                    ),
+                    {"pid": intruder},
+                )
+            assert "row-level security" in str(excinfo.value).lower()
+        finally:
+            conn.rollback()
+            conn.close()
+
+        # The row must not exist for anyone — checked as the clinician,
+        # who can see every patient in the practice.
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_patient_id"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN},
+            )
+            found = conn.execute(
+                text("SELECT count(*) FROM patients WHERE id = CAST(:p AS uuid)"),
+                {"p": intruder},
+            ).scalar_one()
+        assert found == 0, "a patient principal created a patients row"
+
+    def test_a_patient_can_insert_their_own_outcome_measure(
+        self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
+    ) -> None:
+        """The write arm the intake form needs, and the control for the test below.
+
+        ``outcome_measures`` is registered patient-writable on
+        ``patient_id``; a patient submitting a PHQ-9 writes their own row.
+        This is the positive case — if it fails, the patient-facing intake
+        surface cannot store a screener result at all.
+        """
+        patient_a, _ = two_patients
+        measure_id = str(uuid.uuid4())
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            conn.execute(
+                text(
+                    "INSERT INTO outcome_measures (id, patient_id, instrument, "
+                    "total_score, is_complete, source, administered_at, "
+                    "created_by, created_at, updated_at) "
+                    "VALUES (CAST(:mid AS uuid), CAST(:pid AS uuid), 'phq9', "
+                    "12, true, 'patient_self_report', now(), "
+                    "CAST(:pid AS uuid), now(), now())"
+                ),
+                {"mid": measure_id, "pid": patient_a},
+            )
+            conn.commit()
+
+            # And can read it back through their own arm.
+            own = conn.execute(
+                text("SELECT patient_id FROM outcome_measures WHERE id = CAST(:m AS uuid)"),
+                {"m": measure_id},
+            ).scalar()
+            assert str(own) == patient_a
+        finally:
+            conn.close()
+
+    def test_a_patient_cannot_insert_an_outcome_measure_for_another_patient(
+        self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
+    ) -> None:
+        """The forgery case: armed as A, write a row owned by B.
+
+        Meaningful only because the test above proves an in-scope INSERT
+        succeeds on this same table and connection shape.
+        """
+        patient_a, patient_b = two_patients
+        forged = str(uuid.uuid4())
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            with pytest.raises(ProgrammingError) as excinfo:
+                conn.execute(
+                    text(
+                        "INSERT INTO outcome_measures (id, patient_id, instrument, "
+                        "total_score, is_complete, source, administered_at, "
+                        "created_by, created_at, updated_at) "
+                        "VALUES (CAST(:mid AS uuid), CAST(:victim AS uuid), 'phq9', "
+                        "27, true, 'patient_self_report', now(), "
+                        "CAST(:actor AS uuid), now(), now())"
+                    ),
+                    {"mid": forged, "victim": patient_b, "actor": patient_a},
+                )
+            assert "row-level security" in str(excinfo.value).lower()
+        finally:
+            conn.rollback()
+            conn.close()
+
+        # B must not see a row they never submitted.
+        conn = _as_patient(engine, tenant_schema, patient_b)
+        try:
+            found = conn.execute(
+                text("SELECT count(*) FROM outcome_measures WHERE id = CAST(:m AS uuid)"),
+                {"m": forged},
+            ).scalar_one()
+            assert found == 0, "patient A forged an outcome measure onto patient B"
+        finally:
+            conn.close()
+
+    def test_the_patient_write_arm_exists_on_outcome_measures(
+        self, engine: Engine, tenant_schema: str
+    ) -> None:
+        """Provisioning must create the INSERT arm, not just the read arm.
+
+        Asserted against ``pg_policies`` so a regression that drops the
+        arm is caught here rather than as a confusing permission error in
+        whatever route writes next.
+        """
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT policyname, cmd FROM pg_policies "
+                    "WHERE schemaname = :s AND tablename = 'outcome_measures'"
+                ),
+                {"s": tenant_schema},
+            ).all()
+        by_name = {r[0]: r[1] for r in rows}
+        assert "rls_patient_self_read" in by_name, (
+            f"patient read arm missing on outcome_measures; policies: {by_name}"
+        )
+        commands = {cmd for name, cmd in by_name.items() if name.startswith("rls_patient_self")}
+        assert "INSERT" in commands or "ALL" in commands, (
+            f"no patient INSERT arm on outcome_measures; policy commands present: {commands}"
+        )

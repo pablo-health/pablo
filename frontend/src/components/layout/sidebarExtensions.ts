@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { Calendar, ClipboardCheck, Home, Settings, Users } from "lucide-react"
+import { Calendar, ClipboardCheck, CreditCard, Home, Settings, Users } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { navExtensions } from "./sidebarExtensions.extensions"
 
@@ -57,6 +57,7 @@ const baseClinicianNavigation: NavItem[] = [
   { name: "Calendar", href: "/dashboard/calendar", icon: Calendar },
   { name: "Patients", href: "/dashboard/patients", icon: Users },
   { name: "Review", href: "/dashboard/sessions", icon: ClipboardCheck },
+  { name: "Billing", href: "/dashboard/billing", icon: CreditCard },
 ]
 
 /** Apply the slot's per-href patches (relabel / re-icon) to the base items. */

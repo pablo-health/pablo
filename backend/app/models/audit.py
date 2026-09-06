@@ -223,6 +223,23 @@ class AuditAction(StrEnum):
     # payload never carries patient_name, video_url, or the raw intent_id.
     LAUNCH_INTENT_REDEEMED = "launch_intent_redeemed"
 
+    # Self-pay card payments. These are financial records about a named
+    # client, so reading or writing one is a patient-record access and is
+    # audited as such. PATIENT_CHARGE_CREATED is emitted when the clinician
+    # initiates the charge, not when the processor answers: the event is "this
+    # clinician asked to charge this client", which is true the moment the
+    # ledger row exists. The outcome lives on that row, and the `changes`
+    # payload carries only its opaque id.
+    PATIENT_PAYMENT_SETUP_STARTED = "patient_payment_setup_started"
+    PATIENT_PAYMENT_METHOD_STORED = "patient_payment_method_stored"
+    PATIENT_PAYMENT_METHOD_VIEWED = "patient_payment_method_viewed"
+    PATIENT_CHARGE_CREATED = "patient_charge_created"
+    PATIENT_CHARGES_VIEWED = "patient_charges_viewed"
+    # Reading what a client would be charged discloses their rate — a
+    # financial fact about a named person — so the preview is audited like
+    # any other read of the record, separately from the charge itself.
+    PATIENT_CHARGE_AMOUNT_VIEWED = "patient_charge_amount_viewed"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""

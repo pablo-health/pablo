@@ -713,3 +713,80 @@ class TestConnectionReleasedAcrossLLMCall:
             "chat_turn_service._run_turn_locked regressed — this is the "
             "pool-exhaustion bug class THERAPY-vtrb / THERAPY-blx6."
         )
+
+
+# ---------------------------------------------------------------------------
+# Case 7 — windowed read over a real sequence column
+# ---------------------------------------------------------------------------
+
+
+class TestPriorTurnWindowRealDB:
+    """``list_messages_windowed`` against a real, DB-assigned ``sequence``
+    column rather than the in-memory repo's Python-side sort. The unit
+    suite at ``test_chat_turn_service.py`` covers the windowing and
+    elision-marker logic exhaustively against ``InMemoryChatRepository``;
+    this proves the same head+tail slice comes back once a real unique
+    index and grant join are in the loop.
+    """
+
+    def test_windowed_read_matches_head_plus_tail_over_real_sequence(
+        self,
+        e2e_client: TestClient,
+        engine: Engine,
+        tenant_schema: str,
+        e2e_user_id: str,
+    ) -> None:
+        from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
+        from app.repositories.postgres.chat import PostgresChatRepository  # noqa: PLC0415
+        from app.services.chat_turn_service import (  # noqa: PLC0415
+            PRIOR_TURNS_HEAD,
+            PRIOR_TURNS_TAIL,
+        )
+        from sqlalchemy.orm import Session  # noqa: PLC0415
+
+        _truncate_tenant_tables(engine, tenant_schema)
+        patient = _create_patient(e2e_client)
+        conv = _create_conversation(e2e_client, patient["id"])
+
+        total = PRIOR_TURNS_HEAD + PRIOR_TURNS_TAIL + 4
+        with engine.begin() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                {"uid": e2e_user_id},
+            )
+            for i in range(total):
+                conn.execute(
+                    text(
+                        "INSERT INTO chat_messages "
+                        "(id, conversation_id, sequence, role, content, created_at) "
+                        "VALUES (gen_random_uuid(), CAST(:cid AS uuid), :seq, :role, "
+                        ":content, now())"
+                    ),
+                    {
+                        "cid": conv["id"],
+                        "seq": i + 1,
+                        "role": "user" if i % 2 == 0 else "assistant",
+                        "content": f"turn {i}",
+                    },
+                )
+
+        session = Session(bind=engine)
+        set_tenant_schema(session, tenant_schema)
+        try:
+            session.commit()
+            arm_current_user_id(session, e2e_user_id)
+            repo = PostgresChatRepository(session)
+            windowed = repo.list_messages_windowed(
+                conv["id"], e2e_user_id, head=PRIOR_TURNS_HEAD, tail=PRIOR_TURNS_TAIL
+            )
+        finally:
+            session.rollback()
+            session.close()
+
+        expected_sequences = [
+            *range(1, PRIOR_TURNS_HEAD + 1),
+            *range(total - PRIOR_TURNS_TAIL + 1, total + 1),
+        ]
+        assert [m.sequence for m in windowed] == expected_sequences
+        assert len(windowed) == PRIOR_TURNS_HEAD + PRIOR_TURNS_TAIL

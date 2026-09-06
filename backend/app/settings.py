@@ -10,6 +10,7 @@ HIPAA Compliance: Manages security settings including TLS enforcement
 and environment-specific configurations for PHI protection.
 """
 
+import logging
 import re
 from functools import lru_cache
 from typing import Literal
@@ -211,6 +212,20 @@ class Settings(BaseSettings):
             "allowlist."
         ),
     )
+    allow_test_identity_signup: bool = Field(
+        default=False,
+        description=(
+            "Let the reserved test-identity addresses "
+            "(pentestuser-<hex>@ and e2etest-<hex>@pablo.health) register "
+            "themselves through the beforeCreate allowlist check. Off by "
+            "default: the weekly pentest creates its users with the Admin SDK "
+            "and never needs it, so a deployment that leaves this off cannot "
+            "have a stranger register a test-shaped address just because the "
+            "project id lacks a -prod suffix. Only honored on a non-production "
+            "project (see is_prod_project); a hosted dev environment that runs "
+            "browser e2e against fresh users sets it explicitly."
+        ),
+    )
 
     # API Settings
     api_title: str = Field(
@@ -222,10 +237,66 @@ class Settings(BaseSettings):
         description="API description",
     )
 
-    # Stripe Settings (used by the optional billing overlay)
+    # Stripe settings. The secret key is what the default payment-credential
+    # provider charges self-pay cards with (see app.payments.provider); leave
+    # it empty and the card-payment routes report 503 rather than half-working.
     stripe_secret_key: SecretStr = Field(
         default=SecretStr(""),
-        description="Stripe API secret key for billing portal session creation",
+        description="Stripe API secret key used to charge self-pay cards",
+    )
+    # The three settings below are named for the *integration* they belong to,
+    # not just for Stripe, because a deployment may well run more than one —
+    # its own subscription billing alongside patient card payments, say. Every
+    # Stripe webhook endpoint has its own signing secret, so a field called
+    # `stripe_webhook_secret` invites someone to point two endpoints at one
+    # value, and that mistake is silent: a mismatched signature rejects every
+    # delivery with a 401, so charges succeed at Stripe while the local ledger
+    # never reconciles and nothing surfaces but a log line. The name is the
+    # control. The publishable key carries the same prefix so the three read as
+    # one set.
+    #
+    # The publishable key is the other half of the secret key's credential
+    # pair, and deliberately NOT a SecretStr: a publishable key is public by
+    # design — it ends up in the browser, because that is the only place it is
+    # any use. It is kept beside the secret key because the two must name the
+    # same Stripe account and the same mode; a live secret key with a test
+    # publishable key collects cards that can never be charged, and nothing
+    # about that failure says so.
+    stripe_patient_billing_publishable_key: str = Field(
+        default="",
+        description=(
+            "Stripe publishable key handed to the browser so it can post card "
+            "details straight to Stripe. Must belong to the same account and "
+            "mode as STRIPE_SECRET_KEY. Unset means the card-collection route "
+            "reports 503 rather than handing the browser a key it cannot use. "
+            "Named for the patient-billing integration so a deployment running "
+            "a second Stripe integration cannot confuse the two."
+        ),
+    )
+    stripe_patient_billing_webhook_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Signing secret for the Stripe webhook endpoint that reconciles "
+            "card-charge outcomes. Unset means every delivery is rejected, "
+            "which is the right posture for a deployment that has not "
+            "configured the endpoint. This is the secret of one specific "
+            "endpoint, not of Stripe as a whole: if the deployment also runs "
+            "another Stripe integration, that endpoint has a different secret "
+            "and must be configured separately. Reusing one value across two "
+            "endpoints fails silently — the mismatched deliveries are simply "
+            "rejected, so money moves at Stripe and the local records never "
+            "catch up."
+        ),
+    )
+    stripe_patient_billing_webhook_secret_previous: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Optional second signing secret for the same patient-billing "
+            "endpoint, accepted alongside the current one. Fill this with the "
+            "outgoing secret while rotating so no delivery is dropped "
+            "mid-rotation, then clear it. Not a slot for a different Stripe "
+            "integration's secret — each endpoint gets its own setting."
+        ),
     )
     app_url: str = Field(
         default="http://localhost:3000",
@@ -442,6 +513,23 @@ class Settings(BaseSettings):
                     f"oidc_issuer is set but {', '.join(missing)} must also be "
                     "set to enable the OIDC auth backend"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_deployment_posture(self) -> "Settings":
+        """Keep debug mode and MFA bypass scoped to local development.
+
+        ``debug=True`` turns on FastAPI's interactive tracebacks and
+        ``require_mfa=False`` drops the second factor entirely — both are
+        meant for a laptop checkout, never a reachable deployment. Refusing
+        to boot with either set outside ``ENVIRONMENT=development`` catches
+        a stray env var before it becomes the running posture.
+        """
+        if not self.is_development:
+            if self.debug:
+                raise ValueError("DEBUG must not be enabled outside ENVIRONMENT=development")
+            if not self.require_mfa:
+                raise ValueError("REQUIRE_MFA must not be disabled outside ENVIRONMENT=development")
         return self
 
     # Firebase Blocking Function OIDC Verification
@@ -791,6 +879,29 @@ class Settings(BaseSettings):
     smtp_username: str = Field(default="", description="SMTP auth username")
     smtp_password: SecretStr = Field(default=SecretStr(""), description="SMTP auth password")
     smtp_from: str = Field(default="", description="From address for outbound email")
+
+    # CAPTCHA verification for the public booking write surface
+    # (docs/design/public-booking.md). 'none' accepts every request — a
+    # bare deployment behaves exactly as it does today, and no vendor
+    # script is ever requested by the booker's browser.
+    captcha_provider: Literal["none", "turnstile"] = Field(
+        default="none",
+        description=(
+            "CAPTCHA provider for the public booking write surface. "
+            "'none' = no verification, every request passes (default) — a "
+            "bare deployment behaves exactly as it does today. "
+            "'turnstile' = Cloudflare Turnstile; requires turnstile_site_key "
+            "and turnstile_secret_key."
+        ),
+    )
+    turnstile_site_key: str = Field(
+        default="",
+        description="Cloudflare Turnstile site key, rendered into the public booking card.",
+    )
+    turnstile_secret_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Cloudflare Turnstile secret key, used server-side to verify a token.",
+    )
 
     # Document AI OCR fallback for scanned PDFs (THERAPY-ak6m.2.3).
     # Both project and processor id are optional — leave unset and the
@@ -1254,6 +1365,17 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     @property
+    def test_identity_signup_armed(self) -> bool:
+        """True when a reserved test-identity address may self-register.
+
+        Requires the explicit opt-in AND a non-production project, so the
+        default deployment is disarmed no matter what the project is
+        called. Consumed by the beforeCreate allowlist check and by the
+        startup posture log.
+        """
+        return self.allow_test_identity_signup and not self.is_prod_project
+
+    @property
     def effective_firebase_project_id(self) -> str:
         """Firebase project ID, falling back to GCP project ID."""
         return self.firebase_project_id or self.gcp_project_id
@@ -1263,6 +1385,28 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached application settings."""
     return Settings()
+
+
+def log_startup_posture(settings: Settings, logger: logging.Logger) -> None:
+    """Log a one-line summary of the security-relevant startup posture.
+
+    An operator scanning boot logs should be able to see at a glance
+    whether MFA, the signup allowlist, Redis-backed shared state, DPoP
+    proof enforcement, and the test-identity bypass are on, without
+    grepping for each setting individually. Booleans and a count only —
+    no PHI, no secrets.
+    """
+    cors_origin_count = len([o for o in settings.cors_origins.split(",") if o.strip()])
+    logger.info(
+        "startup posture: mfa=%s restrict_signups=%s use_redis=%s "
+        "test_identity_signup=%s dpop=%s cors_origins=%d",
+        settings.require_mfa,
+        settings.restrict_signups,
+        settings.use_redis,
+        settings.test_identity_signup_armed,
+        settings.enable_dpop_validation,
+        cors_origin_count,
+    )
 
 
 # Global settings instance for backwards compatibility

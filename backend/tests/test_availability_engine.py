@@ -437,7 +437,7 @@ class TestFreeSlots:
         starts = [s.start for s in slots]
         assert "2026-03-18T12:00:00Z" not in starts
 
-    def test_max_per_day_limits_slots(
+    def test_max_per_day_under_cap_shows_every_open_slot(
         self,
         rule_repo: InMemoryAvailabilityRuleRepository,
         appt_repo: InMemoryAppointmentRepository,
@@ -452,9 +452,22 @@ class TestFreeSlots:
         )
         rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 2}, rule_id="r2"))
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
-        # 1 existing appointment, max 2 => only 1 more slot returned
+        # Only 1 of 2 appointments is booked, so the day is under cap. Every
+        # open hour-long slot in 09:00-17:00 should be offered, not just
+        # enough to fill the remaining booking capacity — a patient who can
+        # only do afternoons still needs to see 15:00 and 16:00.
         slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
-        assert len(slots) == 1
+        starts = [s.start for s in slots]
+        assert starts == [
+            "2026-03-18T09:00:00Z",
+            "2026-03-18T10:50:00Z",
+            "2026-03-18T11:40:00Z",
+            "2026-03-18T12:30:00Z",
+            "2026-03-18T13:20:00Z",
+            "2026-03-18T14:10:00Z",
+            "2026-03-18T15:00:00Z",
+            "2026-03-18T15:50:00Z",
+        ]
 
     def test_max_per_day_fully_booked(
         self,
@@ -473,6 +486,142 @@ class TestFreeSlots:
         appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
         slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
         assert len(slots) == 0
+
+    def test_max_per_day_fully_booked_by_pending_hold(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 1}, rule_id="r2"))
+        appt_repo.create(
+            _appt(
+                "2026-03-18T10:00:00Z",
+                "2026-03-18T10:50:00Z",
+                appt_id="a1",
+                status=AppointmentStatus.PENDING,
+            )
+        )
+        # A pending hold nobody has confirmed yet still closes the day —
+        # it occupies a slot the moment it's requested, not once approved.
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert len(slots) == 0
+
+    def test_max_per_day_soft_cap_shows_slots_flagged_over_cap(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.MAX_PER_DAY,
+                {"max": 1},
+                rule_id="r2",
+                enforcement=EnforcementLevel.SOFT,
+            )
+        )
+        appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
+        # A soft cap at capacity must not hide the day the way a hard cap
+        # does — the slots come back as usual, each flagged so a caller
+        # that shows them can say so.
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert len(slots) > 0
+        assert all(s.over_cap for s in slots)
+
+    def test_max_per_day_soft_cap_under_cap_not_flagged(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.MAX_PER_DAY,
+                {"max": 2},
+                rule_id="r2",
+                enforcement=EnforcementLevel.SOFT,
+            )
+        )
+        appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert len(slots) > 0
+        assert not any(s.over_cap for s in slots)
+
+    def test_max_per_day_hard_rule_wins_over_lower_soft_cap(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": 2, "start": "09:00", "end": "17:00"},
+                rule_id="r1",
+            )
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.MAX_PER_DAY,
+                {"max": 1},
+                rule_id="r2",
+                enforcement=EnforcementLevel.SOFT,
+            )
+        )
+        rule_repo.create(
+            _rule(
+                RuleType.MAX_PER_DAY,
+                {"max": 3},
+                rule_id="r3",
+                enforcement=EnforcementLevel.HARD,
+            )
+        )
+        appt_repo.create(_appt("2026-03-18T10:00:00Z", "2026-03-18T10:50:00Z", appt_id="a1"))
+        # The soft rule sets the more restrictive number (1), but a hard
+        # rule is also in play for this day — a hard cap is never softened
+        # by a softer rule also existing, so the day closes entirely.
+        slots = engine.get_free_slots(USER_ID, "2026-03-18", 50).slots
+        assert slots == []
+
+    def test_max_per_day_second_booking_still_raises_conflict(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 2}, rule_id="r1"))
+        appt_repo.create(_appt("2026-03-18T09:00:00Z", "2026-03-18T09:50:00Z", appt_id="a1"))
+        appt_repo.create(_appt("2026-03-18T15:00:00Z", "2026-03-18T15:50:00Z", appt_id="a2"))
+        # Not offering fewer slots doesn't mean the day can be over-booked:
+        # booking-time enforcement (_check_max_per_day) is a separate,
+        # untouched mechanism that still refuses a third appointment.
+        conflicts = engine.check_conflicts(
+            USER_ID, "2026-03-18T16:00:00Z", "2026-03-18T16:50:00Z"
+        ).conflicts
+        assert len(conflicts) == 1
+        assert "maximum" in conflicts[0].message.lower()
 
     def test_no_rules_is_unconfigured_not_empty(self, engine: AvailabilityEngine) -> None:
         result = engine.get_free_slots(USER_ID, "2026-03-18", 50)

@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent, act } from "@testing-library/react"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 const { getSessionStatus, touchSession, handleTerminalAuthLogout, routerPush, signOut } =
   vi.hoisted(() => ({
@@ -51,12 +52,17 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-async function renderAndSettleMount() {
-  render(<IdleTimeout />)
+async function renderAndSettleMount(queryClient = new QueryClient()) {
+  render(
+    <QueryClientProvider client={queryClient}>
+      <IdleTimeout />
+    </QueryClientProvider>,
+  )
   // Flush the mount-time validateSession promise.
   await act(async () => {
     await vi.advanceTimersByTimeAsync(0)
   })
+  return queryClient
 }
 
 describe("IdleTimeout (server-enforced mode)", () => {
@@ -200,5 +206,24 @@ describe("IdleTimeout (local fallback when enforcement is off)", () => {
     expect(signOut).toHaveBeenCalled()
     expect(routerPush).toHaveBeenCalledWith("/login?reason=idle_timeout")
     expect(handleTerminalAuthLogout).not.toHaveBeenCalled()
+  })
+
+  it("clears the query cache before routing to /login", async () => {
+    getSessionStatus.mockResolvedValue({
+      enforced: false,
+      active: true,
+      seconds_remaining: null,
+    })
+
+    const queryClient = await renderAndSettleMount()
+    queryClient.setQueryData(["patients"], [{ id: "1" }])
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15 * 60_000 + 1_000)
+    })
+
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(0)
+    expect(routerPush).toHaveBeenCalledWith("/login?reason=idle_timeout")
   })
 })

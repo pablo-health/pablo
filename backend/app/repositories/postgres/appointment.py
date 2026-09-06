@@ -140,6 +140,26 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
+        if not session_ids:
+            return {}
+        rows = (
+            self._session.execute(
+                select(AppointmentRow)
+                .join(
+                    PatientClinicianRow,
+                    PatientClinicianRow.patient_id == AppointmentRow.patient_id,
+                )
+                .where(
+                    AppointmentRow.session_id.in_(session_ids),
+                    *_grant_filters(user_id),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {row.session_id: _row_to_appointment(row) for row in rows if row.session_id}
+
     def count_by_range(self, user_id: str, start: str | datetime, end: str | datetime) -> int:
         """Aggregate variant of :meth:`list_by_range` — one COUNT, no rows
         materialised, valid under column-scoped grants."""
@@ -248,8 +268,12 @@ class PostgresAppointmentRepository(AppointmentRepository):
     def create(self, appointment: Appointment) -> Appointment:
         row = AppointmentRow()
         _appointment_to_row(appointment, row)
-        self._session.add(row)
-        self._session.flush()
+        # SAVEPOINT, not a bare flush: a slot collision (unique active-slot
+        # index) must undo this INSERT and nothing else, leaving the caller's
+        # session usable to translate the error rather than stuck aborted.
+        with self._session.begin_nested():
+            self._session.add(row)
+            self._session.flush()
         return appointment
 
     def create_batch(self, appointments: list[Appointment]) -> list[Appointment]:
@@ -311,6 +335,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         duration_minutes=row.duration_minutes,
         status=row.status,
         session_type=row.session_type,
+        appointment_type_id=row.appointment_type_id,
         video_link=row.video_link,
         video_platform=row.video_platform,
         notes=row.notes,
@@ -351,6 +376,7 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.duration_minutes = appt.duration_minutes
     row.status = appt.status
     row.session_type = appt.session_type
+    row.appointment_type_id = appt.appointment_type_id
     row.video_link = appt.video_link
     row.video_platform = appt.video_platform
     row.notes = appt.notes

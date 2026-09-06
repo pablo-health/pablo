@@ -96,6 +96,10 @@ AUDIT_EXEMPT_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # not on the route signature; both handlers delegate to it.
         ("post", "/api/internal/transcription-complete"),  # audited in helper
         ("post", "/api/internal/transcription-poll"),  # delegates to the audited helper
+        # users.py — practice-level retention *policy* (a day count), not
+        # audio content; matches the "/audio" marker on path text alone.
+        ("get", "/api/users/me/practice/audio-retention"),
+        ("put", "/api/users/me/practice/audio-retention"),
     }
 )
 
@@ -150,6 +154,12 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # already holds; discloses no patient data (the redeem step, which does
         # disclose the patient name, IS audited as launch_intent_redeemed)
         ("post", "/api/launch/intent"),  # mints opaque launch intent, no PHI disclosed
+        # payment_webhooks.py — signature-verified processor callback. It moves
+        # a ledger row's status from an event the processor signed; there is no
+        # authenticated principal to attribute an access to, and it discloses
+        # nothing to anybody. The clinician-initiated side of every charge IS
+        # audited, on the routes in patient_payments.py.
+        ("post", "/api/webhooks/payments/stripe"),  # processor callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
         ("get", "/api/booking-links"),  # lists caller's own booking links
@@ -196,6 +206,8 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         ("post", "/api/availability/rules/parse"),  # NL rule proposals, no client attached
         ("get", "/api/availability/slots"),  # open free-slot times, no client
         ("post", "/api/availability/check"),  # conflict check, rule messages only
+        ("get", "/api/scheduling/policy"),  # practice booking policy; no patient data
+        ("patch", "/api/scheduling/policy"),  # practice booking policy; no patient data
         ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
         ("post", "/api/appointment-types"),  # creates an appointment type
         ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type
