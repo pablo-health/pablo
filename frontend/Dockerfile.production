@@ -18,6 +18,12 @@ RUN npm ci
 # Copy application code
 COPY . .
 
+# Next inlines NEXT_PUBLIC_* at build time. The end-to-end compose stack sets
+# this one so the browser bundle talks to the Firebase Auth emulator; every
+# other build leaves it empty, which the code treats as "not set".
+ARG NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=""
+ENV NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST=${NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST}
+
 # Build Next.js app (standalone mode for minimal output)
 # AUTH_COOKIE_SIGNATURE_KEY is required at build time because auth-config.ts
 # evaluates on module import. This placeholder is NOT used at runtime —

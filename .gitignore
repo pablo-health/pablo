@@ -61,6 +61,11 @@ local/
 # Playwright MCP session artifacts (console logs, page snapshots) — local debug only
 .playwright-mcp/
 
+# End-to-end suite output (frontend/e2e): reports, traces, saved sign-in state
+frontend/e2e/test-results/
+frontend/e2e/playwright-report/
+frontend/e2e/.auth/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

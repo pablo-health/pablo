@@ -1,4 +1,5 @@
 .PHONY: help install lint format test test-integration test-all check clean
+.PHONY: e2e-up e2e e2e-down
 .PHONY: docker-up docker-down docker-restart docker-logs docker-shell-backend docker-shell-frontend
 .PHONY: docker-test-backend docker-test-frontend docker-lint-backend docker-lint-frontend docker-check
 .PHONY: docker-clean docker-rebuild docker-status
@@ -14,6 +15,9 @@ help:
 	@echo "  make test              - Run unit tests with coverage"
 	@echo "  make test-integration  - Run integration tests (requires PostgreSQL)"
 	@echo "  make test-all          - Run both unit and integration tests"
+	@echo "  make e2e-up            - Build and start the end-to-end stack (Docker)"
+	@echo "  make e2e               - Run the Playwright end-to-end suite"
+	@echo "  make e2e-down          - Stop the end-to-end stack and drop its data"
 	@echo "  make check             - Run lint + test (CI-style)"
 	@echo "  make clean             - Clean generated files"
 	@echo ""
@@ -66,6 +70,23 @@ test-integration-tenant:
 	@echo "Running multi-tenant isolation tests (requires Postgres)..."
 	cd backend && MULTI_TENANCY_ENABLED=true \
 		poetry run pytest tests_integration/database/test_tenant_isolation.py -v
+
+# End-to-end: a browser driving the whole stack (frontend, API, Postgres,
+# the Firebase Auth emulator, the fake clearinghouse) from
+# docker-compose.e2e.yml. See docs/design/e2e-harness.md. The backend
+# provisions its schemas at boot, so "up" leaves the database migrated.
+# Needs Docker; on macOS with Docker Desktop, export
+# DOCKER_HOST=unix://$$HOME/.docker/run/docker.sock if the daemon isn't found.
+E2E_COMPOSE = docker compose -f docker-compose.e2e.yml
+
+e2e-up:
+	$(E2E_COMPOSE) up --build --wait
+
+e2e:
+	cd frontend && npm run test:e2e
+
+e2e-down:
+	$(E2E_COMPOSE) down --volumes --remove-orphans
 
 # Run all tests (unit + integration)
 test-all:

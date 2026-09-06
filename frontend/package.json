@@ -11,6 +11,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "postinstall": "patch-package"
   },
   "dependencies": {

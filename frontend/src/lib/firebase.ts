@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import { type FirebaseApp, getApps, initializeApp } from "firebase/app"
-import { type Auth, getAuth } from "firebase/auth"
+import { type Auth, connectAuthEmulator, getAuth } from "firebase/auth"
 
 export interface FirebaseConfig {
   apiKey: string
@@ -17,6 +17,11 @@ export function initFirebase(config: FirebaseConfig): Auth {
     const app: FirebaseApp =
       getApps().length === 0 ? initializeApp(config) : getApps()[0]
     _auth = getAuth(app)
+    // Local end-to-end runs point the SDK at the Firebase Auth emulator; a
+    // build without this variable never reaches this line.
+    if (process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST) {
+      connectAuthEmulator(_auth, `http://${process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST}`, { disableWarnings: true })
+    }
   }
   return _auth
 }
