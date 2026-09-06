@@ -13,6 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from ..auth.service import TenantContext, get_tenant_context, require_active_subscription
+from ..claims.enrollment import sync_provider_record
 from ..db import get_db_session
 from ..models.practice_billing import BillingProfileResponse, UpdateBillingProfileRequest
 from ..services.practice_billing_profile import load_billing_profile, update_billing_profile
@@ -39,7 +40,7 @@ def get_billing_profile(
 @router.patch("", response_model=BillingProfileResponse)
 def update_billing_profile_route(
     request: UpdateBillingProfileRequest,
-    _ctx: TenantContext = Depends(get_tenant_context),
+    ctx: TenantContext = Depends(get_tenant_context),
 ) -> BillingProfileResponse:
     """Change part of the billing profile.
 
@@ -47,8 +48,15 @@ def update_billing_profile_route(
     raw ``tax_id`` (if sent) is encrypted before it touches the database
     and is never echoed back — the response only ever carries
     ``tax_id_last4``.
+
+    A save that completes the profile also registers the practice's
+    provider record with its clearinghouse, once; the response then carries
+    ``clearinghouse_provider_id``. That registration never fails the save.
     """
     session = get_db_session()
     merged = update_billing_profile(session, request.model_dump(exclude_unset=True))
+    provider_id = sync_provider_record(session, ctx.practice_id)
+    if provider_id is not None:
+        merged["clearinghouse_provider_id"] = provider_id
     session.commit()
     return BillingProfileResponse(**merged)  # type: ignore[arg-type]

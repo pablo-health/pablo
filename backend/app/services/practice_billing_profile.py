@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 #: The singleton row's fixed primary key.
 SINGLETON_ID = 1
 
-#: Fields returned to a caller and accepted (minus ``tax_id`` -> the
-#: encrypted/last4 pair) on a partial update.
-_READABLE_FIELDS: frozenset[str] = frozenset(
+#: Fields accepted (minus ``tax_id`` -> the encrypted/last4 pair) on a
+#: partial update.
+_WRITABLE_FIELDS: frozenset[str] = frozenset(
     {
         "legal_name",
         "tax_id_last4",
@@ -42,9 +42,14 @@ _READABLE_FIELDS: frozenset[str] = frozenset(
         "state",
         "postal_code",
         "phone",
+        "contact_email",
         "eligibility_auto_check",
     }
 )
+
+#: Fields returned to a caller: everything writable plus the clearinghouse's
+#: id for the provider record, which only the enrollment flow sets.
+_READABLE_FIELDS: frozenset[str] = _WRITABLE_FIELDS | {"clearinghouse_provider_id"}
 
 #: The one field with a default other than "unset": a practice that has never
 #: opened billing settings still gets its clients' plans checked at intake.
@@ -80,7 +85,7 @@ def update_billing_profile(session: Session, patch: dict[str, object]) -> dict[s
     row = session.get(PracticeBillingProfileRow, SINGLETON_ID)
     now = datetime.now(UTC)
 
-    fields = {k: v for k, v in patch.items() if k in _READABLE_FIELDS}
+    fields = {k: v for k, v in patch.items() if k in _WRITABLE_FIELDS}
 
     raw_tax_id = patch.get("tax_id")
     if isinstance(raw_tax_id, str) and raw_tax_id:

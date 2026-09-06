@@ -11,6 +11,7 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  PayerEnrollmentListResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
@@ -37,6 +38,21 @@ export async function updatePayer(
   token?: string,
 ): Promise<PayerResponse> {
   return patch<PayerResponse>(`${PAYERS}/${payerRowId}`, data, token)
+}
+
+export async function listPayerEnrollments(
+  payerRowId: string,
+  token?: string,
+): Promise<PayerEnrollmentListResponse> {
+  return get<PayerEnrollmentListResponse>(`${PAYERS}/${payerRowId}/enrollments`, token)
+}
+
+/** Enroll with the payer: files whatever it needs that is not on file yet. */
+export async function requestPayerEnrollments(
+  payerRowId: string,
+  token?: string,
+): Promise<PayerEnrollmentListResponse> {
+  return post<PayerEnrollmentListResponse>(`${PAYERS}/${payerRowId}/enrollments`, {}, token)
 }
 
 /**

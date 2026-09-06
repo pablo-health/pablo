@@ -11,6 +11,14 @@ Practice-level, no client attached (not a PHI surface, same posture as
 * ``GET /api/payers`` — the practice's payer list, for the picker and Settings.
 * ``POST /api/payers`` — add a payer; deadlines default for the payer id.
 * ``PATCH /api/payers/{payer_row_id}`` — edit a payer, deadlines included.
+* ``GET /api/payers/{payer_row_id}/enrollments`` — where the practice stands
+  with the payer for each electronic transaction.
+* ``POST /api/payers/{payer_row_id}/enrollments`` — the "Enroll with payer"
+  button: file whatever the payer needs that is not on file yet.
+
+Putting a plan on file for a payer with no enrollments yet files them too,
+on the way through (``app.claims.enrollment.enroll_if_new``); that never
+fails the save.
 
 Per client, audited (a plan is protected health information about a named
 person, and reading or writing it is a patient-record access):
@@ -68,7 +76,6 @@ from ..claims.clearinghouse import (
     ClearinghouseRateLimitedError,
     ClearinghouseUnavailableError,
 )
-from ..claims.credentials import get_clearinghouse_credential_provider
 from ..claims.eligibility import (
     BillingIdentity,
     CoverageNotFoundError,
@@ -83,7 +90,14 @@ from ..claims.eligibility import (
     run_eligibility,
     summary_for_coverage,
 )
-from ..claims.stedi import StediClearinghouseClient
+from ..claims.enrollment import (
+    BillingProfileIncompleteError,
+    PayerNotInDirectoryError,
+    clearinghouse_client_for_practice,
+    enroll_if_new,
+    list_enrollments,
+    request_enrollments,
+)
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models.audit import AuditAction, ResourceType
 from ..models.coverage import (
@@ -92,6 +106,8 @@ from ..models.coverage import (
     CreatePayerRequest,
     PatientCoverage,
     Payer,
+    PayerEnrollmentListResponse,
+    PayerEnrollmentResponse,
     PayerListResponse,
     PayerResponse,
     UpdateCoverageRequest,
@@ -113,6 +129,11 @@ from ..services.session_generation_worker import resolve_tenant_for_user
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from sqlalchemy.orm import Session
+
+    from ..db.models import PayerEnrollmentRow
     from ..models import User
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.patient import PatientRepository
@@ -132,6 +153,7 @@ PayersRepo = Annotated["PayerRepository", Depends(get_payer_repository)]
 CoverageRepo = Annotated["PatientCoverageRepository", Depends(get_patient_coverage_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
+DbSession = Annotated["Session", Depends(get_db_session)]
 AutoCheck = Annotated[EligibilityAutoCheck, Depends(get_eligibility_auto_check)]
 
 _NO_COVERAGE = "No coverage on file."
@@ -143,17 +165,31 @@ def get_clearinghouse_client(
     ctx: TenantContext = Depends(get_tenant_context),
 ) -> ClearinghouseClient | None:
     """The practice's clearinghouse account, or ``None`` when none is configured."""
-    return _clearinghouse_client_for(ctx.practice_id)
-
-
-def _clearinghouse_client_for(practice_id: str | None) -> ClearinghouseClient | None:
-    credentials = get_clearinghouse_credential_provider().get(practice_id)
-    return StediClearinghouseClient(credentials) if credentials is not None else None
+    return clearinghouse_client_for_practice(ctx.practice_id)
 
 
 def get_billing_identity(user: CurrentUser) -> BillingIdentity | None:
     """Who the 270 is asked as: the practice's billing NPI, else the clinician's."""
     return load_billing_identity(get_db_session(), user)
+
+
+def get_enrollment_trigger(
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> Callable[[str, str], None]:
+    """What a coverage save does about enrolling with its payer.
+
+    A dependency so the coverage tests, which run on in-memory repositories,
+    can swap the clearinghouse-backed trigger for a recorder.
+    """
+
+    def trigger(payer_row_id: str, user_id: str) -> None:
+        enroll_if_new(get_db_session(), ctx.practice_id, payer_row_id=payer_row_id, user_id=user_id)
+
+    return trigger
+
+
+EnrollmentTrigger = Annotated["Callable[[str, str], None]", Depends(get_enrollment_trigger)]
+Clearinghouse = Annotated[ClearinghouseClient | None, Depends(get_clearinghouse_client)]
 
 
 def _to_payer_response(payer: Payer) -> PayerResponse:
@@ -249,6 +285,78 @@ def update_payer(
     return _to_payer_response(updated)
 
 
+def _to_enrollment_response(row: PayerEnrollmentRow) -> PayerEnrollmentResponse:
+    return PayerEnrollmentResponse(
+        transaction_type=row.transaction_type,  # type: ignore[arg-type]  # CHECK-constrained column
+        vendor_request_id=row.vendor_request_id,
+        status=row.status,  # type: ignore[arg-type]  # CHECK-constrained column
+        instructions=row.instructions,
+        updated_at=row.updated_at,
+    )
+
+
+def _enrollments_response(
+    session: Session, payers: PayerRepository, payer_row_id: str
+) -> PayerEnrollmentListResponse:
+    payer = _require_payer(payers, payer_row_id)
+    rows = list_enrollments(session, payer.id)
+    return PayerEnrollmentListResponse(
+        data=[_to_enrollment_response(row) for row in rows],
+        enrollment_status=payer.enrollment_status,
+    )
+
+
+@payers_router.get("/{payer_row_id}/enrollments", response_model=PayerEnrollmentListResponse)
+def get_payer_enrollments(
+    payer_row_id: str,
+    payers: PayersRepo,
+    session: DbSession,
+    _ctx: TenantContext = Depends(get_tenant_context),
+) -> PayerEnrollmentListResponse:
+    """Where the practice stands with this payer, per transaction."""
+    return _enrollments_response(session, payers, payer_row_id)
+
+
+@payers_router.post("/{payer_row_id}/enrollments", response_model=PayerEnrollmentListResponse)
+def request_payer_enrollments(
+    payer_row_id: str,
+    payers: PayersRepo,
+    session: DbSession,
+    client: Clearinghouse,
+    ctx: TenantContext = Depends(get_tenant_context),
+) -> PayerEnrollmentListResponse:
+    """Enroll with the payer: file every request it needs that is not on file.
+
+    Answers with the full set afterwards, so a second press is harmless. The
+    reasons it cannot file are each their own status: no clearinghouse
+    configured or reachable (503), a billing profile still missing fields or
+    a payer id the directory does not know (422, naming what is missing).
+    """
+    payer = _require_payer(payers, payer_row_id)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No clearinghouse account is configured for this practice.",
+        )
+    try:
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=ctx.user_id)
+    except (BillingProfileIncompleteError, PayerNotInDirectoryError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    except ClearinghouseUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The clearinghouse could not be reached. Try again later.",
+        ) from exc
+    except ClearinghouseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="The clearinghouse refused the enrollment request.",
+        ) from exc
+    return _enrollments_response(session, payers, payer_row_id)
+
+
 # ---------------------------------------------------------------------------
 # Coverage
 # ---------------------------------------------------------------------------
@@ -298,6 +406,7 @@ def create_coverage(
     coverage: CoverageRepo,
     payers: PayersRepo,
     patients: PatientsRepo,
+    enroll: EnrollmentTrigger,
     auto_check: AutoCheck,
     audit: AuditService = Depends(get_audit_service),
 ) -> CoverageResponse:
@@ -308,7 +417,9 @@ def create_coverage(
     rule, and the database enforces it too.
 
     Queues an eligibility check when the practice has auto-check on; the
-    answer lands on the row and shows on the next read.
+    answer lands on the row and shows on the next read. A payer with no
+    enrollments on file gets them requested on the way through, so the
+    practice is enrolled by the time a claim is ready.
     """
     _require_patient(patients, patient_id, user.id)
     if coverage.get_active(patient_id) is not None:
@@ -351,6 +462,7 @@ def create_coverage(
         changes={"coverage_id": created.id, "payer_id": payer.id},
     )
     auto_check(created.id, user.id, "save")
+    enroll(payer.id, user.id)
     return _to_coverage_response(created, payer)
 
 
@@ -363,6 +475,7 @@ def update_coverage(
     coverage: CoverageRepo,
     payers: PayersRepo,
     patients: PatientsRepo,
+    enroll: EnrollmentTrigger,
     auto_check: AutoCheck,
     audit: AuditService = Depends(get_audit_service),
 ) -> CoverageResponse:
@@ -370,6 +483,8 @@ def update_coverage(
 
     A changed plan is a different question to the payer, so the stored
     eligibility answer is cleared and (with auto-check on) asked again.
+    Switching to a payer with no enrollments on file requests them, as a
+    create would.
     """
     _require_patient(patients, patient_id, user.id)
     active = _require_active_coverage(coverage, patient_id)
@@ -391,6 +506,8 @@ def update_coverage(
         changes={"coverage_id": updated.id, "payer_id": payer.id},
     )
     auto_check(updated.id, user.id, "save")
+    if payer.id != active.payer_id:
+        enroll(payer.id, user.id)
     return _to_coverage_response(updated, payer)
 
 
@@ -519,7 +636,7 @@ def check_eligibility_job(
         return {"status": "unknown_user"}
 
     deps = EligibilityDeps(
-        client=_clearinghouse_client_for(practice_id),
+        client=clearinghouse_client_for_practice(practice_id),
         identity=load_billing_identity(session, user),
         coverage=coverage,
         payers=payers,

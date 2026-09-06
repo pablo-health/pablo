@@ -130,6 +130,10 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_patient_coverage_repository] = lambda: coverage
     app.dependency_overrides[get_patient_repository] = lambda: patients
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
+    # Enrolling with the payer is its own flow (test_payer_enrollment_routes.py).
+    app.dependency_overrides[coverage_routes.get_enrollment_trigger] = lambda: (
+        lambda _payer_row_id, _user_id: None
+    )
     app.dependency_overrides[get_eligibility_auto_check] = lambda: auto_check
     app.dependency_overrides[coverage_routes.get_clearinghouse_client] = lambda: clearinghouse
     app.dependency_overrides[coverage_routes.get_billing_identity] = lambda: BillingIdentity(

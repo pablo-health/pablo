@@ -4,7 +4,9 @@ Recorded from the clearinghouse's test environment with a test API key. Every
 value is synthetic: the patient is the vendor's documented example person, the
 provider is the vendor's documented dummy NPI, the tax id is a random dummy
 EIN created for the test payer enrollment, and no request ever reached a real
-payer. Nothing here is PHI.
+payer. Nothing here is PHI. Contact emails in the recordings are replaced
+with a synthetic address (`billing@example.test`); no real person's address
+appears in any fixture.
 
 | File | What it is |
 |---|---|
@@ -41,4 +43,5 @@ The files below were NOT captured from a live call — the vendor's generic
 | `error_invalid_request_body.json`, `error_account_not_provisioned.json` | the vendor's generic `{code, message}` error envelope |
 | `error_request_changed.json` | the 422 an idempotency key gets when reused with a different body; the live lane sees this `code`, the `message` is illustrative |
 | `error_access_denied.json` | the 403 the enrollment API answers a test-mode key with; same caveat |
+| `enrollment_provider_action_required.json` | the recorded 835 enrollment moved to `PROVIDER_ACTION_REQUIRED`, with a `tasks[]` entry and `reason` built from the vendor's documented enrollment schema — the state a test key can never produce, and the one the reminder flow is built on |
 | `eligibility_271_carveout_behavioral.json` | a 271 whose behavioral benefit is administered by somebody other than the payer on the card. None of the vendor's mock members carries one, so this is `eligibility_271_active.json` with its recorded pharmacy carve-out line (`benefitsInformation[].code == "U"`, service type `88`, entity OPTUMRX — the shape the vendor's own mock uses for "contact this other entity") re-pointed at service types `MH`/`A4` and a made-up third-party administrator (`EXAMPLE BEHAVIORAL HEALTH`, payer id `EXBH1`). The vendor's per-call ids are blanked so nobody mistakes it for a capture |

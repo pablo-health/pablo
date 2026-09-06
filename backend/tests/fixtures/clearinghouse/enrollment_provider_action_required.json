@@ -1,0 +1,95 @@
+{
+  "aggregationPreference": {
+    "taxId": "844459714"
+  },
+  "createdAt": "2026-09-06T01:57:18.429Z",
+  "history": [
+    {
+      "newStatus": "STEDI_ACTION_REQUIRED",
+      "changedBy": "SYSTEM",
+      "changedAt": "2026-09-06T01:57:18.429Z",
+      "type": "STATUS_CHANGE"
+    },
+    {
+      "previousStatus": "STEDI_ACTION_REQUIRED",
+      "newStatus": "PROVIDER_ACTION_REQUIRED",
+      "changedBy": "SYSTEM",
+      "changedAt": "2026-09-08T14:02:11.000Z",
+      "type": "STATUS_CHANGE"
+    }
+  ],
+  "id": "01a0746f-2edf-75c0-a780-555b1231c789",
+  "payer": {
+    "name": "Stedi Test Payer",
+    "stediPayerId": "FRCPB",
+    "submittedPayerIdOrAlias": "STEDI"
+  },
+  "primaryContact": {
+    "organizationName": "Pablo Health Test Provider",
+    "email": "billing@example.test",
+    "phone": "4045550100",
+    "streetAddress1": "1 Test St",
+    "city": "Atlanta",
+    "zipCode": "30301",
+    "state": "GA"
+  },
+  "provider": {
+    "name": "Pablo Health Test Provider",
+    "npi": "1999999984",
+    "taxId": "844459714",
+    "taxIdType": "EIN",
+    "id": "01a0746f-25d4-78a0-bb43-0f95acd218c9"
+  },
+  "reason": "The payer needs a signed EFT authorization before it will release remittances.",
+  "requestedEffectiveDate": "20260906",
+  "source": "API",
+  "status": "PROVIDER_ACTION_REQUIRED",
+  "statusLastUpdatedAt": "2026-09-08T14:02:11.000Z",
+  "submittedAt": "2026-09-06T01:57:18.429Z",
+  "tasks": [
+    {
+      "id": "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2b",
+      "rank": 1,
+      "responsibleParty": "PROVIDER",
+      "isComplete": false,
+      "definition": {
+        "manualTask": {
+          "instructions": "Sign the EFT authorization form and upload the signed copy.",
+          "fields": [
+            {
+              "key": "signed_eft_form",
+              "label": "Signed EFT authorization",
+              "fieldType": "DOCUMENT"
+            }
+          ],
+          "links": [
+            {
+              "label": "EFT authorization form",
+              "url": "https://example.com/payer/eft-authorization.pdf"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "01a0a1b2-3c4d-7e5f-8a6b-7c8d9e0f1a2c",
+      "rank": 2,
+      "responsibleParty": "STEDI",
+      "isComplete": false,
+      "definition": {
+        "manualTask": {
+          "instructions": "Forward the signed form to the payer.",
+          "fields": [],
+          "links": []
+        }
+      }
+    }
+  ],
+  "transactions": {
+    "claimPayment": {
+      "enroll": true
+    }
+  },
+  "updatedAt": "2026-09-08T14:02:11.000Z",
+  "userEmail": "billing@example.test"
+}

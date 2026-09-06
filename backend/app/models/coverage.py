@@ -28,6 +28,16 @@ from .eligibility import (
 )
 
 EnrollmentStatus = Literal["none", "filed", "pending", "active", "error"]
+EnrollmentTransactionType = Literal["837P", "270", "835"]
+EnrollmentRequestStatus = Literal[
+    "draft",
+    "stedi_action_required",
+    "provider_action_required",
+    "provisioning",
+    "live",
+    "rejected",
+    "canceled",
+]
 SubscriberRelationship = Literal["self", "spouse", "child", "other"]
 AdministrativeSex = Literal["M", "F", "U"]
 
@@ -103,6 +113,27 @@ class PayerResponse(BaseModel):
 class PayerListResponse(BaseModel):
     data: list[PayerResponse]
     total: int
+
+
+class PayerEnrollmentResponse(BaseModel):
+    """One enrollment request with the payer, as the payer row shows it.
+
+    ``instructions`` is the clearinghouse's own wording of what the payer
+    needs when the request is waiting on the practice; ``None`` otherwise.
+    """
+
+    transaction_type: EnrollmentTransactionType
+    vendor_request_id: str
+    status: EnrollmentRequestStatus
+    instructions: str | None = None
+    updated_at: datetime
+
+
+class PayerEnrollmentListResponse(BaseModel):
+    """The payer's requests plus the status they add up to."""
+
+    data: list[PayerEnrollmentResponse]
+    enrollment_status: EnrollmentStatus
 
 
 # ---------------------------------------------------------------------------

@@ -621,6 +621,21 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.payer_enrollments (
+    payer_id uuid NOT NULL,
+    transaction_type character varying(4) NOT NULL,
+    vendor_request_id character varying(80) NOT NULL,
+    status character varying(32) NOT NULL,
+    instructions text,
+    requested_by_user_id uuid NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_payer_enrollments_status CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, 'stedi_action_required'::character varying, 'provider_action_required'::character varying, 'provisioning'::character varying, 'live'::character varying, 'rejected'::character varying, 'canceled'::character varying])::text[]))),
+    CONSTRAINT ck_payer_enrollments_transaction_type CHECK (((transaction_type)::text = ANY ((ARRAY['837P'::character varying, '270'::character varying, '835'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.payers (
     id uuid NOT NULL,
     name character varying(255) NOT NULL,
@@ -658,6 +673,8 @@ CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
     eligibility_auto_check boolean DEFAULT true NOT NULL,
+    contact_email character varying(255),
+    clearinghouse_provider_id character varying(80),
     CONSTRAINT ck_practice_billing_profile_singleton CHECK ((id = 1)),
     CONSTRAINT ck_practice_billing_profile_tax_id_type CHECK (((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[])))
 );
@@ -1041,6 +1058,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
+    ADD CONSTRAINT pk_payer_enrollments PRIMARY KEY (payer_id, transaction_type);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.practice_billing_profile
     ADD CONSTRAINT practice_billing_profile_pkey PRIMARY KEY (id);
 
@@ -1334,6 +1356,10 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
+CREATE INDEX ix_payer_enrollments_vendor_request_id ON __TENANT_SCHEMA__.payer_enrollments USING btree (vendor_request_id);
+
+
+
 CREATE INDEX ix_payers_payer_id ON __TENANT_SCHEMA__.payers USING btree (payer_id);
 
 
@@ -1529,6 +1555,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
     ADD CONSTRAINT fk_patient_coverage_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.payer_enrollments
+    ADD CONSTRAINT fk_payer_enrollments_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE CASCADE;
 
 
 

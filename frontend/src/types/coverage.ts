@@ -9,6 +9,15 @@
 
 export type SubscriberRelationship = "self" | "spouse" | "child" | "other"
 export type EnrollmentStatus = "none" | "filed" | "pending" | "active" | "error"
+export type EnrollmentTransactionType = "837P" | "270" | "835"
+export type EnrollmentRequestStatus =
+  | "draft"
+  | "stedi_action_required"
+  | "provider_action_required"
+  | "provisioning"
+  | "live"
+  | "rejected"
+  | "canceled"
 export type AdministrativeSex = "M" | "F" | "U"
 
 export interface PayerResponse {
@@ -33,6 +42,21 @@ export interface PayerResponse {
 export interface PayerListResponse {
   data: PayerResponse[]
   total: number
+}
+
+/** One enrollment request with the payer, per transaction type. */
+export interface PayerEnrollmentResponse {
+  transaction_type: EnrollmentTransactionType
+  vendor_request_id: string
+  status: EnrollmentRequestStatus
+  /** The clearinghouse's wording of what the payer needs; null unless it is waiting on the practice. */
+  instructions: string | null
+  updated_at: string
+}
+
+export interface PayerEnrollmentListResponse {
+  data: PayerEnrollmentResponse[]
+  enrollment_status: EnrollmentStatus
 }
 
 export interface CreatePayerRequest {

@@ -285,6 +285,40 @@ def compliance_reminder_listener(session: Session, event: ClaimEvent) -> None:
     session.flush()
 
 
+def resolve_compliance_reminder(
+    session: Session, *, kind: ClaimEventKind, control_number: str, user_id: str
+) -> bool:
+    """Mark the default listener's reminder for ``(kind, control number)`` done.
+
+    The counterpart of :func:`compliance_reminder_listener` for the events
+    that stop needing a person once the world moves on — an enrollment the
+    payer wanted paperwork for that has since gone live. Returns whether a
+    reminder was open to resolve; a reminder that is already complete, or
+    was never written (a deployment that routes events elsewhere), is left
+    alone.
+    """
+    row = _existing_reminder(
+        session,
+        ClaimEvent(
+            kind=kind,
+            control_number=control_number,
+            claim_id="",
+            user_id=user_id,
+            payer_id=None,
+            payer_name=None,
+            state="",
+            occurred_at=utc_now(),
+        ),
+    )
+    if row is None or row.completed_at is not None:
+        return False
+    now = utc_now()
+    row.completed_at = now
+    row.updated_at = now
+    session.flush()
+    return True
+
+
 COMPLIANCE_ITEM_TYPES: tuple[str, ...] = tuple(
     compliance_item_type(kind) for kind in get_args(ClaimEventKind) if kind != "paid"
 )
