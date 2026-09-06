@@ -13,6 +13,10 @@ interface EditorialDateHeaderProps {
   onNext: () => void
   onToday: () => void
   onPickerOpen?: () => void
+  /** `summarize()` of the rule that blanks the whole displayed day, e.g.
+   * "Friday blocked" — set only when `view === "day"` and the anchor date
+   * is fully unavailable per a whole-day-blocking rule. */
+  blockedLabel?: string
 }
 
 export function EditorialDateHeader({
@@ -22,6 +26,7 @@ export function EditorialDateHeader({
   onNext,
   onToday,
   onPickerOpen,
+  blockedLabel,
 }: EditorialDateHeaderProps) {
   const { primary, secondary } = rangeLabel(view, anchor)
 
@@ -48,6 +53,17 @@ export function EditorialDateHeader({
           </span>
         )}
       </button>
+      {blockedLabel && (
+        <span
+          className="rounded-full px-2.5 py-1 text-[11px] font-semibold tracking-wide"
+          style={{
+            backgroundColor: "var(--ed-hairline-strong)",
+            color: "var(--ed-ink-muted)",
+          }}
+        >
+          {blockedLabel}
+        </span>
+      )}
       <div className="flex items-center gap-0.5">
         <button
           type="button"

@@ -5,13 +5,17 @@
 import { useEffect, useMemo, useRef } from "react"
 import { format, isSameDay, isToday, startOfDay } from "date-fns"
 import type { AppointmentResponse } from "@/types/scheduling"
+import type { AvailabilityRule, FreeSlotsResponse } from "@/types/availability"
+import { summarize } from "@/components/settings/AvailabilitySettings"
 import {
   EditorialEventCard,
   EVENT_COMPACT_PX,
   EVENT_MICRO_PX,
 } from "./EditorialEventCard"
 import { EditorialEventWrapper } from "./EditorialEventWrapper"
+import { UnavailableLayer } from "./UnavailableLayer"
 import { assignLanes } from "./laneLayout"
+import { rulesInForceForDate } from "./unavailability"
 import {
   DAY_END_HOUR,
   DAY_START_HOUR,
@@ -24,6 +28,14 @@ interface EditorialDayViewProps {
   anchor: Date
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
+  /** All of the therapist's availability rules — used only to attribute a
+   * fully-blocked day and to list what's in force for the tooltip; the
+   * shading itself comes from `freeSlots`, not from these. */
+  availabilityRules: AvailabilityRule[]
+  /** Free slots for `anchor`, at whatever duration the caller queried with.
+   * Undefined while loading — renders no shading until it resolves, rather
+   * than flashing "fully unavailable". */
+  freeSlots?: FreeSlotsResponse
   onSelectSlot: (start: string) => void
   /** Single click on an event → open the peek popover anchored to its rect. */
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
@@ -45,6 +57,8 @@ export function EditorialDayView({
   anchor,
   appointments,
   patientMap,
+  availabilityRules,
+  freeSlots,
   onSelectSlot,
   onPeek,
   onEdit,
@@ -71,6 +85,20 @@ export function EditorialDayView({
     const dayAppts = appointments.filter((a) => isSameDay(new Date(a.start_at), anchor))
     return assignLanes(dayAppts)
   }, [appointments, anchor])
+
+  // `configured === false` means the therapist has no rules at all — never
+  // shade an unconfigured calendar as unavailable.
+  const showUnavailable = freeSlots?.configured === true
+  const inForceLabel = useMemo(
+    () =>
+      showUnavailable
+        ? rulesInForceForDate(availabilityRules, anchor)
+            .map(summarize)
+            .filter(Boolean)
+            .join(" · ")
+        : "",
+    [showUnavailable, availabilityRules, anchor],
+  )
 
   const handleSlotClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("button")) return
@@ -116,7 +144,16 @@ export function EditorialDayView({
             }}
             onClick={handleSlotClick}
             aria-label={`${format(anchor, "EEEE MMM d")} schedule. Click to add appointment.`}
+            title={inForceLabel || undefined}
           >
+            {freeSlots && freeSlots.configured && (
+              <UnavailableLayer
+                slots={freeSlots.slots}
+                dayStartHour={dayStart}
+                dayEndHour={dayEnd}
+                rowHeightPx={rowHeightPx}
+              />
+            )}
             {lanes.map(({ appointment, lane, laneCount }) => {
               const startMin = minutesSinceMidnight(appointment.start_at)
               const endMin = minutesSinceMidnight(appointment.end_at)
