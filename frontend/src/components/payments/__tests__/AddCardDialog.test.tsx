@@ -43,9 +43,12 @@ vi.mock("@stripe/react-stripe-js", () => ({
 vi.mock("@/hooks/usePayments", () => ({
   useStartCardSetup: () => ({
     mutateAsync: vi.fn(() =>
+      // Both values are inert here: Elements and loadStripe are mocked above,
+      // so nothing parses them. Kept deliberately shapeless so secret scanning
+      // has nothing to recognise.
       Promise.resolve({
-        client_secret: "seti_123_secret_456",
-        publishable_key: "pk_test_123",
+        client_secret: "unused",
+        publishable_key: "unused",
       }),
     ),
   }),
