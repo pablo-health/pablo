@@ -70,6 +70,7 @@ PHI_PATH_MARKERS: tuple[str, ...] = (
     "/notes",
     "/resolve-client",
     "/import-clients",
+    "/claims",
 )
 
 FORBIDDEN_UNDERSCORE_PARAMS: frozenset[str] = frozenset({"_audit", "_http_request"})
