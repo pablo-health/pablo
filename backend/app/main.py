@@ -47,6 +47,7 @@ from .routes import (
     calendar_import,
     chat,
     compliance,
+    coverage,
     dashboard,
     ehr_routes,
     ext_auth,
@@ -203,6 +204,8 @@ app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(patients.router)
 app.include_router(practice_billing.router)
+app.include_router(coverage.payers_router)
+app.include_router(coverage.router)
 app.include_router(billing_queue.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
+    from .coverage import PatientCoverageRepository, PayerRepository
     from .diagnostic_assessment import DiagnosticAssessmentRepository
     from .google_calendar_token import GoogleCalendarTokenRepository
     from .ical_client_mapping import ICalClientMappingRepository
@@ -133,6 +134,20 @@ def get_patient_payment_repository() -> PatientPaymentRepository:
     from .postgres.patient_payment import PostgresPatientPaymentRepository
 
     return PostgresPatientPaymentRepository(_get_pg_session())
+
+
+def get_payer_repository() -> PayerRepository:
+    """Get the practice payer-list repository instance."""
+    from .postgres.coverage import PostgresPayerRepository
+
+    return PostgresPayerRepository(_get_pg_session())
+
+
+def get_patient_coverage_repository() -> PatientCoverageRepository:
+    """Get the per-client coverage repository instance."""
+    from .postgres.coverage import PostgresPatientCoverageRepository
+
+    return PostgresPatientCoverageRepository(_get_pg_session())
 
 
 def get_session_repository() -> TherapySessionRepository:
@@ -336,9 +351,11 @@ __all__ = [
     "get_medication_repository",
     "get_notes_repository",
     "get_outcome_measure_repository",
+    "get_patient_coverage_repository",
     "get_patient_document_repository",
     "get_patient_payment_repository",
     "get_patient_repository",
+    "get_payer_repository",
     "get_session_repository",
     "get_supervision_repository",
     "get_user_repository",

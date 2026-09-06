@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
+from .coverage import IntakeCoverage  # noqa: TC001 — Pydantic resolves the field type at runtime
+
 SLUG_PATTERN = r"^[a-z0-9][a-z0-9-]{2,63}$"
 _SLUG_RE = re.compile(SLUG_PATTERN)
 
@@ -155,6 +157,9 @@ class CreatePublicBookingRequest(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     note: str | None = Field(None, max_length=1000)
+    # Insurance as read off the card, optional. Goes straight onto the new
+    # chart's coverage on file; omitted, nothing is created.
+    insurance: IntakeCoverage | None = None
 
 
 class ConfirmPublicBookingRequest(BaseModel):

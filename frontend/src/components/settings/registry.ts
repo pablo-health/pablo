@@ -8,6 +8,7 @@ import {
   Palette,
   Receipt,
   ShieldCheck,
+  ShieldPlus,
   User,
   Users,
 } from "lucide-react"
@@ -16,6 +17,7 @@ import type { ComponentType } from "react"
 import { AppearancePage } from "./pages/AppearancePage"
 import { AvailabilityPage } from "./pages/AvailabilityPage"
 import { CalendarsPage } from "./pages/CalendarsPage"
+import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
 import { ProfilePage } from "./pages/ProfilePage"
 import { SchedulingPage } from "./pages/SchedulingPage"
@@ -152,6 +154,13 @@ const baseGroups: SettingsGroup[] = [
         page: SuperbillsPage,
         feature: "superbills",
         desc: "Out-of-network receipts generated from the chart.",
+      },
+      {
+        id: "insurance",
+        label: "Insurance payers",
+        icon: ShieldPlus,
+        page: InsurancePage,
+        desc: "Who you file claims with, and the filing deadlines each payer holds you to.",
       },
     ],
   },

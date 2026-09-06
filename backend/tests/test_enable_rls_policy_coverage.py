@@ -83,7 +83,7 @@ def test_compliance_documents_gets_uploaded_by_user_id_policy() -> None:
     assert "ENABLE ROW LEVEL SECURITY" in ddl
 
 
-@pytest.mark.parametrize("table", ["ehr_routes", "users"])
+@pytest.mark.parametrize("table", ["ehr_routes", "payers", "users"])
 def test_not_row_scoped_tables_are_left_unforced(table: str) -> None:
     session = _run({table: {"id"}})
     ddl = " ".join(session.executed)
