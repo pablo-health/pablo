@@ -29,7 +29,7 @@ Registration is a statement about the deployment, not about a request.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from ..settings import get_settings
@@ -42,6 +42,8 @@ class ClearinghouseCredentials:
     """What one clearinghouse call needs to be made for a practice.
 
     ``api_key`` authenticates the call, sent as the ``Authorization`` header.
+    It is kept out of the dataclass ``repr`` so a logged or traceback-printed
+    credentials object never carries the secret.
 
     ``mode`` is inferred from the key by whoever resolves it, not chosen
     separately — the vendor's test keys are answered by its test environment
@@ -49,7 +51,7 @@ class ClearinghouseCredentials:
     forget to flip back.
     """
 
-    api_key: str
+    api_key: str = field(repr=False)
     mode: ClearinghouseMode
 
 
@@ -86,18 +88,22 @@ class SettingsClearinghouseCredentialProvider:
         api_key = settings.clearinghouse_api_key
         if not api_key:
             return None
-        mode: ClearinghouseMode = "test" if api_key.startswith(_TEST_KEY_PREFIX) else "production"
-        return ClearinghouseCredentials(api_key=api_key, mode=mode)
+        return ClearinghouseCredentials(api_key=api_key, mode=mode_for_key(api_key))
 
 
-#: The vendor's test API keys carry this prefix (mirroring the ``sk_test_`` /
-#: ``sk_live_`` convention other payment/API vendors use); production keys do
-#: not. This is the only signal the deployment ever needs to check — there is
-#: deliberately no separate "which environment" setting to keep in sync with
-#: the key itself. Confirm against a real key from the vendor's dashboard
-#: before relying on this in a new deployment; if the vendor changes its key
-#: format this is the one place to update.
-_TEST_KEY_PREFIX = "key_test_"
+#: The vendor's test API keys carry this prefix; production keys do not.
+#: Confirmed against a real test key from the vendor's dashboard (the live
+#: suite under ``tests_integration/clearinghouse_live`` refuses to run unless
+#: the key it is handed classifies as ``test`` here). This is the only signal
+#: the deployment ever needs to check — there is deliberately no separate
+#: "which environment" setting to keep in sync with the key itself. If the
+#: vendor changes its key format this is the one place to update.
+_TEST_KEY_PREFIX = "test_"
+
+
+def mode_for_key(api_key: str) -> ClearinghouseMode:
+    """Which vendor environment answers ``api_key``: inferred from the key's prefix."""
+    return "test" if api_key.startswith(_TEST_KEY_PREFIX) else "production"
 
 
 @dataclass
