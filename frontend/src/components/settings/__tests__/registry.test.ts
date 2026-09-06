@@ -72,7 +72,7 @@ describe("settings registry merge", () => {
     const { settingsGroups } = await load()
 
     const billing = settingsGroups.find((group) => group.id === "billing")
-    expect(billing?.items.map((item) => item.id)).toEqual(["plan", "payments", "superbills"])
+    expect(billing?.items.map((item) => item.id)).toEqual(["plan", "payments", "superbills", "insurance"])
 
     const you = settingsGroups.find((group) => group.id === "you")
     expect(you?.items.map((item) => item.id)).toEqual(["profile", "appearance", "security", "notifications"])

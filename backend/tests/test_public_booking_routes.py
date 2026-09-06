@@ -34,6 +34,7 @@ from app.models.booking_link import (
     PublicBookingLinkResponse,
     UpdateBookingLinkRequest,
 )
+from app.models.coverage import IntakeCoverage
 from app.rate_limit import (
     require_public_booking_rate_limit,
     require_public_booking_write_rate_limit,
@@ -45,12 +46,18 @@ from app.repositories import (
 )
 from app.repositories.audit import InMemoryAuditRepository
 from app.repositories.booking_link import InMemoryBookingLinkRepository, SlugTakenError
+from app.repositories.coverage import (
+    InMemoryPatientCoverageRepository,
+    InMemoryPayerRepository,
+)
 from app.repositories.patient import InMemoryPatientRepository
 from app.routes import public_booking as public_booking_module
 from app.routes.booking_links import get_link_repository
 from app.routes.public_booking import (
+    CoverageRepos,
     get_public_appointment_repository,
     get_public_availability_engine,
+    get_public_coverage_repos,
     get_public_gcal_service,
     get_public_scheduling_service,
 )
@@ -68,6 +75,7 @@ from app.scheduling_engine.services.scheduling import SchedulingService
 from app.services import get_audit_service
 from app.services.audit_service import AuditService
 from app.services.captcha import CaptchaVerifier, NoneCaptchaVerifier, get_captcha_verifier
+from app.services.coverage_intake import record_intake_coverage
 from app.services.email_sender import (
     EmailSender,
     InMemoryEmailSender,
@@ -235,6 +243,9 @@ def _public_app(
     appt_repo = InMemoryAppointmentRepository()
     rule_repo = InMemoryAvailabilityRuleRepository()
     patient_repo = InMemoryPatientRepository()
+    coverage_repos = CoverageRepos(
+        payers=InMemoryPayerRepository(), coverage=InMemoryPatientCoverageRepository()
+    )
     fake_audit = audit if audit is not None else _FakeAudit()
     fake_email = email_sender if email_sender is not None else InMemoryEmailSender()
     fake_captcha = captcha_verifier if captcha_verifier is not None else NoneCaptchaVerifier()
@@ -257,6 +268,7 @@ def _public_app(
     app.dependency_overrides[get_public_scheduling_service] = lambda: SchedulingService(appt_repo)
     app.dependency_overrides[get_public_appointment_repository] = lambda: appt_repo
     app.dependency_overrides[get_patient_repository] = lambda: patient_repo
+    app.dependency_overrides[get_public_coverage_repos] = lambda: coverage_repos
     app.dependency_overrides[get_public_gcal_service] = lambda: gcal
     app.dependency_overrides[get_audit_service] = lambda: fake_audit
     app.dependency_overrides[get_email_sender] = lambda: fake_email
@@ -265,6 +277,7 @@ def _public_app(
     client = TestClient(app)
     client.rule_repo = rule_repo  # type: ignore[attr-defined]  # test-only stash, keeps fixtures to one object
     client.patient_repo = patient_repo  # type: ignore[attr-defined]  # test-only stash
+    client.coverage_repos = coverage_repos  # type: ignore[attr-defined]  # test-only stash
     client.appt_repo = appt_repo  # type: ignore[attr-defined]  # test-only stash
     client.audit = fake_audit  # type: ignore[attr-defined]  # test-only stash
     client.email = fake_email  # type: ignore[attr-defined]  # test-only stash
@@ -2066,3 +2079,229 @@ def test_another_users_link_is_invisible_to_the_caller(
     assert stored is not None
     assert stored.title == foreign.title
     assert stored.user_id == "other-user-999"
+
+
+# ------------------------------------------------------- intake: insurance
+
+
+_INSURANCE = {
+    "payer_name": "Aetna",
+    "payer_id": "60054",
+    "member_id": "W123456789",
+    "group_number": "GRP-77",
+    "plan_name": "Choice POS II",
+}
+
+
+def _book_with_insurance(
+    client: Any,
+    slug: str,
+    start_at: str,
+    insurance: dict[str, Any],
+    email: str = "jane@example.com",
+) -> Any:
+    payload = {
+        "start_at": start_at,
+        "first_name": "Jane",
+        "last_name": "Roe",
+        "email": email,
+        "insurance": insurance,
+    }
+    return client.post(f"/api/public/booking-links/{slug}/bookings", json=payload)
+
+
+def test_booking_with_insurance_puts_coverage_on_the_new_chart(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book_with_insurance(public_client, "intro-call", f"{date_str}T09:30:00Z", _INSURANCE)
+    assert resp.status_code == 201
+
+    patient = public_client.patient_repo.find_by_email("jane@example.com", OWNER_ID)
+    assert patient is not None
+    coverage = public_client.coverage_repos.coverage.get_active(patient.id)
+    assert coverage is not None
+    assert coverage.member_id == "W123456789"
+    assert coverage.group_number == "GRP-77"
+    assert coverage.plan_name == "Choice POS II"
+    assert coverage.subscriber_relationship == "self"
+
+    payer = public_client.coverage_repos.payers.get(coverage.payer_id)
+    assert payer is not None
+    assert payer.name == "Aetna"
+    assert payer.payer_id == "60054"
+    assert payer.timely_filing_days == 90
+
+    # Audited as a coverage write on the chart, by nobody signed in, and the
+    # payload names rows — never the member id or anything off the card.
+    created = [
+        c for c in public_client.audit.calls if "patient_coverage_created" in str(c["action"])
+    ]
+    assert len(created) == 1
+    assert created[0]["actor_type"] == ACTOR_TYPE_ANONYMOUS
+    assert created[0]["changes"] == {
+        "source": "public_booking",
+        "coverage_id": coverage.id,
+        "payer_id": payer.id,
+    }
+    for call in public_client.audit.calls:
+        assert "W123456789" not in str(call["changes"])
+        assert "GRP-77" not in str(call["changes"])
+
+
+def test_booking_without_insurance_creates_no_coverage(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book(public_client, "intro-call", f"{date_str}T09:30:00Z")
+    assert resp.status_code == 201
+
+    patient = public_client.patient_repo.find_by_email("jane@example.com", OWNER_ID)
+    assert patient is not None
+    assert public_client.coverage_repos.coverage.get_active(patient.id) is None
+    assert public_client.coverage_repos.payers.list() == []
+    assert not any("patient_coverage" in str(c["action"]) for c in public_client.audit.calls)
+
+
+def test_same_payer_typed_twice_is_one_payer_row(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    first = _book_with_insurance(
+        public_client, "intro-call", f"{date_str}T09:00:00Z", _INSURANCE, email="a@example.com"
+    )
+    second = _book_with_insurance(
+        public_client,
+        "intro-call",
+        f"{date_str}T10:00:00Z",
+        {**_INSURANCE, "payer_name": "aetna ", "member_id": "W987"},
+        email="b@example.com",
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    assert len(public_client.coverage_repos.payers.list()) == 1
+
+
+def test_insurance_typed_without_a_payer_id_gets_a_placeholder_id(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    link_repo.create(_link(require_email_confirmation=False))
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    resp = _book_with_insurance(
+        public_client,
+        "intro-call",
+        f"{date_str}T09:30:00Z",
+        {"payer_name": "Some Local Plan", "member_id": "M1"},
+    )
+    assert resp.status_code == 201
+
+    (payer,) = public_client.coverage_repos.payers.list()
+    assert payer.name == "Some Local Plan"
+    assert payer.payer_id == "UNKNOWN"
+
+
+def test_confirmed_hold_carries_intake_coverage_onto_the_existing_chart(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """A verified email that matches a chart moves the typed plan onto it."""
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+
+    resp = _book_with_insurance(
+        public_client,
+        "intro-call",
+        f"{date_str}T09:00:00Z",
+        _INSURANCE,
+        email="client@example.com",
+    )
+    assert resp.status_code == 201
+    match = re.search(r"token=(\S+)", public_client.email.sent[-1].text)
+    assert match is not None
+    appt = next(iter(public_client.appt_repo._appointments.values()))
+    placeholder_id = appt.patient_id
+    assert public_client.coverage_repos.coverage.get_active(placeholder_id) is not None
+
+    confirm = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": match.group(1)}
+    )
+    assert confirm.status_code == 200
+
+    moved = public_client.coverage_repos.coverage.get_active(existing.id)
+    assert moved is not None
+    assert moved.member_id == "W123456789"
+    assert public_client.coverage_repos.coverage.get_active(placeholder_id) is None
+
+
+def test_confirmed_hold_never_replaces_the_existing_charts_coverage(
+    public_client: Any, link_repo: InMemoryBookingLinkRepository
+) -> None:
+    """The chart's own plan stays; the typed one is deactivated, not lost."""
+    link_repo.create(_link())
+    date_str = _bookable_date()
+    public_client.rule_repo.create(_working_hours_rule(date_str))
+
+    now = utc_now()
+    existing = public_client.patient_repo.create(
+        Patient(
+            id=str(uuid.uuid4()),
+            first_name="Realfirst",
+            last_name="Reallast",
+            email="client@example.com",
+            created_at=now,
+            updated_at=now,
+        ),
+        OWNER_ID,
+    )
+    on_file = record_intake_coverage(
+        existing.id,
+        IntakeCoverage(payer_name="Cigna", payer_id="62308", member_id="ON-FILE"),
+        public_client.coverage_repos.payers,
+        public_client.coverage_repos.coverage,
+    )
+
+    resp = _book_with_insurance(
+        public_client,
+        "intro-call",
+        f"{date_str}T09:00:00Z",
+        _INSURANCE,
+        email="client@example.com",
+    )
+    assert resp.status_code == 201
+    match = re.search(r"token=(\S+)", public_client.email.sent[-1].text)
+    assert match is not None
+
+    confirm = public_client.post(
+        "/api/public/booking-links/intro-call/confirm", json={"token": match.group(1)}
+    )
+    assert confirm.status_code == 200
+
+    kept = public_client.coverage_repos.coverage.get_active(existing.id)
+    assert kept is not None
+    assert kept.id == on_file.id
+    assert kept.member_id == "ON-FILE"

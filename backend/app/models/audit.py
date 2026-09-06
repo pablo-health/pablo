@@ -240,6 +240,16 @@ class AuditAction(StrEnum):
     # any other read of the record, separately from the charge itself.
     PATIENT_CHARGE_AMOUNT_VIEWED = "patient_charge_amount_viewed"
 
+    # Coverage on file. A client's plan — payer, member id, subscriber — is
+    # protected health information about a named person, so reading or
+    # writing it is a patient-record access and is audited as such. The
+    # `changes` payload carries the coverage row id and the payer row id
+    # only: never the member id or anything about the subscriber.
+    PATIENT_COVERAGE_VIEWED = "patient_coverage_viewed"
+    PATIENT_COVERAGE_CREATED = "patient_coverage_created"
+    PATIENT_COVERAGE_UPDATED = "patient_coverage_updated"
+    PATIENT_COVERAGE_DEACTIVATED = "patient_coverage_deactivated"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""

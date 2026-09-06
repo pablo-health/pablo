@@ -214,6 +214,12 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # last 4 digits, so there is nothing here to disclose either.
         ("get", "/api/practice/billing-profile"),  # practice billing identity; no patient data
         ("patch", "/api/practice/billing-profile"),  # practice billing identity; no patient data
+        # coverage.py — the practice's payer list (names, electronic payer
+        # ids, filing deadlines); no client attached. The per-client coverage
+        # routes in the same file live under /api/patients and are audited.
+        ("get", "/api/payers"),  # practice payer list; no patient data
+        ("post", "/api/payers"),  # adds a payer; no patient data
+        ("patch", "/api/payers/{payer_row_id}"),  # edits a payer; no patient data
         ("get", "/api/appointment-types"),  # practice-level fee defaults, no client
         ("post", "/api/appointment-types"),  # creates an appointment type
         ("patch", "/api/appointment-types/{appointment_type_id}"),  # updates an appointment type

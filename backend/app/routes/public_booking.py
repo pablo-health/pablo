@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..repositories.booking_link import BookingLinkRepository
+    from ..repositories.coverage import PatientCoverageRepository, PayerRepository
     from ..repositories.google_calendar_token import GoogleCalendarTokenRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.user import UserRepository
@@ -63,7 +64,9 @@ from ..repositories import (
     get_availability_rule_repository,
     get_booking_link_repository,
     get_google_calendar_token_repository,
+    get_patient_coverage_repository,
     get_patient_repository,
+    get_payer_repository,
     get_user_repository,
 )
 from ..scheduling_engine.exceptions import AppointmentConflictError, InvalidAppointmentError
@@ -72,6 +75,7 @@ from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..services import AuditService, get_audit_service
 from ..services.captcha import CaptchaVerifier, get_captcha_verifier
+from ..services.coverage_intake import record_intake_coverage
 from ..services.email_sender import EmailSender, OutboundEmail, get_email_sender
 from ..services.google_calendar_service import (
     GoogleCalendarService,
@@ -108,6 +112,71 @@ class PublicBookingContext:
 
     link: BookingLink
     owner: User
+
+
+@dataclass
+class CoverageRepos:
+    """The two repositories intake insurance lands in, carried as one."""
+
+    payers: PayerRepository
+    coverage: PatientCoverageRepository
+
+
+def get_public_coverage_repos(
+    payers: PayerRepository = Depends(get_payer_repository),
+    coverage: PatientCoverageRepository = Depends(get_patient_coverage_repository),
+) -> CoverageRepos:
+    return CoverageRepos(payers=payers, coverage=coverage)
+
+
+def _record_intake_coverage(
+    request: CreatePublicBookingRequest,
+    patient: Patient,
+    ctx: PublicBookingContext,
+    repos: CoverageRepos,
+    http_request: Request,
+    audit: AuditService,
+) -> None:
+    """Put the insurance the booker typed on file for the chart just created.
+
+    Optional on the form, so a booking without it creates nothing here. The
+    audit row names the coverage and payer rows by id only — the member id
+    and subscriber details are protected health information and stay off
+    every log and audit payload.
+    """
+    if request.insurance is None:
+        return
+    coverage = record_intake_coverage(patient.id, request.insurance, repos.payers, repos.coverage)
+    audit.log_patient_action(
+        AuditAction.PATIENT_COVERAGE_CREATED,
+        ctx.owner,
+        http_request,
+        patient,
+        changes={
+            "source": "public_booking",
+            "coverage_id": coverage.id,
+            "payer_id": coverage.payer_id,
+        },
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+
+
+def _carry_coverage_to_existing_chart(
+    placeholder_id: str, existing_id: str, repos: CoverageRepos
+) -> None:
+    """Move a placeholder's intake coverage onto the chart it merged into.
+
+    The existing chart's own coverage, if it has one, is never touched: the
+    placeholder's row is deactivated instead, and what the client typed
+    stays readable on it for a person to reconcile.
+    """
+    typed = repos.coverage.get_active(placeholder_id)
+    if typed is None:
+        return
+    if repos.coverage.get_active(existing_id) is None:
+        repos.coverage.update(typed.model_copy(update={"patient_id": existing_id}))
+    else:
+        repos.coverage.update(typed.model_copy(update={"active": False}))
 
 
 def get_public_booking_context(
@@ -376,6 +445,7 @@ def _patient_for_instant_booking(
     request: CreatePublicBookingRequest,
     ctx: PublicBookingContext,
     patient_repo: PatientRepository,
+    repos: CoverageRepos,
     http_request: Request,
     audit: AuditService,
 ) -> Patient:
@@ -415,6 +485,7 @@ def _patient_for_instant_booking(
             changes=_booking_provenance(ctx),
             actor_type=ACTOR_TYPE_ANONYMOUS,
         )
+        _record_intake_coverage(request, patient, ctx, repos, http_request, audit)
         return patient
 
     patient = patient_repo.create(
@@ -442,6 +513,7 @@ def _patient_for_instant_booking(
         },
         actor_type=ACTOR_TYPE_ANONYMOUS,
     )
+    _record_intake_coverage(request, patient, ctx, repos, http_request, audit)
     return patient
 
 
@@ -478,6 +550,7 @@ def _place_hold(
     slot: TimeSlot,
     note_lines: list[str],
     patient_repo: PatientRepository,
+    repos: CoverageRepos,
     scheduling: SchedulingService,
     sender: EmailSender,
     http_request: Request,
@@ -511,6 +584,7 @@ def _place_hold(
         changes={"source": "public_booking", "status": "pending"},
         actor_type=ACTOR_TYPE_ANONYMOUS,
     )
+    _record_intake_coverage(request, patient, ctx, repos, http_request, audit)
 
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -583,6 +657,7 @@ def create_public_booking(
     engine: AvailabilityEngine = Depends(get_public_availability_engine),
     scheduling: SchedulingService = Depends(get_public_scheduling_service),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    repos: CoverageRepos = Depends(get_public_coverage_repos),
     gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
     sender: EmailSender = Depends(get_email_sender),
     audit: AuditService = Depends(get_audit_service),
@@ -614,10 +689,19 @@ def create_public_booking(
 
     if ctx.link.require_email_confirmation:
         return _place_hold(
-            request, ctx, slot, note_lines, patient_repo, scheduling, sender, http_request, audit
+            request,
+            ctx,
+            slot,
+            note_lines,
+            patient_repo,
+            repos,
+            scheduling,
+            sender,
+            http_request,
+            audit,
         )
 
-    patient = _patient_for_instant_booking(request, ctx, patient_repo, http_request, audit)
+    patient = _patient_for_instant_booking(request, ctx, patient_repo, repos, http_request, audit)
 
     try:
         appt = scheduling.create_appointment(
@@ -731,6 +815,7 @@ def _promote_pending_patient(
     appt: Appointment,
     ctx: PublicBookingContext,
     patient_repo: PatientRepository,
+    repos: CoverageRepos,
     scheduling: SchedulingService,
     http_request: Request,
     audit: AuditService,
@@ -753,6 +838,7 @@ def _promote_pending_patient(
     existing = patient_repo.find_by_email(str(placeholder.email), ctx.link.user_id)
     if existing is not None:
         appt = scheduling.update_appointment(appt.id, ctx.link.user_id, patient_id=existing.id)
+        _carry_coverage_to_existing_chart(placeholder.id, existing.id, repos)
         patient_repo.delete(placeholder.id, ctx.link.user_id)
         audit.log_appointment_action(
             AuditAction.APPOINTMENT_UPDATED,
@@ -799,6 +885,7 @@ def confirm_public_booking(
     scheduling: SchedulingService = Depends(get_public_scheduling_service),
     appt_repo: AppointmentRepository = Depends(get_public_appointment_repository),
     patient_repo: PatientRepository = Depends(get_patient_repository),
+    repos: CoverageRepos = Depends(get_public_coverage_repos),
     gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
     audit: AuditService = Depends(get_audit_service),
 ) -> PublicBookingConfirmation:
@@ -845,7 +932,7 @@ def confirm_public_booking(
     else:
         raise NotFoundError(_CONFIRMATION_INVALID)
 
-    appt = _promote_pending_patient(appt, ctx, patient_repo, scheduling, http_request, audit)
+    appt = _promote_pending_patient(appt, ctx, patient_repo, repos, scheduling, http_request, audit)
     appt = _sync_appointment_to_google(scheduling, gcal_service, ctx.owner, appt)
 
     audit.log_appointment_action(
