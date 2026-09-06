@@ -24,6 +24,12 @@ naming every claim it carried (ids, control numbers, range and count), the
 PDF one row for its claim. Nothing off the card — no member id, no date
 of birth, no diagnosis — reaches an audit payload or a log line.
 
+Both carry the practice's full tax id — a biller cannot file from the
+last four the claim keeps — decrypted from the billing profile as the
+export is rendered, the way a superbill reads it. The audit row records
+that it went out (``tax_id_disclosed``); the number itself never reaches
+an audit payload or a log line.
+
 Mounted before the claims router: ``/api/claims/export.csv`` would
 otherwise be read as a claim id.
 """
@@ -44,6 +50,7 @@ from ..models.claims import ClaimExportFinding, FindingResponse
 from ..repositories import get_claim_repository, get_patient_repository
 from ..services import AuditService, get_audit_service
 from ..utcnow import utc_now
+from .superbills import get_billing_tax_id_loader
 
 if TYPE_CHECKING:
     from ..models import User
@@ -57,6 +64,7 @@ router = APIRouter(prefix="/api/claims", tags=["claims"])
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
 ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
+TaxId = Annotated[str | None, Depends(get_billing_tax_id_loader)]
 
 _CLAIM_NOT_FOUND = "Claim not found."
 
@@ -66,6 +74,7 @@ def export_claims_csv(
     request: Request,
     user: CurrentUser,
     claims: ClaimsRepo,
+    tax_id: TaxId,
     from_date: Annotated[date, Query(alias="from")],
     to_date: Annotated[date, Query(alias="to")],
     audit: AuditService = Depends(get_audit_service),
@@ -89,11 +98,12 @@ def export_claims_csv(
             "count": len(selected),
             "claim_ids": [claim.id for claim in selected],
             "control_numbers": [claim.control_number for claim in selected],
+            "tax_id_disclosed": tax_id is not None,
         },
     )
     filename = f"claims-{from_date.isoformat()}-{to_date.isoformat()}.csv"
     return Response(
-        content=claims_to_csv(selected),
+        content=claims_to_csv(selected, tax_id=tax_id),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -106,6 +116,7 @@ def export_claim_cms1500(
     user: CurrentUser,
     claims: ClaimsRepo,
     patients: PatientsRepo,
+    tax_id: TaxId,
     audit: AuditService = Depends(get_audit_service),
 ) -> Response:
     """One claim on a letter page in the CMS-1500 layout."""
@@ -127,10 +138,11 @@ def export_claim_cms1500(
             "control_number": claim.control_number,
             "state": claim.state,
             "payer_id": claim.payer_id,
+            "tax_id_disclosed": tax_id is not None,
         },
     )
     return Response(
-        content=render_cms1500(claim, now=utc_now()),
+        content=render_cms1500(claim, tax_id=tax_id, now=utc_now()),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="claim-{claim.control_number}.pdf"'},
     )

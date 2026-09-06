@@ -19,7 +19,9 @@ same clock renders the same bytes. That is what lets a committed fixture stand a
 The form's diagnosis pointers are letters (A-L, box 21) rather than the
 1-based numbers the stored line carries, so ``24E`` is translated here.
 The practice's tax id is never on the claim — only its type and last four
-are — so box 25 shows the masked form; the biller has the number.
+are — so the caller decrypts it from the billing profile at render time
+and passes it in for box 25 (see :func:`app.claims.export.tax_id_for_export`
+for what prints when none is on file).
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from reportlab.pdfgen.canvas import Canvas
 
 from ..utcnow import utc_now
 from .cms1500_layout import DX_LETTERS, draw_form
-from .export import dollars
+from .export import dollars, tax_id_for_export
 
 if TYPE_CHECKING:
     from datetime import date, datetime
@@ -83,13 +85,17 @@ class Cms1500Fields:
     box_33a_billing_npi: str
 
 
-def cms1500_fields(claim: Claim, *, now: datetime | None = None) -> Cms1500Fields:
-    """The claim's values in the form's boxes, as strings ready to print."""
+def cms1500_fields(
+    claim: Claim, *, tax_id: str | None, now: datetime | None = None
+) -> Cms1500Fields:
+    """The claim's values in the form's boxes, as strings ready to print.
+
+    ``tax_id`` is the practice's full id, decrypted by the caller for box 25.
+    """
     signed_on = (now or utc_now()).date()
     plan = claim.subscriber_snapshot
     billing = claim.billing_snapshot.billing_provider
     rendering = claim.billing_snapshot.rendering_provider
-    tax_type = (billing.tax_id_type or "").upper()
     return Cms1500Fields(
         box_1a_insured_id=plan.member_id,
         box_2_patient_name=_person_name(plan.patient),
@@ -106,8 +112,8 @@ def cms1500_fields(claim: Claim, *, now: datetime | None = None) -> Cms1500Field
             _service_line(claim, line, rendering.npi or "")
             for line in sorted(claim.lines, key=lambda line: line.line_number)
         ],
-        box_25_tax_id=_masked_tax_id(billing.tax_id_last4, tax_type),
-        box_25_tax_id_type=tax_type,
+        box_25_tax_id=tax_id_for_export(tax_id, billing),
+        box_25_tax_id_type=(billing.tax_id_type or "").upper(),
         box_26_account_number=claim.control_number,
         box_28_total_charge=dollars(claim.total_charge_cents),
         box_29_amount_paid=dollars(claim.total_paid_cents),
@@ -118,9 +124,9 @@ def cms1500_fields(claim: Claim, *, now: datetime | None = None) -> Cms1500Field
     )
 
 
-def render_cms1500(claim: Claim, *, now: datetime | None = None) -> bytes:
+def render_cms1500(claim: Claim, *, tax_id: str | None, now: datetime | None = None) -> bytes:
     """The claim on a letter page in the CMS-1500 layout, as PDF bytes."""
-    fields = cms1500_fields(claim, now=now)
+    fields = cms1500_fields(claim, tax_id=tax_id, now=now)
     buffer = BytesIO()
     canvas = Canvas(buffer, pagesize=letter, invariant=1, pageCompression=0)
     canvas.setTitle(f"Claim {claim.control_number}")
@@ -170,9 +176,3 @@ def _address_lines(party: PersonSnapshot | BillingProviderSnapshot) -> list[str]
 def _form_date(value: date | None) -> str:
     """``MM DD YYYY``, the way the form's date boxes are segmented."""
     return value.strftime("%m %d %Y") if value is not None else ""
-
-
-def _masked_tax_id(last4: str | None, tax_type: str) -> str:
-    if not last4:
-        return ""
-    return f"XXX-XX-{last4}" if tax_type == "SSN" else f"XX-XXX{last4}"

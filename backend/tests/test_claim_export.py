@@ -8,6 +8,9 @@ What these pin down:
   row per service line;
 * each column reads from the stored claim — money as dollars with two
   decimals, lists pipe-joined, four diagnosis columns padded with blanks;
+* the tax id column carries the full id the caller decrypted, with its
+  EIN/SSN qualifier beside it, and falls back to the claim's mask when the
+  practice has none on file;
 * ``check_export`` refuses a package with a blocking finding, naming the
   claim and reusing the scrub's findings, and refuses a draft;
 * the in-memory repository's range query leaves drafts out and honours
@@ -28,15 +31,17 @@ from app.claims.export import (
     ExportBlockedError,
     check_export,
     claims_to_csv,
+    tax_id_for_export,
 )
 from app.repositories.claims import InMemoryClaimRepository
 
-from tests.claims_fixtures import TODAY, claim, line
+from tests.claims_fixtures import TODAY, billing_snapshot, claim, line
 
 if TYPE_CHECKING:
     from app.models.claims import Claim
 
 _SECOND_LINE_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+_TAX_ID = "12-3459714"
 
 
 def _validated(**overrides: Any) -> Claim:
@@ -47,9 +52,13 @@ def _rows(text: str) -> list[dict[str, str]]:
     return list(csv.DictReader(StringIO(text)))
 
 
+def _csv(claims: list[Claim], tax_id: str | None = _TAX_ID) -> str:
+    return claims_to_csv(claims, tax_id=tax_id)
+
+
 class TestColumns:
     def test_header_is_the_fixed_column_list(self) -> None:
-        header = next(csv.reader(StringIO(claims_to_csv([]))))
+        header = next(csv.reader(StringIO(_csv([]))))
         assert header == list(CSV_COLUMNS)
         assert header == [
             "control_number",
@@ -64,7 +73,8 @@ class TestColumns:
             "subscriber_relationship",
             "rendering_npi",
             "billing_npi",
-            "tax_id_last4",
+            "tax_id",
+            "tax_id_type",
             "taxonomy",
             "service_date",
             "place_of_service",
@@ -87,7 +97,7 @@ class TestColumns:
             ],
             total_charge_cents=21000,
         )
-        rows = _rows(claims_to_csv([two_lines, _validated(id="other", control_number="X1")]))
+        rows = _rows(_csv([two_lines, _validated(id="other", control_number="X1")]))
         assert [(r["control_number"], r["cpt"]) for r in rows] == [
             ("88659891", "90837"),
             ("88659891", "90833"),
@@ -95,7 +105,7 @@ class TestColumns:
         ]
 
     def test_every_column_reads_from_the_stored_claim(self) -> None:
-        (row,) = _rows(claims_to_csv([_validated()]))
+        (row,) = _rows(_csv([_validated()]))
         assert row == {
             "control_number": "88659891",
             "patient_last": "Anon",
@@ -109,7 +119,8 @@ class TestColumns:
             "subscriber_relationship": "self",
             "rendering_npi": "1999999984",
             "billing_npi": "1999999984",
-            "tax_id_last4": "9714",
+            "tax_id": _TAX_ID,
+            "tax_id_type": "EIN",
             "taxonomy": "101YM0800X",
             "service_date": "2026-09-01",
             "place_of_service": "10",
@@ -130,11 +141,37 @@ class TestColumns:
             lines=[line(modifiers=["95", "GT"], dx_pointers=[1, 3], charge_cents=12345)],
             total_charge_cents=12345,
         )
-        (row,) = _rows(claims_to_csv([many]))
+        (row,) = _rows(_csv([many]))
         assert row["modifiers"] == "95|GT"
         assert row["dx_pointers"] == "1|3"
         assert row["charge"] == "123.45"
         assert (row["dx1"], row["dx2"], row["dx3"], row["dx4"]) == ("F41.1", "F32.1", "F43.10", "")
+
+
+class TestTaxId:
+    def test_the_full_id_is_rendered_not_the_claims_last_four(self) -> None:
+        (row,) = _rows(_csv([_validated()]))
+        assert (row["tax_id"], row["tax_id_type"]) == (_TAX_ID, "EIN")
+        assert "9714" not in row.values()
+
+    def test_an_ssn_keeps_its_qualifier(self) -> None:
+        ssn = _validated(billing_snapshot=billing_snapshot(tax_id_type="ssn", tax_id_last4="6789"))
+        (row,) = _rows(_csv([ssn], tax_id="123-45-6789"))
+        assert (row["tax_id"], row["tax_id_type"]) == ("123-45-6789", "SSN")
+
+    def test_without_an_id_on_file_the_claims_mask_is_printed(self) -> None:
+        (row,) = _rows(_csv([_validated()], tax_id=None))
+        assert row["tax_id"] == "XX-XXX9714"
+        assert row["tax_id_type"] == "EIN"
+
+    def test_the_mask_takes_the_shape_of_the_ids_type(self) -> None:
+        ein = billing_snapshot().billing_provider
+        ssn = billing_snapshot(tax_id_type="ssn", tax_id_last4="1234").billing_provider
+        none = billing_snapshot(tax_id_type=None, tax_id_last4=None).billing_provider
+        assert tax_id_for_export(None, ein) == "XX-XXX9714"
+        assert tax_id_for_export(None, ssn) == "XXX-XX-1234"
+        assert tax_id_for_export(None, none) == ""
+        assert tax_id_for_export("12-3459714", ein) == "12-3459714"
 
 
 class TestRefusal:

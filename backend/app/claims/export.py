@@ -7,8 +7,15 @@ over the same assembled claims in the two shapes billers take: a CSV with
 one row per service line, in the column order below, and a CMS-1500-layout
 PDF per claim (:mod:`app.claims.cms1500`). Both read the stored claim and
 its lines exactly as they were built — nothing here reaches back to the
-appointment, the coverage or the billing profile, so the package and the
-claim never disagree.
+appointment or the coverage, so the package and the claim never disagree.
+
+The one value the claim does not carry is the practice's tax id: the
+snapshot keeps its type and last four only, and a biller cannot file from
+the last four. The caller decrypts the full id from the billing profile at
+the moment of export and passes it in; it is rendered, with its EIN/SSN
+qualifier, and goes nowhere else — never onto the claim, never into a log
+or an audit payload. With no id on file the mask the claim carries is
+printed instead, so the row still says what the practice knows.
 
 Only a claim that has passed the scrub leaves here. :func:`check_export`
 runs the scrub again over what is about to go out and refuses the whole
@@ -34,7 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
     from datetime import date
 
-    from ..models.claims import Claim, ClaimLine
+    from ..models.claims import BillingProviderSnapshot, Claim, ClaimLine
 
 #: The columns of the biller CSV, in this order. Fixed: a biller maps an
 #: import template to these once.
@@ -51,7 +58,8 @@ CSV_COLUMNS: tuple[str, ...] = (
     "subscriber_relationship",
     "rendering_npi",
     "billing_npi",
-    "tax_id_last4",
+    "tax_id",
+    "tax_id_type",
     "taxonomy",
     "service_date",
     "place_of_service",
@@ -127,23 +135,23 @@ def _draft_finding() -> Finding:
     )
 
 
-def claims_to_csv(claims: Sequence[Claim]) -> str:
+def claims_to_csv(claims: Sequence[Claim], *, tax_id: str | None) -> str:
     """The biller CSV: a header row, then one row per service line.
 
     Claims come out in the order given, lines in line-number order. Pure —
     :func:`check_export` is where refusal happens; this writes whatever it
-    is given.
+    is given. ``tax_id`` is the practice's full id, decrypted by the caller.
     """
     out = StringIO()
     writer = csv.writer(out, lineterminator="\n")
     writer.writerow(CSV_COLUMNS)
     for claim in claims:
         for line in sorted(claim.lines, key=lambda line: line.line_number):
-            writer.writerow(csv_row(claim, line))
+            writer.writerow(csv_row(claim, line, tax_id=tax_id))
     return out.getvalue()
 
 
-def csv_row(claim: Claim, line: ClaimLine) -> list[str]:
+def csv_row(claim: Claim, line: ClaimLine, *, tax_id: str | None) -> list[str]:
     """One CSV row, in :data:`CSV_COLUMNS` order."""
     billing = claim.billing_snapshot.billing_provider
     rendering = claim.billing_snapshot.rendering_provider
@@ -164,7 +172,8 @@ def csv_row(claim: Claim, line: ClaimLine) -> list[str]:
         plan.relationship,
         rendering.npi or "",
         billing.npi or "",
-        billing.tax_id_last4 or "",
+        tax_id_for_export(tax_id, billing),
+        (billing.tax_id_type or "").upper(),
         rendering.taxonomy_code or "",
         line.service_date.isoformat(),
         claim.place_of_service or "",
@@ -180,3 +189,18 @@ def csv_row(claim: Claim, line: ClaimLine) -> list[str]:
 def dollars(cents: int) -> str:
     """Stored cents as the dollars-and-cents string a biller reads: ``150.00``."""
     return f"{cents_to_dollars(cents) or 0:.2f}"
+
+
+def tax_id_for_export(tax_id: str | None, billing: BillingProviderSnapshot) -> str:
+    """The full tax id when the practice has one on file, else the claim's mask.
+
+    The mask takes the shape of the id's type — ``XXX-XX-1234`` for an SSN,
+    ``XX-XXX1234`` for an EIN — so a biller reading it knows which number
+    to ask the practice for.
+    """
+    if tax_id:
+        return tax_id
+    last4 = billing.tax_id_last4
+    if not last4:
+        return ""
+    return f"XXX-XX-{last4}" if (billing.tax_id_type or "").upper() == "SSN" else f"XX-XXX{last4}"
