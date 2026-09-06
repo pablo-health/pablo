@@ -1,0 +1,221 @@
+%PDF-1.3
+%“Œ‹ž ReportLab Generated PDF document (opensource)
+1 0 obj
+<<
+/F1 2 0 R /F2 3 0 R
+>>
+endobj
+2 0 obj
+<<
+/BaseFont /Helvetica /Encoding /WinAnsiEncoding /Name /F1 /Subtype /Type1 /Type /Font
+>>
+endobj
+3 0 obj
+<<
+/BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding /Name /F2 /Subtype /Type1 /Type /Font
+>>
+endobj
+4 0 obj
+<<
+/Contents 8 0 R /MediaBox [ 0 0 612 792 ] /Parent 7 0 R /Resources <<
+/Font 1 0 R /ProcSet [ /PDF /Text /ImageB /ImageC /ImageI ]
+>> /Rotate 0 /Trans <<
+
+>> 
+  /Type /Page
+>>
+endobj
+5 0 obj
+<<
+/PageMode /UseNone /Pages 7 0 R /Type /Catalog
+>>
+endobj
+6 0 obj
+<<
+/Author () /CreationDate (D:20000101000000+00'00') /Creator () /Keywords () /ModDate (D:20000101000000+00'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+  /Subject (CMS-1500 layout) /Title (Claim 88659891) /Trapped /False
+>>
+endobj
+7 0 obj
+<<
+/Count 1 /Kids [ 4 0 R ] /Type /Pages
+>>
+endobj
+8 0 obj
+<<
+/Length 5540
+>>
+stream
+1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
+.5 w
+BT /F2 11 Tf 13.2 TL ET
+BT 1 0 0 1 24 764 Tm (HEALTH INSURANCE CLAIM FORM) Tj T* ET
+BT /F1 6.5 Tf 7.8 TL ET
+BT 1 0 0 1 365.6805 764 Tm (CMS-1500 layout for transcription by the practice's biller. Not the official form.) Tj T* ET
+n 24 722 564 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 744 Tm (1a. INSURED'S I.D. NUMBER) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 732 Tm (123456789) Tj T* ET
+n 24 692 188 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 714 Tm (2. PATIENT'S NAME \(Last, First\)) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 702 Tm (Anon, John) Tj T* ET
+n 212 692 188 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 215 714 Tm (3. PATIENT'S BIRTH DATE \(MM DD YYYY\) / SEX) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 216 702 Tm (01 01 2000    SEX M) Tj T* ET
+n 400 692 188 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 403 714 Tm (4. INSURED'S NAME \(Last, First\)) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 404 702 Tm (Anon, John) Tj T* ET
+n 24 638 188 54 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 684 Tm (5. PATIENT'S ADDRESS, CITY STATE ZIP, PHONE) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 672 Tm (2222 Random St) Tj T* ET
+BT 1 0 0 1 28 662 Tm (Atlanta GA 303010000) Tj T* ET
+n 212 638 188 54 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 215 684 Tm (6. PATIENT RELATIONSHIP TO INSURED) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 216 672 Tm (Self) Tj T* ET
+n 400 638 188 54 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 403 684 Tm (7. INSURED'S ADDRESS, CITY STATE ZIP) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 404 672 Tm (2222 Random St) Tj T* ET
+BT 1 0 0 1 404 662 Tm (Atlanta GA 303010000) Tj T* ET
+n 24 608 282 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 630 Tm (11. INSURED'S POLICY GROUP OR FECA NUMBER) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 618 Tm (3335555) Tj T* ET
+n 306 608 282 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 309 630 Tm (11c. INSURANCE PLAN NAME OR PROGRAM NAME) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 310 618 Tm (Stedi Test Payer) Tj T* ET
+n 24 560 564 48 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 600 Tm (21. DIAGNOSIS OR NATURE OF ILLNESS OR INJURY    ICD Ind. 0) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 590 Tm (A. F41.1) Tj T* ET
+BT 1 0 0 1 169 590 Tm (B. F32.1) Tj T* ET
+BT 1 0 0 1 310 590 Tm (C. ) Tj T* ET
+BT 1 0 0 1 451 590 Tm (D. ) Tj T* ET
+BT 1 0 0 1 28 580 Tm (E. ) Tj T* ET
+BT 1 0 0 1 169 580 Tm (F. ) Tj T* ET
+BT 1 0 0 1 310 580 Tm (G. ) Tj T* ET
+BT 1 0 0 1 451 580 Tm (H. ) Tj T* ET
+BT 1 0 0 1 28 570 Tm (I. ) Tj T* ET
+BT 1 0 0 1 169 570 Tm (J. ) Tj T* ET
+BT 1 0 0 1 310 570 Tm (K. ) Tj T* ET
+BT 1 0 0 1 451 570 Tm (L. ) Tj T* ET
+n 24 440 564 120 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 552 Tm (24. SERVICE LINES) Tj T* ET
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 541 Tm (A. DATE\(S\) OF SERVICE  From / To) Tj T* ET
+BT 1 0 0 1 162.36 541 Tm (B. POS) Tj T* ET
+BT 1 0 0 1 196.2 541 Tm (D. PROCEDURES \(CPT/HCPCS\) / MODIFIER) Tj T* ET
+BT 1 0 0 1 320.28 541 Tm (E. DX PTR) Tj T* ET
+BT 1 0 0 1 365.4 541 Tm (F. $ CHARGES) Tj T* ET
+BT 1 0 0 1 433.08 541 Tm (G. UNITS) Tj T* ET
+BT 1 0 0 1 472.56 541 Tm (J. RENDERING PROVIDER NPI) Tj T* ET
+n 24 536 m 588 536 l S
+n 159.36 440 m 159.36 536 l S
+n 193.2 440 m 193.2 536 l S
+n 317.28 440 m 317.28 536 l S
+n 362.4 440 m 362.4 536 l S
+n 430.08 440 m 430.08 536 l S
+n 469.56 440 m 469.56 536 l S
+BT /F1 8.5 Tf 10.2 TL ET
+n 24 520 m 588 520 l S
+BT 1 0 0 1 27 525 Tm (09 01 2026  -  09 01 2026) Tj T* ET
+BT 1 0 0 1 162.36 525 Tm (10) Tj T* ET
+BT 1 0 0 1 196.2 525 Tm (90837  95) Tj T* ET
+BT 1 0 0 1 320.28 525 Tm (AB) Tj T* ET
+BT 1 0 0 1 365.4 525 Tm (150.00) Tj T* ET
+BT 1 0 0 1 433.08 525 Tm (1) Tj T* ET
+BT 1 0 0 1 472.56 525 Tm (1999999984) Tj T* ET
+n 24 504 m 588 504 l S
+BT 1 0 0 1 27 509 Tm (09 01 2026  -  09 01 2026) Tj T* ET
+BT 1 0 0 1 162.36 509 Tm (10) Tj T* ET
+BT 1 0 0 1 196.2 509 Tm (90833  95) Tj T* ET
+BT 1 0 0 1 320.28 509 Tm (A) Tj T* ET
+BT 1 0 0 1 365.4 509 Tm (60.00) Tj T* ET
+BT 1 0 0 1 433.08 509 Tm (1) Tj T* ET
+BT 1 0 0 1 472.56 509 Tm (1999999984) Tj T* ET
+n 24 488 m 588 488 l S
+n 24 472 m 588 472 l S
+n 24 456 m 588 456 l S
+n 24 440 m 588 440 l S
+n 24 410 141 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 432 Tm (25. FEDERAL TAX I.D. NUMBER    SSN / EIN) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 420 Tm (XX-XXX9714  EIN) Tj T* ET
+n 165 410 141 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 168 432 Tm (26. PATIENT'S ACCOUNT NO.) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 169 420 Tm (88659891) Tj T* ET
+n 306 410 141 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 309 432 Tm (28. TOTAL CHARGE) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 310 420 Tm ($ 210.00) Tj T* ET
+n 447 410 141 30 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 450 432 Tm (29. AMOUNT PAID) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 451 420 Tm ($ 0.00) Tj T* ET
+n 24 338 282 72 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 27 402 Tm (31. SIGNATURE OF PHYSICIAN OR SUPPLIER / DATE) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 28 390 Tm (Jane Smith) Tj T* ET
+BT 1 0 0 1 28 380 Tm (DATE 09 06 2026) Tj T* ET
+n 306 338 282 72 re S
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 309 402 Tm (33. BILLING PROVIDER INFO & PH #) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 310 390 Tm (Pablo Test Practice) Tj T* ET
+BT 1 0 0 1 310 380 Tm (123 Some St) Tj T* ET
+BT 1 0 0 1 310 370 Tm (Atlanta GA 303010000) Tj T* ET
+BT 1 0 0 1 310 360 Tm (5553334444) Tj T* ET
+BT /F2 5.5 Tf 6.6 TL ET
+BT 1 0 0 1 309 342 Tm (33a. NPI) Tj T* ET
+BT /F1 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 342 342 Tm (1999999984) Tj T* ET
+ 
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000061 00000 n 
+0000000102 00000 n 
+0000000209 00000 n 
+0000000321 00000 n 
+0000000514 00000 n 
+0000000582 00000 n 
+0000000835 00000 n 
+0000000894 00000 n 
+trailer
+<<
+/ID 
+[<59a0d81f93a09ae065f4bbc777ee21b2><59a0d81f93a09ae065f4bbc777ee21b2>]
+% ReportLab generated PDF document -- digest (opensource)
+
+/Info 6 0 R
+/Root 5 0 R
+/Size 9
+>>
+startxref
+6485
+%%EOF

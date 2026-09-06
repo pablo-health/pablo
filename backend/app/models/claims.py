@@ -228,3 +228,15 @@ class ClaimValidationFailed(BaseModel):
 
     message: str
     findings: list[FindingResponse]
+
+
+class ClaimExportFinding(BaseModel):
+    """One claim the export refused, with what stopped it.
+
+    Carried as ``details.claims`` on the 422 (``CLAIM_EXPORT_BLOCKED``)
+    envelope; nothing left the practice.
+    """
+
+    claim_id: str
+    control_number: str
+    findings: list[FindingResponse]

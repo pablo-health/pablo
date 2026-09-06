@@ -47,6 +47,7 @@ from .routes import (
     calendar_import,
     chat,
     claims,
+    claims_export,
     compliance,
     coverage,
     dashboard,
@@ -208,6 +209,9 @@ app.include_router(practice_billing.router)
 app.include_router(coverage.payers_router)
 app.include_router(coverage.router)
 app.include_router(coverage.jobs_router)
+# The export router mounts ``/api/claims/export.csv`` and must come before
+# the claims router, whose ``/api/claims/{claim_id}`` would otherwise match it.
+app.include_router(claims_export.router)
 app.include_router(claims.router)
 app.include_router(claims.patient_claims_router)
 app.include_router(billing_queue.router)
