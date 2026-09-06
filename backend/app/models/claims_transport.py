@@ -87,6 +87,31 @@ class Subscriber(BaseModel):
     groupNumber: str | None = None
 
 
+#: Who the patient is to the subscriber (the 837P's PAT01): spouse, child,
+#: employee, unknown, organ donor, cadaver donor, life partner, other.
+DependentRelationshipCode = Literal["01", "19", "20", "21", "39", "40", "53", "G8"]
+
+
+class Dependent(BaseModel):
+    """The patient, when they are covered under somebody else's member id.
+
+    Present only when the patient is not the subscriber; ``subscriber`` then
+    carries the policy holder. A dependent who has a member id of their own
+    goes in ``subscriber`` instead, per the vendor, and this loop is left
+    out — hence ``memberId`` is optional and unset for the ordinary case.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    relationshipToSubscriberCode: DependentRelationshipCode
+    firstName: str
+    lastName: str
+    gender: Literal["M", "F", "U"]
+    dateOfBirth: str
+    address: Address
+    memberId: str | None = None
+
+
 class DiagnosisCode(BaseModel):
     model_config = _WIRE_MODEL_CONFIG
 
@@ -158,6 +183,7 @@ class ClaimSubmissionRequest(BaseModel):
     submitter: Submitter
     receiver: Receiver
     subscriber: Subscriber
+    dependent: Dependent | None = None
     claimInformation: ClaimInformation
 
 

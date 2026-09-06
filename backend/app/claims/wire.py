@@ -15,10 +15,11 @@ Dates become ``YYYYMMDD``; diagnosis codes lose their dot (``F41.1`` is
 ``F411`` on the wire); the first diagnosis is the principal (``ABK``) and
 the rest are ``ABF``.
 
-The subscriber loop is filled from the claim's subscriber snapshot. A claim
-whose client is not the subscriber needs a dependent loop this transport
-model does not carry yet, so it is refused here rather than sent with the
-client's details in the subscriber's place.
+The subscriber loop is filled from the claim's subscriber snapshot. When the
+client is a spouse or child on somebody else's plan, the policy holder goes
+in ``subscriber`` and the client in ``dependent``, with the relationship
+code the vendor expects; when the client is the subscriber there is no
+dependent loop at all.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ from ..models.claims_transport import (
     ClaimSubmissionRequest,
     CompositeDiagnosisCodePointers,
     ContactInformation,
+    Dependent,
+    DependentRelationshipCode,
     DiagnosisCode,
     ProfessionalService,
     Receiver,
@@ -52,6 +55,7 @@ if TYPE_CHECKING:
         Claim,
         PersonSnapshot,
     )
+    from ..models.coverage import SubscriberRelationship
 
 
 class ClaimMappingError(Exception):
@@ -62,13 +66,10 @@ class ClaimMappingError(Exception):
         self.missing = missing
 
 
-class UnsupportedClaimError(Exception):
-    """A claim shape this transport cannot carry yet."""
-
-
 _BILLING_REQUIRED = ["legal_name", "npi", "address_line1", "city", "state", "postal_code", "phone"]
 _RENDERING_REQUIRED = ["first_name", "last_name", "npi", "taxonomy_code"]
-_SUBSCRIBER_REQUIRED = [
+#: What the subscriber loop needs, and the dependent loop when there is one.
+_PERSON_REQUIRED = [
     "first_name",
     "last_name",
     "sex",
@@ -78,6 +79,14 @@ _SUBSCRIBER_REQUIRED = [
     "state",
     "postal_code",
 ]
+
+#: The coverage's relationship, as the vendor codes it on the dependent loop.
+#: ``self`` has no entry: a client who is the subscriber is not a dependent.
+_RELATIONSHIP_CODES: dict[SubscriberRelationship, DependentRelationshipCode] = {
+    "spouse": "01",
+    "child": "19",
+    "other": "G8",
+}
 
 
 def to_submission_request(  # noqa: PLR0913 — the per-account values, keyword-only
@@ -98,22 +107,20 @@ def to_submission_request(  # noqa: PLR0913 — the per-account values, keyword-
     the practice's clearinghouse account.
 
     Raises :class:`ClaimMappingError` naming any value the transport needs
-    that the claim does not carry, and :class:`UnsupportedClaimError` for a
-    claim whose client is not the subscriber.
+    that the claim does not carry.
     """
     snapshot = claim.subscriber_snapshot
-    if snapshot.relationship != "self":
-        msg = "Claims for a client who is not the subscriber are not supported yet."
-        raise UnsupportedClaimError(msg)
-
     billing = claim.billing_snapshot.billing_provider
     rendering = claim.billing_snapshot.rendering_provider
     subscriber = snapshot.subscriber
+    patient = snapshot.patient if snapshot.relationship != "self" else None
     missing = (
         [f"billing_provider.{f}" for f in missing_fields(billing, _BILLING_REQUIRED)]
         + [f"rendering_provider.{f}" for f in missing_fields(rendering, _RENDERING_REQUIRED)]
-        + [f"subscriber.{f}" for f in missing_fields(subscriber, _SUBSCRIBER_REQUIRED)]
+        + [f"subscriber.{f}" for f in missing_fields(subscriber, _PERSON_REQUIRED)]
     )
+    if patient is not None:
+        missing.extend(f"patient.{f}" for f in missing_fields(patient, _PERSON_REQUIRED))
     if not claim.place_of_service:
         missing.append("place_of_service")
     if not claim.lines:
@@ -155,6 +162,16 @@ def to_submission_request(  # noqa: PLR0913 — the per-account values, keyword-
             dateOfBirth=_wire_date(subscriber.date_of_birth),
             address=_address(subscriber),
             groupNumber=snapshot.group_number,
+        ),
+        dependent=None
+        if patient is None
+        else Dependent(
+            relationshipToSubscriberCode=_RELATIONSHIP_CODES[snapshot.relationship],
+            firstName=_present(patient.first_name),
+            lastName=_present(patient.last_name),
+            gender=patient.sex or "U",
+            dateOfBirth=_wire_date(patient.date_of_birth),
+            address=_address(patient),
         ),
         claimInformation=ClaimInformation(
             patientControlNumber=claim.control_number,

@@ -1,0 +1,27 @@
+{
+  "status": "SUCCESS",
+  "controlNumber": "1",
+  "tradingPartnerServiceId": "STEDI",
+  "claimReference": {
+    "correlationId": "01M1VP6JBGV9MD9K0S7SM9BSYY",
+    "patientControlNumber": "LIVED9015FE9B389",
+    "timeOfResponse": "2026-09-06T15:43:11.942Z",
+    "payerId": "STEDI",
+    "formatVersion": "5010",
+    "rhclaimNumber": "01M1VP6JBGV9MD9K0S7SM9BSYY",
+    "serviceLines": [
+      {
+        "lineItemControlNumber": "LIVED9015FE9B389L1"
+      }
+    ]
+  },
+  "meta": {
+    "traceId": "20142bb0-ac73-4c1d-a238-fb39f6482478"
+  },
+  "payer": {
+    "payerName": "Stedi Test Payer",
+    "payerId": "STEDI"
+  },
+  "x12": "ISA*00*          *00*          *ZZ*STEDITEST      *ZZ*189416354675   *260906*1543*^*00501*626754897*0*T*`~GS*HN*STEDITEST*189416354675*20260906*154311*1*X*005010X214~ST*277*0001*005010X214~BHT*0085*08*01M1VP6KHW55J5D8QBHEY1DF26*20260906*154311*TH~HL*1**20*1~NM1*AY*2*STEDI INC*****46*117151744~TRN*1*01M1VP6KHW55J5D8QBHEY1DF26~DTP*050*D8*20260906~DTP*009*D8*20260906~HL*2*1*21*1~NM1*41*2*Pablo Test Practice*****46*0000001~TRN*2*01M1VP6JBGV9MD9K0S7SM9BSYY~STC*A1`19`AY*20260906*WQ*150.00~QTY*90*1~AMT*YU*150.00~HL*3*2*19*1~NM1*85*2*Pablo Test Practice*****XX*1999999984~TRN*1*0~REF*TJ*844459714~QTY*QA*1~AMT*YU*150.00~HL*4*3*PT*0~NM1*QC*1*Anon*Sam****MI*123456789~TRN*2*LIVED9015FE9B389~STC*A1`16`PR*20260906*WQ*150.00********Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication. Claim/encounter has been forwarded to entity. Payer~DTP*472*RD8*20260901-20260901~SE*25*0001~GE*1*1~IEA*1*626754897~",
+  "httpStatusCode": "200 OK"
+}
