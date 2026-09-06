@@ -10,6 +10,7 @@ payer. Nothing here is PHI.
 |---|---|
 | `837p_request_test_payer.json` | a professional claim request body the API accepts |
 | `837p_submission_success*.json` | the synchronous accept: `status`, `claimReference` (vendor claim id, echoed control numbers) |
+| `837p_submission_success_dependent_test_payer.json` | the accept for a claim whose patient is a child on the policy holder's plan — `subscriber` + `dependent` loops, both people made up |
 | `837p_submission_edit_rejected_*.json` | HTTP 400 edit rejections: `status: ERROR`, `errors[]` with `code`, `description`, `followupAction` |
 | `polling_transactions_277_and_835.json` | the polling endpoint listing an outbound 837, an inbound 277CA and an inbound 835 |
 | `835_report_paid_in_full.json` | the 835 as JSON from the report endpoint |
