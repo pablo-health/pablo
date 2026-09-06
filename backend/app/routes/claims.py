@@ -9,10 +9,13 @@ Routes
   the client's coverage and the practice's billing identity into a
   ``draft`` claim. 422 when the client has no active coverage.
 * ``GET /api/claims?state=&from=&to=`` — the tracker: every claim the
-  caller can see, newest first, narrowed by state and service-date range.
+  caller can see, newest first, narrowed by state and service-date range,
+  each with the deadline it is under and what to do next.
 * ``GET /api/claims/{claim_id}`` — the claim with its lines, plus what the
   detail view derives at read time: the scrub's current findings, the hops
-  it has passed, its deadlines and the names its ids stand for.
+  it has passed, its deadlines and the names its ids stand for — and
+  every receipt the pipeline recorded (see ``app.routes.claim_status`` for
+  the on-demand status check).
 * ``POST /api/claims/{claim_id}/validate`` — run the scrub. With a blocking
   finding: 422 (``CLAIM_VALIDATION_FAILED``) carrying every finding in
   ``details.findings``, and the claim stays a draft. Without: the claim
@@ -64,6 +67,7 @@ from ..claims.assembly import (
 )
 from ..claims.deadlines import deadlines_for
 from ..claims.scrub import scrub
+from ..claims.tracker import next_action_for
 from ..claims.transitions import ClaimNotValidError, advance
 from ..db import get_db_session
 from ..models.audit import AuditAction, ResourceType
@@ -85,6 +89,7 @@ from ..models.claims import (
 from ..repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_receipt_repository,
     get_claim_repository,
     get_clinician_profile_repository,
     get_patient_coverage_repository,
@@ -102,8 +107,10 @@ if TYPE_CHECKING:
 
     from ..claims.scrub import Finding
     from ..models import User
+    from ..models.claims import ClaimReceipt
     from ..models.coverage import Payer
     from ..models.patient import Patient
+    from ..repositories.claim_receipts import ClaimReceiptRepository
     from ..repositories.claims import ClaimRepository
     from ..repositories.clinician_profile import ClinicianProfileRepository
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
@@ -128,6 +135,7 @@ def get_billing_profile_loader() -> Mapping[str, object]:
 # silently read as a query parameter.
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
 ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
+ReceiptsRepo = Annotated["ClaimReceiptRepository", Depends(get_claim_receipt_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
 AppointmentsRepo = Annotated["AppointmentRepository", Depends(get_appointment_repository)]
 AppointmentTypesRepo = Annotated[
@@ -239,14 +247,31 @@ _PAST_CLEARINGHOUSE: frozenset[str] = frozenset(
 )
 
 
-def _hops(claim: Claim) -> list[ClaimHop]:
-    """Where the claim has been, read off its receipt timestamps."""
+def _hops(claim: Claim, receipts: list[ClaimReceipt]) -> list[ClaimHop]:
+    """Where the claim has been, read off its receipt timestamps.
+
+    The clearinghouse hop has no column of its own on the row; its moment
+    is the ``ch_accepted`` receipt's, when the pipeline recorded one.
+    """
+    clearinghouse_at = next(
+        (
+            r.occurred_at
+            for r in receipts
+            if r.kind == "ch_accepted" and r.to_state == "ch_accepted"
+        ),
+        None,
+    )
     return [
         ClaimHop(kind="built", reached=True, at=claim.created_at),
         ClaimHop(kind="submitted", reached=claim.submitted_at is not None, at=claim.submitted_at),
         ClaimHop(
             kind="clearinghouse_accepted",
-            reached=claim.state in _PAST_CLEARINGHOUSE or claim.payer_accepted_at is not None,
+            reached=(
+                claim.state in _PAST_CLEARINGHOUSE
+                or claim.payer_accepted_at is not None
+                or clearinghouse_at is not None
+            ),
+            at=clearinghouse_at,
         ),
         ClaimHop(
             kind="payer_accepted",
@@ -296,9 +321,11 @@ def _to_tracker_item(
         total_charge_cents=claim.total_charge_cents,
         total_paid_cents=claim.total_paid_cents,
         submitted_at=claim.submitted_at,
+        last_receipt_at=claim.last_receipt_at,
         created_at=claim.created_at,
         updated_at=claim.updated_at,
         deadlines=_deadlines(claim, payer, today),
+        next_action=next_action_for(claim),
     )
 
 
@@ -348,6 +375,24 @@ def build_claim(
         changes={**_audit_changes(created), "appointment_id": appointment_id},
     )
     return _to_response(created)
+
+
+def _to_detail(
+    claim: Claim, patient: Patient, payer: Payer | None, receipts: ClaimReceiptRepository
+) -> ClaimDetailResponse:
+    """The claim as the detail view sees it, receipts and all."""
+    today = utc_now().date()
+    collected = receipts.list_for_claim(claim.id)
+    return ClaimDetailResponse(
+        **claim.model_dump(),
+        patient_name=patient.display_name,
+        payer_name=payer.name if payer is not None else None,
+        findings=_to_findings(scrub(claim, today=today)),
+        hops=_hops(claim, collected),
+        deadlines=_deadlines(claim, payer, today),
+        receipts=collected,
+        next_action=next_action_for(claim),
+    )
 
 
 @router.get("", response_model=ClaimTrackerResponse)
@@ -404,6 +449,7 @@ def get_claim(
     claims: ClaimsRepo,
     patients: PatientsRepo,
     payers: PayersRepo,
+    receipts: ReceiptsRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> ClaimDetailResponse:
     claim, patient = _require_claim(claims, patients, claim_id, user.id)
@@ -416,16 +462,7 @@ def get_claim(
         patient=patient,
         changes=_audit_changes(claim),
     )
-    payer = payers.get(claim.payer_id)
-    today = utc_now().date()
-    return ClaimDetailResponse(
-        **claim.model_dump(),
-        patient_name=patient.display_name,
-        payer_name=payer.name if payer is not None else None,
-        findings=_to_findings(scrub(claim, today=today)),
-        hops=_hops(claim),
-        deadlines=_deadlines(claim, payer, today),
-    )
+    return _to_detail(claim, patient, payers.get(claim.payer_id), receipts)
 
 
 @router.post("/{claim_id}/validate", response_model=ValidateClaimResponse)

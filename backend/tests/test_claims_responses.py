@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from app.claims.responses import (
     ParseError,
+    parse_277,
     parse_835,
     parse_enrollment,
     parse_polling_page,
@@ -103,6 +104,53 @@ def test_parse_polling_page() -> None:
     inbound_835 = items[1]
     assert inbound_835.business_identifiers["CLP-01"] == "88659891"
     assert inbound_835.business_identifiers["TRN-02"] == "01M1T7166M0FRNNBFWHJQC7V18"
+
+
+def test_parse_277_clearinghouse_forwarded() -> None:
+    [ack] = parse_277(_load("277ca_report_clearinghouse_forwarded.json"))
+    assert ack.source == "clearinghouse"
+    assert ack.source_name == "STEDI INC"
+    assert ack.control_number == "LIVE50D1D98E2364"
+    assert ack.batch_number == "01M1VPM7E0T38G9WBVG4HN5C5Q"
+    assert ack.payer_claim_number is None
+    assert [
+        (s.category_code, s.status_code, s.entity_code, s.action_code) for s in ack.statuses
+    ] == [("A1", "16", "PR", "WQ")]
+    assert ack.statuses[0].code == "A1:16"
+    assert ack.statuses[0].effective_date == "20260906"
+    assert ack.outcome == "accepted"
+
+
+def test_parse_277_payer_accepted() -> None:
+    [ack] = parse_277(_load("277ca_report_payer_accepted.json"))
+    assert ack.source == "payer"
+    assert ack.payer_claim_number == "PYR2026090600001"
+    assert [s.code for s in ack.statuses] == ["A2:20"]
+    assert ack.outcome == "accepted"
+
+
+def test_parse_277_payer_rejected() -> None:
+    [ack] = parse_277(_load("277ca_report_payer_rejected.json"))
+    assert ack.source == "payer"
+    assert [s.code for s in ack.statuses] == ["A7:21", "A7:164"]
+    assert ack.statuses[0].status_description == "Missing or invalid information."
+    assert ack.statuses[0].action_code == "U"
+    assert ack.outcome == "rejected"
+
+
+def test_parse_277_requires_the_echoed_control_number() -> None:
+    report = _load("277ca_report_payer_accepted.json")
+    status = report["transactions"][0]["payers"][0]["claimStatusTransactions"][0][
+        "claimStatusDetails"
+    ][0]["patientClaimStatusDetails"][0]["claims"][0]["claimStatus"]
+    del status["referencedTransactionTraceNumber"]
+    with pytest.raises(ParseError) as excinfo:
+        parse_277(report)
+    assert excinfo.value.path.endswith(".claimStatus.referencedTransactionTraceNumber")
+
+
+def test_parse_277_of_an_empty_report_is_empty() -> None:
+    assert parse_277({"transactions": []}) == []
 
 
 def test_parse_835_paid_in_full() -> None:

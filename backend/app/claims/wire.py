@@ -32,6 +32,7 @@ from ..models.claims_transport import (
     BillingProvider,
     ClaimInformation,
     ClaimSubmissionRequest,
+    ClaimSupplementalInformation,
     CompositeDiagnosisCodePointers,
     ContactInformation,
     Dependent,
@@ -97,6 +98,7 @@ def to_submission_request(  # noqa: PLR0913 — the per-account values, keyword-
     tax_id: str,
     submitter_identification: str,
     receiver_name: str,
+    payer_claim_number: str | None = None,
 ) -> ClaimSubmissionRequest:
     """The 837P request body for ``claim``.
 
@@ -104,7 +106,9 @@ def to_submission_request(  # noqa: PLR0913 — the per-account values, keyword-
     ``usage_indicator`` is ``T`` for the vendor's test mode, ``P`` for
     production; ``tax_id`` is the practice's EIN or SSN, decrypted by the
     caller; ``submitter_identification`` and ``receiver_name`` come from
-    the practice's clearinghouse account.
+    the practice's clearinghouse account. ``payer_claim_number`` is the
+    payer's number for the claim a correction or void replaces, quoted back
+    as REF*F8; it is ignored on an original claim.
 
     Raises :class:`ClaimMappingError` naming any value the transport needs
     that the claim does not carry.
@@ -178,6 +182,11 @@ def to_submission_request(  # noqa: PLR0913 — the per-account values, keyword-
             claimChargeAmount=_amount(claim.total_charge_cents),
             placeOfServiceCode=_present(claim.place_of_service),
             claimFrequencyCode=claim.frequency_code,
+            claimSupplementalInformation=(
+                ClaimSupplementalInformation(claimControlNumber=payer_claim_number)
+                if payer_claim_number and claim.frequency_code != "1"
+                else None
+            ),
             healthCareCodeInformation=[
                 DiagnosisCode(
                     diagnosisTypeCode="ABK" if position == 0 else "ABF",

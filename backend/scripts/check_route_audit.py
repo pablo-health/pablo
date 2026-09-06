@@ -161,6 +161,12 @@ AUDIT_EXEMPT_NON_PHI_ROUTES: frozenset[tuple[str, str]] = frozenset(
         # nothing to anybody. The clinician-initiated side of every charge IS
         # audited, on the routes in patient_payments.py.
         ("post", "/api/webhooks/payments/stripe"),  # processor callback, no disclosure
+        # claim_webhooks.py — signature-verified clearinghouse callback. It
+        # moves a claim on the acknowledgement the vendor signed; there is no
+        # authenticated principal and nothing is disclosed to anybody. The
+        # clinician-facing reads of the same claims ARE audited, on the
+        # routes in claims.py and claim_tracker.py.
+        ("post", "/api/webhooks/clearinghouse"),  # clearinghouse callback, no disclosure
         # booking_links.py — owner's own link metadata (slug/copy/duration), no patient data
         ("post", "/api/booking-links"),  # creates a booking link
         ("get", "/api/booking-links"),  # lists caller's own booking links

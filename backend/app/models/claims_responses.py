@@ -53,6 +53,73 @@ class PolledTransaction(BaseModel):
     business_identifiers: dict[str, str]
 
 
+AcknowledgmentSource = Literal["clearinghouse", "payer", "unknown"]
+"""Who is speaking in a 277CA: the clearinghouse (``AY`` in the payer loop)
+saying it has the claim and has passed it on, or the payer (``PR``)."""
+
+AcknowledgmentOutcome = Literal["accepted", "rejected", "unknown"]
+
+#: Claim status category codes that mean the claim is moving forward:
+#: forwarded, received, accepted for adjudication, split.
+_ACCEPTED_CATEGORIES = frozenset({"A0", "A1", "A2", "A5"})
+#: ...and the ones that mean it was refused: returned as unprocessable, not
+#: found, or rejected for missing / invalid / relational information.
+_REJECTED_CATEGORIES = frozenset({"A3", "A4", "A6", "A7", "A8"})
+_REJECT_ACTION_CODE = "U"
+
+
+class ClaimStatus(BaseModel):
+    """One status pair off a 277CA: what happened, and to whom it refers."""
+
+    category_code: str
+    category_description: str | None = None
+    status_code: str | None = None
+    status_description: str | None = None
+    entity_code: str | None = None
+    effective_date: str | None = None
+    action_code: str | None = None
+
+    @property
+    def code(self) -> str:
+        """The pair as one token, ``A7:21``, for a finding or a reminder."""
+        if not self.status_code:
+            return self.category_code
+        return f"{self.category_code}:{self.status_code}"
+
+
+class ClaimAcknowledgment(BaseModel):
+    """What a 277CA says about one claim.
+
+    ``control_number`` is the patient control number the claim was filed
+    under, echoed back; ``batch_number`` is the clearinghouse's id for the
+    filing (its ``correlationId``); ``payer_claim_number`` the payer's own
+    number, present once the payer has one.
+    """
+
+    source: AcknowledgmentSource
+    source_name: str | None = None
+    control_number: str
+    batch_number: str | None = None
+    payer_claim_number: str | None = None
+    statuses: list[ClaimStatus]
+
+    @property
+    def outcome(self) -> AcknowledgmentOutcome:
+        """Accepted, rejected, or nothing this code knows how to read.
+
+        One rejecting status rejects the claim — a payer that accepts the
+        claim and rejects a line reports both, and the claim is not
+        moving. Otherwise any accepting status accepts it.
+        """
+        categories = {status.category_code for status in self.statuses}
+        actions = {status.action_code for status in self.statuses}
+        if categories & _REJECTED_CATEGORIES or _REJECT_ACTION_CODE in actions:
+            return "rejected"
+        if categories & _ACCEPTED_CATEGORIES:
+            return "accepted"
+        return "unknown"
+
+
 class Adjustment(BaseModel):
     """One claim adjustment reason/amount pair from an 835."""
 

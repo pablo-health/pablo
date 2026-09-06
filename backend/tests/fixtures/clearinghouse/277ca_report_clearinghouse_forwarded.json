@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "transactionId": "7cfce085-f4af-43ce-aa36-5654d52efec0"
+  },
+  "transactions": [
+    {
+      "controlNumber": "1",
+      "payers": [
+        {
+          "claimStatusTransactions": [
+            {
+              "claimStatusDetails": [
+                {
+                  "patientClaimStatusDetails": [
+                    {
+                      "claims": [
+                        {
+                          "claimStatus": {
+                            "claimServiceBeginDate": "20260901",
+                            "claimServiceEndDate": "20260901",
+                            "informationClaimStatuses": [
+                              {
+                                "informationStatuses": [
+                                  {
+                                    "entityIdentifierCode": "PR",
+                                    "entityIdentifierCodeValue": "Payer",
+                                    "healthCareClaimStatusCategoryCode": "A1",
+                                    "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication.",
+                                    "statusCode": "16",
+                                    "statusCodeValue": "Claim/encounter has been forwarded to entity."
+                                  }
+                                ],
+                                "statusInformationEffectiveDate": "20260906",
+                                "totalClaimChargeAmount": "150",
+                                "statusMessage": "Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication. Claim/encounter has been forwarded to entity. Payer",
+                                "statusInformationActionCode": "WQ",
+                                "statusInformationActionCodeValue": "Accept"
+                              }
+                            ],
+                            "patientAccountNumber": "LIVE50D1D98E2364",
+                            "referencedTransactionTraceNumber": "LIVE50D1D98E2364"
+                          }
+                        }
+                      ],
+                      "subscriber": {
+                        "firstName": "John",
+                        "lastName": "Anon",
+                        "memberId": "123456789"
+                      }
+                    }
+                  ],
+                  "providerOFServiceInformationTraceIdentifier": "0",
+                  "serviceProvider": {
+                    "npi": "1999999984",
+                    "organizationName": "Pablo Test Practice"
+                  }
+                }
+              ],
+              "claimTransactionBatchNumber": "01M1VPM7E0T38G9WBVG4HN5C5Q",
+              "provider": {
+                "etin": "0000001",
+                "organizationName": "Pablo Test Practice"
+              },
+              "providerClaimStatuses": [
+                {
+                  "providerStatuses": [
+                    {
+                      "entityIdentifierCode": "AY",
+                      "healthCareClaimStatusCategoryCode": "A1",
+                      "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication.",
+                      "statusCode": "19",
+                      "statusCodeValue": "Entity acknowledges receipt of claim/encounter."
+                    }
+                  ],
+                  "statusInformationEffectiveDate": "20260906"
+                }
+              ]
+            }
+          ],
+          "entityIdentifierCode": "AY",
+          "entityIdentifierCodeValue": "Clearinghouse",
+          "etin": "117151744",
+          "organizationName": "STEDI INC"
+        }
+      ],
+      "referenceIdentification": "01M1VPN3PYKTEFWBF8AJYA7AWG",
+      "transactionSetCreationDate": "20260906",
+      "transactionSetCreationTime": "1551"
+    }
+  ]
+}

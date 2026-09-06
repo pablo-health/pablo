@@ -11,9 +11,11 @@ seam ``app.payments.provider`` uses for credentials.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from ..models.claims_transport import (
         ClaimSubmissionRequest,
         ClaimSubmissionResult,
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
         ProviderRecord,
         ProviderRegistration,
         TransactionDocument,
+        TransactionPage,
     )
 
 
@@ -94,6 +97,11 @@ class ClearinghouseInFlightError(ClearinghouseError):
         self.retry_after = retry_after
 
 
+class ClearinghouseNotFoundError(ClearinghouseError):
+    """The vendor has no such record (404): a transaction id this account
+    never produced, or one that belongs to a different account."""
+
+
 class ClearinghouseUnavailableError(ClearinghouseError):
     """The call could not be completed: a network failure, a timeout, or a
     5xx that survived the retry budget."""
@@ -127,6 +135,25 @@ class ClearinghouseClient(Protocol):
 
     def get_transaction(self, transaction_id: str) -> TransactionDocument:
         """Fetch one transaction (a submitted 837, an inbound 277CA or 835, ...)."""
+        ...
+
+    def list_transactions(
+        self, *, start: datetime | None = None, page_token: str | None = None
+    ) -> TransactionPage:
+        """One page of the account's transaction feed, oldest first.
+
+        The first call names ``start`` (which the vendor requires to be at
+        least a minute in the past); each following call passes the page
+        token the previous page returned.
+        """
+        ...
+
+    def get_claim_acknowledgment(self, transaction_id: str) -> dict[str, Any]:
+        """The 277CA behind an inbound ``277`` transaction, as the vendor's JSON.
+
+        Parsed by ``app.claims.responses.parse_277``; the raw document is
+        returned so the parser stays the one place that reads it.
+        """
         ...
 
     def create_provider(self, provider: ProviderRegistration) -> ProviderRecord:

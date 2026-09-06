@@ -112,6 +112,7 @@ DPOP_UNCOVERABLE: dict[str, str] = {
     # there is no install_id to bind a proof to; the request is authenticated
     # by a constant-time HMAC over the raw body instead. ---
     "POST /api/webhooks/payments/stripe": "processor callback: signature-authenticated, no user",
+    "POST /api/webhooks/clearinghouse": "clearinghouse callback: signature-authenticated, no user",
 }
 
 

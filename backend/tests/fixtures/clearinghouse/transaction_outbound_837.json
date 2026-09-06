@@ -1,0 +1,88 @@
+{
+  "transactionId": "b2e3f5d4-fb2e-4cb9-bc36-f5b55262d1ef",
+  "fileExecutionId": "9e1e6e2e-6eaa-4107-be04-eb146b5234e3",
+  "direction": "OUTBOUND",
+  "operation": "GuideJSON->X12",
+  "mode": "test",
+  "businessIdentifiers": [
+    {
+      "elementId": "1028",
+      "element": "CLM-01",
+      "name": "Patient Control Number",
+      "value": "LIVE50D1D98E2364"
+    },
+    {
+      "elementId": "127",
+      "element": "BHT-03",
+      "name": "Reference Identification",
+      "value": "01M1VPM7E0T38G9WBVG4HN5C5Q"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "44fa8bdf-c744-46ce-8e3b-e5d74fdd908c",
+      "artifactType": "application/json",
+      "sizeBytes": 4699,
+      "model": "transaction",
+      "usage": "input",
+      "url": "https://core.us.stedi.com/2023-08-01/transactions/b2e3f5d4-fb2e-4cb9-bc36-f5b55262d1ef/input"
+    },
+    {
+      "id": "82659b57-09f6-4a60-89ea-f711ee1ef62a",
+      "artifactType": "application/edi-x12",
+      "sizeBytes": 660,
+      "model": "transaction",
+      "usage": "output",
+      "url": "https://core.us.stedi.com/2023-08-01/transactions/b2e3f5d4-fb2e-4cb9-bc36-f5b55262d1ef/output"
+    }
+  ],
+  "partnership": {
+    "partnershipId": "local-clearinghouse-test",
+    "partnershipType": "x12",
+    "sender": {
+      "profileId": "local"
+    },
+    "receiver": {
+      "profileId": "clearinghouse-test"
+    }
+  },
+  "processedAt": "2026-09-06T15:50:41.859029Z",
+  "x12": {
+    "metadata": {
+      "sender": {
+        "isa": {
+          "id": "189416354675",
+          "qualifier": "ZZ"
+        },
+        "applicationCode": "189416354675"
+      },
+      "receiver": {
+        "isa": {
+          "id": "STEDITEST",
+          "qualifier": "ZZ"
+        },
+        "applicationCode": "STEDITEST"
+      },
+      "interchange": {
+        "controlNumber": 21,
+        "acknowledgmentRequestedCode": "0"
+      },
+      "transaction": {
+        "controlNumber": "0001",
+        "transactionSetIdentifier": "837"
+      },
+      "functionalGroup": {
+        "date": "2026-09-06",
+        "time": "15:50:39",
+        "release": "005010X222A1",
+        "controlNumber": 21,
+        "functionalIdentifierCode": "HC"
+      }
+    },
+    "transactionSetting": {
+      "guideId": "01M1T3WBN893C6WWDJCZ73T0PG",
+      "transactionSettingId": "005010X222A1-837"
+    }
+  },
+  "status": "succeeded"
+}

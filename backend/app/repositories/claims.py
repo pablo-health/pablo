@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
     from datetime import date
 
     from ..models.claims import Claim
@@ -32,8 +33,26 @@ class ClaimRepository(ABC):
         """One claim with its lines, or ``None``."""
 
     @abstractmethod
+    def get_by_control_number(self, control_number: str) -> Claim | None:
+        """The claim filed under ``control_number``, matched case-insensitively.
+
+        Acknowledgements echo the control number back, and some payers
+        upper-case it on the way.
+        """
+
+    @abstractmethod
     def list_by_patient(self, patient_id: str) -> list[Claim]:
         """Every claim for a client, newest first."""
+
+    @abstractmethod
+    def list_by_state(
+        self, states: Collection[str], *, limit: int, newest_first: bool = False
+    ) -> list[Claim]:
+        """Claims in any of ``states``, oldest first unless asked otherwise.
+
+        Oldest first is the outbox's order — the claim that has waited
+        longest goes next; newest first is the tracker's.
+        """
 
     @abstractmethod
     def list_for_export(self, from_date: date, to_date: date) -> list[Claim]:
@@ -91,9 +110,21 @@ class InMemoryClaimRepository(ClaimRepository):
         claim = self._claims.get(claim_id)
         return claim.model_copy(deep=True) if claim is not None else None
 
+    def get_by_control_number(self, control_number: str) -> Claim | None:
+        wanted = control_number.upper()
+        match = next((c for c in self._claims.values() if c.control_number.upper() == wanted), None)
+        return match.model_copy(deep=True) if match is not None else None
+
     def list_by_patient(self, patient_id: str) -> list[Claim]:
         matches = [c for c in self._claims.values() if c.patient_id == patient_id]
         return [c.model_copy(deep=True) for c in sorted(matches, key=_newest_first)]
+
+    def list_by_state(
+        self, states: Collection[str], *, limit: int, newest_first: bool = False
+    ) -> list[Claim]:
+        matches = [c for c in self._claims.values() if c.state in states]
+        ordered = sorted(matches, key=_newest_first if newest_first else _oldest_first)
+        return [c.model_copy(deep=True) for c in ordered[:limit]]
 
     def list_for_export(self, from_date: date, to_date: date) -> list[Claim]:
         matches = [

@@ -19,7 +19,10 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.claims_responses import (
+    AcknowledgmentSource,
     Adjustment,
+    ClaimAcknowledgment,
+    ClaimStatus,
     ClaimSubmissionResult,
     EditRejection,
     EnrollmentRecord,
@@ -193,6 +196,91 @@ def _parse_remittance(transaction: dict[str, Any], path: str) -> Remittance:
         payment_amount_cents=_cents(financial, "totalActualProviderPaymentAmount", financial_path),
         claims=claims,
     )
+
+
+#: The 277CA's information-source loop names who is acknowledging: ``AY``
+#: is a clearinghouse, ``PR`` a payer.
+_ACKNOWLEDGMENT_SOURCES: dict[str, AcknowledgmentSource] = {"AY": "clearinghouse", "PR": "payer"}
+
+
+def _parse_claim_status(
+    status: dict[str, Any], path: str, effective_date: str | None, action_code: str | None
+) -> ClaimStatus:
+    return ClaimStatus(
+        category_code=_require(status, "healthCareClaimStatusCategoryCode", path),
+        category_description=status.get("healthCareClaimStatusCategoryCodeValue"),
+        status_code=status.get("statusCode"),
+        status_description=status.get("statusCodeValue"),
+        entity_code=status.get("entityIdentifierCode"),
+        effective_date=effective_date,
+        action_code=action_code,
+    )
+
+
+def _parse_acknowledged_claim(
+    claim: dict[str, Any],
+    path: str,
+    *,
+    source: AcknowledgmentSource,
+    source_name: str | None,
+    batch_number: str | None,
+) -> ClaimAcknowledgment:
+    claim_status = _require(claim, "claimStatus", path)
+    status_path = f"{path}.claimStatus"
+    statuses: list[ClaimStatus] = []
+    for i, info in enumerate(claim_status.get("informationClaimStatuses", [])):
+        info_path = f"{status_path}.informationClaimStatuses[{i}]"
+        effective_date = info.get("statusInformationEffectiveDate")
+        action_code = info.get("statusInformationActionCode")
+        statuses.extend(
+            _parse_claim_status(
+                status, f"{info_path}.informationStatuses[{j}]", effective_date, action_code
+            )
+            for j, status in enumerate(info.get("informationStatuses", []))
+        )
+    return ClaimAcknowledgment(
+        source=source,
+        source_name=source_name,
+        control_number=_require(claim_status, "referencedTransactionTraceNumber", status_path),
+        batch_number=batch_number,
+        payer_claim_number=claim_status.get("tradingPartnerClaimNumber"),
+        statuses=statuses,
+    )
+
+
+def parse_277(data: dict[str, Any]) -> list[ClaimAcknowledgment]:
+    """Parse a 277CA report into one acknowledgment per claim it names.
+
+    A report can carry several claims (payers batch them); each comes back
+    with who acknowledged it — the clearinghouse or the payer — and its
+    status pairs. Free-text status messages and the subscriber loop are
+    not read.
+    """
+    acknowledgments: list[ClaimAcknowledgment] = []
+    for t, transaction in enumerate(data.get("transactions", [])):
+        for p, payer in enumerate(transaction.get("payers", [])):
+            payer_path = f"$.transactions[{t}].payers[{p}]"
+            source = _ACKNOWLEDGMENT_SOURCES.get(str(payer.get("entityIdentifierCode")), "unknown")
+            source_name = payer.get("organizationName")
+            for s, status_transaction in enumerate(payer.get("claimStatusTransactions", [])):
+                batch_number = status_transaction.get("claimTransactionBatchNumber")
+                for d, detail in enumerate(status_transaction.get("claimStatusDetails", [])):
+                    for q, patient in enumerate(detail.get("patientClaimStatusDetails", [])):
+                        for c, claim in enumerate(patient.get("claims", [])):
+                            path = (
+                                f"{payer_path}.claimStatusTransactions[{s}].claimStatusDetails[{d}]"
+                                f".patientClaimStatusDetails[{q}].claims[{c}]"
+                            )
+                            acknowledgments.append(
+                                _parse_acknowledged_claim(
+                                    claim,
+                                    path,
+                                    source=source,
+                                    source_name=source_name,
+                                    batch_number=batch_number,
+                                )
+                            )
+    return acknowledgments
 
 
 def parse_835(data: dict[str, Any]) -> list[Remittance]:

@@ -46,6 +46,8 @@ from .routes import (
     booking_links,
     calendar_import,
     chat,
+    claim_status,
+    claim_webhooks,
     claims,
     claims_export,
     compliance,
@@ -127,14 +129,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             settings.app_url,
         )
 
-    task = None
+    tasks: list[asyncio.Task[None]] = []
     if settings.calendar_auto_sync_enabled and not settings.is_saas:
         from .background_sync import calendar_sync_loop
 
-        task = asyncio.create_task(calendar_sync_loop())
+        tasks.append(asyncio.create_task(calendar_sync_loop()))
         logger.info("Started background calendar sync (every 15 min)")
+    if settings.claims_pipeline_enabled and not settings.is_saas:
+        from .jobs.claims_pipeline import claims_pipeline_loop
+
+        tasks.append(asyncio.create_task(claims_pipeline_loop()))
+        logger.info(
+            "Started the claims pipeline (every %d min)", settings.claims_pipeline_interval_minutes
+        )
     yield
-    if task:
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
@@ -213,8 +222,10 @@ app.include_router(coverage.jobs_router)
 # The export router mounts ``/api/claims/export.csv`` and must come before
 # the claims router, whose ``/api/claims/{claim_id}`` would otherwise match it.
 app.include_router(claims_export.router)
+app.include_router(claim_status.router)
 app.include_router(claims.router)
 app.include_router(claims.patient_claims_router)
+app.include_router(claim_webhooks.router)
 app.include_router(superbills.router)
 app.include_router(billing_queue.router)
 app.include_router(scheduling.router)

@@ -268,6 +268,9 @@ class AuditAction(StrEnum):
     # naming the claims it listed (ids and control numbers), like the CSV
     # export does.
     CLAIMS_LISTED = "claims_listed"
+    # A status check the clinician asked for: the row names its one claim
+    # and where it stood afterwards.
+    CLAIM_STATUS_CHECKED = "claim_status_checked"
     # The biller handoff: a range of claims left the practice as a CSV, or
     # one claim as a CMS-1500-layout PDF. A disclosure, so the CSV row names
     # every claim it carried (ids and control numbers, with the range and

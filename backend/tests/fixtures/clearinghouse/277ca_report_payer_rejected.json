@@ -1,0 +1,99 @@
+{
+  "meta": {
+    "transactionId": "9e1ef2a7-16c1-4e80-9c58-7876f74a1002"
+  },
+  "transactions": [
+    {
+      "controlNumber": "1",
+      "payers": [
+        {
+          "claimStatusTransactions": [
+            {
+              "claimStatusDetails": [
+                {
+                  "patientClaimStatusDetails": [
+                    {
+                      "claims": [
+                        {
+                          "claimStatus": {
+                            "claimServiceBeginDate": "20260901",
+                            "claimServiceEndDate": "20260901",
+                            "informationClaimStatuses": [
+                              {
+                                "informationStatuses": [
+                                  {
+                                    "healthCareClaimStatusCategoryCode": "A7",
+                                    "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Rejected for Invalid Information - The claim/encounter has invalid information as specified in the Status details and has been rejected.",
+                                    "statusCode": "21",
+                                    "statusCodeValue": "Missing or invalid information.",
+                                    "entityIdentifierCode": "IL",
+                                    "entityIdentifierCodeValue": "Insured or Subscriber"
+                                  },
+                                  {
+                                    "healthCareClaimStatusCategoryCode": "A7",
+                                    "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Rejected for Invalid Information - The claim/encounter has invalid information as specified in the Status details and has been rejected.",
+                                    "statusCode": "164",
+                                    "statusCodeValue": "Entity's contract/member number.",
+                                    "entityIdentifierCode": "IL",
+                                    "entityIdentifierCodeValue": "Insured or Subscriber"
+                                  }
+                                ],
+                                "statusInformationEffectiveDate": "20260906",
+                                "totalClaimChargeAmount": "150",
+                                "statusMessage": "Acknowledgement/Rejected for Invalid Information. Missing or invalid information. Insured or Subscriber",
+                                "statusInformationActionCode": "U",
+                                "statusInformationActionCodeValue": "Reject"
+                              }
+                            ],
+                            "patientAccountNumber": "LIVE50D1D98E2364",
+                            "referencedTransactionTraceNumber": "LIVE50D1D98E2364"
+                          }
+                        }
+                      ],
+                      "subscriber": {
+                        "firstName": "John",
+                        "lastName": "Anon",
+                        "memberId": "123456789"
+                      }
+                    }
+                  ],
+                  "providerOFServiceInformationTraceIdentifier": "0",
+                  "serviceProvider": {
+                    "npi": "1999999984",
+                    "organizationName": "Pablo Test Practice"
+                  }
+                }
+              ],
+              "claimTransactionBatchNumber": "01M1VPM7E0T38G9WBVG4HN5C5Q",
+              "provider": {
+                "etin": "0000001",
+                "organizationName": "Pablo Test Practice"
+              },
+              "providerClaimStatuses": [
+                {
+                  "providerStatuses": [
+                    {
+                      "entityIdentifierCode": "PR",
+                      "healthCareClaimStatusCategoryCode": "A2",
+                      "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication.",
+                      "statusCode": "20",
+                      "statusCodeValue": "Accepted for processing."
+                    }
+                  ],
+                  "statusInformationEffectiveDate": "20260906"
+                }
+              ]
+            }
+          ],
+          "entityIdentifierCode": "PR",
+          "entityIdentifierCodeValue": "Payer",
+          "etin": "STEDI",
+          "organizationName": "Stedi Test Payer"
+        }
+      ],
+      "referenceIdentification": "01M1VPN3PYKTEFWBF8AJYA7AWJ",
+      "transactionSetCreationDate": "20260906",
+      "transactionSetCreationTime": "1551"
+    }
+  ]
+}

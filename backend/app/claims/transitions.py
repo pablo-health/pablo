@@ -6,8 +6,11 @@ A claim only ever moves on a receipt from the next hop::
 
     draft -> validated -> submitted -> ch_accepted -> payer_accepted
                                                    -> paid | partial | denied
+    validated -> rejected                              (a synchronous edit refusal)
+    submitted -> payer_accepted                        (a payer 277CA with no
+                                                        clearinghouse one before it)
     submitted | ch_accepted | payer_accepted -> rejected   (a refusal)
-    submitted | ch_accepted | payer_accepted -> stalled    (a watchdog timeout)
+    validated | submitted | ch_accepted | payer_accepted -> stalled  (a watchdog timeout)
     stalled -> whatever the late receipt says
 
 ``validated`` is the one transition with a precondition of its own: the
@@ -68,7 +71,14 @@ class ClaimNotValidError(Exception):
 _TRANSITIONS: dict[tuple[str, str], ClaimState] = {
     ("draft", "validate"): "validated",
     ("validated", "submit"): "submitted",
+    # The clearinghouse refuses the claim on the synchronous answer (an
+    # edit rejection), or the outbox cannot get it filed at all.
+    ("validated", "reject"): "rejected",
+    ("validated", "stall"): "stalled",
     ("submitted", "ch_accept"): "ch_accepted",
+    # A payer's 277CA can be the first acknowledgement in the feed; the
+    # clearinghouse's own is not a precondition for the payer's.
+    ("submitted", "payer_accept"): "payer_accepted",
     ("submitted", "reject"): "rejected",
     ("submitted", "stall"): "stalled",
     ("ch_accepted", "payer_accept"): "payer_accepted",

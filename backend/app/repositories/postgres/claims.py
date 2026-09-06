@@ -15,14 +15,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ...db.models import ClaimLineRow, ClaimRow
-from ...models.claims import BillingSnapshot, Claim, ClaimLine, SubscriberSnapshot
+from ...models.claims import (
+    BillingSnapshot,
+    Claim,
+    ClaimLine,
+    SubmissionFinding,
+    SubscriberSnapshot,
+)
 from ...utcnow import utc_now
 from ..claims import ClaimRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
     from datetime import date
 
     from sqlalchemy.orm import Session
@@ -42,6 +49,12 @@ _HEADER_FIELDS = (
     "submitted_at",
     "payer_accepted_at",
     "adjudicated_at",
+    "vendor_claim_id",
+    "payer_claim_number",
+    "submission_idempotency_key",
+    "submission_pending_at",
+    "last_receipt_at",
+    "status_checked_at",
 )
 
 #: Header fields that may change after the claim is built.
@@ -51,6 +64,12 @@ _MUTABLE_HEADER_FIELDS = (
     "submitted_at",
     "payer_accepted_at",
     "adjudicated_at",
+    "vendor_claim_id",
+    "payer_claim_number",
+    "submission_idempotency_key",
+    "submission_pending_at",
+    "last_receipt_at",
+    "status_checked_at",
 )
 
 _LINE_FIELDS = (
@@ -89,6 +108,9 @@ def _to_claim(row: ClaimRow, lines: list[ClaimLineRow]) -> Claim:
         id=row.id,
         billing_snapshot=BillingSnapshot.model_validate(row.billing_snapshot),
         subscriber_snapshot=SubscriberSnapshot.model_validate(row.subscriber_snapshot),
+        submission_findings=[
+            SubmissionFinding.model_validate(finding) for finding in row.submission_findings or []
+        ],
         created_at=row.created_at,
         updated_at=row.updated_at,
         lines=[_to_line(line) for line in sorted(lines, key=lambda line: line.line_number)],
@@ -106,12 +128,37 @@ class PostgresClaimRepository(ClaimRepository):
             return None
         return _to_claim(row, self._lines_for([row.id]).get(row.id, []))
 
+    def get_by_control_number(self, control_number: str) -> Claim | None:
+        row = self._session.execute(
+            select(ClaimRow).where(func.upper(ClaimRow.control_number) == control_number.upper())
+        ).scalar_one_or_none()
+        if row is None:
+            return None
+        return _to_claim(row, self._lines_for([row.id]).get(row.id, []))
+
     def list_by_patient(self, patient_id: str) -> list[Claim]:
         rows = (
             self._session.execute(
                 select(ClaimRow)
                 .where(ClaimRow.patient_id == patient_id)
                 .order_by(ClaimRow.created_at.desc(), ClaimRow.id)
+            )
+            .scalars()
+            .all()
+        )
+        lines = self._lines_for([row.id for row in rows])
+        return [_to_claim(row, lines.get(row.id, [])) for row in rows]
+
+    def list_by_state(
+        self, states: Collection[str], *, limit: int, newest_first: bool = False
+    ) -> list[Claim]:
+        order = ClaimRow.created_at.desc() if newest_first else ClaimRow.created_at
+        rows = (
+            self._session.execute(
+                select(ClaimRow)
+                .where(ClaimRow.state.in_(list(states)))
+                .order_by(order, ClaimRow.id)
+                .limit(limit)
             )
             .scalars()
             .all()
@@ -211,6 +258,11 @@ class PostgresClaimRepository(ClaimRepository):
             raise LookupError(msg)
         for name in _MUTABLE_HEADER_FIELDS:
             setattr(row, name, getattr(claim, name))
+        row.submission_findings = (
+            [finding.model_dump(mode="json") for finding in claim.submission_findings]
+            if claim.submission_findings
+            else None
+        )
         row.updated_at = utc_now()
 
         line_rows = self._lines_for([claim.id]).get(claim.id, [])
