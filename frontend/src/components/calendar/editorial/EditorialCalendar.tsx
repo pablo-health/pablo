@@ -6,6 +6,8 @@ import { useCallback, useMemo, useState } from "react"
 import type { CSSProperties } from "react"
 import { useAppointmentList, useUpdateAppointment } from "@/hooks/useAppointments"
 import { usePatientList } from "@/hooks/usePatients"
+import { useAvailabilityRules, useFreeSlots } from "@/hooks/useAvailability"
+import { summarize } from "@/components/settings/AvailabilitySettings"
 import type {
   AppointmentResponse,
   AppointmentStatus,
@@ -21,9 +23,11 @@ import { EditorialSidebar, type EditorialTheme } from "./EditorialSidebar"
 import { EditorialMiniMonth } from "./EditorialMiniMonth"
 import { EditorialEventPeek } from "./EditorialEventPeek"
 import { EditorialEventContextMenu } from "./EditorialEventContextMenu"
+import { matchWholeDayBlockRule } from "./unavailability"
 import {
   DENSITY_PRESETS,
   dynamicDayWindow,
+  format,
   shiftAnchor,
   visibleRange,
   type CalendarDensity,
@@ -92,6 +96,23 @@ export function EditorialCalendar({
   )
   const { data: patientData } = usePatientList()
   const updateAppointment = useUpdateAppointment()
+
+  const { data: availabilityRulesData } = useAvailabilityRules()
+  const availabilityRules = useMemo(
+    () => availabilityRulesData?.data ?? [],
+    [availabilityRulesData],
+  )
+  // Only day view needs this at the EditorialCalendar level — week view
+  // attributes each of its own 7 columns internally. Duration omitted so the
+  // engine picks its own default (session_defaults, else 50min), same as
+  // the sibling AvailabilitySlotPicker does.
+  const anchorDateStr = useMemo(() => format(anchor, "yyyy-MM-dd"), [anchor])
+  const { data: anchorFreeSlots } = useFreeSlots(anchorDateStr)
+  const dayBlockedLabel = useMemo(() => {
+    if (view !== "day" || anchorFreeSlots?.configured !== true) return undefined
+    const rule = matchWholeDayBlockRule(availabilityRules, anchor)
+    return rule ? summarize(rule) : undefined
+  }, [view, anchorFreeSlots, availabilityRules, anchor])
 
   const patientMap = useMemo(() => {
     const map = new Map<string, string>()
@@ -240,6 +261,7 @@ export function EditorialCalendar({
             onNext={() => setAnchor((a) => shiftAnchor(view, a, 1))}
             onToday={() => setAnchor(new Date())}
             onPickerOpen={() => setPickerOpen((p) => !p)}
+            blockedLabel={dayBlockedLabel}
           />
           <div className="flex items-center gap-4">
             <EditorialViewSwitcher view={view} onChange={handleViewChange} />
@@ -274,6 +296,7 @@ export function EditorialCalendar({
             anchor={anchor}
             appointments={filteredAppointments}
             patientMap={patientMap}
+            availabilityRules={availabilityRules}
             onSelectSlot={onSelectSlot}
             onPeek={handlePeek}
             onEdit={handleEdit}
@@ -290,6 +313,8 @@ export function EditorialCalendar({
             anchor={anchor}
             appointments={filteredAppointments}
             patientMap={patientMap}
+            availabilityRules={availabilityRules}
+            freeSlots={anchorFreeSlots}
             onSelectSlot={onSelectSlot}
             onPeek={handlePeek}
             onEdit={handleEdit}

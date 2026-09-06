@@ -4,14 +4,22 @@
 
 import { useEffect, useMemo, useRef } from "react"
 import { format, isSameDay, isToday, startOfDay } from "date-fns"
+import { useQueries } from "@tanstack/react-query"
 import type { AppointmentResponse } from "@/types/scheduling"
+import type { AvailabilityRule, FreeSlotsResponse } from "@/types/availability"
+import { getFreeSlots } from "@/lib/api/availability"
+import { queryKeys } from "@/lib/api/queryKeys"
+import { useAuth } from "@/lib/auth-context"
+import { summarize } from "@/components/settings/AvailabilitySettings"
 import {
   EditorialEventCard,
   EVENT_COMPACT_PX,
   EVENT_MICRO_PX,
 } from "./EditorialEventCard"
 import { EditorialEventWrapper } from "./EditorialEventWrapper"
+import { UnavailableLayer } from "./UnavailableLayer"
 import { assignLanes } from "./laneLayout"
+import { matchWholeDayBlockRule, rulesInForceForDate } from "./unavailability"
 import {
   DAY_END_HOUR,
   DAY_START_HOUR,
@@ -25,6 +33,10 @@ interface EditorialWeekViewProps {
   anchor: Date
   appointments: AppointmentResponse[]
   patientMap: Map<string, string>
+  /** All of the therapist's availability rules — used only to attribute a
+   * fully-blocked day and to list what's in force for each day's tooltip;
+   * the shading itself comes from the per-day free-slots fetch below. */
+  availabilityRules: AvailabilityRule[]
   onSelectSlot: (start: string) => void
   /** Single click on an event → open the peek popover anchored to its rect. */
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
@@ -47,6 +59,7 @@ export function EditorialWeekView({
   anchor,
   appointments,
   patientMap,
+  availabilityRules,
   onSelectSlot,
   onPeek,
   onEdit,
@@ -60,6 +73,25 @@ export function EditorialWeekView({
   const days = useMemo(() => weekDays(anchor), [anchor])
   const hours = useMemo(() => gridHours(dayStart, dayEnd), [dayStart, dayEnd])
   const scrollerRef = useRef<HTMLDivElement>(null)
+
+  // One free-slots query per visible day (a fixed 7, so this is a stable
+  // number/order of hook calls across renders — see unavailability.ts for
+  // why shading needs the real per-day response rather than re-deriving it
+  // from `availabilityRules`).
+  const { loading: authLoading } = useAuth()
+  const dateStrs = useMemo(() => days.map((d) => format(d, "yyyy-MM-dd")), [days])
+  const freeSlotsQueries = useQueries({
+    queries: dateStrs.map((dateStr) => ({
+      queryKey: queryKeys.availability.slots(dateStr, undefined),
+      queryFn: () => getFreeSlots(dateStr),
+      staleTime: 30 * 1000,
+      enabled: !authLoading,
+    })),
+  })
+  const freeSlotsByDay = useMemo(
+    () => freeSlotsQueries.map((q) => q.data),
+    [freeSlotsQueries],
+  )
 
   useEffect(() => {
     if (scrollerRef.current) {
@@ -85,7 +117,11 @@ export function EditorialWeekView({
         boxShadow: "var(--ed-shadow-card)",
       }}
     >
-      <DayHeaderRow days={days} />
+      <DayHeaderRow
+        days={days}
+        availabilityRules={availabilityRules}
+        freeSlotsByDay={freeSlotsByDay}
+      />
       <div ref={scrollerRef} className="relative max-h-[68vh] overflow-y-auto">
         <div className="flex">
           <HourRail hours={hours} rowHeightPx={rowHeightPx} />
@@ -101,6 +137,8 @@ export function EditorialWeekView({
                 dayIndex={idx}
                 lanes={dayBuckets[idx]}
                 patientMap={patientMap}
+                availabilityRules={availabilityRules}
+                freeSlots={freeSlotsByDay[idx]}
                 onSelectSlot={onSelectSlot}
                 onPeek={onPeek}
                 onEdit={onEdit}
@@ -119,7 +157,15 @@ export function EditorialWeekView({
   )
 }
 
-function DayHeaderRow({ days }: { days: Date[] }) {
+function DayHeaderRow({
+  days,
+  availabilityRules,
+  freeSlotsByDay,
+}: {
+  days: Date[]
+  availabilityRules: AvailabilityRule[]
+  freeSlotsByDay: (FreeSlotsResponse | undefined)[]
+}) {
   return (
     <div
       className="flex border-b"
@@ -130,12 +176,18 @@ function DayHeaderRow({ days }: { days: Date[] }) {
         className="ed-daycols grid flex-1"
         style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}
       >
-        {days.map((day) => {
+        {days.map((day, idx) => {
           const today = isToday(day)
+          // `configured === false` (no rules at all) must never render a
+          // blocked label — only a real whole-day-blocking rule does.
+          const configured = freeSlotsByDay[idx]?.configured === true
+          const blockRule = configured
+            ? matchWholeDayBlockRule(availabilityRules, day)
+            : undefined
           return (
             <div
               key={day.toISOString()}
-              className="flex items-center justify-center py-3"
+              className="flex flex-col items-center justify-center gap-1 py-3"
             >
               {today ? (
                 <span
@@ -153,6 +205,17 @@ function DayHeaderRow({ days }: { days: Date[] }) {
                   style={{ color: "var(--ed-ink-muted)" }}
                 >
                   {format(day, "EEE d")}
+                </span>
+              )}
+              {blockRule && (
+                <span
+                  className="rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide"
+                  style={{
+                    backgroundColor: "var(--ed-hairline-strong)",
+                    color: "var(--ed-ink-muted)",
+                  }}
+                >
+                  {summarize(blockRule)}
                 </span>
               )}
             </div>
@@ -187,6 +250,8 @@ function DayColumn({
   dayIndex,
   lanes,
   patientMap,
+  availabilityRules,
+  freeSlots,
   onSelectSlot,
   onPeek,
   onEdit,
@@ -202,6 +267,12 @@ function DayColumn({
   dayIndex: number
   lanes: ReturnType<typeof assignLanes>
   patientMap: Map<string, string>
+  /** All of the therapist's availability rules — used only for the
+   * in-force tooltip; shading comes from `freeSlots`. */
+  availabilityRules: AvailabilityRule[]
+  /** This day's free slots. Undefined while loading — renders no shading
+   * until it resolves. */
+  freeSlots?: FreeSlotsResponse
   onSelectSlot: (start: string) => void
   onPeek: (appointment: AppointmentResponse, anchorRect: DOMRect) => void
   onEdit: (appointment: AppointmentResponse) => void
@@ -225,6 +296,13 @@ function DayColumn({
     onSelectSlot(start.toISOString())
   }
 
+  // `configured === false` means the therapist has no rules at all — never
+  // shade an unconfigured calendar as unavailable.
+  const showUnavailable = freeSlots?.configured === true
+  const inForceLabel = showUnavailable
+    ? rulesInForceForDate(availabilityRules, day).map(summarize).filter(Boolean).join(" · ")
+    : ""
+
   return (
     <div
       className="relative cursor-pointer"
@@ -234,7 +312,16 @@ function DayColumn({
       }}
       onClick={handleSlotClick}
       aria-label={`${format(day, "EEEE MMM d")} schedule. Click to add appointment.`}
+      title={inForceLabel || undefined}
     >
+      {freeSlots && freeSlots.configured && (
+        <UnavailableLayer
+          slots={freeSlots.slots}
+          dayStartHour={dayStart}
+          dayEndHour={dayEnd}
+          rowHeightPx={rowHeightPx}
+        />
+      )}
       {lanes.map(({ appointment, lane, laneCount }) => {
         const startMin = minutesSinceMidnight(appointment.start_at)
         const endMin = minutesSinceMidnight(appointment.end_at)
