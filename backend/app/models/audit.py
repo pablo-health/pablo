@@ -271,6 +271,14 @@ class AuditAction(StrEnum):
     CLAIMS_EXPORTED = "claims_exported"
     CLAIM_EXPORTED = "claim_exported"
 
+    # Superbills. The document hands the client their diagnoses, the
+    # services and the practice's identity to pass on to an insurer, so
+    # issuing one is a disclosure. The `changes` payload carries the period,
+    # the claim, line and charge ids the document was rendered from — or,
+    # when it was refused, the codes and field paths of what was missing.
+    SUPERBILL_GENERATED = "superbill_generated"
+    SUPERBILL_REFUSED = "superbill_refused"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
