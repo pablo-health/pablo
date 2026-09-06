@@ -229,7 +229,14 @@ class ClaimSubmissionResult(BaseModel):
 
 
 class Payer(BaseModel):
-    """One payer-search hit."""
+    """One payer-search hit.
+
+    ``transactionSupport`` maps each transaction the vendor knows
+    (``professionalClaimSubmission``, ``eligibilityCheck``, ``claimPayment``,
+    ...) to ``SUPPORTED``, ``ENROLLMENT_REQUIRED`` or ``NOT_SUPPORTED`` — what
+    decides whether an enrollment request has to be filed before the
+    practice can use that transaction with this payer.
+    """
 
     model_config = _WIRE_MODEL_CONFIG
 
@@ -237,6 +244,7 @@ class Payer(BaseModel):
     primaryPayerId: str
     displayName: str
     aliases: list[str] = []
+    transactionSupport: dict[str, str] = {}
 
 
 class EligibilityProvider(BaseModel):
@@ -388,16 +396,26 @@ class ProviderRecord(BaseModel):
     contacts: list[ProviderContact] = []
 
 
-class ClaimPaymentEnrollment(BaseModel):
+class TransactionEnrollment(BaseModel):
     model_config = _WIRE_MODEL_CONFIG
 
     enroll: bool
 
 
 class EnrollmentTransactions(BaseModel):
+    """Which transactions one enrollment request covers.
+
+    The vendor's object carries one key per transaction it knows; only the
+    three a practice files for are modeled (835 remittance, 837P claims, 270
+    eligibility). One request per transaction is the convention here, so at
+    most one of these is set on any request.
+    """
+
     model_config = _WIRE_MODEL_CONFIG
 
-    claimPayment: ClaimPaymentEnrollment | None = None
+    claimPayment: TransactionEnrollment | None = None
+    professionalClaimSubmission: TransactionEnrollment | None = None
+    eligibilityCheck: TransactionEnrollment | None = None
 
 
 class EnrollmentProviderRef(BaseModel):
@@ -413,7 +431,12 @@ class EnrollmentPayerRef(BaseModel):
 
 
 class EnrollmentRequest(BaseModel):
-    """A transaction enrollment, in the shape ``create_enrollment`` accepts."""
+    """A transaction enrollment, in the shape ``create_enrollment`` accepts.
+
+    ``userEmail`` is where the vendor sends updates about the request;
+    ``status`` set to ``STEDI_ACTION_REQUIRED`` submits it in the same call
+    rather than parking it as a draft.
+    """
 
     model_config = _WIRE_MODEL_CONFIG
 
@@ -421,6 +444,8 @@ class EnrollmentRequest(BaseModel):
     payer: EnrollmentPayerRef
     primaryContact: ProviderContact
     transactions: EnrollmentTransactions
+    userEmail: str | None = None
+    status: Literal["DRAFT", "STEDI_ACTION_REQUIRED"] | None = None
 
 
 class EnrollmentPayer(BaseModel):
@@ -441,8 +466,50 @@ class EnrollmentProvider(BaseModel):
     taxIdType: Literal["EIN", "SSN"]
 
 
+class EnrollmentTaskLink(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    label: str
+    url: str
+
+
+class EnrollmentManualTask(BaseModel):
+    """What the vendor asks the practice to do by hand: instructions and links."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    instructions: str | None = None
+    links: list[EnrollmentTaskLink] = []
+
+
+class EnrollmentTaskDefinition(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    manualTask: EnrollmentManualTask | None = None
+
+
+class EnrollmentTask(BaseModel):
+    """One step the vendor attached to an enrollment.
+
+    ``responsibleParty`` is ``PROVIDER`` when the practice has to act (sign a
+    form, attest, upload a document) and ``STEDI`` when the vendor does.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    id: str
+    responsibleParty: str
+    isComplete: bool = False
+    definition: EnrollmentTaskDefinition | None = None
+
+
 class Enrollment(BaseModel):
-    """A transaction enrollment's current state, as the vendor reports it."""
+    """A transaction enrollment's current state, as the vendor reports it.
+
+    ``reason`` is the vendor's note on why a request is still provisioning
+    or was rejected; ``tasks`` is what it wants done. Both are payer-facing
+    prose about the practice, never about a patient.
+    """
 
     model_config = _WIRE_MODEL_CONFIG
 
@@ -450,8 +517,11 @@ class Enrollment(BaseModel):
     status: str
     payer: EnrollmentPayer
     provider: EnrollmentProvider
-    submittedAt: str
+    submittedAt: str | None = None
     statusLastUpdatedAt: str
+    transactions: EnrollmentTransactions = EnrollmentTransactions()
+    reason: str | None = None
+    tasks: list[EnrollmentTask] = []
 
 
 class EnrollmentFilters(BaseModel):

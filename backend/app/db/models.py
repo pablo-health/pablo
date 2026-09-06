@@ -835,6 +835,13 @@ class PracticeBillingProfileRow(Base):
     state: Mapped[str | None] = mapped_column(String(2))
     postal_code: Mapped[str | None] = mapped_column(String(10))
     phone: Mapped[str | None] = mapped_column(String(50))
+    #: The practice's general inbox — where a payer or the clearinghouse
+    #: writes about an enrollment. A shared address on purpose: enrollment
+    #: correspondence belongs to the practice, never to one clinician.
+    contact_email: Mapped[str | None] = mapped_column(String(255))
+    #: The clearinghouse's id for this practice's provider record, set the
+    #: first time the profile is complete enough to register. NULL until then.
+    clearinghouse_provider_id: Mapped[str | None] = mapped_column(String(80))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1934,6 +1941,70 @@ class PatientCoverageRow(Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     last_271: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+#: The X12 transactions a practice enrolls for with a payer. Remittance
+#: (835) always needs one; claims (837P) and eligibility (270) only when the
+#: payer's directory entry says so.
+ENROLLMENT_TRANSACTION_TYPES: tuple[str, ...] = ("837P", "270", "835")
+
+#: Where one enrollment request stands, in the clearinghouse's own
+#: vocabulary lower-cased. ``provider_action_required`` is the one a person
+#: has to act on; ``live`` is the one a claim or remittance needs.
+PAYER_ENROLLMENT_REQUEST_STATUSES: tuple[str, ...] = (
+    "draft",
+    "stedi_action_required",
+    "provider_action_required",
+    "provisioning",
+    "live",
+    "rejected",
+    "canceled",
+)
+
+
+class PayerEnrollmentRow(Base):
+    """One enrollment request with a payer for one transaction type.
+
+    Keyed by ``(payer_id, transaction_type)``: a practice files at most one
+    request per payer per transaction, and the clearinghouse's own id for it
+    is ``vendor_request_id``. Practice-level like ``payers`` — the practice
+    is enrolled, not a clinician — so there is no ``user_id`` / ``patient_id``
+    and no ``id`` either, which keeps the table out of ``enable_rls_on_schema``
+    altogether; its isolation boundary is the tenant schema.
+
+    ``requested_by_user_id`` is who asked for the enrollment and therefore
+    who the reminder is addressed to when the payer wants something. It is
+    deliberately not named ``user_id``: that name would make the row
+    clinician-owned and hide the practice's enrollment from everyone else.
+
+    ``instructions`` is the clearinghouse's wording of what the payer needs,
+    kept to show on the payer row and in the reminder. It is stored and
+    rendered, never logged.
+    """
+
+    __tablename__ = "payer_enrollments"
+    __table_args__ = (
+        CheckConstraint(
+            f"transaction_type IN ({_sql_in_list(ENROLLMENT_TRANSACTION_TYPES)})",
+            name="ck_payer_enrollments_transaction_type",
+        ),
+        CheckConstraint(
+            f"status IN ({_sql_in_list(PAYER_ENROLLMENT_REQUEST_STATUSES)})",
+            name="ck_payer_enrollments_status",
+        ),
+        Index("ix_payer_enrollments_vendor_request_id", "vendor_request_id"),
+    )
+
+    payer_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="CASCADE"), primary_key=True
+    )
+    transaction_type: Mapped[str] = mapped_column(String(4), primary_key=True)
+    vendor_request_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by_user_id: Mapped[str] = mapped_column(Uuid(as_uuid=False), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

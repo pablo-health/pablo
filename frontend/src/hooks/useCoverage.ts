@@ -6,6 +6,7 @@ import type {
   CoverageResponse,
   CreateCoverageRequest,
   CreatePayerRequest,
+  PayerEnrollmentListResponse,
   PayerListResponse,
   PayerResponse,
   UpdateCoverageRequest,
@@ -16,7 +17,9 @@ import {
   createPayer,
   deactivateCoverage,
   fetchCoverage,
+  listPayerEnrollments,
   listPayers,
+  requestPayerEnrollments,
   updateCoverage,
   updatePayer,
 } from "@/lib/api/coverage"
@@ -43,6 +46,28 @@ export function useUpdatePayer(token?: string) {
     mutationFn: ({ id, data }) => updatePayer(id, data, token),
     // A payer edit shows on every coverage that names it.
     invalidateKeys: [queryKeys.payers.all, queryKeys.coverage.all],
+  })
+}
+
+/** Where the practice stands with one payer, per transaction. Fetched when a
+ * payer row is open, not for the whole list. */
+export function usePayerEnrollments(payerRowId: string | undefined, token?: string) {
+  return useAuthQuery<PayerEnrollmentListResponse>({
+    queryKey: queryKeys.payers.enrollments(payerRowId ?? ""),
+    queryFn: () => listPayerEnrollments(payerRowId!, token),
+    enabled: !!payerRowId,
+    staleTime: 60 * 1000,
+  })
+}
+
+export function useRequestPayerEnrollments(token?: string) {
+  return useAuthMutation<PayerEnrollmentListResponse, { payerRowId: string }>({
+    mutationFn: ({ payerRowId }) => requestPayerEnrollments(payerRowId, token),
+    // The payer row's overall status changes with its requests.
+    invalidateKeys: ({ payerRowId }) => [
+      queryKeys.payers.enrollments(payerRowId),
+      queryKeys.payers.list(),
+    ],
   })
 }
 

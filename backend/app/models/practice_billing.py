@@ -28,6 +28,12 @@ class BillingProfileResponse(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     phone: str | None = None
+    #: The practice's general inbox, where payers and the clearinghouse
+    #: write about enrollments. Never an individual clinician's address.
+    contact_email: str | None = None
+    #: The clearinghouse's id for the practice's provider record, set once
+    #: the profile is complete enough to register. Read-only.
+    clearinghouse_provider_id: str | None = None
 
 
 class UpdateBillingProfileRequest(BaseModel):
@@ -48,3 +54,4 @@ class UpdateBillingProfileRequest(BaseModel):
     state: str | None = Field(None, max_length=2)
     postal_code: str | None = Field(None, max_length=10)
     phone: str | None = Field(None, max_length=50)
+    contact_email: str | None = Field(None, max_length=255)

@@ -6,6 +6,11 @@
  * The practice's insurance payers and, per payer, the three deadlines a claim
  * against it lives under. The defaults are the common floor; a practice's
  * participation agreement can say otherwise, and this is where it says so.
+ *
+ * Each payer also shows where the practice stands with it for electronic
+ * transactions: the enrollment requests filed through the clearinghouse and
+ * what the payer is waiting on, with an "Enroll with payer" button for a
+ * payer that has nothing on file yet.
  */
 
 "use client"
@@ -16,11 +21,27 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SettingsCard } from "@/components/settings/ui"
-import { useCreatePayer, usePayers, useUpdatePayer } from "@/hooks/useCoverage"
-import type { PayerResponse, UpdatePayerRequest } from "@/types/coverage"
+import {
+  useCreatePayer,
+  usePayerEnrollments,
+  usePayers,
+  useRequestPayerEnrollments,
+  useUpdatePayer,
+} from "@/hooks/useCoverage"
+import type {
+  EnrollmentRequestStatus,
+  EnrollmentStatus,
+  EnrollmentTransactionType,
+  PayerEnrollmentResponse,
+  PayerResponse,
+  UpdatePayerRequest,
+} from "@/types/coverage"
 
 export const DEADLINE_HELP =
   "From your participation agreement; the defaults are the common floor."
+
+export const ENROLLMENT_HELP =
+  "Filed through your clearinghouse account. Remittance always needs one; claims and eligibility only when the payer says so."
 
 type DeadlineField = "timely_filing_days" | "corrected_claim_days" | "appeal_days"
 
@@ -29,6 +50,84 @@ const DEADLINES: { field: DeadlineField; label: string }[] = [
   { field: "corrected_claim_days", label: "Corrected claim (days)" },
   { field: "appeal_days", label: "Appeal (days)" },
 ]
+
+export const ENROLLMENT_STATUS_LABELS: Record<EnrollmentStatus, string> = {
+  none: "Not enrolled",
+  filed: "Enrollment filed",
+  pending: "Enrollment in progress",
+  active: "Enrolled",
+  error: "Enrollment rejected",
+}
+
+const TRANSACTION_LABELS: Record<EnrollmentTransactionType, string> = {
+  "837P": "Claims",
+  "270": "Eligibility",
+  "835": "Remittance",
+}
+
+const REQUEST_STATUS_LABELS: Record<EnrollmentRequestStatus, string> = {
+  draft: "Draft",
+  stedi_action_required: "Submitted",
+  provider_action_required: "Needs your action",
+  provisioning: "With the payer",
+  live: "Live",
+  rejected: "Rejected",
+  canceled: "Canceled",
+}
+
+function EnrollmentRequestRow({ request }: { request: PayerEnrollmentResponse }) {
+  const needsAction = request.status === "provider_action_required"
+  return (
+    <li className="py-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-foreground">{TRANSACTION_LABELS[request.transaction_type]}</span>
+        <span className={needsAction ? "font-semibold text-foreground" : "text-muted-foreground"}>
+          {REQUEST_STATUS_LABELS[request.status]}
+        </span>
+      </div>
+      {request.instructions && (
+        <p className="mt-1 whitespace-pre-line text-[12.5px] text-muted-foreground">
+          {request.instructions}
+        </p>
+      )}
+    </li>
+  )
+}
+
+function PayerEnrollments({ payer }: { payer: PayerResponse }) {
+  const { data } = usePayerEnrollments(payer.id)
+  const request = useRequestPayerEnrollments()
+  const requests = data?.data ?? []
+  const error = request.error instanceof Error ? request.error.message : null
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-semibold text-foreground">
+          {ENROLLMENT_STATUS_LABELS[data?.enrollment_status ?? payer.enrollment_status]}
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => request.mutate({ payerRowId: payer.id })}
+          disabled={request.isPending}
+        >
+          Enroll with payer
+        </Button>
+      </div>
+      {requests.length > 0 && (
+        <ul className="m-0 list-none divide-y divide-border p-0">
+          {requests.map((r) => (
+            <EnrollmentRequestRow key={r.transaction_type} request={r} />
+          ))}
+        </ul>
+      )}
+      {error && <p className="text-[12.5px] text-destructive">{error}</p>}
+      <p className="text-[12.5px] text-muted-foreground">{ENROLLMENT_HELP}</p>
+    </div>
+  )
+}
 
 function PayerRow({
   payer,
@@ -57,7 +156,8 @@ function PayerRow({
         <span>
           <span className="block text-sm font-semibold text-foreground">{payer.name}</span>
           <span className="block text-[12.5px] text-muted-foreground">
-            Payer ID {payer.payer_id} · files within {payer.timely_filing_days} days
+            Payer ID {payer.payer_id} · files within {payer.timely_filing_days} days ·{" "}
+            {ENROLLMENT_STATUS_LABELS[payer.enrollment_status]}
           </span>
         </span>
         {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -103,6 +203,7 @@ function PayerRow({
             ))}
           </div>
           <p className="text-[12.5px] text-muted-foreground">{DEADLINE_HELP}</p>
+          <PayerEnrollments payer={payer} />
         </div>
       )}
     </li>

@@ -280,6 +280,8 @@ const baseQueryKeys = {
   payers: {
     all: ["payers"] as const,
     list: () => [...baseQueryKeys.payers.all, "list"] as const,
+    enrollments: (payerRowId: string) =>
+      [...baseQueryKeys.payers.all, "enrollments", payerRowId] as const,
   },
 
   // A client's coverage on file

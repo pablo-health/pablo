@@ -39,3 +39,4 @@ The files below were NOT captured from a live call — the vendor's generic
 | `error_invalid_request_body.json`, `error_account_not_provisioned.json` | the vendor's generic `{code, message}` error envelope |
 | `error_request_changed.json` | the 422 an idempotency key gets when reused with a different body; the live lane sees this `code`, the `message` is illustrative |
 | `error_access_denied.json` | the 403 the enrollment API answers a test-mode key with; same caveat |
+| `enrollment_provider_action_required.json` | the recorded 835 enrollment moved to `PROVIDER_ACTION_REQUIRED`, with a `tasks[]` entry and `reason` built from the vendor's documented enrollment schema — the state a test key can never produce, and the one the reminder flow is built on |
