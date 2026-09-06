@@ -20,8 +20,10 @@ from app.claims.credentials import (
     register_clearinghouse_credential_provider,
 )
 
-_TEST_KEY = "key_test_abc123"
-_PRODUCTION_KEY = "key_live_abc123"
+# Placeholder-shaped on purpose: the secret scan allowlists literal
+# placeholders, and only the key_test_ prefix matters to the provider.
+_TEST_KEY = "key_test_placeholder"
+_PRODUCTION_KEY = "key_live_placeholder"
 _CUSTOM_KEY = "provider-supplied-key-for-tests"
 
 
