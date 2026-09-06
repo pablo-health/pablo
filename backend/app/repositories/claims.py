@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
+    from datetime import date
+
     from ..models.claims import Claim
 
 
@@ -32,6 +34,15 @@ class ClaimRepository(ABC):
     @abstractmethod
     def list_by_patient(self, patient_id: str) -> list[Claim]:
         """Every claim for a client, newest first."""
+
+    @abstractmethod
+    def list_for_export(self, from_date: date, to_date: date) -> list[Claim]:
+        """Every claim past ``draft`` with a service line dated in the range.
+
+        Both ends inclusive; oldest first, so the biller's file reads in the
+        order the visits happened. Drafts are left out — nothing that has
+        not passed the scrub leaves the practice.
+        """
 
     @abstractmethod
     def create(self, claim: Claim) -> Claim:
@@ -59,6 +70,15 @@ class InMemoryClaimRepository(ClaimRepository):
         matches = [c for c in self._claims.values() if c.patient_id == patient_id]
         return [c.model_copy(deep=True) for c in sorted(matches, key=_newest_first)]
 
+    def list_for_export(self, from_date: date, to_date: date) -> list[Claim]:
+        matches = [
+            c
+            for c in self._claims.values()
+            if c.state != "draft"
+            and any(from_date <= line.service_date <= to_date for line in c.lines)
+        ]
+        return [c.model_copy(deep=True) for c in sorted(matches, key=_oldest_first)]
+
     def create(self, claim: Claim) -> Claim:
         if any(c.control_number == claim.control_number for c in self._claims.values()):
             msg = f"control number {claim.control_number!r} already used"
@@ -77,3 +97,7 @@ class InMemoryClaimRepository(ClaimRepository):
 
 def _newest_first(claim: Claim) -> tuple[float, str]:
     return (-claim.created_at.timestamp(), claim.id)
+
+
+def _oldest_first(claim: Claim) -> tuple[float, str]:
+    return (claim.created_at.timestamp(), claim.id)

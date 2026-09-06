@@ -262,6 +262,12 @@ class AuditAction(StrEnum):
     CLAIM_CORRECTED = "claim_corrected"
     CLAIM_VOIDED = "claim_voided"
     PATIENT_CLAIMS_VIEWED = "patient_claims_viewed"
+    # The biller handoff: a range of claims left the practice as a CSV, or
+    # one claim as a CMS-1500-layout PDF. A disclosure, so the CSV row names
+    # every claim it carried (ids and control numbers, with the range and
+    # the count) and the PDF row names its one claim.
+    CLAIMS_EXPORTED = "claims_exported"
+    CLAIM_EXPORTED = "claim_exported"
 
 
 class ResourceType(StrEnum):
@@ -277,6 +283,7 @@ class ResourceType(StrEnum):
     PATIENT_DOCUMENT = "patient_document"
     INVITATION = "invitation"
     CLAIM = "claim"
+    CLAIM_EXPORT = "claim_export"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
