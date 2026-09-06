@@ -94,6 +94,39 @@ describe("ClaimReviewDialog", () => {
     expect(screen.getByTestId("review-and-file")).toBeDisabled()
   })
 
+  it("links to the practice profile when a profile field is what is missing", async () => {
+    mockValidate.mockRejectedValue(
+      new ApiError(
+        "CLAIM_VALIDATION_FAILED",
+        "The claim has blocking findings and stays a draft.",
+        {
+          findings: [
+            {
+              severity: "blocking",
+              code: "missing_field",
+              message: "billing_provider.tax_id_last4 is required.",
+              field: "billing_provider.tax_id_last4",
+            },
+          ],
+        },
+        422,
+      ),
+    )
+    renderOpen()
+    await userEvent.click(await screen.findByTestId("review-and-file"))
+    expect(await screen.findByText("billing_provider.tax_id_last4 is required.")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "practice profile" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings/billing-profile",
+    )
+  })
+
+  it("offers no profile link when the finding is about the visit", async () => {
+    renderOpen({ claimId: "claim-1" })
+    await screen.findByText("Claim 88659891")
+    expect(screen.queryByTestId("fix-profile-link")).not.toBeInTheDocument()
+  })
+
   it("says so when the claim cannot be built", async () => {
     mockBuild.mockRejectedValue(
       new ApiError("UNPROCESSABLE_ENTITY", "The client has no active coverage on file.", {}, 422),

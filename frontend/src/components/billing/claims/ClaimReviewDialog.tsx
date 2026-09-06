@@ -22,6 +22,7 @@ import Link from "next/link"
 import { useBuildClaim, useClaim, useValidateClaim } from "@/hooks/useClaims"
 import { blockingFindingsFrom } from "@/lib/api/claims"
 import { formatCents } from "@/lib/money"
+import { BILLING_PROFILE_SETTINGS_PATH } from "@/components/settings/paths"
 import type { ClaimFinding } from "@/types/claims"
 import { Button } from "@/components/ui/button"
 import {
@@ -62,6 +63,16 @@ export function ClaimReviewDialog({ open, onOpenChange, ...body }: ClaimReviewDi
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * A finding about who is filing — the practice's billing identity or the
+ * clinician's own identifiers — is fixed on the practice profile page, not
+ * on the visit or the coverage.
+ */
+function namesProfileField(finding: ClaimFinding): boolean {
+  const field = finding.field ?? ""
+  return field.startsWith("billing_provider.") || field.startsWith("rendering_provider.")
 }
 
 interface ReviewBodyProps {
@@ -120,6 +131,7 @@ function ReviewBody({ appointmentId, claimId: existingClaimId, onClose }: Review
   const detail = claim.data
   const findings = blocked ?? detail?.findings ?? []
   const hasBlocking = findings.some((f) => f.severity === "blocking")
+  const needsProfile = findings.some(namesProfileField)
   const isDraft = detail?.state === "draft"
   const loading = build.isPending || (claimId !== undefined && claim.isLoading)
 
@@ -180,10 +192,21 @@ function ReviewBody({ appointmentId, claimId: existingClaimId, onClose }: Review
               .
             </p>
           ) : (
-            <ClaimFindings
-              findings={findings}
-              emptyText="Nothing stops this claim from being filed."
-            />
+            <>
+              <ClaimFindings
+                findings={findings}
+                emptyText="Nothing stops this claim from being filed."
+              />
+              {needsProfile && (
+                <p className="text-sm text-neutral-700" data-testid="fix-profile-link">
+                  What&rsquo;s missing about who files the claim lives on your{" "}
+                  <Link href={BILLING_PROFILE_SETTINGS_PATH} className="underline">
+                    practice profile
+                  </Link>
+                  . Fill it in there, then rebuild the claim.
+                </p>
+              )}
+            </>
           )}
         </div>
       )}

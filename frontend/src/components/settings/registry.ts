@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 import {
+  Building2,
   Calendar,
   CalendarClock,
   Clock,
@@ -16,6 +17,7 @@ import type { LucideIcon } from "lucide-react"
 import type { ComponentType } from "react"
 import { AppearancePage } from "./pages/AppearancePage"
 import { AvailabilityPage } from "./pages/AvailabilityPage"
+import { BillingProfilePage } from "./pages/BillingProfilePage"
 import { CalendarsPage } from "./pages/CalendarsPage"
 import { InsurancePage } from "./pages/InsurancePage"
 import { PatientPortalPage } from "./pages/PatientPortalPage"
@@ -24,6 +26,7 @@ import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
+import { BILLING_PROFILE_SETTINGS_ID } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
 
 /**
@@ -154,6 +157,13 @@ const baseGroups: SettingsGroup[] = [
         page: SuperbillsPage,
         feature: "superbills",
         desc: "Out-of-network receipts generated from the chart.",
+      },
+      {
+        id: BILLING_PROFILE_SETTINGS_ID,
+        label: "Practice profile",
+        icon: Building2,
+        page: BillingProfilePage,
+        desc: "Who your claims are filed by: legal name, tax id, NPI, address, and your taxonomy code.",
       },
       {
         id: "insurance",
