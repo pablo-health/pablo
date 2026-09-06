@@ -1,0 +1,39 @@
+{
+  "status": "ERROR",
+  "controlNumber": "1",
+  "tradingPartnerServiceId": "STEDI",
+  "claimReference": {
+    "correlationId": "01M1T7G1JXQ4R61PEXBSP9Q355",
+    "patientControlNumber": "BADDUP660401B",
+    "timeOfResponse": "2026-09-06T02:06:58.261Z",
+    "payerId": "STEDI",
+    "formatVersion": "5010",
+    "rhclaimNumber": "01M1T7G1JXQ4R61PEXBSP9Q355",
+    "serviceLines": [
+      {
+        "lineItemControlNumber": "BADDUP660401BL1"
+      }
+    ]
+  },
+  "errors": [
+    {
+      "code": "33",
+      "description": "The patient's date of birth and gender are both missing. Correct and resubmit.",
+      "followupAction": "Please Correct and Resubmit"
+    },
+    {
+      "code": "33",
+      "description": "Missing subscriber address and/or demographics. When the patient is the subscriber (SBR-02 = 18), the subscriber address and demographics are required. Correct and resubmit.",
+      "followupAction": "Please Correct and Resubmit"
+    }
+  ],
+  "meta": {
+    "traceId": "1d1d20ce-4de9-454d-b847-9301de7a45a1"
+  },
+  "payer": {
+    "payerName": "Stedi Test Payer",
+    "payerId": "STEDI"
+  },
+  "x12": "ISA*00*          *00*          *ZZ*STEDITEST      *ZZ*189416354675   *260906*0206*^*00501*543848903*0*T*`~GS*HN*STEDITEST*189416354675*20260906*020658*1*X*005010X214~ST*277*0001*005010X214~BHT*0085*08*01M1T7G1PHXRXKQBQD40MZ1BTN*20260906*020658*TH~HL*1**20*1~NM1*AY*2*STEDI INC*****46*117151744~TRN*1*01M1T7G1PHXRXKQBQD40MZ1BTN~DTP*050*D8*20260906~DTP*009*D8*20260906~HL*2*1*21*1~NM1*41*2*Pablo Test Practice*****46*0000001~TRN*2*01M1T7G1JXQ4R61PEXBSP9Q355~STC*A1`20*20260906*WQ*150.00~QTY*90*1~AMT*YU*150.00~HL*3*2*19*1~NM1*85*2*Pablo Test Practice*****XX*1999999984~TRN*1*0~REF*TJ*844459714~QTY*QA*1~AMT*YU*150.00~HL*4*3*PT*0~NM1*QC*1*Anon*John****MI*123456789~TRN*2*BADDUP660401B~STC*A3`158`QC*20260906*U*150.00********The patient's date of birth and gender are both missing. Correct and resubmit.~STC*A6`173`HK*20260906*U*150.00********Missing subscriber address and/or demographics. When the patient is the subscriber (SBR-02 = 18), the subscriber address and demographics are required. Correct and resubmit.~DTP*472*RD8*20260901-20260901~SE*26*0001~GE*1*1~IEA*1*543848903~",
+  "httpStatusCode": "400 BAD_REQUEST"
+}

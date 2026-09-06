@@ -1,0 +1,281 @@
+{
+  "nextPageToken": "MTc4ODY1OTk0OTk3Mzg1NHwwNTk0N2FjNi1jYzFjLTQ2MDYtYjFkNi1iZDE4YjQzZGE5ZWE=",
+  "items": [
+    {
+      "transactionId": "25593492-ef5e-4294-8268-094615ccb387",
+      "fileExecutionId": "0174f713-8bdd-460f-b680-900f2bd04152",
+      "direction": "OUTBOUND",
+      "operation": "GuideJSON->X12",
+      "mode": "test",
+      "businessIdentifiers": [
+        {
+          "elementId": "1028",
+          "element": "CLM-01",
+          "name": "Patient Control Number",
+          "value": "88659891"
+        },
+        {
+          "elementId": "127",
+          "element": "BHT-03",
+          "name": "Reference Identification",
+          "value": "01M1T7001FRW15MVE0SSW4FA7G"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "5b7d4d6d-22c6-4138-b176-2c439a94cbc4",
+          "artifactType": "application/json",
+          "sizeBytes": 4686,
+          "model": "transaction",
+          "usage": "input",
+          "url": "https://core.us.stedi.com/2023-08-01/transactions/25593492-ef5e-4294-8268-094615ccb387/input"
+        },
+        {
+          "id": "a17a2fa0-746e-496f-95cd-212a5bfa669f",
+          "artifactType": "application/edi-x12",
+          "sizeBytes": 650,
+          "model": "transaction",
+          "usage": "output",
+          "url": "https://core.us.stedi.com/2023-08-01/transactions/25593492-ef5e-4294-8268-094615ccb387/output"
+        }
+      ],
+      "partnership": {
+        "partnershipId": "local-clearinghouse-test",
+        "partnershipType": "x12",
+        "sender": {
+          "profileId": "local"
+        },
+        "receiver": {
+          "profileId": "clearinghouse-test"
+        }
+      },
+      "processedAt": "2026-09-06T01:58:25.689554Z",
+      "x12": {
+        "metadata": {
+          "sender": {
+            "isa": {
+              "id": "189416354675",
+              "qualifier": "ZZ"
+            },
+            "applicationCode": "189416354675"
+          },
+          "receiver": {
+            "isa": {
+              "id": "STEDITEST",
+              "qualifier": "ZZ"
+            },
+            "applicationCode": "STEDITEST"
+          },
+          "interchange": {
+            "controlNumber": 2,
+            "acknowledgmentRequestedCode": "0"
+          },
+          "transaction": {
+            "controlNumber": "0001",
+            "transactionSetIdentifier": "837"
+          },
+          "functionalGroup": {
+            "date": "2026-09-06",
+            "time": "01:58:17",
+            "release": "005010X222A1",
+            "controlNumber": 2,
+            "functionalIdentifierCode": "HC"
+          }
+        },
+        "transactionSetting": {
+          "guideId": "01M1T3WBN893C6WWDJCZ73T0PG",
+          "transactionSettingId": "005010X222A1-837"
+        }
+      },
+      "status": "succeeded"
+    },
+    {
+      "transactionId": "d19a0d9b-a741-4971-8f6b-8f7a8ebeab92",
+      "fileExecutionId": "b2fe5021-3cca-4a34-96ba-43fce4209511",
+      "direction": "INBOUND",
+      "operation": "X12->GuideJSON",
+      "mode": "test",
+      "businessIdentifiers": [
+        {
+          "elementId": "1028",
+          "element": "CLP-01",
+          "name": "Patient Control Number",
+          "value": "88659891"
+        },
+        {
+          "elementId": "127",
+          "element": "TRN-02",
+          "name": "Reference Identification",
+          "value": "01M1T7166M0FRNNBFWHJQC7V18"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "337a72ff-939d-4bb5-9e23-bf106c4dd3b6",
+          "artifactType": "application/edi-x12",
+          "sizeBytes": 518,
+          "model": "transaction",
+          "usage": "input",
+          "url": "https://core.us.stedi.com/2023-08-01/transactions/d19a0d9b-a741-4971-8f6b-8f7a8ebeab92/input"
+        },
+        {
+          "id": "b4745d73-3050-4012-a2db-c82c6b9298a0",
+          "artifactType": "application/json",
+          "sizeBytes": 3442,
+          "model": "transaction",
+          "usage": "output",
+          "url": "https://core.us.stedi.com/2023-08-01/transactions/d19a0d9b-a741-4971-8f6b-8f7a8ebeab92/output"
+        }
+      ],
+      "partnership": {
+        "partnershipId": "local-clearinghouse-test",
+        "partnershipType": "x12",
+        "sender": {
+          "profileId": "clearinghouse-test"
+        },
+        "receiver": {
+          "profileId": "local"
+        }
+      },
+      "processedAt": "2026-09-06T01:59:09.656332Z",
+      "x12": {
+        "metadata": {
+          "sender": {
+            "isa": {
+              "id": "STEDITEST",
+              "qualifier": "ZZ"
+            },
+            "applicationCode": "STEDITEST"
+          },
+          "receiver": {
+            "isa": {
+              "id": "189416354675",
+              "qualifier": "ZZ"
+            },
+            "applicationCode": "189416354675"
+          },
+          "interchange": {
+            "controlNumber": 2,
+            "acknowledgmentRequestedCode": "0"
+          },
+          "transaction": {
+            "controlNumber": "0001",
+            "transactionSetIdentifier": "835"
+          },
+          "functionalGroup": {
+            "date": "2026-09-06",
+            "time": "01:58:53",
+            "release": "005010X221A1",
+            "controlNumber": 2,
+            "functionalIdentifierCode": "HP"
+          }
+        },
+        "transactionSetting": {
+          "guideId": "01M1T3WAHK2JX4Z25C7AAYMKEA",
+          "transactionSettingId": "01M1T3WKDPYEMQNP2W0FC1JDGK"
+        }
+      },
+      "status": "succeeded"
+    },
+    {
+      "transactionId": "05947ac6-cc1c-4606-b1d6-bd18b43da9ea",
+      "fileExecutionId": "da270720-4d19-4527-af31-1d2c6dba6ca5",
+      "direction": "INBOUND",
+      "operation": "X12->GuideJSON",
+      "mode": "test",
+      "businessIdentifiers": [
+        {
+          "elementId": "127",
+          "element": "BHT-03",
+          "name": "Reference Identification",
+          "value": "01M1T715VB8H7YMERHVXJ3S40K"
+        },
+        {
+          "elementId": "127",
+          "element": "TRN-02",
+          "name": "Reference Identification",
+          "value": "01M1T7001FRW15MVE0SSW4FA7G"
+        },
+        {
+          "elementId": "127",
+          "element": "TRN-02",
+          "name": "Reference Identification",
+          "value": "01M1T715VB8H7YMERHVXJ3S40K"
+        },
+        {
+          "elementId": "127",
+          "element": "TRN-02",
+          "name": "Reference Identification",
+          "value": "88659891"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": "06ba821b-2ac1-45ac-a8a6-004869b7424a",
+          "artifactType": "application/edi-x12",
+          "sizeBytes": 769,
+          "model": "transaction",
+          "usage": "input",
+          "url": "https://core.us.stedi.com/2023-08-01/transactions/05947ac6-cc1c-4606-b1d6-bd18b43da9ea/input"
+        },
+        {
+          "id": "dacd6083-620a-4ce8-b3e6-76ec2773d34d",
+          "artifactType": "application/json",
+          "sizeBytes": 4487,
+          "model": "transaction",
+          "usage": "output",
+          "url": "https://core.us.stedi.com/2023-08-01/transactions/05947ac6-cc1c-4606-b1d6-bd18b43da9ea/output"
+        }
+      ],
+      "partnership": {
+        "partnershipId": "local-clearinghouse-test",
+        "partnershipType": "x12",
+        "sender": {
+          "profileId": "clearinghouse-test"
+        },
+        "receiver": {
+          "profileId": "local"
+        }
+      },
+      "processedAt": "2026-09-06T01:59:09.973854Z",
+      "x12": {
+        "metadata": {
+          "sender": {
+            "isa": {
+              "id": "STEDITEST",
+              "qualifier": "ZZ"
+            },
+            "applicationCode": "STEDITEST"
+          },
+          "receiver": {
+            "isa": {
+              "id": "189416354675",
+              "qualifier": "ZZ"
+            },
+            "applicationCode": "189416354675"
+          },
+          "interchange": {
+            "controlNumber": 3,
+            "acknowledgmentRequestedCode": "0"
+          },
+          "transaction": {
+            "controlNumber": "0001",
+            "transactionSetIdentifier": "277"
+          },
+          "functionalGroup": {
+            "date": "2026-09-06",
+            "time": "01:58:55",
+            "release": "005010X214",
+            "controlNumber": 3,
+            "functionalIdentifierCode": "HN"
+          }
+        },
+        "transactionSetting": {
+          "guideId": "01M1T3W99J7JNAXZ97MA17WFGC",
+          "transactionSettingId": "01M1T3WKKB7XTWR901EQMZHSG2"
+        }
+      },
+      "status": "succeeded"
+    }
+  ]
+}

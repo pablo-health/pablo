@@ -1,0 +1,20 @@
+{
+  "contacts": [
+    {
+      "organizationName": "Pablo Health Test Provider",
+      "email": "kurtn@pablo.health",
+      "phone": "4045550100",
+      "streetAddress1": "1 Test St",
+      "city": "Atlanta",
+      "zipCode": "30301",
+      "state": "GA"
+    }
+  ],
+  "createdAt": "2026-09-06T01:57:16.32Z",
+  "id": "01a0746f-25d4-78a0-bb43-0f95acd218c9",
+  "name": "Pablo Health Test Provider",
+  "npi": "1999999984",
+  "taxId": "844459714",
+  "taxIdType": "EIN",
+  "updatedAt": "2026-09-06T01:57:16.32Z"
+}
