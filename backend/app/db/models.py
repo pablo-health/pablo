@@ -58,6 +58,11 @@ class ClinicianProfileRow(Base):
     license_state: Mapped[str | None] = mapped_column(String(2))
     dea_number: Mapped[str | None] = mapped_column(String(50))
     npi_number: Mapped[str | None] = mapped_column(String(20))
+    # NUCC health care provider taxonomy code (e.g. 101YM0800X) — the
+    # specialty classification a payer expects on a claim's rendering-
+    # provider loop, alongside npi_number. Free text so a clinician whose
+    # specialty isn't in the picker can still enter one.
+    taxonomy_code: Mapped[str | None] = mapped_column(String(10))
 
 
 class PatientRow(Base):
@@ -143,6 +148,18 @@ class PatientRow(Base):
     # reads this column to merge or de-duplicate automatically; it only
     # flags a row for a person to look at.
     origin: Mapped[str | None] = mapped_column(String(20))
+    # Mailing address, collected for claim submission (X12 837P subscriber/
+    # patient loop). Optional — a chart with no billing intent has no reason
+    # to require it.
+    address_line1: Mapped[str | None] = mapped_column(String(255))
+    address_line2: Mapped[str | None] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(2))
+    postal_code: Mapped[str | None] = mapped_column(String(10))
+    # X12 DMG03 administrative sex code set — what a claim's demographic
+    # segment expects, not a gender-identity field. Displayed as "Sex on
+    # insurance card" in the UI.
+    sex: Mapped[str | None] = mapped_column(String(1))
 
     __table_args__ = (
         # Backs PatientRepository.find_by_email, whose `lower(email) = ?`
@@ -154,6 +171,7 @@ class PatientRow(Base):
             func.lower(email),
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        CheckConstraint("sex IN ('M', 'F', 'U')", name="ck_patients_sex"),
     )
 
 
@@ -781,6 +799,50 @@ class SchedulingPolicyRow(Base):
         CheckConstraint("pending_hold_hours > 0", name="ck_scheduling_policy_pending_hold"),
         CheckConstraint(
             "intake_forms_due_hours >= 0", name="ck_scheduling_policy_intake_forms_due"
+        ),
+    )
+
+
+class PracticeBillingProfileRow(Base):
+    """The practice's billing identity: the legal entity a claim is filed as.
+
+    One row per tenant, singleton, pinned by ``CHECK (id = 1)`` — same shape
+    as :class:`SchedulingPolicyRow`, and for the same reason: this is
+    practice-level configuration, not a per-patient or per-user record, so
+    there is no ``user_id`` / ``patient_id`` to scope it by.
+
+    ``tax_id_encrypted`` holds the EIN or SSN at rest, AES-256-GCM encrypted
+    the same way OAuth calendar tokens are (see
+    ``app.services.token_encryption``). ``tax_id_last4`` is stored
+    separately, in the clear, purely for display — a settings page can show
+    "···· 1234" without ever decrypting the real value.
+    """
+
+    __tablename__ = "practice_billing_profile"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+
+    legal_name: Mapped[str | None] = mapped_column(String(255))
+    tax_id_encrypted: Mapped[str | None] = mapped_column(Text)
+    tax_id_last4: Mapped[str | None] = mapped_column(String(4))
+    tax_id_type: Mapped[str | None] = mapped_column(String(3))
+    #: Type-2 (organization) NPI. Nullable — a solo practice bills under its
+    #: rendering clinician's own NPI instead of requiring a separate one.
+    billing_npi: Mapped[str | None] = mapped_column(String(20))
+    address_line1: Mapped[str | None] = mapped_column(String(255))
+    address_line2: Mapped[str | None] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(100))
+    state: Mapped[str | None] = mapped_column(String(2))
+    postal_code: Mapped[str | None] = mapped_column(String(10))
+    phone: Mapped[str | None] = mapped_column(String(50))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_practice_billing_profile_singleton"),
+        CheckConstraint(
+            "tax_id_type IN ('ein', 'ssn')", name="ck_practice_billing_profile_tax_id_type"
         ),
     )
 

@@ -120,6 +120,10 @@ class UpdateProfessionalInfoRequest(BaseModel):
     # can reuse them instead of re-typing per encounter.
     dea_number: str | None = Field(None, min_length=1, max_length=50)
     npi_number: str | None = Field(None, pattern=r"^\d{10}$")
+    # NUCC health care provider taxonomy code — the specialty classification
+    # a payer expects on a claim's rendering-provider loop. A short picker
+    # of common behavioral-health codes plus free text, so no fixed pattern.
+    taxonomy_code: str | None = Field(None, min_length=1, max_length=10)
 
 
 # Keep in sync with the DB CHECK constraint added by

@@ -478,6 +478,12 @@ def _row_to_patient(row: PatientRow) -> Patient:
         rate_cents=row.rate_cents,
         sliding_scale_note=row.sliding_scale_note,
         origin=row.origin,
+        address_line1=row.address_line1,
+        address_line2=row.address_line2,
+        city=row.city,
+        state=row.state,
+        postal_code=row.postal_code,
+        sex=row.sex,
     )
 
 
@@ -501,5 +507,11 @@ def _patient_to_row(patient: Patient, row: PatientRow) -> None:
     row.rate_cents = patient.rate_cents
     row.sliding_scale_note = patient.sliding_scale_note
     row.origin = patient.origin
+    row.address_line1 = patient.address_line1
+    row.address_line2 = patient.address_line2
+    row.city = patient.city
+    row.state = patient.state
+    row.postal_code = patient.postal_code
+    row.sex = patient.sex
     row.created_at = patient.created_at
     row.updated_at = patient.updated_at

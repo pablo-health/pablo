@@ -75,6 +75,26 @@ _UNDO_WINDOW_DAYS = 30
 
 router = APIRouter(prefix="/api/patients", tags=["patients"])
 
+#: Fields ``update_patient`` may set, in the same name on both
+#: ``UpdatePatientRequest`` and the ``Patient`` dataclass.
+_PATCHABLE_FIELDS: tuple[str, ...] = (
+    "first_name",
+    "last_name",
+    "email",
+    "phone",
+    "status",
+    "date_of_birth",
+    "diagnosis",
+    "rate_cents",
+    "sliding_scale_note",
+    "address_line1",
+    "address_line2",
+    "city",
+    "state",
+    "postal_code",
+    "sex",
+)
+
 
 def get_patient_repository(
     _ctx: TenantContext = Depends(get_tenant_context),
@@ -126,6 +146,8 @@ def create_patient(
     - **diagnosis**: Current diagnosis (optional)
     - **rate_cents**: Per-patient rate override, in cents (optional)
     - **sliding_scale_note**: Free-text note on a sliding-scale arrangement (optional)
+    - **address_line1/address_line2/city/state/postal_code**: Mailing address (optional)
+    - **sex**: Sex on insurance card, the X12 DMG03 code set - M, F, or U (optional)
     """
     now = utc_now()
 
@@ -140,6 +162,12 @@ def create_patient(
         diagnosis=request.diagnosis,
         rate_cents=request.rate_cents,
         sliding_scale_note=request.sliding_scale_note,
+        address_line1=request.address_line1,
+        address_line2=request.address_line2,
+        city=request.city,
+        state=request.state,
+        postal_code=request.postal_code,
+        sex=request.sex,
         created_at=now,
         updated_at=now,
         session_count=0,
@@ -276,6 +304,8 @@ def update_patient(
     - **diagnosis**: New diagnosis (optional)
     - **rate_cents**: New per-patient rate override, in cents (optional)
     - **sliding_scale_note**: New sliding-scale note (optional)
+    - **address_line1/address_line2/city/state/postal_code**: New mailing address (optional)
+    - **sex**: New sex on insurance card, the X12 DMG03 code set - M, F, or U (optional)
 
     Only provided fields will be updated.
     """
@@ -285,35 +315,14 @@ def update_patient(
         raise NotFoundError("Patient not found", {"patient_id": patient_id})
 
     # Track which fields changed for audit (names only — values would be PHI).
+    # Every patchable field has the same name on the request and on the
+    # Patient dataclass, so a single loop replaces one branch per field.
     changed_fields: list[str] = []
-
-    if request.first_name is not None:
-        changed_fields.append("first_name")
-        patient.first_name = request.first_name
-    if request.last_name is not None:
-        changed_fields.append("last_name")
-        patient.last_name = request.last_name
-    if request.email is not None:
-        changed_fields.append("email")
-        patient.email = request.email
-    if request.phone is not None:
-        changed_fields.append("phone")
-        patient.phone = request.phone
-    if request.status is not None:
-        changed_fields.append("status")
-        patient.status = request.status
-    if request.date_of_birth is not None:
-        changed_fields.append("date_of_birth")
-        patient.date_of_birth = request.date_of_birth
-    if request.diagnosis is not None:
-        changed_fields.append("diagnosis")
-        patient.diagnosis = request.diagnosis
-    if request.rate_cents is not None:
-        changed_fields.append("rate_cents")
-        patient.rate_cents = request.rate_cents
-    if request.sliding_scale_note is not None:
-        changed_fields.append("sliding_scale_note")
-        patient.sliding_scale_note = request.sliding_scale_note
+    for field in _PATCHABLE_FIELDS:
+        value = getattr(request, field)
+        if value is not None:
+            changed_fields.append(field)
+            setattr(patient, field, value)
 
     patient = repo.update(patient)
     audit.log_patient_action(

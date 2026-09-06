@@ -222,7 +222,8 @@ CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
     license_state character varying(2),
     dea_number character varying(50),
     npi_number character varying(20),
-    credential_titles jsonb
+    credential_titles jsonb,
+    taxonomy_code character varying(10)
 );
 
 
@@ -526,8 +527,50 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     phi_email_consent_by character varying(128),
     rate_cents integer,
     sliding_scale_note text,
-    origin character varying(20)
+    origin character varying(20),
+    address_line1 character varying(255),
+    address_line2 character varying(255),
+    city character varying(100),
+    state character varying(2),
+    postal_code character varying(10),
+    sex character varying(1),
+    CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
 );
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
+    id smallint NOT NULL,
+    legal_name character varying(255),
+    tax_id_encrypted text,
+    tax_id_last4 character varying(4),
+    tax_id_type character varying(3),
+    billing_npi character varying(20),
+    address_line1 character varying(255),
+    address_line2 character varying(255),
+    city character varying(100),
+    state character varying(2),
+    postal_code character varying(10),
+    phone character varying(50),
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_practice_billing_profile_singleton CHECK ((id = 1)),
+    CONSTRAINT ck_practice_billing_profile_tax_id_type CHECK (((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[])))
+);
+
+
+
+CREATE SEQUENCE __TENANT_SCHEMA__.practice_billing_profile_id_seq
+    AS smallint
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+
+ALTER SEQUENCE __TENANT_SCHEMA__.practice_billing_profile_id_seq OWNED BY __TENANT_SCHEMA__.practice_billing_profile.id;
 
 
 
@@ -736,6 +779,10 @@ CREATE TABLE __TENANT_SCHEMA__.therapy_sessions (
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.practice_billing_profile ALTER COLUMN id SET DEFAULT nextval('__TENANT_SCHEMA__.practice_billing_profile_id_seq'::regclass);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.scheduling_policy ALTER COLUMN id SET DEFAULT nextval('__TENANT_SCHEMA__.scheduling_policy_id_seq'::regclass);
 
 
@@ -867,6 +914,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patients
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.llm_usage
     ADD CONSTRAINT pk_llm_usage PRIMARY KEY (user_id, feature_key, period_yyyymm, model);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.practice_billing_profile
+    ADD CONSTRAINT practice_billing_profile_pkey PRIMARY KEY (id);
 
 
 

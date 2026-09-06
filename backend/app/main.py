@@ -60,6 +60,7 @@ from .routes import (
     patient_payments,
     patients,
     payment_webhooks,
+    practice_billing,
     public_booking,
     scheduling,
     sessions,
@@ -201,6 +202,7 @@ app.include_router(admin.router)
 app.include_router(admin_pentest.router)
 app.include_router(users.router)
 app.include_router(patients.router)
+app.include_router(practice_billing.router)
 app.include_router(billing_queue.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)

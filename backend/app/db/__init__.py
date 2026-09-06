@@ -909,9 +909,14 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #     considered because it carries an ``id``.
 #   * scheduling_policy — practice-level booking policy, a singleton row with
 #     no ``user_id`` / ``patient_id``.
+#   * practice_billing_profile — the practice's billing identity (tax id,
+#     billing NPI, address), a singleton row with no ``user_id`` /
+#     ``patient_id`` — same shape and same reason as scheduling_policy.
 #   * users — vestigial per-tenant table. Runtime identity lives in the
 #     platform schema; nothing reads this per-tenant copy.
-_CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset({"ehr_routes", "scheduling_policy", "users"})
+_CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
+    {"ehr_routes", "scheduling_policy", "practice_billing_profile", "users"}
+)
 
 
 def not_row_scoped_tenant_tables() -> set[str]:
