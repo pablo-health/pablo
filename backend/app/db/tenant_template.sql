@@ -211,6 +211,60 @@ CREATE TABLE __TENANT_SCHEMA__.chat_messages (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.claim_lines (
+    id uuid NOT NULL,
+    claim_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    appointment_id uuid,
+    line_number integer NOT NULL,
+    line_control_number character varying(30) NOT NULL,
+    service_date date NOT NULL,
+    cpt character varying(10) NOT NULL,
+    modifiers jsonb NOT NULL,
+    units integer DEFAULT 1 NOT NULL,
+    charge_cents integer NOT NULL,
+    dx_pointers jsonb NOT NULL,
+    telehealth boolean DEFAULT false NOT NULL,
+    allowed_cents integer,
+    paid_cents integer DEFAULT 0 NOT NULL,
+    patient_resp_cents integer,
+    adjustments jsonb,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_claim_lines_charge_cents CHECK ((charge_cents >= 0)),
+    CONSTRAINT ck_claim_lines_line_number CHECK ((line_number > 0)),
+    CONSTRAINT ck_claim_lines_units CHECK ((units > 0))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.claims (
+    id uuid NOT NULL,
+    control_number character varying(17) NOT NULL,
+    patient_id uuid NOT NULL,
+    coverage_id uuid NOT NULL,
+    payer_id uuid NOT NULL,
+    state character varying(16) NOT NULL,
+    frequency_code character varying(1) DEFAULT '1'::character varying NOT NULL,
+    parent_claim_id uuid,
+    total_charge_cents integer NOT NULL,
+    total_paid_cents integer DEFAULT 0 NOT NULL,
+    diagnosis_codes jsonb NOT NULL,
+    place_of_service character varying(2),
+    billing_snapshot jsonb NOT NULL,
+    subscriber_snapshot jsonb NOT NULL,
+    submitted_at timestamp with time zone,
+    payer_accepted_at timestamp with time zone,
+    adjudicated_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_claims_frequency_code CHECK (((frequency_code)::text = ANY ((ARRAY['1'::character varying, '7'::character varying, '8'::character varying])::text[]))),
+    CONSTRAINT ck_claims_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'validated'::character varying, 'submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'paid'::character varying, 'partial'::character varying, 'denied'::character varying, 'rejected'::character varying, 'stalled'::character varying])::text[]))),
+    CONSTRAINT ck_claims_total_charge_cents CHECK ((total_charge_cents >= 0)),
+    CONSTRAINT ck_claims_total_paid_cents CHECK ((total_paid_cents >= 0))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.clinician_profiles (
     user_id uuid NOT NULL,
     practice_id character varying(128) NOT NULL,
@@ -877,6 +931,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.chat_messages
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
+    ADD CONSTRAINT claim_lines_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims
+    ADD CONSTRAINT claims_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.clinician_profiles
     ADD CONSTRAINT clinician_profiles_pkey PRIMARY KEY (user_id);
 
@@ -1032,6 +1096,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
+    ADD CONSTRAINT ux_claim_lines_claim_line_number UNIQUE (claim_id, line_number);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims
+    ADD CONSTRAINT ux_claims_control_number UNIQUE (control_number);
+
+
+
 CREATE INDEX ix_appointment_types_user_id ON __TENANT_SCHEMA__.appointment_types USING btree (user_id);
 
 
@@ -1117,6 +1191,26 @@ CREATE INDEX ix_chat_conversations_patient_last_turn ON __TENANT_SCHEMA__.chat_c
 
 
 CREATE INDEX ix_chat_messages_conversation_id ON __TENANT_SCHEMA__.chat_messages USING btree (conversation_id);
+
+
+
+CREATE INDEX ix_claim_lines_appointment_id ON __TENANT_SCHEMA__.claim_lines USING btree (appointment_id);
+
+
+
+CREATE INDEX ix_claim_lines_claim_id ON __TENANT_SCHEMA__.claim_lines USING btree (claim_id);
+
+
+
+CREATE INDEX ix_claim_lines_patient_id ON __TENANT_SCHEMA__.claim_lines USING btree (patient_id);
+
+
+
+CREATE INDEX ix_claims_patient_id ON __TENANT_SCHEMA__.claims USING btree (patient_id);
+
+
+
+CREATE INDEX ix_claims_state ON __TENANT_SCHEMA__.claims USING btree (state);
 
 
 
@@ -1395,6 +1489,36 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
     ADD CONSTRAINT fk_appointments_appointment_type FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
+    ADD CONSTRAINT fk_claim_lines_claim_id_claims FOREIGN KEY (claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
+    ADD CONSTRAINT fk_claim_lines_patient_id_patients FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims
+    ADD CONSTRAINT fk_claims_coverage_id_patient_coverage FOREIGN KEY (coverage_id) REFERENCES __TENANT_SCHEMA__.patient_coverage(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims
+    ADD CONSTRAINT fk_claims_parent_claim_id_claims FOREIGN KEY (parent_claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims
+    ADD CONSTRAINT fk_claims_patient_id_patients FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claims
+    ADD CONSTRAINT fk_claims_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
 
 
 

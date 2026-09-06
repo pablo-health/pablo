@@ -1941,3 +1941,169 @@ class PatientCoverageRow(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+#: Where a claim stands. It only ever moves forward on a receipt from the
+#: next hop — a scrub with no blocking findings, a clearinghouse
+#: acknowledgement, a payer acknowledgement, a remittance. ``rejected`` and
+#: ``stalled`` are the two side exits: the first is a clearinghouse or payer
+#: refusal that a corrected claim answers, the second is a watchdog noticing
+#: no receipt arrived in time.
+CLAIM_STATES: tuple[str, ...] = (
+    "draft",
+    "validated",
+    "submitted",
+    "ch_accepted",
+    "payer_accepted",
+    "paid",
+    "partial",
+    "denied",
+    "rejected",
+    "stalled",
+)
+
+#: CLM05-3: ``1`` an original claim, ``7`` a replacement of a prior claim,
+#: ``8`` a void of a prior claim. A replacement or a void always names the
+#: claim it replaces in ``parent_claim_id``.
+CLAIM_FREQUENCY_CODES: tuple[str, ...] = ("1", "7", "8")
+
+#: CLM01 is at most 20 characters on the wire; the clearinghouse this
+#: codebase files through caps it at 17.
+CLAIM_CONTROL_NUMBER_MAX_LENGTH = 17
+
+
+class ClaimRow(Base):
+    """One professional claim, built from a session and filed with a payer.
+
+    A snapshot, not a view: the billing identity, the subscriber and the
+    diagnosis list are copied in when the claim is built, so an edit to the
+    appointment or the coverage afterwards does not change what was (or
+    will be) filed. A claim past ``draft`` is never edited in place; the
+    correction is a new row with ``frequency_code`` ``7`` (or ``8`` to
+    void) that points back here through ``parent_claim_id``.
+
+    Carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
+    attaches the standard ``has_patient_access`` policy — the same posture
+    as ``patient_coverage``. The snapshots hold the subscriber's name, date
+    of birth and address and the diagnosis codes: protected health
+    information that is stored here and never written to a log line.
+
+    ``control_number`` is CLM01, the practice's own identifier for the
+    claim on the wire; the clearinghouse and the payer echo it back on
+    every acknowledgement, which is how those are matched to this row.
+    Generated here, unique within the practice, never reused.
+    """
+
+    __tablename__ = "claims"
+    __table_args__ = (
+        CheckConstraint(f"state IN ({_sql_in_list(CLAIM_STATES)})", name="ck_claims_state"),
+        CheckConstraint(
+            f"frequency_code IN ({_sql_in_list(CLAIM_FREQUENCY_CODES)})",
+            name="ck_claims_frequency_code",
+        ),
+        CheckConstraint("total_charge_cents >= 0", name="ck_claims_total_charge_cents"),
+        CheckConstraint("total_paid_cents >= 0", name="ck_claims_total_paid_cents"),
+        UniqueConstraint("control_number", name="ux_claims_control_number"),
+        Index("ix_claims_patient_id", "patient_id"),
+        Index("ix_claims_state", "state"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    control_number: Mapped[str] = mapped_column(
+        String(CLAIM_CONTROL_NUMBER_MAX_LENGTH), nullable=False
+    )
+    # Native uuid so the schema's ``has_patient_access`` policy applies.
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    coverage_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False),
+        ForeignKey("patient_coverage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    payer_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="RESTRICT"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    frequency_code: Mapped[str] = mapped_column(String(1), nullable=False, default="1")
+    parent_claim_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("claims.id", ondelete="RESTRICT"), nullable=True
+    )
+    total_charge_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_paid_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Ordered; the first code is the principal diagnosis. Stored as a JSON
+    # list like the ``appointments.diagnosis_codes`` it is copied from.
+    diagnosis_codes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    place_of_service: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    # The billing provider and the rendering provider as they stood when
+    # the claim was built. Never carries the tax id itself — only its type
+    # and last four, the same as the settings page shows.
+    billing_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # The subscriber, the patient and the plan as they stood when the claim
+    # was built.
+    subscriber_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payer_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    adjudicated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ClaimLineRow(Base):
+    """One service line on a claim: a CPT code on a date for an amount.
+
+    ``appointment_id`` is a soft reference on purpose — no foreign key.
+    Appointments get deleted; a money record does not, and it must keep
+    reading correctly after the visit it came from is gone.
+
+    Carries ``patient_id`` alongside ``claim_id`` so the row is isolated by
+    the same ``has_patient_access`` policy as its claim, rather than by a
+    join the policy engine would have to be taught. It is a copy of the
+    claim's ``patient_id`` and is never different from it.
+
+    ``allowed_cents`` / ``paid_cents`` / ``patient_resp_cents`` and
+    ``adjustments`` (CARC/RARC entries) are written by remittance posting;
+    they stay unset until an 835 arrives.
+    """
+
+    __tablename__ = "claim_lines"
+    __table_args__ = (
+        CheckConstraint("line_number > 0", name="ck_claim_lines_line_number"),
+        CheckConstraint("units > 0", name="ck_claim_lines_units"),
+        CheckConstraint("charge_cents >= 0", name="ck_claim_lines_charge_cents"),
+        UniqueConstraint("claim_id", "line_number", name="ux_claim_lines_claim_line_number"),
+        Index("ix_claim_lines_claim_id", "claim_id"),
+        Index("ix_claim_lines_patient_id", "patient_id"),
+        Index("ix_claim_lines_appointment_id", "appointment_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    claim_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+    line_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # REF*6R — the line's own control number, echoed back per line on
+    # acknowledgements. Derived from the claim's control number.
+    line_control_number: Mapped[str] = mapped_column(String(30), nullable=False)
+    service_date: Mapped[date] = mapped_column(Date, nullable=False)
+    cpt: Mapped[str] = mapped_column(String(10), nullable=False)
+    modifiers: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    units: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    charge_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 1-based positions into the claim's ``diagnosis_codes``.
+    dx_pointers: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Whether the visit was held over video. Copied from the appointment so
+    # the scrub can check the place of service against it without reaching
+    # back to a row that may have changed or gone.
+    telehealth: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    allowed_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    paid_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    patient_resp_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    adjustments: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

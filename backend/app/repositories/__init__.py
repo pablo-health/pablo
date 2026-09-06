@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
+    from .claims import ClaimRepository
     from .coverage import PatientCoverageRepository, PayerRepository
     from .diagnostic_assessment import DiagnosticAssessmentRepository
     from .google_calendar_token import GoogleCalendarTokenRepository
@@ -148,6 +149,13 @@ def get_patient_coverage_repository() -> PatientCoverageRepository:
     from .postgres.coverage import PostgresPatientCoverageRepository
 
     return PostgresPatientCoverageRepository(_get_pg_session())
+
+
+def get_claim_repository() -> ClaimRepository:
+    """Get the claims repository instance."""
+    from .postgres.claims import PostgresClaimRepository
+
+    return PostgresClaimRepository(_get_pg_session())
 
 
 def get_session_repository() -> TherapySessionRepository:
@@ -336,6 +344,7 @@ __all__ = [
     "get_availability_rule_repository",
     "get_booking_link_repository",
     "get_chat_repository",
+    "get_claim_repository",
     "get_clinician_profile_repository",
     "get_compliance_document_repository",
     "get_compliance_item_repository",

@@ -28,7 +28,7 @@ _ICD10_CM_CODE = re.compile(r"^[A-TV-Z][0-9][0-9A-Z](?:\.?[0-9A-Z]{1,4})?$")
 _ICD10_CM_CATEGORY_LENGTH = 3
 
 #: An 837P service line carries at most four diagnosis pointers (SV107).
-_MAX_DX_POINTERS_PER_LINE = 4
+MAX_DX_POINTERS_PER_LINE = 4
 
 
 def dx_at_highest_specificity(code: str) -> bool:
@@ -57,7 +57,7 @@ def dx_pointers_valid(pointers: Sequence[str | int], n_dx: int) -> bool:
     most four; a repeated pointer is a defect too (the same diagnosis cannot
     justify a line twice).
     """
-    if not 1 <= len(pointers) <= _MAX_DX_POINTERS_PER_LINE:
+    if not 1 <= len(pointers) <= MAX_DX_POINTERS_PER_LINE:
         return False
     positions: list[int] = []
     for pointer in pointers:
