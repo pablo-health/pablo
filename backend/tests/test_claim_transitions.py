@@ -24,7 +24,10 @@ _NOW = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
 _EXPECTED = {
     ("draft", "validate"): "validated",
     ("validated", "submit"): "submitted",
+    ("validated", "reject"): "rejected",
+    ("validated", "stall"): "stalled",
     ("submitted", "ch_accept"): "ch_accepted",
+    ("submitted", "payer_accept"): "payer_accepted",
     ("submitted", "reject"): "rejected",
     ("submitted", "stall"): "stalled",
     ("ch_accepted", "payer_accept"): "payer_accepted",

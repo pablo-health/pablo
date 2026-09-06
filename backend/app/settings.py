@@ -1254,6 +1254,39 @@ class Settings(BaseSettings):
         ),
     )
 
+    clearinghouse_webhook_secret: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Signing secret of the clearinghouse event destination that posts "
+            "transaction events to /api/webhooks/clearinghouse. Unset rejects "
+            "every delivery; acknowledgements then arrive by the status poll "
+            "alone."
+        ),
+    )
+    clearinghouse_webhook_secret_previous: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Optional outgoing secret for the same event destination, accepted "
+            "alongside the current one while rotating so no delivery is "
+            "dropped mid-rotation. Clear it once the rotation is done."
+        ),
+    )
+    claims_pipeline_enabled: bool = Field(
+        default=True,
+        description=(
+            "Run the claims pipeline (submit validated claims, poll for "
+            "acknowledgements, raise stalled and deadline alerts) inside the "
+            "API process every CLAIMS_PIPELINE_INTERVAL_MINUTES. A deployment "
+            "with its own scheduler turns this off and runs "
+            "python -m app.jobs.claims_pipeline on a schedule instead."
+        ),
+    )
+    claims_pipeline_interval_minutes: int = Field(
+        default=5,
+        ge=1,
+        description="How often the in-process claims pipeline runs.",
+    )
+
     eligibility_check_task_queue: str = Field(
         default="pablo-soap-generation",
         description=(

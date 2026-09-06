@@ -12,7 +12,8 @@ Three hosts, because Stedi splits its healthcare API across them:
 * ``healthcare.us.stedi.com`` — eligibility and claim submission.
 * ``payers.us.stedi.com`` — the payer directory search.
 * ``core.us.stedi.com`` — the generic transaction-polling API (used to fetch
-  the inbound 277CA/835 that follow a submission).
+  the inbound 277CA/835 that follow a submission); the 277CA itself is read
+  as JSON from the healthcare host's report endpoint.
 * ``enrollments.us.stedi.com`` — provider registration and payer enrollment.
 
 Idempotency: eligibility, payer search, and transaction/enrollment reads are
@@ -41,12 +42,14 @@ response body.
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
 
     from .credentials import ClearinghouseCredentials
 
@@ -62,11 +65,13 @@ from ..models.claims_transport import (
     ProviderRecord,
     ProviderRegistration,
     TransactionDocument,
+    TransactionPage,
 )
 from ..reliability import HTTP_REQUEST, Idempotency, RetryExhaustedError, call_with_retry
 from .clearinghouse import (
     ClearinghouseAccessDeniedError,
     ClearinghouseInFlightError,
+    ClearinghouseNotFoundError,
     ClearinghouseNotProvisionedError,
     ClearinghouseRateLimitedError,
     ClearinghouseRequestChangedError,
@@ -90,8 +95,12 @@ _DEFAULT_PAYER_SEARCH_PAGE_SIZE = 25
 _HTTP_TOO_MANY_REQUESTS = 429
 _HTTP_BAD_REQUEST = 400
 _HTTP_FORBIDDEN = 403
+_HTTP_NOT_FOUND = 404
 _HTTP_CONFLICT = 409
 _HTTP_UNPROCESSABLE = 422
+
+#: The feed's page size; the vendor allows up to 500.
+_TRANSACTION_PAGE_SIZE = 100
 
 #: Error codes the vendor's JSON error envelope (``{"code": ..., "message": ...}``)
 #: uses for the failure modes this adapter has typed exceptions for.
@@ -100,6 +109,13 @@ _ACCOUNT_NOT_PROVISIONED = "ACCOUNT_NOT_PROVISIONED"
 _REQUEST_CHANGED = "REQUEST_CHANGED"
 
 _IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
+#: The submitter loop of an 837P names the sender; Stedi assigns no
+#: submitter id of its own and echoes whatever is sent (the recorded
+#: ``837p_request_test_payer.json`` and its X12 carry this value), and the
+#: receiver is always the clearinghouse itself.
+SUBMITTER_IDENTIFICATION = "0000001"
+RECEIVER_NAME = "Stedi"
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -151,6 +167,8 @@ def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
         )
     if response.status_code == _HTTP_FORBIDDEN:
         raise ClearinghouseAccessDeniedError(message or "access denied")
+    if response.status_code == _HTTP_NOT_FOUND:
+        raise ClearinghouseNotFoundError(message or "not found")
     if response.status_code == _HTTP_CONFLICT:
         raise ClearinghouseInFlightError(
             message or "a request with this idempotency key is still in flight",
@@ -313,6 +331,28 @@ class StediClearinghouseClient:
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
         return TransactionDocument.model_validate(response.json())
+
+    def list_transactions(
+        self, *, start: datetime | None = None, page_token: str | None = None
+    ) -> TransactionPage:
+        params: dict[str, Any] = {"pageSize": _TRANSACTION_PAGE_SIZE}
+        if page_token:
+            params["pageToken"] = page_token
+        elif start is not None:
+            params["startDateTime"] = start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        response = self._get(f"{CORE_API_BASE}/polling/transactions", params=params)
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        return TransactionPage.model_validate(response.json())
+
+    def get_claim_acknowledgment(self, transaction_id: str) -> dict[str, Any]:
+        response = self._get(
+            f"{HEALTHCARE_API_BASE}/change/medicalnetwork/reports/v2/{transaction_id}/277"
+        )
+        if response.status_code != httpx.codes.OK:
+            _raise_for_error_envelope(response)
+        body = response.json()
+        return body if isinstance(body, dict) else {}
 
     def create_provider(self, provider: ProviderRegistration) -> ProviderRecord:
         response = self._post(

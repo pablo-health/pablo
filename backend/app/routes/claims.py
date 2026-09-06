@@ -8,7 +8,10 @@ Routes
 * ``POST /api/claims/from-session/{appointment_id}`` — snapshot the visit,
   the client's coverage and the practice's billing identity into a
   ``draft`` claim. 422 when the client has no active coverage.
-* ``GET /api/claims/{claim_id}`` — the claim with its lines.
+* ``GET /api/claims/{claim_id}`` — the claim with its lines, every receipt
+  it has collected, the deadline it is under and what to do next (see
+  ``app.routes.claim_tracker`` for the list across clients and the
+  on-demand status check).
 * ``POST /api/claims/{claim_id}/validate`` — run the scrub. With a blocking
   finding: 422 carrying every finding, and the claim stays a draft.
   Without: the claim becomes ``validated`` and the response carries any
@@ -56,12 +59,14 @@ from ..claims.assembly import (
     build_void_claim,
 )
 from ..claims.scrub import scrub
+from ..claims.tracker import detail_response
 from ..claims.transitions import ClaimNotValidError, advance
 from ..db import get_db_session
 from ..models.audit import AuditAction, ResourceType
 from ..models.claims import (
     BuildClaimRequest,
     Claim,
+    ClaimDetailResponse,
     ClaimListResponse,
     ClaimResponse,
     ClaimValidationFailed,
@@ -71,6 +76,7 @@ from ..models.claims import (
 from ..repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_receipt_repository,
     get_claim_repository,
     get_clinician_profile_repository,
     get_patient_coverage_repository,
@@ -89,6 +95,7 @@ if TYPE_CHECKING:
     from ..claims.scrub import Finding
     from ..models import User
     from ..models.patient import Patient
+    from ..repositories.claim_receipts import ClaimReceiptRepository
     from ..repositories.claims import ClaimRepository
     from ..repositories.clinician_profile import ClinicianProfileRepository
     from ..repositories.coverage import PatientCoverageRepository, PayerRepository
@@ -113,6 +120,7 @@ def get_billing_profile_loader() -> Mapping[str, object]:
 # silently read as a query parameter.
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
 ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
+ReceiptsRepo = Annotated["ClaimReceiptRepository", Depends(get_claim_receipt_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
 AppointmentsRepo = Annotated["AppointmentRepository", Depends(get_appointment_repository)]
 AppointmentTypesRepo = Annotated[
@@ -264,15 +272,18 @@ def build_claim(
     return _to_response(created)
 
 
-@router.get("/{claim_id}", response_model=ClaimResponse)
+@router.get("/{claim_id}", response_model=ClaimDetailResponse)
 def get_claim(
     claim_id: str,
     request: Request,
     user: CurrentUser,
     claims: ClaimsRepo,
     patients: PatientsRepo,
+    payers: PayersRepo,
+    receipts: ReceiptsRepo,
     audit: AuditService = Depends(get_audit_service),
-) -> ClaimResponse:
+) -> ClaimDetailResponse:
+    """The claim with every receipt it has collected, its deadline and its next action."""
     claim, patient = _require_claim(claims, patients, claim_id, user.id)
     audit.log(
         AuditAction.CLAIM_VIEWED,
@@ -283,7 +294,12 @@ def get_claim(
         patient=patient,
         changes=_audit_changes(claim),
     )
-    return _to_response(claim)
+    return detail_response(
+        claim,
+        receipts.list_for_claim(claim.id),
+        payers.get(claim.payer_id),
+        today=utc_now().date(),
+    )
 
 
 @router.post("/{claim_id}/validate", response_model=ValidateClaimResponse)

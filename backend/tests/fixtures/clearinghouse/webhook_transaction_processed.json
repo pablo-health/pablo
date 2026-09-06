@@ -1,0 +1,12 @@
+{
+  "account": "11111111-2222-3333-4444-555555555555",
+  "created": "2026-09-06T15:51:22.301Z",
+  "environment": "TEST",
+  "id": "evt_a81659f1-16a5-9bec-03e1-0ba8ab5e9652",
+  "object": "v1.event",
+  "resource": {
+    "id": "7cfce085-f4af-43ce-aa36-5654d52efec0",
+    "type": "transaction"
+  },
+  "type": "transaction.processed"
+}

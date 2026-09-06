@@ -147,8 +147,36 @@ class ClaimLine(BaseModel):
     created_at: datetime
 
 
+FindingSource = Literal["edit", "status"]
+"""Where a rejection finding came from: a clearinghouse edit on the
+synchronous answer, or a 277CA claim status from the clearinghouse or the
+payer."""
+
+
+class SubmissionFinding(BaseModel):
+    """One thing the clearinghouse or the payer found wrong with a filed claim.
+
+    ``code`` is the vendor's edit code or the ``category:status`` pair off a
+    277CA; ``description`` is the vendor's wording for it, which can name
+    the field at fault and so lives on the claim row and nowhere else.
+    """
+
+    source: FindingSource
+    code: str
+    description: str
+    followup_action: str | None = None
+
+
 class Claim(BaseModel):
-    """A claim as stored, lines included."""
+    """A claim as stored, lines included.
+
+    ``vendor_claim_id`` is the clearinghouse's id for the filing and
+    ``payer_claim_number`` the payer's, once its 277CA has named one; a
+    corrected or void claim quotes the latter back. The two ``submission_*``
+    fields before ``submission_findings`` are the outbox's pending marker,
+    set while a filing attempt is in flight and cleared once the
+    clearinghouse has answered.
+    """
 
     id: str
     control_number: str
@@ -167,9 +195,54 @@ class Claim(BaseModel):
     submitted_at: datetime | None = None
     payer_accepted_at: datetime | None = None
     adjudicated_at: datetime | None = None
+    vendor_claim_id: str | None = None
+    payer_claim_number: str | None = None
+    submission_idempotency_key: str | None = None
+    submission_pending_at: datetime | None = None
+    submission_findings: list[SubmissionFinding] = Field(default_factory=list)
+    last_receipt_at: datetime | None = None
+    status_checked_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     lines: list[ClaimLine] = Field(default_factory=list)
+
+    @property
+    def owner_user_id(self) -> str:
+        """The clinician the claim belongs to: its rendering provider."""
+        return self.billing_snapshot.rendering_provider.user_id
+
+
+ClaimReceiptKind = Literal[
+    "submitted",
+    "ch_accepted",
+    "payer_accepted",
+    "rejected",
+    "stalled",
+    "acknowledged",
+    "status_checked",
+    "deadline_approaching",
+    "deadline_missed",
+]
+
+
+class ClaimReceipt(BaseModel):
+    """One hop the claim took, or one alert raised about it, with its moment.
+
+    ``detail`` carries codes and vendor identifiers only — never a member
+    id, a diagnosis or a name — so the tracker can show it as it is.
+    """
+
+    id: str
+    claim_id: str
+    kind: ClaimReceiptKind
+    from_state: ClaimState | None = None
+    to_state: ClaimState | None = None
+    deadline_kind: Literal["filing", "correction", "appeal"] | None = None
+    rung: int | None = None
+    vendor_event_id: str | None = None
+    vendor_transaction_id: str | None = None
+    detail: dict[str, object] = Field(default_factory=dict)
+    occurred_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +286,50 @@ class ClaimResponse(Claim):
 
 class ClaimListResponse(BaseModel):
     data: list[ClaimResponse]
+    total: int
+
+
+class ClaimDeadlineResponse(BaseModel):
+    """The claim's clocks: the three dates, which one applies, how long is left."""
+
+    filing: date | None = None
+    correction: date | None = None
+    appeal: date | None = None
+    applicable: Literal["filing", "correction", "appeal"] | None = None
+    days_left: int | None = None
+
+
+NextAction = Literal[
+    "review_and_file",
+    "queued_to_send",
+    "sending",
+    "await_acknowledgment",
+    "await_payer",
+    "await_remittance",
+    "review_remittance",
+    "correct_and_resubmit",
+    "appeal_or_correct",
+    "check_with_clearinghouse",
+]
+"""What a person does next with a claim in its current state, for the
+tracker to render. ``None`` on a paid claim: nothing."""
+
+
+class ClaimDetailResponse(ClaimResponse):
+    """A claim with every receipt it has collected and where it stands.
+
+    What the tracker and the claim page render: the hops with their
+    receipt timestamps, the findings behind a rejection (on the claim
+    itself), the deadline the claim is under and what to do next.
+    """
+
+    receipts: list[ClaimReceipt] = Field(default_factory=list)
+    deadline: ClaimDeadlineResponse | None = None
+    next_action: NextAction | None = None
+
+
+class ClaimTrackerResponse(BaseModel):
+    data: list[ClaimDetailResponse]
     total: int
 
 

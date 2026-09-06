@@ -35,6 +35,7 @@ from app.models.patient import Patient
 from app.repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_receipt_repository,
     get_claim_repository,
     get_clinician_profile_repository,
     get_patient_coverage_repository,
@@ -43,6 +44,7 @@ from app.repositories import (
     get_user_repository,
 )
 from app.repositories.audit import InMemoryAuditRepository
+from app.repositories.claim_receipts import InMemoryClaimReceiptRepository
 from app.repositories.claims import InMemoryClaimRepository
 from app.repositories.clinician_profile import (
     ClinicianProfile,
@@ -173,6 +175,7 @@ def harness() -> dict[str, Any]:
         )
     )
     claims = InMemoryClaimRepository()
+    receipts = InMemoryClaimReceiptRepository()
     audit_repo = InMemoryAuditRepository()
     billing_profile = dict(_BILLING_PROFILE)
 
@@ -188,6 +191,7 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[get_clinician_profile_repository] = lambda: profiles
     app.dependency_overrides[get_user_repository] = InMemoryUserRepository
     app.dependency_overrides[get_claim_repository] = lambda: claims
+    app.dependency_overrides[get_claim_receipt_repository] = lambda: receipts
     app.dependency_overrides[claims_routes.get_billing_profile_loader] = lambda: billing_profile
     app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
     client = TestClient(app, raise_server_exceptions=False)

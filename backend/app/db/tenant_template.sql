@@ -211,6 +211,25 @@ CREATE TABLE __TENANT_SCHEMA__.chat_messages (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.claim_events (
+    id uuid NOT NULL,
+    claim_id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    kind character varying(24) NOT NULL,
+    from_state character varying(16),
+    to_state character varying(16),
+    deadline_kind character varying(16),
+    rung integer,
+    vendor_event_id character varying(128),
+    vendor_transaction_id character varying(128),
+    detail jsonb NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_claim_events_kind CHECK (((kind)::text = ANY ((ARRAY['submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'rejected'::character varying, 'stalled'::character varying, 'acknowledged'::character varying, 'status_checked'::character varying, 'deadline_approaching'::character varying, 'deadline_missed'::character varying])::text[])))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.claim_lines (
     id uuid NOT NULL,
     claim_id uuid NOT NULL,
@@ -257,6 +276,13 @@ CREATE TABLE __TENANT_SCHEMA__.claims (
     adjudicated_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    vendor_claim_id character varying(80),
+    payer_claim_number character varying(80),
+    submission_idempotency_key character varying(120),
+    submission_pending_at timestamp with time zone,
+    submission_findings jsonb,
+    last_receipt_at timestamp with time zone,
+    status_checked_at timestamp with time zone,
     CONSTRAINT ck_claims_frequency_code CHECK (((frequency_code)::text = ANY ((ARRAY['1'::character varying, '7'::character varying, '8'::character varying])::text[]))),
     CONSTRAINT ck_claims_state CHECK (((state)::text = ANY ((ARRAY['draft'::character varying, 'validated'::character varying, 'submitted'::character varying, 'ch_accepted'::character varying, 'payer_accepted'::character varying, 'paid'::character varying, 'partial'::character varying, 'denied'::character varying, 'rejected'::character varying, 'stalled'::character varying])::text[]))),
     CONSTRAINT ck_claims_total_charge_cents CHECK ((total_charge_cents >= 0)),
@@ -948,6 +974,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.chat_messages
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_events
+    ADD CONSTRAINT claim_events_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
     ADD CONSTRAINT claim_lines_pkey PRIMARY KEY (id);
 
@@ -1118,6 +1149,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.prescribing_checklist_items
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_events
+    ADD CONSTRAINT ux_claim_events_deadline_rung UNIQUE (claim_id, kind, deadline_kind, rung);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_events
+    ADD CONSTRAINT ux_claim_events_vendor_event_id UNIQUE (vendor_event_id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.claim_lines
     ADD CONSTRAINT ux_claim_lines_claim_line_number UNIQUE (claim_id, line_number);
 
@@ -1213,6 +1254,18 @@ CREATE INDEX ix_chat_conversations_patient_last_turn ON __TENANT_SCHEMA__.chat_c
 
 
 CREATE INDEX ix_chat_messages_conversation_id ON __TENANT_SCHEMA__.chat_messages USING btree (conversation_id);
+
+
+
+CREATE INDEX ix_claim_events_claim_id ON __TENANT_SCHEMA__.claim_events USING btree (claim_id);
+
+
+
+CREATE INDEX ix_claim_events_patient_id ON __TENANT_SCHEMA__.claim_events USING btree (patient_id);
+
+
+
+CREATE INDEX ix_claim_events_vendor_transaction_id ON __TENANT_SCHEMA__.claim_events USING btree (vendor_transaction_id);
 
 
 
@@ -1515,6 +1568,16 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
     ADD CONSTRAINT fk_appointments_appointment_type FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_events
+    ADD CONSTRAINT fk_claim_events_claim_id_claims FOREIGN KEY (claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.claim_events
+    ADD CONSTRAINT fk_claim_events_patient_id_patients FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
 
 
 

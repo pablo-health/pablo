@@ -1,0 +1,100 @@
+{
+  "transactionId": "7cfce085-f4af-43ce-aa36-5654d52efec0",
+  "fileExecutionId": "710008a5-67db-472b-96a3-5c0ad8fb587e",
+  "direction": "INBOUND",
+  "operation": "X12->GuideJSON",
+  "mode": "test",
+  "businessIdentifiers": [
+    {
+      "elementId": "127",
+      "element": "BHT-03",
+      "name": "Reference Identification",
+      "value": "01M1VPN3PYKTEFWBF8AJYA7AWG"
+    },
+    {
+      "elementId": "127",
+      "element": "TRN-02",
+      "name": "Reference Identification",
+      "value": "01M1VPM7E0T38G9WBVG4HN5C5Q"
+    },
+    {
+      "elementId": "127",
+      "element": "TRN-02",
+      "name": "Reference Identification",
+      "value": "01M1VPN3PYKTEFWBF8AJYA7AWG"
+    },
+    {
+      "elementId": "127",
+      "element": "TRN-02",
+      "name": "Reference Identification",
+      "value": "LIVE50D1D98E2364"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "649caf0b-2c40-4ce5-9149-914974cd2a31",
+      "artifactType": "application/edi-x12",
+      "sizeBytes": 776,
+      "model": "transaction",
+      "usage": "input",
+      "url": "https://core.us.stedi.com/2023-08-01/transactions/7cfce085-f4af-43ce-aa36-5654d52efec0/input"
+    },
+    {
+      "id": "fa64d983-3600-48b3-af90-35c678aa84c0",
+      "artifactType": "application/json",
+      "sizeBytes": 4494,
+      "model": "transaction",
+      "usage": "output",
+      "url": "https://core.us.stedi.com/2023-08-01/transactions/7cfce085-f4af-43ce-aa36-5654d52efec0/output"
+    }
+  ],
+  "partnership": {
+    "partnershipId": "local-clearinghouse-test",
+    "partnershipType": "x12",
+    "sender": {
+      "profileId": "clearinghouse-test"
+    },
+    "receiver": {
+      "profileId": "local"
+    }
+  },
+  "processedAt": "2026-09-06T15:51:22.048561Z",
+  "x12": {
+    "metadata": {
+      "sender": {
+        "isa": {
+          "id": "STEDITEST",
+          "qualifier": "ZZ"
+        },
+        "applicationCode": "STEDITEST"
+      },
+      "receiver": {
+        "isa": {
+          "id": "189416354675",
+          "qualifier": "ZZ"
+        },
+        "applicationCode": "189416354675"
+      },
+      "interchange": {
+        "controlNumber": 40,
+        "acknowledgmentRequestedCode": "0"
+      },
+      "transaction": {
+        "controlNumber": "0001",
+        "transactionSetIdentifier": "277"
+      },
+      "functionalGroup": {
+        "date": "2026-09-06",
+        "time": "15:51:07",
+        "release": "005010X214",
+        "controlNumber": 40,
+        "functionalIdentifierCode": "HN"
+      }
+    },
+    "transactionSetting": {
+      "guideId": "01M1T3W99J7JNAXZ97MA17WFGC",
+      "transactionSettingId": "01M1T3WKKB7XTWR901EQMZHSG2"
+    }
+  },
+  "status": "succeeded"
+}

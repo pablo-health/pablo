@@ -156,6 +156,16 @@ class ServiceLine(BaseModel):
     professionalService: ProfessionalService
 
 
+class ClaimSupplementalInformation(BaseModel):
+    """REF segments on the claim. ``claimControlNumber`` is the payer's own
+    number for the claim this one replaces or voids (REF*F8), which the
+    vendor requires on a frequency ``7`` or ``8`` claim."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    claimControlNumber: str | None = None
+
+
 class ClaimInformation(BaseModel):
     model_config = _WIRE_MODEL_CONFIG
 
@@ -168,6 +178,7 @@ class ClaimInformation(BaseModel):
     planParticipationCode: Literal["A"] = "A"
     benefitsAssignmentCertificationIndicator: Literal["Y"] = "Y"
     releaseInformationCode: Literal["Y"] = "Y"
+    claimSupplementalInformation: ClaimSupplementalInformation | None = None
     healthCareCodeInformation: list[DiagnosisCode]
     serviceLines: list[ServiceLine]
 
@@ -501,6 +512,26 @@ class TransactionArtifact(BaseModel):
     url: str
 
 
+class TransactionSetMetadata(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    transactionSetIdentifier: str
+
+
+class TransactionX12Metadata(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    transaction: TransactionSetMetadata
+
+
+class TransactionX12(BaseModel):
+    """The X12 envelope metadata on a transaction: which transaction set it is."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    metadata: TransactionX12Metadata
+
+
 class TransactionDocument(BaseModel):
     """One entry from the transaction-polling endpoint: an inbound/outbound
     X12 exchange (a submitted 837, an inbound 277CA or 835, ...)."""
@@ -508,10 +539,34 @@ class TransactionDocument(BaseModel):
     model_config = _WIRE_MODEL_CONFIG
 
     transactionId: str
-    direction: Literal["INBOUND", "OUTBOUND"]
+    direction: Literal["INBOUND", "OUTBOUND", "UNKNOWN"]
     processedAt: str
+    mode: str | None = None
     businessIdentifiers: list[TransactionBusinessIdentifier] = []
     artifacts: list[TransactionArtifact] = []
+    x12: TransactionX12 | None = None
+
+    @property
+    def transaction_set(self) -> str | None:
+        """``837``, ``277``, ``835`` — or ``None`` when the vendor sent no metadata."""
+        return self.x12.metadata.transaction.transactionSetIdentifier if self.x12 else None
+
+    def identifier_values(self, element: str) -> list[str]:
+        """Every value the vendor lifted for ``element`` (``CLM-01``, ``TRN-02``, ...)."""
+        return [
+            identifier.value
+            for identifier in self.businessIdentifiers
+            if identifier.element == element
+        ]
+
+
+class TransactionPage(BaseModel):
+    """One page of the transaction feed, oldest first, with the token for the next."""
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    items: list[TransactionDocument] = []
+    nextPageToken: str | None = None
 
 
 class ProviderContact(BaseModel):

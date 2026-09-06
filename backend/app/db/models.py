@@ -2118,8 +2118,107 @@ class ClaimRow(Base):
         DateTime(timezone=True), nullable=True
     )
     adjudicated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The clearinghouse's own id for the filing (its ``correlationId``),
+    # set by the synchronous accept; and the payer's claim number from its
+    # 277CA (``tradingPartnerClaimNumber``), which a corrected or void
+    # claim must quote back to the payer.
+    vendor_claim_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    payer_claim_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # The outbox's pending marker. The key is minted and written, and the
+    # timestamp set, BEFORE the submission call is made, so a crash between
+    # the call and the commit leaves a claim the next run can reconcile
+    # with the same key instead of filing a second one. Both are cleared
+    # once the clearinghouse has answered.
+    submission_idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    submission_pending_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # What the clearinghouse or the payer found wrong, as a list of
+    # ``{source, code, description, followup_action}``. Set on a rejection.
+    submission_findings: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # When the last acknowledgement for this claim arrived, and when the
+    # status poll last asked about it. The watchdog reads the first; the
+    # poll backstop throttles on the second.
+    last_receipt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+#: Every hop a claim takes and every alert raised for it, as the receipt
+#: ledger records them. ``acknowledged`` is a 277CA that confirmed where the
+#: claim already was; ``status_checked`` is a manual status check that found
+#: nothing new. The two deadline kinds are the watchdog's ladder rungs.
+CLAIM_EVENT_KINDS: tuple[str, ...] = (
+    "submitted",
+    "ch_accepted",
+    "payer_accepted",
+    "rejected",
+    "stalled",
+    "acknowledged",
+    "status_checked",
+    "deadline_approaching",
+    "deadline_missed",
+)
+
+
+class ClaimEventRow(Base):
+    """One receipt on a claim: a hop it took, or an alert raised about it.
+
+    The claims tracker shows every hop with the moment its receipt arrived,
+    and this is where those moments live. It is also what makes the
+    acknowledgement paths idempotent: a clearinghouse webhook delivery is
+    keyed by ``vendor_event_id`` (unique, so a redelivery cannot move the
+    claim twice) and a deadline alert by ``(claim, kind, deadline kind,
+    rung)`` (unique, so a restarted watchdog cannot re-raise it).
+
+    Carries ``patient_id`` beside ``claim_id`` for the same reason
+    ``claim_lines`` does: the row is isolated by the ``has_patient_access``
+    policy of its claim without the policy engine learning a join.
+
+    ``detail`` holds codes and vendor identifiers only — the clearinghouse
+    edit codes or 277CA status codes behind a rejection, the correlation
+    and trace ids behind a filing. Never a member id, a diagnosis or a
+    name.
+    """
+
+    __tablename__ = "claim_events"
+    __table_args__ = (
+        CheckConstraint(
+            f"kind IN ({_sql_in_list(CLAIM_EVENT_KINDS)})", name="ck_claim_events_kind"
+        ),
+        UniqueConstraint("vendor_event_id", name="ux_claim_events_vendor_event_id"),
+        # ``rung`` is NULL on everything but a deadline alert, and NULLs are
+        # distinct under a unique constraint, so hops are never deduped.
+        UniqueConstraint(
+            "claim_id", "kind", "deadline_kind", "rung", name="ux_claim_events_deadline_rung"
+        ),
+        Index("ix_claim_events_claim_id", "claim_id"),
+        Index("ix_claim_events_patient_id", "patient_id"),
+        Index("ix_claim_events_vendor_transaction_id", "vendor_transaction_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    claim_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    from_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    to_state: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    deadline_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Days before the deadline the alert fired at (14, 7, 2), or 0 once it
+    # has passed.
+    rung: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vendor_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    vendor_transaction_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ClaimLineRow(Base):

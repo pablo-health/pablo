@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "transactionId": "8d0de196-05b0-4d7f-bb47-6765e63f0fe1"
+  },
+  "transactions": [
+    {
+      "controlNumber": "1",
+      "payers": [
+        {
+          "claimStatusTransactions": [
+            {
+              "claimStatusDetails": [
+                {
+                  "patientClaimStatusDetails": [
+                    {
+                      "claims": [
+                        {
+                          "claimStatus": {
+                            "claimServiceBeginDate": "20260901",
+                            "claimServiceEndDate": "20260901",
+                            "informationClaimStatuses": [
+                              {
+                                "informationStatuses": [
+                                  {
+                                    "healthCareClaimStatusCategoryCode": "A2",
+                                    "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Acceptance into adjudication system - The claim/encounter has been accepted into the adjudication system.",
+                                    "statusCode": "20",
+                                    "statusCodeValue": "Accepted for processing."
+                                  }
+                                ],
+                                "statusInformationEffectiveDate": "20260906",
+                                "totalClaimChargeAmount": "150",
+                                "statusMessage": "Acknowledgement/Acceptance into adjudication system. Accepted for processing.",
+                                "statusInformationActionCode": "WQ",
+                                "statusInformationActionCodeValue": "Accept"
+                              }
+                            ],
+                            "patientAccountNumber": "LIVE50D1D98E2364",
+                            "referencedTransactionTraceNumber": "LIVE50D1D98E2364",
+                            "tradingPartnerClaimNumber": "PYR2026090600001"
+                          }
+                        }
+                      ],
+                      "subscriber": {
+                        "firstName": "John",
+                        "lastName": "Anon",
+                        "memberId": "123456789"
+                      }
+                    }
+                  ],
+                  "providerOFServiceInformationTraceIdentifier": "0",
+                  "serviceProvider": {
+                    "npi": "1999999984",
+                    "organizationName": "Pablo Test Practice"
+                  }
+                }
+              ],
+              "claimTransactionBatchNumber": "01M1VPM7E0T38G9WBVG4HN5C5Q",
+              "provider": {
+                "etin": "0000001",
+                "organizationName": "Pablo Test Practice"
+              },
+              "providerClaimStatuses": [
+                {
+                  "providerStatuses": [
+                    {
+                      "entityIdentifierCode": "PR",
+                      "healthCareClaimStatusCategoryCode": "A2",
+                      "healthCareClaimStatusCategoryCodeValue": "Acknowledgement/Receipt - The claim/encounter has been received. This does not mean that the claim has been accepted for adjudication.",
+                      "statusCode": "20",
+                      "statusCodeValue": "Accepted for processing."
+                    }
+                  ],
+                  "statusInformationEffectiveDate": "20260906"
+                }
+              ]
+            }
+          ],
+          "entityIdentifierCode": "PR",
+          "entityIdentifierCodeValue": "Payer",
+          "etin": "STEDI",
+          "organizationName": "Stedi Test Payer"
+        }
+      ],
+      "referenceIdentification": "01M1VPN3PYKTEFWBF8AJYA7AWH",
+      "transactionSetCreationDate": "20260906",
+      "transactionSetCreationTime": "1551"
+    }
+  ]
+}
