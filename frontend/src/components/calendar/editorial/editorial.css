@@ -261,3 +261,18 @@
 .ed-ctx-item:hover {
   background-color: var(--ed-pill-hover);
 }
+
+/* Unavailable-time background layer — a quiet tint plus a subtle diagonal
+ * texture, built from the existing warm-neutral tokens rather than a new
+ * color so it reads correctly in both themes. Sits unstacked (no z-index)
+ * behind event cards (which set z-10) and is never a click target. */
+.ed-unavailable {
+  background-color: var(--ed-hairline);
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--ed-hairline-strong) 0px,
+    var(--ed-hairline-strong) 1px,
+    transparent 1px,
+    transparent 7px
+  );
+}

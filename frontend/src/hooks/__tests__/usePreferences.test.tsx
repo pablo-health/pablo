@@ -18,8 +18,6 @@ const mockPreferences: usersApi.UserPreferences = {
   auto_transcribe: true,
   quality_preset: "balanced",
   therapist_display_name: null,
-  working_hours_start: 8,
-  working_hours_end: 18,
   calendar_default_view: "week",
   timezone: "America/New_York",
   theme: "warm-paper",
@@ -53,34 +51,6 @@ describe("usePreferences", () => {
     expect(result.current.data).toEqual(mockPreferences)
     expect(usersApi.getPreferences).toHaveBeenCalledOnce()
   })
-
-  it("returns working hours defaults from backend", async () => {
-    vi.mocked(usersApi.getPreferences).mockResolvedValue(mockPreferences)
-
-    const { result } = renderHook(() => usePreferences(), {
-      wrapper: createWrapper(),
-    })
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(result.current.data?.working_hours_start).toBe(8)
-    expect(result.current.data?.working_hours_end).toBe(18)
-  })
-
-  it("returns custom working hours", async () => {
-    vi.mocked(usersApi.getPreferences).mockResolvedValue({
-      ...mockPreferences,
-      working_hours_start: 10,
-      working_hours_end: 20,
-    })
-
-    const { result } = renderHook(() => usePreferences(), {
-      wrapper: createWrapper(),
-    })
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true))
-    expect(result.current.data?.working_hours_start).toBe(10)
-    expect(result.current.data?.working_hours_end).toBe(20)
-  })
 })
 
 describe("useSavePreferences", () => {
@@ -89,7 +59,7 @@ describe("useSavePreferences", () => {
   })
 
   it("saves preferences and updates cache", async () => {
-    const updated = { ...mockPreferences, working_hours_start: 9 }
+    const updated = { ...mockPreferences, therapist_display_name: "Dr. Rivera" }
     vi.mocked(usersApi.savePreferences).mockResolvedValue(updated)
 
     const { result } = renderHook(() => useSavePreferences(), {

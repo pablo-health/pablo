@@ -20,7 +20,6 @@ import {
   useUpdateAvailabilityRule,
   useDeleteAvailabilityRule,
 } from "@/hooks/useAvailability"
-import { usePreferences } from "@/hooks/usePreferences"
 import { ApiError } from "@/lib/api/client"
 import { RULE_TYPES, ENFORCEMENT_LEVELS } from "@/types/availability"
 import type {
@@ -28,7 +27,7 @@ import type {
   EnforcementLevel,
   RuleType,
 } from "@/types/availability"
-import { NaturalLanguageRuleEntry } from "./NaturalLanguageRuleEntry"
+import { SegmentedControl } from "./ui"
 
 const DAY_OPTIONS = [
   { value: 0, label: "Monday" },
@@ -60,21 +59,13 @@ export const RULE_TYPE_LABELS: Record<RuleType, string> = {
 // which has its own dedicated fields section — one editing surface only.
 const PICKER_RULE_TYPES = RULE_TYPES.filter((rt) => rt !== "session_defaults")
 
-type RuleGroup = "Working hours" | "Blocked time" | "Limits & buffers"
-
-const RULE_TYPE_GROUPS: Record<RuleType, RuleGroup> = {
-  working_hours: "Working hours",
-  block_day_of_week: "Blocked time",
-  block_time_range: "Blocked time",
-  block_date_range: "Blocked time",
-  block_specific_dates: "Blocked time",
-  max_per_day: "Limits & buffers",
-  buffer_before: "Limits & buffers",
-  buffer_after: "Limits & buffers",
-  session_defaults: "Limits & buffers",
-}
-
-const GROUP_ORDER: RuleGroup[] = ["Working hours", "Blocked time", "Limits & buffers"]
+/** The rule types listed, with Edit/Remove, on the Blocked time card. */
+const BLOCKED_RULE_TYPES: RuleType[] = [
+  "block_day_of_week",
+  "block_time_range",
+  "block_date_range",
+  "block_specific_dates",
+]
 
 type ParamFields = Record<string, string>
 
@@ -239,12 +230,22 @@ export function summarize(rule: AvailabilityRule): string {
   }
 }
 
-// --- Scheduling defaults: session length, break, and start-time alignment ---
+/** "Always enforced" for hard rules, "Warns, still bookable" for soft ones. */
+function enforcementLabel(enforcement: EnforcementLevel): string {
+  return enforcement === "hard" ? "Always enforced" : "Warns, still bookable"
+}
+
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message
+  if (err instanceof Error) return err.message
+  return "Something went wrong. Please try again."
+}
+
+// --- Limits & buffers: sessions per day, break, session length, alignment ---
 //
-// These three fields map onto a single session_defaults rule (length +
-// alignment) and the existing buffer_after rule (break) rather than any new
-// storage. Kept as pure functions so the mapping is unit-testable without
-// rendering the form.
+// Four rows, three rule types (max_per_day, buffer_after, session_defaults).
+// Each row saves itself immediately rather than through a shared submit —
+// there is nothing to review before committing a number of minutes.
 
 export type SessionAlignment = "hour" | "half_hour" | "none"
 
@@ -289,92 +290,168 @@ export function schedulingDefaultsToRulePayloads(
   }
 }
 
-interface SchedulingDefaultsSectionProps {
-  rules: AvailabilityRule[]
-  onSave: (fields: SchedulingDefaultsFields) => void
-  isSaving: boolean
-  error: string | null
-}
+export function LimitsAndBuffersCard() {
+  const { data } = useAvailabilityRules()
+  const createMutation = useCreateAvailabilityRule()
+  const updateMutation = useUpdateAvailabilityRule()
+  const deleteMutation = useDeleteAvailabilityRule()
+  const [error, setError] = useState<string | null>(null)
 
-function SchedulingDefaultsSection({
-  rules,
-  onSave,
-  isSaving,
-  error,
-}: SchedulingDefaultsSectionProps) {
+  const rules = data?.data ?? []
+  const maxPerDayRule = rules.find((r) => r.rule_type === "max_per_day")
+  const bufferAfterRule = rules.find((r) => r.rule_type === "buffer_after")
+  const sessionDefaultsRule = rules.find((r) => r.rule_type === "session_defaults")
   const initial = schedulingDefaultsFromRules(rules)
+
+  const [maxPerDay, setMaxPerDay] = useState(
+    maxPerDayRule ? String(maxPerDayRule.params.max) : ""
+  )
   const [durationMinutes, setDurationMinutes] = useState(initial.durationMinutes)
   const [breakMinutes, setBreakMinutes] = useState(initial.breakMinutes)
   const [alignment, setAlignment] = useState<SessionAlignment>(initial.alignment)
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    onSave({ durationMinutes, breakMinutes, alignment })
+  const isSaving = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
+  const onError = (err: unknown) => setError(errorMessage(err))
+
+  function saveMaxPerDay(value: string) {
+    if (value === "" || Number(value) < 1) return
+    const params = { max: Number(value) }
+    if (maxPerDayRule) {
+      updateMutation.mutate({ ruleId: maxPerDayRule.id, data: { params } }, { onError })
+    } else {
+      createMutation.mutate({ rule_type: "max_per_day", enforcement: "soft", params }, { onError })
+    }
+  }
+
+  function saveBreakMinutes(value: string) {
+    const minutes = value === "" ? 0 : Number(value)
+    if (minutes > 0) {
+      const params = { minutes }
+      if (bufferAfterRule) {
+        updateMutation.mutate({ ruleId: bufferAfterRule.id, data: { params } }, { onError })
+      } else {
+        createMutation.mutate({ rule_type: "buffer_after", enforcement: "hard", params }, { onError })
+      }
+    } else if (bufferAfterRule) {
+      deleteMutation.mutate(bufferAfterRule.id, { onError })
+    }
+  }
+
+  function saveSessionDefaults(nextDuration: string, nextAlignment: SessionAlignment) {
+    const { sessionDefaultsParams } = schedulingDefaultsToRulePayloads({
+      durationMinutes: nextDuration,
+      breakMinutes,
+      alignment: nextAlignment,
+    })
+    if (sessionDefaultsRule) {
+      updateMutation.mutate(
+        { ruleId: sessionDefaultsRule.id, data: { params: sessionDefaultsParams } },
+        { onError }
+      )
+    } else {
+      createMutation.mutate(
+        { rule_type: "session_defaults", enforcement: "soft", params: sessionDefaultsParams },
+        { onError }
+      )
+    }
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="space-y-4 rounded-md border border-neutral-200 p-4"
-    >
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-        Scheduling defaults
-      </h3>
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="session-length">Session length (minutes)</Label>
-          <Input
-            id="session-length"
-            type="number"
-            min={1}
-            placeholder="50"
-            value={durationMinutes}
-            onChange={(e) => setDurationMinutes(e.target.value)}
-            disabled={isSaving}
-            className="w-32"
-          />
+    <>
+      <div className="flex items-center justify-between gap-5 px-[22px] py-3.5">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-foreground">Sessions per day</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
+            Pablo warns before you go over.
+          </div>
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="session-break">Break between sessions (minutes)</Label>
+        <Input
+          type="number"
+          min={1}
+          className="w-20"
+          value={maxPerDay}
+          onChange={(e) => setMaxPerDay(e.target.value)}
+          onBlur={(e) => saveMaxPerDay(e.target.value)}
+          disabled={isSaving}
+          aria-label="Sessions per day"
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-5 border-t border-border px-[22px] py-3.5">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-foreground">Break after each session</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
+            Kept free between back-to-back appointments.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
           <Input
-            id="session-break"
             type="number"
             min={0}
+            step={5}
+            className="w-20"
             value={breakMinutes}
             onChange={(e) => setBreakMinutes(e.target.value)}
+            onBlur={(e) => saveBreakMinutes(e.target.value)}
             disabled={isSaving}
-            className="w-32"
+            aria-label="Break after each session"
           />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="session-alignment">Start-time alignment</Label>
-          <Select
-            value={alignment}
-            onValueChange={(v) => setAlignment(v as SessionAlignment)}
-            disabled={isSaving}
-          >
-            <SelectTrigger id="session-alignment" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="hour">On the hour</SelectItem>
-              <SelectItem value="half_hour">On the half hour</SelectItem>
-              <SelectItem value="none">No alignment</SelectItem>
-            </SelectContent>
-          </Select>
+          <span className="text-sm text-muted-foreground">min</span>
         </div>
       </div>
+
+      <div className="flex items-center justify-between gap-5 border-t border-border px-[22px] py-3.5">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-foreground">Default session length</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={5}
+            step={5}
+            className="w-20"
+            value={durationMinutes}
+            onChange={(e) => setDurationMinutes(e.target.value)}
+            onBlur={(e) => saveSessionDefaults(e.target.value, alignment)}
+            disabled={isSaving}
+            aria-label="Default session length"
+          />
+          <span className="text-sm text-muted-foreground">min</span>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-5 border-t border-border px-[22px] py-3.5">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-foreground">Start times</div>
+          <div className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
+            Where new appointments snap to.
+          </div>
+        </div>
+        <SegmentedControl
+          label="Start-time alignment"
+          value={alignment}
+          onChange={(next) => {
+            setAlignment(next)
+            saveSessionDefaults(durationMinutes, next)
+          }}
+          options={[
+            { value: "hour", label: "On the hour" },
+            { value: "half_hour", label: "Half hour" },
+            { value: "none", label: "Any" },
+          ]}
+        />
+      </div>
+
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="px-[22px] pb-3 text-sm text-red-600">
           {error}
         </p>
       )}
-      <Button type="submit" size="sm" disabled={isSaving}>
-        {isSaving ? "Saving..." : "Save scheduling defaults"}
-      </Button>
-    </form>
+    </>
   )
 }
+
+// --- Blocked time: recurring breaks, days off and time away ---
 
 interface RuleParamsFieldsProps {
   ruleType: RuleType
@@ -598,8 +675,8 @@ function RuleParamsFields({
         </div>
       )
     case "session_defaults":
-      // Owned by the dedicated "Scheduling defaults" fields section above —
-      // never reachable here since PICKER_RULE_TYPES excludes it.
+      // Owned by LimitsAndBuffersCard above — never reachable here since
+      // PICKER_RULE_TYPES excludes it.
       return null
   }
 }
@@ -613,11 +690,11 @@ export interface RuleFormProps {
 }
 
 export function RuleForm({ initialRule, onCancel, onSubmit, isSaving, submitError }: RuleFormProps) {
-  const [ruleType, setRuleType] = useState<RuleType>(initialRule?.rule_type ?? "working_hours")
+  const [ruleType, setRuleType] = useState<RuleType>(initialRule?.rule_type ?? "block_day_of_week")
   const [enforcement, setEnforcement] = useState<EnforcementLevel>(initialRule?.enforcement ?? "hard")
   const initialState = initialRule
     ? paramsToFields(initialRule.rule_type, initialRule.params)
-    : { fields: defaultFields("working_hours"), dates: [] }
+    : { fields: defaultFields("block_day_of_week"), dates: [] }
   const [fields, setFields] = useState<ParamFields>(initialState.fields)
   const [dates, setDates] = useState<string[]>(initialState.dates)
   const [newDate, setNewDate] = useState("")
@@ -736,15 +813,8 @@ export function RuleForm({ initialRule, onCancel, onSubmit, isSaving, submitErro
   )
 }
 
-function errorMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message
-  if (err instanceof Error) return err.message
-  return "Something went wrong. Please try again."
-}
-
-export function AvailabilitySettings() {
+export function BlockedTimeCard() {
   const { data, isLoading, error } = useAvailabilityRules()
-  const { data: preferences } = usePreferences()
   const createMutation = useCreateAvailabilityRule()
   const updateMutation = useUpdateAvailabilityRule()
   const deleteMutation = useDeleteAvailabilityRule()
@@ -753,13 +823,9 @@ export function AvailabilitySettings() {
   const [editingRule, setEditingRule] = useState<AvailabilityRule | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
-  const [schedulingDefaultsError, setSchedulingDefaultsError] = useState<string | null>(null)
-  const [seedError, setSeedError] = useState<string | null>(null)
 
   const rules = data?.data ?? []
-  // session_defaults is edited exclusively through the dedicated fields
-  // section above — keep it out of the generic grouped rule list.
-  const visibleRules = rules.filter((rule) => rule.rule_type !== "session_defaults")
+  const blockedRules = rules.filter((rule) => BLOCKED_RULE_TYPES.includes(rule.rule_type))
 
   function openCreateForm() {
     setEditingRule(null)
@@ -804,164 +870,75 @@ export function AvailabilitySettings() {
   }
 
   function handleDelete(rule: AvailabilityRule) {
-    if (!window.confirm(`Delete this rule? ${summarize(rule)}`)) return
+    if (!window.confirm(`Remove this? ${summarize(rule)}`)) return
     setListError(null)
     deleteMutation.mutate(rule.id, {
       onError: (err) => setListError(errorMessage(err)),
     })
   }
 
-  function handleSeedFromDisplayHours() {
-    if (!preferences) return
-    setSeedError(null)
-    const start = `${String(preferences.working_hours_start).padStart(2, "0")}:00`
-    const end = `${String(preferences.working_hours_end).padStart(2, "0")}:00`
-    for (let dayOfWeek = 0; dayOfWeek <= 4; dayOfWeek++) {
-      createMutation.mutate(
-        { rule_type: "working_hours", enforcement: "hard", params: { day_of_week: dayOfWeek, start, end } },
-        { onError: (err) => setSeedError(errorMessage(err)) }
-      )
-    }
-  }
-
-  function handleSchedulingDefaultsSave(fields: SchedulingDefaultsFields) {
-    setSchedulingDefaultsError(null)
-    const { sessionDefaultsParams, breakMinutes } = schedulingDefaultsToRulePayloads(fields)
-    const existingSessionDefaults = rules.find((r) => r.rule_type === "session_defaults")
-    const existingBufferAfter = rules.find((r) => r.rule_type === "buffer_after")
-    const onError = (err: unknown) => setSchedulingDefaultsError(errorMessage(err))
-
-    if (existingSessionDefaults) {
-      updateMutation.mutate(
-        { ruleId: existingSessionDefaults.id, data: { params: sessionDefaultsParams } },
-        { onError }
-      )
-    } else {
-      createMutation.mutate(
-        { rule_type: "session_defaults", enforcement: "soft", params: sessionDefaultsParams },
-        { onError }
-      )
-    }
-
-    if (breakMinutes > 0) {
-      const params = { minutes: breakMinutes }
-      if (existingBufferAfter) {
-        updateMutation.mutate({ ruleId: existingBufferAfter.id, data: { params } }, { onError })
-      } else {
-        createMutation.mutate({ rule_type: "buffer_after", enforcement: "hard", params }, { onError })
-      }
-    } else if (existingBufferAfter) {
-      deleteMutation.mutate(existingBufferAfter.id, { onError })
-    }
-  }
-
   if (isLoading) {
     return (
-      <div className="space-y-2">
-        <Skeleton className="h-16 w-full" />
-        <Skeleton className="h-16 w-full" />
+      <div className="space-y-2 px-[22px] py-4">
+        <Skeleton className="h-12 w-full" />
       </div>
     )
   }
 
   if (error) {
-    return <p className="text-sm text-red-600">Failed to load availability rules.</p>
+    return (
+      <p role="alert" className="px-[22px] py-4 text-sm text-red-600">
+        Failed to load availability rules.
+      </p>
+    )
   }
 
-  const activeGroups = GROUP_ORDER.filter((group) =>
-    visibleRules.some((rule) => RULE_TYPE_GROUPS[rule.rule_type] === group)
-  )
-
   return (
-    <div className="space-y-4">
-      <SchedulingDefaultsSection
-        rules={rules}
-        onSave={handleSchedulingDefaultsSave}
-        isSaving={createMutation.isPending || updateMutation.isPending || deleteMutation.isPending}
-        error={schedulingDefaultsError}
-      />
-
-      {visibleRules.length === 0 && (
-        <div className="rounded-md border border-dashed border-neutral-300 p-6 text-center space-y-3">
-          <p className="text-sm text-neutral-600">
-            You don&apos;t have any availability rules yet. A rule controls when
-            appointments can be booked — for example blocking Fridays, capping
-            how many sessions you take in a day, or requiring a buffer between
-            back-to-back sessions.
-          </p>
-          {preferences && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleSeedFromDisplayHours}
-              disabled={createMutation.isPending}
-            >
-              Start from your calendar display hours
-            </Button>
-          )}
-          {seedError && (
-            <p role="alert" className="text-sm text-red-600">
-              {seedError}
-            </p>
-          )}
-        </div>
+    <div className="px-[22px] py-3.5">
+      {blockedRules.length === 0 ? (
+        <p className="pb-3 text-sm text-muted-foreground">No blocked time yet.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {blockedRules.map((rule) => (
+            <li key={rule.id} className="flex items-center justify-between gap-4 py-3 first:pt-0">
+              <div>
+                <p className="text-sm font-semibold text-foreground">{RULE_TYPE_LABELS[rule.rule_type]}</p>
+                <p className="text-[12.5px] text-muted-foreground">
+                  {summarize(rule)} · {enforcementLabel(rule.enforcement)}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button size="sm" variant="ghost" onClick={() => openEditForm(rule)}>
+                  Edit
+                </Button>
+                <Button size="sm" variant="ghost" className="text-red-600" onClick={() => handleDelete(rule)}>
+                  Remove
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
 
-      {activeGroups.map((group) => (
-        <div key={group}>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            {group}
-          </h3>
-          <ul className="space-y-2">
-            {visibleRules
-              .filter((rule) => RULE_TYPE_GROUPS[rule.rule_type] === group)
-              .map((rule) => (
-                <li
-                  key={rule.id}
-                  className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-neutral-900">
-                      {RULE_TYPE_LABELS[rule.rule_type]}
-                    </p>
-                    <p className="text-sm text-neutral-600">{summarize(rule)}</p>
-                    <p className="text-xs text-neutral-500">
-                      {rule.enforcement === "hard" ? "Hard — always enforced" : "Soft — allows override"}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openEditForm(rule)}>
-                      Edit
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={() => handleDelete(rule)}>
-                      Delete
-                    </Button>
-                  </div>
-                </li>
-              ))}
-          </ul>
-        </div>
-      ))}
-
       {listError && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="pb-2 text-sm text-red-600">
           {listError}
         </p>
       )}
 
-      <NaturalLanguageRuleEntry />
-
       {formOpen ? (
-        <RuleForm
-          initialRule={editingRule}
-          onCancel={closeForm}
-          onSubmit={handleFormSubmit}
-          isSaving={createMutation.isPending || updateMutation.isPending}
-          submitError={formError}
-        />
+        <div className="pt-2">
+          <RuleForm
+            initialRule={editingRule}
+            onCancel={closeForm}
+            onSubmit={handleFormSubmit}
+            isSaving={createMutation.isPending || updateMutation.isPending}
+            submitError={formError}
+          />
+        </div>
       ) : (
         <Button size="sm" onClick={openCreateForm}>
-          Add rule
+          Block time
         </Button>
       )}
     </div>

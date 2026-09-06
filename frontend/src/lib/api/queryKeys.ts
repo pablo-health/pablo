@@ -287,6 +287,18 @@ const baseQueryKeys = {
     all: ["bookingLinks"] as const,
     list: () => [...baseQueryKeys.bookingLinks.all, "list"] as const,
   },
+
+  // Appointment type (practice's scheduling catalog) query keys
+  appointmentTypes: {
+    all: ["appointmentTypes"] as const,
+    list: () => [...baseQueryKeys.appointmentTypes.all, "list"] as const,
+  },
+
+  // Scheduling policy (practice-wide notice/cutoff/self-booking defaults)
+  schedulingPolicy: {
+    all: ["schedulingPolicy"] as const,
+    detail: () => [...baseQueryKeys.schedulingPolicy.all, "detail"] as const,
+  },
 } as const
 
 export const queryKeys = mergeQueryKeys(baseQueryKeys, queryKeyExtensions)

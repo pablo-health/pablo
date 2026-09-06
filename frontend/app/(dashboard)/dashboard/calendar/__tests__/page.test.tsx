@@ -20,6 +20,9 @@ vi.mock("@/hooks/usePreferences", () => ({
   usePreferences: () => ({ data: preferencesState.data }),
   useSavePreferences: () => ({ mutate: savePreferences, isPending: false }),
 }))
+vi.mock("@/hooks/useAvailability", () => ({
+  useAvailabilityRules: () => ({ data: { data: [], total: 0 } }),
+}))
 
 vi.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ loading: false }),
@@ -67,8 +70,6 @@ const PREFERENCES = {
   auto_transcribe: true,
   quality_preset: "balanced",
   therapist_display_name: null,
-  working_hours_start: 8,
-  working_hours_end: 18,
   calendar_default_view: "timeGridWeek",
   timezone: "America/New_York",
   theme: "warm-paper",
