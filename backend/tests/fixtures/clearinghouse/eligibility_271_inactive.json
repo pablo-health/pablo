@@ -1,0 +1,96 @@
+{
+  "meta": {
+    "senderId": "STEDI",
+    "submitterId": "117151744",
+    "applicationMode": "test",
+    "traceId": "01M1VMMETGPCGKZ0ADTS04DV78",
+    "outboundTraceId": "01M1VMMETGPCGKZ0ADTS04DV78"
+  },
+  "controlNumber": "716634268",
+  "reassociationKey": "716634268",
+  "tradingPartnerServiceId": "87726",
+  "provider": {
+    "providerName": "MEDICAL PROVIDER",
+    "entityIdentifier": "Provider",
+    "entityType": "Non-Person Entity",
+    "npi": "1999999984"
+  },
+  "subscriber": {
+    "memberId": "UHCINACTIVE",
+    "firstName": "JANE",
+    "lastName": "DOE",
+    "gender": "F",
+    "entityIdentifier": "Insured or Subscriber",
+    "entityType": "Person",
+    "dateOfBirth": "19710101",
+    "address": {
+      "address1": "101 MAIN ST",
+      "city": "SACRAMENTO",
+      "state": "CA",
+      "postalCode": "94203"
+    }
+  },
+  "payer": {
+    "entityIdentifier": "Payer",
+    "entityType": "Non-Person Entity",
+    "name": "UNITEDHEALTHCARE",
+    "payorIdentification": "87726",
+    "contactInformation": {
+      "contacts": [
+        {
+          "communicationMode": "Uniform Resource Locator (URL)",
+          "communicationNumber": "WWW.UHCPROVIDER.COM"
+        }
+      ]
+    }
+  },
+  "planStatus": [
+    {
+      "statusCode": "6",
+      "status": "Inactive",
+      "serviceTypeCodes": [
+        "30"
+      ]
+    }
+  ],
+  "benefitsInformation": [
+    {
+      "code": "6",
+      "name": "Inactive",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable"
+    },
+    {
+      "code": "X",
+      "name": "Health Care Facility",
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable",
+      "benefitsRelatedEntity": {
+        "entityIdentifier": "Provider",
+        "entityType": "Non-Person Entity",
+        "entityName": "MEDICAL PROVIDER",
+        "entityIdentification": "XX",
+        "entityIdentificationValue": "0001112223"
+      },
+      "benefitsRelatedEntities": [
+        {
+          "entityIdentifier": "Provider",
+          "entityType": "Non-Person Entity",
+          "entityName": "MEDICAL PROVIDER",
+          "entityIdentification": "XX",
+          "entityIdentificationValue": "0001112223"
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "x12": "ISA*00*          *00*          *ZZ*STEDI          *01*117151744      *260906*1515*^*00501*716634268*0*T*`~GS*HB*STEDI*117151744*20260906*151548*1*X*005010X279A1~ST*271*0001*005010X279A1~BHT*0022*11*01M1VMMETGPCGKZ0ADTS04DV78*20260325*0901~HL*1**20*1~NM1*PR*2*UNITEDHEALTHCARE*****PI*87726~PER*IC**UR*WWW.UHCPROVIDER.COM~HL*2*1*21*1~NM1*1P*2*MEDICAL PROVIDER*****XX*1999999984~HL*3*2*22*0~NM1*IL*1*DOE*JANE****MI*UHCINACTIVE~N3*101 MAIN ST~N4*SACRAMENTO*CA*94203~DMG*D8*19710101*F~EB*6**30*********W~EB*X***********W~LS*2120~NM1*1P*2*MEDICAL PROVIDER*****XX*0001112223~LE*2120~SE*18*0001~GE*1*1~IEA*1*716634268~",
+  "eligibilitySearchId": "01a0774a-3b50-7be0-b176-25c39be63271",
+  "id": "ec_01a0774a-3b4f-7142-b880-aafbd5162ba5"
+}

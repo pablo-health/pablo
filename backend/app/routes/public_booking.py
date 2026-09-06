@@ -40,6 +40,7 @@ from sqlalchemy.exc import IntegrityError
 from ..api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from ..auth.route_access import AccessLevel, resolve_access_level
 from ..auth.route_security import truly_public
+from ..claims.eligibility import EligibilityAutoCheck, get_eligibility_auto_check
 from ..db import arm_current_user_id, get_db_session, set_tenant_schema
 from ..models import Patient, User
 from ..models.audit import ACTOR_TYPE_ANONYMOUS, AuditAction
@@ -116,17 +117,20 @@ class PublicBookingContext:
 
 @dataclass
 class CoverageRepos:
-    """The two repositories intake insurance lands in, carried as one."""
+    """The two repositories intake insurance lands in, carried as one, plus
+    the post-save hook that queues an eligibility check on the new row."""
 
     payers: PayerRepository
     coverage: PatientCoverageRepository
+    auto_check: EligibilityAutoCheck
 
 
 def get_public_coverage_repos(
     payers: PayerRepository = Depends(get_payer_repository),
     coverage: PatientCoverageRepository = Depends(get_patient_coverage_repository),
+    auto_check: EligibilityAutoCheck = Depends(get_eligibility_auto_check),
 ) -> CoverageRepos:
-    return CoverageRepos(payers=payers, coverage=coverage)
+    return CoverageRepos(payers=payers, coverage=coverage, auto_check=auto_check)
 
 
 def _record_intake_coverage(
@@ -159,6 +163,9 @@ def _record_intake_coverage(
         },
         actor_type=ACTOR_TYPE_ANONYMOUS,
     )
+    # Check the plan before the first session: queued, so a slow payer never
+    # holds the booking page. The link's owner is the clinician of record.
+    repos.auto_check(coverage.id, ctx.owner.id, "intake")
 
 
 def _carry_coverage_to_existing_chart(

@@ -266,10 +266,20 @@ class Payer(BaseModel):
 
 
 class EligibilityProvider(BaseModel):
+    """The provider a 270 is asked on behalf of.
+
+    Either an organization (``organizationName`` with the practice's type-2
+    billing NPI) or a person (``firstName``/``lastName`` with the rendering
+    clinician's own NPI). Which one a practice sends is decided by
+    ``app.claims.eligibility``; the vendor accepts both shapes.
+    """
+
     model_config = _WIRE_MODEL_CONFIG
 
-    organizationName: str
     npi: str
+    organizationName: str | None = None
+    firstName: str | None = None
+    lastName: str | None = None
 
 
 class EligibilitySubscriber(BaseModel):
@@ -278,7 +288,38 @@ class EligibilitySubscriber(BaseModel):
     memberId: str
     firstName: str | None = None
     lastName: str | None = None
+    #: ``YYYYMMDD``, the vendor's date format on this API.
     dateOfBirth: str | None = None
+    gender: Literal["M", "F", "U"] | None = None
+    groupNumber: str | None = None
+
+
+class EligibilityDependent(BaseModel):
+    """The client, when the plan's subscriber is somebody else.
+
+    Sent alongside the subscriber's own details; the payer answers about the
+    dependent. Only the fields the vendor needs to find the person.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    firstName: str
+    lastName: str
+    dateOfBirth: str | None = None
+    gender: Literal["M", "F", "U"] | None = None
+
+
+class EligibilityEncounter(BaseModel):
+    """What the inquiry is about: X12 service type codes (``MH`` is mental health).
+
+    Left out, the vendor asks for ``30`` (health benefit plan coverage) and
+    the answer is about the plan as a whole rather than the benefit a
+    behavioral-health visit is billed under.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    serviceTypeCodes: list[str]
 
 
 class EligibilityRequest(BaseModel):
@@ -289,6 +330,11 @@ class EligibilityRequest(BaseModel):
     tradingPartnerServiceId: str
     provider: EligibilityProvider
     subscriber: EligibilitySubscriber
+    #: ``None`` rather than an empty list: the vendor rejects ``dependents: []``
+    #: outright ("the length of the items must be >= 1"), and the adapter
+    #: serialises with ``exclude_none`` so an absent list is simply not sent.
+    dependents: list[EligibilityDependent] | None = None
+    encounter: EligibilityEncounter | None = None
 
 
 class EligibilityPlanStatus(BaseModel):
@@ -296,13 +342,89 @@ class EligibilityPlanStatus(BaseModel):
 
     statusCode: str
     status: str | None = None
+    planDetails: str | None = None
+    serviceTypeCodes: list[str] = []
 
 
 class EligibilityPayer(BaseModel):
+    """The payer that answered, as the 271's own ``payer`` loop names it.
+
+    ``payorIdentification`` is the electronic payer id (X12 ``PI``); it is
+    what a benefit line's related entity is compared against to tell "the
+    same payer" from "somebody else administers this".
+    """
+
     model_config = _WIRE_MODEL_CONFIG
 
     name: str | None = None
-    payerId: str | None = None
+    payorIdentification: str | None = None
+
+
+class EligibilityRelatedEntity(BaseModel):
+    """An entity a benefit line points at (X12 2120 loop).
+
+    ``entityIdentifier`` is the role the vendor spells out from the NM1
+    qualifier ("Payer", "Third-Party Administrator", "Vendor", "Primary Care
+    Provider", ...). ``entityIdentification`` is the code set of
+    ``entityIdentificationValue``: ``PI`` is a payer id, ``XX`` an NPI.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    entityIdentifier: str | None = None
+    entityType: str | None = None
+    entityName: str | None = None
+    entityFirstname: str | None = None
+    entityIdentification: str | None = None
+    entityIdentificationValue: str | None = None
+
+
+class EligibilityAdditionalInformation(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    description: str | None = None
+
+
+class EligibilityBenefit(BaseModel):
+    """One ``benefitsInformation`` line of a 271 (an X12 EB segment).
+
+    ``code`` is the EB01 benefit type: ``1``-``5`` active, ``6``-``8``
+    inactive, ``A`` co-insurance, ``B`` co-payment, ``C`` deductible, ``F``
+    limitations, ``U`` "contact the following entity". ``timeQualifierCode``
+    says what period an amount or quantity is for (``29`` remaining, ``23``
+    calendar year, ``27`` per visit). Amounts are the vendor's decimal
+    strings, not cents; ``app.claims.eligibility`` converts once.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    code: str
+    name: str | None = None
+    serviceTypeCodes: list[str] = []
+    insuranceTypeCode: str | None = None
+    planCoverage: str | None = None
+    coverageLevelCode: str | None = None
+    timeQualifierCode: str | None = None
+    timeQualifier: str | None = None
+    benefitAmount: str | None = None
+    benefitPercent: str | None = None
+    benefitQuantity: str | None = None
+    quantityQualifierCode: str | None = None
+    quantityQualifier: str | None = None
+    inPlanNetworkIndicatorCode: str | None = None
+    authOrCertIndicator: str | None = None
+    benefitsRelatedEntity: EligibilityRelatedEntity | None = None
+    benefitsRelatedEntities: list[EligibilityRelatedEntity] = []
+    additionalInformation: list[EligibilityAdditionalInformation] = []
+
+
+class EligibilityPlanDates(BaseModel):
+    model_config = _WIRE_MODEL_CONFIG
+
+    planBegin: str | None = None
+    planEnd: str | None = None
+    eligibilityBegin: str | None = None
+    eligibilityEnd: str | None = None
 
 
 class EligibilityError(BaseModel):
@@ -313,8 +435,9 @@ class EligibilityError(BaseModel):
     Subscriber/Insured ID" is the common one) rather than a coverage answer.
     ``code`` and ``followupAction`` are safe to log; ``description`` is the
     vendor's own explanation of the code, but treat it as PHI-adjacent
-    rather than assuming that holds for every payer. The vendor's longer
-    ``location`` / ``possibleResolutions`` prose is not modeled.
+    rather than assuming that holds for every payer. ``possibleResolutions``
+    is the vendor's plain-language "what to do about it", rendered to the
+    practice as-is.
     """
 
     model_config = _WIRE_MODEL_CONFIG
@@ -322,21 +445,27 @@ class EligibilityError(BaseModel):
     code: str
     description: str
     followupAction: str
+    possibleResolutions: str | None = None
 
 
 class EligibilityResponse(BaseModel):
     """A 271 response.
 
-    Only the fields a caller needs to record the check are modeled;
-    benefit-line detail is intentionally out of scope. An empty
-    ``planStatus`` alone does not mean "no coverage": when ``errors`` is
-    non-empty the payer rejected the inquiry and never answered the
-    coverage question.
+    Modeled to the depth ``app.claims.eligibility`` reads: the plan-level
+    status, every benefit line (that is where copays, deductibles, visit
+    limits and "somebody else administers this" all live), and the payer's
+    own name and id. An empty ``planStatus`` alone does not mean "no
+    coverage": when ``errors`` is non-empty the payer rejected the inquiry
+    and never answered the coverage question.
     """
 
     model_config = _WIRE_MODEL_CONFIG
 
+    controlNumber: str | None = None
+    tradingPartnerServiceId: str | None = None
     planStatus: list[EligibilityPlanStatus] = []
+    benefitsInformation: list[EligibilityBenefit] = []
+    planDateInformation: EligibilityPlanDates | None = None
     errors: list[EligibilityError] = []
     payer: EligibilityPayer | None = None
     meta: SubmissionMeta

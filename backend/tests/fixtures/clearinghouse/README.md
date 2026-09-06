@@ -16,7 +16,8 @@ payer. Nothing here is PHI.
 | `835_report_paid_in_full.json` | the 835 as JSON from the report endpoint |
 | `enrollment_create_provider.json`, `enrollment_create_enrollment_835.json` | provider record and a transaction enrollment that went live |
 | `payer_search_test_payer.json` | the payer directory's answer to a search for the test payer |
-| `eligibility_271_active.json` | a 271 for the vendor's documented mock "active coverage" member |
+| `eligibility_271_active.json` | a 271 for the vendor's documented mock "active coverage" member. Asking with `encounter.serviceTypeCodes: ["MH"]` returns this same body, byte-for-byte apart from ids (checked 2026-09-06), so one recording serves both the plan-level and the mental-health inquiry |
+| `eligibility_271_inactive.json` | a 271 for the vendor's documented mock "inactive coverage" member (`planStatus` code 6), asked with service type `MH` |
 | `eligibility_271_aaa_invalid_member_id.json` | HTTP 200 with no `planStatus` and a top-level `errors[]` carrying AAA 72, for a made-up member id the mock payer does not know |
 
 Regenerate with a test API key against the vendor's test payer; the shapes are
@@ -40,3 +41,4 @@ The files below were NOT captured from a live call — the vendor's generic
 | `error_invalid_request_body.json`, `error_account_not_provisioned.json` | the vendor's generic `{code, message}` error envelope |
 | `error_request_changed.json` | the 422 an idempotency key gets when reused with a different body; the live lane sees this `code`, the `message` is illustrative |
 | `error_access_denied.json` | the 403 the enrollment API answers a test-mode key with; same caveat |
+| `eligibility_271_carveout_behavioral.json` | a 271 whose behavioral benefit is administered by somebody other than the payer on the card. None of the vendor's mock members carries one, so this is `eligibility_271_active.json` with its recorded pharmacy carve-out line (`benefitsInformation[].code == "U"`, service type `88`, entity OPTUMRX — the shape the vendor's own mock uses for "contact this other entity") re-pointed at service types `MH`/`A4` and a made-up third-party administrator (`EXAMPLE BEHAVIORAL HEALTH`, payer id `EXBH1`). The vendor's per-call ids are blanked so nobody mistakes it for a capture |

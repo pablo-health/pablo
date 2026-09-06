@@ -23,6 +23,9 @@ from ..db.models import (
     DEFAULT_CORRECTED_CLAIM_DAYS,
     DEFAULT_TIMELY_FILING_DAYS,
 )
+from .eligibility import (
+    EligibilitySummary,  # noqa: TC001 — Pydantic resolves the field type at runtime
+)
 
 EnrollmentStatus = Literal["none", "filed", "pending", "active", "error"]
 SubscriberRelationship = Literal["self", "spouse", "child", "other"]
@@ -204,7 +207,9 @@ class CoverageResponse(SubscriberFields):
     """A client's coverage as the chart card renders it, payer embedded.
 
     ``last_271`` is not returned here: the raw eligibility response is a
-    vendor document the eligibility surface renders on its own terms.
+    vendor document. What the chart gets is ``eligibility``, the stored
+    response read down by ``app.claims.eligibility`` — ``None`` until a
+    check has run.
     """
 
     id: str
@@ -215,6 +220,7 @@ class CoverageResponse(SubscriberFields):
     plan_name: str | None = None
     active: bool
     verified_at: datetime | None = None
+    eligibility: EligibilitySummary | None = None
     created_at: datetime
     updated_at: datetime
 

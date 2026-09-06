@@ -36,14 +36,14 @@ class UnknownTenantError(Exception):
     """The job's user_id maps to no active tenant — a non-retryable failure."""
 
 
-def resolve_tenant_schema_for_user(user_id: str) -> str | None:
-    """Resolve a Pablo ``user_id`` to its active tenant schema, off-request.
+def resolve_tenant_for_user(user_id: str) -> tuple[str, str] | None:
+    """Resolve a Pablo ``user_id`` to its active ``(practice_id, schema_name)``, off-request.
 
     ``user_id`` → email (platform ``users``) → practice (``email_tenant_mappings``
-    → ``practices``) → ``schema_name``, all in the shared platform schema via a
-    standalone session. Returns ``None`` if the user, mapping, or practice is
-    missing or inactive; the caller treats that as non-retryable (no schema to
-    safely write into).
+    → ``practices``), all in the shared platform schema via a standalone
+    session. Returns ``None`` if the user, mapping, or practice is missing or
+    inactive; the caller treats that as non-retryable (no schema to safely
+    write into).
     """
     from ..db import create_standalone_session
     from ..db.platform_models import EmailTenantMappingRow, PlatformUserRow, PracticeRow
@@ -58,7 +58,13 @@ def resolve_tenant_schema_for_user(user_id: str) -> str | None:
         practice = db.get(PracticeRow, mapping.practice_id)
         if practice is None or not practice.is_active:
             return None
-        return practice.schema_name
+        return practice.id, practice.schema_name
+
+
+def resolve_tenant_schema_for_user(user_id: str) -> str | None:
+    """The schema half of :func:`resolve_tenant_for_user`."""
+    resolved = resolve_tenant_for_user(user_id)
+    return resolved[1] if resolved is not None else None
 
 
 def run_soap_generation_job(
