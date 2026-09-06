@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models.claims_responses import (
+from ..models.claims_responses import (
     AcknowledgmentSource,
     Adjustment,
     ClaimAcknowledgment,
@@ -31,7 +31,7 @@ from app.models.claims_responses import (
     RemittanceClaim,
     RemittanceLine,
 )
-from app.money import dollars_to_cents
+from ..money import dollars_to_cents
 
 _MAX_ADJUSTMENT_SLOTS = 6
 

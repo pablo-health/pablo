@@ -9,7 +9,7 @@ cites its list version and retrieval date), so posting a remittance or
 showing a denial never has to call out to learn what ``CO-45`` means.
 """
 
-from app.claims.codes.lookup import (
+from .lookup import (
     CATEGORIES,
     Category,
     categorize,
