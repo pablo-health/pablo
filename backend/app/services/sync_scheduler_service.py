@@ -233,8 +233,15 @@ class _UserSyncState:
     max_error_count: int = 0
 
 
+# A per-user working-hours window now lives in availability rules (one per
+# day, no single start/end), not in preferences — too granular for a dispatch
+# throttle that only needs an approximate daytime window per timezone.
+_DEFAULT_WINDOW_START_HOUR = 8
+_DEFAULT_WINDOW_END_HOUR = 18
+
+
 def _is_within_working_hours(prefs: UserPreferences) -> bool:
-    """Check if the current time falls within the user's working hours ±1 hour."""
+    """Check if the current time falls within a daytime window ±1 hour."""
     try:
         tz = ZoneInfo(prefs.timezone)
     except (ZoneInfoNotFoundError, KeyError):
@@ -242,8 +249,8 @@ def _is_within_working_hours(prefs: UserPreferences) -> bool:
         return True
 
     user_now = datetime.now(tz)
-    window_start = max(prefs.working_hours_start - 1, 0)
-    window_end = min(prefs.working_hours_end + 1, 24)
+    window_start = max(_DEFAULT_WINDOW_START_HOUR - 1, 0)
+    window_end = min(_DEFAULT_WINDOW_END_HOUR + 1, 24)
     return window_start <= user_now.hour < window_end
 
 
