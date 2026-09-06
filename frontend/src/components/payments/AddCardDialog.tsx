@@ -56,12 +56,10 @@ interface AddCardDialogProps {
 
 function CardSetupForm({
   patientId,
-  clientSecret,
   replacing,
   onDone,
 }: {
   patientId: string
-  clientSecret: string
   replacing: boolean
   onDone: () => void
 }) {
@@ -83,9 +81,15 @@ function CardSetupForm({
     // `redirect: "if_required"` keeps card entry on this page. A payment method
     // that genuinely needs a redirect would leave it, which is why the result
     // is read rather than assumed below.
+    //
+    // The client secret is deliberately NOT passed here. `<Elements>` is
+    // created with it (see the provider below), and in that mode Stripe.js
+    // takes the secret from the Elements group. Passing it again selects the
+    // deferred-intent shape, which additionally requires `elements.submit()`
+    // first — so the mixed form threw `IntegrationError` synchronously, before
+    // any call to Stripe, and "Save card" did nothing at all.
     const result = await stripe.confirmSetup({
       elements,
-      clientSecret,
       redirect: "if_required",
     })
     setConfirming(false)
@@ -192,12 +196,7 @@ function CardSetupFlow({
 
   return (
     <Elements stripe={stripePromise} options={{ clientSecret: setup.client_secret }}>
-      <CardSetupForm
-        patientId={patientId}
-        clientSecret={setup.client_secret}
-        replacing={replacing}
-        onDone={onDone}
-      />
+      <CardSetupForm patientId={patientId} replacing={replacing} onDone={onDone} />
     </Elements>
   )
 }
