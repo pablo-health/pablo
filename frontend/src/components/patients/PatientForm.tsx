@@ -35,6 +35,12 @@ const patientFormSchema = z.object({
   status: z.enum(["active", "inactive", "on_hold"]),
   date_of_birth: z.string().optional().or(z.literal("")),
   diagnosis: z.string().optional().or(z.literal("")),
+  address_line1: z.string().max(255).optional().or(z.literal("")),
+  address_line2: z.string().max(255).optional().or(z.literal("")),
+  city: z.string().max(100).optional().or(z.literal("")),
+  state: z.string().max(2).optional().or(z.literal("")),
+  postal_code: z.string().max(10).optional().or(z.literal("")),
+  sex: z.enum(["M", "F", "U"]).optional().or(z.literal("")),
 })
 
 type PatientFormData = z.infer<typeof patientFormSchema>
@@ -67,10 +73,17 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
       status: "active",
       date_of_birth: "",
       diagnosis: "",
+      address_line1: "",
+      address_line2: "",
+      city: "",
+      state: "",
+      postal_code: "",
+      sex: "",
     },
   })
 
   const status = watch("status")
+  const sex = watch("sex")
 
   // Reset form when dialog opens/closes or patient changes
   useEffect(() => {
@@ -83,6 +96,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         status: (patient.status as "active" | "inactive" | "on_hold") || "active",
         date_of_birth: patient.date_of_birth || "",
         diagnosis: patient.diagnosis || "",
+        address_line1: patient.address_line1 || "",
+        address_line2: patient.address_line2 || "",
+        city: patient.city || "",
+        state: patient.state || "",
+        postal_code: patient.postal_code || "",
+        sex: (patient.sex as "M" | "F" | "U") || "",
       })
     } else if (open && mode === "create") {
       reset({
@@ -93,6 +112,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         status: "active",
         date_of_birth: "",
         diagnosis: "",
+        address_line1: "",
+        address_line2: "",
+        city: "",
+        state: "",
+        postal_code: "",
+        sex: "",
       })
     }
   }, [open, mode, patient, reset])
@@ -108,6 +133,12 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
         status: data.status,
         date_of_birth: data.date_of_birth || undefined,
         diagnosis: data.diagnosis || undefined,
+        address_line1: data.address_line1 || undefined,
+        address_line2: data.address_line2 || undefined,
+        city: data.city || undefined,
+        state: data.state || undefined,
+        postal_code: data.postal_code || undefined,
+        sex: data.sex || undefined,
       }
 
       if (mode === "create") {
@@ -244,6 +275,50 @@ export function PatientForm({ mode, patient, open, onOpenChange }: PatientFormPr
             {errors.diagnosis && (
               <p className="text-sm text-red-500 mt-1">{errors.diagnosis.message}</p>
             )}
+          </div>
+
+          {/* Address */}
+          <div className="form-group">
+            <Label htmlFor="address_line1">Address Line 1</Label>
+            <Input id="address_line1" {...register("address_line1")} />
+          </div>
+
+          <div className="form-group">
+            <Label htmlFor="address_line2">Address Line 2</Label>
+            <Input id="address_line2" {...register("address_line2")} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-4">
+            <div className="form-group">
+              <Label htmlFor="city">City</Label>
+              <Input id="city" {...register("city")} />
+            </div>
+            <div className="form-group">
+              <Label htmlFor="state">State</Label>
+              <Input id="state" maxLength={2} {...register("state")} />
+            </div>
+            <div className="form-group">
+              <Label htmlFor="postal_code">ZIP</Label>
+              <Input id="postal_code" {...register("postal_code")} />
+            </div>
+          </div>
+
+          {/* Sex on insurance card */}
+          <div className="form-group">
+            <Label htmlFor="sex">Sex on insurance card</Label>
+            <Select
+              value={sex}
+              onValueChange={(value) => setValue("sex", value as "M" | "F" | "U")}
+            >
+              <SelectTrigger id="sex">
+                <SelectValue placeholder="Not set" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="M">Male</SelectItem>
+                <SelectItem value="F">Female</SelectItem>
+                <SelectItem value="U">Unknown</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <DialogFooter>

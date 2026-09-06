@@ -47,6 +47,12 @@ const mockPatient: PatientResponse = {
   updated_at: "2024-01-01T00:00:00Z",
   deleted_at: null,
   restore_deadline: null,
+  address_line1: null,
+  address_line2: null,
+  city: null,
+  state: null,
+  postal_code: null,
+  sex: null,
 }
 
 describe("PatientForm", () => {
@@ -271,6 +277,72 @@ describe("PatientForm", () => {
       expect(screen.getByLabelText(/phone/i)).toHaveValue("")
       expect(screen.getByLabelText(/date of birth/i)).toHaveValue("")
       expect(screen.getByLabelText(/diagnosis/i)).toHaveValue("")
+    })
+  })
+
+  describe("Address and sex on insurance card", () => {
+    it("submits address and sex fields", async () => {
+      const user = userEvent.setup()
+      const { Wrapper } = createWrapper()
+      const onOpenChange = vi.fn()
+
+      vi.mocked(patientsApi.createPatient).mockResolvedValue(mockPatient)
+
+      render(
+        <PatientForm mode="create" open={true} onOpenChange={onOpenChange} />,
+        { wrapper: Wrapper }
+      )
+
+      await user.type(screen.getByLabelText(/first name/i), "Jane")
+      await user.type(screen.getByLabelText(/last name/i), "Doe")
+      await user.type(screen.getByLabelText(/address line 1/i), "123 Main St")
+      await user.type(screen.getByLabelText(/city/i), "Springfield")
+      await user.type(screen.getByLabelText(/state/i), "IL")
+      await user.type(screen.getByLabelText(/zip/i), "62704")
+      await user.click(screen.getByRole("combobox", { name: /sex on insurance card/i }))
+      await user.click(screen.getByRole("option", { name: "Female" }))
+
+      await user.click(screen.getByRole("button", { name: /create patient/i }))
+
+      await waitFor(() => {
+        expect(patientsApi.createPatient).toHaveBeenCalledWith(
+          expect.objectContaining({
+            address_line1: "123 Main St",
+            city: "Springfield",
+            state: "IL",
+            postal_code: "62704",
+            sex: "F",
+          }),
+          undefined
+        )
+      })
+    })
+
+    it("pre-fills address and sex in edit mode", () => {
+      const { Wrapper } = createWrapper()
+
+      render(
+        <PatientForm
+          mode="edit"
+          patient={{
+            ...mockPatient,
+            address_line1: "456 Oak Ave",
+            city: "Shelbyville",
+            state: "IL",
+            postal_code: "62565",
+            sex: "M",
+          }}
+          open={true}
+          onOpenChange={vi.fn()}
+        />,
+        { wrapper: Wrapper }
+      )
+
+      expect(screen.getByLabelText(/address line 1/i)).toHaveValue("456 Oak Ave")
+      expect(screen.getByLabelText(/city/i)).toHaveValue("Shelbyville")
+      expect(screen.getByRole("combobox", { name: /sex on insurance card/i })).toHaveTextContent(
+        "Male"
+      )
     })
   })
 

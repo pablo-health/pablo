@@ -56,6 +56,12 @@ const mockPatients: PatientResponse[] = [
     updated_at: "2024-01-01T00:00:00Z",
     deleted_at: null,
     restore_deadline: null,
+    address_line1: null,
+    address_line2: null,
+    city: null,
+    state: null,
+    postal_code: null,
+    sex: null,
   },
   {
     id: "patient-2",
@@ -73,6 +79,12 @@ const mockPatients: PatientResponse[] = [
     updated_at: "2024-01-01T00:00:00Z",
     deleted_at: null,
     restore_deadline: null,
+    address_line1: null,
+    address_line2: null,
+    city: null,
+    state: null,
+    postal_code: null,
+    sex: null,
   },
   {
     id: "patient-3",
@@ -90,6 +102,12 @@ const mockPatients: PatientResponse[] = [
     updated_at: "2024-01-01T00:00:00Z",
     deleted_at: null,
     restore_deadline: null,
+    address_line1: null,
+    address_line2: null,
+    city: null,
+    state: null,
+    postal_code: null,
+    sex: null,
   },
 ]
 

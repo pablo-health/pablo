@@ -33,6 +33,13 @@ export interface PatientResponse {
   updated_at: string
   deleted_at: string | null
   restore_deadline: string | null
+  address_line1: string | null
+  address_line2: string | null
+  city: string | null
+  state: string | null
+  postal_code: string | null
+  /** X12 DMG03 administrative sex code (M/F/U) — "Sex on insurance card". */
+  sex: string | null
 }
 
 /**
@@ -56,6 +63,12 @@ export interface CreatePatientRequest {
   status?: string
   date_of_birth?: string
   diagnosis?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  sex?: string
 }
 
 /**
@@ -71,6 +84,12 @@ export interface UpdatePatientRequest {
   status?: string
   date_of_birth?: string
   diagnosis?: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  sex?: string
 }
 
 /**
