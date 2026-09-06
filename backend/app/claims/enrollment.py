@@ -99,6 +99,12 @@ OPEN_REQUEST_STATUSES: frozenset[str] = frozenset(
 #: cap is what keeps a runaway tenant from monopolising the daily job.
 MAX_REFRESH_PER_TENANT = 200
 
+#: How many pages of the vendor's listing one refresh pass reads. At the
+#: vendor's default page size that is two thousand enrollments, far past
+#: what one practice's provider record can carry, so the bound stops a
+#: listing that has gone wrong, not one that is merely long.
+MAX_LIST_PAGES = 20
+
 #: The vendor's directory answer that means "file an enrollment first".
 _ENROLLMENT_REQUIRED = "ENROLLMENT_REQUIRED"
 
@@ -561,6 +567,45 @@ before it writes that person's reminder. The default is the real RLS arm;
 a test on a database without the GUC hands in a no-op."""
 
 
+def _listing_filters(session: Session, rows: Iterable[PayerEnrollmentRow]) -> EnrollmentFilters:
+    """Narrow the vendor's listing to this practice's provider and the payers with open requests.
+
+    Status is deliberately not a filter: the listing is how a request is
+    seen to have moved on, and asking only for the open statuses would hide
+    exactly the answers the refresh is after. The payer filter is dropped
+    altogether if any open request's payer has no vendor id on file, so
+    narrowing never hides a request.
+    """
+    profile = session.get(PracticeBillingProfileRow, SINGLETON_ID)
+    provider_id = profile.clearinghouse_provider_id if profile is not None else None
+    payer_row_ids = {row.payer_id for row in rows}
+    vendor_payer_ids = (
+        session.execute(
+            select(PayerRow.clearinghouse_payer_id).where(PayerRow.id.in_(payer_row_ids))
+        )
+        .scalars()
+        .all()
+    )
+    known = sorted({payer_id for payer_id in vendor_payer_ids if payer_id})
+    return EnrollmentFilters(
+        providerIds=[provider_id] if provider_id else [],
+        payerIds=known if len(known) == len(payer_row_ids) else [],
+    )
+
+
+def _list_all(client: ClearinghouseClient, filters: EnrollmentFilters) -> dict[str, Enrollment]:
+    """Every enrollment the listing returns, by vendor id, up to ``MAX_LIST_PAGES`` pages."""
+    by_vendor_id: dict[str, Enrollment] = {}
+    for _ in range(MAX_LIST_PAGES):
+        page = client.list_enrollments(filters)
+        by_vendor_id.update((e.id, e) for e in page.items)
+        if page.nextPageToken is None:
+            return by_vendor_id
+        filters = filters.model_copy(update={"pageToken": page.nextPageToken})
+    logger.warning("payer_enrollment_listing_truncated max_pages=%s", MAX_LIST_PAGES)
+    return by_vendor_id
+
+
 def refresh_enrollments(
     session: Session,
     client: ClearinghouseClient,
@@ -571,11 +616,13 @@ def refresh_enrollments(
 ) -> int:
     """Poll the clearinghouse for this tenant's open requests; returns how many changed.
 
-    One listing call per pass, then at most ``limit`` requests matched by
-    vendor id. Requests the listing does not mention — the vendor's first
-    page only, or one it no longer knows — are left as they are. The
-    session is re-armed per request owner so the reminder a status change
-    writes lands under that person's row policy. Does not commit.
+    One listing per pass — narrowed to this practice's provider and the
+    payers with open requests, read page by page until the vendor has no
+    more or ``MAX_LIST_PAGES`` is reached — then at most ``limit`` requests
+    matched by vendor id. A request the listing does not mention (one the
+    vendor no longer knows, or one past the page bound) is left as it is.
+    The session is re-armed per request owner so the reminder a status
+    change writes lands under that person's row policy. Does not commit.
     """
     now = now or utc_now()
     rows = (
@@ -595,7 +642,7 @@ def refresh_enrollments(
     if not rows:
         return 0
 
-    by_vendor_id = {e.id: e for e in client.list_enrollments(EnrollmentFilters())}
+    by_vendor_id = _list_all(client, _listing_filters(session, rows))
     changed = 0
     touched: dict[str, PayerRow] = {}
     for row in rows:

@@ -22,6 +22,7 @@ from typing import Any
 from app.models.claims_transport import (
     Enrollment,
     EnrollmentFilters,
+    EnrollmentPage,
     EnrollmentRequest,
     Payer,
     ProviderRecord,
@@ -69,11 +70,14 @@ class FakeClearinghouse:
 
     ``transaction_support`` overrides the directory's answer for the test
     payer so a test can make claims or eligibility need an enrollment too.
+    ``page_size`` splits ``listing`` into pages the way the vendor does,
+    with the page token an offset into it; ``None`` answers in one page.
     """
 
     def __init__(self, *, transaction_support: dict[str, str] | None = None) -> None:
         self.calls: list[tuple[str, Any]] = []
         self.listing: list[dict[str, Any]] = []
+        self.page_size: int | None = None
         self._support = transaction_support
         self._next_vendor_id = 0
 
@@ -113,9 +117,16 @@ class FakeClearinghouse:
             enrollment_fixture(vendor_id=f"enr-{self._next_vendor_id:04d}", transaction=transaction)
         )
 
-    def list_enrollments(self, filters: EnrollmentFilters) -> list[Enrollment]:
+    def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
         self.calls.append(("list_enrollments", filters))
-        return [Enrollment.model_validate(item) for item in self.listing]
+        items = [Enrollment.model_validate(item) for item in self.listing]
+        if self.page_size is None:
+            return EnrollmentPage(items=items)
+        start = int(filters.pageToken or 0)
+        end = start + self.page_size
+        return EnrollmentPage(
+            items=items[start:end], nextPageToken=str(end) if end < len(items) else None
+        )
 
     # -- the rest of the protocol is never reached by enrollment ---------------
 

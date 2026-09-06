@@ -681,10 +681,52 @@ class Enrollment(BaseModel):
 
 class EnrollmentFilters(BaseModel):
     """Query filters for ``list_enrollments``. All optional; an empty
-    instance lists every enrollment the account has."""
+    instance asks for the first page of every enrollment the account has.
+
+    Each list matches an enrollment with any of its values, sent as the
+    vendor's repeated query key (``providerIds=a&providerIds=b``).
+    ``payerIds`` are the vendor's own payer ids — an enrollment's
+    ``payer.stediPayerId`` — not the payer's electronic id. ``statuses`` is
+    the vendor's ``status`` key, which takes at most five values; it is the
+    one name here that is not the wire name, because a list called
+    ``status`` reads as a single value. ``pageSize`` is 1 to 500 (the vendor
+    defaults to 100); ``pageToken`` is the ``nextPageToken`` of the page
+    before.
+    """
 
     model_config = _WIRE_MODEL_CONFIG
 
-    providerId: str | None = None
-    payerId: str | None = None
-    status: str | None = None
+    providerIds: list[str] = []
+    payerIds: list[str] = []
+    statuses: list[str] = []
+    pageSize: int | None = None
+    pageToken: str | None = None
+
+    def query_params(self) -> dict[str, list[str] | int | str]:
+        """The vendor's query string, with only the filters that are set."""
+        params: dict[str, list[str] | int | str] = {}
+        if self.providerIds:
+            params["providerIds"] = self.providerIds
+        if self.payerIds:
+            params["payerIds"] = self.payerIds
+        if self.statuses:
+            params["status"] = self.statuses
+        if self.pageSize is not None:
+            params["pageSize"] = self.pageSize
+        if self.pageToken:
+            params["pageToken"] = self.pageToken
+        return params
+
+
+class EnrollmentPage(BaseModel):
+    """One page of ``list_enrollments``.
+
+    ``nextPageToken`` goes back as ``EnrollmentFilters.pageToken`` to read
+    the page after this one; ``None`` means this was the last.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    items: list[Enrollment] = []
+    nextPageToken: str | None = None
+    totalCount: int | None = None

@@ -572,6 +572,78 @@ class TestRefresh:
 
         assert len(client.calls_named("list_enrollments")) == 1
 
+    def test_listing_is_narrowed_to_the_provider_and_its_payers_never_by_status(
+        self, session: Session
+    ) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse()
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+        client.listing = _listing_for(session, "LIVE", "835")
+
+        refresh_enrollments(session, client, arm=_no_arm)
+
+        [filters] = client.calls_named("list_enrollments")
+        assert filters.providerIds == [PROVIDER_ID]
+        assert filters.payerIds == [TEST_PAYER_STEDI_ID]
+        assert filters.statuses == []
+        assert filters.pageToken is None
+
+    def test_a_payer_without_a_vendor_id_drops_the_payer_filter(self, session: Session) -> None:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse()
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+        payer.clearinghouse_payer_id = None
+        session.flush()
+
+        refresh_enrollments(session, client, arm=_no_arm)
+
+        [filters] = client.calls_named("list_enrollments")
+        assert filters.providerIds == [PROVIDER_ID]
+        assert filters.payerIds == []
+
+    def _two_open_requests(self, session: Session) -> FakeClearinghouse:
+        _seed_profile(session)
+        payer = _seed_payer(session)
+        client = FakeClearinghouse(
+            transaction_support={
+                "professionalClaimSubmission": "ENROLLMENT_REQUIRED",
+                "claimPayment": "ENROLLMENT_REQUIRED",
+            }
+        )
+        request_enrollments(session, client, payer_row_id=payer.id, user_id=_USER_ID)
+        client.listing = _listing_for(session, "LIVE", "837P", "835")
+        client.page_size = 1
+        return client
+
+    def test_pages_through_the_listing_until_the_vendor_has_no_more(self, session: Session) -> None:
+        client = self._two_open_requests(session)
+
+        assert refresh_enrollments(session, client, arm=_no_arm) == 2
+
+        first, second = client.calls_named("list_enrollments")
+        assert first.pageToken is None
+        assert second.pageToken == "1"
+        assert second.providerIds == first.providerIds == [PROVIDER_ID]
+        assert {row.status for row in _rows(session).values()} == {"live"}
+
+    def test_stops_at_max_pages_and_leaves_the_rest_for_the_next_pass(
+        self, session: Session, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = self._two_open_requests(session)
+        monkeypatch.setattr(enrollment, "MAX_LIST_PAGES", 1)
+
+        with caplog.at_level(logging.WARNING):
+            assert refresh_enrollments(session, client, arm=_no_arm) == 1
+
+        assert len(client.calls_named("list_enrollments")) == 1
+        assert "payer_enrollment_listing_truncated" in caplog.text
+        assert sorted(row.status for row in _rows(session).values()) == [
+            "live",
+            "stedi_action_required",
+        ]
+
     def test_a_request_the_listing_does_not_mention_is_left_alone(self, session: Session) -> None:
         _seed_profile(session)
         payer = _seed_payer(session)
