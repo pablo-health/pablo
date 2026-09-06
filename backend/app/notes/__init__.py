@@ -10,8 +10,12 @@ default registry at bootstrap.
 
 from .authorizer import NoteTypeAuthorizer, get_note_type_authorizer
 from .builtin import (
+    INTAKE_DEFINITION,
+    MEDICATIONS_DEFINITION,
     NARRATIVE_DEFINITION,
+    SAFETY_PLAN_DEFINITION,
     SOAP_DEFINITION,
+    TREATMENT_PLAN_DEFINITION,
     register_builtin_note_types,
 )
 from .registry import (
@@ -26,8 +30,12 @@ from .registry import (
 )
 
 __all__ = [
+    "INTAKE_DEFINITION",
+    "MEDICATIONS_DEFINITION",
     "NARRATIVE_DEFINITION",
+    "SAFETY_PLAN_DEFINITION",
     "SOAP_DEFINITION",
+    "TREATMENT_PLAN_DEFINITION",
     "NoteContext",
     "NoteFieldDef",
     "NoteFieldKind",
