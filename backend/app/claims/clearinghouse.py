@@ -63,6 +63,37 @@ class ClearinghouseRateLimitedError(ClearinghouseError):
     """The vendor answered 429 after the retry budget was exhausted."""
 
 
+class ClearinghouseRequestChangedError(ClearinghouseError):
+    """An idempotency key was reused with a different body (422 ``REQUEST_CHANGED``).
+
+    Within the vendor's replay window the same ``Idempotency-Key`` must carry
+    the same request. A corrected claim is a new submission and needs a
+    fresh key from the caller; resending unchanged fails identically.
+    """
+
+
+class ClearinghouseAccessDeniedError(ClearinghouseError):
+    """The account's key may not use this API at all (403 ``access_denied``).
+
+    Neither transient nor a request-shape problem — the enrollment API, for
+    one, refuses test-mode keys outright.
+    """
+
+
+class ClearinghouseInFlightError(ClearinghouseError):
+    """A request with this idempotency key is still being processed (409).
+
+    ``retry_after`` is the vendor's ``Retry-After`` hint in seconds when it
+    sent one. Re-issue the same key and body after it; the replay answers
+    with the original result. The adapter never waits or retries this
+    itself — the caller owns that decision.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class ClearinghouseUnavailableError(ClearinghouseError):
     """The call could not be completed: a network failure, a timeout, or a
     5xx that survived the retry budget."""
@@ -79,11 +110,18 @@ class ClearinghouseClient(Protocol):
         """Run a real-time eligibility check (270/271)."""
         ...
 
-    def submit_claim(self, req: ClaimSubmissionRequest) -> ClaimSubmissionResult:
+    def submit_claim(
+        self, req: ClaimSubmissionRequest, *, idempotency_key: str
+    ) -> ClaimSubmissionResult:
         """Submit a professional (837P) claim.
 
         Returns the synchronous accept-or-edit-reject response — the
         initial acknowledgement, not the payer's eventual adjudication.
+
+        ``idempotency_key`` is minted and persisted by the caller before the
+        call, one per submission attempt, and is what makes a resend after a
+        timeout safe: the vendor answers a repeat of the same key and body
+        with the original result instead of filing a second claim.
         """
         ...
 

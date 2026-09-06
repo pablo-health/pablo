@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 from app.models.claims_transport import (
     EligibilityProvider,
     EligibilityRequest,
-    EligibilityResponse,
     EligibilitySubscriber,
 )
 
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from .conftest import LiveClient
 
 _RECORDING = "eligibility_271_active.json"
+_AAA_RECORDING = "eligibility_271_aaa_invalid_member_id.json"
 
 #: The vendor's mock payer for these examples (its UnitedHealthcare id).
 _MOCK_PAYER_ID = "87726"
@@ -74,11 +74,11 @@ def test_an_unknown_member_id_is_an_aaa_error_not_a_transport_failure(live: Live
 
     response = live.adapter.check_eligibility(_request(unknown))
 
-    # The vendor answers 200 with an empty plan status and the AAA in
-    # ``errors``; the adapter's model does not surface ``errors`` yet, so the
-    # error code is read off the raw body.
+    # The vendor answers 200 with no plan status at all and the AAA in the
+    # top-level ``errors``; the adapter surfaces it rather than answering
+    # "no coverage".
     assert live.recorder.last_status() == 200
     assert response.planStatus == []
-    raw = live.recorder.last_json()
-    assert _AAA_SUBSCRIBER_ID_INVALID in [e.get("code") for e in raw.get("errors", [])]
-    assert EligibilityResponse.model_validate(raw).planStatus == []
+    assert _AAA_SUBSCRIBER_ID_INVALID in [e.code for e in response.errors]
+    assert all(e.followupAction for e in response.errors)
+    assert_same_shape(live.recorder.last_json(), fixture_shape(_AAA_RECORDING))

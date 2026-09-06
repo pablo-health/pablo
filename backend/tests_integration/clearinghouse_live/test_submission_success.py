@@ -2,10 +2,11 @@
 
 """An accepted test-payer claim, and the vendor's idempotency contract around it.
 
-The vendor keys replay detection on an ``Idempotency-Key`` header (24 h):
-the same key with the same body answers with the original result, the same
-key with a different body is refused with 422. The adapter sends no such
-header today, so the lane attaches one at the HTTP client level.
+The vendor keys replay detection on the ``Idempotency-Key`` the adapter
+sends for every submission (24 h): the same key with the same body answers
+with the original result, the same key with a different body is refused
+with 422. Both are exercised through the adapter's own keyed parameter, so
+what passes here is the contract a caller actually gets.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from app.claims.clearinghouse import ClearinghouseUnavailableError
+from app.claims.clearinghouse import ClearinghouseRequestChangedError
 from app.models.claims_transport import ClaimSubmissionRequest
 
 from .conftest import TEST_PAYER_ID, assert_same_shape, fixture_shape
@@ -42,8 +43,9 @@ def test_the_test_payer_accepts_the_claim(submitted_claim: SubmittedClaim) -> No
 def test_replaying_the_same_key_and_body_returns_the_same_claim(
     live: LiveClient, submitted_claim: SubmittedClaim
 ) -> None:
-    replay = live.with_idempotency_key(submitted_claim.idempotency_key).adapter.submit_claim(
-        ClaimSubmissionRequest.model_validate(submitted_claim.body)
+    replay = live.adapter.submit_claim(
+        ClaimSubmissionRequest.model_validate(submitted_claim.body),
+        idempotency_key=submitted_claim.idempotency_key,
     )
 
     assert replay.status == "SUCCESS"
@@ -62,9 +64,9 @@ def test_reusing_the_key_with_a_changed_body_is_refused(
     changed.claimInformation.claimChargeAmount = "160.00"
     changed.claimInformation.serviceLines[0].professionalService.lineItemChargeAmount = "160.00"
 
-    # The adapter has no typed error for 422 yet; it surfaces as "unavailable".
-    with pytest.raises(ClearinghouseUnavailableError):
-        live.with_idempotency_key(submitted_claim.idempotency_key).adapter.submit_claim(changed)
+    with pytest.raises(ClearinghouseRequestChangedError):
+        live.adapter.submit_claim(changed, idempotency_key=submitted_claim.idempotency_key)
 
     assert live.recorder.last_status() == _HTTP_UNPROCESSABLE
     assert live.recorder.last_json().get("code") == _REQUEST_CHANGED
+    assert_same_shape(live.recorder.last_json(), fixture_shape("error_request_changed.json"))

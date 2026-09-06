@@ -134,16 +134,6 @@ class LiveClient:
     http: httpx.Client = field(repr=False)
     recorder: ResponseRecorder = field(repr=False)
 
-    def with_idempotency_key(self, key: str) -> LiveClient:
-        """A sibling client whose every request carries ``Idempotency-Key``.
-
-        The adapter sends no idempotency header of its own, and the vendor
-        keys replay detection on it, so the submission that is later replayed
-        gets a client of its own — the reject submissions must NOT share it,
-        or the vendor would answer them with the first claim's cached result.
-        """
-        return _build_live_client(self.credentials, self.recorder, headers={"Idempotency-Key": key})
-
     def get_raw(self, url: str, *, params: dict[str, Any] | None = None) -> httpx.Response:
         return self.http.get(
             url, params=params, headers={"Authorization": f"Key {self.credentials.api_key}"}
@@ -156,18 +146,11 @@ class LiveClient:
 
 
 def _build_live_client(
-    credentials: ClearinghouseCredentials,
-    recorder: ResponseRecorder,
-    *,
-    headers: dict[str, str] | None = None,
+    credentials: ClearinghouseCredentials, recorder: ResponseRecorder
 ) -> LiveClient:
     from app.claims.stedi import StediClearinghouseClient  # noqa: PLC0415
 
-    http = httpx.Client(
-        timeout=_REQUEST_TIMEOUT_SECONDS,
-        headers=headers or {},
-        event_hooks={"response": [recorder]},
-    )
+    http = httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS, event_hooks={"response": [recorder]})
     return LiveClient(
         credentials=credentials,
         adapter=StediClearinghouseClient(credentials, client=http),
@@ -259,6 +242,17 @@ def fresh_control_number() -> str:
     return number
 
 
+def fresh_idempotency_key() -> str:
+    """A key no other submission in this run (or the last 24 h) has used.
+
+    The vendor keys replay detection on it, so every submission that is
+    meant to be a new claim — the reject tests included — needs its own;
+    sharing one would answer later claims with the first one's cached
+    result.
+    """
+    return secrets.token_urlsafe(24)
+
+
 def submission_body(control_number: str) -> dict[str, Any]:
     """The recorded test-payer claim, re-keyed to ``control_number``.
 
@@ -295,10 +289,10 @@ def submitted_claim(live: LiveClient) -> SubmittedClaim:
     from app.models.claims_transport import ClaimSubmissionRequest  # noqa: PLC0415
 
     body = submission_body(fresh_control_number())
-    key = secrets.token_urlsafe(24)
+    key = fresh_idempotency_key()
     submitted_at = datetime.now(UTC)
-    result = live.with_idempotency_key(key).adapter.submit_claim(
-        ClaimSubmissionRequest.model_validate(body)
+    result = live.adapter.submit_claim(
+        ClaimSubmissionRequest.model_validate(body), idempotency_key=key
     )
     return SubmittedClaim(
         body=body,

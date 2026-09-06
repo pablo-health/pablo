@@ -1,0 +1,63 @@
+{
+  "meta": {
+    "senderId": "STEDI",
+    "submitterId": "117151744",
+    "applicationMode": "test",
+    "traceId": "01M1VKH3QZWQ26Z4F2WGTYJSQD",
+    "outboundTraceId": "01M1VKH3QZWQ26Z4F2WGTYJSQD"
+  },
+  "controlNumber": "522205104",
+  "reassociationKey": "522205104",
+  "tradingPartnerServiceId": "87726",
+  "provider": {
+    "providerName": "Pablo Test Practice",
+    "entityIdentifier": "Provider",
+    "entityType": "Non-Person Entity",
+    "npi": "1999999984"
+  },
+  "subscriber": {
+    "memberId": "NOSUCHMEMBER000000",
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "entityIdentifier": "Insured or Subscriber",
+    "entityType": "Person",
+    "dateOfBirth": "19710101",
+    "aaaErrors": [
+      {
+        "field": "AAA",
+        "code": "72",
+        "description": "Invalid/Missing Subscriber/Insured ID",
+        "followupAction": "Please Correct and Resubmit",
+        "location": "Loop 2100C",
+        "possibleResolutions": "The subscriber's member ID is either missing or invalid.\n\u2022 Check the `subscriber.memberId`.\n\u2022 Ensure the member ID doesn't include the [Card Issuer Identifier](https://www.stedi.com/docs/healthcare/eligibility-troubleshooting#card-issuer-identifier-80840).\n\u2022 If you can't locate the correct member ID, try running an [insurance discovery check](https://www.stedi.com/docs/healthcare/insurance-discovery) to retrieve the patient's benefits information instead."
+      }
+    ]
+  },
+  "subscriberTraceNumbers": [
+    {
+      "traceTypeCode": "1",
+      "traceType": "Current Transaction Trace Numbers",
+      "referenceIdentification": "01M1VKH3QZWQ26Z4F2WGTYJSQD",
+      "originatingCompanyIdentifier": "3117151744"
+    }
+  ],
+  "payer": {
+    "entityIdentifier": "Payer",
+    "entityType": "Non-Person Entity",
+    "name": "UNITEDHEALTHCARE",
+    "payorIdentification": "87726"
+  },
+  "errors": [
+    {
+      "field": "AAA",
+      "code": "72",
+      "description": "Invalid/Missing Subscriber/Insured ID",
+      "followupAction": "Please Correct and Resubmit",
+      "location": "Loop 2100C",
+      "possibleResolutions": "The subscriber's member ID is either missing or invalid.\n\u2022 Check the `subscriber.memberId`.\n\u2022 Ensure the member ID doesn't include the [Card Issuer Identifier](https://www.stedi.com/docs/healthcare/eligibility-troubleshooting#card-issuer-identifier-80840).\n\u2022 If you can't locate the correct member ID, try running an [insurance discovery check](https://www.stedi.com/docs/healthcare/insurance-discovery) to retrieve the patient's benefits information instead."
+    }
+  ],
+  "x12": "ISA*00*          *00*          *ZZ*STEDI          *01*117151744      *260906*1456*^*00501*522205104*0*T*`~GS*HB*STEDI*117151744*20260906*145630*1*X*005010X279A1~ST*271*0001*005010X279A1~BHT*0022*11*01M1VKH3QZWQ26Z4F2WGTYJSQD*20260906*145630~HL*1**20*1~NM1*PR*2*UNITEDHEALTHCARE*****PI*87726~HL*2*1*21*1~NM1*1P*2*Pablo Test Practice*****XX*1999999984~HL*3*2*22*0~TRN*1*01M1VKH3QZWQ26Z4F2WGTYJSQD*3117151744~NM1*IL*1*Doe*Jane****MI*NOSUCHMEMBER000000~AAA*N**72*C~DMG*D8*19710101~SE*12*0001~GE*1*1~IEA*1*522205104~",
+  "eligibilitySearchId": "01a07738-8efe-79b2-9515-3f8f2e60e5cc",
+  "id": "ec_01a07738-8efe-79b2-9515-3f7ea1437891"
+}

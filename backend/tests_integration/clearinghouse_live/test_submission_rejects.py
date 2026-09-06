@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING, Any
 from app.claims.validation import dx_at_highest_specificity, dx_pointers_valid, missing_fields
 from app.models.claims_transport import ClaimSubmissionRequest, ClaimSubmissionResult, Subscriber
 
-from .conftest import assert_same_shape, fixture_shape, fresh_control_number, submission_body
+from .conftest import (
+    assert_same_shape,
+    fixture_shape,
+    fresh_control_number,
+    fresh_idempotency_key,
+    submission_body,
+)
 
 if TYPE_CHECKING:
     from .conftest import LiveClient
@@ -32,7 +38,7 @@ _SUBSCRIBER_DEMOGRAPHICS = ["dateOfBirth", "gender", "address"]
 def _submit_expecting_rejection(
     live: LiveClient, request: ClaimSubmissionRequest
 ) -> ClaimSubmissionResult:
-    result = live.adapter.submit_claim(request)
+    result = live.adapter.submit_claim(request, idempotency_key=fresh_idempotency_key())
 
     assert live.recorder.last_status() == 400
     assert result.status == "ERROR"
