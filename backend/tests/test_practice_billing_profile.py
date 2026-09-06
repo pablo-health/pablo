@@ -18,7 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from app.db.models import PracticeBillingProfileRow
-from app.services.practice_billing_profile import load_billing_profile, update_billing_profile
+from app.services.practice_billing_profile import (
+    load_billing_profile,
+    load_billing_tax_id,
+    update_billing_profile,
+)
 from app.services.token_encryption import decrypt_tokens
 from app.settings import get_settings
 
@@ -104,3 +108,24 @@ class TestPartialUpdatePreservesOtherFields:
 
         assert merged["legal_name"] == "Acme Therapy"
         assert merged["city"] == "Shelbyville"
+
+
+class TestReadingTheFullTaxId:
+    """The one reader of the encrypted value, for the documents that need it whole."""
+
+    def test_an_unconfigured_practice_has_none(self) -> None:
+        assert load_billing_tax_id(_empty_session()) is None
+
+    def test_a_row_without_a_tax_id_has_none(self) -> None:
+        session = MagicMock()
+        session.get.return_value = PracticeBillingProfileRow(id=1, legal_name="Acme Therapy")
+
+        assert load_billing_tax_id(session) is None
+
+    def test_the_stored_value_round_trips_whole(self) -> None:
+        session = _empty_session()
+        update_billing_profile(session, {"tax_id": "12-3456789"})
+        stored = session.add.call_args[0][0]
+        session.get.return_value = stored
+
+        assert load_billing_tax_id(session) == "12-3456789"
