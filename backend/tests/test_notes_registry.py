@@ -14,14 +14,33 @@ from app.models.soap_note import (
     SubjectiveNote,
 )
 from app.notes import (
+    INTAKE_DEFINITION,
+    MEDICATIONS_DEFINITION,
     NARRATIVE_DEFINITION,
+    SAFETY_PLAN_DEFINITION,
     SOAP_DEFINITION,
+    TREATMENT_PLAN_DEFINITION,
     NoteFieldDef,
     NoteSectionDef,
     NoteTypeDefinition,
     NoteTypeRegistry,
     get_default_registry,
     register_builtin_note_types,
+)
+from app.services.chat_context_bundler import (
+    INTAKE_NOTE_TYPES,
+    MEDICATIONS_NOTE_TYPES,
+    SAFETY_PLAN_NOTE_TYPES,
+    TREATMENT_PLAN_NOTE_TYPES,
+)
+
+ALL_BUILTIN_DEFINITIONS = (
+    SOAP_DEFINITION,
+    NARRATIVE_DEFINITION,
+    INTAKE_DEFINITION,
+    TREATMENT_PLAN_DEFINITION,
+    SAFETY_PLAN_DEFINITION,
+    MEDICATIONS_DEFINITION,
 )
 
 
@@ -98,14 +117,25 @@ class TestNoteTypeRegistry:
 
 
 class TestBuiltinDefinitions:
-    def test_register_builtin_populates_soap_and_narrative(self) -> None:
+    def test_register_builtin_populates_all_core_types(self) -> None:
         registry = NoteTypeRegistry()
 
         register_builtin_note_types(registry)
 
-        assert registry.keys() == ["narrative", "soap"]
+        assert registry.keys() == [
+            "intake",
+            "medications",
+            "narrative",
+            "safety_plan",
+            "soap",
+            "treatment_plan",
+        ]
         assert registry.get("soap") is SOAP_DEFINITION
         assert registry.get("narrative") is NARRATIVE_DEFINITION
+        assert registry.get("intake") is INTAKE_DEFINITION
+        assert registry.get("treatment_plan") is TREATMENT_PLAN_DEFINITION
+        assert registry.get("safety_plan") is SAFETY_PLAN_DEFINITION
+        assert registry.get("medications") is MEDICATIONS_DEFINITION
 
     def test_register_builtin_is_idempotent(self) -> None:
         registry = NoteTypeRegistry()
@@ -113,7 +143,67 @@ class TestBuiltinDefinitions:
         register_builtin_note_types(registry)
         register_builtin_note_types(registry)
 
-        assert registry.keys() == ["narrative", "soap"]
+        assert len(registry.keys()) == 6
+
+    def test_alias_keys_are_not_registered(self) -> None:
+        """The bundler's alternate keys are recognised on read, not registered
+        as their own note types — that would duplicate entries in every
+        note-type picker."""
+        registry = NoteTypeRegistry()
+
+        register_builtin_note_types(registry)
+
+        for alias in ("biopsychosocial", "stanley_brown", "medication_list"):
+            assert not registry.has(alias)
+
+    def test_patient_context_definitions_are_patient_scoped(self) -> None:
+        assert INTAKE_DEFINITION.context == "patient"
+        assert TREATMENT_PLAN_DEFINITION.context == "patient"
+        assert SAFETY_PLAN_DEFINITION.context == "patient"
+        assert MEDICATIONS_DEFINITION.context == "patient"
+
+    def test_session_context_definitions_unchanged(self) -> None:
+        assert SOAP_DEFINITION.context == "session"
+        assert NARRATIVE_DEFINITION.context == "session"
+
+    def test_bundler_canonical_keys_all_resolve_in_registry(self) -> None:
+        """Each note-type set the chat context bundler names must have at
+        least one key registered, so the bundler and the registry cannot
+        silently drift apart."""
+        registry = NoteTypeRegistry()
+        register_builtin_note_types(registry)
+
+        for note_type_set in (
+            INTAKE_NOTE_TYPES,
+            TREATMENT_PLAN_NOTE_TYPES,
+            SAFETY_PLAN_NOTE_TYPES,
+            MEDICATIONS_NOTE_TYPES,
+        ):
+            assert any(registry.has(key) for key in note_type_set), (
+                f"none of {note_type_set} are registered"
+            )
+
+    def test_new_definitions_have_sections_and_fields_with_unique_keys(self) -> None:
+        for definition in (
+            INTAKE_DEFINITION,
+            TREATMENT_PLAN_DEFINITION,
+            SAFETY_PLAN_DEFINITION,
+            MEDICATIONS_DEFINITION,
+        ):
+            assert definition.sections
+            section_keys = definition.section_keys()
+            assert len(section_keys) == len(set(section_keys))
+            for section in definition.sections:
+                assert section.fields
+
+    def test_new_definitions_do_not_set_prompt_builder(self) -> None:
+        for definition in (
+            INTAKE_DEFINITION,
+            TREATMENT_PLAN_DEFINITION,
+            SAFETY_PLAN_DEFINITION,
+            MEDICATIONS_DEFINITION,
+        ):
+            assert definition.prompt_builder is None
 
     def test_narrative_is_single_text_field(self) -> None:
         assert NARRATIVE_DEFINITION.tier == "core"
@@ -167,15 +257,15 @@ class TestBuiltinDefinitions:
         assert found == expected_list_fields
 
     def test_every_field_has_nonempty_label(self) -> None:
-        for definition in (SOAP_DEFINITION, NARRATIVE_DEFINITION):
+        for definition in ALL_BUILTIN_DEFINITIONS:
             for section in definition.sections:
                 assert section.label
                 for f in section.fields:
                     assert f.label, f"{definition.key}.{section.key}.{f.key} missing label"
 
     def test_builtins_do_not_set_system_prompt(self) -> None:
-        assert SOAP_DEFINITION.system_prompt is None
-        assert NARRATIVE_DEFINITION.system_prompt is None
+        for definition in ALL_BUILTIN_DEFINITIONS:
+            assert definition.system_prompt is None
 
 
 class TestSystemPrompt:
@@ -202,5 +292,5 @@ class TestDefaultRegistry:
         """Importing app.main (done via conftest) must have registered the
         OSS built-ins on the default registry."""
         registry = get_default_registry()
-        assert registry.has("soap")
-        assert registry.has("narrative")
+        for definition in ALL_BUILTIN_DEFINITIONS:
+            assert registry.has(definition.key)

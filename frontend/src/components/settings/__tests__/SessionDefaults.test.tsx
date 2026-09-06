@@ -14,8 +14,6 @@ function createPreferences(overrides: Partial<UserPreferences> = {}): UserPrefer
     auto_transcribe: true,
     quality_preset: "balanced",
     therapist_display_name: null,
-    working_hours_start: 8,
-    working_hours_end: 18,
     calendar_default_view: "week",
     timezone: "America/New_York",
     theme: "warm-paper",

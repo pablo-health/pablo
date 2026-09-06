@@ -174,3 +174,27 @@ class PublicBookingConfirmation(BaseModel):
     end_at: str
     duration_minutes: int
     status: Literal["confirmed", "pending_confirmation"]
+    # A capability link the booker can use to view or cancel this booking
+    # later — not an id, just the same confirmation token folded into a
+    # URL. ``None`` for an instant booking, which never gets a token.
+    manage_url: str | None = None
+
+
+class PublicManagedBooking(BaseModel):
+    """What a booker sees when they redeem their manage link.
+
+    Same "no internal ids" posture as the rest of the public surface —
+    link-derived display fields plus the appointment's own status, and
+    nothing that identifies the patient record behind it.
+    """
+
+    title: str
+    host_name: str
+    start_at: str
+    end_at: str
+    duration_minutes: int
+    status: str
+
+
+class PublicBookingCancellation(BaseModel):
+    cancelled: bool = True

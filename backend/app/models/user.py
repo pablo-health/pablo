@@ -72,8 +72,6 @@ class UserPreferences(BaseModel):
     auto_transcribe: bool = True
     quality_preset: str = "balanced"
     therapist_display_name: str | None = None
-    working_hours_start: int = Field(default=8, ge=0, le=23)
-    working_hours_end: int = Field(default=18, ge=1, le=24)
     calendar_default_view: str = "timeGridWeek"
     timezone: str = Field(
         default="America/New_York",

@@ -78,8 +78,6 @@ class TestSavePreferences:
         "auto_transcribe": False,
         "quality_preset": "high",
         "therapist_display_name": "Dr. Rivera",
-        "working_hours_start": 6,
-        "working_hours_end": 22,
         "calendar_default_view": "dayGridMonth",
         "timezone": "America/Los_Angeles",
         "theme": "dark",
@@ -112,8 +110,6 @@ class TestSavePreferences:
         assert body["default_session_type"] == "individual"
         assert body["auto_transcribe"] is True
         assert body["therapist_display_name"] is None
-        assert body["working_hours_start"] == 8
-        assert body["working_hours_end"] == 18
 
     def test_put_rejects_out_of_range_duration(self, client: Any) -> None:
         too_low = client.put("/api/users/me/preferences", json={"default_duration_minutes": 0})
@@ -121,13 +117,6 @@ class TestSavePreferences:
 
         assert too_low.status_code == 422
         assert too_high.status_code == 422
-
-    def test_put_rejects_out_of_range_working_hours(self, client: Any) -> None:
-        bad_start = client.put("/api/users/me/preferences", json={"working_hours_start": 24})
-        bad_end = client.put("/api/users/me/preferences", json={"working_hours_end": 0})
-
-        assert bad_start.status_code == 422
-        assert bad_end.status_code == 422
 
     def test_put_rejects_wrong_types(self, client: Any) -> None:
         response = client.put(
