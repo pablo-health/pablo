@@ -17,3 +17,17 @@ payer. Nothing here is PHI.
 
 Regenerate with a test API key against the vendor's test payer; the shapes are
 stable across their dated API versions.
+
+## Constructed fixtures
+
+The files below were NOT captured from a live call — building the request
+that would trigger them (a malformed body, an unenrolled payer) wasn't
+practical without a test account handy, so they're hand-built from the
+vendor's documented shapes instead. Replace them with a recorded capture the
+next time someone has a test key and hits these paths for real.
+
+| File | What it is |
+|---|---|
+| `payer_search_test_payer.json` | a payer-search hit |
+| `eligibility_271_active.json` | a 271 eligibility response |
+| `error_invalid_request_body.json`, `error_account_not_provisioned.json` | the vendor's generic `{code, message}` error envelope |

@@ -1,0 +1,268 @@
+# Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
+
+"""Tests for the Stedi clearinghouse adapter.
+
+Every call goes over ``httpx.MockTransport`` — no network — replaying the
+recorded (or, where noted in the fixtures' README, constructed) fixtures
+under ``tests/fixtures/clearinghouse/``. One test per ``ClearinghouseClient``
+protocol method, plus the error-mapping cases the bead specifically calls
+out: a generic 400, the unprovisioned-account body, and a 429.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import httpx
+import pytest
+from app.claims.clearinghouse import (
+    ClearinghouseNotProvisionedError,
+    ClearinghouseRateLimitedError,
+    ClearinghouseValidationError,
+)
+from app.claims.credentials import ClearinghouseCredentials
+from app.claims.stedi import StediClearinghouseClient
+from app.models.claims_transport import (
+    ClaimSubmissionRequest,
+    EligibilityProvider,
+    EligibilityRequest,
+    EligibilitySubscriber,
+    EnrollmentFilters,
+    EnrollmentPayerRef,
+    EnrollmentProviderRef,
+    EnrollmentRequest,
+    EnrollmentTransactions,
+    ProviderContact,
+    ProviderRegistration,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "clearinghouse"
+
+
+def _fixture(name: str) -> dict[str, object]:
+    data: dict[str, object] = json.loads((_FIXTURES / name).read_text())
+    return data
+
+
+def _client_for(handler: Callable[[httpx.Request], httpx.Response]) -> StediClearinghouseClient:
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.Client(transport=transport)
+    credentials = ClearinghouseCredentials(api_key="key_test_fixture", mode="test")
+    return StediClearinghouseClient(credentials, client=http_client)
+
+
+def _json_response(body: dict[str, object], status_code: int = 200) -> httpx.Response:
+    return httpx.Response(status_code, json=body)
+
+
+def _submission_request() -> ClaimSubmissionRequest:
+    body = _fixture("837p_request_test_payer.json")
+    return ClaimSubmissionRequest.model_validate(body)
+
+
+class TestSearchPayers:
+    def test_returns_the_matching_payers(self) -> None:
+        fixture = _fixture("payer_search_test_payer.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/2024-04-01/payers/search"
+            assert request.headers["authorization"] == "Key key_test_fixture"
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+
+        payers = client.search_payers("Stedi Test Payer")
+
+        assert [p.primaryPayerId for p in payers] == ["STEDI"]
+        assert payers[0].displayName == "Stedi Test Payer"
+
+
+class TestCheckEligibility:
+    def test_returns_the_271_response(self) -> None:
+        fixture = _fixture("eligibility_271_active.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/2024-04-01/change/medicalnetwork/eligibility/v3"
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+        req = EligibilityRequest(
+            tradingPartnerServiceId="STEDI",
+            provider=EligibilityProvider(organizationName="Pablo Test Practice", npi="1999999984"),
+            subscriber=EligibilitySubscriber(memberId="123456789"),
+        )
+
+        response = client.check_eligibility(req)
+
+        assert response.meta.traceId == "b7a1e6d1-6c1a-4a0d-9c4a-2b6b6e6a0c11"
+        assert response.planStatus[0].statusCode == "1"
+
+
+class TestSubmitClaim:
+    def test_a_success_response_carries_the_claim_reference(self) -> None:
+        fixture = _fixture("837p_submission_success_test_payer.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert (
+                request.url.path
+                == "/2024-04-01/change/medicalnetwork/professionalclaims/v3/submission"
+            )
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+
+        result = client.submit_claim(_submission_request())
+
+        assert result.status == "SUCCESS"
+        assert result.claimReference is not None
+        assert result.claimReference.rhclaimNumber == "01M1T7001FRW15MVE0SSW4FA7G"
+
+    def test_an_edit_rejection_is_a_result_not_an_exception(self) -> None:
+        fixture = _fixture("837p_submission_edit_rejected_dx_pointer.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture, status_code=400)
+
+        client = _client_for(handler)
+
+        result = client.submit_claim(_submission_request())
+
+        assert result.status == "ERROR"
+        assert result.errors[0].code == "33"
+        assert result.errors[0].followupAction == "Please Correct and Resubmit"
+
+
+class TestGetTransaction:
+    def test_returns_the_transaction_document(self) -> None:
+        listing = _fixture("polling_transactions_277_and_835.json")
+        items = listing["items"]
+        assert isinstance(items, list)
+        item = items[0]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == f"/2023-08-01/transactions/{item['transactionId']}"
+            return _json_response(item)
+
+        client = _client_for(handler)
+
+        document = client.get_transaction(str(item["transactionId"]))
+
+        assert document.transactionId == item["transactionId"]
+        assert document.direction == "OUTBOUND"
+        assert document.businessIdentifiers[0].name == "Patient Control Number"
+
+
+class TestCreateProvider:
+    def test_returns_the_registered_provider(self) -> None:
+        fixture = _fixture("enrollment_create_provider.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/2024-09-01/providers"
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+        registration = ProviderRegistration(
+            name="Pablo Health Test Provider",
+            npi="1999999984",
+            taxId="844459714",
+            contacts=[
+                ProviderContact(
+                    organizationName="Pablo Health Test Provider",
+                    email="test@example.com",
+                    phone="4045550100",
+                    streetAddress1="1 Test St",
+                    city="Atlanta",
+                    zipCode="30301",
+                    state="GA",
+                )
+            ],
+        )
+
+        provider = client.create_provider(registration)
+
+        assert provider.npi == "1999999984"
+        assert provider.id == "01a0746f-25d4-78a0-bb43-0f95acd218c9"
+
+
+class TestCreateEnrollment:
+    def test_returns_the_enrollment(self) -> None:
+        fixture = _fixture("enrollment_create_enrollment_835.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/2024-09-01/enrollments"
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+        request = EnrollmentRequest(
+            provider=EnrollmentProviderRef(id="01a0746f-25d4-78a0-bb43-0f95acd218c9"),
+            payer=EnrollmentPayerRef(idOrAlias="STEDI"),
+            primaryContact=ProviderContact(
+                organizationName="Pablo Health Test Provider",
+                email="test@example.com",
+                phone="4045550100",
+                streetAddress1="1 Test St",
+                city="Atlanta",
+                zipCode="30301",
+                state="GA",
+            ),
+            transactions=EnrollmentTransactions(),
+        )
+
+        enrollment = client.create_enrollment(request)
+
+        assert enrollment.status == "STEDI_ACTION_REQUIRED"
+        assert enrollment.payer.submittedPayerIdOrAlias == "STEDI"
+
+
+class TestListEnrollments:
+    def test_returns_the_matching_enrollments(self) -> None:
+        fixture = _fixture("enrollment_create_enrollment_835.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/2024-09-01/enrollments"
+            return _json_response({"items": [fixture]})
+
+        client = _client_for(handler)
+
+        enrollments = client.list_enrollments(EnrollmentFilters())
+
+        assert len(enrollments) == 1
+        assert enrollments[0].id == "01a0746f-2edf-75c0-a780-555b1231c789"
+
+
+class TestErrorMapping:
+    def test_invalid_request_body_raises_a_validation_error(self) -> None:
+        fixture = _fixture("error_invalid_request_body.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture, status_code=400)
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseValidationError):
+            client.search_payers("anything")
+
+    def test_unprovisioned_account_raises_a_typed_error(self) -> None:
+        fixture = _fixture("error_account_not_provisioned.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture, status_code=400)
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseNotProvisionedError):
+            client.submit_claim(_submission_request())
+
+    def test_rate_limiting_raises_a_typed_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, json={"code": "TOO_MANY_REQUESTS"})
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseRateLimitedError):
+            client.search_payers("anything")
