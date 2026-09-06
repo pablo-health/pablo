@@ -45,6 +45,31 @@ class ClaimRepository(ABC):
         """
 
     @abstractmethod
+    def list_all(
+        self,
+        *,
+        state: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[Claim]:
+        """Every claim the tracker shows, newest first.
+
+        ``state`` narrows to one state; ``from_date`` / ``to_date`` (each
+        optional, inclusive) keep only claims with a service line dated in
+        the range. Drafts are included — the tracker is where a draft is
+        found again after the review step was closed.
+        """
+
+    @abstractmethod
+    def latest_by_appointment(self, appointment_ids: list[str]) -> dict[str, Claim]:
+        """The newest claim carrying a line for each appointment.
+
+        Keyed by appointment id; an appointment with no claim is absent.
+        Voids and corrections count — the newest row is what the queue
+        needs to say about the visit, whatever kind of claim it is.
+        """
+
+    @abstractmethod
     def create(self, claim: Claim) -> Claim:
         """Add a claim and its lines. Flushed, not committed."""
 
@@ -78,6 +103,37 @@ class InMemoryClaimRepository(ClaimRepository):
             and any(from_date <= line.service_date <= to_date for line in c.lines)
         ]
         return [c.model_copy(deep=True) for c in sorted(matches, key=_oldest_first)]
+
+    def list_all(
+        self,
+        *,
+        state: str | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> list[Claim]:
+        matches = [
+            c
+            for c in self._claims.values()
+            if (state is None or c.state == state)
+            and (
+                (from_date is None and to_date is None)
+                or any(
+                    (from_date is None or line.service_date >= from_date)
+                    and (to_date is None or line.service_date <= to_date)
+                    for line in c.lines
+                )
+            )
+        ]
+        return [c.model_copy(deep=True) for c in sorted(matches, key=_newest_first)]
+
+    def latest_by_appointment(self, appointment_ids: list[str]) -> dict[str, Claim]:
+        wanted = set(appointment_ids)
+        latest: dict[str, Claim] = {}
+        for claim in sorted(self._claims.values(), key=_newest_first):
+            for line in claim.lines:
+                if line.appointment_id in wanted and line.appointment_id not in latest:
+                    latest[line.appointment_id] = claim.model_copy(deep=True)
+        return latest
 
     def create(self, claim: Claim) -> Claim:
         if any(c.control_number == claim.control_number for c in self._claims.values()):

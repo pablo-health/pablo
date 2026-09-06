@@ -264,6 +264,10 @@ class AuditAction(StrEnum):
     CLAIM_CORRECTED = "claim_corrected"
     CLAIM_VOIDED = "claim_voided"
     PATIENT_CLAIMS_VIEWED = "patient_claims_viewed"
+    # The tracker: every claim the clinician can see, in one read. One row
+    # naming the claims it listed (ids and control numbers), like the CSV
+    # export does.
+    CLAIMS_LISTED = "claims_listed"
     # The biller handoff: a range of claims left the practice as a CSV, or
     # one claim as a CMS-1500-layout PDF. A disclosure, so the CSV row names
     # every claim it carried (ids and control numbers, with the range and
