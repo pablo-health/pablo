@@ -13,10 +13,13 @@ services a booking POST uses) to check search_path, appointment reads, and
 appointment/patient writes all land in the resolved practice's own schema
 and nowhere else.
 
-Runs as a superuser connection (matching local dev Postgres) — RLS is not
-under test here (see test_tenant_isolation.py / test_patient_guc_integration.py
-for that); this suite is only about which schema a request ends up in and
-where its writes land.
+RLS is not under test here (see test_tenant_isolation.py /
+test_patient_guc_integration.py for that); this suite is only about which
+schema a request ends up in and where its writes land. It still runs under
+RLS, though: the suite's role is NOSUPERUSER NOBYPASSRLS (tests_integration/
+conftest.py), so the out-of-band row counts arm ``app.current_user_id`` as
+the clinician whose write is being located — an unarmed connection sees
+nothing under FORCE ROW LEVEL SECURITY and would report every schema empty.
 
 Requires:
   - Cloud SQL proxy running (make db-dev-proxy) or local Postgres (make db-up)
@@ -271,14 +274,25 @@ def pg_session(engine, two_practices):
     conn.close()
 
 
-def _appointment_count(engine, schema: str) -> int:
+def _count_as(engine, schema: str, table: str, as_user: str) -> int:
+    """Rows of ``schema.table`` visible to ``as_user``, on a fresh connection.
+
+    Armed as the clinician whose write we are locating, so pointing this at
+    the *other* schema is what exposes a misplaced row: a booking that
+    landed in B's schema would still carry A's owner as ``user_id`` and be
+    visible to nobody else.
+    """
     with engine.connect() as conn:
-        return conn.execute(text(f"SELECT count(*) FROM {schema}.appointments")).scalar_one()  # noqa: S608
+        conn.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": as_user})
+        return conn.execute(text(f"SELECT count(*) FROM {schema}.{table}")).scalar_one()  # noqa: S608
 
 
-def _patient_count(engine, schema: str) -> int:
-    with engine.connect() as conn:
-        return conn.execute(text(f"SELECT count(*) FROM {schema}.patients")).scalar_one()  # noqa: S608
+def _appointment_count(engine, schema: str, as_user: str) -> int:
+    return _count_as(engine, schema, "appointments", as_user)
+
+
+def _patient_count(engine, schema: str, as_user: str) -> int:
+    return _count_as(engine, schema, "patients", as_user)
 
 
 def _book_instant(
@@ -402,21 +416,22 @@ class TestBookingWritePlacement:
     and appointment in the owning schema, and nowhere else."""
 
     def test_booking_writes_land_only_in_owning_schema(self, engine, pg_session):
-        before_a_appts = _appointment_count(engine, SCHEMA_A)
-        before_b_appts = _appointment_count(engine, SCHEMA_B)
-        before_a_patients = _patient_count(engine, SCHEMA_A)
-        before_b_patients = _patient_count(engine, SCHEMA_B)
-
         link_repo = get_booking_link_repository()
         user_repo = get_user_repository()
         ctx = get_public_booking_context(_SLUG_A, link_repo=link_repo, user_repo=user_repo)
+        writer = ctx.link.user_id
+
+        before_a_appts = _appointment_count(engine, SCHEMA_A, writer)
+        before_b_appts = _appointment_count(engine, SCHEMA_B, writer)
+        before_a_patients = _patient_count(engine, SCHEMA_A, writer)
+        before_b_patients = _patient_count(engine, SCHEMA_B, writer)
 
         start_at = datetime.combine(_BOOKING_DATE, datetime.min.time(), tzinfo=UTC) + timedelta(
             hours=14
         )
         _book_instant(pg_session, ctx.link.user_id, start_at, ctx.link.duration_minutes)
 
-        assert _appointment_count(engine, SCHEMA_A) == before_a_appts + 1
-        assert _appointment_count(engine, SCHEMA_B) == before_b_appts
-        assert _patient_count(engine, SCHEMA_A) == before_a_patients + 1
-        assert _patient_count(engine, SCHEMA_B) == before_b_patients
+        assert _appointment_count(engine, SCHEMA_A, writer) == before_a_appts + 1
+        assert _appointment_count(engine, SCHEMA_B, writer) == before_b_appts
+        assert _patient_count(engine, SCHEMA_A, writer) == before_a_patients + 1
+        assert _patient_count(engine, SCHEMA_B, writer) == before_b_patients
