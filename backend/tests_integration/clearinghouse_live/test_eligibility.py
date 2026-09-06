@@ -14,11 +14,14 @@ from __future__ import annotations
 import secrets
 from typing import TYPE_CHECKING
 
+from app.claims.eligibility import REQUESTED_SERVICE_TYPE_CODES, summarize_271
 from app.models.claims_transport import (
+    EligibilityEncounter,
     EligibilityProvider,
     EligibilityRequest,
     EligibilitySubscriber,
 )
+from app.utcnow import utc_now
 
 from .conftest import assert_same_shape, fixture_shape
 
@@ -82,3 +85,38 @@ def test_an_unknown_member_id_is_an_aaa_error_not_a_transport_failure(live: Live
     assert _AAA_SUBSCRIBER_ID_INVALID in [e.code for e in response.errors]
     assert all(e.followupAction for e in response.errors)
     assert_same_shape(live.recorder.last_json(), fixture_shape(_AAA_RECORDING))
+
+
+def test_the_mental_health_inquiry_reads_down_to_a_well_formed_summary(live: LiveClient) -> None:
+    """The chart's own inquiry — service type ``MH`` — against a live 271,
+    read down by the summariser. Proves the vendor still answers the shape
+    the summariser reads, and that the reading is coherent: a status, the
+    payer's name and id, and every money field either absent or in cents.
+    """
+    inquiry = _request(_ACTIVE_MEMBER).model_copy(
+        update={
+            "encounter": EligibilityEncounter(serviceTypeCodes=list(REQUESTED_SERVICE_TYPE_CODES))
+        }
+    )
+
+    response = live.adapter.check_eligibility(inquiry)
+    summary = summarize_271(response, checked_at=utc_now())
+
+    assert summary.status == "active"
+    assert summary.aaa_errors == []
+    assert summary.payer_name
+    assert response.payer is not None
+    assert response.payer.payorIdentification == _MOCK_PAYER_ID
+    assert summary.plan_name
+    assert summary.plan_begin is not None
+    assert len(summary.plan_begin) == len("YYYY-MM-DD")
+    for cents in (summary.copay_cents, summary.deductible_remaining_cents):
+        assert cents is None or (isinstance(cents, int) and cents >= 0)
+    assert summary.coinsurance_pct is None or 0 <= summary.coinsurance_pct <= 100
+    # The mock member's only carve-out is pharmacy; it must not read as behavioral.
+    assert summary.carveout_administrator is None
+    assert_same_shape(live.recorder.last_json(), fixture_shape(_RECORDING))
+    print(
+        "summary:",
+        summary.model_dump_json(exclude={"aaa_errors"}, exclude_none=True),
+    )

@@ -59,6 +59,10 @@ class PatientCoverageRepository(ABC):
     """One client's coverage rows, the active one foremost."""
 
     @abstractmethod
+    def get(self, coverage_id: str) -> PatientCoverage | None:
+        """One coverage row by id, active or not, or ``None``."""
+
+    @abstractmethod
     def get_active(self, patient_id: str) -> PatientCoverage | None:
         """The client's active primary coverage, or ``None``."""
 
@@ -111,6 +115,9 @@ class InMemoryPayerRepository(PayerRepository):
 class InMemoryPatientCoverageRepository(PatientCoverageRepository):
     def __init__(self) -> None:
         self._rows: dict[str, PatientCoverage] = {}
+
+    def get(self, coverage_id: str) -> PatientCoverage | None:
+        return self._rows.get(coverage_id)
 
     def get_active(self, patient_id: str) -> PatientCoverage | None:
         for row in self._rows.values():

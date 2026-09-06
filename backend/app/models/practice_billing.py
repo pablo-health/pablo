@@ -28,6 +28,9 @@ class BillingProfileResponse(BaseModel):
     state: str | None = None
     postal_code: str | None = None
     phone: str | None = None
+    #: Run an eligibility check on its own when coverage lands at intake or is
+    #: saved on the chart. Default on; off leaves the manual re-verify button.
+    eligibility_auto_check: bool = True
 
 
 class UpdateBillingProfileRequest(BaseModel):
@@ -48,3 +51,4 @@ class UpdateBillingProfileRequest(BaseModel):
     state: str | None = Field(None, max_length=2)
     postal_code: str | None = Field(None, max_length=10)
     phone: str | None = Field(None, max_length=50)
+    eligibility_auto_check: bool | None = None

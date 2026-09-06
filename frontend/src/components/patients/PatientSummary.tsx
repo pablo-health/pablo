@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
+"use client"
+
 import { Users, Calendar, Phone, Mail } from "lucide-react"
+import { EligibilityBadge } from "@/components/insurance/EligibilityBadge"
+import { usePatientCoverage } from "@/hooks/useCoverage"
 import type { PatientResponse } from "@/types/patients"
 
 interface PatientSummaryProps {
@@ -32,6 +36,11 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export function PatientSummary({ patient }: PatientSummaryProps) {
+  // The plan's last eligibility answer rides in the header so it is seen
+  // before the first session, not only on the Insurance tab. Nothing on
+  // file renders nothing: an absent plan is not a coverage status.
+  const { data: coverage } = usePatientCoverage(patient.id)
+
   return (
     <div className="card">
       <div className="flex items-start gap-6">
@@ -39,11 +48,12 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
           <Users className="w-10 h-10 text-primary-600" />
         </div>
         <div className="flex-1">
-          <div className="flex items-center gap-4 mb-4">
+          <div className="flex flex-wrap items-center gap-4 mb-4">
             <h1 className="text-3xl font-display font-bold text-neutral-900">
               {patient.first_name} {patient.last_name}
             </h1>
             <StatusBadge status={patient.status} />
+            {coverage && <EligibilityBadge summary={coverage.eligibility} />}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-neutral-600">

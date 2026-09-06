@@ -19,6 +19,7 @@ import {
   listPayers,
   updateCoverage,
   updatePayer,
+  verifyCoverage,
 } from "@/lib/api/coverage"
 import { queryKeys } from "@/lib/api/queryKeys"
 import { useAuthMutation, useAuthQuery } from "./useAuthQuery"
@@ -78,6 +79,14 @@ export function useUpdateCoverage(token?: string) {
 export function useDeactivateCoverage(token?: string) {
   return useAuthMutation<void, { patientId: string }>({
     mutationFn: ({ patientId }) => deactivateCoverage(patientId, token),
+    invalidateKeys: ({ patientId }) => [queryKeys.coverage.byPatient(patientId)],
+  })
+}
+
+/** The chart card's re-verify button: ask the payer now. */
+export function useVerifyCoverage(token?: string) {
+  return useAuthMutation<CoverageResponse, { patientId: string }>({
+    mutationFn: ({ patientId }) => verifyCoverage(patientId, token),
     invalidateKeys: ({ patientId }) => [queryKeys.coverage.byPatient(patientId)],
   })
 }

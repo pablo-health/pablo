@@ -70,6 +70,53 @@ export interface SubscriberFields {
   subscriber_postal_code: string | null
 }
 
+/**
+ * What the last eligibility check found. Mirrors
+ * `backend/app/models/eligibility.py`.
+ *
+ * `active` and `inactive` are the payer's answer; `unknown` is a 271 that
+ * answered without saying either way for this benefit; `error` is a payer
+ * refusal (an AAA rejection) — the payer never answered the coverage
+ * question. None of it is a payment guarantee.
+ */
+export type EligibilityStatus = "active" | "inactive" | "unknown" | "error"
+
+/** Somebody other than the payer on the card administers behavioral benefits. */
+export interface CarveoutAdministrator {
+  name: string
+  /** The administrator's electronic payer id, when the 271 carried one. */
+  payer_id: string | null
+}
+
+export interface VisitLimit {
+  remaining: number | null
+  total: number | null
+}
+
+export interface AaaError {
+  code: string
+  description: string
+  followup_action: string
+  /** The vendor's plain-language "what to do about it". */
+  resolution: string | null
+}
+
+export interface EligibilitySummary {
+  status: EligibilityStatus
+  checked_at: string
+  payer_name: string | null
+  plan_name: string | null
+  /** ISO date (YYYY-MM-DD). */
+  plan_begin: string | null
+  copay_cents: number | null
+  coinsurance_pct: number | null
+  deductible_remaining_cents: number | null
+  visit_limit: VisitLimit | null
+  requires_authorization: boolean | null
+  carveout_administrator: CarveoutAdministrator | null
+  aaa_errors: AaaError[]
+}
+
 export interface CoverageResponse extends SubscriberFields {
   id: string
   patient_id: string
@@ -78,8 +125,10 @@ export interface CoverageResponse extends SubscriberFields {
   group_number: string | null
   plan_name: string | null
   active: boolean
-  /** When an eligibility check last confirmed the plan; null until one has run. */
+  /** When an eligibility check last asked the payer; null until one has run. */
   verified_at: string | null
+  /** The stored 271 read down; null until a check has run. */
+  eligibility: EligibilitySummary | null
   created_at: string
   updated_at: string
 }

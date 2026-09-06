@@ -603,6 +603,7 @@ CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
     phone character varying(50),
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    eligibility_auto_check boolean DEFAULT true NOT NULL,
     CONSTRAINT ck_practice_billing_profile_singleton CHECK ((id = 1)),
     CONSTRAINT ck_practice_billing_profile_tax_id_type CHECK (((tax_id_type)::text = ANY ((ARRAY['ein'::character varying, 'ssn'::character varying])::text[])))
 );
