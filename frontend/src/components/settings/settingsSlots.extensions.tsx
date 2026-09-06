@@ -26,6 +26,7 @@
  */
 
 import type { ReactNode } from "react"
+import type { AppointmentTypeResponse, UpdateAppointmentTypeRequest } from "@/types/scheduling"
 
 /** Extra cards on Practice > Availability, below the working-hours grid. */
 export function AvailabilityExtras(): ReactNode {
@@ -35,6 +36,21 @@ export function AvailabilityExtras(): ReactNode {
 
 /** An extra card on Practice > Scheduling, below the new-patient flow. */
 export function SchedulingEmailReplies(): ReactNode {
+  return null
+}
+
+/**
+ * An extra control on an appointment type's row, next to Self-book.
+ *
+ * A managed deployment drafts reply emails and needs to know which types it
+ * may offer times for in those drafts ("In drafts"); a self-hosted deployment
+ * has no draft surface, so this stays absent rather than a toggle nobody's
+ * anything reads.
+ */
+export function SchedulingTypeExtras(_props: {
+  appointmentType: AppointmentTypeResponse
+  onChange: (patch: UpdateAppointmentTypeRequest) => void
+}): ReactNode {
   return null
 }
 

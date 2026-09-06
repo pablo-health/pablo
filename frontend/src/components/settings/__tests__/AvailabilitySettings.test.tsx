@@ -5,7 +5,8 @@ import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import {
-  AvailabilitySettings,
+  BlockedTimeCard,
+  LimitsAndBuffersCard,
   schedulingDefaultsFromRules,
   schedulingDefaultsToRulePayloads,
 } from "../AvailabilitySettings"
@@ -14,15 +15,10 @@ import type { AvailabilityRule } from "@/types/availability"
 const mutateCreate = vi.fn()
 const mutateUpdate = vi.fn()
 const mutateDelete = vi.fn()
-const mutateParse = vi.fn()
 
 let rulesData: AvailabilityRule[] = []
 let listLoading = false
 let listErrored = false
-let preferencesData: { working_hours_start: number; working_hours_end: number } | undefined = {
-  working_hours_start: 8,
-  working_hours_end: 18,
-}
 
 vi.mock("@/hooks/useAvailability", () => ({
   useAvailabilityRules: () => ({
@@ -33,11 +29,6 @@ vi.mock("@/hooks/useAvailability", () => ({
   useCreateAvailabilityRule: () => ({ mutate: mutateCreate, isPending: false }),
   useUpdateAvailabilityRule: () => ({ mutate: mutateUpdate, isPending: false }),
   useDeleteAvailabilityRule: () => ({ mutate: mutateDelete, isPending: false }),
-  useParseAvailabilityRules: () => ({ mutate: mutateParse, isPending: false }),
-}))
-
-vi.mock("@/hooks/usePreferences", () => ({
-  usePreferences: () => ({ data: preferencesData }),
 }))
 
 function makeRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
@@ -53,150 +44,100 @@ function makeRule(overrides: Partial<AvailabilityRule> = {}): AvailabilityRule {
   }
 }
 
-function renderWithClient() {
+function renderWithClient(ui: React.ReactElement) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <AvailabilitySettings />
-    </QueryClientProvider>
-  )
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>)
 }
 
-describe("AvailabilitySettings", () => {
+describe("BlockedTimeCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     rulesData = []
     listLoading = false
     listErrored = false
-    preferencesData = { working_hours_start: 8, working_hours_end: 18 }
   })
 
-  it("mounts the natural-language rule entry beside the rules list", () => {
-    renderWithClient()
+  it("shows an empty state when there is no blocked time", () => {
+    renderWithClient(<BlockedTimeCard />)
 
-    expect(screen.getByLabelText(/describe your availability/i)).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Parse" })).toBeInTheDocument()
+    expect(screen.getByText("No blocked time yet.")).toBeInTheDocument()
   })
 
-  it("shows an explanatory empty state when there are no rules", () => {
-    renderWithClient()
-
-    expect(
-      screen.getByText(/don't have any availability rules yet/i)
-    ).toBeInTheDocument()
-  })
-
-  describe("seed from calendar display hours", () => {
-    it("shows the seed action when there are no rules, and does not create anything on its own", () => {
-      renderWithClient()
-
-      expect(
-        screen.getByRole("button", { name: "Start from your calendar display hours" })
-      ).toBeInTheDocument()
-      expect(mutateCreate).not.toHaveBeenCalled()
-    })
-
-    it("hides the seed action once a rule exists", () => {
-      rulesData = [makeRule({ id: "r1" })]
-      renderWithClient()
-
-      expect(
-        screen.queryByRole("button", { name: "Start from your calendar display hours" })
-      ).not.toBeInTheDocument()
-    })
-
-    it("creates five weekday working_hours rules from the display preference", async () => {
-      const user = userEvent.setup()
-      renderWithClient()
-
-      await user.click(
-        screen.getByRole("button", { name: "Start from your calendar display hours" })
-      )
-
-      expect(mutateCreate).toHaveBeenCalledTimes(5)
-      for (let dayOfWeek = 0; dayOfWeek <= 4; dayOfWeek++) {
-        expect(mutateCreate).toHaveBeenCalledWith(
-          {
-            rule_type: "working_hours",
-            enforcement: "hard",
-            params: { day_of_week: dayOfWeek, start: "08:00", end: "18:00" },
-          },
-          expect.anything()
-        )
-      }
-    })
-  })
-
-  it("lists existing rules grouped by category", () => {
+  it("does not list working_hours or session_defaults rules", () => {
     rulesData = [
-      makeRule({ id: "r1", rule_type: "block_day_of_week", params: { day_of_week: 4 } }),
-      makeRule({
-        id: "r2",
-        rule_type: "max_per_day",
-        enforcement: "soft",
-        params: { max: 6 },
-      }),
+      makeRule({ id: "r1", rule_type: "working_hours", params: { day_of_week: 0, start: "09:00", end: "17:00" } }),
+      makeRule({ id: "r2", rule_type: "session_defaults", params: { duration_minutes: 50 } }),
     ]
 
-    renderWithClient()
+    renderWithClient(<BlockedTimeCard />)
 
-    expect(screen.getByText("Blocked time")).toBeInTheDocument()
-    expect(screen.getByText("Limits & buffers")).toBeInTheDocument()
-    expect(screen.getByText("Friday blocked")).toBeInTheDocument()
-    expect(screen.getByText("Max 6 appointments per day")).toBeInTheDocument()
-    expect(screen.getByText("Soft — allows override")).toBeInTheDocument()
+    expect(screen.getByText("No blocked time yet.")).toBeInTheDocument()
+  })
+
+  it("lists blocked-time rules with the plain-language enforcement label", () => {
+    rulesData = [
+      makeRule({ id: "r1", rule_type: "block_day_of_week", enforcement: "hard", params: { day_of_week: 4 } }),
+      makeRule({ id: "r2", rule_type: "block_time_range", enforcement: "soft", params: { start: "12:00", end: "13:00" } }),
+    ]
+
+    renderWithClient(<BlockedTimeCard />)
+
+    expect(screen.getByText(/Friday blocked/)).toBeInTheDocument()
+    expect(screen.getByText(/Always enforced/)).toBeInTheDocument()
+    expect(screen.getByText(/Warns, still bookable/)).toBeInTheDocument()
+  })
+
+  it("opens the rule form via the Block time button and creates a rule", async () => {
+    const user = userEvent.setup()
+    renderWithClient(<BlockedTimeCard />)
+
+    await user.click(screen.getByRole("button", { name: "Block time" }))
+    await user.click(screen.getByRole("combobox", { name: /rule type/i }))
+    await user.click(screen.getByRole("option", { name: "Block a day of the week" }))
+    await user.click(screen.getByRole("button", { name: "Add rule" }))
+
+    expect(mutateCreate).toHaveBeenCalledWith(
+      { rule_type: "block_day_of_week", enforcement: "hard", params: { day_of_week: 6 } },
+      expect.anything()
+    )
+  })
+
+  it("confirms before removing a rule", async () => {
+    rulesData = [makeRule({ id: "r1" })]
+    const user = userEvent.setup()
+    window.confirm = vi.fn().mockReturnValue(false)
+    const confirmSpy = vi.mocked(window.confirm)
+
+    renderWithClient(<BlockedTimeCard />)
+
+    await user.click(screen.getByRole("button", { name: "Remove" }))
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(mutateDelete).not.toHaveBeenCalled()
+
+    confirmSpy.mockReturnValue(true)
+    await user.click(screen.getByRole("button", { name: "Remove" }))
+    expect(mutateDelete).toHaveBeenCalledWith("r1", expect.anything())
   })
 
   it("offers all eight rule types in the rule-type picker", async () => {
     const user = userEvent.setup()
-    renderWithClient()
+    renderWithClient(<BlockedTimeCard />)
 
-    await user.click(screen.getByRole("button", { name: "Add rule" }))
+    await user.click(screen.getByRole("button", { name: "Block time" }))
     await user.click(screen.getByRole("combobox", { name: /rule type/i }))
 
     const listbox = screen.getByRole("listbox")
     const options = within(listbox).getAllByRole("option")
     expect(options).toHaveLength(8)
-
-    const expectedLabels = [
-      "Working hours",
-      "Block a day of the week",
-      "Block a time range",
-      "Limit appointments per day",
-      "Buffer before appointments",
-      "Buffer after appointments",
-      "Block a date range",
-      "Block specific dates",
-    ]
-    for (const label of expectedLabels) {
-      expect(within(listbox).getByText(label)).toBeInTheDocument()
-    }
-  })
-
-  it("switches the params form fields when the rule type changes", async () => {
-    const user = userEvent.setup()
-    renderWithClient()
-
-    await user.click(screen.getByRole("button", { name: "Add rule" }))
-
-    // Default type is "Working hours" -> day + start/end fields.
-    expect(screen.getByLabelText("Start")).toBeInTheDocument()
-    expect(screen.getByLabelText("End")).toBeInTheDocument()
-
-    await user.click(screen.getByRole("combobox", { name: /rule type/i }))
-    await user.click(screen.getByRole("option", { name: "Limit appointments per day" }))
-
-    expect(screen.getByLabelText("Max appointments per day")).toBeInTheDocument()
-    expect(screen.queryByLabelText("Start")).not.toBeInTheDocument()
   })
 
   it("rejects an end time before the start time", async () => {
     const user = userEvent.setup()
-    renderWithClient()
+    renderWithClient(<BlockedTimeCard />)
 
-    await user.click(screen.getByRole("button", { name: "Add rule" }))
+    await user.click(screen.getByRole("button", { name: "Block time" }))
     await user.click(screen.getByRole("combobox", { name: /rule type/i }))
     await user.click(screen.getByRole("option", { name: "Block a time range" }))
 
@@ -209,165 +150,83 @@ describe("AvailabilitySettings", () => {
 
     await user.click(screen.getByRole("button", { name: "Add rule" }))
 
-    expect(
-      await screen.findByText("End time must be after start time.")
-    ).toBeInTheDocument()
+    expect(await screen.findByText("End time must be after start time.")).toBeInTheDocument()
     expect(mutateCreate).not.toHaveBeenCalled()
   })
+})
 
-  it("confirms before deleting a rule", async () => {
-    rulesData = [makeRule({ id: "r1" })]
-    const user = userEvent.setup()
-    window.confirm = vi.fn().mockReturnValue(false)
-    const confirmSpy = vi.mocked(window.confirm)
-
-    renderWithClient()
-
-    await user.click(screen.getByRole("button", { name: "Delete" }))
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(mutateDelete).not.toHaveBeenCalled()
-
-    confirmSpy.mockReturnValue(true)
-    await user.click(screen.getByRole("button", { name: "Delete" }))
-    expect(mutateDelete).toHaveBeenCalledWith("r1", expect.anything())
+describe("LimitsAndBuffersCard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    rulesData = []
   })
 
-  it("does not list session_defaults in the generic grouped rule list", () => {
+  it("shows the absent-rule default state", () => {
+    renderWithClient(<LimitsAndBuffersCard />)
+
+    expect(screen.getByLabelText("Sessions per day")).toHaveValue(null)
+    expect(screen.getByLabelText("Default session length")).toHaveValue(null)
+    expect(screen.getByLabelText("Break after each session")).toHaveValue(0)
+  })
+
+  it("shows values from existing rules", () => {
     rulesData = [
+      makeRule({ id: "r1", rule_type: "max_per_day", enforcement: "soft", params: { max: 6 } }),
       makeRule({
-        id: "r1",
+        id: "r2",
         rule_type: "session_defaults",
         enforcement: "soft",
         params: { duration_minutes: 50, alignment: "hour" },
       }),
+      makeRule({ id: "r3", rule_type: "buffer_after", enforcement: "hard", params: { minutes: 10 } }),
     ]
 
-    renderWithClient()
+    renderWithClient(<LimitsAndBuffersCard />)
 
-    expect(screen.queryByText("Scheduling defaults")).toBeInTheDocument() // section heading
-    // The generic grouped list (with its own Edit/Delete buttons) never
-    // renders a card for it — the dedicated fields section owns it.
-    expect(screen.queryByText("Working hours")).not.toBeInTheDocument()
-    expect(screen.queryByText("Blocked time")).not.toBeInTheDocument()
-    expect(screen.queryByText("Limits & buffers")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Sessions per day")).toHaveValue(6)
+    expect(screen.getByLabelText("Default session length")).toHaveValue(50)
+    expect(screen.getByLabelText("Break after each session")).toHaveValue(10)
   })
 
-  describe("scheduling defaults fields section", () => {
-    it("shows length, break, and alignment from a session_defaults + buffer_after rule", () => {
-      rulesData = [
-        makeRule({
-          id: "r1",
-          rule_type: "session_defaults",
-          enforcement: "soft",
-          params: { duration_minutes: 50, alignment: "hour" },
-        }),
-        makeRule({
-          id: "r2",
-          rule_type: "buffer_after",
-          enforcement: "hard",
-          params: { minutes: 10 },
-        }),
-      ]
+  it("creates a max_per_day rule when sessions per day is set for the first time", async () => {
+    const user = userEvent.setup()
+    renderWithClient(<LimitsAndBuffersCard />)
 
-      renderWithClient()
+    const input = screen.getByLabelText("Sessions per day")
+    await user.type(input, "6")
+    await user.tab()
 
-      expect(screen.getByLabelText("Session length (minutes)")).toHaveValue(50)
-      expect(screen.getByLabelText("Break between sessions (minutes)")).toHaveValue(10)
-      expect(screen.getByRole("combobox", { name: /start-time alignment/i })).toHaveTextContent(
-        "On the hour"
-      )
-    })
+    expect(mutateCreate).toHaveBeenCalledWith(
+      { rule_type: "max_per_day", enforcement: "soft", params: { max: 6 } },
+      expect.anything()
+    )
+  })
 
-    it("shows the absent-rule default state", () => {
-      rulesData = []
-      renderWithClient()
+  it("updates the existing max_per_day rule rather than creating a new one", async () => {
+    rulesData = [makeRule({ id: "r1", rule_type: "max_per_day", enforcement: "soft", params: { max: 6 } })]
+    const user = userEvent.setup()
+    renderWithClient(<LimitsAndBuffersCard />)
 
-      expect(screen.getByLabelText("Session length (minutes)")).toHaveValue(null)
-      expect(screen.getByLabelText("Break between sessions (minutes)")).toHaveValue(0)
-      expect(screen.getByRole("combobox", { name: /start-time alignment/i })).toHaveTextContent(
-        "No alignment"
-      )
-    })
+    const input = screen.getByLabelText("Sessions per day")
+    await user.clear(input)
+    await user.type(input, "8")
+    await user.tab()
 
-    it("saving issues a create-or-update for session_defaults and buffer_after", async () => {
-      rulesData = []
-      const user = userEvent.setup()
-      renderWithClient()
+    expect(mutateUpdate).toHaveBeenCalledWith({ ruleId: "r1", data: { params: { max: 8 } } }, expect.anything())
+    expect(mutateCreate).not.toHaveBeenCalled()
+  })
 
-      await user.type(screen.getByLabelText("Session length (minutes)"), "45")
-      await user.clear(screen.getByLabelText("Break between sessions (minutes)"))
-      await user.type(screen.getByLabelText("Break between sessions (minutes)"), "5")
-      await user.click(screen.getByRole("combobox", { name: /start-time alignment/i }))
-      await user.click(screen.getByRole("option", { name: "On the half hour" }))
+  it("deletes the buffer_after rule when break is set to 0", async () => {
+    rulesData = [makeRule({ id: "r1", rule_type: "buffer_after", enforcement: "hard", params: { minutes: 10 } })]
+    const user = userEvent.setup()
+    renderWithClient(<LimitsAndBuffersCard />)
 
-      await user.click(screen.getByRole("button", { name: "Save scheduling defaults" }))
+    const input = screen.getByLabelText("Break after each session")
+    await user.clear(input)
+    await user.type(input, "0")
+    await user.tab()
 
-      expect(mutateCreate).toHaveBeenCalledWith(
-        {
-          rule_type: "session_defaults",
-          enforcement: "soft",
-          params: { duration_minutes: 45, alignment: "half_hour" },
-        },
-        expect.anything()
-      )
-      expect(mutateCreate).toHaveBeenCalledWith(
-        { rule_type: "buffer_after", enforcement: "hard", params: { minutes: 5 } },
-        expect.anything()
-      )
-    })
-
-    it("updates existing rules rather than creating new ones", async () => {
-      rulesData = [
-        makeRule({
-          id: "r1",
-          rule_type: "session_defaults",
-          enforcement: "soft",
-          params: { duration_minutes: 50, alignment: "hour" },
-        }),
-        makeRule({
-          id: "r2",
-          rule_type: "buffer_after",
-          enforcement: "hard",
-          params: { minutes: 10 },
-        }),
-      ]
-      const user = userEvent.setup()
-      renderWithClient()
-
-      await user.click(screen.getByRole("button", { name: "Save scheduling defaults" }))
-
-      expect(mutateUpdate).toHaveBeenCalledWith(
-        {
-          ruleId: "r1",
-          data: { params: { duration_minutes: 50, alignment: "hour" } },
-        },
-        expect.anything()
-      )
-      expect(mutateUpdate).toHaveBeenCalledWith(
-        { ruleId: "r2", data: { params: { minutes: 10 } } },
-        expect.anything()
-      )
-      expect(mutateCreate).not.toHaveBeenCalled()
-    })
-
-    it("deletes the buffer_after rule when break is set to 0", async () => {
-      rulesData = [
-        makeRule({
-          id: "r2",
-          rule_type: "buffer_after",
-          enforcement: "hard",
-          params: { minutes: 10 },
-        }),
-      ]
-      const user = userEvent.setup()
-      renderWithClient()
-
-      await user.clear(screen.getByLabelText("Break between sessions (minutes)"))
-      await user.type(screen.getByLabelText("Break between sessions (minutes)"), "0")
-      await user.click(screen.getByRole("button", { name: "Save scheduling defaults" }))
-
-      expect(mutateDelete).toHaveBeenCalledWith("r2", expect.anything())
-    })
+    expect(mutateDelete).toHaveBeenCalledWith("r1", expect.anything())
   })
 })
 

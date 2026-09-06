@@ -381,6 +381,10 @@ class AppointmentTypeListResponse(BaseModel):
 
     data: list[AppointmentTypeResponse]
     total: int
+    #: True once a practice's pre-existing types have been joined by the
+    #: seeded Consultation / Intake types rather than created alongside them.
+    #: Drives the settings page's migration sentence, not anything enforced.
+    migrated: bool = False
 
 
 # --- Scheduling policy models ---

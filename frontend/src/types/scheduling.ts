@@ -102,3 +102,76 @@ export interface EditSeriesRequest {
   notes?: string | null
   note_type?: string
 }
+
+// --- Appointment type models -------------------------------------------------
+
+export type AppointmentAudience = "new" | "existing" | "both"
+export type HorizonUnit = "business" | "days"
+
+export interface AppointmentTypeResponse {
+  id: string
+  user_id: string
+  name: string
+  default_fee_cents: number | null
+  duration_minutes: number
+  audience: AppointmentAudience
+  /** `null` means "use the practice default", distinct from `0` (no notice). */
+  min_notice_hours: number | null
+  earliest_offer_business_days: number
+  horizon: number
+  horizon_unit: HorizonUnit
+  self_bookable: boolean
+  offerable: boolean
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface AppointmentTypeListResponse {
+  data: AppointmentTypeResponse[]
+  total: number
+  /** True once the practice's pre-existing types were joined by seeded ones. */
+  migrated: boolean
+}
+
+export interface CreateAppointmentTypeRequest {
+  name: string
+  default_fee_cents?: number | null
+  duration_minutes?: number
+  audience?: AppointmentAudience
+  min_notice_hours?: number | null
+  earliest_offer_business_days?: number
+  horizon?: number
+  horizon_unit?: HorizonUnit
+  self_bookable?: boolean
+  offerable?: boolean
+}
+
+export interface UpdateAppointmentTypeRequest {
+  name?: string
+  default_fee_cents?: number | null
+  duration_minutes?: number
+  audience?: AppointmentAudience
+  min_notice_hours?: number | null
+  earliest_offer_business_days?: number
+  horizon?: number
+  horizon_unit?: HorizonUnit
+  self_bookable?: boolean
+  offerable?: boolean
+}
+
+// --- Scheduling policy models -------------------------------------------------
+
+export interface SchedulingPolicyResponse {
+  min_notice_hours: number
+  max_horizon_days: number
+  cancel_cutoff_hours: number
+  reschedule_cutoff_hours: number
+  pending_hold_hours: number
+  self_book_existing: boolean
+  self_book_new: boolean
+  self_book_mode: "request" | "auto"
+  new_patient_flow: "consult" | "intake"
+  intake_forms_due_hours: number
+}
+
+export type UpdateSchedulingPolicyRequest = Partial<SchedulingPolicyResponse>
