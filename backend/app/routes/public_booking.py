@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
     from ..scheduling_engine.repositories.availability_rule import AvailabilityRuleRepository
 
-from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from ..api_errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
@@ -46,8 +46,10 @@ from ..models.booking_link import (
     BookingLink,
     ConfirmPublicBookingRequest,
     CreatePublicBookingRequest,
+    PublicBookingCancellation,
     PublicBookingConfirmation,
     PublicBookingLinkResponse,
+    PublicManagedBooking,
 )
 from ..models.enums import PracticeEdition
 from ..models.scheduling import FreeSlotsResponse, TimeSlotResponse
@@ -77,7 +79,7 @@ from ..services.google_calendar_service import (
 )
 from ..settings import get_settings
 from ..utcnow import utc_now
-from .scheduling import _sync_appointment_to_google
+from .scheduling import _push_cancellation_to_google, _sync_appointment_to_google
 
 logger = logging.getLogger(__name__)
 
@@ -220,6 +222,7 @@ _CONFIRMATION_INVALID = "This confirmation link is not valid."
 _SLOT_TAKEN = "That time was taken while you were confirming. Please pick another slot."
 _SLOT_NO_LONGER_AVAILABLE = "That time is no longer available. Please pick another slot."
 _CAPTCHA_FAILED = "Verification failed. Please refresh and try again."
+_MANAGE_LINK_INVALID = "This link is not valid or has expired."
 
 
 def require_captcha(
@@ -442,6 +445,16 @@ def _patient_for_instant_booking(
     return patient
 
 
+def _manage_url(ctx: PublicBookingContext, token: str) -> str:
+    """The booker's own capability link to view or cancel this booking.
+
+    It is the confirmation token folded into a URL, not a second secret —
+    see docs/design/public-booking.md. A capability, not an id, so handing
+    it back on every response that carries a token is not a disclosure.
+    """
+    return f"{get_settings().app_url}/book/{ctx.link.slug}/manage?token={token}"
+
+
 def _confirmation_email(
     ctx: PublicBookingContext, to: str, slot: TimeSlot, token: str
 ) -> OutboundEmail:
@@ -549,6 +562,7 @@ def _place_hold(
         end_at=slot.end,
         duration_minutes=ctx.link.duration_minutes,
         status="pending_confirmation",
+        manage_url=_manage_url(ctx, token),
     )
 
 
@@ -662,7 +676,7 @@ def _slot_start_iso(appt: Appointment) -> str:
 
 
 def _confirmation_from_appointment(
-    ctx: PublicBookingContext, appt: Appointment
+    ctx: PublicBookingContext, appt: Appointment, token: str
 ) -> PublicBookingConfirmation:
     return PublicBookingConfirmation(
         host_name=ctx.link.host_name,
@@ -671,6 +685,7 @@ def _confirmation_from_appointment(
         end_at=appt.end_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         duration_minutes=ctx.link.duration_minutes,
         status="confirmed",
+        manage_url=_manage_url(ctx, token),
     )
 
 
@@ -804,7 +819,7 @@ def confirm_public_booking(
 
     if appt.status == AppointmentStatus.CONFIRMED:
         # Idempotent: a second click or a double form submit does nothing.
-        return _confirmation_from_appointment(ctx, appt)
+        return _confirmation_from_appointment(ctx, appt, request.token)
 
     if appt.status == AppointmentStatus.PENDING:
         try:
@@ -843,4 +858,137 @@ def confirm_public_booking(
         actor_type=ACTOR_TYPE_ANONYMOUS,
     )
 
-    return _confirmation_from_appointment(ctx, appt)
+    return _confirmation_from_appointment(ctx, appt, request.token)
+
+
+def _redeem_manage_token(
+    request: ConfirmPublicBookingRequest,
+    ctx: PublicBookingContext,
+    appt_repo: AppointmentRepository,
+) -> Appointment:
+    """Resolve a manage-link token to the appointment it still controls.
+
+    Refuses with the identical message for a token that never existed,
+    belongs to another link, was already cancelled, or has aged past its
+    own start time — the same no-oracle posture as ``confirm_public_booking``.
+    """
+    token_hash = hashlib.sha256(request.token.encode()).hexdigest()
+    appt = appt_repo.get_by_confirmation_token_hash(ctx.link.user_id, token_hash)
+    if appt is None or appt.status == AppointmentStatus.CANCELLED or appt.start_at <= utc_now():
+        raise NotFoundError(_MANAGE_LINK_INVALID)
+    return appt
+
+
+@router.post(
+    "/api/public/booking-links/{slug}/manage",
+    response_model=PublicManagedBooking,
+    dependencies=[Depends(sweep_expired_holds)],
+)
+def get_managed_booking(
+    request: ConfirmPublicBookingRequest,
+    http_request: Request,
+    ctx: PublicBookingContext = Depends(get_public_booking_context),
+    appt_repo: AppointmentRepository = Depends(get_public_appointment_repository),
+    audit: AuditService = Depends(get_audit_service),
+) -> PublicManagedBooking:
+    """What a booker sees when they follow their own manage link."""
+    appt = _redeem_manage_token(request, ctx, appt_repo)
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_VIEWED,
+        ctx.owner,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={"source": "public_booking"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+    return PublicManagedBooking(
+        title=ctx.link.title,
+        host_name=ctx.link.host_name,
+        start_at=_slot_start_iso(appt),
+        end_at=appt.end_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        duration_minutes=ctx.link.duration_minutes,
+        status=appt.status,
+    )
+
+
+def _cancellation_notice_email(
+    ctx: PublicBookingContext, to: str, appt: Appointment
+) -> OutboundEmail:
+    book_again_url = f"{get_settings().app_url}/book/{ctx.link.slug}"
+    start_iso = _slot_start_iso(appt)
+    return OutboundEmail(
+        to=to,
+        subject=f"Your {ctx.link.title} with {ctx.link.host_name} is cancelled",
+        kind="booking_cancelled",
+        text=(
+            f"Your {ctx.link.title} with {ctx.link.host_name} on "
+            f"{start_iso[:10]} at {start_iso[11:16]} has been cancelled.\n\n"
+            f"Book again: {book_again_url}"
+        ),
+    )
+
+
+def _send_cancellation_notice(
+    sender: EmailSender, ctx: PublicBookingContext, to: str, appt: Appointment
+) -> None:
+    """Best-effort notice, run from a background task after the cancel commits.
+
+    Never raises back into the task runner — a failed send here must not
+    look like a failed cancellation. Only ``kind`` is logged; the address
+    is PHI-adjacent (guardrail #5).
+    """
+    message = _cancellation_notice_email(ctx, to, appt)
+    try:
+        sender.send(message)
+    except Exception:
+        logger.warning("booking cancellation notice send failed: kind=%s", message.kind)
+
+
+@router.post(
+    "/api/public/booking-links/{slug}/manage/cancel",
+    response_model=PublicBookingCancellation,
+    dependencies=[
+        Depends(require_public_booking_write_rate_limit),
+        Depends(sweep_expired_holds),
+    ],
+)
+def cancel_managed_booking(
+    request: ConfirmPublicBookingRequest,
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    ctx: PublicBookingContext = Depends(get_public_booking_context),
+    appt_repo: AppointmentRepository = Depends(get_public_appointment_repository),
+    scheduling: SchedulingService = Depends(get_public_scheduling_service),
+    gcal_service: GoogleCalendarService = Depends(get_public_gcal_service),
+    patient_repo: PatientRepository = Depends(get_patient_repository),
+    sender: EmailSender = Depends(get_email_sender),
+    audit: AuditService = Depends(get_audit_service),
+) -> PublicBookingCancellation:
+    """Cancel a booking from its own manage link — the booker-side DELETE.
+
+    Same engine call, Google push and audit action as the clinician's
+    in-app cancel; ``cancel_appointment`` clears the confirmation hash
+    along with it, so the token that reached this endpoint stops working
+    the moment this returns. The notice email is best-effort and never
+    blocks or fails the cancellation itself.
+    """
+    appt = _redeem_manage_token(request, ctx, appt_repo)
+
+    appt = scheduling.cancel_appointment(appt.id, ctx.link.user_id)
+    _push_cancellation_to_google(gcal_service, ctx.owner, appt)
+    audit.log_appointment_action(
+        AuditAction.APPOINTMENT_CANCELLED,
+        ctx.owner,
+        http_request,
+        appt.id,
+        patient_id=appt.patient_id,
+        changes={"source": "public_booking"},
+        actor_type=ACTOR_TYPE_ANONYMOUS,
+    )
+
+    patient = patient_repo.get(appt.patient_id, ctx.link.user_id)
+    if patient is not None and patient.email:
+        background_tasks.add_task(_send_cancellation_notice, sender, ctx, patient.email, appt)
+
+    return PublicBookingCancellation(cancelled=True)
