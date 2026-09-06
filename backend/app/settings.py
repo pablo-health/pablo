@@ -1242,6 +1242,18 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Clearinghouse (claim submission and eligibility checks; see app.claims)
+    clearinghouse_api_key: str | None = Field(
+        default=None,
+        description=(
+            "API key for the practice's own clearinghouse account, used by the "
+            "default credential provider (see app.claims.credentials). Whether "
+            "this is a test or production key is read off the key itself, not "
+            "a separate setting. Unset means claim submission and eligibility "
+            "checks report unavailable rather than half-working."
+        ),
+    )
+
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(
         default=SecretStr(""),
