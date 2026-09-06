@@ -541,8 +541,12 @@ def create_charge(
         "currency": charge.currency,
         "customer": card.stripe_customer_id,
         "payment_method": card.stripe_payment_method_id,
-        # off_session: the client is not at the keyboard when this is confirmed.
-        "off_session": "true",
+        # No off_session here. It says "nobody is at the keyboard for this
+        # attempt", which is only meaningful where the attempt happens — and
+        # Stripe rejects the create outright for naming it without confirm=true
+        # (a 400, which this route turns into a 502). It goes on the confirm
+        # below instead; splitting create from confirm is what buys the
+        # committed intent id in step 2.
         # Cards only, for the same reason as the SetupIntent above: without it
         # the account's payment-method configuration decides, and a
         # redirect-based method cannot be charged with nobody at the keyboard.
@@ -588,12 +592,15 @@ def create_charge(
     payments.record_payment_intent(charge.id, payment_intent_id)
 
     # STEP 3 — confirm. This is where the card is actually charged, and where a
-    # decline comes back.
+    # decline comes back. off_session belongs on this call: the clinician
+    # raised the charge from a signed note, the client is not present to answer
+    # a challenge, and telling Stripe so is what lets it fall back to the
+    # mandate the SetupIntent already collected instead of asking for one.
     accepted, body = payment_intent_request(
         f"/v1/payment_intents/{payment_intent_id}/confirm",
         secret_key=credentials.secret_key,
         account_id=credentials.account_id,
-        data={},
+        data={"off_session": "true"},
         idempotency_key=f"patient-charge-confirm:{charge.id}",
     )
 

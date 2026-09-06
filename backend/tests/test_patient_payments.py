@@ -678,7 +678,6 @@ class TestCharge:
         assert payments.charges[0].stripe_payment_intent_id == _PI_ID
 
         sent = _create_call(seen)["data"]
-        assert sent["off_session"] == "true"
         assert sent["currency"] == "usd"
         assert sent["customer"] == "cus_123"
         assert sent["payment_method"] == "pm_123"
@@ -707,6 +706,27 @@ class TestCharge:
             _confirm_call(seen)["headers"]["Idempotency-Key"]
             == f"patient-charge-confirm:{charge_id}"
         )
+
+    def test_off_session_is_named_on_the_confirm_not_the_create(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stripe rejects ``off_session`` on a create that does not confirm.
+
+        The whole point of the two-step flow is a create that does *not*
+        confirm, so naming ``off_session`` there is a 400 — which this route
+        turns into a 502, and which no fake transport can notice, because the
+        rule lives in Stripe's validation rather than in our code. It cost a
+        deployed e2e run to find. This pins both halves of the move.
+        """
+        payments = _FakePayments(_stored_card())
+        client = _client(payments, _FakePatients())
+        seen = _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/charges", json={"amount_cents": 15000})
+
+        assert response.status_code == 200
+        assert "off_session" not in _create_call(seen)["data"]
+        assert _confirm_call(seen)["data"]["off_session"] == "true"
 
     def test_the_payment_intent_id_is_recorded_before_the_confirm_call(
         self, monkeypatch: pytest.MonkeyPatch
