@@ -51,6 +51,12 @@ def test_critical_items_are_livelihood_or_legal() -> None:
         "board_certification",
         # Supervision/oversight review — a lapse suspends practice/prescribing authority
         "supervision_review",
+        # Claim events that cost money if nobody acts before the payer's deadline
+        "claim_rejected",
+        "claim_denied",
+        "claim_deadline_approaching",
+        "claim_deadline_missed",
+        "claim_enrollment_action_required",
     }
     actual_critical = {t.item_type for t in _TEMPLATES if t.severity == "critical"}
     assert actual_critical == expected_critical
