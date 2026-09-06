@@ -3,12 +3,14 @@
 "use client"
 
 import { useState } from "react"
+import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { signOutAndClear } from "@/lib/auth/signOutAndClear"
 import Image from "next/image"
 import { UserCircle, LogOut } from "lucide-react"
 import { ThemeMenu } from "@/components/theme/ThemeMenu"
+import { userMenuItems } from "./userMenuExtensions"
 
 interface HeaderProps {
   user: {
@@ -78,6 +80,19 @@ export function Header({ user }: HeaderProps) {
                   </div>
                 ) : null}
                 <ThemeMenu />
+                {/* Slot items sit between the theme control and Sign out, so
+                    Sign out stays the last thing in the menu. */}
+                {userMenuItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsMenuOpen(false)}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors duration-150"
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.name}
+                  </Link>
+                ))}
                 <button
                   onClick={handleSignOut}
                   className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-neutral-700 hover:bg-neutral-50 transition-colors duration-150"

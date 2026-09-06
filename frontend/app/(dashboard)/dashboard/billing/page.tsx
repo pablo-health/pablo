@@ -3,7 +3,7 @@
 "use client"
 
 import { BillerExport } from "@/components/billing/BillerExport"
-import { BillingSetupSlot } from "@/components/billing/BillingSetupSlot"
+import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
 import { UnbilledQueue } from "@/components/billing/UnbilledQueue"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -18,36 +18,40 @@ export default function BillingPage() {
         </p>
       </div>
 
-      <BillingSetupSlot />
-
-      <Tabs defaultValue="unbilled">
-        <TabsList>
-          <TabsTrigger value="unbilled" data-testid="billing-tab-unbilled">
-            Unbilled
-          </TabsTrigger>
-          <TabsTrigger value="claims" data-testid="billing-tab-claims">
-            Claims
-          </TabsTrigger>
-          <TabsTrigger value="remittances" data-testid="billing-tab-remittances">
-            Remittances
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="unbilled" className="space-y-6">
-          <UnbilledQueue />
-          <BillerExport />
-        </TabsContent>
-        <TabsContent value="claims">
-          <ClaimsTracker />
-        </TabsContent>
-        <TabsContent value="remittances">
-          <div className="card py-12 text-center">
-            <p className="text-sm font-medium text-neutral-900">No remittances yet</p>
-            <p className="mt-1 text-sm text-neutral-500">
-              Payments and denials from payers land here once a claim is adjudicated.
-            </p>
-          </div>
-        </TabsContent>
-      </Tabs>
+      {/* The gate wraps the tabs rather than sitting above them: a build whose
+          billing setup is a prerequisite renders that setup here in place of
+          the queue, with the nav still around it, instead of sending the
+          clinician to a settings page to come back later. */}
+      <BillingSetupGate>
+        <Tabs defaultValue="unbilled">
+          <TabsList>
+            <TabsTrigger value="unbilled" data-testid="billing-tab-unbilled">
+              Unbilled
+            </TabsTrigger>
+            <TabsTrigger value="claims" data-testid="billing-tab-claims">
+              Claims
+            </TabsTrigger>
+            <TabsTrigger value="remittances" data-testid="billing-tab-remittances">
+              Remittances
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="unbilled" className="space-y-6">
+            <UnbilledQueue />
+            <BillerExport />
+          </TabsContent>
+          <TabsContent value="claims">
+            <ClaimsTracker />
+          </TabsContent>
+          <TabsContent value="remittances">
+            <div className="card py-12 text-center">
+              <p className="text-sm font-medium text-neutral-900">No remittances yet</p>
+              <p className="mt-1 text-sm text-neutral-500">
+                Payments and denials from payers land here once a claim is adjudicated.
+              </p>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </BillingSetupGate>
     </div>
   )
 }
