@@ -16,6 +16,7 @@ payer. Nothing here is PHI.
 | `enrollment_create_provider.json`, `enrollment_create_enrollment_835.json` | provider record and a transaction enrollment that went live |
 | `payer_search_test_payer.json` | the payer directory's answer to a search for the test payer |
 | `eligibility_271_active.json` | a 271 for the vendor's documented mock "active coverage" member |
+| `eligibility_271_aaa_invalid_member_id.json` | HTTP 200 with no `planStatus` and a top-level `errors[]` carrying AAA 72, for a made-up member id the mock payer does not know |
 
 Regenerate with a test API key against the vendor's test payer; the shapes are
 stable across their dated API versions. The live suite under
@@ -36,3 +37,5 @@ The files below were NOT captured from a live call — the vendor's generic
 | File | What it is |
 |---|---|
 | `error_invalid_request_body.json`, `error_account_not_provisioned.json` | the vendor's generic `{code, message}` error envelope |
+| `error_request_changed.json` | the 422 an idempotency key gets when reused with a different body; the live lane sees this `code`, the `message` is illustrative |
+| `error_access_denied.json` | the 403 the enrollment API answers a test-mode key with; same caveat |

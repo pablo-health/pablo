@@ -279,16 +279,39 @@ class EligibilityPayer(BaseModel):
     payerId: str | None = None
 
 
+class EligibilityError(BaseModel):
+    """One entry of a 271's top-level ``errors`` array: the payer refused the inquiry.
+
+    These arrive with HTTP 200 and no ``planStatus`` at all — the payer
+    answered, but with an AAA rejection (72 "Invalid/Missing
+    Subscriber/Insured ID" is the common one) rather than a coverage answer.
+    ``code`` and ``followupAction`` are safe to log; ``description`` is the
+    vendor's own explanation of the code, but treat it as PHI-adjacent
+    rather than assuming that holds for every payer. The vendor's longer
+    ``location`` / ``possibleResolutions`` prose is not modeled.
+    """
+
+    model_config = _WIRE_MODEL_CONFIG
+
+    code: str
+    description: str
+    followupAction: str
+
+
 class EligibilityResponse(BaseModel):
     """A 271 response.
 
     Only the fields a caller needs to record the check are modeled;
-    benefit-line detail is intentionally out of scope for this bead.
+    benefit-line detail is intentionally out of scope. An empty
+    ``planStatus`` alone does not mean "no coverage": when ``errors`` is
+    non-empty the payer rejected the inquiry and never answered the
+    coverage question.
     """
 
     model_config = _WIRE_MODEL_CONFIG
 
     planStatus: list[EligibilityPlanStatus] = []
+    errors: list[EligibilityError] = []
     payer: EligibilityPayer | None = None
     meta: SubmissionMeta
 
