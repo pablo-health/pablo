@@ -2,6 +2,7 @@
 
 "use client"
 
+import { AppointmentTypesCard } from "../AppointmentTypesCard"
 import { BookingLinkSettings } from "../BookingLinkSettings"
 import { SchedulingEmailReplies, SchedulingExtras } from "../settingsSlots.extensions"
 import { SettingsCard } from "../ui"
@@ -10,15 +11,17 @@ import { useConfig } from "@/lib/config"
 /**
  * Practice > Scheduling.
  *
- * Appointment types as first-class rows and the new-patient flow arrive with
- * the per-type scheduling columns. Until then this page is the public booking
- * pages, re-housed from the old settings list.
+ * The new-patient flow and the self-booking split are still the public
+ * booking pages, re-housed from the old settings list, until their own cards
+ * land (THERAPY-9zgyw.19, .20).
  */
 export function SchedulingPage() {
   const { publicBookingEnabled } = useConfig()
 
   return (
     <>
+      <AppointmentTypesCard />
+
       <SchedulingExtras />
 
       {publicBookingEnabled && (
