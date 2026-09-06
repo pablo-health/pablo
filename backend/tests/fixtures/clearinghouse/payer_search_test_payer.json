@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "payer": {
+        "stediId": "9496DD3D-7F70-4A1B-8A2E-2E5C8A5D0001",
+        "primaryPayerId": "STEDI",
+        "displayName": "Stedi Test Payer",
+        "aliases": [
+          "STEDI TEST"
+        ]
+      },
+      "score": 1.0
+    }
+  ],
+  "stats": {
+    "total": 1
+  },
+  "nextPageToken": null
+}

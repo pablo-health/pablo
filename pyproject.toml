@@ -231,6 +231,12 @@ ignore = [
 "backend/app/models/**/*.py" = [
     "TC003",    # datetime import needed at runtime for Pydantic/dataclass field validation
 ]
+"backend/app/models/claims_transport.py" = [
+    "N815",     # Fields mirror the clearinghouse vendor's own camelCase wire format;
+                # mypy doesn't honor pydantic's populate_by_name/alias relaxation, so
+                # matching the vendor's field names directly (not a snake_case alias
+                # pair) is what keeps construction and mypy in agreement
+]
 "backend/app/medications/**/*.py" = [
     "TC003",    # datetime import needed at runtime for Pydantic field validation
     "PLR0913",  # Allow many arguments (FastAPI Depends injection)

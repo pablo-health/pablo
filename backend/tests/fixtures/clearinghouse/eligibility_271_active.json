@@ -1,0 +1,15 @@
+{
+  "planStatus": [
+    {
+      "statusCode": "1",
+      "status": "Active Coverage"
+    }
+  ],
+  "payer": {
+    "name": "Stedi Test Payer",
+    "payerId": "STEDI"
+  },
+  "meta": {
+    "traceId": "b7a1e6d1-6c1a-4a0d-9c4a-2b6b6e6a0c11"
+  }
+}

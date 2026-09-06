@@ -1,0 +1,4 @@
+{
+  "code": "INVALID_REQUEST_BODY",
+  "message": "subscriber.memberId is required"
+}
