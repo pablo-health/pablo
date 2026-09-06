@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from app.claims.clearinghouse import ClearinghouseUnavailableError
+from app.claims.clearinghouse import ClearinghouseAccessDeniedError
 from app.claims.responses import parse_enrollment
 from app.models.claims_transport import EnrollmentFilters
 
@@ -48,12 +48,11 @@ def test_the_recorded_enrollment_is_the_test_payers_remittance_enrollment() -> N
 def test_listing_enrollments_is_refused_in_test_mode(live: LiveClient) -> None:
     filters = EnrollmentFilters(providerId=_platform_provider_id())
 
-    # The adapter has no typed error for the vendor's 403; it surfaces as
-    # "unavailable". No enrollment is created or changed by this call.
-    with pytest.raises(ClearinghouseUnavailableError):
+    # No enrollment is created or changed by this call.
+    with pytest.raises(ClearinghouseAccessDeniedError):
         live.adapter.list_enrollments(filters)
 
     assert live.recorder.last_status() == _HTTP_FORBIDDEN
     envelope = live.recorder.last_json()
     assert envelope.get("code") == _ACCESS_DENIED
-    assert_same_shape(envelope, fixture_shape("error_account_not_provisioned.json"))
+    assert_same_shape(envelope, fixture_shape("error_access_denied.json"))

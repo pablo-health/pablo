@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -82,7 +83,7 @@ def main() -> int:
     submission_body = json.loads(_FIXTURE_SUBMISSION_REQUEST.read_text())
     submission_req = ClaimSubmissionRequest.model_validate(submission_body)
     try:
-        result = client.submit_claim(submission_req)
+        result = client.submit_claim(submission_req, idempotency_key=secrets.token_urlsafe(24))
         print(f"status: {result.status}")
         if result.claimReference:
             print(f"claim reference: {result.claimReference.rhclaimNumber}")

@@ -17,16 +17,20 @@ Three hosts, because Stedi splits its healthcare API across them:
 
 Idempotency: eligibility, payer search, and transaction/enrollment reads are
 side-effect-free, so they retry any transient failure
-(``Idempotency.SAFE``). Claim submission does not: Stedi's submission docs
-document no request-level dedup key (no field like an idempotency key, and no
-mention that resubmitting a ``patientControlNumber`` is rejected or
-short-circuited server-side) — a resubmitted claim is a new claim at the
-payer as far as anything in the docs says. So submission is
-``Idempotency.UNSAFE``: only a failure that never reached the network (DNS,
-connection refused) is retried automatically. A timeout or 5xx that might
-have reached Stedi surfaces raw, and the caller reconciles via
-``get_transaction``/``list_enrollments`` before deciding whether to resubmit
-with a new control number.
+(``Idempotency.SAFE``). Claim submission is deduped server-side by the
+``Idempotency-Key`` header, which the caller mints and persists before the
+call (one key per submission attempt) and ``submit_claim`` sends. For 24
+hours after the first request the vendor keys on it: the same key with the
+same body replays the original response (same ``correlationId``, no second
+claim filed); the same key with a different body is refused with ``422
+REQUEST_CHANGED``; a repeat while the original is still being processed is
+``409`` with a ``Retry-After``. That contract is what lets submission run as
+``Idempotency.KEYED`` — a timeout or 5xx that might have reached Stedi is
+retried with the same key, and the replay is safe. The 409 is deliberately
+not retried here; it surfaces as ``ClearinghouseInFlightError`` and the
+caller decides when to resend. Provider registration and enrollment creation
+carry no such key and stay ``Idempotency.UNSAFE``: only a failure that never
+reached the network (DNS, connection refused) is retried automatically.
 
 Logging here is limited to what the module docstring for ``app.claims``
 allows: claim control numbers, claim/transaction state, payer id, trace id,
@@ -61,8 +65,11 @@ from ..models.claims_transport import (
 )
 from ..reliability import HTTP_REQUEST, Idempotency, RetryExhaustedError, call_with_retry
 from .clearinghouse import (
+    ClearinghouseAccessDeniedError,
+    ClearinghouseInFlightError,
     ClearinghouseNotProvisionedError,
     ClearinghouseRateLimitedError,
+    ClearinghouseRequestChangedError,
     ClearinghouseTransactionSettingError,
     ClearinghouseUnavailableError,
     ClearinghouseValidationError,
@@ -82,11 +89,28 @@ _DEFAULT_PAYER_SEARCH_PAGE_SIZE = 25
 
 _HTTP_TOO_MANY_REQUESTS = 429
 _HTTP_BAD_REQUEST = 400
+_HTTP_FORBIDDEN = 403
+_HTTP_CONFLICT = 409
+_HTTP_UNPROCESSABLE = 422
 
 #: Error codes the vendor's JSON error envelope (``{"code": ..., "message": ...}``)
 #: uses for the failure modes this adapter has typed exceptions for.
 _INVALID_REQUEST_BODY = "INVALID_REQUEST_BODY"
 _ACCOUNT_NOT_PROVISIONED = "ACCOUNT_NOT_PROVISIONED"
+_REQUEST_CHANGED = "REQUEST_CHANGED"
+
+_IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """The vendor's ``Retry-After`` hint, seconds only (the HTTP-date form is not used)."""
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
@@ -97,6 +121,11 @@ def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
     "ERROR"``, an ``errors`` array) and is a business answer, not a transport
     failure. Callers of ``submit_claim`` parse that shape directly and never
     reach this function for it.
+
+    Only a 5xx (or a status this function has no name for) becomes
+    ``ClearinghouseUnavailableError``; every 4xx the vendor documents has its
+    own type so a caller can tell "fix the request" from "wait" from "this
+    key can't do that".
     """
     if response.status_code == _HTTP_TOO_MANY_REQUESTS:
         raise ClearinghouseRateLimitedError(f"rate limited: {response.status_code}")
@@ -116,6 +145,17 @@ def _raise_for_error_envelope(response: httpx.Response) -> NoReturn:
         raise ClearinghouseNotProvisionedError(message or "account not provisioned")
     if code == _INVALID_REQUEST_BODY:
         raise ClearinghouseValidationError(message or "invalid request body")
+    if response.status_code == _HTTP_UNPROCESSABLE or code == _REQUEST_CHANGED:
+        raise ClearinghouseRequestChangedError(
+            message or "idempotency key reused with a different request"
+        )
+    if response.status_code == _HTTP_FORBIDDEN:
+        raise ClearinghouseAccessDeniedError(message or "access denied")
+    if response.status_code == _HTTP_CONFLICT:
+        raise ClearinghouseInFlightError(
+            message or "a request with this idempotency key is still in flight",
+            retry_after=_retry_after_seconds(response),
+        )
     if response.status_code == _HTTP_BAD_REQUEST and "transaction setting" in message.lower():
         raise ClearinghouseTransactionSettingError(message)
     if response.status_code == _HTTP_BAD_REQUEST:
@@ -201,9 +241,17 @@ class StediClearinghouseClient:
             url=url,
         )
 
-    def _post(self, url: str, *, json: dict[str, Any], idempotency: Idempotency) -> httpx.Response:
+    def _post(
+        self,
+        url: str,
+        *,
+        json: dict[str, Any],
+        idempotency: Idempotency,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        merged = {**self._headers(), **(headers or {})}
         return self._send(
-            lambda: self._client.post(url, json=json, headers=self._headers()),
+            lambda: self._client.post(url, json=json, headers=merged),
             idempotency=idempotency,
             url=url,
         )
@@ -232,11 +280,14 @@ class StediClearinghouseClient:
         )
         return EligibilityResponse.model_validate(response.json())
 
-    def submit_claim(self, req: ClaimSubmissionRequest) -> ClaimSubmissionResult:
+    def submit_claim(
+        self, req: ClaimSubmissionRequest, *, idempotency_key: str
+    ) -> ClaimSubmissionResult:
         response = self._post(
             f"{HEALTHCARE_API_BASE}/change/medicalnetwork/professionalclaims/v3/submission",
             json=req.model_dump(exclude_none=True),
-            idempotency=Idempotency.UNSAFE,
+            idempotency=Idempotency.KEYED,
+            headers={_IDEMPOTENCY_KEY_HEADER: idempotency_key},
         )
         body = None
         try:

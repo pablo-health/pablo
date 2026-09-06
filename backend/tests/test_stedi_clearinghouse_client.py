@@ -5,8 +5,8 @@
 Every call goes over ``httpx.MockTransport`` — no network — replaying the
 recorded (or, where noted in the fixtures' README, constructed) fixtures
 under ``tests/fixtures/clearinghouse/``. One test per ``ClearinghouseClient``
-protocol method, plus the error-mapping cases the bead specifically calls
-out: a generic 400, the unprovisioned-account body, and a 429.
+protocol method, plus one error-mapping case per vendor status the adapter
+names: a generic 400, the unprovisioned-account body, 403, 409, 422 and 429.
 """
 
 from __future__ import annotations
@@ -18,8 +18,12 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 from app.claims.clearinghouse import (
+    ClearinghouseAccessDeniedError,
+    ClearinghouseInFlightError,
     ClearinghouseNotProvisionedError,
     ClearinghouseRateLimitedError,
+    ClearinghouseRequestChangedError,
+    ClearinghouseUnavailableError,
     ClearinghouseValidationError,
 )
 from app.claims.credentials import ClearinghouseCredentials
@@ -42,6 +46,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "clearinghouse"
+_IDEMPOTENCY_KEY = "claim-0001:1:attempt-1"
 
 
 def _fixture(name: str) -> dict[str, object]:
@@ -101,6 +106,27 @@ class TestCheckEligibility:
 
         assert response.meta.traceId == "01M1VJ4FKH9T82FWJFGHJ92WEM"
         assert response.planStatus[0].statusCode == "1"
+        assert response.errors == []
+
+    def test_a_payer_rejection_arrives_as_errors_not_as_no_coverage(self) -> None:
+        fixture = _fixture("eligibility_271_aaa_invalid_member_id.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture)
+
+        client = _client_for(handler)
+        req = EligibilityRequest(
+            tradingPartnerServiceId="87726",
+            provider=EligibilityProvider(organizationName="Pablo Test Practice", npi="1999999984"),
+            subscriber=EligibilitySubscriber(memberId="NOSUCHMEMBER000000"),
+        )
+
+        response = client.check_eligibility(req)
+
+        assert response.planStatus == []
+        assert [e.code for e in response.errors] == ["72"]
+        assert response.errors[0].description == "Invalid/Missing Subscriber/Insured ID"
+        assert response.errors[0].followupAction == "Please Correct and Resubmit"
 
 
 class TestSubmitClaim:
@@ -112,11 +138,12 @@ class TestSubmitClaim:
                 request.url.path
                 == "/2024-04-01/change/medicalnetwork/professionalclaims/v3/submission"
             )
+            assert request.headers["idempotency-key"] == _IDEMPOTENCY_KEY
             return _json_response(fixture)
 
         client = _client_for(handler)
 
-        result = client.submit_claim(_submission_request())
+        result = client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
         assert result.status == "SUCCESS"
         assert result.claimReference is not None
@@ -130,7 +157,7 @@ class TestSubmitClaim:
 
         client = _client_for(handler)
 
-        result = client.submit_claim(_submission_request())
+        result = client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
         assert result.status == "ERROR"
         assert result.errors[0].code == "33"
@@ -256,7 +283,7 @@ class TestErrorMapping:
         client = _client_for(handler)
 
         with pytest.raises(ClearinghouseNotProvisionedError):
-            client.submit_claim(_submission_request())
+            client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
 
     def test_rate_limiting_raises_a_typed_error(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -265,4 +292,61 @@ class TestErrorMapping:
         client = _client_for(handler)
 
         with pytest.raises(ClearinghouseRateLimitedError):
+            client.search_payers("anything")
+
+    def test_a_reused_key_with_a_changed_body_raises_request_changed(self) -> None:
+        fixture = _fixture("error_request_changed.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture, status_code=422)
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseRequestChangedError):
+            client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
+
+    def test_a_forbidden_api_raises_access_denied(self) -> None:
+        fixture = _fixture("error_access_denied.json")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _json_response(fixture, status_code=403)
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseAccessDeniedError):
+            client.list_enrollments(EnrollmentFilters())
+
+    def test_an_in_flight_key_raises_with_the_retry_hint(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                409,
+                headers={"Retry-After": "5"},
+                json={"message": "A request with this idempotency key is still in progress."},
+            )
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseInFlightError) as raised:
+            client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
+
+        assert raised.value.retry_after == 5.0
+
+    def test_an_in_flight_key_without_a_hint_carries_none(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(409, json={"message": "still in progress"})
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseInFlightError) as raised:
+            client.submit_claim(_submission_request(), idempotency_key=_IDEMPOTENCY_KEY)
+
+        assert raised.value.retry_after is None
+
+    def test_a_5xx_is_the_only_thing_left_as_unavailable(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(502, text="bad gateway")
+
+        client = _client_for(handler)
+
+        with pytest.raises(ClearinghouseUnavailableError):
             client.search_payers("anything")
