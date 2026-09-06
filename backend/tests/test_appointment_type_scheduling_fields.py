@@ -30,7 +30,7 @@ from app.models.scheduling import (
     CreateAppointmentTypeRequest,
     UpdateAppointmentTypeRequest,
 )
-from app.routes.scheduling import _apply_appointment_type
+from app.routes.scheduling import _apply_appointment_type, _ensure_default_appointment_types
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.scheduling_engine.repositories.appointment_type import (
@@ -273,3 +273,89 @@ class TestBookingAgainstAType:
         _apply_appointment_type(data, user_id="u1", type_repo=self._repo())
 
         assert data["duration_minutes"] == 90
+
+
+class TestDefaultAppointmentTypeSeeding:
+    """A practice's first read of /api/appointment-types seeds its catalog.
+
+    A brand-new practice gets all three seed types. A practice that already
+    had its own types keeps them untouched and only gains whichever of
+    Consultation / Intake it is missing — the settings page's migration
+    sentence hinges on telling those two cases apart.
+    """
+
+    def test_a_practice_with_no_types_gets_all_three_seeds(self) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+
+        types, migrated = _ensure_default_appointment_types(repo, "u1")
+
+        assert {t.name for t in types} == {"Session", "Consultation", "Intake"}
+        assert migrated is False
+
+    def test_seed_windows_match_the_handoff_table(self) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+
+        types, _ = _ensure_default_appointment_types(repo, "u1")
+        by_name = {t.name: t for t in types}
+
+        assert by_name["Session"].duration_minutes == 50
+        assert by_name["Session"].audience == "existing"
+        assert by_name["Session"].min_notice_hours == 24
+        assert by_name["Session"].horizon == 10
+        assert by_name["Session"].horizon_unit == "business"
+
+        assert by_name["Consultation"].duration_minutes == 15
+        assert by_name["Consultation"].default_fee_cents == 0
+        assert by_name["Consultation"].audience == "new"
+        assert by_name["Consultation"].horizon == 5
+        assert by_name["Consultation"].horizon_unit == "business"
+
+        assert by_name["Intake"].duration_minutes == 60
+        assert by_name["Intake"].audience == "new"
+        assert by_name["Intake"].min_notice_hours == 72
+        assert by_name["Intake"].earliest_offer_business_days == 3
+        assert by_name["Intake"].horizon == 21
+        assert by_name["Intake"].horizon_unit == "days"
+
+    def test_seeding_a_fresh_practice_is_idempotent(self) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+
+        _ensure_default_appointment_types(repo, "u1")
+        types, migrated = _ensure_default_appointment_types(repo, "u1")
+
+        assert len(types) == 3
+        assert migrated is False
+
+    def test_a_practice_with_its_own_types_keeps_them_and_gains_the_two_seeds(self) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+        for name in ("Individual", "Couples", "Group"):
+            repo.create(AppointmentType(id=name, user_id="u1", name=name))
+
+        types, migrated = _ensure_default_appointment_types(repo, "u1")
+
+        assert {t.name for t in types} == {"Individual", "Couples", "Group", "Consultation", "Intake"}
+        assert migrated is True
+        # The pre-existing types are untouched, not overwritten with seed windows.
+        individual = next(t for t in types if t.name == "Individual")
+        assert individual.audience == "existing"
+        assert individual.min_notice_hours is None
+
+    def test_migration_is_idempotent_and_does_not_duplicate_the_seeds(self) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+        repo.create(AppointmentType(id="i1", user_id="u1", name="Individual"))
+
+        _ensure_default_appointment_types(repo, "u1")
+        types, migrated = _ensure_default_appointment_types(repo, "u1")
+
+        assert len(types) == 3
+        assert migrated is True
+
+    def test_seeding_is_scoped_to_the_calling_practice(self) -> None:
+        repo = InMemoryAppointmentTypeRepository()
+
+        _ensure_default_appointment_types(repo, "u1")
+        other_types, other_migrated = _ensure_default_appointment_types(repo, "u2")
+
+        assert {t.name for t in other_types} == {"Session", "Consultation", "Intake"}
+        assert other_migrated is False
+        assert all(t.user_id == "u2" for t in other_types)

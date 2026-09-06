@@ -8,7 +8,7 @@ import logging
 import uuid
 from collections.abc import Collection, Sequence
 from datetime import UTC, datetime, tzinfo
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -113,7 +113,7 @@ from ..scheduling_engine.exceptions import (
     InvalidRecurrenceError,
     RuleViolationError,
 )
-from ..scheduling_engine.models.appointment_type import AppointmentType
+from ..scheduling_engine.models.appointment_type import AppointmentType, Audience, HorizonUnit
 from ..scheduling_engine.models.availability import AvailabilityRule, EnforcementLevel, RuleType
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
@@ -1049,6 +1049,111 @@ def parse_availability_rules(
 
 # --- Appointment type endpoints ---
 
+#: Names of the two seeded types every practice is supposed to have alongside
+#: whatever it already had, per the scheduling settings brief. Kept separate
+#: from ``_SEED_APPOINTMENT_TYPES`` below so a migrated practice can be
+#: recognized without hardcoding "Session" a second time.
+_ALWAYS_SEEDED_NAMES = ("Consultation", "Intake")
+
+
+class _SeedAppointmentType(TypedDict, total=False):
+    name: str
+    default_fee_cents: int | None
+    duration_minutes: int
+    audience: Audience
+    min_notice_hours: int | None
+    earliest_offer_business_days: int
+    horizon: int
+    horizon_unit: HorizonUnit
+
+
+#: What a brand-new practice's appointment types look like, and what a
+#: practice that already had types gains alongside them. Order matters only
+#: for created_at ordering on first creation.
+_SEED_APPOINTMENT_TYPES: tuple[_SeedAppointmentType, ...] = (
+    {
+        "name": "Session",
+        "duration_minutes": 50,
+        "audience": "existing",
+        "min_notice_hours": 24,
+        "earliest_offer_business_days": 1,
+        "horizon": 10,
+        "horizon_unit": "business",
+    },
+    {
+        "name": "Consultation",
+        "default_fee_cents": 0,
+        "duration_minutes": 15,
+        "audience": "new",
+        "min_notice_hours": 24,
+        "earliest_offer_business_days": 1,
+        "horizon": 5,
+        "horizon_unit": "business",
+    },
+    {
+        "name": "Intake",
+        "duration_minutes": 60,
+        "audience": "new",
+        "min_notice_hours": 72,
+        "earliest_offer_business_days": 3,
+        "horizon": 21,
+        "horizon_unit": "days",
+    },
+)
+
+#: Every seed type's name, so "did this practice always have exactly the
+#: seed set" can be answered without a second constant to keep in sync.
+_SEED_NAMES = frozenset(seed["name"] for seed in _SEED_APPOINTMENT_TYPES)
+
+
+def _ensure_default_appointment_types(
+    type_repo: AppointmentTypeRepository, user_id: str
+) -> tuple[list[AppointmentType], bool]:
+    """Seed the practice's appointment types on first read, and report whether
+    this was a join rather than a fresh creation.
+
+    A practice with no types yet gets all three seed types — a brand-new
+    practice starting from nothing. A practice that already had types (its
+    own, hand-created ones) keeps them untouched and simply gains whichever
+    of Consultation / Intake it is missing; that is the "migrated" case the
+    settings page's card description names.
+
+    Reading is not usually where writes happen, but the seed values are fixed
+    and idempotent (checked by name), so a concurrent double-read produces at
+    worst a duplicate seed row rather than corrupt state.
+    """
+    existing = type_repo.list_by_user(user_id)
+    if not existing:
+        now = utc_now()
+        created = [
+            type_repo.create(
+                AppointmentType(
+                    id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **seed
+                )
+            )
+            for seed in _SEED_APPOINTMENT_TYPES
+        ]
+        return created, False
+
+    existing_names = {t.name for t in existing}
+    missing = [
+        seed
+        for seed in _SEED_APPOINTMENT_TYPES
+        if seed["name"] in _ALWAYS_SEEDED_NAMES and seed["name"] not in existing_names
+    ]
+    if not missing:
+        migrated = any(name not in _SEED_NAMES for name in existing_names)
+        return existing, migrated
+
+    now = utc_now()
+    for seed in missing:
+        type_repo.create(
+            AppointmentType(
+                id=str(uuid.uuid4()), user_id=user_id, created_at=now, updated_at=now, **seed
+            )
+        )
+    return type_repo.list_by_user(user_id), True
+
 
 def _appointment_type_to_response(appointment_type: AppointmentType) -> AppointmentTypeResponse:
     return AppointmentTypeResponse(
@@ -1107,11 +1212,18 @@ def list_appointment_types(
     ctx: TenantContext = Depends(get_tenant_context),
     type_repo: AppointmentTypeRepository = Depends(get_appointment_type_repository),
 ) -> AppointmentTypeListResponse:
-    """List all appointment types for the current user."""
-    types = type_repo.list_by_user(ctx.user_id)
+    """List all appointment types for the current user.
+
+    Seeds the practice's default types on first read (see
+    ``_ensure_default_appointment_types``) so a brand-new practice, or one
+    that only ever had its own hand-created types, sees Consultation and
+    Intake without anyone having to click "Add a type" first.
+    """
+    types, migrated = _ensure_default_appointment_types(type_repo, ctx.user_id)
     return AppointmentTypeListResponse(
         data=[_appointment_type_to_response(t) for t in types],
         total=len(types),
+        migrated=migrated,
     )
 
 
