@@ -11,6 +11,12 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { buildApiUrl } from "@/lib/api/client"
 import { BookingConfirmedCard, type Confirmation } from "@/components/booking/BookingConfirmedCard"
+import {
+  EMPTY_INSURANCE,
+  IntakeInsuranceFields,
+  intakeInsurancePayload,
+  type IntakeInsuranceForm,
+} from "@/components/booking/IntakeInsuranceFields"
 import { longDateLabel, slotTimeLabel } from "@/lib/booking/time"
 
 const TURNSTILE_SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js"
@@ -107,6 +113,8 @@ export default function PublicBookingPage({
   const [lastName, setLastName] = useState("")
   const [email, setEmail] = useState("")
   const [note, setNote] = useState("")
+  const [useInsurance, setUseInsurance] = useState(false)
+  const [insurance, setInsurance] = useState<IntakeInsuranceForm>(EMPTY_INSURANCE)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
@@ -189,6 +197,7 @@ export default function PublicBookingPage({
           last_name: lastName,
           email,
           note: note || null,
+          insurance: useInsurance ? intakeInsurancePayload(insurance) : null,
         }),
       })
       if (resp.status === 409) {
@@ -438,6 +447,12 @@ export default function PublicBookingPage({
                 rows={3}
               />
             </div>
+            <IntakeInsuranceFields
+              enabled={useInsurance}
+              onEnabledChange={setUseInsurance}
+              value={insurance}
+              onChange={setInsurance}
+            />
             {captchaSiteKey && <div ref={captchaContainerRef} className="mb-4" />}
             {submitError && <p className="mb-3 text-sm text-red-600">{submitError}</p>}
             <Button

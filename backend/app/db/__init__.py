@@ -912,10 +912,15 @@ _OVERLAY_NOT_ROW_SCOPED: set[str] = set()
 #   * practice_billing_profile — the practice's billing identity (tax id,
 #     billing NPI, address), a singleton row with no ``user_id`` /
 #     ``patient_id`` — same shape and same reason as scheduling_policy.
+#   * payers — the practice's list of insurance payers, referenced by each
+#     client's coverage on file. Practice-level like the two above: no
+#     ``user_id`` / ``patient_id``, considered only because it carries an
+#     ``id``. The per-client rows that point at it (``patient_coverage``)
+#     DO carry ``patient_id`` and get the patient-access policy.
 #   * users — vestigial per-tenant table. Runtime identity lives in the
 #     platform schema; nothing reads this per-tenant copy.
 _CORE_NOT_ROW_SCOPED: frozenset[str] = frozenset(
-    {"ehr_routes", "scheduling_policy", "practice_billing_profile", "users"}
+    {"ehr_routes", "scheduling_policy", "practice_billing_profile", "payers", "users"}
 )
 
 

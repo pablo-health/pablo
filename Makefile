@@ -259,3 +259,14 @@ pentest-image-push:
 		-f backend/Dockerfile.pentest \
 		-t $$REGISTRY/pentest:$$TAG \
 		--push .
+
+# Live clearinghouse lane: the claims adapter against the vendor's test mode
+# with your own clearinghouse test key. Opt-in — skips without
+# CLEARINGHOUSE_LIVE_API_KEY and refuses a production-mode key. The dummy
+# DATABASE_URL keeps the integration conftest from starting a Postgres
+# container this lane never uses. See backend/tests_integration/README.md.
+.PHONY: test-clearinghouse-live
+test-clearinghouse-live:
+	@echo "Running the live clearinghouse lane (needs CLEARINGHOUSE_LIVE_API_KEY, test mode)..."
+	cd backend && DATABASE_URL=postgresql://pablo:pablo_dev@localhost:5432/pablo \
+		poetry run pytest tests_integration/clearinghouse_live/ -v --no-cov --tb=short -p no:cacheprovider

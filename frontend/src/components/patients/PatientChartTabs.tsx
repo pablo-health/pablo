@@ -3,7 +3,15 @@
 "use client"
 
 import Link from "next/link"
-import { Activity, CreditCard, FileText, Folder, Pill, Stethoscope } from "lucide-react"
+import {
+  Activity,
+  CreditCard,
+  FileText,
+  Folder,
+  Pill,
+  ShieldCheck,
+  Stethoscope,
+} from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewNoteButton } from "@/components/notes/NewNoteButton"
@@ -12,6 +20,7 @@ import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasures
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
 import { MedicationsTab } from "@/components/medications/MedicationsTab"
 import { PaymentsTab } from "@/components/payments/PaymentsTab"
+import { InsuranceCard } from "@/components/insurance/InsuranceCard"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
 import { usePatientOutcomeMeasures } from "@/hooks/useOutcomeMeasures"
@@ -169,6 +178,10 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
             Payments
             <CountBadge count={chargeCount} />
           </TabsTrigger>
+          <TabsTrigger value="insurance">
+            <ShieldCheck className="h-4 w-4" />
+            Insurance
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="notes" className="pt-4">
           <NotesTab patientId={patientId} />
@@ -187,6 +200,9 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
         </TabsContent>
         <TabsContent value="payments" className="pt-4">
           <PaymentsTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="insurance" className="pt-4">
+          <InsuranceCard patientId={patientId} />
         </TabsContent>
       </Tabs>
     </div>

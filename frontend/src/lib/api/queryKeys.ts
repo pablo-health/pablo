@@ -276,6 +276,19 @@ const baseQueryKeys = {
       ] as const,
   },
 
+  // The practice's insurance payer list (Settings and the coverage picker)
+  payers: {
+    all: ["payers"] as const,
+    list: () => [...baseQueryKeys.payers.all, "list"] as const,
+  },
+
+  // A client's coverage on file
+  coverage: {
+    all: ["coverage"] as const,
+    byPatient: (patientId: string) =>
+      [...baseQueryKeys.coverage.all, "byPatient", patientId] as const,
+  },
+
   // Billing (unbilled-sessions queue) query keys
   billing: {
     all: ["billing"] as const,

@@ -444,6 +444,34 @@ CREATE TABLE __TENANT_SCHEMA__.patient_clinicians (
 
 
 
+CREATE TABLE __TENANT_SCHEMA__.patient_coverage (
+    id uuid NOT NULL,
+    patient_id uuid NOT NULL,
+    payer_id uuid NOT NULL,
+    member_id character varying(80) NOT NULL,
+    group_number character varying(80),
+    subscriber_relationship character varying(10) DEFAULT 'self'::character varying NOT NULL,
+    subscriber_first_name character varying(255),
+    subscriber_last_name character varying(255),
+    subscriber_date_of_birth date,
+    subscriber_sex character varying(1),
+    subscriber_address_line1 character varying(255),
+    subscriber_address_line2 character varying(255),
+    subscriber_city character varying(100),
+    subscriber_state character varying(2),
+    subscriber_postal_code character varying(10),
+    plan_name character varying(255),
+    active boolean DEFAULT true NOT NULL,
+    last_271 jsonb,
+    verified_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_patient_coverage_subscriber_relationship CHECK (((subscriber_relationship)::text = ANY ((ARRAY['self'::character varying, 'spouse'::character varying, 'child'::character varying, 'other'::character varying])::text[]))),
+    CONSTRAINT ck_patient_coverage_subscriber_sex CHECK (((subscriber_sex IS NULL) OR ((subscriber_sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[]))))
+);
+
+
+
 CREATE TABLE __TENANT_SCHEMA__.patient_documents (
     id uuid NOT NULL,
     patient_id uuid NOT NULL,
@@ -535,6 +563,27 @@ CREATE TABLE __TENANT_SCHEMA__.patients (
     postal_code character varying(10),
     sex character varying(1),
     CONSTRAINT ck_patients_sex CHECK (((sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[])))
+);
+
+
+
+CREATE TABLE __TENANT_SCHEMA__.payers (
+    id uuid NOT NULL,
+    name character varying(255) NOT NULL,
+    payer_id character varying(80) NOT NULL,
+    clearinghouse_payer_id character varying(80),
+    is_carveout boolean DEFAULT false NOT NULL,
+    carveout_of uuid,
+    enrollment_status character varying(16) DEFAULT 'none'::character varying NOT NULL,
+    timely_filing_days integer DEFAULT 90 NOT NULL,
+    corrected_claim_days integer DEFAULT 90 NOT NULL,
+    appeal_days integer DEFAULT 180 NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT ck_payers_appeal_days CHECK ((appeal_days > 0)),
+    CONSTRAINT ck_payers_corrected_claim_days CHECK ((corrected_claim_days > 0)),
+    CONSTRAINT ck_payers_enrollment_status CHECK (((enrollment_status)::text = ANY ((ARRAY['none'::character varying, 'filed'::character varying, 'pending'::character varying, 'active'::character varying, 'error'::character varying])::text[]))),
+    CONSTRAINT ck_payers_timely_filing_days CHECK ((timely_filing_days > 0))
 );
 
 
@@ -892,6 +941,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_clinicians
 
 
 
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
+    ADD CONSTRAINT patient_coverage_pkey PRIMARY KEY (id);
+
+
+
 ALTER TABLE ONLY __TENANT_SCHEMA__.patient_documents
     ADD CONSTRAINT patient_documents_pkey PRIMARY KEY (id);
 
@@ -909,6 +963,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.patient_payment_methods
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.patients
     ADD CONSTRAINT patients_pkey PRIMARY KEY (id);
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.payers
+    ADD CONSTRAINT payers_pkey PRIMARY KEY (id);
 
 
 
@@ -1180,6 +1239,10 @@ CREATE INDEX ix_patients_last_name_lower ON __TENANT_SCHEMA__.patients USING btr
 
 
 
+CREATE INDEX ix_payers_payer_id ON __TENANT_SCHEMA__.payers USING btree (payer_id);
+
+
+
 CREATE INDEX ix_prescribing_checklist_items_encounter_id ON __TENANT_SCHEMA__.prescribing_checklist_items USING btree (encounter_id);
 
 
@@ -1268,6 +1331,10 @@ CREATE UNIQUE INDEX ux_patient_charges_payment_intent ON __TENANT_SCHEMA__.patie
 
 
 
+CREATE UNIQUE INDEX ux_patient_coverage_active_primary ON __TENANT_SCHEMA__.patient_coverage USING btree (patient_id) WHERE active;
+
+
+
 CREATE UNIQUE INDEX ux_patient_payment_methods_patient_id ON __TENANT_SCHEMA__.patient_payment_methods USING btree (patient_id);
 
 
@@ -1327,6 +1394,21 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.diagnostic_assessments
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.appointments
     ADD CONSTRAINT fk_appointments_appointment_type FOREIGN KEY (appointment_type_id) REFERENCES __TENANT_SCHEMA__.appointment_types(id) ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
+    ADD CONSTRAINT fk_patient_coverage_patient_id_patients FOREIGN KEY (patient_id) REFERENCES __TENANT_SCHEMA__.patients(id) ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_coverage
+    ADD CONSTRAINT fk_patient_coverage_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.payers
+    ADD CONSTRAINT fk_payers_carveout_of_payers FOREIGN KEY (carveout_of) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE SET NULL;
 
 
 

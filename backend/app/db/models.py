@@ -1789,3 +1789,150 @@ class PatientChargeRow(Base):
     # zero.
     fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     net_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+#: Where a practice stands with a payer for electronic transactions. ``none``
+#: is the default for a payer typed in from a client's card; the rest are
+#: written by whatever files and tracks the enrollment.
+PAYER_ENROLLMENT_STATUSES: tuple[str, ...] = ("none", "filed", "pending", "active", "error")
+
+#: Who the coverage's subscriber is relative to the client. ``self`` is the
+#: common case; anything else means the subscriber's own name and details
+#: have to be on file before a claim can name them.
+SUBSCRIBER_RELATIONSHIPS: tuple[str, ...] = ("self", "spouse", "child", "other")
+
+#: Deadline defaults a payer row is created with, in days. These are the
+#: common floor; a practice's participation agreement can say otherwise, and
+#: the settings form lets it. Medicare's longer filing window is applied by
+#: ``app.services.payer_defaults`` when the row is created, not here.
+DEFAULT_TIMELY_FILING_DAYS = 90
+DEFAULT_CORRECTED_CLAIM_DAYS = 90
+DEFAULT_APPEAL_DAYS = 180
+
+
+class PayerRow(Base):
+    """An insurance payer this practice files with or checks eligibility against.
+
+    Practice-level, not per-client: one row per payer, referenced by every
+    coverage on file that names it. There is no ``user_id`` / ``patient_id``
+    to scope it by, so — like ``practice_billing_profile`` — its isolation
+    boundary is the tenant schema and RLS is deliberately left off
+    (registered in ``_CORE_NOT_ROW_SCOPED``).
+
+    ``payer_id`` is the electronic payer id printed on the card or listed in
+    the clearinghouse's payer directory. ``clearinghouse_payer_id`` is the
+    clearinghouse's own identifier for the same payer, filled in later by
+    whatever looks the payer up; NULL until then.
+
+    Behavioral benefits are often administered by a different entity than
+    the one the medical card names. ``is_carveout`` marks such a payer and
+    ``carveout_of`` points at the medical payer it carves out from, so a
+    claim can be routed to the right one.
+
+    The three ``*_days`` columns are the deadlines a claim against this payer
+    lives under: how long after the service the original claim may be filed,
+    how long after a rejection a corrected claim may follow, and how long
+    after a denial an appeal may be lodged. Nothing here computes a date from
+    them; the claim workflow reads them.
+    """
+
+    __tablename__ = "payers"
+    __table_args__ = (
+        CheckConstraint(
+            f"enrollment_status IN ({_sql_in_list(PAYER_ENROLLMENT_STATUSES)})",
+            name="ck_payers_enrollment_status",
+        ),
+        CheckConstraint("timely_filing_days > 0", name="ck_payers_timely_filing_days"),
+        CheckConstraint("corrected_claim_days > 0", name="ck_payers_corrected_claim_days"),
+        CheckConstraint("appeal_days > 0", name="ck_payers_appeal_days"),
+        Index("ix_payers_payer_id", "payer_id"),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    payer_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    clearinghouse_payer_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    is_carveout: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    carveout_of: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="SET NULL"), nullable=True
+    )
+    enrollment_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    timely_filing_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=DEFAULT_TIMELY_FILING_DAYS
+    )
+    corrected_claim_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=DEFAULT_CORRECTED_CLAIM_DAYS
+    )
+    appeal_days: Mapped[int] = mapped_column(Integer, nullable=False, default=DEFAULT_APPEAL_DAYS)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PatientCoverageRow(Base):
+    """The insurance plan a client is on — what a claim and an eligibility
+    check both need before they can be built.
+
+    Carries ``patient_id`` and no ``user_id``, so ``enable_rls_on_schema``
+    attaches the standard ``has_patient_access`` policy: only a clinician
+    with a grant on the client can read or write their coverage.
+
+    One active primary coverage per client (partial unique index on
+    ``patient_id WHERE active``). Replacing a plan deactivates the old row
+    rather than deleting it, so a claim filed under the old plan can still
+    be read against what was on file at the time.
+
+    The member id is protected health information, not a secret: it is
+    stored as typed and must never reach a log line. The subscriber fields
+    are nullable because they only matter when the subscriber is somebody
+    other than the client (``subscriber_relationship != 'self'``); the
+    claim scrub, not this table, decides when they are required.
+
+    ``last_271`` and ``verified_at`` are written by the eligibility check,
+    never by the chart form; they stay NULL until one has run.
+    """
+
+    __tablename__ = "patient_coverage"
+    __table_args__ = (
+        CheckConstraint(
+            f"subscriber_relationship IN ({_sql_in_list(SUBSCRIBER_RELATIONSHIPS)})",
+            name="ck_patient_coverage_subscriber_relationship",
+        ),
+        CheckConstraint(
+            "subscriber_sex IS NULL OR subscriber_sex IN ('M', 'F', 'U')",
+            name="ck_patient_coverage_subscriber_sex",
+        ),
+        Index(
+            "ux_patient_coverage_active_primary",
+            "patient_id",
+            unique=True,
+            postgresql_where=text("active"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(Uuid(as_uuid=False), primary_key=True)
+    # Native uuid so the schema's ``has_patient_access`` policy applies.
+    patient_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("patients.id", ondelete="CASCADE"), nullable=False
+    )
+    payer_id: Mapped[str] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("payers.id", ondelete="RESTRICT"), nullable=False
+    )
+    member_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    group_number: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    subscriber_relationship: Mapped[str] = mapped_column(String(10), nullable=False, default="self")
+    subscriber_first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subscriber_last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subscriber_date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # X12 DMG03 code set, same as ``patients.sex``.
+    subscriber_sex: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    subscriber_address_line1: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subscriber_address_line2: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subscriber_city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    subscriber_state: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    subscriber_postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    plan_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_271: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
