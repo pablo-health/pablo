@@ -31,9 +31,10 @@ Idempotency
 -----------
 
 Every applied delivery is recorded on the claim's receipt ledger under
-the vendor's event id, which is unique there, and under the transaction
-id. A redelivery — or a webhook for a 277CA the poll already applied —
-finds the receipt and answers ``200`` without a second transition.
+the delivery's ``webhook-id`` (the vendor's event id, stable across its
+retries), which is unique there, and under the transaction id. A
+redelivery — or a webhook for a 277CA the poll already applied — finds
+the receipt and answers ``200`` without a second transition.
 
 Errors
 ------
@@ -108,7 +109,8 @@ async def clearinghouse_webhook(
     except json.JSONDecodeError as exc:
         logger.warning("clearinghouse_webhook_bad_json err=%s", exc)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid JSON") from None
-    event = parse_event(payload)
+    # The signature check above refused any delivery without a webhook-id.
+    event = parse_event(payload, delivery_id=webhook_id or "")
     if event is None:
         logger.warning("clearinghouse_webhook_payload_not_event")
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "expected an event object")

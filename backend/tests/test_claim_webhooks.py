@@ -47,23 +47,43 @@ _OLD_SECRET = "previous-webhook-signing-secret-for-tests"
 _TRANSACTION = "7cfce085-f4af-43ce-aa36-5654d52efec0"
 
 
+_MESSAGE_ID = "msg_2f5a1c1a01"
+
+
+def _signing_key(secret: str) -> bytes:
+    """Built the way the vendor's scheme (and the fake clearinghouse) builds it."""
+    if secret.startswith("whsec_"):
+        return base64.b64decode(secret.removeprefix("whsec_"))
+    return secret.encode()
+
+
 def _sign(
     body: bytes,
     secret: str = _SECRET,
     *,
     timestamp: int | None = None,
-    message_id: str | None = None,
+    message_id: str = _MESSAGE_ID,
 ) -> dict[str, str]:
+    """Standard Webhooks headers: HMAC-SHA256 over ``"<id>.<timestamp>.<body>"``."""
     stamp = int(time.time()) if timestamp is None else timestamp
-    prefix = f"{message_id}.{stamp}." if message_id else f"{stamp}."
-    digest = hmac.new(secret.encode(), prefix.encode() + body, hashlib.sha256).digest()
-    headers = {
+    signed = f"{message_id}.{stamp}.".encode() + body
+    digest = hmac.new(_signing_key(secret), signed, hashlib.sha256).digest()
+    return {
+        "webhook-id": message_id,
         "webhook-signature": "v1," + base64.b64encode(digest).decode(),
         "webhook-timestamp": str(stamp),
     }
-    if message_id:
-        headers["webhook-id"] = message_id
-    return headers
+
+
+def _verify(body: bytes, headers: dict[str, str], secrets: list[str], **kwargs: Any) -> bool:
+    return verify_signature(
+        body,
+        signature_header=headers.get("webhook-signature"),
+        timestamp_header=headers.get("webhook-timestamp"),
+        message_id=headers.get("webhook-id"),
+        secrets=secrets,
+        **kwargs,
+    )
 
 
 def _event(**overrides: Any) -> bytes:
@@ -74,56 +94,70 @@ def _event(**overrides: Any) -> bytes:
 # --- verify_signature -----------------------------------------------------------
 
 
-def test_the_documented_form_verifies() -> None:
+def test_a_standard_webhooks_delivery_verifies() -> None:
     body = _event()
-    headers = _sign(body)
-    assert verify_signature(
-        body,
-        signature_header=headers["webhook-signature"],
-        timestamp_header=headers["webhook-timestamp"],
-        message_id="msg_1",
-        secrets=[_SECRET],
-    )
+    assert _verify(body, _sign(body), [_SECRET])
 
 
-def test_the_standard_webhooks_form_with_the_message_id_verifies() -> None:
-    body = _event()
-    headers = _sign(body, message_id="msg_1")
-    assert verify_signature(
-        body,
-        signature_header=headers["webhook-signature"],
-        timestamp_header=headers["webhook-timestamp"],
-        message_id="msg_1",
-        secrets=[_SECRET],
-    )
+def test_a_known_vector_verifies() -> None:
+    """A fixed delivery, signed by hand the way the vendor's scheme says.
+
+    ``echo -n "msg_vector.1700000000.{}" | openssl dgst -sha256 -hmac k | base64``
+    """
+    body = b"{}"
+    headers = {
+        "webhook-id": "msg_vector",
+        "webhook-timestamp": "1700000000",
+        "webhook-signature": "v1,"
+        + base64.b64encode(
+            hmac.new(b"k", b"msg_vector.1700000000.{}", hashlib.sha256).digest()
+        ).decode(),
+    }
+    assert _verify(body, headers, ["k"], now=1700000001)
+    assert not _verify(body, {**headers, "webhook-id": "msg_other"}, ["k"], now=1700000001)
 
 
 def test_a_prefixed_base64_secret_is_decoded_before_signing() -> None:
     body = _event()
     raw_key = b"0123456789abcdef0123456789abcdef"
-    digest = hmac.new(raw_key, b"1700000000." + body, hashlib.sha256).digest()
-    presented = "v1," + base64.b64encode(digest).decode()
     secret = "whsec_" + base64.b64encode(raw_key).decode()
-    assert verify_signature(
-        body,
-        signature_header=presented,
-        timestamp_header="1700000000",
-        message_id=None,
-        secrets=[secret],
-        now=1700000010,
-    )
+    headers = _sign(body, secret, timestamp=1700000000)
+    assert _verify(body, headers, [secret], now=1700000010)
+    # Signing with the prefixed string itself is not the same key.
+    digest = hmac.new(secret.encode(), b"msg_x.1700000000." + body, hashlib.sha256).digest()
+    wrong = {
+        "webhook-id": "msg_x",
+        "webhook-timestamp": "1700000000",
+        "webhook-signature": "v1," + base64.b64encode(digest).decode(),
+    }
+    assert not _verify(body, wrong, [secret], now=1700000010)
+
+
+def test_the_signature_without_the_delivery_id_is_refused() -> None:
+    """``timestamp.body`` alone is not the scheme; the id is part of what is signed."""
+    body = _event()
+    stamp = str(int(time.time()))
+    digest = hmac.new(_SECRET.encode(), f"{stamp}.".encode() + body, hashlib.sha256).digest()
+    headers = {
+        "webhook-id": _MESSAGE_ID,
+        "webhook-timestamp": stamp,
+        "webhook-signature": "v1," + base64.b64encode(digest).decode(),
+    }
+    assert not _verify(body, headers, [_SECRET])
+
+
+def test_a_delivery_without_an_id_header_is_refused() -> None:
+    body = _event()
+    headers = _sign(body)
+    del headers["webhook-id"]
+    assert not _verify(body, headers, [_SECRET])
 
 
 def test_several_signatures_in_the_header_are_all_tried() -> None:
     body = _event()
-    good = _sign(body)["webhook-signature"]
-    assert verify_signature(
-        body,
-        signature_header=f"v1,AAAA {good}",
-        timestamp_header=str(int(time.time())),
-        message_id=None,
-        secrets=[_SECRET],
-    )
+    headers = _sign(body)
+    headers["webhook-signature"] = "v1,AAAA " + headers["webhook-signature"]
+    assert _verify(body, headers, [_SECRET])
 
 
 @pytest.mark.parametrize(
@@ -152,27 +186,31 @@ def test_malformed_or_unconfigured_is_refused(
 def test_a_stale_timestamp_is_refused_even_when_the_signature_is_right() -> None:
     body = _event()
     headers = _sign(body, timestamp=1700000000)
-    assert not verify_signature(
-        body,
-        signature_header=headers["webhook-signature"],
-        timestamp_header=headers["webhook-timestamp"],
-        message_id=None,
-        secrets=[_SECRET],
-        now=1700000000 + 600,
-    )
+    assert not _verify(body, headers, [_SECRET], now=1700000000 + 600)
 
 
 def test_parse_event_reads_the_transaction_reference() -> None:
-    event = parse_event(json.loads(_event()))
+    event = parse_event(json.loads(_event()), delivery_id="msg_1")
     assert event == WebhookEvent(
-        id="evt_a81659f1-16a5-9bec-03e1-0ba8ab5e9652",
-        type="transaction.processed",
-        transaction_id=_TRANSACTION,
+        id="msg_1", type="transaction.processed", transaction_id=_TRANSACTION
     )
-    assert parse_event({"type": "transaction.processed"}) is None
-    assert parse_event(["not", "an", "object"]) is None
-    assert parse_event({"id": "e", "type": "file.processed"}) == WebhookEvent(
-        id="e", type="file.processed", transaction_id=None
+    assert parse_event({"id": "evt"}, delivery_id="msg_1") is None
+    assert parse_event(["not", "an", "object"], delivery_id="msg_1") is None
+    assert parse_event({"id": "e", "type": "file.processed"}, delivery_id="msg_1") == (
+        WebhookEvent(id="msg_1", type="file.processed", transaction_id=None)
+    )
+
+
+def test_parse_event_reads_the_newer_delivery_shape() -> None:
+    """``detail-type`` with a version suffix, and the transaction document under ``detail``."""
+    payload = {
+        "id": "evt_9",
+        "source": "stedi.core",
+        "detail-type": "transaction.processed.v2",
+        "detail": fixture("transaction_inbound_277.json"),
+    }
+    assert parse_event(payload, delivery_id="msg_9") == WebhookEvent(
+        id="msg_9", type="transaction.processed", transaction_id=_TRANSACTION
     )
 
 
@@ -274,14 +312,36 @@ def test_other_event_types_are_acknowledged_and_ignored(route: dict[str, Any]) -
     assert route["ingested"] == []
 
 
-def test_a_transaction_event_is_handed_on_with_its_ids(route: dict[str, Any]) -> None:
+def test_a_transaction_event_is_handed_on_keyed_by_its_delivery_id(
+    route: dict[str, Any],
+) -> None:
     body = _event()
     response = _post(route, body, _sign(body, message_id="msg_1"))
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "outcome": "moved"}
     [event] = route["ingested"]
-    assert event.id == "evt_a81659f1-16a5-9bec-03e1-0ba8ab5e9652"
+    assert event.id == "msg_1"
     assert event.transaction_id == _TRANSACTION
+
+
+def test_the_fake_clearinghouses_delivery_shape_is_handed_on(route: dict[str, Any]) -> None:
+    """The e2e harness signs the same way and sends the newer body shape."""
+    payload = {
+        "id": "evt_fake",
+        "source": "stedi.core",
+        "detail-type": "transaction.processed",
+        "time": "2026-09-06T15:51:22Z",
+        "detail": fixture("transaction_inbound_277.json"),
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    secret = "whsec_" + base64.b64encode(b"fake-clearinghouse-key-bytes").decode()
+    route["settings"].clearinghouse_webhook_secret = SecretStr(secret)
+
+    response = _post(route, body, _sign(body, secret, message_id="evt_fake"))
+
+    assert response.status_code == 200, response.text
+    [event] = route["ingested"]
+    assert (event.id, event.transaction_id) == ("evt_fake", _TRANSACTION)
 
 
 def test_a_vendor_outage_asks_for_a_redelivery(route: dict[str, Any]) -> None:

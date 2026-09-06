@@ -2,24 +2,22 @@
 
 """The clearinghouse's event deliveries: verifying them and reading them.
 
-The vendor signs every delivery the Standard Webhooks way: a
-``webhook-signature`` header carrying one or more ``v1,<base64>`` entries,
-a ``webhook-timestamp`` (Unix seconds) and a ``webhook-id``. The signature
-is an HMAC-SHA256 over ``"<timestamp>.<body>"`` under the event
-destination's secret, base64-encoded.
+The vendor signs every delivery the Standard Webhooks way. Three headers:
+``webhook-id`` (the delivery's id, stable across the vendor's retries — the
+value deliveries are deduped on), ``webhook-timestamp`` (Unix seconds) and
+``webhook-signature`` carrying one or more space-separated ``v1,<base64>``
+entries. The signature is an HMAC-SHA256 over
+``"<webhook-id>.<webhook-timestamp>.<raw body>"`` under the event
+destination's secret — the secret's raw bytes, or its base64 decoding when
+it carries the scheme's ``whsec_`` prefix — base64-encoded. A delivery
+missing any of the three headers, or whose timestamp is outside the
+tolerance, is refused before the body is read.
 
-Two details are deliberately covered both ways. The vendor's guide spells
-the signed content as ``timestamp.body``; the standard it cites signs
-``id.timestamp.body``. And the standard's secrets are ``whsec_``-prefixed
-base64 while the guide treats the secret as an opaque string. Every
-combination is a legitimate HMAC under the real secret, so
-:func:`verify_signature` checks each of them in constant time and accepts
-any match — no weaker than one form, and immune to which one the vendor
-means this month. A stale timestamp is refused regardless.
-
-The event body is small: an ``id`` (what deliveries are deduped on), a
-``type`` — ``transaction.processed`` is the one that matters, ``event.ping``
-is the vendor's test — and a ``resource`` naming the transaction to fetch.
+The event body is small: a ``type`` (the vendor's newer deliveries spell
+it ``detail-type`` and may suffix a version) — ``transaction.processed``
+is the one that matters, ``event.ping`` is the vendor's test — and the
+transaction it is about, either as ``resource.id`` or as the transaction
+document itself under ``detail``.
 """
 
 from __future__ import annotations
@@ -45,6 +43,7 @@ PING = "event.ping"
 _SIGNATURE_VERSION = "v1"
 #: The Standard Webhooks marker for a base64-encoded signing key.
 _ENCODED_KEY_MARKER = "whsec_"
+_VERSION_SUFFIX = ".v"
 
 
 def candidate_secrets(settings: Settings) -> list[str]:
@@ -56,19 +55,12 @@ def candidate_secrets(settings: Settings) -> list[str]:
     return [secret for secret in secrets if secret]
 
 
-def _keys(secret: str) -> list[bytes]:
-    keys = [secret.encode()]
+def signing_key(secret: str) -> bytes:
+    """The bytes the HMAC runs under: decoded when the secret is ``whsec_``-prefixed."""
     if secret.startswith(_ENCODED_KEY_MARKER):
         with contextlib.suppress(binascii.Error, ValueError):
-            keys.append(base64.b64decode(secret[len(_ENCODED_KEY_MARKER) :], validate=True))
-    return keys
-
-
-def _signed_payloads(body: bytes, timestamp: str, message_id: str | None) -> list[bytes]:
-    payloads = [f"{timestamp}.".encode() + body]
-    if message_id:
-        payloads.append(f"{message_id}.{timestamp}.".encode() + body)
-    return payloads
+            return base64.b64decode(secret[len(_ENCODED_KEY_MARKER) :], validate=True)
+    return secret.encode()
 
 
 def _presented_signatures(header: str) -> list[str]:
@@ -94,7 +86,7 @@ def verify_signature(  # noqa: PLR0913 — the headers, keyword-only
     ``False`` on a missing or malformed header, a timestamp outside the
     tolerance, no configured secret, or no match.
     """
-    if not signature_header or not timestamp_header or not secrets:
+    if not signature_header or not timestamp_header or not message_id or not secrets:
         return False
     try:
         timestamp = int(timestamp_header)
@@ -107,37 +99,49 @@ def verify_signature(  # noqa: PLR0913 — the headers, keyword-only
     if not presented:
         return False
 
-    payloads = _signed_payloads(body, str(timestamp), message_id)
+    signed = f"{message_id}.{timestamp}.".encode() + body
     for secret in secrets:
-        for key in _keys(secret):
-            for payload in payloads:
-                expected = base64.b64encode(
-                    hmac.new(key, payload, hashlib.sha256).digest()
-                ).decode()
-                if any(hmac.compare_digest(expected, candidate) for candidate in presented):
-                    return True
+        digest = hmac.new(signing_key(secret), signed, hashlib.sha256).digest()
+        expected = base64.b64encode(digest).decode()
+        if any(hmac.compare_digest(expected, candidate) for candidate in presented):
+            return True
     return False
 
 
 @dataclass(frozen=True)
 class WebhookEvent:
-    """The parts of a delivery this receiver reads."""
+    """The parts of a delivery this receiver reads.
+
+    ``id`` is what the delivery is deduped on: the ``webhook-id`` header,
+    which the vendor keeps stable across its retries.
+    """
 
     id: str
     type: str
     transaction_id: str | None
 
 
-def parse_event(payload: Any) -> WebhookEvent | None:
-    """The event in ``payload``, or ``None`` if it lacks an id or a type."""
+def _event_type(payload: dict[str, Any]) -> str:
+    raw = str(payload.get("type") or payload.get("detail-type") or "")
+    head, marker, version = raw.rpartition(_VERSION_SUFFIX)
+    return head if marker and version.isdigit() else raw
+
+
+def _transaction_id(payload: dict[str, Any]) -> str | None:
+    resource = payload.get("resource")
+    if isinstance(resource, dict) and resource.get("type") == "transaction":
+        return str(resource.get("id") or "") or None
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        return str(detail.get("transactionId") or "") or None
+    return None
+
+
+def parse_event(payload: Any, *, delivery_id: str) -> WebhookEvent | None:
+    """The event in ``payload``, or ``None`` if it carries no type."""
     if not isinstance(payload, dict):
         return None
-    event_id = str(payload.get("id") or "")
-    event_type = str(payload.get("type") or "")
-    if not event_id or not event_type:
+    event_type = _event_type(payload)
+    if not event_type:
         return None
-    resource = payload.get("resource")
-    transaction_id: str | None = None
-    if isinstance(resource, dict) and resource.get("type") == "transaction":
-        transaction_id = str(resource.get("id") or "") or None
-    return WebhookEvent(id=event_id, type=event_type, transaction_id=transaction_id)
+    return WebhookEvent(id=delivery_id, type=event_type, transaction_id=_transaction_id(payload))
