@@ -153,7 +153,7 @@ def register_clearinghouse_client_factory(factory: ClearinghouseClientFactory | 
     _registry.factory = factory
 
 
-def get_clearinghouse_client(practice_id: str | None) -> ClearinghouseClient | None:
+def clearinghouse_client_for_practice(practice_id: str | None) -> ClearinghouseClient | None:
     """The client for ``practice_id``, or ``None`` when none is configured."""
     return (_registry.factory or _default_client_factory)(practice_id)
 
@@ -245,7 +245,7 @@ def sync_provider_record(session: Session, practice_id: str | None) -> str | Non
     a vendor error leaves the save itself untouched — the record is created
     on the next save that succeeds, or when an enrollment is requested.
     """
-    client = get_clearinghouse_client(practice_id)
+    client = clearinghouse_client_for_practice(practice_id)
     if client is None:
         return None
     try:
@@ -395,7 +395,7 @@ def enroll_if_new(
     """
     if list_enrollments(session, payer_row_id):
         return
-    client = get_clearinghouse_client(practice_id)
+    client = clearinghouse_client_for_practice(practice_id)
     if client is None:
         return
     try:

@@ -1,0 +1,988 @@
+{
+  "meta": {
+    "senderId": "STEDI",
+    "submitterId": "117151744",
+    "applicationMode": "test",
+    "traceId": "CONSTRUCTED-CARVEOUT",
+    "outboundTraceId": "CONSTRUCTED-CARVEOUT"
+  },
+  "controlNumber": "000000000",
+  "reassociationKey": "000000000",
+  "tradingPartnerServiceId": "87726",
+  "provider": {
+    "providerName": "CALIFORNIA MEDICAL PROVIDER",
+    "entityIdentifier": "Provider",
+    "entityType": "Non-Person Entity",
+    "npi": "1999999984"
+  },
+  "subscriber": {
+    "memberId": "UHC123456",
+    "firstName": "JANE",
+    "lastName": "DOE",
+    "middleName": "D",
+    "gender": "F",
+    "entityIdentifier": "Insured or Subscriber",
+    "entityType": "Person",
+    "dateOfBirth": "19710101",
+    "groupNumber": "111222",
+    "address": {
+      "address1": "101 MAIN ST",
+      "city": "SACRAMENTO",
+      "state": "CA",
+      "postalCode": "94203"
+    }
+  },
+  "payer": {
+    "entityIdentifier": "Payer",
+    "entityType": "Non-Person Entity",
+    "name": "UNITEDHEALTHCARE",
+    "payorIdentification": "87726",
+    "contactInformation": {
+      "contacts": [
+        {
+          "communicationMode": "Uniform Resource Locator (URL)",
+          "communicationNumber": "WWW.UHCPROVIDER.COM"
+        }
+      ]
+    }
+  },
+  "planInformation": {
+    "groupNumber": "111222"
+  },
+  "planDateInformation": {
+    "planBegin": "20240101"
+  },
+  "planStatus": [
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "planDetails": "Gold Plan HMO",
+      "serviceTypeCodes": [
+        "30"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "PT"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "PT"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "33"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "96"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "86"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "BZ"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "1",
+        "AL",
+        "48",
+        "35",
+        "47",
+        "50",
+        "MH",
+        "BZ",
+        "BY",
+        "UC"
+      ]
+    },
+    {
+      "statusCode": "1",
+      "status": "Active Coverage",
+      "serviceTypeCodes": [
+        "96"
+      ]
+    }
+  ],
+  "benefitsInformation": [
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "planCoverage": "Gold Plan HMO",
+      "authOrCertIndicator": "Y",
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable",
+      "benefitsRelatedEntity": {
+        "entityIdentifier": "Payer",
+        "entityType": "Non-Person Entity",
+        "entityName": "UNITEDHEALTHCARE",
+        "entityIdentification": "PI",
+        "entityIdentificationValue": "87726"
+      },
+      "benefitsRelatedEntities": [
+        {
+          "entityIdentifier": "Payer",
+          "entityType": "Non-Person Entity",
+          "entityName": "UNITEDHEALTHCARE",
+          "entityIdentification": "PI",
+          "entityIdentificationValue": "87726"
+        }
+      ],
+      "additionalInformation": [
+        {
+          "description": "PCP TO SUBMIT A SPECIALIST REFERRAL"
+        }
+      ]
+    },
+    {
+      "code": "C",
+      "name": "Deductible",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "timeQualifierCode": "29",
+      "timeQualifier": "Remaining",
+      "benefitAmount": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "G",
+      "name": "Out of Pocket (Stop Loss)",
+      "coverageLevelCode": "FAM",
+      "coverageLevel": "Family",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "timeQualifierCode": "23",
+      "timeQualifier": "Calendar Year",
+      "benefitAmount": "3000",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "C",
+      "name": "Deductible",
+      "coverageLevelCode": "FAM",
+      "coverageLevel": "Family",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "timeQualifierCode": "29",
+      "timeQualifier": "Remaining",
+      "benefitAmount": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "G",
+      "name": "Out of Pocket (Stop Loss)",
+      "coverageLevelCode": "FAM",
+      "coverageLevel": "Family",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "timeQualifierCode": "24",
+      "timeQualifier": "Year to Date",
+      "benefitAmount": "925",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "G",
+      "name": "Out of Pocket (Stop Loss)",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "timeQualifierCode": "23",
+      "timeQualifier": "Calendar Year",
+      "benefitAmount": "1500",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "G",
+      "name": "Out of Pocket (Stop Loss)",
+      "coverageLevelCode": "FAM",
+      "coverageLevel": "Family",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "timeQualifierCode": "29",
+      "timeQualifier": "Remaining",
+      "benefitAmount": "2200",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "G",
+      "name": "Out of Pocket (Stop Loss)",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "timeQualifierCode": "24",
+      "timeQualifier": "Year to Date",
+      "benefitAmount": "650",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "G",
+      "name": "Out of Pocket (Stop Loss)",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "30"
+      ],
+      "serviceTypes": [
+        "Health Benefit Plan Coverage"
+      ],
+      "insuranceTypeCode": "C1",
+      "insuranceType": "Commercial",
+      "timeQualifierCode": "29",
+      "timeQualifier": "Remaining",
+      "benefitAmount": "850",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "L",
+      "name": "Primary Care Provider",
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable",
+      "benefitsRelatedEntity": {
+        "entityIdentifier": "Primary Care Provider",
+        "entityType": "Person",
+        "entityName": "DOUGH",
+        "entityFirstname": "JOHN",
+        "entityMiddlename": "L",
+        "entityIdentification": "XX",
+        "entityIdentificationValue": "3334445556",
+        "address": {
+          "address1": "202 MAIN ST",
+          "city": "SACRAMENTO",
+          "state": "CA",
+          "postalCode": "94203"
+        }
+      },
+      "benefitsRelatedEntities": [
+        {
+          "entityIdentifier": "Primary Care Provider",
+          "entityType": "Person",
+          "entityName": "DOUGH",
+          "entityFirstname": "JOHN",
+          "entityMiddlename": "L",
+          "entityIdentification": "XX",
+          "entityIdentificationValue": "3334445556",
+          "address": {
+            "address1": "202 MAIN ST",
+            "city": "SACRAMENTO",
+            "state": "CA",
+            "postalCode": "94203"
+          }
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "PT"
+      ],
+      "serviceTypes": [
+        "Physical Therapy"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "REHABILITATIVE"
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "PT"
+      ],
+      "serviceTypes": [
+        "Physical Therapy"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "HABILITATIVE"
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "33"
+      ],
+      "serviceTypes": [
+        "Chiropractic"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "VARIED BENEFIT.REFER TO PLAN EVIDENCE OF COVERAGE FOR BENEFITS AND LIMITATIONS"
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "96"
+      ],
+      "serviceTypes": [
+        "Professional (Physician)"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "SPECIALIST"
+        },
+        {
+          "description": "OUTPATIENT MATERNITY"
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "86"
+      ],
+      "serviceTypes": [
+        "Emergency Services"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "COPAY WAIVED IF ADMITTED"
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "BZ"
+      ],
+      "serviceTypes": [
+        "Physician Visit - Office: Well"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "OUTPATIENT PERIODIC HEALTH EVALUATION"
+        }
+      ]
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "1",
+        "AL",
+        "48",
+        "35",
+        "47",
+        "50",
+        "MH",
+        "BZ",
+        "BY",
+        "UC"
+      ],
+      "serviceTypes": [
+        "Medical Care",
+        "Vision (Optometry)",
+        "Hospital - Inpatient",
+        "Dental Care",
+        "Hospital",
+        "Hospital - Outpatient",
+        "Mental Health",
+        "Physician Visit - Office: Well",
+        "Physician Visit - Office: Sick",
+        "Urgent Care"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "1",
+      "name": "Active Coverage",
+      "serviceTypeCodes": [
+        "96"
+      ],
+      "serviceTypes": [
+        "Professional (Physician)"
+      ],
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "SPECIALIST"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "BZ"
+      ],
+      "serviceTypes": [
+        "Physician Visit - Office: Well"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "OUTPATIENT PERIODIC HEALTH EVALUATION"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "UC",
+        "48",
+        "BZ",
+        "BY",
+        "50"
+      ],
+      "serviceTypes": [
+        "Urgent Care",
+        "Hospital - Inpatient",
+        "Physician Visit - Office: Well",
+        "Physician Visit - Office: Sick",
+        "Hospital - Outpatient"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "PT"
+      ],
+      "serviceTypes": [
+        "Physical Therapy"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "REHABILITATIVE"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "33"
+      ],
+      "serviceTypes": [
+        "Chiropractic"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "VARIED BENEFIT.REFER TO PLAN EVIDENCE OF COVERAGE FOR BENEFITS AND LIMITATIONS"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "96"
+      ],
+      "serviceTypes": [
+        "Professional (Physician)"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "SPECIALIST"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "PT"
+      ],
+      "serviceTypes": [
+        "Physical Therapy"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "HABILITATIVE"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "86"
+      ],
+      "serviceTypes": [
+        "Emergency Services"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "COPAY WAIVED IF ADMITTED"
+        }
+      ]
+    },
+    {
+      "code": "A",
+      "name": "Co-Insurance",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "96"
+      ],
+      "serviceTypes": [
+        "Professional (Physician)"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitPercent": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "SPECIALIST"
+        },
+        {
+          "description": "OUTPATIENT MATERNITY"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "96"
+      ],
+      "serviceTypes": [
+        "Professional (Physician)"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "15",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "SPECIALIST"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "96"
+      ],
+      "serviceTypes": [
+        "Professional (Physician)"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "SPECIALIST"
+        },
+        {
+          "description": "OUTPATIENT MATERNITY"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "PT"
+      ],
+      "serviceTypes": [
+        "Physical Therapy"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "15",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "HABILITATIVE"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "BZ"
+      ],
+      "serviceTypes": [
+        "Physician Visit - Office: Well"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "OUTPATIENT PERIODIC HEALTH EVALUATION"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "BY",
+        "BZ",
+        "UC"
+      ],
+      "serviceTypes": [
+        "Physician Visit - Office: Sick",
+        "Physician Visit - Office: Well",
+        "Urgent Care"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "15",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "48",
+        "50"
+      ],
+      "serviceTypes": [
+        "Hospital - Inpatient",
+        "Hospital - Outpatient"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "0",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes"
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "33"
+      ],
+      "serviceTypes": [
+        "Chiropractic"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "15",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "VARIED BENEFIT.REFER TO PLAN EVIDENCE OF COVERAGE FOR BENEFITS AND LIMITATIONS"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "86"
+      ],
+      "serviceTypes": [
+        "Emergency Services"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "50",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "COPAY WAIVED IF ADMITTED"
+        }
+      ]
+    },
+    {
+      "code": "B",
+      "name": "Co-Payment",
+      "coverageLevelCode": "IND",
+      "coverageLevel": "Individual",
+      "serviceTypeCodes": [
+        "PT"
+      ],
+      "serviceTypes": [
+        "Physical Therapy"
+      ],
+      "timeQualifierCode": "27",
+      "timeQualifier": "Visit",
+      "benefitAmount": "15",
+      "inPlanNetworkIndicatorCode": "Y",
+      "inPlanNetworkIndicator": "Yes",
+      "additionalInformation": [
+        {
+          "description": "REHABILITATIVE"
+        }
+      ]
+    },
+    {
+      "code": "U",
+      "name": "Contact Following Entity for Eligibility or Benefit Information",
+      "serviceTypeCodes": [
+        "MH",
+        "A4"
+      ],
+      "serviceTypes": [
+        "Mental Health",
+        "Psychiatric"
+      ],
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable",
+      "benefitsRelatedEntity": {
+        "entityIdentifier": "Third-Party Administrator",
+        "entityType": "Non-Person Entity",
+        "entityName": "EXAMPLE BEHAVIORAL HEALTH",
+        "entityIdentification": "PI",
+        "entityIdentificationValue": "EXBH1",
+        "contactInformation": {
+          "contacts": [
+            {
+              "communicationMode": "Telephone",
+              "communicationNumber": "8005550100"
+            }
+          ]
+        }
+      },
+      "benefitsRelatedEntities": [
+        {
+          "entityIdentifier": "Third-Party Administrator",
+          "entityType": "Non-Person Entity",
+          "entityName": "EXAMPLE BEHAVIORAL HEALTH",
+          "entityIdentification": "PI",
+          "entityIdentificationValue": "EXBH1",
+          "contactInformation": {
+            "contacts": [
+              {
+                "communicationMode": "Telephone",
+                "communicationNumber": "8005550100"
+              }
+            ]
+          }
+        }
+      ],
+      "additionalInformation": [
+        {
+          "description": "BEHAVIORAL HEALTH BENEFITS ADMINISTERED BY EXAMPLE BEHAVIORAL HEALTH"
+        }
+      ]
+    },
+    {
+      "code": "X",
+      "name": "Health Care Facility",
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable",
+      "benefitsRelatedEntity": {
+        "entityIdentifier": "Facility",
+        "entityType": "Non-Person Entity",
+        "entityName": "DIRECTED BY PRIMARY MD"
+      },
+      "benefitsRelatedEntities": [
+        {
+          "entityIdentifier": "Facility",
+          "entityType": "Non-Person Entity",
+          "entityName": "DIRECTED BY PRIMARY MD"
+        }
+      ]
+    },
+    {
+      "code": "N",
+      "name": "Services Restricted to Following Provider",
+      "inPlanNetworkIndicatorCode": "W",
+      "inPlanNetworkIndicator": "Not Applicable",
+      "benefitsRelatedEntity": {
+        "entityIdentifier": "Contracted Service Provider",
+        "entityType": "Non-Person Entity",
+        "entityName": "MEDICAL FACILITY SACRAMENTO",
+        "address": {
+          "address1": "202 MAIN ST",
+          "city": "SACRAMENTO",
+          "state": "CA",
+          "postalCode": "94203"
+        }
+      },
+      "benefitsRelatedEntities": [
+        {
+          "entityIdentifier": "Contracted Service Provider",
+          "entityType": "Non-Person Entity",
+          "entityName": "MEDICAL FACILITY SACRAMENTO",
+          "address": {
+            "address1": "202 MAIN ST",
+            "city": "SACRAMENTO",
+            "state": "CA",
+            "postalCode": "94203"
+          }
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "eligibilitySearchId": "constructed",
+  "id": "ec_constructed_carveout"
+}

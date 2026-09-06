@@ -34,6 +34,9 @@ class BillingProfileResponse(BaseModel):
     #: The clearinghouse's id for the practice's provider record, set once
     #: the profile is complete enough to register. Read-only.
     clearinghouse_provider_id: str | None = None
+    #: Run an eligibility check on its own when coverage lands at intake or is
+    #: saved on the chart. Default on; off leaves the manual re-verify button.
+    eligibility_auto_check: bool = True
 
 
 class UpdateBillingProfileRequest(BaseModel):
@@ -55,3 +58,4 @@ class UpdateBillingProfileRequest(BaseModel):
     postal_code: str | None = Field(None, max_length=10)
     phone: str | None = Field(None, max_length=50)
     contact_email: str | None = Field(None, max_length=255)
+    eligibility_auto_check: bool | None = None

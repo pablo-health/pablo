@@ -314,6 +314,12 @@ const baseQueryKeys = {
     all: ["schedulingPolicy"] as const,
     detail: () => [...baseQueryKeys.schedulingPolicy.all, "detail"] as const,
   },
+
+  // The practice's billing identity and billing-side switches
+  billingProfile: {
+    all: ["billingProfile"] as const,
+    detail: () => [...baseQueryKeys.billingProfile.all, "detail"] as const,
+  },
 } as const
 
 export const queryKeys = mergeQueryKeys(baseQueryKeys, queryKeyExtensions)

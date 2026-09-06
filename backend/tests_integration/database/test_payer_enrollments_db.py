@@ -251,9 +251,7 @@ class TestWorkerRaisedReminder:
             assert payer is not None
             assert payer.enrollment_status == "active"
             statuses = scoped.session.execute(
-                select(PayerEnrollmentRow.status).where(
-                    PayerEnrollmentRow.payer_id == payer_row_id
-                )
+                select(PayerEnrollmentRow.status).where(PayerEnrollmentRow.payer_id == payer_row_id)
             ).scalars()
             assert list(statuses) == ["live"]
         finally:

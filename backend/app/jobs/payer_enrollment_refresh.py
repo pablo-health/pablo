@@ -38,7 +38,7 @@ from ..claims.clearinghouse import ClearinghouseError
 from ..claims.enrollment import (
     MAX_REFRESH_PER_TENANT,
     OPEN_REQUEST_STATUSES,
-    get_clearinghouse_client,
+    clearinghouse_client_for_practice,
     refresh_enrollments,
 )
 from ..db import _validate_schema_name, create_standalone_session, get_engine
@@ -102,7 +102,7 @@ def run(argv: list[str] | None = None) -> int:
     visited = 0
     changed = 0
     for schema, practice_id in registry:
-        client = get_clearinghouse_client(practice_id)
+        client = clearinghouse_client_for_practice(practice_id)
         if client is None:
             continue
         visited += 1

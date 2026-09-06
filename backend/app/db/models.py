@@ -842,6 +842,11 @@ class PracticeBillingProfileRow(Base):
     #: The clearinghouse's id for this practice's provider record, set the
     #: first time the profile is complete enough to register. NULL until then.
     clearinghouse_provider_id: Mapped[str | None] = mapped_column(String(80))
+    #: Run an eligibility check on its own whenever coverage lands (intake,
+    #: chart save). Off leaves only the chart card's re-verify button.
+    eligibility_auto_check: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

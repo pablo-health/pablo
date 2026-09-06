@@ -59,7 +59,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(job, "get_engine", object)
     monkeypatch.setattr(job, "list_active_practice_registry", lambda _engine: list(_REGISTRY))
-    monkeypatch.setattr(job, "get_clearinghouse_client", clients.get)
+    monkeypatch.setattr(job, "clearinghouse_client_for_practice", clients.get)
     monkeypatch.setattr(job, "create_standalone_session", create_standalone_session)
     monkeypatch.setattr(job, "refresh_enrollments", refresh_enrollments)
     return {"sessions": sessions, "refreshed": refreshed, "clients": clients}

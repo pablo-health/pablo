@@ -672,6 +672,7 @@ CREATE TABLE __TENANT_SCHEMA__.practice_billing_profile (
     phone character varying(50),
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    eligibility_auto_check boolean DEFAULT true NOT NULL,
     contact_email character varying(255),
     clearinghouse_provider_id character varying(80),
     CONSTRAINT ck_practice_billing_profile_singleton CHECK ((id = 1)),

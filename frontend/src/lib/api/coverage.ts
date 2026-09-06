@@ -94,3 +94,17 @@ export async function updateCoverage(
 export async function deactivateCoverage(patientId: string, token?: string): Promise<void> {
   return del<void>(`/api/patients/${patientId}/coverage`, token)
 }
+
+/**
+ * Run an eligibility check now, through the practice's own clearinghouse
+ * account, and get the coverage back with the answer on it.
+ *
+ * 409 means the practice cannot ask yet (no clearinghouse account, no NPI, a
+ * payer with no electronic id); the detail says which.
+ */
+export async function verifyCoverage(
+  patientId: string,
+  token?: string,
+): Promise<CoverageResponse> {
+  return post<CoverageResponse>(`/api/patients/${patientId}/coverage/verify`, {}, token)
+}

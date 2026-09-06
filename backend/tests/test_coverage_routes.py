@@ -20,7 +20,10 @@ so the rows can be read back and inspected.
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,7 +33,10 @@ from app.auth.service import (
     require_active_subscription,
     require_baa_acceptance,
 )
+from app.claims.clearinghouse import ClearinghouseUnavailableError, ClearinghouseValidationError
+from app.claims.eligibility import BillingIdentity, EligibilityAutoCheck, get_eligibility_auto_check
 from app.models import User
+from app.models.claims_transport import EligibilityRequest, EligibilityResponse
 from app.models.patient import Patient
 from app.repositories import (
     get_patient_coverage_repository,
@@ -43,6 +49,8 @@ from app.routes import coverage as coverage_routes
 from app.services import AuditService, get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "clearinghouse"
 
 _USER_ID = "user-1"
 _PATIENT_ID = "11111111-1111-4111-8111-111111111111"
@@ -82,12 +90,33 @@ def _user() -> User:
     )
 
 
+class _FakeClearinghouse:
+    """Answers every 270 with one recorded 271, or raises what it was told to."""
+
+    def __init__(self, fixture: str = "eligibility_271_active.json") -> None:
+        self.fixture = fixture
+        self.raises: Exception | None = None
+        self.inquiries: list[EligibilityRequest] = []
+
+    def check_eligibility(self, req: EligibilityRequest) -> EligibilityResponse:
+        self.inquiries.append(req)
+        if self.raises is not None:
+            raise self.raises
+        body = json.loads((_FIXTURES / self.fixture).read_text())
+        return EligibilityResponse.model_validate(body)
+
+
 @pytest.fixture
 def harness() -> dict[str, Any]:
     payers = InMemoryPayerRepository()
     coverage = InMemoryPatientCoverageRepository()
     patients = _FakePatients()
     audit_repo = InMemoryAuditRepository()
+    clearinghouse = _FakeClearinghouse()
+    queued: list[tuple[str, str, str]] = []
+    auto_check = EligibilityAutoCheck(
+        enabled=True, schedule=lambda c, u, t: queued.append((c, u, t))
+    )
 
     app = FastAPI()
     app.include_router(coverage_routes.payers_router)
@@ -105,6 +134,11 @@ def harness() -> dict[str, Any]:
     app.dependency_overrides[coverage_routes.get_enrollment_trigger] = lambda: (
         lambda _payer_row_id, _user_id: None
     )
+    app.dependency_overrides[get_eligibility_auto_check] = lambda: auto_check
+    app.dependency_overrides[coverage_routes.get_clearinghouse_client] = lambda: clearinghouse
+    app.dependency_overrides[coverage_routes.get_billing_identity] = lambda: BillingIdentity(
+        npi="1999999984", organization_name="Test Practice"
+    )
     client = TestClient(app, raise_server_exceptions=False)
     return {
         "client": client,
@@ -112,6 +146,10 @@ def harness() -> dict[str, Any]:
         "coverage": coverage,
         "patients": patients,
         "audit": audit_repo,
+        "clearinghouse": clearinghouse,
+        "queued": queued,
+        "auto_check": auto_check,
+        "app": app,
     }
 
 
@@ -435,3 +473,213 @@ class TestAudit:
     def test_a_404_leaves_no_audit_row(self, harness: dict[str, Any]) -> None:
         harness["client"].get(f"/api/patients/{_PATIENT_ID}/coverage")
         assert _audit_rows(harness) == []
+
+
+# ---------------------------------------------------------------------------
+# Eligibility
+# ---------------------------------------------------------------------------
+
+
+_VERIFY = f"/api/patients/{_PATIENT_ID}/coverage/verify"
+
+
+def _put_on_file(harness: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    resp = harness["client"].post(
+        f"/api/patients/{_PATIENT_ID}/coverage", json=_coverage_payload(**overrides)
+    )
+    assert resp.status_code == 201
+    return resp.json()
+
+
+class TestAutoCheck:
+    def test_saving_coverage_queues_a_check_when_on(self, harness: dict[str, Any]) -> None:
+        created = _put_on_file(harness)
+        harness["client"].patch(f"/api/patients/{_PATIENT_ID}/coverage", json={"member_id": "X"})
+
+        assert harness["queued"] == [
+            (created["id"], _USER_ID, "save"),
+            (created["id"], _USER_ID, "save"),
+        ]
+
+    def test_saving_coverage_queues_nothing_when_off(self, harness: dict[str, Any]) -> None:
+        harness["auto_check"].enabled = False
+
+        _put_on_file(harness)
+        harness["client"].patch(f"/api/patients/{_PATIENT_ID}/coverage", json={"member_id": "X"})
+
+        assert harness["queued"] == []
+
+    def test_the_manual_button_runs_regardless(self, harness: dict[str, Any]) -> None:
+        harness["auto_check"].enabled = False
+        _put_on_file(harness)
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 200
+        assert len(harness["clearinghouse"].inquiries) == 1
+        assert harness["queued"] == []
+
+    def test_editing_the_plan_clears_the_old_answer(self, harness: dict[str, Any]) -> None:
+        _put_on_file(harness)
+        harness["client"].post(_VERIFY)
+        assert harness["client"].get(f"/api/patients/{_PATIENT_ID}/coverage").json()["eligibility"]
+
+        resp = harness["client"].patch(
+            f"/api/patients/{_PATIENT_ID}/coverage", json={"member_id": "CHANGED"}
+        )
+
+        assert resp.json()["eligibility"] is None
+        assert resp.json()["verified_at"] is None
+
+
+class TestVerify:
+    def test_asks_about_mental_health_and_returns_the_summary(
+        self, harness: dict[str, Any]
+    ) -> None:
+        _put_on_file(harness)
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["verified_at"] is not None
+        assert body["eligibility"]["status"] == "active"
+        assert body["eligibility"]["payer_name"] == "UNITEDHEALTHCARE"
+        assert body["eligibility"]["carveout_administrator"] is None
+        assert "last_271" not in body
+
+        (inquiry,) = harness["clearinghouse"].inquiries
+        assert inquiry.encounter is not None
+        assert inquiry.encounter.serviceTypeCodes == ["MH"]
+        assert inquiry.subscriber.memberId == _MEMBER_ID
+        assert inquiry.tradingPartnerServiceId == "60054"
+        assert inquiry.provider.npi == "1999999984"
+
+    def test_the_raw_271_is_kept_on_the_row(self, harness: dict[str, Any]) -> None:
+        created = _put_on_file(harness)
+
+        harness["client"].post(_VERIFY)
+
+        stored = harness["coverage"]._rows[created["id"]]
+        assert stored.last_271 is not None
+        assert stored.last_271["payer"]["name"] == "UNITEDHEALTHCARE"
+        assert stored.verified_at is not None
+        # And the next read renders it without asking the payer again.
+        read = harness["client"].get(f"/api/patients/{_PATIENT_ID}/coverage").json()
+        assert read["eligibility"]["status"] == "active"
+        assert len(harness["clearinghouse"].inquiries) == 1
+
+    def test_a_carveout_names_the_administrator(self, harness: dict[str, Any]) -> None:
+        harness["clearinghouse"].fixture = "eligibility_271_carveout_behavioral.json"
+        _put_on_file(harness)
+
+        body = harness["client"].post(_VERIFY).json()
+
+        assert body["eligibility"]["carveout_administrator"] == {
+            "name": "EXAMPLE BEHAVIORAL HEALTH",
+            "payer_id": "EXBH1",
+        }
+
+    def test_an_inactive_plan(self, harness: dict[str, Any]) -> None:
+        harness["clearinghouse"].fixture = "eligibility_271_inactive.json"
+        _put_on_file(harness)
+
+        body = harness["client"].post(_VERIFY).json()
+
+        assert body["eligibility"]["status"] == "inactive"
+
+    def test_a_payer_refusal_is_stored_as_the_answer(self, harness: dict[str, Any]) -> None:
+        harness["clearinghouse"].fixture = "eligibility_271_aaa_invalid_member_id.json"
+        _put_on_file(harness)
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 200
+        summary = resp.json()["eligibility"]
+        assert summary["status"] == "error"
+        assert [e["code"] for e in summary["aaa_errors"]] == ["72"]
+        assert summary["aaa_errors"][0]["resolution"]
+
+    def test_a_payer_without_an_electronic_id_is_409(self, harness: dict[str, Any]) -> None:
+        _put_on_file(harness, new_payer={"name": "Typed From Card", "payer_id": "UNKNOWN"})
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 409
+        assert "payer directory" in resp.json()["detail"]
+        assert harness["clearinghouse"].inquiries == []
+
+    def test_no_clearinghouse_account_is_409(self, harness: dict[str, Any]) -> None:
+        harness["app"].dependency_overrides[coverage_routes.get_clearinghouse_client] = lambda: None
+        _put_on_file(harness)
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 409
+        assert "clearinghouse" in resp.json()["detail"]
+
+    def test_an_unreachable_clearinghouse_is_503(self, harness: dict[str, Any]) -> None:
+        harness["clearinghouse"].raises = ClearinghouseUnavailableError("timed out")
+        _put_on_file(harness)
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 503
+
+    def test_a_refused_inquiry_is_502(self, harness: dict[str, Any]) -> None:
+        harness["clearinghouse"].raises = ClearinghouseValidationError("bad request")
+        _put_on_file(harness)
+
+        resp = harness["client"].post(_VERIFY)
+
+        assert resp.status_code == 502
+
+    def test_nothing_on_file_is_404(self, harness: dict[str, Any]) -> None:
+        assert harness["client"].post(_VERIFY).status_code == 404
+
+    def test_unknown_client_is_404(self, harness: dict[str, Any]) -> None:
+        resp = harness["client"].post(f"/api/patients/{_OTHER_PATIENT_ID}/coverage/verify")
+        assert resp.status_code == 404
+
+
+class TestEligibilityAudit:
+    def test_every_check_writes_a_row_with_ids_and_outcome_only(
+        self, harness: dict[str, Any]
+    ) -> None:
+        created = _put_on_file(harness)
+
+        harness["client"].post(_VERIFY)
+        harness["clearinghouse"].fixture = "eligibility_271_aaa_invalid_member_id.json"
+        harness["client"].post(_VERIFY)
+        harness["clearinghouse"].raises = ClearinghouseUnavailableError("timed out")
+        harness["client"].post(_VERIFY)
+
+        rows = [r for r in _audit_rows(harness) if str(r.action) == "patient_coverage_verified"]
+        assert len(rows) == 3
+        outcomes = sorted((r.changes or {}).get("status") for r in rows)
+        assert outcomes == ["active", "error", "failed"]
+        for row in rows:
+            assert row.resource_id == _PATIENT_ID
+            assert row.changes is not None
+            assert row.changes["coverage_id"] == created["id"]
+            assert row.changes["trigger"] == "manual"
+            assert _MEMBER_ID not in str(row.changes)
+            assert "benefitsInformation" not in str(row.changes)
+            assert "UHC123456" not in str(row.changes)
+
+    def test_the_271_and_member_id_never_reach_a_log_line(
+        self, harness: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        _put_on_file(harness)
+
+        with caplog.at_level(logging.DEBUG):
+            harness["client"].post(_VERIFY)
+            harness["clearinghouse"].fixture = "eligibility_271_aaa_invalid_member_id.json"
+            harness["client"].post(_VERIFY)
+
+        logged = "\n".join(record.getMessage() for record in caplog.records)
+        assert _MEMBER_ID not in logged
+        assert "UHC123456" not in logged
+        assert "NOSUCHMEMBER" not in logged
+        assert "benefitsInformation" not in logged
+        assert "JANE" not in logged

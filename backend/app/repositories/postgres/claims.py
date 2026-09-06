@@ -23,6 +23,8 @@ from ...utcnow import utc_now
 from ..claims import ClaimRepository
 
 if TYPE_CHECKING:
+    from datetime import date
+
     from sqlalchemy.orm import Session
 
 _HEADER_FIELDS = (
@@ -110,6 +112,22 @@ class PostgresClaimRepository(ClaimRepository):
                 select(ClaimRow)
                 .where(ClaimRow.patient_id == patient_id)
                 .order_by(ClaimRow.created_at.desc(), ClaimRow.id)
+            )
+            .scalars()
+            .all()
+        )
+        lines = self._lines_for([row.id for row in rows])
+        return [_to_claim(row, lines.get(row.id, [])) for row in rows]
+
+    def list_for_export(self, from_date: date, to_date: date) -> list[Claim]:
+        dated_in_range = select(ClaimLineRow.claim_id).where(
+            ClaimLineRow.service_date >= from_date, ClaimLineRow.service_date <= to_date
+        )
+        rows = (
+            self._session.execute(
+                select(ClaimRow)
+                .where(ClaimRow.state != "draft", ClaimRow.id.in_(dated_in_range))
+                .order_by(ClaimRow.created_at, ClaimRow.id)
             )
             .scalars()
             .all()

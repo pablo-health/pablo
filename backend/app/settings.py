@@ -1254,6 +1254,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    eligibility_check_task_queue: str = Field(
+        default="pablo-soap-generation",
+        description=(
+            "Cloud Tasks queue for the eligibility check that runs on its own "
+            "after coverage lands (intake, chart save). Reuses the "
+            "pablo-soap-generation queue for the same reason document finalize "
+            "does: same IAM, same retry profile, no new infra."
+        ),
+    )
+
     # AssemblyAI (batch transcription for SOAP pipeline)
     assemblyai_api_key: SecretStr = Field(
         default=SecretStr(""),

@@ -29,6 +29,7 @@ from app.auth.service import (
     require_baa_acceptance,
 )
 from app.claims import enrollment
+from app.claims.eligibility import EligibilityAutoCheck, get_eligibility_auto_check
 from app.db import get_db_session
 from app.db.models import (
     ComplianceItemRow,
@@ -256,6 +257,13 @@ def coverage_harness() -> dict[str, Any]:
     app.dependency_overrides[coverage_routes.get_enrollment_trigger] = lambda: (
         lambda payer_row_id, user_id: triggered.append((payer_row_id, user_id))
     )
+    # The eligibility check that rides the same save is its own flow
+    # (test_coverage_routes.py); off here.
+    app.dependency_overrides[get_eligibility_auto_check] = lambda: EligibilityAutoCheck(
+        enabled=False, schedule=lambda _c, _u, _t: None
+    )
+    app.dependency_overrides[coverage_routes.get_clearinghouse_client] = lambda: None
+    app.dependency_overrides[coverage_routes.get_billing_identity] = lambda: None
     return {
         "client": TestClient(app, raise_server_exceptions=False),
         "payers": payers,

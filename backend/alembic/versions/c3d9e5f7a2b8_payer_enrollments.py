@@ -21,7 +21,7 @@ and the practice's general contact inbox, which is the address every
 enrollment request names (never an individual clinician's).
 
 Revision ID: c3d9e5f7a2b8
-Revises: d7f2a9c4e8b1
+Revises: c4d1e7f2a9b8
 Create Date: 2026-09-06
 """
 
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "c3d9e5f7a2b8"
-down_revision: str | Sequence[str] | None = "d7f2a9c4e8b1"
+down_revision: str | Sequence[str] | None = "c4d1e7f2a9b8"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

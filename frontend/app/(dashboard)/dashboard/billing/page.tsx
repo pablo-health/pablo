@@ -2,6 +2,7 @@
 
 "use client"
 
+import { BillerExport } from "@/components/billing/BillerExport"
 import { BillingSetupSlot } from "@/components/billing/BillingSetupSlot"
 import { UnbilledQueue } from "@/components/billing/UnbilledQueue"
 
@@ -18,6 +19,8 @@ export default function BillingPage() {
       <BillingSetupSlot />
 
       <UnbilledQueue />
+
+      <BillerExport />
     </div>
   )
 }

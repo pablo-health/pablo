@@ -43,6 +43,7 @@ _WRITABLE_FIELDS: frozenset[str] = frozenset(
         "postal_code",
         "phone",
         "contact_email",
+        "eligibility_auto_check",
     }
 )
 
@@ -50,9 +51,18 @@ _WRITABLE_FIELDS: frozenset[str] = frozenset(
 #: id for the provider record, which only the enrollment flow sets.
 _READABLE_FIELDS: frozenset[str] = _WRITABLE_FIELDS | {"clearinghouse_provider_id"}
 
+#: The one field with a default other than "unset": a practice that has never
+#: opened billing settings still gets its clients' plans checked at intake.
+_DEFAULTS: dict[str, object] = {"eligibility_auto_check": True}
+
 
 def _empty_profile() -> dict[str, object]:
-    return dict.fromkeys(_READABLE_FIELDS)
+    return {**dict.fromkeys(_READABLE_FIELDS), **_DEFAULTS}
+
+
+def eligibility_auto_check_enabled(session: Session) -> bool:
+    """Does this practice want an eligibility check run whenever coverage lands?"""
+    return bool(load_billing_profile(session)["eligibility_auto_check"])
 
 
 def load_billing_profile(session: Session) -> dict[str, object]:

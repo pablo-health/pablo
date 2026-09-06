@@ -14,8 +14,8 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from app.claims.wire import ClaimMappingError, UnsupportedClaimError, to_submission_request
-from app.models.claims_transport import ClaimSubmissionRequest
+from app.claims.wire import ClaimMappingError, to_submission_request
+from app.models.claims_transport import Address, ClaimSubmissionRequest, Dependent
 
 from tests.claims_fixtures import billing_snapshot, claim, line, person, subscriber_snapshot
 
@@ -113,7 +113,77 @@ def test_missing_wire_fields_are_named_together() -> None:
     ]
 
 
-def test_a_dependent_claim_is_refused_rather_than_mis_sent() -> None:
-    parent = person(first_name="Parent", date_of_birth=date(1975, 5, 5))
-    with pytest.raises(UnsupportedClaimError):
-        _build(subscriber_snapshot=subscriber_snapshot(relationship="child", subscriber=parent))
+def test_a_self_subscriber_claim_carries_no_dependent_loop() -> None:
+    assert _build().dependent is None
+    assert "dependent" not in _build().model_dump(exclude_none=True)
+
+
+def test_a_dependent_claim_puts_the_policy_holder_in_subscriber_and_the_client_in_dependent() -> (
+    None
+):
+    parent = person(
+        first_name="Pat",
+        last_name="Anon",
+        date_of_birth=date(1975, 5, 5),
+        sex="F",
+        address_line1="4444 Other Ave",
+        postal_code="30302-1111",
+    )
+    child = person(first_name="Sam", date_of_birth=date(2012, 3, 4))
+    built = _build(
+        subscriber_snapshot=subscriber_snapshot(
+            relationship="child", subscriber=parent, patient=child
+        )
+    )
+
+    expected = ClaimSubmissionRequest.model_validate_json(_FIXTURE.read_text())
+    expected.submitter.contactInformation.phoneNumber = (
+        built.submitter.contactInformation.phoneNumber
+    )
+    expected.subscriber.firstName = "Pat"
+    expected.subscriber.lastName = "Anon"
+    expected.subscriber.gender = "F"
+    expected.subscriber.dateOfBirth = "19750505"
+    expected.subscriber.address = Address(
+        address1="4444 Other Ave", city="Atlanta", state="GA", postalCode="303021111"
+    )
+    expected.dependent = Dependent(
+        relationshipToSubscriberCode="19",
+        firstName="Sam",
+        lastName="Anon",
+        gender="M",
+        dateOfBirth="20120304",
+        address=Address(
+            address1="2222 Random St", city="Atlanta", state="GA", postalCode="303010000"
+        ),
+    )
+    assert built.model_dump() == expected.model_dump()
+    # The plan is the policy holder's: the member id stays on the subscriber.
+    assert built.subscriber.memberId == "123456789"
+    assert built.dependent is not None
+    assert built.dependent.memberId is None
+
+
+@pytest.mark.parametrize(
+    ("relationship", "code"), [("spouse", "01"), ("child", "19"), ("other", "G8")]
+)
+def test_the_coverage_relationship_becomes_the_vendor_code(relationship: str, code: str) -> None:
+    parent = person(first_name="Pat", date_of_birth=date(1975, 5, 5))
+    built = _build(
+        subscriber_snapshot=subscriber_snapshot(relationship=relationship, subscriber=parent)
+    )
+    assert built.dependent is not None
+    assert built.dependent.relationshipToSubscriberCode == code
+
+
+def test_missing_dependent_fields_are_named_with_the_patient_prefix() -> None:
+    parent = person(first_name="Pat", date_of_birth=date(1975, 5, 5))
+    with pytest.raises(ClaimMappingError) as excinfo:
+        _build(
+            subscriber_snapshot=subscriber_snapshot(
+                relationship="spouse",
+                subscriber=parent,
+                patient=person(date_of_birth=None, postal_code=None),
+            )
+        )
+    assert excinfo.value.missing == ["patient.date_of_birth", "patient.postal_code"]

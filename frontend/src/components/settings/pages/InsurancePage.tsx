@@ -2,14 +2,21 @@
 
 "use client"
 
+import { EligibilityChecksCard } from "../EligibilityChecksCard"
 import { PayersCard } from "../PayersCard"
 
 /**
  * Billing > Insurance.
  *
- * The practice's payer list and each payer's filing deadlines. A client's own
+ * The practice's payer list and each payer's filing deadlines, and whether a
+ * client's plan is checked on its own when coverage lands. A client's own
  * coverage lives on their chart, not here.
  */
 export function InsurancePage() {
-  return <PayersCard />
+  return (
+    <>
+      <PayersCard />
+      <EligibilityChecksCard />
+    </>
+  )
 }
