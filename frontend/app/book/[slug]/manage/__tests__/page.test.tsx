@@ -57,7 +57,7 @@ describe("ManageBookingPage", () => {
   })
 
   it("requires a confirm click before cancelling, then POSTs cancel once", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input).includes("/manage/cancel")) {
         return jsonResponse({ cancelled: true })
       }
