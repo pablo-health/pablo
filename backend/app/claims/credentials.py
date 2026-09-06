@@ -91,13 +91,14 @@ class SettingsClearinghouseCredentialProvider:
         return ClearinghouseCredentials(api_key=api_key, mode=mode_for_key(api_key))
 
 
-#: The vendor's test API keys carry this prefix; production keys do not.
-#: Confirmed against a real test key from the vendor's dashboard (the live
-#: suite under ``tests_integration/clearinghouse_live`` refuses to run unless
-#: the key it is handed classifies as ``test`` here). This is the only signal
-#: the deployment ever needs to check — there is deliberately no separate
-#: "which environment" setting to keep in sync with the key itself. If the
-#: vendor changes its key format this is the one place to update.
+#: The vendor's test API keys are ``test_``-prefixed; its production keys
+#: carry no prefix at all. Confirmed against a real test key from the
+#: vendor's dashboard on 2026-09-06 (the live suite under
+#: ``tests_integration/clearinghouse_live`` refuses to run unless the key it
+#: is handed classifies as ``test`` here). This is the only signal the
+#: deployment ever needs to check — there is deliberately no separate "which
+#: environment" setting to keep in sync with the key itself. If the vendor
+#: changes its key format this is the one place to update.
 _TEST_KEY_PREFIX = "test_"
 
 

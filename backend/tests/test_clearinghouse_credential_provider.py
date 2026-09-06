@@ -22,9 +22,10 @@ from app.claims.credentials import (
 )
 
 # Placeholder-shaped on purpose: the secret scan allowlists literal
-# placeholders, and only the test_ prefix matters to the provider.
+# placeholders, and only the test_ prefix matters to the provider (the
+# vendor's production keys are unprefixed).
 _TEST_KEY = "test_placeholder"
-_PRODUCTION_KEY = "live_placeholder"
+_PRODUCTION_KEY = "placeholder_live"
 _CUSTOM_KEY = "provider-supplied-key-for-tests"
 
 
