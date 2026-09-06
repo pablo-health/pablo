@@ -2,18 +2,219 @@
   "items": [
     {
       "payer": {
-        "stediId": "9496DD3D-7F70-4A1B-8A2E-2E5C8A5D0001",
-        "primaryPayerId": "STEDI",
+        "stediId": "FRCPB",
         "displayName": "Stedi Test Payer",
+        "primaryPayerId": "STEDI",
         "aliases": [
-          "STEDI TEST"
-        ]
+          "STEDI",
+          "STEDITEST"
+        ],
+        "names": [],
+        "enrollment": {
+          "ptanRequired": false,
+          "transactionEnrollmentProcesses": {
+            "claimPayment": {
+              "type": "ONE_CLICK",
+              "timeframe": "INSTANT",
+              "supportedAggregationPreferences": [
+                "NPI",
+                "TIN"
+              ]
+            }
+          }
+        },
+        "coverageTypes": [
+          "dental",
+          "medical"
+        ],
+        "programs": [],
+        "avatarUrl": "https://prod-payer-avatars.payers.us.stedi.com/FRCPB/avatar.png?v=1762356807949",
+        "urls": {
+          "website": "https://www.stedi.com"
+        },
+        "transactionSupport": {
+          "eligibilityCheck": "SUPPORTED",
+          "claimStatus": "NOT_SUPPORTED",
+          "professionalClaimSubmission": "SUPPORTED",
+          "institutionalClaimSubmission": "SUPPORTED",
+          "claimPayment": "ENROLLMENT_REQUIRED",
+          "coordinationOfBenefits": "NOT_SUPPORTED",
+          "dentalClaimSubmission": "SUPPORTED",
+          "unsolicitedClaimAttachment": "SUPPORTED"
+        }
       },
-      "score": 1.0
+      "score": 33966.0,
+      "matches": {
+        "displayName": "<b>Stedi</b> Test Payer",
+        "primaryPayerId": "<b>STEDI</b>",
+        "aliases": [
+          "<b>STEDI</b>",
+          "<b>STEDITEST</b>"
+        ]
+      }
+    },
+    {
+      "payer": {
+        "stediId": "UQKWC",
+        "displayName": "Stedi Insurance Discovery",
+        "primaryPayerId": "DISCOVERY",
+        "aliases": [
+          "DISCOVERY"
+        ],
+        "names": [],
+        "enrollment": {
+          "ptanRequired": false,
+          "transactionEnrollmentProcesses": {
+            "eligibilityInquiry": {
+              "type": "ONE_CLICK",
+              "timeframe": "HOURS"
+            }
+          }
+        },
+        "programs": [],
+        "avatarUrl": "https://prod-payer-avatars.payers.us.stedi.com/UQKWC/avatar.png?v=1762356822429",
+        "transactionSupport": {
+          "eligibilityCheck": "ENROLLMENT_REQUIRED",
+          "claimStatus": "NOT_SUPPORTED",
+          "professionalClaimSubmission": "NOT_SUPPORTED",
+          "institutionalClaimSubmission": "NOT_SUPPORTED",
+          "claimPayment": "NOT_SUPPORTED",
+          "coordinationOfBenefits": "NOT_SUPPORTED",
+          "dentalClaimSubmission": "NOT_SUPPORTED",
+          "unsolicitedClaimAttachment": "NOT_SUPPORTED"
+        }
+      },
+      "score": 2166.0,
+      "matches": {
+        "displayName": "<b>Stedi</b> Insurance Discovery"
+      }
     }
   ],
   "stats": {
-    "total": 1
-  },
-  "nextPageToken": null
+    "total": 2,
+    "transactionSupport": {
+      "eligibilityCheck": {
+        "supported": 1,
+        "notSupported": 0,
+        "enrollmentRequired": 1
+      },
+      "claimStatus": {
+        "supported": 0,
+        "notSupported": 2,
+        "enrollmentRequired": 0
+      },
+      "professionalClaimSubmission": {
+        "supported": 1,
+        "notSupported": 1,
+        "enrollmentRequired": 0
+      },
+      "dentalClaimSubmission": {
+        "supported": 1,
+        "notSupported": 1,
+        "enrollmentRequired": 0
+      },
+      "institutionalClaimSubmission": {
+        "supported": 1,
+        "notSupported": 1,
+        "enrollmentRequired": 0
+      },
+      "claimPayment": {
+        "supported": 0,
+        "notSupported": 1,
+        "enrollmentRequired": 1
+      },
+      "coordinationOfBenefits": {
+        "supported": 0,
+        "notSupported": 2,
+        "enrollmentRequired": 0
+      },
+      "unsolicitedClaimAttachment": {
+        "supported": 1,
+        "notSupported": 1,
+        "enrollmentRequired": 0
+      }
+    },
+    "transactionSupportCounts": {
+      "eligibilityCheck": {
+        "supported": {
+          "enrollmentRequired": 1,
+          "enrollmentNotRequired": 1,
+          "total": 2
+        },
+        "notSupported": {
+          "total": 0
+        }
+      },
+      "claimStatus": {
+        "supported": {
+          "enrollmentRequired": 0,
+          "enrollmentNotRequired": 0,
+          "total": 0
+        },
+        "notSupported": {
+          "total": 2
+        }
+      },
+      "professionalClaimSubmission": {
+        "supported": {
+          "enrollmentRequired": 0,
+          "enrollmentNotRequired": 1,
+          "total": 1
+        },
+        "notSupported": {
+          "total": 1
+        }
+      },
+      "dentalClaimSubmission": {
+        "supported": {
+          "enrollmentRequired": 0,
+          "enrollmentNotRequired": 1,
+          "total": 1
+        },
+        "notSupported": {
+          "total": 1
+        }
+      },
+      "institutionalClaimSubmission": {
+        "supported": {
+          "enrollmentRequired": 0,
+          "enrollmentNotRequired": 1,
+          "total": 1
+        },
+        "notSupported": {
+          "total": 1
+        }
+      },
+      "claimPayment": {
+        "supported": {
+          "enrollmentRequired": 1,
+          "enrollmentNotRequired": 0,
+          "total": 1
+        },
+        "notSupported": {
+          "total": 1
+        }
+      },
+      "coordinationOfBenefits": {
+        "supported": {
+          "enrollmentRequired": 0,
+          "enrollmentNotRequired": 0,
+          "total": 0
+        },
+        "notSupported": {
+          "total": 2
+        }
+      },
+      "unsolicitedClaimAttachment": {
+        "supported": {
+          "enrollmentRequired": 0,
+          "enrollmentNotRequired": 1,
+          "total": 1
+        },
+        "notSupported": {
+          "total": 1
+        }
+      }
+    }
+  }
 }
