@@ -1,0 +1,98 @@
+name: Clearinghouse live suite
+
+# Runs backend/tests_integration/clearinghouse_live/ against the
+# clearinghouse's test mode with a clearinghouse test key. Every run makes
+# real vendor calls and submits test claims, so this is deliberately not on
+# every push: weekly to catch vendor drift, on pull requests that change the
+# adapter, the fixtures, the suite or this workflow, and on demand.
+on:
+  schedule:
+    - cron: "0 10 * * 1" # Mondays 10:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - backend/app/claims/**
+      - backend/tests_integration/clearinghouse_live/**
+      - backend/tests/fixtures/clearinghouse/**
+      - .github/workflows/clearinghouse-live.yml
+
+permissions:
+  contents: read
+
+# Two runs must never submit test claims at the same time: the round-trip
+# test finds its own transactions in a shared polling feed. Queue instead
+# of cancelling so a scheduled run is never lost to a pull request.
+concurrency:
+  group: clearinghouse-live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live suite (vendor test mode)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Configure Poetry virtualenv location
+        run: poetry config virtualenvs.in-project true
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v6
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction --no-ansi
+
+      # The key is only in scope for this step. A pull request from a fork
+      # (or Dependabot) gets no repository secrets, so the variable is empty
+      # there; the suite then skips every test with a reason and the step
+      # succeeds — the notice makes that visible instead of a quiet green.
+      # The make target's own exit code is the step's exit code: nothing is
+      # piped after it.
+      - name: Run the live suite
+        shell: bash
+        env:
+          CLEARINGHOUSE_LIVE_API_KEY: ${{ secrets.CLEARINGHOUSE_TEST_API_KEY }}
+          PYTEST_ADDOPTS: --junitxml=${{ github.workspace }}/clearinghouse-live-report/junit.xml
+        run: |
+          set -euo pipefail
+          if [ -z "${CLEARINGHOUSE_LIVE_API_KEY:-}" ]; then
+            echo "::notice title=Clearinghouse live suite::skipped: no key — CLEARINGHOUSE_TEST_API_KEY is not available to this run (fork pull request?), so every test skips."
+            echo "**Clearinghouse live suite skipped: no key.** The repository secret is not available to this run, so every test in the lane skips." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          make test-clearinghouse-live
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: clearinghouse-live-report
+          path: clearinghouse-live-report/
+          if-no-files-found: warn
+          retention-days: 30
+
+  # File a tracking issue when the scheduled (weekly) run fails, so vendor
+  # drift doesn't just sit red until someone happens to check the Actions tab.
+  notify-failure:
+    name: Notify on scheduled failure
+    needs: [live]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/notify-scheduled-failure
+        with:
+          workflow: "Clearinghouse live suite"
