@@ -11,7 +11,15 @@ import { authMiddleware, redirectToLogin, redirectToHome } from "next-firebase-a
 import { authConfig, loginPath, logoutPath } from "@/lib/auth-config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
-import { assertHttpsOrigin, generateNonce, NONCE_HEADER, requestHeadersWithNonce, STRIPE_JS } from "@/lib/auth/csp"
+import {
+  assertHttpsOrigin,
+  generateNonce,
+  NONCE_HEADER,
+  requestHeadersWithNonce,
+  STRIPE_CONNECT_SRC,
+  STRIPE_FRAME_SRC,
+  STRIPE_SCRIPT_SRC,
+} from "@/lib/auth/csp"
 import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = ["/login", "/native-auth", "/baa-acceptance", "/mfa-enrollment", "/api/config", "/api/auth/native", "/api/auth/exchange-setup-token", ...extraPublicPaths()]
@@ -21,12 +29,12 @@ const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' https://apis.google.com ${STRIPE_JS}`,
+    `script-src 'self' 'nonce-${nonce}' https://apis.google.com ${STRIPE_SCRIPT_SRC}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} wss://*.firebaseio.com`.replace(/\s+/g, " ").trim(),
-    `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_JS}`,
+    `connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.pablo.health ${API_ORIGIN} wss://*.firebaseio.com ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `frame-src 'self' https://*.firebaseapp.com https://accounts.google.com ${STRIPE_FRAME_SRC}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self' https://accounts.google.com",

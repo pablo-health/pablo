@@ -19,7 +19,14 @@ import { type NextRequest, NextResponse } from "next/server"
 import { auth } from "./config"
 import { isForcedLogoutArrival } from "@/lib/auth/forced-logout"
 import { extraPublicPaths } from "@/lib/auth/public-paths"
-import { assertHttpsOrigin, generateNonce, requestHeadersWithNonce, STRIPE_JS } from "@/lib/auth/csp"
+import {
+  assertHttpsOrigin,
+  generateNonce,
+  requestHeadersWithNonce,
+  STRIPE_CONNECT_SRC,
+  STRIPE_FRAME_SRC,
+  STRIPE_SCRIPT_SRC,
+} from "@/lib/auth/csp"
 import { IS_DEV_MODE } from "@/lib/devMode"
 
 const PUBLIC_PATHS = [
@@ -52,12 +59,12 @@ const API_ORIGIN = assertHttpsOrigin("API_URL", process.env.API_URL || "")
 function buildCsp(nonce: string): string {
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' ${STRIPE_JS}`,
+    `script-src 'self' 'nonce-${nonce}' ${STRIPE_SCRIPT_SRC}`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
     "img-src 'self' https: data:",
-    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin}`.replace(/\s+/g, " ").trim(),
-    `frame-src 'self' ${keycloakOrigin} ${STRIPE_JS}`.replace(/\s+/g, " ").trim(),
+    `connect-src 'self' ${API_ORIGIN} ${keycloakOrigin} ${STRIPE_CONNECT_SRC}`.replace(/\s+/g, " ").trim(),
+    `frame-src 'self' ${keycloakOrigin} ${STRIPE_FRAME_SRC}`.replace(/\s+/g, " ").trim(),
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self' https://accounts.google.com",
