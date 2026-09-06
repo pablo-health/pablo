@@ -7,9 +7,14 @@ FROM python:3.13-slim
 # stands in for parse JSON the same way.
 RUN pip install --no-cache-dir "fastapi==0.141.1" "uvicorn==0.51.0" "httpx==0.28.1"
 
+# The base image has no unprivileged user; the fake needs no privileges.
+RUN useradd --create-home --uid 10001 fake
+
 WORKDIR /srv
-COPY scripts/fake_clearinghouse.py ./
-COPY backend/tests/fixtures/clearinghouse ./fixtures
+COPY --chown=fake:fake scripts/fake_clearinghouse.py ./
+COPY --chown=fake:fake backend/tests/fixtures/clearinghouse ./fixtures
+
+USER fake
 
 EXPOSE 8080
 

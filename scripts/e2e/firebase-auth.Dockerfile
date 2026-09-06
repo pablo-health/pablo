@@ -7,8 +7,13 @@ FROM node:24-slim
 
 RUN npm install -g firebase-tools@15.29.0
 
+# The emulator writes its debug logs into the working directory, so the
+# unprivileged user the image ships with must own it.
 WORKDIR /srv
-COPY firebase.json ./
+COPY --chown=node:node firebase.json ./
+RUN chown node:node /srv
+
+USER node
 
 EXPOSE 9099
 
