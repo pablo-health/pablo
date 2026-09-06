@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.claims.validation import missing_fields
+from app.claims.validation import dx_at_highest_specificity, dx_pointers_valid, missing_fields
 
 
 @dataclass
@@ -51,3 +51,39 @@ def test_missing_fields_works_on_plain_dict() -> None:
         "tax_id",
         "billing_npi",
     ]
+
+
+class TestDxAtHighestSpecificity:
+    def test_a_subdivided_code_passes_in_either_form(self) -> None:
+        assert dx_at_highest_specificity("F41.1")
+        assert dx_at_highest_specificity("F411")
+        assert dx_at_highest_specificity("f33.1")
+
+    def test_a_bare_category_is_rejected(self) -> None:
+        assert not dx_at_highest_specificity("F41")
+        assert not dx_at_highest_specificity("F41.")
+
+    def test_a_malformed_code_is_rejected(self) -> None:
+        assert not dx_at_highest_specificity("")
+        assert not dx_at_highest_specificity("41.1")
+        assert not dx_at_highest_specificity("U07.1x!")
+        assert not dx_at_highest_specificity("F41.12345")
+
+
+class TestDxPointersValid:
+    def test_pointers_within_the_claims_diagnoses_pass(self) -> None:
+        assert dx_pointers_valid(["1"], 1)
+        assert dx_pointers_valid(["1", "2"], 2)
+        assert dx_pointers_valid([2, 1], 3)
+
+    def test_a_pointer_past_the_last_diagnosis_fails(self) -> None:
+        assert not dx_pointers_valid(["2"], 1)
+        assert not dx_pointers_valid(["0"], 1)
+
+    def test_a_line_needs_one_to_four_distinct_pointers(self) -> None:
+        assert not dx_pointers_valid([], 1)
+        assert not dx_pointers_valid(["1", "1"], 1)
+        assert not dx_pointers_valid(["1", "2", "3", "4", "5"], 5)
+
+    def test_a_non_numeric_pointer_fails(self) -> None:
+        assert not dx_pointers_valid(["A"], 1)

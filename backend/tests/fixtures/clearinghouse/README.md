@@ -14,20 +14,25 @@ payer. Nothing here is PHI.
 | `polling_transactions_277_and_835.json` | the polling endpoint listing an outbound 837, an inbound 277CA and an inbound 835 |
 | `835_report_paid_in_full.json` | the 835 as JSON from the report endpoint |
 | `enrollment_create_provider.json`, `enrollment_create_enrollment_835.json` | provider record and a transaction enrollment that went live |
+| `payer_search_test_payer.json` | the payer directory's answer to a search for the test payer |
+| `eligibility_271_active.json` | a 271 for the vendor's documented mock "active coverage" member |
 
 Regenerate with a test API key against the vendor's test payer; the shapes are
-stable across their dated API versions.
+stable across their dated API versions. The live suite under
+`backend/tests_integration/clearinghouse_live/` shape-diffs each of these
+against the vendor's current answer, so drift shows up there first.
+
+The enrollment fixtures are the one pair a test key cannot regenerate: the
+vendor's enrollment API refuses test-mode keys outright (`403 access_denied`),
+so those were captured through the account's production-mode credentials
+during the one-time test-payer enrollment. The provider record and enrollment
+they describe already exist on the account — reuse them, never create another.
 
 ## Constructed fixtures
 
-The files below were NOT captured from a live call — building the request
-that would trigger them (a malformed body, an unenrolled payer) wasn't
-practical without a test account handy, so they're hand-built from the
-vendor's documented shapes instead. Replace them with a recorded capture the
-next time someone has a test key and hits these paths for real.
+The files below were NOT captured from a live call — the vendor's generic
+`{code, message}` error envelope is hand-built from its documented shape.
 
 | File | What it is |
 |---|---|
-| `payer_search_test_payer.json` | a payer-search hit |
-| `eligibility_271_active.json` | a 271 eligibility response |
 | `error_invalid_request_body.json`, `error_account_not_provisioned.json` | the vendor's generic `{code, message}` error envelope |

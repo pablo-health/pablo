@@ -78,7 +78,7 @@ class TestSearchPayers:
 
         payers = client.search_payers("Stedi Test Payer")
 
-        assert [p.primaryPayerId for p in payers] == ["STEDI"]
+        assert [p.primaryPayerId for p in payers] == ["STEDI", "DISCOVERY"]
         assert payers[0].displayName == "Stedi Test Payer"
 
 
@@ -99,7 +99,7 @@ class TestCheckEligibility:
 
         response = client.check_eligibility(req)
 
-        assert response.meta.traceId == "b7a1e6d1-6c1a-4a0d-9c4a-2b6b6e6a0c11"
+        assert response.meta.traceId == "01M1VJ4FKH9T82FWJFGHJ92WEM"
         assert response.planStatus[0].statusCode == "1"
 
 

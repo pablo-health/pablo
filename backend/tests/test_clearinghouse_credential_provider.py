@@ -17,13 +17,15 @@ from app.claims.credentials import (
     ClearinghouseCredentials,
     SettingsClearinghouseCredentialProvider,
     get_clearinghouse_credential_provider,
+    mode_for_key,
     register_clearinghouse_credential_provider,
 )
 
 # Placeholder-shaped on purpose: the secret scan allowlists literal
-# placeholders, and only the key_test_ prefix matters to the provider.
-_TEST_KEY = "key_test_placeholder"
-_PRODUCTION_KEY = "key_live_placeholder"
+# placeholders, and only the test_ prefix matters to the provider (the
+# vendor's production keys are unprefixed).
+_TEST_KEY = "test_placeholder"
+_PRODUCTION_KEY = "placeholder_live"
 _CUSTOM_KEY = "provider-supplied-key-for-tests"
 
 
@@ -36,6 +38,23 @@ class _Settings:
 def _restore_default() -> Any:
     yield
     register_clearinghouse_credential_provider(None)
+
+
+class TestCredentialsRepr:
+    def test_the_key_is_not_in_the_repr(self) -> None:
+        credentials = ClearinghouseCredentials(api_key=_TEST_KEY, mode="test")
+
+        assert _TEST_KEY not in repr(credentials)
+        assert "mode='test'" in repr(credentials)
+
+
+class TestModeForKey:
+    def test_a_test_prefixed_key_is_test_mode(self) -> None:
+        assert mode_for_key(_TEST_KEY) == "test"
+
+    def test_any_other_key_is_production_mode(self) -> None:
+        assert mode_for_key(_PRODUCTION_KEY) == "production"
+        assert mode_for_key("key_test_placeholder") == "production"
 
 
 class TestDefaultProvider:
