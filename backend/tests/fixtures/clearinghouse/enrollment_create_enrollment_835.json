@@ -1,0 +1,48 @@
+{
+  "aggregationPreference": {
+    "taxId": "844459714"
+  },
+  "createdAt": "2026-09-06T01:57:18.429Z",
+  "history": [
+    {
+      "newStatus": "STEDI_ACTION_REQUIRED",
+      "changedBy": "SYSTEM",
+      "changedAt": "2026-09-06T01:57:18.429Z",
+      "type": "STATUS_CHANGE"
+    }
+  ],
+  "id": "01a0746f-2edf-75c0-a780-555b1231c789",
+  "payer": {
+    "name": "Stedi Test Payer",
+    "stediPayerId": "FRCPB",
+    "submittedPayerIdOrAlias": "STEDI"
+  },
+  "primaryContact": {
+    "organizationName": "Pablo Health Test Provider",
+    "email": "kurtn@pablo.health",
+    "phone": "4045550100",
+    "streetAddress1": "1 Test St",
+    "city": "Atlanta",
+    "zipCode": "30301",
+    "state": "GA"
+  },
+  "provider": {
+    "name": "Pablo Health Test Provider",
+    "npi": "1999999984",
+    "taxId": "844459714",
+    "taxIdType": "EIN",
+    "id": "01a0746f-25d4-78a0-bb43-0f95acd218c9"
+  },
+  "requestedEffectiveDate": "20260906",
+  "source": "API",
+  "status": "STEDI_ACTION_REQUIRED",
+  "statusLastUpdatedAt": "2026-09-06T01:57:18.429Z",
+  "submittedAt": "2026-09-06T01:57:18.429Z",
+  "transactions": {
+    "claimPayment": {
+      "enroll": true
+    }
+  },
+  "updatedAt": "2026-09-06T01:57:18.429Z",
+  "userEmail": "kurtn@pablo.health"
+}

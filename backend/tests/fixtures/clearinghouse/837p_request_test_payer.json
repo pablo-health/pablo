@@ -1,0 +1,93 @@
+{
+  "tradingPartnerName": "Stedi Test Payer",
+  "tradingPartnerServiceId": "STEDI",
+  "usageIndicator": "T",
+  "billing": {
+    "address": {
+      "address1": "123 Some St",
+      "city": "Atlanta",
+      "postalCode": "303010000",
+      "state": "GA"
+    },
+    "contactInformation": {
+      "name": "Pablo Test Practice",
+      "phoneNumber": "5553334444"
+    },
+    "employerId": "844459714",
+    "npi": "1999999984",
+    "organizationName": "Pablo Test Practice",
+    "providerType": "BillingProvider",
+    "taxonomyCode": "101YM0800X"
+  },
+  "claimInformation": {
+    "benefitsAssignmentCertificationIndicator": "Y",
+    "claimChargeAmount": "150.00",
+    "claimFilingCode": "CI",
+    "claimFrequencyCode": "1",
+    "healthCareCodeInformation": [
+      {
+        "diagnosisCode": "F411",
+        "diagnosisTypeCode": "ABK"
+      }
+    ],
+    "patientControlNumber": "88659891",
+    "placeOfServiceCode": "10",
+    "planParticipationCode": "A",
+    "releaseInformationCode": "Y",
+    "serviceLines": [
+      {
+        "professionalService": {
+          "compositeDiagnosisCodePointers": {
+            "diagnosisCodePointers": [
+              "1"
+            ]
+          },
+          "lineItemChargeAmount": "150.00",
+          "measurementUnit": "UN",
+          "procedureCode": "90837",
+          "procedureIdentifier": "HC",
+          "procedureModifiers": [
+            "95"
+          ],
+          "serviceUnitCount": "1"
+        },
+        "providerControlNumber": "886598911",
+        "renderingProvider": {
+          "firstName": "Jane",
+          "lastName": "Smith",
+          "npi": "1999999984",
+          "providerType": "RenderingProvider",
+          "taxonomyCode": "101YM0800X"
+        },
+        "serviceDate": "20260901"
+      }
+    ],
+    "signatureIndicator": "Y"
+  },
+  "receiver": {
+    "organizationName": "Stedi"
+  },
+  "submitter": {
+    "contactInformation": {
+      "name": "Pablo Test Practice",
+      "phoneNumber": "5552223333"
+    },
+    "organizationName": "Pablo Test Practice",
+    "submitterIdentification": "0000001"
+  },
+  "subscriber": {
+    "address": {
+      "address1": "2222 Random St",
+      "city": "Atlanta",
+      "postalCode": "303010000",
+      "state": "GA"
+    },
+    "dateOfBirth": "20000101",
+    "firstName": "John",
+    "gender": "M",
+    "groupNumber": "3335555",
+    "lastName": "Anon",
+    "memberId": "123456789",
+    "paymentResponsibilityLevelCode": "P"
+  }
+}

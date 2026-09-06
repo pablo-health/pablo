@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "applicationMode": "test",
+    "senderId": "STEDITEST",
+    "transactionId": "d19a0d9b-a741-4971-8f6b-8f7a8ebeab92"
+  },
+  "transactions": [
+    {
+      "controlNumber": "1",
+      "detailInfo": [
+        {
+          "assignedNumber": "1",
+          "paymentInfo": [
+            {
+              "claimPaymentInfo": {
+                "claimFilingIndicatorCode": "ZZ",
+                "claimFrequencyCode": "1",
+                "claimPaymentAmount": "150",
+                "claimStatusCode": "1",
+                "facilityTypeCode": "10",
+                "patientControlNumber": "88659891",
+                "patientResponsibilityAmount": "0",
+                "payerClaimControlNumber": "01M1T7166MRBYFXR24M00Z5XQS",
+                "totalClaimChargeAmount": "150"
+              },
+              "claimStatementPeriodStart": "2026-09-01",
+              "patientName": {
+                "firstName": "John",
+                "lastName": "Anon",
+                "memberId": "123456789"
+              },
+              "serviceLines": [
+                {
+                  "lineItemControlNumber": "886598911",
+                  "serviceDate": "20260901",
+                  "servicePaymentInformation": {
+                    "adjudicatedProcedureCode": "90837",
+                    "adjudicatedProcedureModifierCodes": [
+                      "95"
+                    ],
+                    "lineItemChargeAmount": "150",
+                    "lineItemProviderPaymentAmount": "150",
+                    "productOrServiceIDQualifier": "HC",
+                    "productOrServiceIDQualifierValue": "Health Care Financing Administration Common Procedural Coding System (HCPCS) Codes",
+                    "submittedAdjudicatedProcedureCode": "90837",
+                    "submittedAdjudicatedProcedureModifierCodes": [
+                      "95"
+                    ],
+                    "submittedProductOrServiceIDQualifier": "HC",
+                    "submittedProductOrServiceIDQualifierValue": "Health Care Financing Administration Common Procedural Coding System (HCPCS) Codes",
+                    "unitsOfServicePaidCount": "1"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "financialInformation": {
+        "checkIssueOrEFTEffectiveDate": "20260906",
+        "creditOrDebitFlagCode": "C",
+        "paymentMethodCode": "ACH",
+        "totalActualProviderPaymentAmount": "150",
+        "transactionHandlingCode": "I"
+      },
+      "payee": {
+        "address": {
+          "address1": "123 Some St",
+          "city": "Atlanta",
+          "postalCode": "303010000",
+          "state": "GA"
+        },
+        "federalTaxPayersIdentificationNumber": "844459714",
+        "name": "Pablo Test Practice",
+        "npi": "1999999984"
+      },
+      "payer": {
+        "address": {
+          "address1": "228 PARK AVE S",
+          "address2": "STE 58460",
+          "city": "NEW YORK",
+          "postalCode": "10003-1502",
+          "state": "NY"
+        },
+        "centersForMedicareAndMedicaidServicesPlanId": "STEDI",
+        "name": "Stedi Test Payer",
+        "submitterIdentificationNumber": "234567890",
+        "technicalContactInformation": [
+          {}
+        ]
+      },
+      "paymentAndRemitReassociationDetails": {
+        "checkOrEFTTraceNumber": "01M1T7166M0FRNNBFWHJQC7V18",
+        "originatingCompanyIdentifier": "1234567890",
+        "traceTypeCode": "1"
+      },
+      "productionDate": "20260906"
+    }
+  ]
+}
