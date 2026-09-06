@@ -18,7 +18,35 @@ const google_auth_library_1 = require("google-auth-library");
         subnetwork: "default",
     },
     vpcEgress: "ALL_TRAFFIC",
+    // Identity Platform gives blocking functions a hard 7-second response
+    // deadline, and a cold start can eat the whole budget — a user signing
+    // in (or signing up) after an idle period then gets
+    // BLOCKING_FUNCTION_ERROR_RESPONSE instead of a session. Keep one
+    // instance warm; at 1 vCPU / 256Mi the idle cost is roughly $8 a
+    // month per function.
+    // Without this in code, a min-instances setting applied with gcloud is
+    // silently dropped on the next `firebase deploy`.
+    minInstances: 1,
 });
+/**
+ * How long to wait on the backend before giving up on it.
+ *
+ * Identity Platform's blocking-function budget is a hard 7 seconds, enforced
+ * from OUTSIDE the function: when it runs out the invocation is killed, so a
+ * still-pending await never reaches its own catch. Both handlers below have a
+ * catch that decides what an unreachable backend means — fail open for
+ * sign-in, fail closed for create — and without a bound shorter than that
+ * budget, NEITHER of them runs. The deadline decides instead, and it decides
+ * "fail" for both, which is the opposite of what beforeSignIn intends.
+ *
+ * So this is not a tuning knob; it is what makes the error handling
+ * reachable. It must stay comfortably under 7s: the remaining budget has to
+ * cover the OIDC token mint above and the handler's own work. Observed cold
+ * pablo-backend boot is ~12s, well past anything that would fit, so a cold
+ * backend is always going to hit this — the point is to hit it as a timeout
+ * we handle rather than as a deadline that kills us.
+ */
+const BACKEND_TIMEOUT_MS = 3500;
 /**
  * Get the Pablo backend URL from environment or derive from project.
  */
@@ -42,6 +70,7 @@ async function callPabloApi(path, body) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         data: body,
+        timeout: BACKEND_TIMEOUT_MS,
     });
     return response.data;
 }
@@ -67,7 +96,11 @@ exports.beforeCreate = (0, identity_1.beforeUserCreated)(async (event) => {
     catch (error) {
         if (error instanceof identity_2.HttpsError)
             throw error;
-        // If the backend is unreachable, fail closed (deny access)
+        // If the backend is unreachable, fail closed (deny access). Unchanged by
+        // BACKEND_TIMEOUT_MS — a cold backend was already denied here, by the
+        // deadline. What changes is that it is denied with THIS message instead of
+        // a bare BLOCKING_FUNCTION_ERROR_RESPONSE, so the person reading it can
+        // tell "try again in a moment" from "you are not allowlisted".
         console.error("Failed to check allowlist:", error);
         throw new identity_2.HttpsError("internal", "Unable to verify authorization. Please try again later.");
     }
@@ -93,9 +126,24 @@ exports.beforeSignIn = (0, identity_1.beforeUserSignedIn)(async (event) => {
     catch (error) {
         if (error instanceof identity_2.HttpsError)
             throw error;
-        // If backend unreachable, allow sign-in (fail open for existing users)
-        // The backend auth middleware will still validate the JWT
-        console.error("Failed to check user status:", error);
+        // Backend unreachable: allow the session shell, but a disabled account is
+        // STILL blocked on every authenticated request by the backend's per-request
+        // auth seam (_resolve_user in app/auth/service.py reads status=="disabled"
+        // and raises 403 USER_DISABLED — covered by test_rejects_disabled_user). So
+        // a fail-open login here yields only a token that can read no PHI; the
+        // disable control does not depend on this check alone.
+        //
+        // Fail OPEN (unlike beforeCreate) on purpose: beforeSignIn runs on every
+        // login, so a transient check-status blip must not lock every existing user
+        // out of signing in. Login availability is the trade; PHI access is not.
+        //
+        // A COLD BACKEND REACHES HERE, and only because of BACKEND_TIMEOUT_MS. It
+        // used to be caught by Identity Platform's 7s deadline instead, which kills
+        // the invocation from outside — so this branch never ran and the first
+        // sign-in after an idle period failed with BLOCKING_FUNCTION_ERROR_RESPONSE.
+        // A slow backend is the commonest kind of unreachable, and it was the one
+        // case this fail-open did not cover.
+        console.error("Failed to check user status (failing open):", error);
     }
     return;
 });
