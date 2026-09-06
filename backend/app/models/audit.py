@@ -250,6 +250,19 @@ class AuditAction(StrEnum):
     PATIENT_COVERAGE_UPDATED = "patient_coverage_updated"
     PATIENT_COVERAGE_DEACTIVATED = "patient_coverage_deactivated"
 
+    # Claims. A claim carries the client's diagnoses and the subscriber's
+    # demographics, so building, reading or moving one is a patient-record
+    # access. The `changes` payload carries the claim id, its control number,
+    # its state, the payer row id and — for a correction or void — the parent
+    # claim id. Never a member id, a diagnosis code or anything about the
+    # subscriber.
+    CLAIM_CREATED = "claim_created"
+    CLAIM_VIEWED = "claim_viewed"
+    CLAIM_VALIDATED = "claim_validated"
+    CLAIM_CORRECTED = "claim_corrected"
+    CLAIM_VOIDED = "claim_voided"
+    PATIENT_CLAIMS_VIEWED = "patient_claims_viewed"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -263,6 +276,7 @@ class ResourceType(StrEnum):
     CHAT_CONVERSATION = "chat_conversation"
     PATIENT_DOCUMENT = "patient_document"
     INVITATION = "invitation"
+    CLAIM = "claim"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
