@@ -13,6 +13,7 @@ import { useTheme } from "@/components/theme/ThemeProvider"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useReadOnlyMode } from "@/lib/access/readOnlyMode"
 import { usePreferences, useSavePreferences } from "@/hooks/usePreferences"
+import { useAvailabilityRules } from "@/hooks/useAvailability"
 import {
   getICalSyncStatus,
   triggerICalSync,
@@ -24,6 +25,7 @@ import { useConfig } from "@/lib/config"
 import { Loader2, RefreshCw } from "lucide-react"
 import type { AppointmentResponse } from "@/types/scheduling"
 import { errorCode } from "@/lib/errors/errorCode"
+import { deriveWorkingHoursWindow } from "@/lib/workingHours"
 
 function toEditorialView(raw: string | undefined): EditorialView | undefined {
   if (raw === "timeGridDay") return "day"
@@ -46,6 +48,8 @@ export default function CalendarPage() {
   const { readOnly } = useReadOnlyMode()
   const saveMutation = useSavePreferences()
   const { googleCalendarEnabled } = useConfig()
+  const { data: availabilityRules } = useAvailabilityRules()
+  const workingHoursWindow = deriveWorkingHoursWindow(availabilityRules?.data ?? [])
 
   // First visit opens on the setup wizard, in this surface with the nav
   // still around it — the same shape as a first-run inbox. An empty
@@ -235,7 +239,7 @@ export default function CalendarPage() {
         <EditorialCalendar
           theme={editorialTheme}
           density={preferences?.calendar_density ?? "balanced"}
-          workingHoursStart={preferences?.working_hours_start}
+          workingHoursStart={workingHoursWindow?.scrollToHour}
           defaultView={toEditorialView(preferences?.calendar_default_view) ?? "week"}
           onSelectSlot={handleSelectSlot}
           onSelectAppointment={handleSelectAppointment}

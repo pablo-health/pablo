@@ -91,12 +91,8 @@ class TestIsWithinWorkingHours:
     """Test timezone-aware working hours filter."""
 
     def test_within_working_hours(self) -> None:
-        """User at 10 AM in their timezone should be within 8-18 window."""
-        prefs = UserPreferences(
-            working_hours_start=8,
-            working_hours_end=18,
-            timezone="America/New_York",
-        )
+        """User at 10 AM in their timezone should be within the 8-18 window."""
+        prefs = UserPreferences(timezone="America/New_York")
         # Mock 10:00 AM Eastern
         with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
             mock_now = MagicMock()
@@ -106,11 +102,7 @@ class TestIsWithinWorkingHours:
 
     def test_outside_working_hours(self) -> None:
         """User at 11 PM should be outside 8-18 + 1hr buffer."""
-        prefs = UserPreferences(
-            working_hours_start=8,
-            working_hours_end=18,
-            timezone="America/New_York",
-        )
+        prefs = UserPreferences(timezone="America/New_York")
         with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
             mock_now = MagicMock()
             mock_now.hour = 23
@@ -119,11 +111,7 @@ class TestIsWithinWorkingHours:
 
     def test_within_buffer_before(self) -> None:
         """User at 7 AM should be within (8-1=7) to 19 window."""
-        prefs = UserPreferences(
-            working_hours_start=8,
-            working_hours_end=18,
-            timezone="America/New_York",
-        )
+        prefs = UserPreferences(timezone="America/New_York")
         with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
             mock_now = MagicMock()
             mock_now.hour = 7
@@ -132,11 +120,7 @@ class TestIsWithinWorkingHours:
 
     def test_within_buffer_after(self) -> None:
         """User at 6:30 PM (hour=18) should be within window (end+1=19)."""
-        prefs = UserPreferences(
-            working_hours_start=8,
-            working_hours_end=18,
-            timezone="America/New_York",
-        )
+        prefs = UserPreferences(timezone="America/New_York")
         with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
             mock_now = MagicMock()
             mock_now.hour = 18
@@ -147,19 +131,6 @@ class TestIsWithinWorkingHours:
         """Invalid timezone should default to syncing (don't skip)."""
         prefs = UserPreferences(timezone="Invalid/Timezone")
         assert _is_within_working_hours(prefs) is True
-
-    def test_early_morning_start_clamps_to_zero(self) -> None:
-        """Working hours starting at 0 should clamp window_start to 0."""
-        prefs = UserPreferences(
-            working_hours_start=0,
-            working_hours_end=8,
-            timezone="America/New_York",
-        )
-        with patch("app.services.sync_scheduler_service.datetime") as mock_dt:
-            mock_now = MagicMock()
-            mock_now.hour = 0
-            mock_dt.now.return_value = mock_now
-            assert _is_within_working_hours(prefs) is True
 
 
 # dispatch() tests
