@@ -835,6 +835,11 @@ class PracticeBillingProfileRow(Base):
     state: Mapped[str | None] = mapped_column(String(2))
     postal_code: Mapped[str | None] = mapped_column(String(10))
     phone: Mapped[str | None] = mapped_column(String(50))
+    #: Run an eligibility check on its own whenever coverage lands (intake,
+    #: chart save). Off leaves only the chart card's re-verify button.
+    eligibility_auto_check: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

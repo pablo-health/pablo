@@ -24,6 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from app.api_errors import register_exception_handlers
+from app.claims.eligibility import EligibilityAutoCheck
 from app.main import app as real_app
 from app.models import Patient, User
 from app.models.audit import ACTOR_TYPE_ANONYMOUS, ACTOR_TYPE_CLINICIAN, AuditAction
@@ -243,8 +244,13 @@ def _public_app(
     appt_repo = InMemoryAppointmentRepository()
     rule_repo = InMemoryAvailabilityRuleRepository()
     patient_repo = InMemoryPatientRepository()
+    queued_checks: list[tuple[str, str, str]] = []
     coverage_repos = CoverageRepos(
-        payers=InMemoryPayerRepository(), coverage=InMemoryPatientCoverageRepository()
+        payers=InMemoryPayerRepository(),
+        coverage=InMemoryPatientCoverageRepository(),
+        auto_check=EligibilityAutoCheck(
+            enabled=True, schedule=lambda c, u, t: queued_checks.append((c, u, t))
+        ),
     )
     fake_audit = audit if audit is not None else _FakeAudit()
     fake_email = email_sender if email_sender is not None else InMemoryEmailSender()
@@ -278,6 +284,7 @@ def _public_app(
     client.rule_repo = rule_repo  # type: ignore[attr-defined]  # test-only stash, keeps fixtures to one object
     client.patient_repo = patient_repo  # type: ignore[attr-defined]  # test-only stash
     client.coverage_repos = coverage_repos  # type: ignore[attr-defined]  # test-only stash
+    client.queued_checks = queued_checks  # type: ignore[attr-defined]  # test-only stash
     client.appt_repo = appt_repo  # type: ignore[attr-defined]  # test-only stash
     client.audit = fake_audit  # type: ignore[attr-defined]  # test-only stash
     client.email = fake_email  # type: ignore[attr-defined]  # test-only stash
@@ -2151,6 +2158,10 @@ def test_booking_with_insurance_puts_coverage_on_the_new_chart(
         assert "W123456789" not in str(call["changes"])
         assert "GRP-77" not in str(call["changes"])
 
+    # And the plan is checked before the first session: one eligibility
+    # check queued for the new row, under the link's owner.
+    assert public_client.queued_checks == [(coverage.id, OWNER_ID, "intake")]
+
 
 def test_booking_without_insurance_creates_no_coverage(
     public_client: Any, link_repo: InMemoryBookingLinkRepository
@@ -2167,6 +2178,7 @@ def test_booking_without_insurance_creates_no_coverage(
     assert public_client.coverage_repos.coverage.get_active(patient.id) is None
     assert public_client.coverage_repos.payers.list() == []
     assert not any("patient_coverage" in str(c["action"]) for c in public_client.audit.calls)
+    assert public_client.queued_checks == []
 
 
 def test_same_payer_typed_twice_is_one_payer_row(

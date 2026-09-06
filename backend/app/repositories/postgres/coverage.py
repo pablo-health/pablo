@@ -127,6 +127,10 @@ class PostgresPatientCoverageRepository(PatientCoverageRepository):
     def __init__(self, session: Session) -> None:
         self._session = session
 
+    def get(self, coverage_id: str) -> PatientCoverage | None:
+        row = self._session.get(PatientCoverageRow, coverage_id)
+        return _to_coverage(row) if row is not None else None
+
     def get_active(self, patient_id: str) -> PatientCoverage | None:
         row = (
             self._session.execute(

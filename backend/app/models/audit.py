@@ -249,6 +249,8 @@ class AuditAction(StrEnum):
     PATIENT_COVERAGE_CREATED = "patient_coverage_created"
     PATIENT_COVERAGE_UPDATED = "patient_coverage_updated"
     PATIENT_COVERAGE_DEACTIVATED = "patient_coverage_deactivated"
+    # An eligibility check discloses the client to the payer; one row per check.
+    PATIENT_COVERAGE_VERIFIED = "patient_coverage_verified"
 
     # Claims. A claim carries the client's diagnoses and the subscriber's
     # demographics, so building, reading or moving one is a patient-record

@@ -208,6 +208,7 @@ app.include_router(patients.router)
 app.include_router(practice_billing.router)
 app.include_router(coverage.payers_router)
 app.include_router(coverage.router)
+app.include_router(coverage.jobs_router)
 # The export router mounts ``/api/claims/export.csv`` and must come before
 # the claims router, whose ``/api/claims/{claim_id}`` would otherwise match it.
 app.include_router(claims_export.router)
