@@ -4,7 +4,9 @@ Recorded from the clearinghouse's test environment with a test API key. Every
 value is synthetic: the patient is the vendor's documented example person, the
 provider is the vendor's documented dummy NPI, the tax id is a random dummy
 EIN created for the test payer enrollment, and no request ever reached a real
-payer. Nothing here is PHI.
+payer. Nothing here is PHI. Contact emails in the recordings are replaced
+with a synthetic address (`billing@example.test`); no real person's address
+appears in any fixture.
 
 | File | What it is |
 |---|---|

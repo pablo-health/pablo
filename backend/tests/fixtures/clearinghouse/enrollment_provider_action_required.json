@@ -26,7 +26,7 @@
   },
   "primaryContact": {
     "organizationName": "Pablo Health Test Provider",
-    "email": "kurtn@pablo.health",
+    "email": "billing@example.test",
     "phone": "4045550100",
     "streetAddress1": "1 Test St",
     "city": "Atlanta",
@@ -91,5 +91,5 @@
     }
   },
   "updatedAt": "2026-09-08T14:02:11.000Z",
-  "userEmail": "kurtn@pablo.health"
+  "userEmail": "billing@example.test"
 }
