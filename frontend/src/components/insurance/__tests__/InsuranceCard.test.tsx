@@ -74,6 +74,7 @@ function coverage(overrides: Partial<CoverageResponse> = {}): CoverageResponse {
     member_id: "W123456789",
     group_number: "GRP-77",
     plan_name: "Choice POS II",
+    copay_override_cents: null,
     subscriber_relationship: "self",
     subscriber_first_name: null,
     subscriber_last_name: null,
@@ -121,6 +122,23 @@ describe("InsuranceCard", () => {
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument()
     expect(screen.queryByTestId("eligibility-details")).not.toBeInTheDocument()
+  })
+
+  it("shows the copay the practice collects when one is on file", () => {
+    onFile({ copay_override_cents: 3000 })
+
+    render(<InsuranceCard patientId="patient-1" />)
+
+    expect(screen.getByText("Copay collected")).toBeInTheDocument()
+    expect(screen.getByText("$30.00")).toBeInTheDocument()
+  })
+
+  it("shows no copay line when the practice has set no override", () => {
+    onFile()
+
+    render(<InsuranceCard patientId="patient-1" />)
+
+    expect(screen.queryByText("Copay collected")).not.toBeInTheDocument()
   })
 
   it("names the subscriber when it is somebody other than the client", () => {

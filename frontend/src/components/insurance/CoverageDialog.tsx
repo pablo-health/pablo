@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { centsToDollars, dollarsToCents } from "@/lib/money"
 import { useCreateCoverage, usePayers, useUpdateCoverage } from "@/hooks/useCoverage"
 import type { CoverageResponse, CreateCoverageRequest } from "@/types/coverage"
 
@@ -48,6 +49,7 @@ const schema = z
     member_id: z.string().min(1, "Member ID is required").max(80),
     group_number: z.string().max(80),
     plan_name: z.string().max(255),
+    copay: z.string(),
     subscriber_relationship: z.enum(["self", "spouse", "child", "other"]),
     subscriber_first_name: z.string().max(255),
     subscriber_last_name: z.string().max(255),
@@ -62,6 +64,13 @@ const schema = z
     message: "Insurance company name is required",
     path: ["new_payer_name"],
   })
+  // Blank is a real answer — no override, fall back to what the payer said.
+  // Anything else has to be an amount, so a half-typed one cannot be saved
+  // as "nothing to collect".
+  .refine((v) => v.copay.trim() === "" || dollarsToCents(v.copay) !== null, {
+    message: "Enter an amount, like 30",
+    path: ["copay"],
+  })
 
 type FormData = z.infer<typeof schema>
 
@@ -72,6 +81,7 @@ const EMPTY: FormData = {
   member_id: "",
   group_number: "",
   plan_name: "",
+  copay: "",
   subscriber_relationship: "self",
   subscriber_first_name: "",
   subscriber_last_name: "",
@@ -90,6 +100,10 @@ function fromCoverage(coverage: CoverageResponse): FormData {
     member_id: coverage.member_id,
     group_number: coverage.group_number ?? "",
     plan_name: coverage.plan_name ?? "",
+    copay:
+      coverage.copay_override_cents == null
+        ? ""
+        : centsToDollars(coverage.copay_override_cents),
     subscriber_relationship: coverage.subscriber_relationship,
     subscriber_first_name: coverage.subscriber_first_name ?? "",
     subscriber_last_name: coverage.subscriber_last_name ?? "",
@@ -150,6 +164,9 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
       member_id: data.member_id.trim(),
       group_number: orNull(data.group_number),
       plan_name: orNull(data.plan_name),
+      // Blank clears the override, which is why it is sent rather than
+      // omitted: the payer's own answer takes over again.
+      copay_override_cents: dollarsToCents(data.copay),
       ...subscriber,
     }
     try {
@@ -236,9 +253,19 @@ export function CoverageDialog({ patientId, coverage, open, onOpenChange }: Cove
             </div>
           </div>
 
-          <div className="form-group">
-            <Label htmlFor="plan_name">Plan name</Label>
-            <Input id="plan_name" {...register("plan_name")} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="form-group">
+              <Label htmlFor="plan_name">Plan name</Label>
+              <Input id="plan_name" {...register("plan_name")} />
+            </div>
+            <div className="form-group">
+              <Label htmlFor="copay">Copay</Label>
+              <Input id="copay" inputMode="decimal" placeholder="0.00" {...register("copay")} />
+              <p className="mt-1 text-xs text-neutral-500">
+                From the card or your contract; overrides the eligibility answer.
+              </p>
+              {errors.copay && <p className="mt-1 text-sm text-red-500">{errors.copay.message}</p>}
+            </div>
           </div>
 
           <div className="form-group">

@@ -554,6 +554,8 @@ CREATE TABLE __TENANT_SCHEMA__.patient_coverage (
     verified_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    copay_override_cents integer,
+    CONSTRAINT ck_patient_coverage_copay_override_positive CHECK (((copay_override_cents IS NULL) OR (copay_override_cents > 0))),
     CONSTRAINT ck_patient_coverage_subscriber_relationship CHECK (((subscriber_relationship)::text = ANY ((ARRAY['self'::character varying, 'spouse'::character varying, 'child'::character varying, 'other'::character varying])::text[]))),
     CONSTRAINT ck_patient_coverage_subscriber_sex CHECK (((subscriber_sex IS NULL) OR ((subscriber_sex)::text = ANY ((ARRAY['M'::character varying, 'F'::character varying, 'U'::character varying])::text[]))))
 );

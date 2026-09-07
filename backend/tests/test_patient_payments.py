@@ -29,13 +29,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
 from app.auth.service import TenantContext, get_tenant_context, require_baa_acceptance
 from app.db.models import DEFAULT_CHARGE_CURRENCY
 from app.models import User
+from app.models.coverage import PatientCoverage
 from app.models.patient import Patient
 from app.models.payments import CardOnFile, PatientCharge
 from app.payments import stripe_api
@@ -43,6 +44,8 @@ from app.payments.provider import PaymentCredentials, register_payment_credentia
 from app.repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_repository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
 )
@@ -53,6 +56,12 @@ from app.scheduling_engine.models.appointment_type import AppointmentType
 from app.services import AuditService, get_audit_service
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from tests.claims_fixtures import claim as claim_fixture
+from tests.claims_fixtures import line as line_fixture
+
+if TYPE_CHECKING:
+    from app.models.claims import Claim
 
 _USER_ID = "user-1"
 _PRACTICE_ID = "practice-1"
@@ -242,6 +251,36 @@ class _FakeAppointments:
         return None
 
 
+class _FakeCoverage:
+    """One client's active coverage, or none at all."""
+
+    def __init__(self, coverage: PatientCoverage | None = None) -> None:
+        self.coverage = coverage
+
+    def get_active(self, patient_id: str) -> PatientCoverage | None:
+        if self.coverage is not None and self.coverage.patient_id == patient_id:
+            return self.coverage
+        return None
+
+
+class _FakeClaims:
+    """The newest claim on a visit, keyed the way the real repository keys it."""
+
+    def __init__(self, claim: Claim | None = None) -> None:
+        self.claim = claim
+        self.asked_for: list[list[str]] = []
+
+    def latest_by_appointment(self, appointment_ids: list[str]) -> dict[str, Claim]:
+        self.asked_for.append(appointment_ids)
+        if self.claim is None:
+            return {}
+        return {
+            line.appointment_id: self.claim
+            for line in self.claim.lines
+            if line.appointment_id in appointment_ids
+        }
+
+
 class _FakeAppointmentTypes:
     def __init__(self, appointment_type: AppointmentType | None = None) -> None:
         self.appointment_type = appointment_type
@@ -304,6 +343,8 @@ def _client(
     *,
     appointments: _FakeAppointments | None = None,
     appointment_types: _FakeAppointmentTypes | None = None,
+    coverage: _FakeCoverage | None = None,
+    claims: _FakeClaims | None = None,
     credentials: PaymentCredentials | None = PaymentCredentials(
         secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY
     ),
@@ -326,6 +367,8 @@ def _client(
     app.dependency_overrides[get_appointment_type_repository] = lambda: (
         appointment_types or _FakeAppointmentTypes()
     )
+    app.dependency_overrides[get_patient_coverage_repository] = lambda: coverage or _FakeCoverage()
+    app.dependency_overrides[get_claim_repository] = lambda: claims or _FakeClaims()
     # The routes MUST audit; the unit suite has no Postgres to write those to.
     audit_service = audit or AuditService(InMemoryAuditRepository())
     app.dependency_overrides[get_audit_service] = lambda: audit_service
@@ -904,6 +947,187 @@ def _appointment() -> Appointment:
         session_type="Standard",
         appointment_type_id=_TYPE_ID,
     )
+
+
+def _coverage(**overrides: Any) -> PatientCoverage:
+    now = datetime.now(UTC)
+    fields: dict[str, Any] = {
+        "id": "cov-1",
+        "patient_id": _PATIENT_ID,
+        "payer_id": "payer-1",
+        "member_id": "123456789",
+        "created_at": now,
+        "updated_at": now,
+    }
+    fields.update(overrides)
+    return PatientCoverage(**fields)
+
+
+def _271_with_copay(dollars: str) -> dict[str, Any]:
+    """A stored eligibility response carrying one behavioral copay line."""
+    return {
+        "meta": {"traceId": "trace-1"},
+        "benefitsInformation": [
+            {
+                "code": "B",
+                "serviceTypeCodes": ["MH"],
+                "timeQualifierCode": "27",
+                "benefitAmount": dollars,
+            }
+        ],
+    }
+
+
+class TestCopay:
+    """The copay a covered client pays at the door, on the card on file.
+
+    Same route, same card, same ledger — what makes it a copay is the row's
+    kind, which is what lets a later remittance net it out instead of
+    counting the visit as paid twice.
+    """
+
+    def test_the_override_is_charged_and_the_row_says_it_was_a_copay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payments = _FakePayments(_stored_card())
+        client = _client(
+            payments,
+            _FakePatients(rate_cents=15000),
+            coverage=_FakeCoverage(_coverage(copay_override_cents=3000)),
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(
+            f"/api/patients/{_PATIENT_ID}/charges",
+            json={"kind": "copay", "appointment_id": _APPOINTMENT_ID},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        # The copay, not the client's $150 rate.
+        assert body["amount_cents"] == 3000
+        assert body["kind"] == "copay"
+        assert body["appointment_id"] == _APPOINTMENT_ID
+        assert payments.charges[0].kind == "copay"
+
+    def test_the_payers_answer_is_the_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        coverage = _coverage(
+            last_271=_271_with_copay("25"), verified_at=datetime(2026, 9, 1, tzinfo=UTC)
+        )
+        client = _client(
+            _FakePayments(_stored_card()),
+            _FakePatients(rate_cents=15000),
+            coverage=_FakeCoverage(coverage),
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/charges", json={"kind": "copay"})
+
+        assert response.json()["amount_cents"] == 2500
+
+    def test_a_typed_amount_is_charged_when_nothing_is_on_file(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = _client(
+            _FakePayments(_stored_card()),
+            _FakePatients(rate_cents=15000),
+            coverage=_FakeCoverage(_coverage()),
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(
+            f"/api/patients/{_PATIENT_ID}/charges", json={"kind": "copay", "amount_cents": 2000}
+        )
+
+        assert response.json()["amount_cents"] == 2000
+
+    def test_no_copay_anywhere_refuses_rather_than_charging_the_full_rate(self) -> None:
+        payments = _FakePayments(_stored_card())
+        client = _client(
+            payments, _FakePatients(rate_cents=15000), coverage=_FakeCoverage(_coverage())
+        )
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/charges", json={"kind": "copay"})
+
+        assert response.status_code == 422
+        # The session rate is exactly the wrong guess, so nothing was staged.
+        assert payments.charges == []
+
+    def test_an_uncovered_client_has_no_copay_to_charge(self) -> None:
+        client = _client(_FakePayments(_stored_card()), _FakePatients(rate_cents=15000))
+
+        response = client.post(f"/api/patients/{_PATIENT_ID}/charges", json={"kind": "copay"})
+
+        assert response.status_code == 422
+
+    def test_the_row_is_linked_to_the_claim_already_on_the_visit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payments = _FakePayments(_stored_card())
+        filed = claim_fixture(lines=[line_fixture(appointment_id=_APPOINTMENT_ID)])
+        client = _client(
+            payments,
+            _FakePatients(rate_cents=15000),
+            coverage=_FakeCoverage(_coverage(copay_override_cents=3000)),
+            claims=_FakeClaims(filed),
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(
+            f"/api/patients/{_PATIENT_ID}/charges",
+            json={"kind": "copay", "appointment_id": _APPOINTMENT_ID},
+        )
+
+        assert response.json()["claim_id"] == filed.id
+
+    def test_a_visit_with_no_claim_yet_leaves_the_link_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The ordinary case: the copay is taken at the visit and the claim is
+        # filed afterwards.
+        client = _client(
+            _FakePayments(_stored_card()),
+            _FakePatients(rate_cents=15000),
+            coverage=_FakeCoverage(_coverage(copay_override_cents=3000)),
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(
+            f"/api/patients/{_PATIENT_ID}/charges",
+            json={"kind": "copay", "appointment_id": _APPOINTMENT_ID},
+        )
+
+        assert response.json()["claim_id"] is None
+
+    def test_a_full_rate_charge_is_never_linked_to_a_claim(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        claims = _FakeClaims(claim_fixture(lines=[line_fixture(appointment_id=_APPOINTMENT_ID)]))
+        client = _client(
+            _FakePayments(_stored_card()), _FakePatients(rate_cents=15000), claims=claims
+        )
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = client.post(
+            f"/api/patients/{_PATIENT_ID}/charges", json={"appointment_id": _APPOINTMENT_ID}
+        )
+
+        assert response.json()["kind"] == "session"
+        assert response.json()["claim_id"] is None
+        # Not even asked: a self-pay charge has no claim behind it.
+        assert claims.asked_for == []
+
+    def test_a_ledger_only_kind_cannot_be_raised_as_a_card_charge(self) -> None:
+        payments = _FakePayments(_stored_card())
+        client = _client(payments, _FakePatients(rate_cents=15000))
+
+        response = client.post(
+            f"/api/patients/{_PATIENT_ID}/charges",
+            json={"kind": "write_off", "amount_cents": 5000},
+        )
+
+        assert response.status_code == 422
+        assert payments.charges == []
 
 
 class TestAmountResolution:

@@ -230,13 +230,17 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         )
         return [_to_charge(row) for row in rows]
 
-    def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
+    def succeeded_charge_kinds(self, appointment_ids: list[str]) -> dict[str, set[str]]:
         if not appointment_ids:
-            return set()
+            return {}
         rows = self._session.execute(
-            select(PatientChargeRow.appointment_id).where(
+            select(PatientChargeRow.appointment_id, PatientChargeRow.kind).where(
                 PatientChargeRow.appointment_id.in_(appointment_ids),
                 PatientChargeRow.status == "succeeded",
             )
-        ).scalars()
-        return {row for row in rows if row is not None}
+        ).all()
+        kinds: dict[str, set[str]] = {}
+        for appointment_id, kind in rows:
+            if appointment_id is not None:
+                kinds.setdefault(appointment_id, set()).add(kind)
+        return kinds

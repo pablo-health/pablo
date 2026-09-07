@@ -22,7 +22,9 @@ Routes
   to, so the clinician sees the figure before authorising it rather than after.
 * ``POST /api/patients/{patient_id}/charges`` — charge the card on file. One
   click, one charge: there is no scheduler, nothing charges on session
-  completion, and a decline is never retried automatically.
+  completion, and a decline is never retried automatically. A covered
+  client's copay is the same route with ``kind="copay"`` — the same card,
+  the same ledger, a row that says what it was for.
 * ``GET /api/patients/{patient_id}/charges`` — the ledger for one client.
 
 Write-before-money ordering (the load-bearing bit)
@@ -85,12 +87,15 @@ from ..models.payments import (
     VisitBalanceResponse,
 )
 from ..payments.balance import BalanceSummary, patient_balance
+from ..payments.copay import copay_cents
 from ..payments.provider import PaymentCredentials, get_payment_credential_provider
 from ..payments.reconcile import METADATA_CHARGE_ID, METADATA_PRACTICE_ID, METADATA_USER_ID
 from ..payments.stripe_api import payment_intent_request, stripe_request
 from ..repositories import (
     get_appointment_repository,
     get_appointment_type_repository,
+    get_claim_repository,
+    get_patient_coverage_repository,
     get_patient_payment_repository,
     get_patient_repository,
 )
@@ -99,6 +104,8 @@ from ..services import AuditService, get_audit_service
 
 if TYPE_CHECKING:
     from ..models import Patient, User
+    from ..repositories.claims import ClaimRepository
+    from ..repositories.coverage import PatientCoverageRepository
     from ..repositories.patient import PatientRepository
     from ..repositories.patient_payment import PatientPaymentRepository
     from ..scheduling_engine.repositories.appointment import AppointmentRepository
@@ -117,6 +124,8 @@ AppointmentsRepo = Annotated["AppointmentRepository", Depends(get_appointment_re
 AppointmentTypesRepo = Annotated[
     "AppointmentTypeRepository", Depends(get_appointment_type_repository)
 ]
+CoverageRepo = Annotated["PatientCoverageRepository", Depends(get_patient_coverage_repository)]
+ClaimsRepo = Annotated["ClaimRepository", Depends(get_claim_repository)]
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
 Tenant = Annotated[TenantContext, Depends(get_tenant_context)]
 
@@ -232,14 +241,31 @@ def _resolve_amount_cents(
     user_id: str,
     appointments: AppointmentRepository,
     appointment_types: AppointmentTypeRepository,
+    coverage: PatientCoverageRepository,
 ) -> int:
-    """What to charge: the caller's amount, else the client's effective rate.
+    """What to charge: the caller's amount, else whatever ``kind`` resolves to.
 
-    422 when neither an amount nor a rate is available: charging a guessed
-    amount, or zero, is worse than refusing.
+    A ``session`` charge resolves to the client's effective rate; a ``copay``
+    resolves to what the covered client pays at the door. Deliberately
+    resolved here rather than taken from the caller even though the queue row
+    already displayed a figure: the amount the browser was shown can be
+    stale, and money is decided on this side.
+
+    422 when nothing resolves. Charging a guessed amount, or zero, is worse
+    than refusing — and for a copay the full session rate is exactly the
+    wrong guess, so it is never the fallback.
     """
     if payload.amount_cents is not None:
         return payload.amount_cents
+
+    if payload.kind == "copay":
+        amount_cents = copay_cents(coverage.get_active(patient.id))
+        if amount_cents is None or amount_cents <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="No copay is on file for this client; send an amount to charge.",
+            )
+        return amount_cents
 
     amount_cents = _effective_rate_cents(
         patient, payload.appointment_id, user_id, appointments, appointment_types
@@ -250,6 +276,20 @@ def _resolve_amount_cents(
             detail="No rate is set for this client or appointment type; send an amount to charge.",
         )
     return amount_cents
+
+
+def _claim_on_visit(payload: CreateChargeRequest, claims: ClaimRepository) -> str | None:
+    """The claim this charge belongs to, so a remittance can net it out.
+
+    Read from the visit rather than accepted from the caller: a claim id in a
+    request body is one a caller could point at somebody else's claim, and
+    the visit already knows which claim covers it. Only a copay carries one —
+    a full-rate self-pay charge has no claim behind it by definition.
+    """
+    if payload.kind != "copay" or payload.appointment_id is None:
+        return None
+    claim = claims.latest_by_appointment([payload.appointment_id]).get(payload.appointment_id)
+    return claim.id if claim is not None else None
 
 
 @router.post("/{patient_id}/payment-method/setup", response_model=CardSetupResponse)
@@ -517,6 +557,8 @@ def create_charge(
     patients: PatientsRepo,
     appointments: AppointmentsRepo,
     appointment_types: AppointmentTypesRepo,
+    coverage: CoverageRepo,
+    claims: ClaimsRepo,
     audit: AuditService = Depends(get_audit_service),
 ) -> ChargeResponse:
     """Charge the card on file — one click, one charge, no automatic retry.
@@ -540,7 +582,9 @@ def create_charge(
             status_code=status.HTTP_409_CONFLICT, detail="No card on file for this client."
         )
 
-    amount_cents = _resolve_amount_cents(payload, patient, user.id, appointments, appointment_types)
+    amount_cents = _resolve_amount_cents(
+        payload, patient, user.id, appointments, appointment_types, coverage
+    )
 
     # Audited HERE, not after Stripe answers. The § 164.312(b) event is "this
     # clinician initiated a charge against this client", and that is true the
@@ -555,6 +599,8 @@ def create_charge(
         amount_cents=amount_cents,
         currency=DEFAULT_CHARGE_CURRENCY,
         user_id=user.id,
+        kind=payload.kind,
+        claim_id=_claim_on_visit(payload, claims),
     )
     audit.log(
         AuditAction.PATIENT_CHARGE_CREATED,
@@ -562,7 +608,7 @@ def create_charge(
         request,
         resource_type=ResourceType.PATIENT,
         resource_id=patient_id,
-        changes={"charge_id": charge.id},
+        changes={"charge_id": charge.id, "kind": charge.kind},
     )
     payments.commit()
 
@@ -660,8 +706,9 @@ def create_charge(
     # Opaque ledger id and amount only — no client id here; the audit row above
     # carries that linkage.
     logger.info(
-        "patient_charge_attempted charge_id=%s amount_cents=%d status=%s detail=%s",
+        "patient_charge_attempted charge_id=%s kind=%s amount_cents=%d status=%s detail=%s",
         settled.id,
+        settled.kind,
         settled.amount_cents,
         settled.status,
         settled.status_detail,

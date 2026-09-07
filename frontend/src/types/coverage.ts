@@ -149,6 +149,11 @@ export interface CoverageResponse extends SubscriberFields {
   group_number: string | null
   plan_name: string | null
   active: boolean
+  /**
+   * What the practice collects at the door, when it knows better than the
+   * payer's answer. `null` is "no override", not "no copay".
+   */
+  copay_override_cents: number | null
   /** When an eligibility check last asked the payer; null until one has run. */
   verified_at: string | null
   /** The stored 271 read down; null until a check has run. */
@@ -170,6 +175,7 @@ export interface CreateCoverageRequest extends Partial<SubscriberFields> {
   member_id: string
   group_number?: string | null
   plan_name?: string | null
+  copay_override_cents?: number | null
 }
 
 export interface UpdateCoverageRequest extends Partial<SubscriberFields> {
@@ -177,4 +183,6 @@ export interface UpdateCoverageRequest extends Partial<SubscriberFields> {
   member_id?: string
   group_number?: string | null
   plan_name?: string | null
+  /** Send `null` to drop the override and fall back to the payer's answer. */
+  copay_override_cents?: number | null
 }

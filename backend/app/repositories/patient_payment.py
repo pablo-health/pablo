@@ -146,10 +146,15 @@ class PatientPaymentRepository(ABC):
         """This client's ledger, newest first."""
 
     @abstractmethod
-    def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
-        """Which of these appointments have at least one succeeded charge.
+    def succeeded_charge_kinds(self, appointment_ids: list[str]) -> dict[str, set[str]]:
+        """The kinds of succeeded charge on each of these appointments.
 
-        Backs the unbilled queue: an appointment absent from the result has
-        no succeeded charge, whether that's no attempt at all or a decline
-        (``failed``) — either way it belongs in the queue.
+        Keyed by appointment id; an appointment with no succeeded charge is
+        absent, whether that is no attempt at all or a decline (``failed``).
+
+        Kinds rather than a bare "was anything charged", because which kind
+        it was decides whether the visit is done with: a full-rate session
+        charge settles it, a copay is a part payment on a visit the payer
+        has yet to see. That judgement belongs to the caller — the unbilled
+        queue makes it — and not to this query.
         """

@@ -41,10 +41,19 @@ export interface ChargeAmountResponse {
   currency: string
 }
 
+/**
+ * The two things a card is charged for: the visit at its full rate, and the
+ * copay a covered client pays at the door. The other ledger kinds move no
+ * money and are not raised here.
+ */
+export type ChargeKind = "session" | "copay"
+
 export interface CreateChargeRequest {
-  /** Omit to charge the client's resolved rate. */
+  /** Omit to let the server resolve the amount from `kind`. */
   amount_cents?: number
   appointment_id?: string
+  /** Defaults to `session` server-side. */
+  kind?: ChargeKind
 }
 
 /**

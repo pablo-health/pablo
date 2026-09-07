@@ -45,6 +45,18 @@ export function formatCents(cents: number, currency = "usd"): string {
 }
 
 /**
+ * Render stored cents as the plain amount an input holds — `"30.00"`, not
+ * `"$30.00"`.
+ *
+ * The counterpart to `dollarsToCents` for a field that is edited rather than
+ * read: `formatCents` produces a currency string that would not survive a
+ * round trip back through the parser.
+ */
+export function centsToDollars(cents: number): string {
+  return (cents / MINOR_UNITS).toFixed(2)
+}
+
+/**
  * Convert a dollar amount a clinician typed into stored cents.
  *
  * Returns `null` for anything that is not a positive amount, so an empty or

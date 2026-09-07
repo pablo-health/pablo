@@ -531,6 +531,57 @@ class TestAutoCheck:
         assert resp.json()["eligibility"] is None
         assert resp.json()["verified_at"] is None
 
+    def test_editing_only_the_copay_keeps_the_answer(self, harness: dict[str, Any]) -> None:
+        # The override says what this practice collects, not who the payer is
+        # — and it is the answer's own fallback, so clearing it here would
+        # throw away the figure the override exists to replace.
+        created = _put_on_file(harness)
+        harness["client"].post(_VERIFY)
+
+        resp = harness["client"].patch(
+            f"/api/patients/{_PATIENT_ID}/coverage", json={"copay_override_cents": 3000}
+        )
+
+        assert resp.json()["copay_override_cents"] == 3000
+        assert resp.json()["eligibility"] is not None
+        assert resp.json()["verified_at"] is not None
+        # Only the create queued a check: there is nothing new to ask the
+        # payer, so the edit queued none.
+        assert harness["queued"] == [(created["id"], _USER_ID, "save")]
+
+
+class TestCopayOverride:
+    def test_no_override_until_one_is_given(self, harness: dict[str, Any]) -> None:
+        assert _put_on_file(harness)["copay_override_cents"] is None
+
+    def test_the_override_is_kept_as_typed(self, harness: dict[str, Any]) -> None:
+        created = _put_on_file(harness, copay_override_cents=2500)
+
+        assert created["copay_override_cents"] == 2500
+        assert harness["coverage"].get(created["id"]).copay_override_cents == 2500
+
+    def test_an_explicit_null_takes_the_override_off_again(self, harness: dict[str, Any]) -> None:
+        _put_on_file(harness, copay_override_cents=2500)
+
+        resp = harness["client"].patch(
+            f"/api/patients/{_PATIENT_ID}/coverage", json={"copay_override_cents": None}
+        )
+
+        assert resp.json()["copay_override_cents"] is None
+
+    @pytest.mark.parametrize("amount", [0, -100, 100_001])
+    def test_an_override_that_is_not_an_amount_is_refused(
+        self, harness: dict[str, Any], amount: int
+    ) -> None:
+        # Zero is "nothing to collect", which is the absence of an override
+        # rather than one; the far end is a figure typed in dollars.
+        resp = harness["client"].post(
+            f"/api/patients/{_PATIENT_ID}/coverage",
+            json=_coverage_payload(copay_override_cents=amount),
+        )
+
+        assert resp.status_code == 422
+
 
 class TestVerify:
     def test_asks_about_mental_health_and_returns_the_summary(

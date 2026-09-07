@@ -2000,6 +2000,14 @@ class PatientCoverageRow(Base):
             "subscriber_sex IS NULL OR subscriber_sex IN ('M', 'F', 'U')",
             name="ck_patient_coverage_subscriber_sex",
         ),
+        # Money is integer minor units and an override is an amount somebody
+        # collects, so it is positive. "Nothing to collect at the door" is
+        # not an override of zero — it is no override plus a payer who
+        # priced the benefit at nothing.
+        CheckConstraint(
+            "copay_override_cents IS NULL OR copay_override_cents > 0",
+            name="ck_patient_coverage_copay_override_positive",
+        ),
         Index(
             "ux_patient_coverage_active_primary",
             "patient_id",
@@ -2031,6 +2039,11 @@ class PatientCoverageRow(Base):
     subscriber_postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     plan_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # What the practice actually collects at the door, in cents, when it
+    # knows better than the payer's answer: the figure printed on the card,
+    # or the one the contract sets. NULL means "no override", not "no
+    # copay" — the stored 271 is then the only answer there is.
+    copay_override_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_271: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
