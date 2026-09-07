@@ -26,7 +26,7 @@ import { SchedulingPage } from "./pages/SchedulingPage"
 import { SecurityPage } from "./pages/SecurityPage"
 import { SessionsPage } from "./pages/SessionsPage"
 import { SuperbillsPage } from "./pages/SuperbillsPage"
-import { BILLING_PROFILE_SETTINGS_ID } from "./paths"
+import { BILLING_PROFILE_SETTINGS_ID, INSURANCE_PAYERS_SETTINGS_ID } from "./paths"
 import { settingsExtensions } from "./registry.extensions"
 
 /**
@@ -166,7 +166,7 @@ const baseGroups: SettingsGroup[] = [
         desc: "Who your claims are filed by: legal name, tax id, NPI, address, and your taxonomy code.",
       },
       {
-        id: "insurance",
+        id: INSURANCE_PAYERS_SETTINGS_ID,
         label: "Insurance payers",
         icon: ShieldPlus,
         page: InsurancePage,
