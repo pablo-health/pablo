@@ -89,6 +89,12 @@ services:
       - CLEARINGHOUSE_API_KEY=test_e2e_not_a_real_key
       - CLEARINGHOUSE_BASE_URL=http://fake-clearinghouse:8080
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
+      # The practice's tax id is stored encrypted under this key, and filing a
+      # claim needs a billing profile, so without it saving one is a 500. The
+      # value is a placeholder that happens to be 32 valid base64 bytes, so it
+      # reads as the fixture it is; it only ever encrypts this stack's
+      # throwaway database.
+      - GOOGLE_CALENDAR_ENCRYPTION_KEY=e2eplaceholderkeyplaceholderkeyplaceholderA=
     healthcheck:
       # curl isn't in the Chainguard base; probe with the stdlib. The image's
       # own check targets a path the app doesn't serve, so it is replaced.
