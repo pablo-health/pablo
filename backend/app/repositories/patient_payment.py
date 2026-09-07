@@ -61,7 +61,7 @@ class PatientPaymentRepository(ABC):
         """
 
     @abstractmethod
-    def stage_charge(
+    def stage_charge(  # noqa: PLR0913 — the ledger row's own shape
         self,
         *,
         patient_id: str,
@@ -69,6 +69,8 @@ class PatientPaymentRepository(ABC):
         amount_cents: int,
         currency: str,
         user_id: str,
+        kind: str = "session",
+        claim_id: str | None = None,
     ) -> PatientCharge:
         """Write a ``pending`` ledger row and flush it, without committing.
 
@@ -76,6 +78,45 @@ class PatientPaymentRepository(ABC):
         order to write the audit entry naming this charge. :meth:`commit` then
         makes both durable together — the audit entry and the ledger row
         describe one act, and neither should survive without the other.
+
+        ``kind`` defaults to ``session`` so the existing charge-for-a-visit
+        caller is unchanged. A copay taken at the door goes through this same
+        path with ``kind="copay"`` — it is an ordinary card charge, and it
+        becomes collected money only when the processor says ``succeeded``.
+        """
+
+    @abstractmethod
+    def record_settlement(self, charge_id: str, *, settled_by_charge_id: str) -> None:
+        """Mark an owed row as settled by the charge that collected it.
+
+        Separate from :meth:`close_charge` because the two rows are different:
+        the charge succeeds on its own row, and the row it pays off is another
+        one entirely (a ``patient_resp`` the remittance wrote, say). Without
+        this the same dollar reads as both owed and collected.
+        """
+
+    @abstractmethod
+    def add_ledger_row(  # noqa: PLR0913 — the ledger row's own shape
+        self,
+        *,
+        patient_id: str,
+        kind: str,
+        amount_cents: int,
+        currency: str,
+        user_id: str,
+        appointment_id: str | None = None,
+        claim_id: str | None = None,
+        write_off_reason: str | None = None,
+        note: str | None = None,
+    ) -> PatientCharge:
+        """Record a ledger row that no card charge produced, and commit it.
+
+        Remittance posting, contractual adjustments, write-offs and credits
+        are all money facts with no payment intent behind them: nothing is
+        called, so there is no pending state to reconcile and the row is
+        written in its final form. ``status`` is ``succeeded`` because the
+        fact is settled the moment it is recorded — a write-off does not
+        later fail.
         """
 
     @abstractmethod

@@ -53,6 +53,14 @@ class PatientCharge(BaseModel):
     id: str
     patient_id: str
     appointment_id: str | None = None
+    # What the row is — see ``app.db.models.CHARGE_KINDS``. Defaulted so a
+    # ledger row read from before the column existed, or written by a caller
+    # that predates it, is the full-rate session charge it always was.
+    kind: str = "session"
+    claim_id: str | None = None
+    write_off_reason: str | None = None
+    note: str | None = None
+    settled_by_charge_id: str | None = None
     amount_cents: int
     currency: str
     status: str
@@ -153,5 +161,41 @@ class ChargeResponse(BaseModel):
     status: str
     status_detail: str | None = None
     appointment_id: str | None = None
+    kind: str = "session"
+    claim_id: str | None = None
+    write_off_reason: str | None = None
+    note: str | None = None
+    settled_by_charge_id: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
+
+
+class VisitBalanceResponse(BaseModel):
+    """One visit's line of the balance. ``appointment_id`` is ``None`` for the
+    rows that hang off no visit, collapsed into a single trailing line."""
+
+    appointment_id: str | None = None
+    owed_cents: int
+    collected_cents: int
+    written_off_cents: int
+    adjusted_cents: int
+    credited_cents: int
+    balance_cents: int
+
+
+class BalanceResponse(BaseModel):
+    """What a client owes, and the arithmetic that produced it.
+
+    ``balance_cents`` is positive when the client owes the practice and
+    negative when the practice owes the client — a credit is not clamped to
+    zero, because a refund the practice owes is exactly the thing a clamped
+    balance would hide.
+    """
+
+    owed_cents: int
+    collected_cents: int
+    written_off_cents: int
+    adjusted_cents: int
+    credited_cents: int
+    balance_cents: int
+    by_visit: list[VisitBalanceResponse]
