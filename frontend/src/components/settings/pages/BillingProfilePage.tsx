@@ -33,7 +33,10 @@ export function BillingProfilePage() {
         gaps={billingProfileGaps(profile, clinician)}
         registered={Boolean(profile.clearinghouse_provider_id)}
       />
-      <BillingProfileCard profile={profile} />
+      <BillingProfileCard
+        profile={profile}
+        practiceDetails={{ name: user.practice_name, phone: user.practice_phone }}
+      />
       <RenderingProviderCard npiNumber={clinician.npi_number} taxonomyCode={clinician.taxonomy_code} />
     </>
   )

@@ -145,6 +145,43 @@ describe("BillingProfileCard", () => {
     expect(mockUpdate).not.toHaveBeenCalled()
   })
 
+  it("offers the profile's practice details to a card with nothing on it yet", async () => {
+    const user = userEvent.setup()
+    render(
+      <BillingProfileCard
+        profile={profile()}
+        practiceDetails={{ name: "Acme Therapy LLC", phone: "4045550100" }}
+      />,
+    )
+
+    await user.click(screen.getByRole("button", { name: "Use my profile details" }))
+
+    expect(screen.getByLabelText("Legal name")).toHaveValue("Acme Therapy LLC")
+    expect(screen.getByLabelText("Phone")).toHaveValue("4045550100")
+    expect(screen.getByTestId("tax-id-input")).toHaveValue("")
+    expect(screen.getByLabelText("Billing NPI (optional)")).toHaveValue("")
+    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(screen.queryByRole("button", { name: "Use my profile details" })).not.toBeInTheDocument()
+  })
+
+  it("does not offer the prefill once the practice profile has details of its own", () => {
+    render(
+      <BillingProfileCard
+        profile={onFile()}
+        practiceDetails={{ name: "Acme Therapy LLC", phone: "4045550100" }}
+      />,
+    )
+
+    expect(screen.queryByRole("button", { name: "Use my profile details" })).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Legal name")).toHaveValue("Acme Therapy LLC")
+  })
+
+  it("offers no prefill when the profile holds nothing to copy", () => {
+    render(<BillingProfileCard profile={profile()} practiceDetails={{ name: null, phone: null }} />)
+
+    expect(screen.queryByRole("button", { name: "Use my profile details" })).not.toBeInTheDocument()
+  })
+
   it("clears the tax id field after a save lands", async () => {
     const user = userEvent.setup()
     mockUpdate.mockImplementation((_patch, options) => options.onSuccess())

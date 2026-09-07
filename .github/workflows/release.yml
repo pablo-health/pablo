@@ -29,7 +29,11 @@ env:
   OWNER: pablo-health
 
 jobs:
+  e2e:
+    uses: ./.github/workflows/e2e.yml
+
   backend:
+    needs: [e2e]
     name: Build & Push Backend
     runs-on: ubuntu-latest
     steps:
@@ -68,6 +72,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
 
   frontend:
+    needs: [e2e]
     name: Build & Push Frontend
     runs-on: ubuntu-latest
     steps:
@@ -106,6 +111,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=frontend
 
   pentest:
+    needs: [e2e]
     name: Build & Push Pentest Image
     runs-on: ubuntu-latest
     steps:
