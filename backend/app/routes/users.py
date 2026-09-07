@@ -215,6 +215,12 @@ def get_user_status(
             if practice_row is not None:
                 result["practice_name"] = practice_row.name
                 result["practice_phone"] = practice_row.phone
+                # Free text as the professional-info step captured it: one
+                # line, unparsed. A practice that never filled it in reads
+                # as null rather than "", so a caller can tell "not set"
+                # from "set to nothing".
+                address = (practice_row.address or "").strip()
+                result["practice_address"] = address or None
 
     # Include subscription/trial info when subscription enforcement is enabled.
     if settings.is_saas:
