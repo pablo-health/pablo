@@ -9,3 +9,7 @@
 /** The practice billing profile; claim review links here on a missing profile field. */
 export const BILLING_PROFILE_SETTINGS_ID = "billing-profile"
 export const BILLING_PROFILE_SETTINGS_PATH = `/dashboard/settings/${BILLING_PROFILE_SETTINGS_ID}`
+
+/** The payer list; the claims setup checklist links here for the first payer. */
+export const INSURANCE_PAYERS_SETTINGS_ID = "insurance"
+export const INSURANCE_PAYERS_SETTINGS_PATH = `/dashboard/settings/${INSURANCE_PAYERS_SETTINGS_ID}`
