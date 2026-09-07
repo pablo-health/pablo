@@ -180,10 +180,16 @@ def payment_row(charge: PatientCharge, *, timezone: tzinfo) -> list[str]:
 
     Which bucket the amount lands in is not decided here: the row is put
     through :func:`app.payments.balance.patient_balance` on its own, so the
-    export says exactly what a client's balance says, by construction. A row
-    can land in none of them — a client-responsibility charge that another
-    charge already settled is neither still owed nor money that arrived — and
-    that row's buckets are all blank, which is the honest answer.
+    export says exactly what a client's balance says, by construction.
+
+    A row can still land in none of them — a contractual adjustment is owed by
+    nobody and collects nothing — and those buckets are blank, which is the
+    honest answer. A bill that another charge has settled is NOT one of those
+    cases: it stays owed, and the charge that cleared it is what collects.
+    ``settled_by_charge_id`` says which charge paid which bill, for the
+    statement, and is deliberately not an input to the arithmetic — netting
+    happens across rows, because removing the bill while leaving the payment
+    drives the balance to minus the amount collected.
     """
     summary = patient_balance([charge])
     return [
