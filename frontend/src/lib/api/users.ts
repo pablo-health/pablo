@@ -59,6 +59,13 @@ export interface UserStatusBase {
    */
   practice_id?: string
   /**
+   * The practice's own name and phone, as the professional-info step
+   * recorded them. Both are undefined when no practice resolves for the
+   * user; the phone is null when the step left it blank.
+   */
+  practice_name?: string
+  practice_phone?: string | null
+  /**
    * "therapist" | "prescriber" | "both". `null` means the user has not
    * picked a provider type yet; downstream onboarding flows treat this
    * as the "needs onboarding" signal.
