@@ -386,10 +386,14 @@ class TestPayments:
         assert by_id["c-written-off"]["write_off_reason"] == "hardship"
         assert by_id["d-adjusted"]["adjusted"] == "40.00"
         assert by_id["e-credited"]["credited"] == "5.00"
-        # Settled by another charge: no longer owed, and it is not the row the
-        # money arrived on either.
+        # Settled by another charge: STILL a bill, and not the row the money
+        # arrived on. ``settled_by_charge_id`` records which charge cleared it,
+        # for the statement; it is deliberately not an input to the arithmetic.
+        # Netting happens across rows — this one is owed, and the charge that
+        # paid it is collected — because removing the bill while leaving the
+        # payment drove the balance to minus the amount collected.
         settled = by_id["f-settled"]
-        assert (settled["owed"], settled["collected"]) == ("", "")
+        assert (settled["owed"], settled["collected"]) == ("25.00", "")
         assert settled["settled_by_charge_id"] == "a-collected"
 
     def test_a_row_says_what_it_is_and_when_the_practice_recorded_it(
