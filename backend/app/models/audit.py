@@ -286,6 +286,17 @@ class AuditAction(StrEnum):
     SUPERBILL_GENERATED = "superbill_generated"
     SUPERBILL_REFUSED = "superbill_refused"
 
+    # Statements. What a client owes, rendered as a document the practice
+    # hands them. A disclosure of one client's financial history, so the
+    # `changes` payload names the ledger rows it totalled and the balance it
+    # printed — never a service, a visit's date or anything clinical.
+    STATEMENT_GENERATED = "statement_generated"
+    # Every client carrying a balance, in one read — the practice-wide
+    # collections view. One row naming the clients it listed and the count,
+    # the same granularity as the claims tracker's, rather than one row per
+    # client for a screen that discloses them together.
+    BALANCES_LISTED = "balances_listed"
+
     # The practice's own records for a period: everything it billed, or
     # everything on the charge ledger, as a CSV. The disclosure is a whole
     # window rather than one record, so the row says which window and how

@@ -25,7 +25,10 @@ Routes
   completion, and a decline is never retried automatically. A covered
   client's copay is the same route with ``kind="copay"`` — the same card,
   the same ledger, a row that says what it was for.
+* ``POST /api/patients/{patient_id}/charge-balance`` — charge the card for
+  everything the client owes, and stamp the bills it cleared with its id.
 * ``GET /api/patients/{patient_id}/charges`` — the ledger for one client.
+* ``GET /api/patients/{patient_id}/balance`` — what the ledger adds up to.
 
 Write-before-money ordering (the load-bearing bit)
 --------------------------------------------------
@@ -75,6 +78,7 @@ from ..auth.service import TenantContext, get_tenant_context, require_baa_accept
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from ..models.audit import AuditAction, ResourceType
 from ..models.payments import (
+    MAX_CHARGE_CENTS,
     BalanceResponse,
     CardOnFile,
     CardOnFileResponse,
@@ -611,7 +615,39 @@ def create_charge(
         changes={"charge_id": charge.id, "kind": charge.kind},
     )
     payments.commit()
+    return _to_charge_response(
+        _take_the_money(
+            charge=charge,
+            card=card,
+            credentials=credentials,
+            practice_id=tenant.practice_id,
+            user_id=user.id,
+            payments=payments,
+        )
+    )
 
+
+def _take_the_money(
+    *,
+    charge: PatientCharge,
+    card: CardOnFile,
+    credentials: PaymentCredentials,
+    practice_id: str | None,
+    user_id: str,
+    payments: PatientPaymentRepository,
+) -> PatientCharge:
+    """Move the money for an already-staged, already-committed ledger row.
+
+    Every caller reaches here having written its row and audited the intent
+    first; this is the half where a cent can actually move, and it is one
+    function so that the create-then-confirm ordering below exists once. A
+    second copy of it is a second chance to get the ordering wrong, and the
+    ordering is the whole safety property.
+
+    Returns the row in its settled state — ``succeeded``, or ``failed``
+    carrying the processor's reason. A decline is not an exception: it is an
+    outcome, and it belongs on the ledger.
+    """
     # STEP 1 — create the PaymentIntent UNCONFIRMED. No money moves yet.
     create_data: dict[str, Any] = {
         "amount": charge.amount_cents,
@@ -641,10 +677,10 @@ def create_charge(
         # policy with and then verifies against the row it actually updated;
         # the practice id is how the webhook finds the right schema.
         f"metadata[{METADATA_CHARGE_ID}]": charge.id,
-        f"metadata[{METADATA_USER_ID}]": user.id,
+        f"metadata[{METADATA_USER_ID}]": user_id,
     }
-    if tenant.practice_id is not None:
-        create_data[f"metadata[{METADATA_PRACTICE_ID}]"] = tenant.practice_id
+    if practice_id is not None:
+        create_data[f"metadata[{METADATA_PRACTICE_ID}]"] = practice_id
 
     _, body = payment_intent_request(
         "/v1/payment_intents",
@@ -703,8 +739,8 @@ def create_charge(
 
     settled = payments.close_charge(charge.id, status=final_status, status_detail=final_detail)
 
-    # Opaque ledger id and amount only — no client id here; the audit row above
-    # carries that linkage.
+    # Opaque ledger id and amount only — no client id here; the audit row the
+    # caller wrote before staging carries that linkage.
     logger.info(
         "patient_charge_attempted charge_id=%s kind=%s amount_cents=%d status=%s detail=%s",
         settled.id,
@@ -713,7 +749,153 @@ def create_charge(
         settled.status,
         settled.status_detail,
     )
+    return settled
+
+
+@router.post("/{patient_id}/charge-balance", response_model=ChargeResponse)
+def charge_balance(
+    patient_id: str,
+    request: Request,
+    user: CurrentUser,
+    tenant: Tenant,
+    payments: PaymentsRepo,
+    patients: PatientsRepo,
+    audit: AuditService = Depends(get_audit_service),
+) -> ChargeResponse:
+    """Charge the card on file for everything this client owes.
+
+    The whole balance or nothing. There is no partial-payment parameter, and
+    the amount is not a parameter either: it is read from the ledger here, so
+    a figure the browser saw a minute ago cannot be the figure that gets
+    charged after a remittance has landed in between.
+
+    The row is written with kind ``payment`` — money collected against bills
+    somebody else raised. Not ``session``: a session row is itself a bill, so
+    settling a ``patient_resp`` with one would re-bill the very amount it was
+    paying off and leave the balance where it started.
+
+    On success the bills it paid off are stamped with this charge's id. That
+    is provenance for the statement — which payment cleared which visit — and
+    not an input to the balance, which nets the payment against the bills on
+    its own.
+
+    409 when nothing is owed, and 409 while a payment for this client is
+    already in flight. Both are needed to stop a double-click charging the
+    card twice, and neither is sufficient alone — see
+    :func:`_payment_already_in_flight`. A decline comes back the way it does
+    everywhere else — 200, with a ``failed`` row carrying the reason.
+    """
+    credentials = _require_credentials(tenant.practice_id)
+    _require_patient(patients, patient_id, user.id)
+
+    card = payments.get_card_on_file(patient_id)
+    if card is None or not card.chargeable:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="No card on file for this client."
+        )
+
+    ledger = payments.list_charges(patient_id)
+    if _payment_already_in_flight(ledger):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A payment for this client is already being processed.",
+        )
+
+    amount_cents = patient_balance(ledger).balance_cents
+    if amount_cents <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="This client owes nothing."
+        )
+    if amount_cents > MAX_CHARGE_CENTS:
+        # The same blast-radius cap the per-charge route applies, which a
+        # balance built from many rows can reach without anybody typing it.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="The balance is too large to charge in one go.",
+        )
+
+    charge = payments.stage_charge(
+        patient_id=patient_id,
+        appointment_id=None,
+        amount_cents=amount_cents,
+        currency=DEFAULT_CHARGE_CURRENCY,
+        user_id=user.id,
+        kind="payment",
+    )
+    audit.log(
+        AuditAction.PATIENT_CHARGE_CREATED,
+        user,
+        request,
+        resource_type=ResourceType.PATIENT,
+        resource_id=patient_id,
+        changes={"charge_id": charge.id, "amount_cents": amount_cents},
+    )
+    payments.commit()
+
+    settled = _take_the_money(
+        charge=charge,
+        card=card,
+        credentials=credentials,
+        practice_id=tenant.practice_id,
+        user_id=user.id,
+        payments=payments,
+    )
+    if settled.status == "succeeded":
+        for owed in _bills_this_payment_clears(ledger):
+            payments.record_settlement(owed.id, settled_by_charge_id=settled.id)
     return _to_charge_response(settled)
+
+
+def _payment_already_in_flight(ledger: list[PatientCharge]) -> bool:
+    """Is a balance payment for this client already on its way to the processor?
+
+    The zero-balance check alone does NOT stop a double-click, and reasoning
+    that it does is the trap here. A staged row is written ``pending``, and
+    ``pending`` is deliberately not a status the balance counts as collected —
+    the money has not arrived. So while the first request sits inside
+    :func:`_take_the_money`, the balance is still the full amount, and a second
+    request arriving in that window reads it, passes the zero check, stages its
+    own row and charges the card for the whole balance a second time. What the
+    client then has is two charges and a credit the practice has to notice and
+    refund.
+
+    This closes the window a double-click actually produces: the first request
+    commits its ``pending`` row before contacting the processor, so the second
+    one sees it. It is NOT airtight — two requests can both read the ledger
+    before either has inserted, and this check will pass for both. Making it
+    airtight needs the database to enforce it, as a unique partial index over
+    (patient_id) where kind = 'payment' and status = 'pending'. That is a
+    migration and belongs in its own change rather than being smuggled in
+    behind a route.
+
+    A ``failed`` row does not block anything: a decline is terminal, and
+    retrying is a fresh charge the clinician asks for.
+
+    The cost of this check is that a row stranded at ``pending`` blocks further
+    collection until something resolves it. That is the right way round — a row
+    stuck pending means the processor may be holding a completed payment, and
+    charging again on top of it is the outcome worth refusing. The webhook
+    settles any row that got as far as a PaymentIntent; one that never did needs
+    a human, which is what ``log_unreconciled`` exists to surface.
+    """
+    return any(row.kind == "payment" and row.status == "pending" for row in ledger)
+
+
+def _bills_this_payment_clears(ledger: list[PatientCharge]) -> list[PatientCharge]:
+    """The rows to stamp with the payment's id.
+
+    ``patient_resp`` rows only, and only ones not already stamped. Those are
+    the bills a payment exists to clear: a payer said the client owes this
+    much, and nothing on the row itself ever collects it.
+
+    A ``session`` row is deliberately not stamped. It is its own payment
+    attempt, so "which charge paid it" is already answered by its own status —
+    and a declined one is retried as a fresh session charge from the note,
+    which is a different act from paying down a balance.
+    """
+    return [
+        row for row in ledger if row.kind == "patient_resp" and row.settled_by_charge_id is None
+    ]
 
 
 @router.get("/{patient_id}/charges", response_model=list[ChargeResponse])

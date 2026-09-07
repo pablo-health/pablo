@@ -269,6 +269,8 @@ const baseQueryKeys = {
       [...baseQueryKeys.payments.byPatientAll(patientId), "card"] as const,
     charges: (patientId: string) =>
       [...baseQueryKeys.payments.byPatientAll(patientId), "charges"] as const,
+    balance: (patientId: string) =>
+      [...baseQueryKeys.payments.byPatientAll(patientId), "balance"] as const,
     amount: (patientId: string, appointmentId?: string) =>
       [
         ...baseQueryKeys.payments.byPatientAll(patientId),
@@ -296,6 +298,7 @@ const baseQueryKeys = {
   billing: {
     all: ["billing"] as const,
     unbilledQueue: () => [...baseQueryKeys.billing.all, "unbilledQueue"] as const,
+    balances: () => [...baseQueryKeys.billing.all, "balances"] as const,
   },
 
   // Claims: the tracker and one claim's detail

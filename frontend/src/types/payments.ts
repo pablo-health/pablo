@@ -69,6 +69,74 @@ export interface ChargeResponse {
   status: string
   status_detail: string | null
   appointment_id: string | null
+  /** What the row IS — see `app.db.models.CHARGE_KINDS`. */
+  kind: ChargeKind
+  /** The claim a remittance wrote this row out of; `null` otherwise. */
+  claim_id: string | null
+  write_off_reason: string | null
+  note: string | null
+  /** Which charge paid this bill off. Provenance, not arithmetic. */
+  settled_by_charge_id: string | null
   created_at: string
   updated_at: string | null
+}
+
+/**
+ * The kinds of thing a ledger row can be.
+ *
+ * `session` is the practice's own charge for a visit — both the bill and its
+ * own payment attempt. `payment` collects against a bill somebody else
+ * raised, which a `session` row cannot do without re-billing the amount it
+ * settles.
+ */
+export type ChargeKind =
+  | "session"
+  | "copay"
+  | "payment"
+  | "patient_resp"
+  | "contractual_adjustment"
+  | "write_off"
+  | "credit"
+
+/** One visit's line of the balance. */
+export interface VisitBalanceResponse {
+  /** `null` for the rows that hang off no visit, on one trailing line. */
+  appointment_id: string | null
+  owed_cents: number
+  collected_cents: number
+  written_off_cents: number
+  adjusted_cents: number
+  credited_cents: number
+  balance_cents: number
+}
+
+/**
+ * What a client owes, and the arithmetic behind it.
+ *
+ * `balance_cents` is positive when the client owes the practice and negative
+ * when the practice owes the client. A credit is not clamped to zero: a
+ * refund the practice owes is exactly what clamping would hide.
+ */
+export interface BalanceResponse {
+  owed_cents: number
+  collected_cents: number
+  written_off_cents: number
+  adjusted_cents: number
+  credited_cents: number
+  balance_cents: number
+  by_visit: VisitBalanceResponse[]
+}
+
+/** One client on the practice-wide balances list. */
+export interface ClientBalanceItem {
+  patient_id: string
+  patient_name: string
+  balance_cents: number
+  currency: string
+  /** When the money behind the balance first went on the ledger. */
+  outstanding_since: string
+}
+
+export interface BalancesResponse {
+  items: ClientBalanceItem[]
 }

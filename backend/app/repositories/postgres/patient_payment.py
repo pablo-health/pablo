@@ -237,6 +237,16 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         )
         return [_to_charge(row) for row in rows]
 
+    def list_all_charges(self) -> list[PatientCharge]:
+        rows = (
+            self._session.execute(
+                select(PatientChargeRow).order_by(PatientChargeRow.created_at, PatientChargeRow.id)
+            )
+            .scalars()
+            .all()
+        )
+        return [_to_charge(row) for row in rows]
+
     def iter_ledger_for_period(self, *, start: datetime, end: datetime) -> Iterator[PatientCharge]:
         rows = self._session.execute(
             select(PatientChargeRow)

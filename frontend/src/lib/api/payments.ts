@@ -10,13 +10,14 @@
  */
 
 import type {
+  BalanceResponse,
   CardOnFileResponse,
   CardSetupResponse,
   ChargeAmountResponse,
   ChargeResponse,
   CreateChargeRequest,
 } from "@/types/payments"
-import { ApiError, get, post } from "./client"
+import { ApiError, buildApiUrl, get, getAuthHeader, post } from "./client"
 
 /**
  * True for the one failure that is a deployment fact rather than a fault: this
@@ -109,3 +110,56 @@ export async function listCharges(
 ): Promise<ChargeResponse[]> {
   return get<ChargeResponse[]>(`/api/patients/${patientId}/charges`, token)
 }
+
+/**
+ * What the client owes, totalled from the ledger on the server.
+ *
+ * Never computed on this side. The rules about which rows are a bill and
+ * which are a payment live in one module on the backend, and a second copy
+ * here would be a second answer to "what do I owe" — the one question a
+ * practice cannot afford two answers to.
+ *
+ * Unlike the routes above it, this one is not gated on the card processor: a
+ * practice that only bills insurance still has clients who owe it money.
+ */
+export async function fetchPatientBalance(
+  patientId: string,
+  token?: string,
+): Promise<BalanceResponse> {
+  return get<BalanceResponse>(`/api/patients/${patientId}/balance`, token)
+}
+
+/**
+ * Charge the card on file for the whole balance.
+ *
+ * No amount: the server reads it from the ledger at the moment of charging,
+ * so a figure this browser saw before a remittance landed cannot be the one
+ * that gets charged. A decline resolves with a `failed` row, as everywhere
+ * else on this path; a client who owes nothing is a 409.
+ */
+export async function chargeBalance(
+  patientId: string,
+  token?: string,
+): Promise<ChargeResponse> {
+  return post<ChargeResponse>(`/api/patients/${patientId}/charge-balance`, {}, token)
+}
+
+/** The client's statement, as a PDF blob. */
+export async function fetchStatement(patientId: string, token?: string): Promise<Blob> {
+  const response = await fetch(buildApiUrl(`/api/patients/${patientId}/statement`), {
+    method: "GET",
+    headers: await getAuthHeader(token),
+  })
+  if (!response.ok) {
+    throw new ApiError(
+      "UNKNOWN_ERROR",
+      `API request failed with status ${response.status}`,
+      undefined,
+      response.status,
+    )
+  }
+  return response.blob()
+}
+
+/** The filename the route sends, so the download is named the same way. */
+export const STATEMENT_FILENAME = "statement.pdf"

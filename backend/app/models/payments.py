@@ -208,3 +208,24 @@ class BalanceResponse(BaseModel):
     credited_cents: int
     balance_cents: int
     by_visit: list[VisitBalanceResponse]
+
+
+class ClientBalanceItem(BaseModel):
+    """One client on the practice-wide balances list.
+
+    ``outstanding_since`` is when the money behind the balance first went on
+    the ledger, which is what the list is ordered by: the oldest balance is
+    the one that most needs a conversation, not the largest.
+    """
+
+    patient_id: str
+    patient_name: str
+    balance_cents: int
+    currency: str
+    outstanding_since: datetime
+
+
+class BalancesResponse(BaseModel):
+    """Every client carrying a balance, oldest first."""
+
+    items: list[ClientBalanceItem]
