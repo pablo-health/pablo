@@ -29,9 +29,13 @@ _PRODUCTION_KEY = "placeholder_live"
 _CUSTOM_KEY = "provider-supplied-key-for-tests"
 
 
+_BASE_URL = "http://clearinghouse.invalid:8080"
+
+
 class _Settings:
-    def __init__(self, key: str | None) -> None:
+    def __init__(self, key: str | None, base_url: str | None = None) -> None:
         self.clearinghouse_api_key = key
+        self.clearinghouse_base_url = base_url
 
 
 @pytest.fixture(autouse=True)
@@ -85,6 +89,29 @@ class TestDefaultProvider:
         monkeypatch.setattr("app.claims.credentials.get_settings", lambda: _Settings(None))
 
         assert SettingsClearinghouseCredentialProvider().get(None) is None
+
+    def test_no_configured_base_url_means_the_vendors_own(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.claims.credentials.get_settings", lambda: _Settings(_TEST_KEY))
+
+        credentials = SettingsClearinghouseCredentialProvider().get("practice-1")
+
+        assert credentials is not None
+        assert credentials.base_url is None
+
+    def test_a_configured_base_url_rides_with_the_credentials(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "app.claims.credentials.get_settings", lambda: _Settings(_TEST_KEY, _BASE_URL)
+        )
+
+        credentials = SettingsClearinghouseCredentialProvider().get("practice-1")
+
+        assert credentials == ClearinghouseCredentials(
+            api_key=_TEST_KEY, mode="test", base_url=_BASE_URL
+        )
 
 
 class TestRegistration:

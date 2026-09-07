@@ -16,6 +16,15 @@ Three hosts, because Stedi splits its healthcare API across them:
   as JSON from the healthcare host's report endpoint.
 * ``enrollments.us.stedi.com`` — provider registration and payer enrollment.
 
+Those four are the default and are what every real deployment talks to. A
+deployment that has to be answered by something else — the end-to-end
+harness and its stand-in clearinghouse, a recording proxy — says so once, in
+the credentials the adapter is constructed with
+(``ClearinghouseCredentials.base_url``), and all four are then served from
+that one origin under the same version paths. Where to point the adapter is
+a property of the deployment's clearinghouse account, which is why it rides
+with the credentials rather than on a second configuration path of its own.
+
 Idempotency: eligibility, payer search, and transaction/enrollment reads are
 side-effect-free, so they retry any transient failure
 (``Idempotency.SAFE``). Claim submission is deduped server-side by the
@@ -42,8 +51,10 @@ response body.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC
 from typing import TYPE_CHECKING, Any, NoReturn
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -87,6 +98,45 @@ HEALTHCARE_API_BASE = "https://healthcare.us.stedi.com/2024-04-01"
 PAYERS_API_BASE = "https://payers.us.stedi.com/2024-04-01"
 CORE_API_BASE = "https://core.us.stedi.com/2023-08-01"
 ENROLLMENTS_API_BASE = "https://enrollments.us.stedi.com/2024-09-01"
+
+
+@dataclass(frozen=True, slots=True)
+class ApiBases:
+    """The four bases one adapter instance sends to, one per vendor host."""
+
+    healthcare: str
+    payers: str
+    core: str
+    enrollments: str
+
+    @classmethod
+    def resolve(cls, base_url: str | None) -> ApiBases:
+        """The vendor's own hosts, or all four served from ``base_url``.
+
+        A configured base URL replaces the hostname only: the version
+        segment is part of the API's identity rather than of the host, so a
+        stand-in that answers for all four (as the end-to-end harness's
+        does) is still addressed at ``/2024-04-01/payers/search`` and
+        friends.
+        """
+        if not base_url:
+            return DEFAULT_API_BASES
+        root = base_url.rstrip("/")
+        return cls(
+            healthcare=root + urlsplit(HEALTHCARE_API_BASE).path,
+            payers=root + urlsplit(PAYERS_API_BASE).path,
+            core=root + urlsplit(CORE_API_BASE).path,
+            enrollments=root + urlsplit(ENROLLMENTS_API_BASE).path,
+        )
+
+
+#: What an adapter targets when the deployment configures no base URL.
+DEFAULT_API_BASES = ApiBases(
+    healthcare=HEALTHCARE_API_BASE,
+    payers=PAYERS_API_BASE,
+    core=CORE_API_BASE,
+    enrollments=ENROLLMENTS_API_BASE,
+)
 
 _REQUEST_TIMEOUT_SECONDS = 20.0
 
@@ -207,6 +257,9 @@ class StediClearinghouseClient:
     ``httpx.MockTransport`` — no network in this module's own test suite.
     The default client is built once per instance, not per call, so
     connection reuse works the same way it would in production.
+
+    Where the calls go is read off ``credentials.base_url`` once here: unset
+    (the ordinary case) means the vendor's own four hosts.
     """
 
     def __init__(
@@ -216,6 +269,7 @@ class StediClearinghouseClient:
         client: httpx.Client | None = None,
     ) -> None:
         self._credentials = credentials
+        self._bases = ApiBases.resolve(credentials.base_url)
         self._client = client or httpx.Client(timeout=_REQUEST_TIMEOUT_SECONDS)
 
     def _headers(self) -> dict[str, str]:
@@ -277,7 +331,7 @@ class StediClearinghouseClient:
 
     def search_payers(self, query: str) -> list[Payer]:
         response = self._get(
-            f"{PAYERS_API_BASE}/payers/search",
+            f"{self._bases.payers}/payers/search",
             params={"query": query, "pageSize": _DEFAULT_PAYER_SEARCH_PAGE_SIZE},
         )
         if response.status_code != httpx.codes.OK:
@@ -287,7 +341,7 @@ class StediClearinghouseClient:
 
     def check_eligibility(self, req: EligibilityRequest) -> EligibilityResponse:
         response = self._post(
-            f"{HEALTHCARE_API_BASE}/change/medicalnetwork/eligibility/v3",
+            f"{self._bases.healthcare}/change/medicalnetwork/eligibility/v3",
             json=req.model_dump(exclude_none=True),
             idempotency=Idempotency.SAFE,
         )
@@ -303,7 +357,7 @@ class StediClearinghouseClient:
         self, req: ClaimSubmissionRequest, *, idempotency_key: str
     ) -> ClaimSubmissionResult:
         response = self._post(
-            f"{HEALTHCARE_API_BASE}/change/medicalnetwork/professionalclaims/v3/submission",
+            f"{self._bases.healthcare}/change/medicalnetwork/professionalclaims/v3/submission",
             json=req.model_dump(exclude_none=True),
             idempotency=Idempotency.KEYED,
             headers={_IDEMPOTENCY_KEY_HEADER: idempotency_key},
@@ -328,7 +382,7 @@ class StediClearinghouseClient:
         return result
 
     def get_transaction(self, transaction_id: str) -> TransactionDocument:
-        response = self._get(f"{CORE_API_BASE}/transactions/{transaction_id}")
+        response = self._get(f"{self._bases.core}/transactions/{transaction_id}")
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
         return TransactionDocument.model_validate(response.json())
@@ -341,14 +395,14 @@ class StediClearinghouseClient:
             params["pageToken"] = page_token
         elif start is not None:
             params["startDateTime"] = start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        response = self._get(f"{CORE_API_BASE}/polling/transactions", params=params)
+        response = self._get(f"{self._bases.core}/polling/transactions", params=params)
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
         return TransactionPage.model_validate(response.json())
 
     def get_claim_acknowledgment(self, transaction_id: str) -> dict[str, Any]:
         response = self._get(
-            f"{HEALTHCARE_API_BASE}/change/medicalnetwork/reports/v2/{transaction_id}/277"
+            f"{self._bases.healthcare}/change/medicalnetwork/reports/v2/{transaction_id}/277"
         )
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
@@ -357,7 +411,7 @@ class StediClearinghouseClient:
 
     def create_provider(self, provider: ProviderRegistration) -> ProviderRecord:
         response = self._post(
-            f"{ENROLLMENTS_API_BASE}/providers",
+            f"{self._bases.enrollments}/providers",
             json=provider.model_dump(exclude_none=True),
             idempotency=Idempotency.UNSAFE,
         )
@@ -367,7 +421,7 @@ class StediClearinghouseClient:
 
     def create_enrollment(self, enrollment: EnrollmentRequest) -> Enrollment:
         response = self._post(
-            f"{ENROLLMENTS_API_BASE}/enrollments",
+            f"{self._bases.enrollments}/enrollments",
             json=enrollment.model_dump(exclude_none=True),
             idempotency=Idempotency.UNSAFE,
         )
@@ -376,7 +430,9 @@ class StediClearinghouseClient:
         return Enrollment.model_validate(response.json())
 
     def list_enrollments(self, filters: EnrollmentFilters) -> EnrollmentPage:
-        response = self._get(f"{ENROLLMENTS_API_BASE}/enrollments", params=filters.query_params())
+        response = self._get(
+            f"{self._bases.enrollments}/enrollments", params=filters.query_params()
+        )
         if response.status_code != httpx.codes.OK:
             _raise_for_error_envelope(response)
         return EnrollmentPage.model_validate(response.json())
