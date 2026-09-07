@@ -5,6 +5,8 @@
 import { Users, Calendar, Phone, Mail } from "lucide-react"
 import { EligibilityBadge } from "@/components/insurance/EligibilityBadge"
 import { usePatientCoverage } from "@/hooks/useCoverage"
+import { usePatientBalance } from "@/hooks/usePayments"
+import { formatBalanceLine } from "@/lib/paymentDisplay"
 import type { PatientResponse } from "@/types/patients"
 
 interface PatientSummaryProps {
@@ -35,11 +37,31 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+function BalanceBadge({ line }: { line: string }) {
+  const owed = line.startsWith("Owes")
+  return (
+    <span
+      data-testid="chart-balance"
+      className={`inline-flex px-3 py-1 text-sm font-medium rounded-full ${
+        owed ? "bg-amber-100 text-amber-800" : "bg-secondary-100 text-secondary-700"
+      }`}
+    >
+      {line}
+    </span>
+  )
+}
+
 export function PatientSummary({ patient }: PatientSummaryProps) {
   // The plan's last eligibility answer rides in the header so it is seen
   // before the first session, not only on the Insurance tab. Nothing on
   // file renders nothing: an absent plan is not a coverage status.
   const { data: coverage } = usePatientCoverage(patient.id)
+
+  // What the client owes rides here for the same reason: it is the thing a
+  // clinician needs to know BEFORE the session, not after hunting for it on
+  // a tab. A settled client shows no line at all — see `formatBalanceLine`.
+  const { data: balance } = usePatientBalance(patient.id)
+  const balanceLine = balance ? formatBalanceLine(balance.balance_cents) : null
 
   return (
     <div className="card">
@@ -54,6 +76,7 @@ export function PatientSummary({ patient }: PatientSummaryProps) {
             </h1>
             <StatusBadge status={patient.status} />
             {coverage && <EligibilityBadge summary={coverage.eligibility} />}
+            {balanceLine && <BalanceBadge line={balanceLine} />}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-neutral-600">

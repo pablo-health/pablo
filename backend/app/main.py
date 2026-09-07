@@ -64,8 +64,10 @@ from .routes import (
     passkey,
     patient_documents,
     patient_payments,
+    patient_statements,
     patients,
     payment_webhooks,
+    practice_balances,
     practice_billing,
     public_booking,
     scheduling,
@@ -228,7 +230,9 @@ app.include_router(claims.router)
 app.include_router(claims.patient_claims_router)
 app.include_router(claim_webhooks.router)
 app.include_router(superbills.router)
+app.include_router(patient_statements.router)
 app.include_router(billing_queue.router)
+app.include_router(practice_balances.router)
 app.include_router(billing_export.router)
 app.include_router(scheduling.router)
 app.include_router(sessions.router)
