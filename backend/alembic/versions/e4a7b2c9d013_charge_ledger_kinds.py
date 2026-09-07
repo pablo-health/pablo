@@ -49,6 +49,7 @@ depends_on: str | Sequence[str] | None = None
 _CHARGE_KINDS = (
     "session",
     "copay",
+    "payment",
     "patient_resp",
     "contractual_adjustment",
     "write_off",
