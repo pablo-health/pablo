@@ -34,6 +34,7 @@ import { Fingerprint } from "lucide-react"
 import { getFirebaseAuth } from "@/lib/firebase"
 import { useConfig } from "@/lib/config"
 import { beginAuthentication, finishAuthentication } from "@/lib/api/passkey"
+import { getUserStatus } from "@/lib/api/users"
 import { firebaseAuthErrorOutcome } from "@/lib/auth-errors"
 import { clearFirebaseAuthStorage } from "@/lib/firebaseAuthRecovery"
 import { errorCode } from "@/lib/errors/errorCode"
@@ -54,7 +55,8 @@ import { VerifyEmailScreen } from "./VerifyEmailScreen"
 // the clear.
 export type AuthMethod = "google" | "email" | "passkey"
 
-type CredentialStep = "sign-in" | "mfa" | "recovery-code" | "verify-email"
+// Passkey step-up upgrades a first-factor Firebase credential before handoff.
+type CredentialStep = "sign-in" | "mfa" | "passkey-step-up" | "recovery-code" | "verify-email"
 
 // Remember how this device last signed in so we can surface a "Last used"
 // hint on the matching button. We store only the method tag — never the
@@ -156,6 +158,8 @@ export function CredentialBlock({
   // challenge (so we record the right one once the challenge resolves).
   const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
   const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
+  // Retain the first-factor credential while its passkey is asserted.
+  const [pendingCredential, setPendingCredential] = useState<UserCredential | null>(null)
 
   // Only offer passkey sign-in where the browser can actually run the
   // ceremony — resolved client-side after mount to avoid an SSR mismatch.
@@ -177,10 +181,53 @@ export function CredentialBlock({
   }, [showLastUsed])
 
   const resolveCredential = async (credential: UserCredential, method: AuthMethod) => {
+    // Prompt inline when a Firebase sign-in still needs Pablo's passkey.
+    // Status failures fall through because the server-side dashboard gate is
+    // authoritative and will route an unsatisfied session to step-up.
+    if (method !== "passkey") {
+      try {
+        const status = await getUserStatus(await credential.user.getIdToken())
+        if (!status.session_mfa_satisfied && status.has_passkey) {
+          setPendingCredential(credential)
+          setPendingMethod(method)
+          setStep("passkey-step-up")
+          setError("")
+          return
+        }
+      } catch {
+        // Fall through and let the gate handle it.
+      }
+    }
     await onCredential(credential, method)
     // Recording the hint is tied to surfacing it, so a host that never shows
     // the pill leaves the device's record untouched.
     if (showLastUsed) rememberAuthMethod(method)
+  }
+
+  /**
+   * Assert the enrolled passkey on top of a first-factor credential.
+   *
+   * The upgraded credential carries the verified factor. The remembered
+   * method remains the primary sign-in method selected by the user.
+   */
+  const handlePasskeyStepUp = async () => {
+    if (!pendingCredential) return
+    setError("")
+    setLoading(true)
+    try {
+      const options = await beginAuthentication()
+      const assertion = await startAuthentication({ optionsJSON: options })
+      const { custom_token } = await finishAuthentication(assertion)
+      const upgraded = await signInWithCustomToken(getFirebaseAuth(), custom_token)
+      await upgraded.user.getIdToken(true)
+      await onCredential(upgraded, pendingMethod)
+      if (showLastUsed) rememberAuthMethod(pendingMethod)
+    } catch (err) {
+      if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
+      setError("That didn't work. Try again, or start over and sign in with your passkey.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleMfaRequired = (err: MultiFactorError, method: AuthMethod) => {
@@ -312,6 +359,38 @@ export function CredentialBlock({
           setStep("sign-in")
         }}
       />
+    )
+  }
+
+  if (step === "passkey-step-up") {
+    return (
+      <div className="space-y-5 text-center">
+        <Fingerprint className="mx-auto h-10 w-10 text-primary-600" />
+        <div className="space-y-2">
+          <h2 className="font-display text-xl font-semibold text-neutral-900">
+            One more step
+          </h2>
+          <p className="text-sm text-neutral-600">
+            Your account is protected by a passkey. Confirm it to continue.
+          </p>
+        </div>
+
+        <AuthPrimaryButton onClick={handlePasskeyStepUp} disabled={loading}>
+          {loading ? "Waiting for your passkey…" : "Use passkey"}
+        </AuthPrimaryButton>
+
+        {error && <AuthFeedback variant="error">{error}</AuthFeedback>}
+
+        <AuthLinkButton
+          onClick={() => {
+            setPendingCredential(null)
+            setError("")
+            setStep("sign-in")
+          }}
+        >
+          Start over
+        </AuthLinkButton>
+      </div>
     )
   }
 
