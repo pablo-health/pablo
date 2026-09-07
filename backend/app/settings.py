@@ -1254,6 +1254,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    clearinghouse_base_url: str | None = Field(
+        default=None,
+        description=(
+            "Origin that answers the clearinghouse API, for a deployment that "
+            "is not talking to the vendor itself — the end-to-end harness's "
+            "stand-in, or a recording proxy. All of the vendor's APIs are then "
+            "read from this one origin under their usual version paths. Unset "
+            "(the ordinary case) means the vendor's own hosts."
+        ),
+    )
+
     clearinghouse_webhook_secret: SecretStr = Field(
         default=SecretStr(""),
         description=(

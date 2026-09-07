@@ -1,8 +1,9 @@
 name: End-to-end
 
 # A browser driving the whole stack from docker-compose.e2e.yml: the
-# production frontend bundle, the API, Postgres, the Firebase Auth emulator
-# and the fake clearinghouse. No cloud project, no vendor credentials.
+# production frontend bundle, the API, Postgres, the Firebase Auth emulator,
+# the fake clearinghouse and the fake mail server. No cloud project, no
+# vendor credentials.
 # Design: docs/design/e2e-harness.md.
 #
 # Pull requests run the suite only for relevant paths. Main image workflows
@@ -22,6 +23,7 @@ on:
       - "docker-compose*.yml"
       - ".env.e2e"
       - "scripts/fake_clearinghouse.py"
+      - "scripts/fake_mail.py"
       - "scripts/e2e/**"
       - ".github/workflows/e2e.yml"
 

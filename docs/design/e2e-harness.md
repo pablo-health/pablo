@@ -27,12 +27,36 @@ Extends the existing `docker-compose.yml` (`backend`, `postgres`) with:
 | `frontend` | `frontend/` built in production mode | the real bundle, not `next dev` |
 | `firebase-auth` | `ghcr.io/…/firebase-tools` emulator, `auth` only | the backend already honours `FIREBASE_AUTH_EMULATOR_HOST` (`backend/app/auth/firebase_init.py`); the frontend gains `connectAuthEmulator` behind `NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST` |
 | `fake-clearinghouse` | `scripts/fake_clearinghouse.py` (FastAPI) | serves the recorded responses in `backend/tests/fixtures/clearinghouse/` for payer search, eligibility, claim submission, enrollment, polling and reports, and posts `transaction processed` webhooks back to the backend on a scripted delay |
+| `fake-mail` | `scripts/fake_mail.py` (aiosmtpd + FastAPI) | the mail the product sends, catchable. A booking link is born requiring the booker to confirm by email and the booking is refused outright when nothing can deliver that mail, so a silent drain is not enough |
 
-The backend's clearinghouse base URL and webhook secret are plain
-settings, so pointing them at the fake is configuration, not code. The
-fake is deterministic: a claim whose control number starts `REJ` gets the
-recorded edit rejection; anything else gets the recorded success, a 277CA
-after 2 s, and an 835 after 5 s. Nothing here talks to the internet.
+The fake clearinghouse is deterministic: a claim whose control number
+starts `REJ` gets the recorded edit rejection; anything else gets the
+recorded success, a 277CA after 2 s, and an 835 after 5 s. Nothing here
+talks to the internet.
+
+The mail server is the one fake that needs more than a base URL pointed at
+it. The product's SMTP sender negotiates STARTTLS against the platform's
+default certificate store and then authenticates, so a plain catcher is
+refused at the handshake. `fake-mail` mints a self-signed certificate for
+its own service name at startup, shares it on a volume the backend mounts,
+and the backend trusts it by pointing `SSL_CERT_FILE` at the file —
+affordable precisely because nothing else in this stack speaks TLS.
+
+**Where the clearinghouse calls go.** `CLEARINGHOUSE_BASE_URL` is what
+points the adapter (`app.claims.stedi`) at `fake-clearinghouse`. It is read
+by the credential provider (`app.claims.credentials`) and rides on the
+`ClearinghouseCredentials` the adapter is constructed with, because "which
+account" and "which server answers for it" are one fact. Unset — every real
+deployment — means the vendor's own four hosts, so this changes nothing
+outside the harness. The origin replaces the hostname only: each API keeps
+its version path (`/2024-04-01/payers/search` and friends), which is why one
+fake can answer for all four hosts.
+
+**One setting that looks like a seam and is not.** A clinician's rendering
+NPI is written by `_upsert_clinician_profile`, which no-ops when the caller's
+email has no `platform.email_tenant_mappings` row — nothing in the API
+creates one, so on this stack every claim fails the scrub on
+`rendering_provider.npi`. The claims spec below waits on that.
 
 `make e2e-up` brings the stack up and migrates; `make e2e` runs the suite;
 `make e2e-down` tears it down. Playwright's `webServer` block waits on the
@@ -52,6 +76,8 @@ frontend/e2e/
                               giveBookingLink — API-level state, never UI
     clearinghouse.ts          drive the fake: trigger the 277CA / 835 for a
                               control number, list what it received
+    mail.ts                   read the fake mail server, and the link out of
+                              a message the product expects a person to click
   specs/
     patients.spec.ts          the existing spec, rewritten onto the fixtures
     claims.spec.ts            coverage → file claim → tracker submitted →
@@ -114,7 +140,10 @@ and never reaches a real payer.
 ## Rollout
 
 1. Harness + emulator + fake clearinghouse + rewritten `patients.spec.ts`
-   + the CI job definition, in one change.
-2. `claims.spec.ts` when the claims Billing surface lands.
-3. `public-booking.spec.ts` next; then every new user-facing surface ships
-   with its spec here as part of done.
+   + the CI job definition, in one change. **Done.**
+2. `public-booking.spec.ts` + the fake mail server it needs. **Done.**
+3. `claims.spec.ts` once a clinician on a single-practice deployment can
+   save their own NPI. The adapter's base URL is a seam now, so the fake
+   is reachable; the NPI is what is left.
+4. Then every new user-facing surface ships with its spec here as part of
+   done.

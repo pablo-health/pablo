@@ -12,9 +12,10 @@
 #
 # Host ports default to the ones the browser-facing design fixes (frontend
 # 3000, backend 8000, auth emulator 9099). Override E2E_FRONTEND_PORT,
-# E2E_BACKEND_PORT or E2E_CLEARINGHOUSE_PORT when something already listens
-# there. The emulator port is baked into the frontend bundle at build time,
-# so changing E2E_AUTH_EMULATOR_PORT needs `make e2e-up` to rebuild.
+# E2E_BACKEND_PORT, E2E_CLEARINGHOUSE_PORT or E2E_MAIL_PORT when something
+# already listens there. The emulator port is baked into the frontend bundle
+# at build time, so changing E2E_AUTH_EMULATOR_PORT needs `make e2e-up` to
+# rebuild.
 name: pablo-e2e
 
 services:
@@ -67,11 +68,33 @@ services:
       - PRACTICE_ENABLED=true
       - PRACTICE_DAILY_SESSION_LIMIT=999
       - PUBLIC_BOOKING_ENABLED=true
+      # A booking link is born requiring the booker to confirm by email, and
+      # the booking is refused outright when nothing can deliver that mail —
+      # so the stack needs a mail server, not a silent drain.
+      - EMAIL_BACKEND=smtp
+      - SMTP_HOST=fake-mail
+      - SMTP_PORT=1025
+      - SMTP_USERNAME=e2e
+      - SMTP_PASSWORD=e2e
+      - SMTP_FROM=bookings@example.test
+      # The sender negotiates STARTTLS against the default certificate store.
+      # The fake mints its own certificate at startup and shares it on the
+      # volume below; nothing else in this stack speaks TLS, so trusting that
+      # one certificate and nothing else costs nothing.
+      - SSL_CERT_FILE=/srv/mail-tls/cert.pem
+      # The links the product mails point back at the browser's own origin.
+      - APP_URL=http://localhost:${E2E_FRONTEND_PORT:-3000}
       # Point claim submission and eligibility at the fake clearinghouse.
       # The key only has to be present; the fake never checks it.
       - CLEARINGHOUSE_API_KEY=test_e2e_not_a_real_key
       - CLEARINGHOUSE_BASE_URL=http://fake-clearinghouse:8080
       - CLEARINGHOUSE_WEBHOOK_SECRET=e2e-clearinghouse-webhook-shared-secret
+      # The practice's tax id is stored encrypted under this key, and filing a
+      # claim needs a billing profile, so without it saving one is a 500. The
+      # value is a placeholder that happens to be 32 valid base64 bytes, so it
+      # reads as the fixture it is; it only ever encrypts this stack's
+      # throwaway database.
+      - GOOGLE_CALENDAR_ENCRYPTION_KEY=e2eplaceholderkeyplaceholderkeyplaceholderA=
     healthcheck:
       # curl isn't in the Chainguard base; probe with the stdlib. The image's
       # own check targets a path the app doesn't serve, so it is replaced.
@@ -86,12 +109,16 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 30
+    volumes:
+      - e2e-mail-tls:/srv/mail-tls:ro
     depends_on:
       postgres:
         condition: service_healthy
       firebase-auth:
         condition: service_healthy
       fake-clearinghouse:
+        condition: service_healthy
+      fake-mail:
         condition: service_healthy
     networks:
       - e2e-net
@@ -110,6 +137,10 @@ services:
     env_file: .env.e2e
     environment:
       - API_URL=http://localhost:${E2E_BACKEND_PORT:-8000}
+      # The booking pages are reached with no session: the link is the
+      # credential. A deployment that publishes them says so here, and the
+      # auth middleware unions this into its own allowlist.
+      - EXTRA_PUBLIC_PATHS=/book
     healthcheck:
       # Distroless runtime: no shell, node at a fixed path.
       test:
@@ -174,9 +205,40 @@ services:
     networks:
       - e2e-net
 
+  fake-mail:
+    build:
+      context: .
+      dockerfile: scripts/e2e/fake-mail.Dockerfile
+    ports:
+      - "${E2E_MAIL_PORT:-8025}:8025"
+    environment:
+      # Must match the host the backend connects to: the certificate is
+      # issued for this name and the sender verifies it.
+      - FAKE_MAIL_HOSTNAME=fake-mail
+      - FAKE_MAIL_TLS_DIR=/srv/tls
+    volumes:
+      - e2e-mail-tls:/srv/tls
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8025/_fake/messages').getcode() == 200 else 1)",
+        ]
+      interval: 3s
+      timeout: 5s
+      start_period: 5s
+      retries: 20
+    networks:
+      - e2e-net
+
 networks:
   e2e-net:
     driver: bridge
 
 volumes:
   e2e-postgres-data:
+  # The mail server's start-of-run certificate, shared with the backend so it
+  # can trust the STARTTLS handshake.
+  e2e-mail-tls:

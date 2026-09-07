@@ -14,11 +14,12 @@ environment, a production key by the live one), so there is no way for the
 mode and the key to disagree.
 
 :class:`SettingsClearinghouseCredentialProvider` is the default and is what a
-bare deployment gets: the key configured as ``CLEARINGHOUSE_API_KEY``. A
-deployment that needs something else — credentials fetched from a secret
-store per practice, a key that rotates on its own schedule — implements the
-protocol and installs it at startup with
-:func:`register_clearinghouse_credential_provider`.
+bare deployment gets: the key configured as ``CLEARINGHOUSE_API_KEY``, plus
+the optional ``CLEARINGHOUSE_BASE_URL`` saying which server answers for it
+(unset, and it is the vendor's own). A deployment that needs something else
+— credentials fetched from a secret store per practice, a key that rotates
+on its own schedule — implements the protocol and installs it at startup
+with :func:`register_clearinghouse_credential_provider`.
 
 The registry is the same shape the rest of the codebase uses for this kind of
 configuration point (see ``app.payments.provider`` and
@@ -49,10 +50,18 @@ class ClearinghouseCredentials:
     separately — the vendor's test keys are answered by its test environment
     and never touch a real payer, so there is no separate "test mode" flag to
     forget to flip back.
+
+    ``base_url`` is the origin that answers the calls, and is ``None`` for
+    every deployment that talks to the vendor itself — which is all of them
+    bar a harness pointed at a stand-in. It rides here rather than on a
+    configuration path of its own because "which account" and "which server
+    answers for it" are one fact, not two that could disagree; the adapter
+    resolves it to the vendor's four API bases (``app.claims.stedi``).
     """
 
     api_key: str = field(repr=False)
     mode: ClearinghouseMode
+    base_url: str | None = None
 
 
 class ClearinghouseCredentialProvider(Protocol):
@@ -88,7 +97,11 @@ class SettingsClearinghouseCredentialProvider:
         api_key = settings.clearinghouse_api_key
         if not api_key:
             return None
-        return ClearinghouseCredentials(api_key=api_key, mode=mode_for_key(api_key))
+        return ClearinghouseCredentials(
+            api_key=api_key,
+            mode=mode_for_key(api_key),
+            base_url=settings.clearinghouse_base_url or None,
+        )
 
 
 #: The vendor's test API keys are ``test_``-prefixed; its production keys
