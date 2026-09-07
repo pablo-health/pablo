@@ -23,6 +23,9 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from datetime import datetime
+
     from ..models.payments import CardOnFile, PatientCharge
 
 
@@ -144,6 +147,21 @@ class PatientPaymentRepository(ABC):
     @abstractmethod
     def list_charges(self, patient_id: str) -> list[PatientCharge]:
         """This client's ledger, newest first."""
+
+    @abstractmethod
+    def iter_ledger_for_period(self, *, start: datetime, end: datetime) -> Iterator[PatientCharge]:
+        """The practice's whole ledger for a period, one row at a time.
+
+        Half-open — ``start`` included, ``end`` excluded — because the caller
+        turns a pair of calendar dates into moments, and the day after the
+        window's last day is the only boundary that puts a row recorded at
+        23:59:59 inside the window exactly once. Oldest first, with the id as
+        the tiebreaker, so the same period renders the same bytes twice.
+
+        It yields rather than returning a list because the export this backs
+        runs over a year at a time, and every client's rows at once is not a
+        thing to hold in memory.
+        """
 
     @abstractmethod
     def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:

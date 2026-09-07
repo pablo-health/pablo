@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from ..utcnow import utc_now
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Collection, Iterator
     from datetime import date
 
     from ..models.claims import Claim
@@ -61,6 +61,21 @@ class ClaimRepository(ABC):
         Both ends inclusive; oldest first, so the biller's file reads in the
         order the visits happened. Drafts are left out — nothing that has
         not passed the scrub leaves the practice.
+        """
+
+    @abstractmethod
+    def iter_for_period(self, from_date: date, to_date: date) -> Iterator[Claim]:
+        """The same selection as :meth:`list_for_export`, one claim at a time.
+
+        Same rows and same order — both ends inclusive, drafts left out,
+        oldest first with the id as the tiebreaker so a re-read renders the
+        same bytes. It yields rather than returning a list because the
+        practice's own period export runs over a year at a time, and a year
+        of claims is not a thing to hold in memory.
+
+        A claim with even one line in the window comes out whole. Its money
+        columns are the claim's own totals, and clipping its lines to the
+        window would make them disagree with the claim.
         """
 
     @abstractmethod
@@ -134,6 +149,9 @@ class InMemoryClaimRepository(ClaimRepository):
             and any(from_date <= line.service_date <= to_date for line in c.lines)
         ]
         return [c.model_copy(deep=True) for c in sorted(matches, key=_oldest_first)]
+
+    def iter_for_period(self, from_date: date, to_date: date) -> Iterator[Claim]:
+        yield from self.list_for_export(from_date, to_date)
 
     def list_all(
         self,

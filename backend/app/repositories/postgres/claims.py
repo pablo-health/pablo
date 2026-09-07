@@ -29,10 +29,15 @@ from ...utcnow import utc_now
 from ..claims import ClaimRepository
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Collection, Iterator
     from datetime import date
 
     from sqlalchemy.orm import Session
+
+#: How many joined rows the server sends at a time when a period export is
+#: draining the table. Big enough that the round trips disappear, small
+#: enough that the buffer stays a rounding error against a year of claims.
+STREAM_BATCH = 500
 
 _HEADER_FIELDS = (
     "control_number",
@@ -181,6 +186,35 @@ class PostgresClaimRepository(ClaimRepository):
         )
         lines = self._lines_for([row.id for row in rows])
         return [_to_claim(row, lines.get(row.id, [])) for row in rows]
+
+    def iter_for_period(self, from_date: date, to_date: date) -> Iterator[Claim]:
+        """:meth:`list_for_export`'s selection, streamed a claim at a time.
+
+        One join ordered by claim and then by line number, drained in batches,
+        with the consecutive lines of each claim gathered as they go by. Only
+        the claim currently being assembled is held, so memory is flat in the
+        size of the window rather than linear.
+        """
+        dated_in_range = select(ClaimLineRow.claim_id).where(
+            ClaimLineRow.service_date >= from_date, ClaimLineRow.service_date <= to_date
+        )
+        stream = self._session.execute(
+            select(ClaimRow, ClaimLineRow)
+            .join(ClaimLineRow, ClaimLineRow.claim_id == ClaimRow.id)
+            .where(ClaimRow.state != "draft", ClaimRow.id.in_(dated_in_range))
+            .order_by(ClaimRow.created_at, ClaimRow.id, ClaimLineRow.line_number)
+            .execution_options(yield_per=STREAM_BATCH),
+        )
+        current: ClaimRow | None = None
+        lines: list[ClaimLineRow] = []
+        for row, line in stream:
+            if current is not None and row.id != current.id:
+                yield _to_claim(current, lines)
+                lines = []
+            current = row
+            lines.append(line)
+        if current is not None:
+            yield _to_claim(current, lines)
 
     def list_all(
         self,

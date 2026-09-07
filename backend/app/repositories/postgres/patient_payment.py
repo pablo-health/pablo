@@ -24,7 +24,14 @@ from ...utcnow import utc_now
 from ..patient_payment import PatientPaymentRepository
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from datetime import datetime
+
     from sqlalchemy.orm import Session
+
+#: How many ledger rows the server sends at a time when a period export is
+#: draining the table.
+STREAM_BATCH = 500
 
 
 def _to_card(row: PatientPaymentMethodRow) -> CardOnFile:
@@ -229,6 +236,16 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             .all()
         )
         return [_to_charge(row) for row in rows]
+
+    def iter_ledger_for_period(self, *, start: datetime, end: datetime) -> Iterator[PatientCharge]:
+        rows = self._session.execute(
+            select(PatientChargeRow)
+            .where(PatientChargeRow.created_at >= start, PatientChargeRow.created_at < end)
+            .order_by(PatientChargeRow.created_at, PatientChargeRow.id)
+            .execution_options(yield_per=STREAM_BATCH),
+        ).scalars()
+        for row in rows:
+            yield _to_charge(row)
 
     def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
         if not appointment_ids:
