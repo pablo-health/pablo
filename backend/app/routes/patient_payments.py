@@ -732,9 +732,11 @@ def charge_balance(
     not an input to the balance, which nets the payment against the bills on
     its own.
 
-    409 when nothing is owed, so a double-clicked button cannot take the money
-    twice: the second click finds a zero balance. A decline comes back the way
-    it does everywhere else — 200, with a ``failed`` row carrying the reason.
+    409 when nothing is owed, and 409 while a payment for this client is
+    already in flight. Both are needed to stop a double-click charging the
+    card twice, and neither is sufficient alone — see
+    :func:`_payment_already_in_flight`. A decline comes back the way it does
+    everywhere else — 200, with a ``failed`` row carrying the reason.
     """
     credentials = _require_credentials(tenant.practice_id)
     _require_patient(patients, patient_id, user.id)
@@ -746,6 +748,12 @@ def charge_balance(
         )
 
     ledger = payments.list_charges(patient_id)
+    if _payment_already_in_flight(ledger):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A payment for this client is already being processed.",
+        )
+
     amount_cents = patient_balance(ledger).balance_cents
     if amount_cents <= 0:
         raise HTTPException(
@@ -789,6 +797,41 @@ def charge_balance(
         for owed in _bills_this_payment_clears(ledger):
             payments.record_settlement(owed.id, settled_by_charge_id=settled.id)
     return _to_charge_response(settled)
+
+
+def _payment_already_in_flight(ledger: list[PatientCharge]) -> bool:
+    """Is a balance payment for this client already on its way to the processor?
+
+    The zero-balance check alone does NOT stop a double-click, and reasoning
+    that it does is the trap here. A staged row is written ``pending``, and
+    ``pending`` is deliberately not a status the balance counts as collected —
+    the money has not arrived. So while the first request sits inside
+    :func:`_take_the_money`, the balance is still the full amount, and a second
+    request arriving in that window reads it, passes the zero check, stages its
+    own row and charges the card for the whole balance a second time. What the
+    client then has is two charges and a credit the practice has to notice and
+    refund.
+
+    This closes the window a double-click actually produces: the first request
+    commits its ``pending`` row before contacting the processor, so the second
+    one sees it. It is NOT airtight — two requests can both read the ledger
+    before either has inserted, and this check will pass for both. Making it
+    airtight needs the database to enforce it, as a unique partial index over
+    (patient_id) where kind = 'payment' and status = 'pending'. That is a
+    migration and belongs in its own change rather than being smuggled in
+    behind a route.
+
+    A ``failed`` row does not block anything: a decline is terminal, and
+    retrying is a fresh charge the clinician asks for.
+
+    The cost of this check is that a row stranded at ``pending`` blocks further
+    collection until something resolves it. That is the right way round — a row
+    stuck pending means the processor may be holding a completed payment, and
+    charging again on top of it is the outcome worth refusing. The webhook
+    settles any row that got as far as a PaymentIntent; one that never did needs
+    a human, which is what ``log_unreconciled`` exists to surface.
+    """
+    return any(row.kind == "payment" and row.status == "pending" for row in ledger)
 
 
 def _bills_this_payment_clears(ledger: list[PatientCharge]) -> list[PatientCharge]:

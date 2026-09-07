@@ -1295,8 +1295,6 @@ class TestChargeBalance:
         assert next(c for c in payments.charges if c.id == "sess-1").settled_by_charge_id is None
 
     def test_nothing_owed_is_409(self) -> None:
-        """Which is also what makes a double-clicked button safe: the second
-        click finds a zero balance rather than taking the money twice."""
         payments = self._ledger()
         client = _client(payments, _FakePatients())
 
@@ -1304,6 +1302,56 @@ class TestChargeBalance:
 
         assert response.status_code == 409
         assert payments.charges == []
+
+    def test_a_payment_already_in_flight_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The case a double-click actually produces: two requests at once.
+
+        The zero-balance check does NOT cover this. A staged row is ``pending``,
+        and ``pending`` is not a status the balance counts as collected — so
+        while the first request is still at the processor the balance is
+        unchanged, and without this guard the second request would read the full
+        amount and charge the card again.
+        """
+        payments = self._ledger(
+            self._row(id="resp-1"),
+            self._row(id="in-flight", kind="payment", status="pending"),
+        )
+        client = _client(payments, _FakePatients())
+        seen = _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = self._post(client)
+
+        assert response.status_code == 409
+        # Nothing staged and nothing sent: the card was not touched a second
+        # time, which is the whole point.
+        assert [row.id for row in payments.charges] == ["resp-1", "in-flight"]
+        assert seen == []
+
+    def test_a_pending_session_charge_does_not_block_a_payment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only a payment in flight blocks a payment. A session charge is a
+        different act on a different row, and blocking on one would strand
+        collection behind an unrelated attempt."""
+        payments = self._ledger(
+            self._row(id="sess-1", kind="session", status="pending", amount_cents=4_000),
+        )
+        client = _client(payments, _FakePatients())
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        assert self._post(client).status_code == 200
+
+    def test_a_failed_payment_does_not_block_a_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A decline is terminal, and retrying is a fresh charge somebody asked
+        for — not an attempt still in flight."""
+        payments = self._ledger(
+            self._row(id="resp-1"),
+            self._row(id="declined", kind="payment", status="failed"),
+        )
+        client = _client(payments, _FakePatients())
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        assert self._post(client).status_code == 200
 
     def test_a_credit_balance_is_409_rather_than_a_negative_charge(self) -> None:
         payments = self._ledger(self._row(kind="credit", status="succeeded"))
