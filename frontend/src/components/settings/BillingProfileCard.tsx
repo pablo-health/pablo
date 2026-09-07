@@ -13,6 +13,12 @@
  *
  * Saves are explicit (a Save button once something changed) rather than on
  * blur — a tax id should land as one deliberate act, not on the way past.
+ *
+ * A card with nothing on it yet offers to start from the practice details the
+ * clinician's profile already holds. It fills the draft only — the therapist
+ * still saves, because the two records are allowed to differ. The tax id is
+ * never copied from anywhere, and the clinician's NPI reaches a claim through
+ * their own card rather than this one.
  */
 
 "use client"
@@ -113,11 +119,18 @@ function validate(draft: Draft, taxId: string): string | null {
   return null
 }
 
-interface BillingProfileCardProps {
-  profile: BillingProfileResponse
+/** What the clinician's profile knows about the practice, as a starting point. */
+export interface PracticeDetails {
+  name?: string | null
+  phone?: string | null
 }
 
-export function BillingProfileCard({ profile }: BillingProfileCardProps) {
+interface BillingProfileCardProps {
+  profile: BillingProfileResponse
+  practiceDetails?: PracticeDetails
+}
+
+export function BillingProfileCard({ profile, practiceDetails }: BillingProfileCardProps) {
   const update = useUpdateBillingProfile()
   const { flashSaved } = useSettingsSaved()
   const [draft, setDraft] = useState<Draft>(() => draftFrom(profile))
@@ -130,8 +143,21 @@ export function BillingProfileCard({ profile }: BillingProfileCardProps) {
   const patch = patchFrom(profile, draft, taxId)
   const isDirty = Object.keys(patch).length > 0
 
+  const profileName = practiceDetails?.name?.trim() ?? ""
+  const profilePhone = practiceDetails?.phone?.trim() ?? ""
+  const canPrefill =
+    Boolean(profileName || profilePhone) && !draft.legal_name.trim() && !draft.address_line1.trim()
+
   function set(field: TextField, value: string) {
     setDraft((current) => ({ ...current, [field]: value }))
+  }
+
+  function prefillFromProfile() {
+    setDraft((current) => ({
+      ...current,
+      legal_name: current.legal_name || profileName,
+      phone: current.phone || profilePhone,
+    }))
   }
 
   function handleSave() {
@@ -156,6 +182,22 @@ export function BillingProfileCard({ profile }: BillingProfileCardProps) {
       description="The legal entity your claims are filed as. Payers match this against what they have on file for your tax id."
     >
       <div className="space-y-4">
+        {canPrefill && (
+          <p className="text-[12.5px] text-muted-foreground">
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto p-0 text-[12.5px]"
+              onClick={prefillFromProfile}
+            >
+              Use my profile details
+            </Button>{" "}
+            — starts from the practice name and phone you have already given. Nothing is saved
+            until you press Save.
+          </p>
+        )}
+
         <Field id="legal-name" label="Legal name">
           <Input
             id="legal-name"
