@@ -39,6 +39,49 @@ export async function givePatient(api: ApiClient, seed: PatientSeed = {}): Promi
   })
 }
 
+export interface AvailabilityRule {
+  id: string
+  rule_type: string
+  params: Record<string, unknown>
+}
+
+export async function giveAvailabilityRule(
+  api: ApiClient,
+  ruleType: string,
+  params: Record<string, unknown>,
+): Promise<AvailabilityRule> {
+  return api.post<AvailabilityRule>("/api/availability/rules", {
+    rule_type: ruleType,
+    enforcement: "hard",
+    params,
+  })
+}
+
+export interface ScheduledSession {
+  id: string
+  status: string
+}
+
+export async function giveScheduledSession(
+  api: ApiClient,
+  patientId: string,
+  noteType?: string,
+): Promise<ScheduledSession> {
+  return api.post<ScheduledSession>("/api/sessions/schedule", {
+    patient_id: patientId,
+    scheduled_at: new Date().toISOString(),
+    source: "companion",
+    ...(noteType === undefined ? {} : { note_type: noteType }),
+  })
+}
+
+export async function markCalendarSetupComplete(api: ApiClient): Promise<void> {
+  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
+  if (preferences.calendar_setup_complete !== true) {
+    await api.put("/api/users/me/preferences", { ...preferences, calendar_setup_complete: true })
+  }
+}
+
 export interface Appointment {
   id: string
   patient_id: string

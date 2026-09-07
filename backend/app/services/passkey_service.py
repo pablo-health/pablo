@@ -225,11 +225,17 @@ class PasskeyService:
         result: dict[str, Any] = json.loads(options_to_json(options))
         return result
 
-    def finish_authentication(self, *, credential: dict[str, Any]) -> AuthenticatedAssertion:
+    def finish_authentication(
+        self, *, credential: dict[str, Any], expected_firebase_uid: str | None = None
+    ) -> AuthenticatedAssertion:
         """Verify the assertion and mint the passkey-factor custom token.
 
         Returns the token plus the authenticated ``user_id`` so the route can
         record a durable login audit event.
+
+        ``expected_firebase_uid`` binds a step-up assertion to the caller's
+        existing session. Passwordless callers omit it and continue to use
+        usernameless credential discovery.
         """
         # Consume the single-use challenge before issuing anything.
         challenge = extract_challenge(credential)
@@ -283,6 +289,11 @@ class PasskeyService:
         firebase_uid = self._identities.get_subject_id(stored.user_id, "firebase")
         if firebase_uid is None:
             logger.warning("passkey_assertion_no_firebase_uid user_id=%s", stored.user_id)
+            raise PasskeyAssertionError
+
+        # Reject account mismatches before mutating the credential or minting.
+        if expected_firebase_uid is not None and expected_firebase_uid != firebase_uid:
+            logger.warning("passkey_assertion_user_mismatch asserted_user_id=%s", stored.user_id)
             raise PasskeyAssertionError
 
         self._credentials.update_after_assertion(

@@ -20,7 +20,9 @@ caller's transaction from committing.
 
 The one listener shipped here writes a compliance reminder, so out of the
 box every actionable claim event lands on the clinician's compliance
-dashboard next to their license renewal and CAQH attestation.
+dashboard next to their license renewal and CAQH attestation. A listener
+that wants to enrich or resolve that reminder rather than write its own
+finds it with :func:`find_claim_reminder`.
 
 An event carries identifiers, codes and dates only. It never carries a
 member id, a date of birth, a diagnosis code or a subscriber name, so a
@@ -235,23 +237,34 @@ def _notes(event: ClaimEvent) -> str:
     return "\n".join(lines)
 
 
-def _existing_reminder(session: Session, event: ClaimEvent) -> ComplianceItemRow | None:
-    """The reminder already written for this (kind, control number), if any.
+def find_claim_reminder(
+    session: Session,
+    *,
+    kind: ClaimEventKind,
+    control_number: str,
+    user_id: str | None = None,
+) -> ComplianceItemRow | None:
+    """The reminder written for this (kind, control number), if any.
 
     The control number is kept on the first line of ``notes``; there is no
     column for it because the reminder is the only place it is needed.
+    That format is this module's business, so this is how a listener that
+    wants to enrich or resolve the default listener's reminder finds it.
+    Pass ``user_id`` to narrow the search to one clinician's reminders.
     """
-    return session.execute(
+    query = (
         select(ComplianceItemRow)
-        .where(ComplianceItemRow.user_id == event.user_id)
-        .where(ComplianceItemRow.item_type == compliance_item_type(event.kind))
+        .where(ComplianceItemRow.item_type == compliance_item_type(kind))
         .where(
             ComplianceItemRow.notes.startswith(
-                _control_number_marker(event.control_number), autoescape=True
+                _control_number_marker(control_number), autoescape=True
             )
         )
         .limit(1)
-    ).scalar_one_or_none()
+    )
+    if user_id is not None:
+        query = query.where(ComplianceItemRow.user_id == user_id)
+    return session.execute(query).scalar_one_or_none()
 
 
 def compliance_reminder_listener(session: Session, event: ClaimEvent) -> None:
@@ -264,7 +277,13 @@ def compliance_reminder_listener(session: Session, event: ClaimEvent) -> None:
     """
     if event.kind == "paid":
         return
-    if _existing_reminder(session, event) is not None:
+    existing = find_claim_reminder(
+        session,
+        kind=event.kind,
+        control_number=event.control_number,
+        user_id=event.user_id,
+    )
+    if existing is not None:
         return
     detail = event.detail
     now = utc_now()
@@ -297,19 +316,7 @@ def resolve_compliance_reminder(
     was never written (a deployment that routes events elsewhere), is left
     alone.
     """
-    row = _existing_reminder(
-        session,
-        ClaimEvent(
-            kind=kind,
-            control_number=control_number,
-            claim_id="",
-            user_id=user_id,
-            payer_id=None,
-            payer_name=None,
-            state="",
-            occurred_at=utc_now(),
-        ),
-    )
+    row = find_claim_reminder(session, kind=kind, control_number=control_number, user_id=user_id)
     if row is None or row.completed_at is not None:
         return False
     now = utc_now()
