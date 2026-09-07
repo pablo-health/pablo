@@ -5,15 +5,11 @@ name: End-to-end
 # and the fake clearinghouse. No cloud project, no vendor credentials.
 # Design: docs/design/e2e-harness.md.
 #
-# Its own workflow rather than a job in ci.yml because the cadence differs:
-# a full-stack run costs minutes, so it runs nightly on main, on demand, and
-# on pull requests that touch what it exercises — never on every push. A
-# `paths` filter is fine here precisely because this is not a required
-# check (the reason ci.yml avoids one): a pull request outside these paths
-# simply has no e2e result, and nothing waits on it. The job becomes a
-# required check once it has run green for a week; at that point the
-# filter has to become an in-job classification like the other jobs use.
+# Pull requests run the suite only for relevant paths. Main image workflows
+# call this workflow directly, so no image is built or pushed unless the
+# complete deterministic browser suite passes for that exact commit.
 on:
+  workflow_call:
   schedule:
     - cron: "0 5 * * *"
   workflow_dispatch:
