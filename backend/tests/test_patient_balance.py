@@ -61,13 +61,18 @@ def test_an_unpaid_session_charge_is_owed() -> None:
     assert summary.balance_cents == 10_000
 
 
-def test_a_succeeded_session_charge_is_collected_and_not_owed() -> None:
-    """The same row cannot be both: money that arrived is not money owed."""
+def test_a_paid_session_nets_to_zero_rather_than_a_credit() -> None:
+    """A session row is BOTH the bill and its own payment.
+
+    Dropping the owed side when it succeeds would leave the collected side
+    standing alone, and every client who had paid would read as being owed a
+    refund. The bill stays; the payment cancels it.
+    """
     summary = patient_balance([_charge(kind="session", status="succeeded")])
 
-    assert summary.owed_cents == 0
+    assert summary.owed_cents == 10_000
     assert summary.collected_cents == 10_000
-    assert summary.balance_cents == -10_000
+    assert summary.balance_cents == 0
 
 
 def test_a_failed_session_charge_is_still_owed() -> None:
@@ -124,8 +129,14 @@ def test_patient_responsibility_is_owed() -> None:
     assert summary.balance_cents == 4_000
 
 
-def test_a_settled_owed_row_stops_being_owed() -> None:
-    """The dollar arrived on the settling charge; it must not be owed twice."""
+def test_paying_a_balance_drives_it_to_zero() -> None:
+    """The point of the ``payment`` kind: collect against somebody else's bill.
+
+    ``settled_by_charge_id`` records WHICH charge paid WHICH bill, for the
+    statement — it is provenance, and deliberately not an input to the
+    arithmetic. Excluding the settled row here would remove the bill while
+    leaving the payment, and the balance would land at minus the amount paid.
+    """
     rows = [
         _charge(
             kind="patient_resp",
@@ -134,14 +145,29 @@ def test_a_settled_owed_row_stops_being_owed() -> None:
             settled_by_charge_id="charge-2",
             charge_id="charge-1",
         ),
-        _charge(kind="copay", status="succeeded", amount_cents=4_000, charge_id="charge-2"),
+        _charge(kind="payment", status="succeeded", amount_cents=4_000, charge_id="charge-2"),
     ]
 
     summary = patient_balance(rows)
 
-    assert summary.owed_cents == 0
+    assert summary.owed_cents == 4_000
     assert summary.collected_cents == 4_000
-    assert summary.balance_cents == -4_000
+    assert summary.balance_cents == 0
+
+
+def test_a_session_charge_cannot_settle_a_balance() -> None:
+    """Why ``payment`` exists at all: a session charge is itself a bill, so
+    using one to pay off a ``patient_resp`` re-bills the amount it settles."""
+    rows = [
+        _charge(kind="patient_resp", status="pending", amount_cents=4_000, charge_id="charge-1"),
+        _charge(kind="session", status="succeeded", amount_cents=4_000, charge_id="charge-2"),
+    ]
+
+    summary = patient_balance(rows)
+
+    assert summary.owed_cents == 8_000
+    assert summary.collected_cents == 4_000
+    assert summary.balance_cents == 4_000
 
 
 def test_a_contractual_adjustment_is_owed_by_nobody() -> None:
