@@ -31,7 +31,10 @@ carrying every kind. Asked twice over: against the rows read back out of band
 through the repository, and against the rows the ``/charges`` route itself
 serialises — the second catches a field dropped from ``ChargeResponse``, which
 would make the ledger the practice reads and the total it is shown disagree
-without either one looking wrong.
+without either one looking wrong. Agreement alone is not enough, though: two
+computations sharing one wrong rule agree perfectly, so the absolute cents are
+asserted too, and a paid bill has to net to zero rather than to a refund the
+practice owes.
 
 Deliberately NOT re-tested here: that ``patient_charges`` is RLS-forced and
 fail-closed with no GUC set. ``test_rls_invariants.py`` asserts that
@@ -94,9 +97,22 @@ _CLINICIAN_B = "4d6a3d1b-9f3e-5cab-af9e-9f5a8d4f4d04"
 #: anything under test.
 _PRINCIPAL_HEADER = "X-Test-Clinician"
 
+# Deliberately not shaped like real credentials, the same posture as
+# ``tests/test_patient_payments.py``: nothing here ever parses these, no Stripe
+# call is made, and a fixture imitating a credential would be indistinguishable
+# from a leaked one to a secret scanner.
+_SECRET_KEY = "secret-key-for-tests"  # noqa: S105 - a placeholder, not a credential
+_PUBLISHABLE_KEY = "publishable-key-for-tests"
+
+# A local copy of ``app.db.models.CHARGE_KINDS``, because parametrisation is
+# evaluated at import time and this directory's conftest forbids importing
+# ``app.*`` at module scope. ``test_the_kind_list_here_matches_the_models``
+# fails loudly if the two ever drift, which is what keeps a newly added kind
+# from quietly going untested here.
 _CHARGE_KINDS = (
     "session",
     "copay",
+    "payment",
     "patient_resp",
     "contractual_adjustment",
     "write_off",
@@ -219,6 +235,28 @@ def _charge_params(patient_id: str, **overrides: Any) -> dict[str, Any]:
 
 class TestCheckConstraints:
     """Every ``CHECK`` on the table, executed rather than read."""
+
+    def test_the_kind_list_here_matches_the_models(self) -> None:
+        """Drift guard for the local copy every parametrised case below reads.
+
+        A kind added to the models and not to this tuple would silently go
+        untested by the whole module — the amount rule, the write-off
+        biconditional and the every-kind ledger all iterate this list.
+        """
+        from app.db.models import CHARGE_KINDS  # noqa: PLC0415
+
+        assert _CHARGE_KINDS == CHARGE_KINDS
+
+    def test_every_kind_is_accepted_by_the_constraint(
+        self, armed_conn: Connection, patient_a: str
+    ) -> None:
+        """The whole allowed set, so the rule is a list and not a shorter one."""
+        for kind in _CHARGE_KINDS:
+            reason = "hardship" if kind == "write_off" else None
+            armed_conn.execute(
+                _INSERT_CHARGE,
+                _charge_params(patient_a, kind=kind, write_off_reason=reason),
+            )
 
     def test_a_well_formed_row_is_accepted(self, armed_conn: Connection, patient_a: str) -> None:
         """Control. Without it every rejection below could be rejecting everything."""
@@ -482,7 +520,7 @@ class _AlwaysConfigured:
     def credentials_for_practice(self, practice_id: str | None) -> Any:  # noqa: ARG002
         from app.payments.provider import PaymentCredentials  # noqa: PLC0415
 
-        return PaymentCredentials(secret_key="sk_test_integration", publishable_key="pk_test")  # noqa: S106
+        return PaymentCredentials(secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY)
 
 
 def _build_app(tenant_schema: str) -> FastAPI:
@@ -576,6 +614,7 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
         "session_paid": 12000,
         "copay": 2500,
         "patient_resp": 4000,
+        "payment": 4000,
         "contractual_adjustment": 3000,
         "write_off": 5000,
         "credit": 2000,
@@ -606,7 +645,7 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
         repo.commit()
         repo.close_charge(paid.id, status="succeeded", status_detail=None)
 
-        copay = repo.add_ledger_row(
+        repo.add_ledger_row(
             patient_id=patient_a,
             kind="copay",
             amount_cents=amounts["copay"],
@@ -622,7 +661,19 @@ def seeded_ledger(engine: Engine, tenant_schema: str, patient_a: str) -> Iterato
             user_id=_CLINICIAN_A,
             appointment_id=visit_two,
         )
-        repo.record_settlement(responsibility.id, settled_by_charge_id=copay.id)
+        # The kind that exists so money can be collected against a bill some
+        # other row raised — and the settlement link that records which bill
+        # it paid. Both are in the fixture because both are exactly what the
+        # arithmetic has to handle without double-counting.
+        settling_payment = repo.add_ledger_row(
+            patient_id=patient_a,
+            kind="payment",
+            amount_cents=amounts["payment"],
+            currency="usd",
+            user_id=_CLINICIAN_A,
+            appointment_id=visit_two,
+        )
+        repo.record_settlement(responsibility.id, settled_by_charge_id=settling_payment.id)
         repo.add_ledger_row(
             patient_id=patient_a,
             kind="contractual_adjustment",
@@ -816,6 +867,36 @@ class TestRouteAgreesWithTheBalanceFunction:
         assert expected.written_off_cents == seeded_ledger["write_off"]
         assert expected.adjusted_cents == seeded_ledger["contractual_adjustment"]
         assert expected.credited_cents == seeded_ledger["credit"]
+
+    def test_a_paid_bill_nets_to_zero_over_a_real_round_trip(
+        self, client: TestClient, patient_a: str, seeded_ledger: dict[str, int]
+    ) -> None:
+        """The figures themselves, not merely that two computations agree.
+
+        A bill stays a bill and payment cancels it, so the paid session is on
+        both sides and nets to nothing, and the ``payment`` row that settled
+        the ``patient_resp`` cancels that bill without erasing it. Asserted
+        here as absolute cents because "the route agrees with the function" is
+        satisfied by any arithmetic they share — including arithmetic that
+        drops a paid bill from the owed side and reads a settled account as a
+        refund the practice owes.
+        """
+        body = client.get(f"/api/patients/{patient_a}/balance", headers=_as(_CLINICIAN_A)).json()
+
+        billed = (
+            seeded_ledger["session_unpaid"]
+            + seeded_ledger["session_paid"]
+            + seeded_ledger["patient_resp"]
+        )
+        paid = seeded_ledger["session_paid"] + seeded_ledger["copay"] + seeded_ledger["payment"]
+        assert body["owed_cents"] == billed
+        assert body["collected_cents"] == paid
+        assert body["balance_cents"] == (
+            billed - paid - seeded_ledger["write_off"] - seeded_ledger["credit"]
+        )
+        assert body["balance_cents"] > 0, (
+            "a client who has paid for what they were billed must not read as owed a refund"
+        )
 
     @pytest.mark.usefixtures("seeded_ledger")
     def test_the_ledger_the_route_serialises_totals_to_the_same_balance(
