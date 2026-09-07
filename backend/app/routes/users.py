@@ -20,6 +20,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..api_errors import BadRequestError, ForbiddenError, NotFoundError, ServerError
+from ..auth.providers import VerifiedIdentity
 from ..auth.route_access import subscription_exempt
 from ..auth.route_security import truly_public
 from ..auth.service import (
@@ -53,6 +54,7 @@ from ..repositories import (
     get_user_repository,
 )
 from ..services import AuditService, get_audit_service
+from ..services.passkey_service import PasskeyService, get_passkey_service
 from ..utcnow import utc_now, utc_now_iso
 
 if TYPE_CHECKING:
@@ -140,22 +142,36 @@ def _resolve_baa_path(version: str) -> Path:
 
 @router.get("/me/status")
 def get_user_status(
+    request: Request,
     user: User = Depends(get_current_user_no_mfa),
     profile_repo: ClinicianProfileRepository = Depends(get_clinician_profile_repository),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
     """
     Get current user status without requiring MFA.
 
     Used by dashboard layout and companion app to check MFA enrollment
     and subscription/trial status.
+
+    Reports both account enrollment and the current session's second-factor
+    state. These differ when an account with a Pablo passkey signs in through
+    Firebase without asserting that passkey.
     """
     from ..settings import get_settings
 
     profile = profile_repo.get(user.id)
 
+    identity = getattr(request.state, "verified_identity", None)
+    session_mfa_satisfied = isinstance(identity, VerifiedIdentity) and identity.mfa_satisfied
+
     result: dict = {
         "status": user.status,
         "mfa_enrolled_at": user.mfa_enrolled_at,
+        # Authorization depends on the current token, not enrollment history.
+        "session_mfa_satisfied": session_mfa_satisfied,
+        # TOTP enrollment also sets ``mfa_enrolled_at``, so passkey presence
+        # must come from stored credentials.
+        "has_passkey": bool(passkey_service.list_credentials(user.id)),
         "is_platform_admin": user.is_platform_admin,
         "name": user.name,
         "email": user.email,

@@ -34,7 +34,19 @@ export interface UserProfile {
 
 export interface UserStatusBase {
   status: string
+  /**
+   * When the account first enrolled a second factor. This records enrollment
+   * history; use `session_mfa_satisfied` for the current token's MFA state.
+   */
   mfa_enrolled_at: string | null
+  /**
+   * Whether the current session token carries a verified second factor.
+   */
+  session_mfa_satisfied: boolean
+  /**
+   * Whether stored credentials contain a passkey available for step-up.
+   */
+  has_passkey: boolean
   is_platform_admin: boolean
   name: string
   email: string

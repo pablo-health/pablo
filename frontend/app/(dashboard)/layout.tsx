@@ -70,9 +70,13 @@ export default async function DashboardLayout({
         redirect("/onboarding")
       }
 
-      // MFA not enrolled → redirect to enrollment page
-      // Skip if MFA is not required (local development)
-      if (process.env.REQUIRE_MFA !== "false" && !userStatus.mfa_enrolled_at) {
+      // Enrollment history does not prove that the current session satisfied
+      // MFA. Backend authorization remains the authoritative control.
+      if (process.env.REQUIRE_MFA !== "false" && !userStatus.session_mfa_satisfied) {
+        if (userStatus.has_passkey) {
+          redirect("/mfa-step-up")
+        }
+        // No stored passkey is available for step-up.
         redirect("/mfa-enrollment")
       }
     } catch (error) {
