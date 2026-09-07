@@ -2,8 +2,8 @@
 
 /**
  * Claims API client. Wraps `app.routes.claims` (build, read, validate,
- * correct, void, the tracker) and `app.routes.claims_export` (the biller
- * handoff).
+ * correct, void, the tracker), `app.routes.claim_status` (a status check on
+ * demand) and `app.routes.claims_export` (the biller handoff).
  *
  * The two refusals a screen has to read are both `ApiError`s whose details
  * carry findings: a validation that found something blocking
@@ -68,6 +68,29 @@ export async function correctClaim(claimId: string, token?: string): Promise<Cla
 /** A void of this claim: the same claim restated with frequency `8`. */
 export async function voidClaim(claimId: string, token?: string): Promise<ClaimResponse> {
   return post<ClaimResponse>(`${CLAIMS}/${claimId}/void`, {}, token)
+}
+
+/**
+ * Ask the clearinghouse about this claim now and read back where it stands.
+ *
+ * A practice with no clearinghouse configured, or one that is not answering,
+ * is a 503 whose message says which — see `clearinghouseUnavailable`.
+ */
+export async function checkClaimStatus(
+  claimId: string,
+  token?: string,
+): Promise<ClaimDetailResponse> {
+  return post<ClaimDetailResponse>(`${CLAIMS}/${claimId}/status`, {}, token)
+}
+
+/**
+ * The route's own words for a status check it could not run, or `null` when
+ * the error is something else. A deployment fact rather than a fault: there is
+ * nothing about the claim for the clinician to fix.
+ */
+export function clearinghouseUnavailable(error: unknown): string | null {
+  if (!(error instanceof ApiError) || error.status !== 503) return null
+  return error.message
 }
 
 /** ISO calendar dates (`YYYY-MM-DD`), both ends inclusive. */

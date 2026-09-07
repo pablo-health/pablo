@@ -149,10 +149,18 @@ payers_router = APIRouter(
 router = APIRouter(prefix="/api/patients", tags=["patient-coverage"])
 jobs_router = APIRouter(prefix="/api/internal/jobs", tags=["patient-coverage"])
 
+# Every injected type is declared as a module-level ``Annotated`` alias, and
+# every handler below annotates with one. A bare TYPE_CHECKING-only name left
+# in a signature (``repo: UserRepository = Depends(...)``) makes the whole
+# signature unresolvable, and the framework then falls back to reading each
+# unresolved name as a query parameter — including the aliases either side of
+# it, which are not query parameters at all. The routes still serve; only the
+# OpenAPI document, which has to describe those phantom parameters, breaks.
 PayersRepo = Annotated["PayerRepository", Depends(get_payer_repository)]
 CoverageRepo = Annotated["PatientCoverageRepository", Depends(get_patient_coverage_repository)]
 PatientsRepo = Annotated["PatientRepository", Depends(get_patient_repository)]
 CurrentUser = Annotated["User", Depends(require_baa_acceptance)]
+UsersRepo = Annotated["UserRepository", Depends(get_user_repository)]
 DbSession = Annotated["Session", Depends(get_db_session)]
 AutoCheck = Annotated[EligibilityAutoCheck, Depends(get_eligibility_auto_check)]
 
@@ -601,8 +609,8 @@ def check_eligibility_job(
     coverage: CoverageRepo,
     payers: PayersRepo,
     patients: PatientsRepo,
+    user_repo: UsersRepo,
     _invoker: None = Depends(require_cloud_tasks_invoker),
-    user_repo: UserRepository = Depends(get_user_repository),
     audit: AuditService = Depends(get_audit_service),
 ) -> dict[str, str]:
     """Worker: the check queued by a coverage save or an intake submission.

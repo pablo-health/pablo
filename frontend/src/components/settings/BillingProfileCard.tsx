@@ -18,7 +18,9 @@
  * clinician's profile already holds. It fills the draft only — the therapist
  * still saves, because the two records are allowed to differ. The tax id is
  * never copied from anywhere, and the clinician's NPI reaches a claim through
- * their own card rather than this one.
+ * their own card rather than this one. The profile keeps the address as one
+ * free-text line, so it lands whole on the first address line and the city,
+ * state and ZIP are left to be split out by hand.
  */
 
 "use client"
@@ -123,6 +125,8 @@ function validate(draft: Draft, taxId: string): string | null {
 export interface PracticeDetails {
   name?: string | null
   phone?: string | null
+  /** One free-text line, as the professional-info step captured it. */
+  address?: string | null
 }
 
 interface BillingProfileCardProps {
@@ -145,8 +149,11 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
 
   const profileName = practiceDetails?.name?.trim() ?? ""
   const profilePhone = practiceDetails?.phone?.trim() ?? ""
+  const profileAddress = practiceDetails?.address?.trim() ?? ""
   const canPrefill =
-    Boolean(profileName || profilePhone) && !draft.legal_name.trim() && !draft.address_line1.trim()
+    Boolean(profileName || profilePhone || profileAddress) &&
+    !draft.legal_name.trim() &&
+    !draft.address_line1.trim()
 
   function set(field: TextField, value: string) {
     setDraft((current) => ({ ...current, [field]: value }))
@@ -157,6 +164,7 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
       ...current,
       legal_name: current.legal_name || profileName,
       phone: current.phone || profilePhone,
+      address_line1: current.address_line1 || profileAddress,
     }))
   }
 
@@ -193,7 +201,8 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
             >
               Use my profile details
             </Button>{" "}
-            — starts from the practice name and phone you have already given. Nothing is saved
+            — starts from the practice name, phone and address you have already given. The address
+            arrives as one line; split the city, state and ZIP out yourself. Nothing is saved
             until you press Save.
           </p>
         )}

@@ -25,7 +25,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ClaimStateBadge, DeadlineBadge } from "./ClaimBadges"
-import { ageInDays, formatIsoDate, frequencyLabel, presentState } from "./claimPresentation"
+import {
+  ageInDays,
+  formatIsoDate,
+  frequencyLabel,
+  presentNextAction,
+  presentState,
+} from "./claimPresentation"
 
 export function ClaimsTracker() {
   const [state, setState] = useState<ClaimState | "">("")
@@ -103,7 +109,10 @@ export function ClaimsTracker() {
 function TrackerRow({ row }: { row: ClaimTrackerItem }) {
   const presentation = presentState(row.state)
   const kind = frequencyLabel(row.frequency_code)
-  const age = ageInDays(row.created_at)
+  const nextAction = presentNextAction(row.next_action)
+  // How long since anything happened to the claim: its last receipt, or the
+  // moment it was built when nobody has answered yet.
+  const age = ageInDays(row.last_receipt_at ?? row.created_at)
   return (
     <TableRow data-testid="claims-tracker-row" data-claim-id={row.id} data-state={row.state}>
       <TableCell>
@@ -140,9 +149,7 @@ function TrackerRow({ row }: { row: ClaimTrackerItem }) {
       </TableCell>
       <TableCell>
         <div className="flex flex-col items-start gap-1">
-          {presentation.nextAction && (
-            <span className="text-sm text-neutral-700">{presentation.nextAction}</span>
-          )}
+          {nextAction && <span className="text-sm text-neutral-700">{nextAction}</span>}
           <DeadlineBadge deadlines={row.deadlines} state={row.state} />
         </div>
       </TableCell>

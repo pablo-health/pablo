@@ -35,7 +35,11 @@ export function BillingProfilePage() {
       />
       <BillingProfileCard
         profile={profile}
-        practiceDetails={{ name: user.practice_name, phone: user.practice_phone }}
+        practiceDetails={{
+          name: user.practice_name,
+          phone: user.practice_phone,
+          address: user.practice_address,
+        }}
       />
       <RenderingProviderCard npiNumber={clinician.npi_number} taxonomyCode={clinician.taxonomy_code} />
     </>

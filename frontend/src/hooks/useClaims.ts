@@ -4,6 +4,7 @@
 
 import {
   buildClaimFromSession,
+  checkClaimStatus,
   correctClaim,
   fetchClaim,
   listClaims,
@@ -68,5 +69,20 @@ export function useVoidClaim(token?: string) {
   return useAuthMutation<ClaimResponse, { claimId: string }>({
     mutationFn: ({ claimId }) => voidClaim(claimId, token),
     invalidateKeys: [queryKeys.claims.all, queryKeys.billing.all],
+  })
+}
+
+/**
+ * Ask the clearinghouse about one claim now. The answer is the detail view's
+ * own shape, so it is written straight into the cache the detail reads rather
+ * than invalidated and fetched again.
+ */
+export function useCheckClaimStatus(token?: string) {
+  return useAuthMutation<ClaimDetailResponse, { claimId: string }>({
+    mutationFn: ({ claimId }) => checkClaimStatus(claimId, token),
+    onSuccess: (claim, _variables, queryClient) => {
+      queryClient.setQueryData(queryKeys.claims.detail(claim.id), claim)
+    },
+    invalidateKeys: [queryKeys.claims.lists()],
   })
 }
