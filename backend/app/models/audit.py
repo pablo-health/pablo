@@ -297,6 +297,14 @@ class AuditAction(StrEnum):
     # client for a screen that discloses them together.
     BALANCES_LISTED = "balances_listed"
 
+    # The practice's own records for a period: everything it billed, or
+    # everything on the charge ledger, as a CSV. The disclosure is a whole
+    # window rather than one record, so the row says which window and how
+    # many rows left — not which clients were in it, because naming every
+    # client of a year would put the roster in the audit trail to describe a
+    # file that carries client ids and nothing else.
+    BILLING_PERIOD_EXPORTED = "billing_period_exported"
+
 
 class ResourceType(StrEnum):
     """Resource types for audit logging."""
@@ -312,6 +320,7 @@ class ResourceType(StrEnum):
     INVITATION = "invitation"
     CLAIM = "claim"
     CLAIM_EXPORT = "claim_export"
+    BILLING_PERIOD_EXPORT = "billing_period_export"
 
 
 # HIPAA § 164.316(b)(2)(i) — 6-year minimum retention. 7y = margin + matches
