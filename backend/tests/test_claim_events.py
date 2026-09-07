@@ -28,7 +28,9 @@ from app.claims.events import (
     compliance_item_type,
     compliance_reminder_listener,
     emit,
+    find_claim_reminder,
     register_claim_event_listener,
+    resolve_compliance_reminder,
 )
 from app.compliance import get_template, list_templates_for_edition
 from app.db import _reset_search_path_on_checkin
@@ -345,6 +347,69 @@ def test_enrollment_reminder_carries_the_payers_instructions(engine: Engine) -> 
     assert row.label == "Claim PCN20260 enrollment action needed for Aetna"
     assert row.notes is not None
     assert row.notes.endswith("Sign and return the EFT authorization form.")
+
+
+# --- finding a reminder --------------------------------------------------------
+
+
+@pytest.mark.usefixtures("listeners")
+def test_find_claim_reminder_returns_the_row_the_listener_wrote(engine: Engine) -> None:
+    register_claim_event_listener(compliance_reminder_listener)
+
+    with Session(engine) as session:
+        emit(session, _event("denied"))
+        session.commit()
+
+    with Session(engine) as session:
+        row = find_claim_reminder(session, kind="denied", control_number=_CONTROL_NUMBER)
+
+    assert row is not None
+    assert row.item_type == "claim_denied"
+    assert row.user_id == _USER_ID
+
+
+@pytest.mark.usefixtures("listeners")
+def test_find_claim_reminder_misses_another_claim_or_kind(engine: Engine) -> None:
+    register_claim_event_listener(compliance_reminder_listener)
+
+    with Session(engine) as session:
+        emit(session, _event("denied"))
+        session.commit()
+
+    with Session(engine) as session:
+        assert find_claim_reminder(session, kind="denied", control_number="OTHER-CLAIM") is None
+        assert find_claim_reminder(session, kind="rejected", control_number=_CONTROL_NUMBER) is None
+        assert (
+            find_claim_reminder(
+                session, kind="denied", control_number=_CONTROL_NUMBER, user_id="someone-else"
+            )
+            is None
+        )
+
+
+@pytest.mark.usefixtures("listeners")
+def test_resolving_completes_the_reminder_the_lookup_returns(engine: Engine) -> None:
+    register_claim_event_listener(compliance_reminder_listener)
+
+    with Session(engine) as session:
+        emit(session, _event("enrollment_action_required"))
+        session.commit()
+
+    with Session(engine) as session:
+        assert resolve_compliance_reminder(
+            session,
+            kind="enrollment_action_required",
+            control_number=_CONTROL_NUMBER,
+            user_id=_USER_ID,
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        row = find_claim_reminder(
+            session, kind="enrollment_action_required", control_number=_CONTROL_NUMBER
+        )
+    assert row is not None
+    assert row.completed_at is not None
 
 
 # --- compliance template catalog -----------------------------------------------
