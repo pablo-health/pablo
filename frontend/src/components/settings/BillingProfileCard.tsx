@@ -16,11 +16,11 @@
  *
  * A card with nothing on it yet offers to start from the practice details the
  * clinician's profile already holds. It fills the draft only — the therapist
- * still saves, because the two records are allowed to differ. The profile
- * keeps the address as one free-text line, so it lands on the first address
- * line and the city, state and ZIP are left to be split out by hand. The tax
- * id is never copied from anywhere, and the clinician's NPI reaches a claim
- * through their own card rather than this one.
+ * still saves, because the two records are allowed to differ. The tax id is
+ * never copied from anywhere, and the clinician's NPI reaches a claim through
+ * their own card rather than this one. The profile keeps the address as one
+ * free-text line, so it lands whole on the first address line and the city,
+ * state and ZIP are left to be split out by hand.
  */
 
 "use client"
@@ -202,8 +202,8 @@ export function BillingProfileCard({ profile, practiceDetails }: BillingProfileC
               Use my profile details
             </Button>{" "}
             — starts from the practice name, phone and address you have already given. The address
-            arrives as one line; split the city, state and ZIP out yourself. Nothing is saved until
-            you press Save.
+            arrives as one line; split the city, state and ZIP out yourself. Nothing is saved
+            until you press Save.
           </p>
         )}
 

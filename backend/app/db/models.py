@@ -1669,6 +1669,37 @@ CHARGE_STATUSES: tuple[str, ...] = (
 #: the processor was actually told, not so a caller can pick one per charge.
 DEFAULT_CHARGE_CURRENCY = "usd"
 
+#: What a ledger row IS, as distinct from how its charge attempt ended
+#: (``CHARGE_STATUSES``). Before insurance there was only one kind — the
+#: full-rate charge for a visit — so every row that predates this column
+#: reads as ``session``, which is why that is the default.
+#:
+#: ``copay`` is the client's share taken at the visit. ``patient_resp`` is
+#: what the payer's remittance says the client owes once it has adjudicated.
+#: ``contractual_adjustment`` is the gap between the practice's rate and the
+#: payer's allowed amount — a participating practice agrees never to bill it,
+#: so it is recorded to explain the arithmetic and is owed by nobody.
+#: ``write_off`` is money the practice decides not to collect.  ``credit`` is
+#: money held on the client's behalf, most often an over-collected copay.
+#:
+#: Only ``session`` and ``patient_resp`` are ever OWED; only ``copay`` and
+#: ``session`` are ever COLLECTED. Nothing here encodes that — the arithmetic
+#: lives in one place, :func:`app.payments.balance.patient_balance`.
+CHARGE_KINDS: tuple[str, ...] = (
+    "session",
+    "copay",
+    "patient_resp",
+    "contractual_adjustment",
+    "write_off",
+    "credit",
+)
+
+#: Why a practice stopped trying to collect. Required on a ``write_off`` row
+#: and forbidden on every other kind: a write-off with no stated reason is the
+#: one the practice cannot explain to an auditor months later, and a reason on
+#: a copay means somebody set the wrong kind.
+WRITE_OFF_REASONS: tuple[str, ...] = ("hardship", "small_balance", "courtesy", "error")
+
 
 class PatientPaymentMethodRow(Base):
     """The card a practice keeps on file for one client — processor ids only.
@@ -1747,11 +1778,36 @@ class PatientChargeRow(Base):
             f"status IN ({_sql_in_list(CHARGE_STATUSES)})",
             name="ck_patient_charges_status",
         ),
+        CheckConstraint(
+            f"kind IN ({_sql_in_list(CHARGE_KINDS)})",
+            name="ck_patient_charges_kind",
+        ),
+        # A write-off states its reason; nothing else carries one. Both halves
+        # matter: an unexplained write-off is the row nobody can account for,
+        # and a reason on a copay means the kind is wrong.
+        CheckConstraint(
+            "(kind = 'write_off') = (write_off_reason IS NOT NULL)",
+            name="ck_patient_charges_write_off_reason_kind",
+        ),
+        CheckConstraint(
+            f"write_off_reason IS NULL OR write_off_reason IN ({_sql_in_list(WRITE_OFF_REASONS)})",
+            name="ck_patient_charges_write_off_reason",
+        ),
         # Money is integer minor units and a charge is for a positive amount; a
         # refund is a status transition on this row, never a negative charge.
+        # This holds for EVERY kind: a contractual adjustment and a credit are
+        # stored as positive magnitudes and given their sign by the balance
+        # arithmetic, so no reader has to remember which kinds are negative.
         CheckConstraint("amount_cents > 0", name="ck_patient_charges_amount_positive"),
         # The ledger read is "this client's charges, newest first".
         Index("ix_patient_charges_patient_created", "patient_id", "created_at"),
+        # Remittance posting reads the other way round: "the rows this claim
+        # produced". Partial — most rows never belong to a claim at all.
+        Index(
+            "ix_patient_charges_claim_id",
+            "claim_id",
+            postgresql_where=text("claim_id IS NOT NULL"),
+        ),
         # The webhook finds its row by the PaymentIntent id; unique so a
         # replayed event can never fan out across two rows. Partial, because
         # many rows legitimately sit at NULL between the insert and the call.
@@ -1770,6 +1826,37 @@ class PatientChargeRow(Base):
 
     # Soft reference to ``appointments.id``, nullable — see the docstring.
     appointment_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+
+    # What this row IS. Defaulted in the database as well as here: every row
+    # written before the column existed is a full-rate session charge, and the
+    # default is what makes that true of the backfill and of any writer that
+    # still does not name a kind.
+    kind: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="session", default="session"
+    )
+
+    # The claim this row came out of, for the rows a remittance writes
+    # (``patient_resp``, ``contractual_adjustment``). NULL on anything the
+    # practice raised itself. ``SET NULL`` rather than ``CASCADE``: a deleted
+    # claim must never take a money record with it.
+    claim_id: Mapped[str | None] = mapped_column(
+        Uuid(as_uuid=False), ForeignKey("claims.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Required on ``write_off``, forbidden elsewhere — see ``WRITE_OFF_REASONS``.
+    write_off_reason: Mapped[str | None] = mapped_column(String(24), nullable=True)
+
+    # Free text the practice wrote about this row. Shown back to the practice,
+    # never to a payer, and never logged: a clinician explaining a hardship
+    # write-off will write clinical context into it.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # The charge that settled this row, for an owed row (``patient_resp``,
+    # ``session``) paid off by a later collection. Soft reference to another
+    # row of this same table — no foreign key, because the settling charge and
+    # the settled row are written in either order depending on how the money
+    # arrived.
+    settled_by_charge_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(

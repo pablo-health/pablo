@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { ClaimsTracker } from "../ClaimsTracker"
-import { trackerItem } from "./claimFixtures"
+import { trackerItem, VENDOR_FINDING } from "./claimFixtures"
 
 const mockUseClaims = vi.fn()
 
@@ -52,6 +52,7 @@ describe("ClaimsTracker", () => {
         data: [
           trackerItem({
             state: "rejected",
+            next_action: "correct_and_resubmit",
             deadlines: {
               filing: "2026-09-20",
               correction: null,
@@ -81,6 +82,65 @@ describe("ClaimsTracker", () => {
     })
     render(<ClaimsTracker />)
     expect(screen.getByText("Corrected claim")).toBeInTheDocument()
+  })
+
+  it("takes the Next column from the API, not from the claim's state", () => {
+    // A queued claim whose filing attempt is already in flight: the state says
+    // `validated`, and only the API knows it is on its way out.
+    mockUseClaims.mockReturnValue({
+      data: {
+        data: [trackerItem({ state: "validated", next_action: "sending" })],
+        total: 1,
+      },
+      isLoading: false,
+    })
+    render(<ClaimsTracker />)
+    const row = screen.getByTestId("claims-tracker-row")
+    expect(within(row).getByTestId("claim-state")).toHaveTextContent("Queued to send")
+    expect(within(row).getByText("Sending")).toBeInTheDocument()
+  })
+
+  it("asks for nothing on a paid claim", () => {
+    mockUseClaims.mockReturnValue({
+      data: { data: [trackerItem({ state: "paid", next_action: null })], total: 1 },
+      isLoading: false,
+    })
+    render(<ClaimsTracker />)
+    expect(screen.getByTestId("claims-tracker-row").textContent).not.toMatch(/Review|Waiting|Fix/)
+  })
+
+  it("ages the row from the last receipt, not from the day it was built", () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-09-10T15:00:00Z"))
+    mockUseClaims.mockReturnValue({
+      data: {
+        data: [
+          trackerItem({
+            state: "submitted",
+            created_at: "2026-09-01T15:00:00Z",
+            last_receipt_at: "2026-09-08T15:00:00Z",
+          }),
+        ],
+        total: 1,
+      },
+      isLoading: false,
+    })
+    render(<ClaimsTracker />)
+    expect(within(screen.getByTestId("claims-tracker-row")).getByText("2 days")).toBeInTheDocument()
+    vi.useRealTimers()
+  })
+
+  it("never shows the clearinghouse's own wording in a row", () => {
+    mockUseClaims.mockReturnValue({
+      data: { data: [trackerItem({ state: "rejected" })], total: 1 },
+      isLoading: false,
+    })
+    render(<ClaimsTracker />)
+    // The vendor's description can quote the field at fault, so the tracker
+    // never carries it — the audited detail view is the only place it renders.
+    expect(screen.getByTestId("claims-tracker-row").textContent).not.toContain(
+      VENDOR_FINDING.description,
+    )
   })
 
   it("asks for one state when the filter is set", () => {

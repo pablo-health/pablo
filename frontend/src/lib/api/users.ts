@@ -59,13 +59,17 @@ export interface UserStatusBase {
    */
   practice_id?: string
   /**
-   * The practice's own name, phone and address, as the professional-info
-   * step recorded them. All three are undefined when no practice resolves
-   * for the user. The address is one free-text line, not split into
-   * street/city/state — it is stored the way it was typed.
+   * The practice's own name and phone, as the professional-info step
+   * recorded them. Both are undefined when no practice resolves for the
+   * user; the phone is null when the step left it blank.
    */
   practice_name?: string
   practice_phone?: string | null
+  /**
+   * The practice's address, one free-text line as it was typed rather than
+   * split into street/city/state. Undefined when no practice resolves for
+   * the user; null when the step left it blank.
+   */
   practice_address?: string | null
   /**
    * "therapist" | "prescriber" | "both". `null` means the user has not

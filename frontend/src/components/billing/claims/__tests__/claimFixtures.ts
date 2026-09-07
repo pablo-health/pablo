@@ -7,8 +7,23 @@ import type {
   ClaimDetailResponse,
   ClaimHop,
   ClaimLine,
+  ClaimReceipt,
+  ClaimReceiptKind,
   ClaimTrackerItem,
+  SubmissionFinding,
 } from "@/types/claims"
+
+/**
+ * One thing the clearinghouse said was wrong, in its own words. Shared by the
+ * detail and the tracker suites so both talk about the same claim: the detail
+ * shows this description, and the tracker row must not.
+ */
+export const VENDOR_FINDING: SubmissionFinding = {
+  source: "edit",
+  code: "A7:562",
+  description: "Entity's National Provider Identifier (NPI) is not on file.",
+  followup_action: "Resubmit once the NPI is registered with this payer.",
+}
 
 export const NO_DEADLINE: ClaimDeadlines = {
   filing: null,
@@ -57,6 +72,26 @@ export function hops(reachedThrough: number): ClaimHop[] {
   }))
 }
 
+export function receipt(
+  kind: ClaimReceiptKind,
+  overrides: Partial<ClaimReceipt> = {},
+): ClaimReceipt {
+  return {
+    id: `receipt-${kind}`,
+    claim_id: "claim-1",
+    kind,
+    from_state: "submitted",
+    to_state: "submitted",
+    deadline_kind: null,
+    rung: null,
+    vendor_event_id: null,
+    vendor_transaction_id: null,
+    detail: {},
+    occurred_at: "2026-09-02T15:00:00Z",
+    ...overrides,
+  }
+}
+
 export function claimDetail(overrides: Partial<ClaimDetailResponse> = {}): ClaimDetailResponse {
   return {
     id: "claim-1",
@@ -74,6 +109,12 @@ export function claimDetail(overrides: Partial<ClaimDetailResponse> = {}): Claim
     submitted_at: null,
     payer_accepted_at: null,
     adjudicated_at: null,
+    vendor_claim_id: null,
+    payer_claim_number: null,
+    submission_pending_at: null,
+    submission_findings: [],
+    last_receipt_at: null,
+    status_checked_at: null,
     created_at: "2026-09-02T15:00:00Z",
     updated_at: "2026-09-02T15:00:00Z",
     lines: [line()],
@@ -82,6 +123,8 @@ export function claimDetail(overrides: Partial<ClaimDetailResponse> = {}): Claim
     findings: [],
     hops: hops(0),
     deadlines: NO_DEADLINE,
+    receipts: [],
+    next_action: "review_and_file",
     ...overrides,
   }
 }
@@ -101,9 +144,11 @@ export function trackerItem(overrides: Partial<ClaimTrackerItem> = {}): ClaimTra
     total_charge_cents: 15000,
     total_paid_cents: 0,
     submitted_at: null,
+    last_receipt_at: null,
     created_at: "2026-09-02T15:00:00Z",
     updated_at: "2026-09-02T15:00:00Z",
     deadlines: NO_DEADLINE,
+    next_action: "review_and_file",
     ...overrides,
   }
 }

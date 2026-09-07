@@ -181,6 +181,19 @@ function findErrorEnvelope(data: unknown): ApiErrorResponse | null {
   return top as unknown as ApiErrorResponse
 }
 
+/**
+ * The message a route wrote itself, for the raise sites that pass a bare
+ * string: `raise HTTPException(503, "The clearinghouse is not answering")`
+ * renders as `{"detail": "…"}`, which carries no envelope and so no code.
+ * Without this the caller sees "API request failed with status 503" and the
+ * one sentence written for the person reading the screen is thrown away.
+ */
+function plainDetailFrom(data: unknown): string | null {
+  if (typeof data !== "object" || data === null) return null
+  const detail = (data as Record<string, unknown>).detail
+  return typeof detail === "string" && detail !== "" ? detail : null
+}
+
 export class ApiError extends Error {
   /**
    * Set by a registered error interceptor to mean: an explanation has
@@ -358,11 +371,13 @@ export async function apiClient<T>(
     }
 
     let errorData: ApiErrorResponse | null = null
+    let errorBody: unknown = null
     const contentType = response.headers.get("content-type")
 
     if (contentType?.includes("application/json")) {
       try {
-        errorData = findErrorEnvelope((await response.json()) as unknown)
+        errorBody = (await response.json()) as unknown
+        errorData = findErrorEnvelope(errorBody)
       } catch {
         // Failed to parse error response
       }
@@ -371,6 +386,7 @@ export async function apiClient<T>(
     const errorCode = errorData?.error?.code || "UNKNOWN_ERROR"
     const errorMessage =
       errorData?.error?.message ||
+      plainDetailFrom(errorBody) ||
       `API request failed with status ${response.status}`
     const errorDetails = errorData?.error?.details
 

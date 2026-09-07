@@ -45,6 +45,11 @@ def _to_charge(row: PatientChargeRow) -> PatientCharge:
         id=row.id,
         patient_id=row.patient_id,
         appointment_id=row.appointment_id,
+        kind=row.kind,
+        claim_id=row.claim_id,
+        write_off_reason=row.write_off_reason,
+        note=row.note,
+        settled_by_charge_id=row.settled_by_charge_id,
         amount_cents=row.amount_cents,
         currency=row.currency,
         status=row.status,
@@ -128,7 +133,7 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
             raise LookupError(msg)
         return row
 
-    def stage_charge(
+    def stage_charge(  # noqa: PLR0913 — the ledger row's own shape
         self,
         *,
         patient_id: str,
@@ -136,11 +141,15 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         amount_cents: int,
         currency: str,
         user_id: str,
+        kind: str = "session",
+        claim_id: str | None = None,
     ) -> PatientCharge:
         row = PatientChargeRow(
             id=uuid.uuid4().hex,
             patient_id=patient_id,
             appointment_id=appointment_id,
+            kind=kind,
+            claim_id=claim_id,
             amount_cents=amount_cents,
             currency=currency,
             status="pending",
@@ -149,6 +158,45 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         )
         self._session.add(row)
         self._session.flush()
+        return _to_charge(row)
+
+    def record_settlement(self, charge_id: str, *, settled_by_charge_id: str) -> None:
+        row = self._charge_row(charge_id)
+        row.settled_by_charge_id = settled_by_charge_id
+        row.updated_at = utc_now()
+        self._session.commit()
+
+    def add_ledger_row(  # noqa: PLR0913 — the ledger row's own shape
+        self,
+        *,
+        patient_id: str,
+        kind: str,
+        amount_cents: int,
+        currency: str,
+        user_id: str,
+        appointment_id: str | None = None,
+        claim_id: str | None = None,
+        write_off_reason: str | None = None,
+        note: str | None = None,
+    ) -> PatientCharge:
+        row = PatientChargeRow(
+            id=uuid.uuid4().hex,
+            patient_id=patient_id,
+            appointment_id=appointment_id,
+            kind=kind,
+            claim_id=claim_id,
+            write_off_reason=write_off_reason,
+            note=note,
+            amount_cents=amount_cents,
+            currency=currency,
+            # No processor was called, so there is nothing to reconcile: the
+            # fact is true as soon as it is written.
+            status="succeeded",
+            created_by_user_id=user_id,
+            created_at=utc_now(),
+        )
+        self._session.add(row)
+        self._session.commit()
         return _to_charge(row)
 
     def commit(self) -> None:
