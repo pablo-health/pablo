@@ -42,9 +42,11 @@ export interface ChargeAmountResponse {
 }
 
 export interface CreateChargeRequest {
-  /** Omit to charge the client's resolved rate. */
+  /** Omit to let the server resolve the amount from `kind`. */
   amount_cents?: number
   appointment_id?: string
+  /** Defaults to `session` server-side. */
+  kind?: ChargeableKind
 }
 
 /**
@@ -88,6 +90,17 @@ export type ChargeKind =
   | "contractual_adjustment"
   | "write_off"
   | "credit"
+
+/**
+ * The two things a card is charged for: the visit at its full rate, and the
+ * copay a covered client pays at the door. The rest of the ledger kinds move
+ * no money on their own and cannot be raised through the charge route —
+ * mirroring the request model's ``Literal["session", "copay"]`` server-side.
+ *
+ * Derived from `ChargeKind` rather than spelled out again, so a kind that is
+ * removed from the ledger cannot survive here as something still chargeable.
+ */
+export type ChargeableKind = Extract<ChargeKind, "session" | "copay">
 
 /** One visit's line of the balance. */
 export interface VisitBalanceResponse {

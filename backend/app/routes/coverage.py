@@ -166,6 +166,12 @@ AutoCheck = Annotated[EligibilityAutoCheck, Depends(get_eligibility_auto_check)]
 
 _NO_COVERAGE = "No coverage on file."
 _PAYER_NOT_FOUND = "Payer not found."
+
+#: Coverage fields an edit can change without making the stored eligibility
+#: answer stale. Everything else describes who the payer is or who the
+#: subscriber is — a different question, so the old answer to the old one is
+#: discarded and asked again.
+_ANSWER_KEEPING_FIELDS = frozenset({"copay_override_cents"})
 _CLEARINGHOUSE_BUSY = "The clearinghouse is not answering right now. Try again in a minute."
 
 
@@ -493,6 +499,11 @@ def update_coverage(
     eligibility answer is cleared and (with auto-check on) asked again.
     Switching to a payer with no enrollments on file requests them, as a
     create would.
+
+    The copay override is the exception: it says what this practice
+    collects, not who the payer is or what was asked of them, so editing it
+    leaves the stored answer where it is. Clearing it there would throw away
+    the very figure the override falls back to.
     """
     _require_patient(patients, patient_id, user.id)
     active = _require_active_coverage(coverage, patient_id)
@@ -500,9 +511,10 @@ def update_coverage(
     changes = payload.model_dump(exclude_unset=True)
     if changes.get("payer_id") is not None:
         _require_payer(payers, changes["payer_id"])
-    updated = coverage.update(
-        active.model_copy(update={**changes, "last_271": None, "verified_at": None})
-    )
+    asks_again = bool(set(changes) - _ANSWER_KEEPING_FIELDS)
+    if asks_again:
+        changes |= {"last_271": None, "verified_at": None}
+    updated = coverage.update(active.model_copy(update=changes))
     payer = _require_payer(payers, updated.payer_id)
 
     audit.log(
@@ -513,7 +525,8 @@ def update_coverage(
         resource_id=patient_id,
         changes={"coverage_id": updated.id, "payer_id": payer.id},
     )
-    auto_check(updated.id, user.id, "save")
+    if asks_again:
+        auto_check(updated.id, user.id, "save")
     if payer.id != active.payer_id:
         enroll(payer.id, user.id)
     return _to_coverage_response(updated, payer)

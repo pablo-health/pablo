@@ -14,6 +14,7 @@ and they are the only card-shaped values that exist anywhere below this line.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -118,10 +119,17 @@ class CardOnFileResponse(BaseModel):
 class CreateChargeRequest(BaseModel):
     """A one-click charge.
 
-    ``amount_cents`` is optional: left out, the amount is resolved from the
-    client's own rate, falling back to the default fee of the appointment's
-    type. Sending it overrides that for this one charge (a partial payment, a
-    late-cancellation fee).
+    ``amount_cents`` is optional: left out, the amount is resolved on the
+    server from what ``kind`` says this charge is. Sending it overrides that
+    for this one charge (a partial payment, a late-cancellation fee, or a
+    copay nobody has on file).
+
+    ``kind`` is the two things a card is charged for. ``session`` resolves to
+    the client's own rate, falling back to the appointment type's default
+    fee; ``copay`` resolves to what a covered client pays at the door and
+    records a row a later remittance can net out. The remaining ledger kinds
+    are not charges at all — a write-off or a contractual adjustment moves no
+    money and cannot be raised here.
 
     Currency is not a parameter — the deployment charges in one currency and a
     caller cannot pick another.
@@ -129,6 +137,7 @@ class CreateChargeRequest(BaseModel):
 
     amount_cents: int | None = Field(default=None, gt=0, le=MAX_CHARGE_CENTS)
     appointment_id: str | None = None
+    kind: Literal["session", "copay"] = "session"
 
 
 class ChargeAmountResponse(BaseModel):

@@ -56,6 +56,7 @@ _COVERAGE_FIELDS = (
     "subscriber_postal_code",
     "plan_name",
     "active",
+    "copay_override_cents",
     "last_271",
     "verified_at",
 )

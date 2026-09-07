@@ -8,6 +8,12 @@
  * (see `ChargeCardSection`). When the client has coverage on file the row
  * also offers "File claim", which opens the review step; a row whose claim
  * is already on its way shows where it stands instead.
+ *
+ * A covered client is billed differently and the row says so: what they owe
+ * at the door is the copay, and the full rate goes to the payer. So the row
+ * offers "Charge copay" and keeps the full-rate charge behind "Charge a
+ * different amount" — there, for the visit nobody is claiming, but not the
+ * obvious thing to click on a visit that is about to be claimed.
  */
 
 "use client"
@@ -21,6 +27,7 @@ import { formatCents } from "@/lib/money"
 import type { UnbilledSessionItem } from "@/types/billing"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ChargeCopay, offersCopay } from "./ChargeCopay"
 import { ClaimStateBadge } from "./claims/ClaimBadges"
 import { ClaimReviewDialog } from "./claims/ClaimReviewDialog"
 
@@ -76,9 +83,11 @@ function offersClaim(item: UnbilledSessionItem): boolean {
 
 function QueueRow({ item, timeZone }: { item: UnbilledSessionItem; timeZone: string }) {
   const [reviewing, setReviewing] = useState(false)
+  const [fullRate, setFullRate] = useState(false)
   const claim = item.claim
   const draft = claim !== null && claim.state === "draft"
   const filed = claim !== null && claim.frequency_code !== "8" && !draft
+  const copay = offersCopay(item)
 
   return (
     <li
@@ -105,9 +114,17 @@ function QueueRow({ item, timeZone }: { item: UnbilledSessionItem; timeZone: str
             <ClaimStateBadge state={claim.state} />
           </Link>
         )}
-        <Button asChild variant="outline" size="sm">
-          <Link href={`/dashboard/sessions/${item.session_id}`}>Charge card</Link>
-        </Button>
+        {copay && <ChargeCopay item={item} />}
+        {copay && !fullRate && (
+          <Button variant="ghost" size="sm" onClick={() => setFullRate(true)}>
+            Charge a different amount
+          </Button>
+        )}
+        {(!copay || fullRate) && (
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/dashboard/sessions/${item.session_id}`}>Charge card</Link>
+          </Button>
+        )}
         {(offersClaim(item) || draft) && item.appointment_id !== null && (
           <>
             <Button size="sm" data-testid="file-claim" onClick={() => setReviewing(true)}>

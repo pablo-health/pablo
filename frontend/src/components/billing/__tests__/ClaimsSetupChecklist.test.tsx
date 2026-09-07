@@ -55,6 +55,7 @@ function unbilled(overrides: Partial<UnbilledSessionItem> = {}): UnbilledSession
     currency: "usd",
     appointment_id: "appt-1",
     has_coverage: false,
+    copay_cents: null,
     claim: null,
     ...overrides,
   }

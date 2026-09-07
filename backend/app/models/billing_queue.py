@@ -42,6 +42,14 @@ class UnbilledSessionItem(BaseModel):
     what makes "File claim" an option beside "Charge card". ``claim`` is
     the newest claim on the visit, so a row whose claim is on its way is
     shown as such rather than offered for filing again.
+
+    ``copay_cents`` is what a covered client pays at the door — the
+    practice's override, else what the payer last said (see
+    ``app.payments.copay``). ``None`` means nobody has said, so the row asks
+    for the amount rather than offering a one-click charge for a figure
+    nobody chose; zero means the payer priced the benefit at nothing, and
+    there is nothing to collect. It is ``None`` for an uncovered client too,
+    who has no copay to speak of.
     """
 
     session_id: str
@@ -52,6 +60,7 @@ class UnbilledSessionItem(BaseModel):
     currency: str
     appointment_id: str | None = None
     has_coverage: bool = False
+    copay_cents: int | None = None
     claim: UnbilledClaimSummary | None = None
 
 

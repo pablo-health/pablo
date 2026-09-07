@@ -9,13 +9,24 @@
  */
 
 import { describe, it, expect } from "vitest"
-import { dollarsToCents, formatCents } from "../money"
+import { centsToDollars, dollarsToCents, formatCents } from "../money"
 
 describe("formatCents", () => {
   it("renders stored cents as money", () => {
     expect(formatCents(15000, "usd")).toBe("$150.00")
     expect(formatCents(1, "usd")).toBe("$0.01")
     expect(formatCents(1234567, "usd")).toBe("$12,345.67")
+  })
+})
+
+describe("centsToDollars", () => {
+  it("renders stored cents as a plain amount an input can hold", () => {
+    expect(centsToDollars(3000)).toBe("30.00")
+    expect(centsToDollars(1)).toBe("0.01")
+  })
+
+  it("round-trips back through the parser", () => {
+    expect(dollarsToCents(centsToDollars(16010))).toBe(16010)
   })
 })
 

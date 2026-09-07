@@ -162,6 +162,12 @@ class SubscriberFields(BaseModel):
     subscriber_postal_code: str | None = Field(default=None, max_length=10)
 
 
+#: Largest copay the API will take on file, in minor units. A copay is the
+#: small figure printed on a card; anything this far above it was typed in
+#: dollars into a cents box, and refusing is better than collecting it.
+MAX_COPAY_CENTS = 100_000
+
+
 class PatientCoverage(SubscriberFields):
     """The plan one client is on, as stored."""
 
@@ -172,6 +178,9 @@ class PatientCoverage(SubscriberFields):
     group_number: str | None = None
     plan_name: str | None = None
     active: bool = True
+    #: What this practice collects at the door, when it knows better than
+    #: the payer's answer. ``None`` is "no override", not "no copay".
+    copay_override_cents: int | None = None
     last_271: dict | None = None
     verified_at: datetime | None = None
     created_at: datetime
@@ -202,6 +211,7 @@ class CreateCoverageRequest(SubscriberFields):
     member_id: str = Field(min_length=1, max_length=80)
     group_number: str | None = Field(default=None, max_length=80)
     plan_name: str | None = Field(default=None, max_length=255)
+    copay_override_cents: int | None = Field(default=None, gt=0, le=MAX_COPAY_CENTS)
 
     @model_validator(mode="after")
     def _exactly_one_payer(self) -> CreateCoverageRequest:
@@ -222,6 +232,10 @@ class UpdateCoverageRequest(BaseModel):
     member_id: str | None = Field(default=None, min_length=1, max_length=80)
     group_number: str | None = Field(default=None, max_length=80)
     plan_name: str | None = Field(default=None, max_length=255)
+    #: Sent as ``null`` to take the override off again and fall back to the
+    #: payer's answer — which is why an omitted field and an explicit null
+    #: mean different things on this one.
+    copay_override_cents: int | None = Field(default=None, gt=0, le=MAX_COPAY_CENTS)
     subscriber_relationship: SubscriberRelationship | None = None
     subscriber_first_name: str | None = Field(default=None, max_length=255)
     subscriber_last_name: str | None = Field(default=None, max_length=255)
@@ -250,6 +264,7 @@ class CoverageResponse(SubscriberFields):
     group_number: str | None = None
     plan_name: str | None = None
     active: bool
+    copay_override_cents: int | None = None
     verified_at: datetime | None = None
     eligibility: EligibilitySummary | None = None
     created_at: datetime

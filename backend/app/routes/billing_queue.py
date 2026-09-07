@@ -26,6 +26,11 @@ offer "File claim" beside "Charge card", and carries the newest claim on the
 visit when there is one. A paid claim settles the visit the way a succeeded
 charge does and drops the row; a claim anywhere short of that keeps the row,
 showing where the claim stands rather than offering to file it again.
+
+For a covered client the row also carries the copay, so the queue can offer
+to take it on the card on file. Collecting it does NOT settle the visit and
+does not drop the row: the payer has still not been billed, and the claim is
+the thing that ends this session's life in the queue.
 """
 
 from __future__ import annotations
@@ -42,6 +47,7 @@ from ..models.billing_queue import (
     UnbilledQueueResponse,
     UnbilledSessionItem,
 )
+from ..payments.copay import copay_cents
 from ..repositories import (
     NotesRepository,
     PatientRepository,
@@ -64,6 +70,13 @@ if TYPE_CHECKING:
     from ..scheduling_engine.repositories.appointment_type import AppointmentTypeRepository
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
+
+#: The charge kinds that mean this visit has been paid for and the row can
+#: go. Only the full-rate session charge does: a copay is a part payment on
+#: a visit the payer has yet to be billed for, and the remaining ledger
+#: kinds (a remittance's patient responsibility, an adjustment, a write-off,
+#: a credit) are money facts about a visit that was already claimed.
+_SETTLING_CHARGE_KINDS = frozenset({"session"})
 
 
 @router.get("/unbilled-sessions", response_model=UnbilledQueueResponse)
@@ -89,7 +102,12 @@ def get_unbilled_sessions(
     appointments_by_session = appointment_repo.get_by_session_ids(session_ids, user.id)
 
     appointment_ids = [a.id for a in appointments_by_session.values()]
-    succeeded_appointment_ids = payments_repo.succeeded_appointment_ids(appointment_ids)
+    succeeded_kinds = payments_repo.succeeded_charge_kinds(appointment_ids)
+    settled_appointment_ids = {
+        appointment_id
+        for appointment_id, kinds in succeeded_kinds.items()
+        if kinds & _SETTLING_CHARGE_KINDS
+    }
     # The newest claim on each visit. A paid one settles the visit the way a
     # succeeded charge does; anything else keeps the row, showing where the
     # claim stands instead of offering to file it again.
@@ -97,8 +115,12 @@ def get_unbilled_sessions(
 
     patient_ids = list({s.patient_id for s in sessions.values()})
     patients = patient_repo.get_multiple(patient_ids, user.id)
-    covered_patient_ids = {
-        patient_id for patient_id in patient_ids if coverage_repo.get_active(patient_id) is not None
+    # The coverage row itself, not just "is there one": the copay the row
+    # offers to collect is read off it.
+    coverage_by_patient = {
+        patient_id: active
+        for patient_id in patient_ids
+        if (active := coverage_repo.get_active(patient_id)) is not None
     }
     appointment_types = {t.id: t for t in appointment_type_repo.list_by_user(user.id)}
 
@@ -111,7 +133,7 @@ def get_unbilled_sessions(
             continue
 
         appointment = appointments_by_session.get(note.session_id)
-        if appointment is not None and appointment.id in succeeded_appointment_ids:
+        if appointment is not None and appointment.id in settled_appointment_ids:
             continue
         claim = claims_by_appointment.get(appointment.id) if appointment is not None else None
         if claim is not None and claim.state == "paid":
@@ -124,6 +146,7 @@ def get_unbilled_sessions(
         amount_cents = resolve_rate_cents(
             patient.rate_cents if patient is not None else None, appointment_type
         )
+        coverage = coverage_by_patient.get(session.patient_id)
 
         items.append(
             UnbilledSessionItem(
@@ -134,7 +157,8 @@ def get_unbilled_sessions(
                 amount_cents=amount_cents,
                 currency=DEFAULT_CHARGE_CURRENCY,
                 appointment_id=appointment.id if appointment is not None else None,
-                has_coverage=session.patient_id in covered_patient_ids,
+                has_coverage=coverage is not None,
+                copay_cents=copay_cents(coverage),
                 claim=(
                     UnbilledClaimSummary(
                         id=claim.id,

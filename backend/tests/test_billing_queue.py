@@ -49,13 +49,22 @@ PATIENT_ID = "patient-1"
 
 
 class _FakePayments:
-    """Just enough of PatientPaymentRepository for the queue's read."""
+    """Just enough of PatientPaymentRepository for the queue's read.
 
-    def __init__(self, succeeded_for: set[str] | None = None) -> None:
-        self._succeeded_for = succeeded_for or set()
+    Seeded with the succeeded charges as ``(appointment_id, kind)`` pairs,
+    exactly what the real query returns — which kind of charge settles a
+    visit is the route's judgement, so it is not made here.
+    """
 
-    def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
-        return {a for a in appointment_ids if a in self._succeeded_for}
+    def __init__(self, succeeded: set[tuple[str, str]] | None = None) -> None:
+        self._succeeded = succeeded or set()
+
+    def succeeded_charge_kinds(self, appointment_ids: list[str]) -> dict[str, set[str]]:
+        kinds: dict[str, set[str]] = {}
+        for appointment_id, kind in self._succeeded:
+            if appointment_id in appointment_ids:
+                kinds.setdefault(appointment_id, set()).add(kind)
+        return kinds
 
 
 def _note(session_id: str, *, finalized: bool) -> Note:
@@ -133,7 +142,7 @@ def _wire(
     app.dependency_overrides[get_claim_repository] = lambda: claims or InMemoryClaimRepository()
 
 
-def _covered() -> InMemoryPatientCoverageRepository:
+def _covered(**overrides: object) -> InMemoryPatientCoverageRepository:
     now = datetime(2026, 6, 1, tzinfo=UTC)
     coverage = InMemoryPatientCoverageRepository()
     coverage.create(
@@ -144,9 +153,30 @@ def _covered() -> InMemoryPatientCoverageRepository:
             member_id="123456789",
             created_at=now,
             updated_at=now,
+            **overrides,
         )
     )
     return coverage
+
+
+def _271_with_copay(dollars: str) -> dict:
+    """A stored eligibility response whose behavioral copay is ``dollars``.
+
+    Only the one benefit line the copay is read off: everything else on a 271
+    is either irrelevant to this figure or deliberately not acted on at the
+    door.
+    """
+    return {
+        "meta": {"traceId": "trace-1"},
+        "benefitsInformation": [
+            {
+                "code": "B",
+                "serviceTypeCodes": ["MH"],
+                "timeQualifierCode": "27",
+                "benefitAmount": dollars,
+            }
+        ],
+    }
 
 
 def _claims_on(appointment_id: str, *, state: str, claim_id: str = "claim-1"):
@@ -242,7 +272,7 @@ def test_succeeded_charge_drops_the_session_from_the_queue(
     mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
     appt_repo = InMemoryAppointmentRepository()
     appt_repo.create(_appointment("appt-1", "sess-1", user_id=mock_user_id))
-    _wire(appt_repo=appt_repo, payments=_FakePayments(succeeded_for={"appt-1"}))
+    _wire(appt_repo=appt_repo, payments=_FakePayments(succeeded={("appt-1", "session")}))
 
     resp = client.get("/api/billing/unbilled-sessions")
     assert resp.json()["items"] == []
@@ -265,7 +295,7 @@ def test_failed_charge_keeps_the_session_in_the_queue(
     # A failed charge exists but is not a *succeeded* one — the fake payments
     # repo (like the real one) only ever reports succeeded appointment ids,
     # so a failed-only appointment simply never appears in that set.
-    _wire(appt_repo=appt_repo, payments=_FakePayments(succeeded_for=set()))
+    _wire(appt_repo=appt_repo, payments=_FakePayments(succeeded=set()))
 
     resp = client.get("/api/billing/unbilled-sessions")
     items = resp.json()["items"]
@@ -391,3 +421,86 @@ def test_denied_claim_keeps_the_session_in_the_queue(
     items = client.get("/api/billing/unbilled-sessions").json()["items"]
     assert len(items) == 1
     assert items[0]["claim"]["state"] == "denied"
+
+
+# ---------------------------------------------------------------------------
+# The copay the row offers to collect
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def one_finalized_visit(
+    mock_repo: InMemoryPatientRepository,
+    mock_session_repo: InMemoryTherapySessionRepository,
+    mock_notes_repo: InMemoryNotesRepository,
+    mock_user_id: str,
+) -> InMemoryAppointmentRepository:
+    """One finalized, booked, unbilled session for a client with a rate."""
+    _seed_patient(mock_repo, mock_user_id, rate_cents=15000)
+    mock_session_repo.create(
+        _session("sess-1", datetime(2026, 6, 10, tzinfo=UTC), user_id=mock_user_id)
+    )
+    mock_notes_repo.add(_note("sess-1", finalized=True), mock_user_id)
+    appt_repo = InMemoryAppointmentRepository()
+    appt_repo.create(_appointment("appt-1", "sess-1", user_id=mock_user_id))
+    return appt_repo
+
+
+def test_copay_comes_from_the_practices_override(client, one_finalized_visit) -> None:
+    _wire(appt_repo=one_finalized_visit, coverage=_covered(copay_override_cents=3000))
+
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["copay_cents"] == 3000
+
+
+def test_copay_falls_back_to_what_the_payer_last_said(client, one_finalized_visit) -> None:
+    coverage = _covered(
+        last_271=_271_with_copay("25"), verified_at=datetime(2026, 6, 5, tzinfo=UTC)
+    )
+    _wire(appt_repo=one_finalized_visit, coverage=coverage)
+
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["copay_cents"] == 2500
+
+
+def test_the_override_wins_over_the_payers_answer(client, one_finalized_visit) -> None:
+    coverage = _covered(
+        copay_override_cents=3000,
+        last_271=_271_with_copay("25"),
+        verified_at=datetime(2026, 6, 5, tzinfo=UTC),
+    )
+    _wire(appt_repo=one_finalized_visit, coverage=coverage)
+
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["copay_cents"] == 3000
+
+
+def test_no_override_and_no_answer_leaves_the_copay_unknown(client, one_finalized_visit) -> None:
+    # Unknown, not zero: the row asks for the amount rather than offering to
+    # charge a figure nobody chose. Nothing else on a 271 stands in for it.
+    _wire(appt_repo=one_finalized_visit, coverage=_covered())
+
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["copay_cents"] is None
+
+
+def test_an_uncovered_client_has_no_copay(client, one_finalized_visit) -> None:
+    _wire(appt_repo=one_finalized_visit)
+
+    row = client.get("/api/billing/unbilled-sessions").json()["items"][0]
+    assert row["has_coverage"] is False
+    assert row["copay_cents"] is None
+
+
+def test_a_collected_copay_keeps_the_session_in_the_queue(client, one_finalized_visit) -> None:
+    # The copay is a part payment on a visit the payer has yet to be billed
+    # for: filing the claim is what the row is still there to do.
+    _wire(
+        appt_repo=one_finalized_visit,
+        coverage=_covered(copay_override_cents=3000),
+        payments=_FakePayments(succeeded={("appt-1", "copay")}),
+    )
+
+    items = client.get("/api/billing/unbilled-sessions").json()["items"]
+    assert len(items) == 1
+    assert items[0]["session_id"] == "sess-1"

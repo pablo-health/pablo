@@ -8,10 +8,15 @@
  * (no rate set anywhere) rendering as unknown rather than free, and the
  * claim affordance — offered beside "Charge card" only when the client has
  * coverage on file, replaced by the claim's state once one is on its way.
+ *
+ * Plus the two shapes a row takes: an uncovered client is charged the full
+ * rate, and a covered one is offered their copay with the full rate tucked
+ * behind "Charge a different amount".
  */
 
 import { describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { UnbilledQueue } from "../UnbilledQueue"
 import type { UnbilledSessionItem } from "@/types/billing"
 
@@ -23,6 +28,12 @@ vi.mock("@/hooks/useBilling", () => ({
 
 vi.mock("../claims/ClaimReviewDialog", () => ({
   ClaimReviewDialog: () => null,
+}))
+
+// The charge itself is `ChargeCopay`'s own test; here the row only has to
+// offer it (or not).
+vi.mock("@/hooks/usePayments", () => ({
+  useCreateCharge: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }))
 
 vi.mock("@/hooks/usePreferences", () => ({
@@ -44,6 +55,7 @@ function item(overrides: Partial<UnbilledSessionItem> = {}): UnbilledSessionItem
     currency: "usd",
     appointment_id: "appt-1",
     has_coverage: false,
+    copay_cents: null,
     claim: null,
     ...overrides,
   }
@@ -98,13 +110,13 @@ describe("UnbilledQueue claims", () => {
     expect(screen.queryByTestId("file-claim")).not.toBeInTheDocument()
   })
 
-  it("offers File claim beside Charge card when the client has coverage", () => {
+  it("offers File claim beside the copay when the client has coverage", () => {
     useUnbilledQueue.mockReturnValue({
-      data: { items: [item({ has_coverage: true })] },
+      data: { items: [item({ has_coverage: true, copay_cents: 2500 })] },
       isLoading: false,
     })
     render(<UnbilledQueue />)
-    expect(screen.getByRole("link", { name: "Charge card" })).toBeInTheDocument()
+    expect(screen.getByTestId("charge-copay")).toHaveTextContent("Charge copay $25.00")
     expect(screen.getByTestId("file-claim")).toHaveTextContent("File claim")
   })
 
@@ -173,5 +185,68 @@ describe("UnbilledQueue claims", () => {
     })
     render(<UnbilledQueue />)
     expect(screen.getByTestId("file-claim")).toHaveTextContent("File claim")
+  })
+})
+
+describe("UnbilledQueue copay", () => {
+  it("offers no copay and the plain charge for a client with no coverage", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: false })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+
+    expect(screen.queryByTestId("charge-copay")).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Charge card" })).toBeInTheDocument()
+  })
+
+  it("shows the copay amount on the button when the row carries one", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: true, copay_cents: 3000 })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+
+    expect(screen.getByTestId("charge-copay")).toHaveTextContent("Charge copay $30.00")
+  })
+
+  it("asks for the amount when nobody has said what the copay is", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: true, copay_cents: null })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+
+    expect(screen.getByTestId("charge-copay")).toHaveTextContent("Charge copay")
+    expect(screen.getByTestId("charge-copay")).not.toHaveTextContent("$")
+  })
+
+  it("offers no copay when the payer priced the benefit at nothing", () => {
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: true, copay_cents: 0 })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+
+    expect(screen.queryByTestId("charge-copay")).not.toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Charge card" })).toBeInTheDocument()
+  })
+
+  it("keeps the full rate behind Charge a different amount for a covered client", async () => {
+    const user = userEvent.setup()
+    useUnbilledQueue.mockReturnValue({
+      data: { items: [item({ has_coverage: true, copay_cents: 2500 })] },
+      isLoading: false,
+    })
+    render(<UnbilledQueue />)
+
+    expect(screen.queryByRole("link", { name: "Charge card" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Charge a different amount" }))
+
+    expect(screen.getByRole("link", { name: "Charge card" })).toHaveAttribute(
+      "href",
+      "/dashboard/sessions/sess-1",
+    )
   })
 })

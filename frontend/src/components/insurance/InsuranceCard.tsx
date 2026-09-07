@@ -3,11 +3,12 @@
 /**
  * InsuranceCard
  *
- * The chart's coverage on file: the payer, the ids off the card, who the
- * subscriber is, and what the last eligibility check found. Adding or
- * editing goes through `CoverageDialog`; removing deactivates the row
- * server-side rather than deleting it, so a claim filed under the old plan
- * still has something to point at. "Re-verify" asks the payer again, now.
+ * The chart's coverage on file: the payer, the ids off the card, what the
+ * practice collects at the door, who the subscriber is, and what the last
+ * eligibility check found. Adding or editing goes through `CoverageDialog`;
+ * removing deactivates the row server-side rather than deleting it, so a
+ * claim filed under the old plan still has something to point at.
+ * "Re-verify" asks the payer again, now.
  *
  * The eligibility answer is rendered as what the payer knew when asked —
  * never as a payment guarantee (see `EligibilityBadge`).
@@ -227,6 +228,14 @@ export function InsuranceCard({ patientId }: InsuranceCardProps) {
             <Field label="Member ID" value={coverage.member_id} />
             <Field label="Group number" value={coverage.group_number} />
             <Field label="Plan" value={coverage.plan_name} />
+            <Field
+              label="Copay collected"
+              value={
+                coverage.copay_override_cents == null
+                  ? null
+                  : formatCents(coverage.copay_override_cents)
+              }
+            />
             <Field label="Subscriber" value={subscriberSummary(coverage)} />
             <Field
               label="Subscriber date of birth"

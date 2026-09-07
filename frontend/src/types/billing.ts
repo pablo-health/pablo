@@ -29,6 +29,13 @@ export interface UnbilledSessionItem {
   appointment_id: string | null
   /** The client has active coverage on file, so a claim can be filed. */
   has_coverage: boolean
+  /**
+   * What a covered client pays at the door: the practice's override, else
+   * what the payer last said. `null` means nobody has said — ask for the
+   * amount rather than charging a figure nobody chose. `0` means the payer
+   * priced the benefit at nothing, so there is nothing to collect.
+   */
+  copay_cents: number | null
   /** The newest claim on the visit; `null` when none has been filed. */
   claim: UnbilledClaimSummary | null
 }
