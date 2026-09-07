@@ -7,17 +7,9 @@
  * place, then re-seeds the server session cookie so the dashboard gate sees
  * the new token.
  *
- * Same three steps the passwordless button on `/login` already uses —
- * `beginAuthentication` / `startAuthentication` / `finishAuthentication` —
- * followed by `signInWithCustomToken`, because the minted token is what
- * carries the verified `pablo_amr` factor claim. The forced `getIdToken(true)`
- * matters: without it the SDK can hand back the cached pre-step-up token and
- * the gate bounces the user straight back here.
- *
- * Re-seeding via `/api/login` is not optional either. The dashboard layout
- * reads a server session cookie, so upgrading only the client-side Firebase
- * session would leave the server still holding the first-factor token — the
- * user would loop.
+ * The minted token carries the verified `pablo_amr` claim. Force-refreshing
+ * the ID token and updating `/api/login` ensures both the Firebase client and
+ * server session cookie use that upgraded token.
  */
 
 import { useState } from "react"
@@ -55,14 +47,11 @@ export function PasskeyStepUpForm() {
         },
       })
 
-      // The pre-step-up session answered 403 to everything behind the MFA
-      // gate. Those refusals are cached; drop them so the dashboard refetches
-      // against the upgraded token instead of rendering stale failures.
+      // Refetch protected queries with the upgraded session.
       queryClient.clear()
       router.push("/dashboard")
     } catch (err) {
-      // Dismissing the platform sheet is a choice, not a failure — leave the
-      // screen as it was so the button can simply be pressed again.
+      // Keep the form available when the user dismisses the platform prompt.
       if (err instanceof WebAuthnError && err.name === "NotAllowedError") return
       setError("That didn't work. Try again, or sign out and sign in with your passkey.")
     } finally {

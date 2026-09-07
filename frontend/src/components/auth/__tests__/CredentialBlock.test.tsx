@@ -81,8 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   useConfig.mockReturnValue({ passkeysEnabled: true })
   browserSupportsWebAuthn.mockReturnValue(true)
-  // Default: the session already cleared a factor, so the step-up branch
-  // stays out of the way of every other test in this file.
+  // Keep step-up inactive unless a test opts into it.
   getUserStatus.mockResolvedValue({ session_mfa_satisfied: true, has_passkey: false })
 })
 
@@ -104,10 +103,6 @@ async function signInWithPassword(container: HTMLElement) {
 }
 
 describe("CredentialBlock passkey step-up", () => {
-  // A passkey is Pablo's factor, invisible to Firebase, so a password or
-  // Google sign-in raises no MFA challenge and yields a session that every
-  // PHI route then refuses. Ask for the passkey instead of handing that
-  // session to the host.
   it("asks for the passkey instead of resolving a first-factor credential", async () => {
     signInWithEmailAndPassword.mockResolvedValue(firstFactorCredential())
     getUserStatus.mockResolvedValue({ session_mfa_satisfied: false, has_passkey: true })
@@ -133,8 +128,6 @@ describe("CredentialBlock passkey step-up", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Use passkey" }))
 
     await waitFor(() => expect(onCredential).toHaveBeenCalledTimes(1))
-    // The minted token is the one carrying the verified factor — handing back
-    // the original first-factor credential would defeat the whole exercise.
     expect(onCredential).toHaveBeenCalledWith(upgraded, "email")
   })
 
@@ -158,8 +151,6 @@ describe("CredentialBlock passkey step-up", () => {
     const { onCredential, container } = renderBlock()
     await signInWithPassword(container)
 
-    // Fail-open on purpose: a hiccup here must not block sign-in, because the
-    // dashboard gate makes the same call server-side and actually enforces it.
     await waitFor(() => expect(onCredential).toHaveBeenCalledWith(credential, "email"))
   })
 })

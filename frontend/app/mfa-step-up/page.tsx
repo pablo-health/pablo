@@ -3,19 +3,9 @@
 /**
  * Passkey step-up.
  *
- * Reached when a session is authenticated but has NOT cleared a second
- * factor, and the account has a passkey to assert. That state is ordinary,
- * not exotic: a passkey is Pablo's own factor and Firebase knows nothing
- * about it, so signing in with email/password or Google yields a perfectly
- * valid credential carrying no second factor. The account has a strong
- * factor; it simply came in through a door that never asked for it.
- *
- * The fix is to ask for it — here, without signing out — rather than send
- * someone to enrol a factor they already have.
- *
- * Outside the `(dashboard)` route group for the same reason
- * `/mfa-enrollment` is: the dashboard layout is what redirects here, so
- * rendering under it would loop.
+ * Handles authenticated sessions that have an enrolled passkey but have not
+ * satisfied MFA. It lives outside `(dashboard)` because the dashboard layout
+ * redirects here; nesting it there would create a redirect loop.
  */
 
 import { redirect } from "next/navigation"

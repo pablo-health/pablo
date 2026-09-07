@@ -65,19 +65,12 @@ EnrollingUser = Annotated[User, Depends(get_current_user_no_mfa)]
 
 
 def _caller_firebase_uid(request: Request) -> str | None:
-    """The Firebase uid of an already-authenticated caller, if there is one.
+    """Return the verified Firebase UID when the caller has a session.
 
-    The authenticate routes are ``truly_public`` because passwordless sign-in
-    has no session yet — that is the point of the flow. A STEP-UP, though,
-    arrives with a first-factor session already established, and the assertion
-    must be pinned to it: usernameless discovery would otherwise happily mint a
-    token for whichever account the presented credential belongs to.
-
-    Returns ``None`` for an anonymous caller (ordinary passwordless login) and
-    for a token that does not verify — an unusable bearer must not silently
-    widen the ceremony into the unbound case, but it is also not this route's
-    job to reject it. Verification is cache-backed by the session middleware,
-    so this costs nothing on the common path.
+    Passwordless authentication has no existing session, while step-up must
+    bind the assertion to the session's account. Invalid bearer tokens are
+    treated as anonymous here and remain subject to the route's normal
+    authentication flow.
     """
     header = request.headers.get("authorization", "")
     if not header.startswith("Bearer "):

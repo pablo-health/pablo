@@ -55,9 +55,7 @@ import { VerifyEmailScreen } from "./VerifyEmailScreen"
 // the clear.
 export type AuthMethod = "google" | "email" | "passkey"
 
-// "passkey-step-up" is for a resolved FIRST-factor credential on an account
-// that has a passkey: Firebase raised no challenge because the passkey isn't
-// its factor, so we ask for it here before handing the session to the host.
+// Passkey step-up upgrades a first-factor Firebase credential before handoff.
 type CredentialStep = "sign-in" | "mfa" | "passkey-step-up" | "recovery-code" | "verify-email"
 
 // Remember how this device last signed in so we can surface a "Last used"
@@ -160,8 +158,7 @@ export function CredentialBlock({
   // challenge (so we record the right one once the challenge resolves).
   const [lastMethod, setLastMethod] = useState<AuthMethod | null>(null)
   const [pendingMethod, setPendingMethod] = useState<AuthMethod>("email")
-  // The first-factor credential held while the passkey is asserted on top of
-  // it. Not a secret beyond the session it already represents.
+  // Retain the first-factor credential while its passkey is asserted.
   const [pendingCredential, setPendingCredential] = useState<UserCredential | null>(null)
 
   // Only offer passkey sign-in where the browser can actually run the
@@ -184,17 +181,9 @@ export function CredentialBlock({
   }, [showLastUsed])
 
   const resolveCredential = async (credential: UserCredential, method: AuthMethod) => {
-    // A passkey is Pablo's own factor and Firebase knows nothing about it, so
-    // an email/password or Google credential can be perfectly valid and still
-    // carry no second factor — Firebase raises no MFA challenge because, as
-    // far as it is concerned, there is nothing to challenge. Ask for the
-    // passkey here rather than handing the host a session that every PHI
-    // route will refuse.
-    //
-    // Deliberately fail-open: if the check itself fails we hand off anyway.
-    // The dashboard gate makes the same decision server-side and is the layer
-    // that actually enforces it; this one exists to spare the round trip, and
-    // a login should not break because a status read hiccuped.
+    // Prompt inline when a Firebase sign-in still needs Pablo's passkey.
+    // Status failures fall through because the server-side dashboard gate is
+    // authoritative and will route an unsatisfied session to step-up.
     if (method !== "passkey") {
       try {
         const status = await getUserStatus(await credential.user.getIdToken())
@@ -218,10 +207,8 @@ export function CredentialBlock({
   /**
    * Assert the enrolled passkey on top of a first-factor credential.
    *
-   * Hands the host the NEW credential, not the one that got us here: the
-   * minted token is the one carrying the verified factor, and it is what the
-   * host must exchange for a session cookie. The remembered "last used"
-   * method stays the door the user actually chose.
+   * The upgraded credential carries the verified factor. The remembered
+   * method remains the primary sign-in method selected by the user.
    */
   const handlePasskeyStepUp = async () => {
     if (!pendingCredential) return

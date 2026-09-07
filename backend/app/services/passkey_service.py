@@ -233,14 +233,9 @@ class PasskeyService:
         Returns the token plus the authenticated ``user_id`` so the route can
         record a durable login audit event.
 
-        ``expected_firebase_uid`` binds the ceremony to an account the caller
-        has ALREADY authenticated as. The flow is usernameless — the user is
-        discovered from the asserted credential — which is what a passwordless
-        login wants and is exactly wrong for a step-up: a caller holding a
-        first-factor session for one account could otherwise assert a
-        different account's passkey and be minted that account's token.
-        Passwordless callers pass nothing and keep today's behaviour; a
-        step-up passes the signed-in uid and a mismatch is refused.
+        ``expected_firebase_uid`` binds a step-up assertion to the caller's
+        existing session. Passwordless callers omit it and continue to use
+        usernameless credential discovery.
         """
         # Consume the single-use challenge before issuing anything.
         challenge = extract_challenge(credential)
@@ -296,9 +291,7 @@ class PasskeyService:
             logger.warning("passkey_assertion_no_firebase_uid user_id=%s", stored.user_id)
             raise PasskeyAssertionError
 
-        # Step-up binding. Checked BEFORE the sign counter is advanced and
-        # before any token is minted, so a refused cross-account attempt
-        # leaves no trace on the credential it targeted.
+        # Reject account mismatches before mutating the credential or minting.
         if expected_firebase_uid is not None and expected_firebase_uid != firebase_uid:
             logger.warning("passkey_assertion_user_mismatch asserted_user_id=%s", stored.user_id)
             raise PasskeyAssertionError

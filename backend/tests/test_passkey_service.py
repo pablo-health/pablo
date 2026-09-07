@@ -301,14 +301,7 @@ class TestFinishAuthentication:
     def test_step_up_refuses_an_assertion_for_a_different_account(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A bound ceremony must not authenticate somebody else's passkey.
-
-        The flow is usernameless — the account comes from the credential —
-        which is right for passwordless login and wrong for a step-up, where
-        the caller already holds a first-factor session. Without the binding, a
-        session for one account could assert another account's passkey and be
-        minted that account's token.
-        """
+        """A step-up assertion must match the existing session's account."""
         service, credentials, challenges = _build_service()
         _seed_credential(credentials, sign_count=5)
         challenges.create("authenticate", None, CHALLENGE)
@@ -326,7 +319,6 @@ class TestFinishAuthentication:
 
         monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", _record_mint)
 
-        # The seeded credential belongs to "fb-uid"; the caller is someone else.
         with pytest.raises(PasskeyAssertionError):
             service.finish_authentication(
                 credential=_assertion_credential(CHALLENGE),
@@ -336,12 +328,10 @@ class TestFinishAuthentication:
         assert minted == [], "a refused step-up must not mint a token"
         stored = credentials.get_active(CRED_ID)
         assert stored is not None
-        # Refused before the counter moves, so the targeted credential is
-        # untouched — a rejected attempt leaves no trace on it.
         assert stored.sign_count == 5
 
     def test_step_up_allows_the_matching_account(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The same binding must not break the legitimate step-up."""
+        """A step-up assertion for the existing session remains valid."""
         service, credentials, challenges = _build_service()
         _seed_credential(credentials, sign_count=5)
         challenges.create("authenticate", None, CHALLENGE)
