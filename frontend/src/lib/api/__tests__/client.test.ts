@@ -300,3 +300,43 @@ describe("returnToParam", () => {
     )
   })
 })
+
+describe("apiClient error messages", () => {
+  /** A route that raised `HTTPException(status, "some words")`. */
+  function bareDetail(status: number, detail: string): Response {
+    return new Response(JSON.stringify({ detail }), {
+      status,
+      headers: { "content-type": "application/json" },
+    })
+  }
+
+  it("keeps the words a route wrote itself when it raised with a bare detail", async () => {
+    const client = await freshClient()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(bareDetail(503, "The clearinghouse is not answering right now.")),
+    )
+
+    await expect(client.post("/api/x", {})).rejects.toMatchObject({
+      status: 503,
+      message: "The clearinghouse is not answering right now.",
+    })
+  })
+
+  it("falls back to the status when the body says nothing", async () => {
+    const client = await freshClient()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({}), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    )
+
+    await expect(client.post("/api/x", {})).rejects.toMatchObject({
+      message: "API request failed with status 500",
+    })
+  })
+})

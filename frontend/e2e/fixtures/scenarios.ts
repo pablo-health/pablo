@@ -39,6 +39,49 @@ export async function givePatient(api: ApiClient, seed: PatientSeed = {}): Promi
   })
 }
 
+export interface AvailabilityRule {
+  id: string
+  rule_type: string
+  params: Record<string, unknown>
+}
+
+export async function giveAvailabilityRule(
+  api: ApiClient,
+  ruleType: string,
+  params: Record<string, unknown>,
+): Promise<AvailabilityRule> {
+  return api.post<AvailabilityRule>("/api/availability/rules", {
+    rule_type: ruleType,
+    enforcement: "hard",
+    params,
+  })
+}
+
+export interface ScheduledSession {
+  id: string
+  status: string
+}
+
+export async function giveScheduledSession(
+  api: ApiClient,
+  patientId: string,
+  noteType?: string,
+): Promise<ScheduledSession> {
+  return api.post<ScheduledSession>("/api/sessions/schedule", {
+    patient_id: patientId,
+    scheduled_at: new Date().toISOString(),
+    source: "companion",
+    ...(noteType === undefined ? {} : { note_type: noteType }),
+  })
+}
+
+export async function markCalendarSetupComplete(api: ApiClient): Promise<void> {
+  const preferences = await api.get<Record<string, unknown>>("/api/users/me/preferences")
+  if (preferences.calendar_setup_complete !== true) {
+    await api.put("/api/users/me/preferences", { ...preferences, calendar_setup_complete: true })
+  }
+}
+
 export interface Appointment {
   id: string
   patient_id: string
@@ -83,10 +126,38 @@ export async function giveSessionWithCodes(
   })
 }
 
+export interface AvailabilityRule {
+  id: string
+  rule_type: string
+  params: Record<string, unknown>
+}
+
+/**
+ * Working hours on one weekday (0 = Monday, matching the engine's
+ * `date.weekday()`), which is what makes free slots exist at all: a
+ * clinician with no rules reads as "availability not set up" rather than
+ * "no openings".
+ *
+ * Rules accumulate, and two identical ones would produce every slot twice,
+ * so a spec that seeds several should give each its own weekday.
+ */
+export async function giveWorkingHours(
+  api: ApiClient,
+  dayOfWeek: number,
+  hours: { start?: string; end?: string } = {},
+): Promise<AvailabilityRule> {
+  return api.post<AvailabilityRule>("/api/availability/rules", {
+    rule_type: "working_hours",
+    params: { day_of_week: dayOfWeek, start: hours.start ?? "09:00", end: hours.end ?? "17:00" },
+  })
+}
+
 export interface BookingLink {
   id: string
   slug: string
+  host_name: string
   title: string
+  duration_minutes: number
   is_active: boolean
 }
 

@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * One claim: where it stands, the hops it has passed, what the scrub finds,
- * each line's adjudication, and the actions its state allows.
+ * One claim: where it stands, every receipt the pipeline kept for it, what
+ * the scrub finds, what the clearinghouse or the payer answered, each line's
+ * adjudication, and the actions its state allows.
  *
  * A draft is reviewed and filed from here. A claim that has left the
  * practice is never edited in place: "Correct and resubmit" builds a
@@ -16,8 +17,18 @@ import { useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Download } from "lucide-react"
-import { useClaim, useCorrectClaim, useValidateClaim, useVoidClaim } from "@/hooks/useClaims"
-import { blockingFindingsFrom, downloadClaimCms1500 } from "@/lib/api/claims"
+import {
+  useCheckClaimStatus,
+  useClaim,
+  useCorrectClaim,
+  useValidateClaim,
+  useVoidClaim,
+} from "@/hooks/useClaims"
+import {
+  blockingFindingsFrom,
+  clearinghouseUnavailable,
+  downloadClaimCms1500,
+} from "@/lib/api/claims"
 import { formatCents } from "@/lib/money"
 import type { ClaimDetailResponse, ClaimFinding } from "@/types/claims"
 import { Button } from "@/components/ui/button"
@@ -26,7 +37,13 @@ import { ClaimStateBadge, DeadlineBadge } from "./ClaimBadges"
 import { ClaimFindings } from "./ClaimFindings"
 import { ClaimHops } from "./ClaimHops"
 import { ClaimLinesTable } from "./ClaimLinesTable"
-import { canCorrectOrVoid, canReviewAndFile, frequencyLabel } from "./claimPresentation"
+import { ClaimSubmissionFindings } from "./ClaimSubmissionFindings"
+import {
+  canCorrectOrVoid,
+  canReviewAndFile,
+  frequencyLabel,
+  presentNextAction,
+} from "./claimPresentation"
 
 interface ClaimDetailProps {
   claimId: string
@@ -58,14 +75,17 @@ function LoadedClaim({ claim }: { claim: ClaimDetailResponse }) {
   const validate = useValidateClaim()
   const correct = useCorrectClaim()
   const voidClaim = useVoidClaim()
+  const checkStatus = useCheckClaimStatus()
   const [blocked, setBlocked] = useState<ClaimFinding[] | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [unavailable, setUnavailable] = useState<string | null>(null)
   const [confirmVoid, setConfirmVoid] = useState(false)
   const [downloading, setDownloading] = useState(false)
 
   const kind = frequencyLabel(claim.frequency_code)
   const findings = blocked ?? claim.findings
   const hasBlocking = findings.some((f) => f.severity === "blocking")
+  const nextAction = presentNextAction(claim.next_action)
   const busy = validate.isPending || correct.isPending || voidClaim.isPending
 
   async function handleFile() {
@@ -98,6 +118,20 @@ function LoadedClaim({ claim }: { claim: ClaimDetailResponse }) {
       router.push(`/dashboard/billing/claims/${child.id}`)
     } catch {
       setFailure("The void could not be filed. Try again in a moment.")
+    }
+  }
+
+  async function handleCheckStatus() {
+    setFailure(null)
+    setUnavailable(null)
+    try {
+      await checkStatus.mutateAsync({ claimId: claim.id })
+    } catch (error) {
+      // The practice has no clearinghouse, or it is not answering: the route's
+      // own words, said next to the claim rather than as a passing toast.
+      const message = clearinghouseUnavailable(error)
+      if (message) setUnavailable(message)
+      else setFailure("The status check could not be run. Try again in a moment.")
     }
   }
 
@@ -150,6 +184,11 @@ function LoadedClaim({ claim }: { claim: ClaimDetailResponse }) {
           <div className="flex flex-col items-end gap-2">
             <ClaimStateBadge state={claim.state} />
             <DeadlineBadge deadlines={claim.deadlines} state={claim.state} />
+            {nextAction && (
+              <p className="text-sm text-neutral-700" data-testid="claim-next-action">
+                {nextAction}
+              </p>
+            )}
           </div>
         </div>
 
@@ -165,6 +204,15 @@ function LoadedClaim({ claim }: { claim: ClaimDetailResponse }) {
         {failure && (
           <p role="alert" className="text-sm text-red-700">
             {failure}
+          </p>
+        )}
+
+        {unavailable && (
+          <p
+            className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+            data-testid="clearinghouse-unavailable"
+          >
+            {unavailable}
           </p>
         )}
 
@@ -210,22 +258,33 @@ function LoadedClaim({ claim }: { claim: ClaimDetailResponse }) {
             </>
           )}
           {claim.state !== "draft" && (
-            <Button variant="outline" onClick={handleDownload} disabled={downloading}>
-              <Download aria-hidden />
-              {downloading ? "Preparing…" : "CMS-1500 PDF"}
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                data-testid="check-status"
+                onClick={handleCheckStatus}
+                disabled={checkStatus.isPending}
+              >
+                {checkStatus.isPending ? "Checking…" : "Check status"}
+              </Button>
+              <Button variant="outline" onClick={handleDownload} disabled={downloading}>
+                <Download aria-hidden />
+                {downloading ? "Preparing…" : "CMS-1500 PDF"}
+              </Button>
+            </>
           )}
         </div>
       </div>
 
       <div className="card space-y-3">
         <h2 className="text-lg font-display font-semibold text-neutral-900">Where it is</h2>
-        <ClaimHops hops={claim.hops} />
+        <ClaimHops receipts={claim.receipts} />
       </div>
 
       <div className="card space-y-3">
         <h2 className="text-lg font-display font-semibold text-neutral-900">Checks</h2>
         <ClaimFindings findings={findings} emptyText="The claim passes every check." />
+        <ClaimSubmissionFindings findings={claim.submission_findings} />
       </div>
 
       <div className="card space-y-3">

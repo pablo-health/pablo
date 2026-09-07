@@ -34,7 +34,19 @@ export interface UserProfile {
 
 export interface UserStatusBase {
   status: string
+  /**
+   * When the account first enrolled a second factor. This records enrollment
+   * history; use `session_mfa_satisfied` for the current token's MFA state.
+   */
   mfa_enrolled_at: string | null
+  /**
+   * Whether the current session token carries a verified second factor.
+   */
+  session_mfa_satisfied: boolean
+  /**
+   * Whether stored credentials contain a passkey available for step-up.
+   */
+  has_passkey: boolean
   is_platform_admin: boolean
   name: string
   email: string
@@ -46,6 +58,19 @@ export interface UserStatusBase {
    * Undefined in single-tenant deployments.
    */
   practice_id?: string
+  /**
+   * The practice's own name and phone, as the professional-info step
+   * recorded them. Both are undefined when no practice resolves for the
+   * user; the phone is null when the step left it blank.
+   */
+  practice_name?: string
+  practice_phone?: string | null
+  /**
+   * The practice's address, one free-text line as it was typed rather than
+   * split into street/city/state. Undefined when no practice resolves for
+   * the user; null when the step left it blank.
+   */
+  practice_address?: string | null
   /**
    * "therapist" | "prescriber" | "both". `null` means the user has not
    * picked a provider type yet; downstream onboarding flows treat this

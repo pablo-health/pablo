@@ -95,13 +95,19 @@ class TestUpdateProfile:
         assert response.status_code == 200
         assert response.json()["provider_type"] is None
 
-    def test_user_status_includes_practice_name_and_phone(
+    def test_user_status_includes_practice_name_phone_and_address(
         self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
     ) -> None:
-        """GET /api/users/me/status surfaces practice_name and
-        practice_phone so the Profile page needs one request, not three."""
+        """GET /api/users/me/status surfaces practice_name, practice_phone
+        and practice_address so the Profile page needs one request, not
+        three — and so the address the professional-info step writes can be
+        read back at all."""
         mock_user_repo.update(mock_user)
-        practice = SimpleNamespace(name="Renamed Practice", phone="555-010-0100")
+        practice = SimpleNamespace(
+            name="Renamed Practice",
+            phone="555-010-0100",
+            address="5 Oak Ave, Town, NY 10001",
+        )
         fake_session = MagicMock()
         fake_session.get.return_value = practice
 
@@ -122,6 +128,32 @@ class TestUpdateProfile:
         assert body["practice_id"] == "practice-1"
         assert body["practice_name"] == "Renamed Practice"
         assert body["practice_phone"] == "555-010-0100"
+        assert body["practice_address"] == "5 Oak Ave, Town, NY 10001"
+
+    def test_user_status_practice_address_null_when_never_filled_in(
+        self, client: Any, mock_user: User, mock_user_repo: InMemoryUserRepository
+    ) -> None:
+        """A practice with no address reads as null, not "" — a caller
+        prefilling a form needs to tell "nothing on file" from "blank"."""
+        mock_user_repo.update(mock_user)
+        practice = SimpleNamespace(name="Renamed Practice", phone=None, address="   ")
+        fake_session = MagicMock()
+        fake_session.get.return_value = practice
+
+        with (
+            patch("app.settings.get_settings") as mock_settings,
+            patch(
+                "app.auth.service._resolve_practice_from_email",
+                return_value=("practice-1", "practice_1"),
+            ),
+            patch("app.db.get_db_session", return_value=fake_session),
+        ):
+            mock_settings.return_value.multi_tenancy_enabled = True
+            mock_settings.return_value.is_saas = False
+            response = client.get("/api/users/me/status")
+
+        assert response.status_code == 200
+        assert response.json()["practice_address"] is None
 
 
 class TestTitleAndCredentials:

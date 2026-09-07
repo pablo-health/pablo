@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -33,7 +33,24 @@ function renderWithClient(props: Partial<Parameters<typeof AvailabilitySlotPicke
   return { onSelect, ...utils }
 }
 
+// Slots arrive as UTC instants and render in the viewer's own zone, so the
+// wall-clock assertions below only mean something against a pinned zone —
+// America/New_York, matching the rest of the suite. 14:00Z is 10:00 EDT.
+const machineTimeZone = process.env.TZ
+
 describe("AvailabilitySlotPicker", () => {
+  beforeAll(() => {
+    process.env.TZ = "America/New_York"
+  })
+
+  afterAll(() => {
+    if (machineTimeZone === undefined) {
+      delete process.env.TZ
+    } else {
+      process.env.TZ = machineTimeZone
+    }
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     slotsData = undefined
@@ -70,7 +87,7 @@ describe("AvailabilitySlotPicker", () => {
 
     await user.click(screen.getAllByRole("button")[0])
 
-    expect(onSelect).toHaveBeenCalledWith("14:00")
+    expect(onSelect).toHaveBeenCalledWith("10:00")
   })
 
   it("shows a no-openings state distinct from not-configured, with no settings link", () => {

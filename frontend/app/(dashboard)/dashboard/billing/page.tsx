@@ -4,6 +4,7 @@
 
 import { BillerExport } from "@/components/billing/BillerExport"
 import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
+import { ClaimsSetupChecklist } from "@/components/billing/ClaimsSetupChecklist"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
 import { UnbilledQueue } from "@/components/billing/UnbilledQueue"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -39,7 +40,10 @@ export default function BillingPage() {
             <UnbilledQueue />
             <BillerExport />
           </TabsContent>
-          <TabsContent value="claims">
+          {/* The checklist is guidance, not a gate: it sits above the tracker
+              while setup is unfinished and never replaces it. */}
+          <TabsContent value="claims" className="space-y-6">
+            <ClaimsSetupChecklist />
             <ClaimsTracker />
           </TabsContent>
           <TabsContent value="remittances">

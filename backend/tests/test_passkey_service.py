@@ -298,6 +298,58 @@ class TestFinishAuthentication:
         assert stored.sign_count == 6
         assert stored.backup_state is True
 
+    def test_step_up_refuses_an_assertion_for_a_different_account(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A step-up assertion must match the existing session's account."""
+        service, credentials, challenges = _build_service()
+        _seed_credential(credentials, sign_count=5)
+        challenges.create("authenticate", None, CHALLENGE)
+        monkeypatch.setattr(
+            svc,
+            "verify_authentication_response",
+            lambda **_: SimpleNamespace(new_sign_count=6, credential_backed_up=True),
+        )
+        monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
+        minted: list[str] = []
+
+        def _record_mint(*_args: Any, **_kwargs: Any) -> bytes:
+            minted.append("minted")
+            return b"tok"
+
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", _record_mint)
+
+        with pytest.raises(PasskeyAssertionError):
+            service.finish_authentication(
+                credential=_assertion_credential(CHALLENGE),
+                expected_firebase_uid="fb-uid-someone-else",
+            )
+
+        assert minted == [], "a refused step-up must not mint a token"
+        stored = credentials.get_active(CRED_ID)
+        assert stored is not None
+        assert stored.sign_count == 5
+
+    def test_step_up_allows_the_matching_account(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A step-up assertion for the existing session remains valid."""
+        service, credentials, challenges = _build_service()
+        _seed_credential(credentials, sign_count=5)
+        challenges.create("authenticate", None, CHALLENGE)
+        monkeypatch.setattr(
+            svc,
+            "verify_authentication_response",
+            lambda **_: SimpleNamespace(new_sign_count=6, credential_backed_up=True),
+        )
+        monkeypatch.setattr(tokens, "initialize_firebase_app", lambda: None)
+        monkeypatch.setattr(tokens.firebase_auth, "create_custom_token", lambda *_: b"minted-token")
+
+        outcome = service.finish_authentication(
+            credential=_assertion_credential(CHALLENGE), expected_firebase_uid="fb-uid"
+        )
+
+        assert outcome.result.custom_token == "minted-token"
+        assert outcome.user_id == USER_ID
+
     def test_mint_passes_webauthn_amr_claim(self, monkeypatch: pytest.MonkeyPatch) -> None:
         service, credentials, challenges = _build_service()
         _seed_credential(credentials, sign_count=0)
