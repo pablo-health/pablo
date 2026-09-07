@@ -73,6 +73,7 @@ from ..auth.service import TenantContext, get_tenant_context, require_baa_accept
 from ..db.models import DEFAULT_CHARGE_CURRENCY
 from ..models.audit import AuditAction, ResourceType
 from ..models.payments import (
+    BalanceResponse,
     CardOnFile,
     CardOnFileResponse,
     CardSetupConfirmation,
@@ -81,7 +82,9 @@ from ..models.payments import (
     ChargeResponse,
     CreateChargeRequest,
     PatientCharge,
+    VisitBalanceResponse,
 )
+from ..payments.balance import BalanceSummary, patient_balance
 from ..payments.provider import PaymentCredentials, get_payment_credential_provider
 from ..payments.reconcile import METADATA_CHARGE_ID, METADATA_PRACTICE_ID, METADATA_USER_ID
 from ..payments.stripe_api import payment_intent_request, stripe_request
@@ -126,8 +129,36 @@ def _to_charge_response(charge: PatientCharge) -> ChargeResponse:
         status=charge.status,
         status_detail=charge.status_detail,
         appointment_id=charge.appointment_id,
+        kind=charge.kind,
+        claim_id=charge.claim_id,
+        write_off_reason=charge.write_off_reason,
+        note=charge.note,
+        settled_by_charge_id=charge.settled_by_charge_id,
         created_at=charge.created_at,
         updated_at=charge.updated_at,
+    )
+
+
+def _to_balance_response(summary: BalanceSummary) -> BalanceResponse:
+    return BalanceResponse(
+        owed_cents=summary.owed_cents,
+        collected_cents=summary.collected_cents,
+        written_off_cents=summary.written_off_cents,
+        adjusted_cents=summary.adjusted_cents,
+        credited_cents=summary.credited_cents,
+        balance_cents=summary.balance_cents,
+        by_visit=[
+            VisitBalanceResponse(
+                appointment_id=visit.appointment_id,
+                owed_cents=visit.owed_cents,
+                collected_cents=visit.collected_cents,
+                written_off_cents=visit.written_off_cents,
+                adjusted_cents=visit.adjusted_cents,
+                credited_cents=visit.credited_cents,
+                balance_cents=visit.balance_cents,
+            )
+            for visit in summary.by_visit
+        ],
     )
 
 
@@ -660,3 +691,37 @@ def list_charges(
         resource_id=patient_id,
     )
     return [_to_charge_response(charge) for charge in payments.list_charges(patient_id)]
+
+
+@router.get("/{patient_id}/balance", response_model=BalanceResponse)
+def get_patient_balance(
+    patient_id: str,
+    request: Request,
+    user: CurrentUser,
+    payments: PaymentsRepo,
+    patients: PatientsRepo,
+    audit: AuditService = Depends(get_audit_service),
+) -> BalanceResponse:
+    """What this client owes, computed from their ledger rows.
+
+    Deliberately NOT gated on ``_require_credentials``, unlike the charge
+    routes beside it. A balance is arithmetic over rows the practice already
+    has: a practice that bills insurance and takes no cards at all still has
+    ``patient_resp`` rows a client owes against, and refusing to total them
+    because no card processor is configured would be answering a question
+    nobody asked.
+    """
+    _require_patient(patients, patient_id, user.id)
+
+    # The same disclosure as the ledger read beside it, over strictly fewer
+    # facts — the totals are derived from exactly those rows — so it is
+    # recorded as the same access rather than inventing a second action that
+    # would split one client's financial history across two audit streams.
+    audit.log(
+        AuditAction.PATIENT_CHARGES_VIEWED,
+        user,
+        request,
+        resource_type=ResourceType.PATIENT,
+        resource_id=patient_id,
+    )
+    return _to_balance_response(patient_balance(payments.list_charges(patient_id)))

@@ -153,12 +153,16 @@ class _FakePayments:
         amount_cents: int,
         currency: str,
         user_id: str,
+        kind: str = "session",
+        claim_id: str | None = None,
     ) -> PatientCharge:
         self._next_id += 1
         charge = PatientCharge(
             id=f"charge-{self._next_id}",
             patient_id=patient_id,
             appointment_id=appointment_id,
+            kind=kind,
+            claim_id=claim_id,
             amount_cents=amount_cents,
             currency=currency,
             status="pending",
@@ -167,6 +171,42 @@ class _FakePayments:
         )
         self.charges.append(charge)
         return charge
+
+    def add_ledger_row(
+        self,
+        *,
+        patient_id: str,
+        kind: str,
+        amount_cents: int,
+        currency: str,
+        user_id: str,
+        appointment_id: str | None = None,
+        claim_id: str | None = None,
+        write_off_reason: str | None = None,
+        note: str | None = None,
+    ) -> PatientCharge:
+        self._next_id += 1
+        charge = PatientCharge(
+            id=f"charge-{self._next_id}",
+            patient_id=patient_id,
+            appointment_id=appointment_id,
+            kind=kind,
+            claim_id=claim_id,
+            write_off_reason=write_off_reason,
+            note=note,
+            amount_cents=amount_cents,
+            currency=currency,
+            status="succeeded",
+            created_by_user_id=user_id,
+            created_at=datetime.now(UTC),
+        )
+        self.charges.append(charge)
+        self.commits += 1
+        return charge
+
+    def record_settlement(self, charge_id: str, *, settled_by_charge_id: str) -> None:
+        self._replace(charge_id, settled_by_charge_id=settled_by_charge_id)
+        self.commits += 1
 
     def commit(self) -> None:
         self.commits += 1
@@ -268,6 +308,7 @@ def _client(
         secret_key=_SECRET_KEY, publishable_key=_PUBLISHABLE_KEY
     ),
     practice_id: str | None = _PRACTICE_ID,
+    audit: AuditService | None = None,
 ) -> TestClient:
     register_payment_credential_provider(_FixedProvider(credentials))
 
@@ -286,7 +327,8 @@ def _client(
         appointment_types or _FakeAppointmentTypes()
     )
     # The routes MUST audit; the unit suite has no Postgres to write those to.
-    app.dependency_overrides[get_audit_service] = lambda: AuditService(InMemoryAuditRepository())
+    audit_service = audit or AuditService(InMemoryAuditRepository())
+    app.dependency_overrides[get_audit_service] = lambda: audit_service
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -971,8 +1013,8 @@ class TestLedgerRead:
         rows = response.json()
         assert len(rows) == 1
         assert rows[0]["id"] == "c1"
-        # The ledger response is amounts and statuses: no processor customer or
-        # payment-method id, no card data.
+        # The ledger response is amounts, kinds and statuses: no processor
+        # customer or payment-method id, no card data.
         assert set(rows[0]) == {
             "id",
             "amount_cents",
@@ -980,9 +1022,33 @@ class TestLedgerRead:
             "status",
             "status_detail",
             "appointment_id",
+            "kind",
+            "claim_id",
+            "write_off_reason",
+            "note",
+            "settled_by_charge_id",
             "created_at",
             "updated_at",
         }
+
+    def test_a_row_written_before_kinds_existed_reads_as_a_session_charge(self) -> None:
+        payments = _FakePayments()
+        payments.charges.append(
+            PatientCharge(
+                id="c1",
+                patient_id=_PATIENT_ID,
+                amount_cents=15000,
+                currency="usd",
+                status="succeeded",
+                created_by_user_id=_USER_ID,
+                created_at=datetime.now(UTC),
+            )
+        )
+        client = _client(payments, _FakePatients())
+
+        rows = client.get(f"/api/patients/{_PATIENT_ID}/charges").json()
+
+        assert rows[0]["kind"] == "session"
 
     def test_no_card_on_file_is_404(self) -> None:
         client = _client(_FakePayments(card=None), _FakePatients())
@@ -1053,3 +1119,75 @@ class TestChargeAmountPreview:
     def test_unconfigured_deployment_is_503(self) -> None:
         client = _client(_FakePayments(_stored_card()), _FakePatients(), credentials=None)
         assert client.get(f"/api/patients/{_PATIENT_ID}/charge-amount").status_code == 503
+
+
+class TestPatientBalance:
+    """``GET /api/patients/{id}/balance`` — the ledger totalled, never stored."""
+
+    def _ledger(self, *charges: PatientCharge) -> _FakePayments:
+        payments = _FakePayments()
+        payments.charges.extend(charges)
+        return payments
+
+    def _row(self, **overrides: Any) -> PatientCharge:
+        row: dict[str, Any] = {
+            "id": "c1",
+            "patient_id": _PATIENT_ID,
+            "amount_cents": 10_000,
+            "currency": "usd",
+            "status": "pending",
+            "created_by_user_id": _USER_ID,
+            "created_at": datetime.now(UTC),
+        }
+        row.update(overrides)
+        return PatientCharge(**row)
+
+    def test_totals_the_clients_ledger(self) -> None:
+        payments = self._ledger(
+            self._row(id="c1", kind="session", status="pending", amount_cents=10_000),
+            self._row(id="c2", kind="copay", status="succeeded", amount_cents=2_500),
+        )
+        client = _client(payments, _FakePatients())
+
+        response = client.get(f"/api/patients/{_PATIENT_ID}/balance")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["owed_cents"] == 10_000
+        assert body["collected_cents"] == 2_500
+        assert body["balance_cents"] == 7_500
+
+    def test_a_credit_is_reported_as_a_negative_balance(self) -> None:
+        """The practice owes the client; clamping to zero would hide a refund."""
+        payments = self._ledger(
+            self._row(id="c1", kind="copay", status="succeeded", amount_cents=5_000),
+        )
+        client = _client(payments, _FakePatients())
+
+        assert client.get(f"/api/patients/{_PATIENT_ID}/balance").json()["balance_cents"] == -5_000
+
+    def test_a_practice_with_no_card_processor_still_gets_a_balance(self) -> None:
+        """A practice that only bills insurance has owed rows and no Stripe."""
+        payments = self._ledger(
+            self._row(id="c1", kind="patient_resp", status="pending", amount_cents=4_000),
+        )
+        client = _client(payments, _FakePatients(), credentials=None)
+
+        response = client.get(f"/api/patients/{_PATIENT_ID}/balance")
+
+        assert response.status_code == 200
+        assert response.json()["balance_cents"] == 4_000
+
+    def test_foreign_client_is_404(self) -> None:
+        client = _client(_FakePayments(), _FakePatients(visible=False))
+        assert client.get(f"/api/patients/{_PATIENT_ID}/balance").status_code == 404
+
+    def test_the_read_is_audited(self) -> None:
+        payments = self._ledger(self._row(id="c1", kind="session", status="pending"))
+        repository = InMemoryAuditRepository()
+        client = _client(payments, _FakePatients(), audit=AuditService(repository))
+
+        client.get(f"/api/patients/{_PATIENT_ID}/balance")
+
+        logged = repository.list_for_user(_USER_ID)
+        assert [entry.resource_id for entry in logged] == [_PATIENT_ID]

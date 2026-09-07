@@ -506,8 +506,16 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
     updated_at timestamp with time zone,
     fee_cents integer,
     net_cents integer,
+    kind character varying(24) DEFAULT 'session'::character varying NOT NULL,
+    claim_id uuid,
+    write_off_reason character varying(24),
+    note text,
+    settled_by_charge_id character varying(128),
     CONSTRAINT ck_patient_charges_amount_positive CHECK ((amount_cents > 0)),
-    CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[])))
+    CONSTRAINT ck_patient_charges_kind CHECK (((kind)::text = ANY ((ARRAY['session'::character varying, 'copay'::character varying, 'patient_resp'::character varying, 'contractual_adjustment'::character varying, 'write_off'::character varying, 'credit'::character varying])::text[]))),
+    CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[]))),
+    CONSTRAINT ck_patient_charges_write_off_reason CHECK (((write_off_reason IS NULL) OR ((write_off_reason)::text = ANY ((ARRAY['hardship'::character varying, 'small_balance'::character varying, 'courtesy'::character varying, 'error'::character varying])::text[])))),
+    CONSTRAINT ck_patient_charges_write_off_reason_kind CHECK ((((kind)::text = 'write_off'::text) = (write_off_reason IS NOT NULL)))
 );
 
 
@@ -1369,6 +1377,10 @@ CREATE INDEX ix_outcome_measures_session_id ON __TENANT_SCHEMA__.outcome_measure
 
 
 
+CREATE INDEX ix_patient_charges_claim_id ON __TENANT_SCHEMA__.patient_charges USING btree (claim_id) WHERE (claim_id IS NOT NULL);
+
+
+
 CREATE INDEX ix_patient_charges_patient_created ON __TENANT_SCHEMA__.patient_charges USING btree (patient_id, created_at);
 
 
@@ -1608,6 +1620,11 @@ ALTER TABLE ONLY __TENANT_SCHEMA__.claims
 
 ALTER TABLE ONLY __TENANT_SCHEMA__.claims
     ADD CONSTRAINT fk_claims_payer_id_payers FOREIGN KEY (payer_id) REFERENCES __TENANT_SCHEMA__.payers(id) ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY __TENANT_SCHEMA__.patient_charges
+    ADD CONSTRAINT fk_patient_charges_claim_id_claims FOREIGN KEY (claim_id) REFERENCES __TENANT_SCHEMA__.claims(id) ON DELETE SET NULL;
 
 
 
