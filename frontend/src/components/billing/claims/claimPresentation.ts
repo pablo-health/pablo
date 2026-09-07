@@ -9,56 +9,62 @@
  * the clearinghouse has taken the claim: a `validated` claim is queued and
  * has not left the practice, so it reads "Queued to send"; `submitted` is
  * stamped only when the clearinghouse accepted the upload.
+ *
+ * What to do next is keyed by the API's `next_action`, never derived from
+ * the state here — the pipeline knows things the state alone does not, such
+ * as a queued claim whose filing attempt is already in flight.
  */
 
-import type { ClaimDeadlines, ClaimState, DeadlineKind, FrequencyCode } from "@/types/claims"
+import type {
+  ClaimDeadlines,
+  ClaimState,
+  DeadlineKind,
+  FrequencyCode,
+  NextAction,
+} from "@/types/claims"
 
 export type BadgeTone = "neutral" | "info" | "success" | "warning" | "danger"
 
 export interface StatePresentation {
   label: string
   tone: BadgeTone
-  /** What a person does next; empty when the claim needs nothing from anyone. */
-  nextAction: string
   /** The claim needs attention beyond waiting. */
   alert: boolean
 }
 
 const STATES: Record<ClaimState, StatePresentation> = {
-  draft: { label: "Draft", tone: "neutral", nextAction: "Review and file", alert: false },
-  validated: { label: "Queued to send", tone: "info", nextAction: "", alert: false },
-  submitted: { label: "Sent", tone: "info", nextAction: "", alert: false },
-  ch_accepted: {
-    label: "Accepted by clearinghouse",
-    tone: "info",
-    nextAction: "",
-    alert: false,
-  },
-  payer_accepted: { label: "Accepted by payer", tone: "info", nextAction: "", alert: false },
-  paid: { label: "Paid", tone: "success", nextAction: "", alert: false },
-  partial: {
-    label: "Partially paid",
-    tone: "warning",
-    nextAction: "Review the remittance; correct or appeal",
-    alert: true,
-  },
-  denied: {
-    label: "Denied",
-    tone: "danger",
-    nextAction: "Correct and resubmit, or appeal",
-    alert: true,
-  },
-  rejected: { label: "Rejected", tone: "danger", nextAction: "Fix and refile", alert: true },
-  stalled: {
-    label: "Needs attention",
-    tone: "warning",
-    nextAction: "No receipt in time; check with the clearinghouse",
-    alert: true,
-  },
+  draft: { label: "Draft", tone: "neutral", alert: false },
+  validated: { label: "Queued to send", tone: "info", alert: false },
+  submitted: { label: "Sent", tone: "info", alert: false },
+  ch_accepted: { label: "Accepted by clearinghouse", tone: "info", alert: false },
+  payer_accepted: { label: "Accepted by payer", tone: "info", alert: false },
+  paid: { label: "Paid", tone: "success", alert: false },
+  partial: { label: "Partially paid", tone: "warning", alert: true },
+  denied: { label: "Denied", tone: "danger", alert: true },
+  rejected: { label: "Rejected", tone: "danger", alert: true },
+  stalled: { label: "Needs attention", tone: "warning", alert: true },
 }
 
 export function presentState(state: ClaimState): StatePresentation {
   return STATES[state]
+}
+
+const NEXT_ACTIONS: Record<NextAction, string> = {
+  review_and_file: "Review and file",
+  queued_to_send: "Queued to send",
+  sending: "Sending",
+  await_acknowledgment: "Waiting for the clearinghouse to acknowledge it",
+  await_payer: "Waiting for the payer to accept it",
+  await_remittance: "Waiting for the remittance",
+  review_remittance: "Review the remittance; correct or appeal",
+  correct_and_resubmit: "Fix and refile",
+  appeal_or_correct: "Correct and resubmit, or appeal",
+  check_with_clearinghouse: "No receipt in time; check with the clearinghouse",
+}
+
+/** What a person does next, or `null` on a paid claim, which needs nothing. */
+export function presentNextAction(nextAction: NextAction | null): string | null {
+  return nextAction === null ? null : NEXT_ACTIONS[nextAction]
 }
 
 /** What kind of claim this row is, when it is not an original. */

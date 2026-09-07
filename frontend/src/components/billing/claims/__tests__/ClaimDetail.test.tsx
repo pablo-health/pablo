@@ -4,7 +4,8 @@
  * The claim detail's actions, gated by state: a draft is reviewed and
  * filed; a claim that has left the practice is corrected or voided; a
  * queued claim and a void offer neither. Plus the refusal path — a
- * blocking finding disables filing and is listed.
+ * blocking finding disables filing and is listed — the vendor's own
+ * findings, and the status check.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -12,19 +13,22 @@ import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { ApiError } from "@/lib/api/client"
 import { ClaimDetail } from "../ClaimDetail"
-import { claimDetail, hops } from "./claimFixtures"
+import { claimDetail, hops, receipt, VENDOR_FINDING } from "./claimFixtures"
 
 const mockUseClaim = vi.fn()
 const mockValidate = vi.fn()
 const mockCorrect = vi.fn()
 const mockVoid = vi.fn()
+const mockCheckStatus = vi.fn()
 const mockPush = vi.fn()
+let checkStatusPending = false
 
 vi.mock("@/hooks/useClaims", () => ({
   useClaim: (...args: unknown[]) => mockUseClaim(...args),
   useValidateClaim: () => ({ mutateAsync: mockValidate, isPending: false }),
   useCorrectClaim: () => ({ mutateAsync: mockCorrect, isPending: false }),
   useVoidClaim: () => ({ mutateAsync: mockVoid, isPending: false }),
+  useCheckClaimStatus: () => ({ mutateAsync: mockCheckStatus, isPending: checkStatusPending }),
 }))
 
 vi.mock("next/navigation", () => ({
@@ -34,6 +38,7 @@ vi.mock("next/navigation", () => ({
 describe("ClaimDetail", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    checkStatusPending = false
   })
 
   function renderState(overrides: Parameters<typeof claimDetail>[0]) {
@@ -159,5 +164,79 @@ describe("ClaimDetail", () => {
     renderState({ state: "payer_accepted" })
     expect(screen.getAllByText("Pending").length).toBeGreaterThan(0)
     expect(screen.getByText("Pending adjudication")).toBeInTheDocument()
+  })
+
+  it("builds the timeline from the receipt ledger, not the derived hops", () => {
+    renderState({
+      state: "ch_accepted",
+      receipts: [
+        receipt("submitted", { id: "r-1", from_state: "validated", to_state: "submitted" }),
+        receipt("acknowledged", { id: "r-2", from_state: "submitted", to_state: "submitted" }),
+      ],
+    })
+    expect(screen.getAllByTestId("claim-hop")).toHaveLength(1)
+    expect(screen.getAllByTestId("claim-note")).toHaveLength(1)
+  })
+
+  it("says what to do next in the API's words", () => {
+    renderState({ state: "stalled", next_action: "check_with_clearinghouse" })
+    expect(screen.getByTestId("claim-next-action")).toHaveTextContent(
+      "No receipt in time; check with the clearinghouse",
+    )
+  })
+
+  it("says nothing about a next step on a paid claim", () => {
+    renderState({ state: "paid", next_action: null })
+    expect(screen.queryByTestId("claim-next-action")).not.toBeInTheDocument()
+  })
+
+  it("keeps the clearinghouse's own findings apart from the scrub's", () => {
+    renderState({
+      state: "rejected",
+      findings: [
+        {
+          severity: "warning",
+          code: "pos_missing",
+          message: "No place of service on the claim.",
+          field: "place_of_service",
+        },
+      ],
+      submission_findings: [VENDOR_FINDING],
+    })
+    const vendor = screen.getByTestId("claim-submission-findings")
+    expect(vendor).toHaveTextContent("From the clearinghouse / payer")
+    expect(vendor).toHaveTextContent(VENDOR_FINDING.description)
+    expect(screen.getByTestId("claim-findings")).not.toHaveTextContent(VENDOR_FINDING.description)
+  })
+
+  it("checks the status on demand and reads the claim back from the answer", async () => {
+    mockCheckStatus.mockResolvedValue(claimDetail({ state: "payer_accepted" }))
+    renderState({ state: "submitted" })
+    await userEvent.click(screen.getByTestId("check-status"))
+    await waitFor(() => expect(mockCheckStatus).toHaveBeenCalledWith({ claimId: "claim-1" }))
+  })
+
+  it("disables the status check while it is in flight", () => {
+    checkStatusPending = true
+    renderState({ state: "submitted" })
+    expect(screen.getByTestId("check-status")).toBeDisabled()
+  })
+
+  it("says next to the claim when the clearinghouse cannot be asked", async () => {
+    mockCheckStatus.mockRejectedValue(
+      new ApiError(
+        "UNKNOWN_ERROR",
+        "The practice has no clearinghouse configured.",
+        undefined,
+        503,
+      ),
+    )
+    renderState({ state: "submitted" })
+    await userEvent.click(screen.getByTestId("check-status"))
+    await waitFor(() =>
+      expect(screen.getByTestId("clearinghouse-unavailable")).toHaveTextContent(
+        "The practice has no clearinghouse configured.",
+      ),
+    )
   })
 })
