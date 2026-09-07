@@ -15,7 +15,7 @@ constraint keeps it a positive amount of money for the same reason the
 charge ledger does: nothing collects zero.
 
 Revision ID: a1f6c30b9d47
-Revises: e4a7b2c9d013
+Revises: b8c1d47e2a95
 Create Date: 2026-09-07
 """
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 revision: str = "a1f6c30b9d47"
-down_revision: str | Sequence[str] | None = "e4a7b2c9d013"
+down_revision: str | Sequence[str] | None = "b8c1d47e2a95"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
