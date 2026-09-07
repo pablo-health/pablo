@@ -34,9 +34,12 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
+  e2e:
+    uses: ./.github/workflows/e2e.yml
+
   build-backend:
     name: Build Backend
-    needs: [ci]
+    needs: [ci, e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -76,7 +79,7 @@ jobs:
 
   build-frontend:
     name: Build Frontend
-    needs: [ci]
+    needs: [ci, e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -113,7 +116,7 @@ jobs:
 
   build-pentest:
     name: Build Pentest Image
-    needs: [ci]
+    needs: [ci, e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
