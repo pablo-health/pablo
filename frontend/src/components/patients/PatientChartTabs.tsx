@@ -11,6 +11,7 @@ import {
   Pill,
   ShieldCheck,
   Stethoscope,
+  Wallet,
 } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -20,6 +21,7 @@ import { OutcomeMeasuresTab } from "@/components/outcomeMeasures/OutcomeMeasures
 import { DiagnosesTab } from "@/components/diagnoses/DiagnosesTab"
 import { MedicationsTab } from "@/components/medications/MedicationsTab"
 import { PaymentsTab } from "@/components/payments/PaymentsTab"
+import { BalanceTab } from "@/components/payments/BalanceTab"
 import { InsuranceCard } from "@/components/insurance/InsuranceCard"
 import { usePatientNotes } from "@/hooks/useNotes"
 import { usePatientDocuments } from "@/hooks/usePatientDocuments"
@@ -178,6 +180,10 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
             Payments
             <CountBadge count={chargeCount} />
           </TabsTrigger>
+          <TabsTrigger value="balance">
+            <Wallet className="h-4 w-4" />
+            Balance
+          </TabsTrigger>
           <TabsTrigger value="insurance">
             <ShieldCheck className="h-4 w-4" />
             Insurance
@@ -200,6 +206,9 @@ export function PatientChartTabs({ patientId }: PatientChartTabsProps) {
         </TabsContent>
         <TabsContent value="payments" className="pt-4">
           <PaymentsTab patientId={patientId} />
+        </TabsContent>
+        <TabsContent value="balance" className="pt-4">
+          <BalanceTab patientId={patientId} />
         </TabsContent>
         <TabsContent value="insurance" className="pt-4">
           <InsuranceCard patientId={patientId} />

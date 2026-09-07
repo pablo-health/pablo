@@ -8,7 +8,8 @@
  * side's job and it happens once, here.
  */
 
-import type { CardOnFileResponse, ChargeResponse } from "@/types/payments"
+import { formatCents } from "@/lib/money"
+import type { CardOnFileResponse, ChargeKind, ChargeResponse } from "@/types/payments"
 
 /** `visa` -> `Visa`, `amex` -> `Amex`; unknown brands pass through capitalised. */
 export function formatCardBrand(brand: string | null): string {
@@ -79,4 +80,47 @@ export function formatChargeDate(value: string): string {
     day: "numeric",
     year: "numeric",
   })
+}
+
+/**
+ * What a ledger row is, in words a clinician uses.
+ *
+ * A row's `kind` is a wire token; nobody says "patient_resp" out loud. An
+ * unrecognised kind falls back to the token rather than to a friendly guess,
+ * so a kind added on the server shows up as itself instead of silently
+ * reading as something it is not.
+ */
+const CHARGE_KIND_LABELS: Record<ChargeKind, string> = {
+  session: "Session charge",
+  copay: "Copay",
+  payment: "Payment",
+  patient_resp: "Client responsibility",
+  contractual_adjustment: "Insurance adjustment",
+  write_off: "Write-off",
+  credit: "Credit",
+}
+
+export function chargeKindLabel(kind: string): string {
+  return CHARGE_KIND_LABELS[kind as ChargeKind] ?? kind
+}
+
+/**
+ * The chart header's balance line, or `null` when there is nothing to say.
+ *
+ * Three states, deliberately distinguished:
+ *
+ * * owes something — "Owes $62.00", the figure to act on;
+ * * owes nothing — `null`, and the header shows no line at all. A settled
+ *   client is the ordinary case, and "Owes $0.00" beside every name is noise
+ *   that trains people to stop reading the line that matters;
+ * * a negative balance — "Credit $10.00". The practice owes it back, and
+ *   rendering it as zero would hide a refund.
+ */
+export function formatBalanceLine(
+  balanceCents: number,
+  currency = "usd",
+): string | null {
+  if (balanceCents === 0) return null
+  if (balanceCents < 0) return `Credit ${formatCents(-balanceCents, currency)}`
+  return `Owes ${formatCents(balanceCents, currency)}`
 }
