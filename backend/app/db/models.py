@@ -1676,18 +1676,25 @@ DEFAULT_CHARGE_CURRENCY = "usd"
 #:
 #: ``copay`` is the client's share taken at the visit. ``patient_resp`` is
 #: what the payer's remittance says the client owes once it has adjudicated.
+#: ``payment`` is money collected against a bill somebody else raised — a
+#: client paying down a balance. It is deliberately distinct from ``session``:
+#: a session charge is itself a bill, so settling a ``patient_resp`` with one
+#: would re-bill the very amount it was paying off.
 #: ``contractual_adjustment`` is the gap between the practice's rate and the
 #: payer's allowed amount — a participating practice agrees never to bill it,
 #: so it is recorded to explain the arithmetic and is owed by nobody.
 #: ``write_off`` is money the practice decides not to collect.  ``credit`` is
 #: money held on the client's behalf, most often an over-collected copay.
 #:
-#: Only ``session`` and ``patient_resp`` are ever OWED; only ``copay`` and
-#: ``session`` are ever COLLECTED. Nothing here encodes that — the arithmetic
-#: lives in one place, :func:`app.payments.balance.patient_balance`.
+#: Only ``session`` and ``patient_resp`` are ever OWED; ``session``, ``copay``
+#: and ``payment`` are what COLLECT. ``session`` is both, which is exactly
+#: what makes a paid self-pay visit net to zero. Nothing here encodes that —
+#: the arithmetic lives in one place,
+#: :func:`app.payments.balance.patient_balance`.
 CHARGE_KINDS: tuple[str, ...] = (
     "session",
     "copay",
+    "payment",
     "patient_resp",
     "contractual_adjustment",
     "write_off",

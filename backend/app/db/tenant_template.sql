@@ -512,7 +512,7 @@ CREATE TABLE __TENANT_SCHEMA__.patient_charges (
     note text,
     settled_by_charge_id character varying(128),
     CONSTRAINT ck_patient_charges_amount_positive CHECK ((amount_cents > 0)),
-    CONSTRAINT ck_patient_charges_kind CHECK (((kind)::text = ANY ((ARRAY['session'::character varying, 'copay'::character varying, 'patient_resp'::character varying, 'contractual_adjustment'::character varying, 'write_off'::character varying, 'credit'::character varying])::text[]))),
+    CONSTRAINT ck_patient_charges_kind CHECK (((kind)::text = ANY ((ARRAY['session'::character varying, 'copay'::character varying, 'payment'::character varying, 'patient_resp'::character varying, 'contractual_adjustment'::character varying, 'write_off'::character varying, 'credit'::character varying])::text[]))),
     CONSTRAINT ck_patient_charges_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying, 'refunded'::character varying, 'disputed'::character varying, 'dispute_lost'::character varying])::text[]))),
     CONSTRAINT ck_patient_charges_write_off_reason CHECK (((write_off_reason IS NULL) OR ((write_off_reason)::text = ANY ((ARRAY['hardship'::character varying, 'small_balance'::character varying, 'courtesy'::character varying, 'error'::character varying])::text[])))),
     CONSTRAINT ck_patient_charges_write_off_reason_kind CHECK ((((kind)::text = 'write_off'::text) = (write_off_reason IS NOT NULL)))

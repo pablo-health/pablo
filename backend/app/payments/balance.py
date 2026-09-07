@@ -11,15 +11,27 @@ thing an auditor reads anyway.
 
 The rules, once, here:
 
-* **Owed** is the unpaid part of what the client was actually billed for:
-  ``session`` rows (the full-rate visit charge) and ``patient_resp`` rows
-  (what the payer said the client owes after adjudication). A row counts as
-  owed while it has not succeeded and has not been settled by another charge.
-* **Collected** is money that actually arrived: ``session`` and ``copay``
-  rows in status ``succeeded``. A ``refunded``, ``failed`` or ``dispute_lost``
-  row collected nothing; a ``disputed`` row is money the practice is holding
-  but may lose, and it counts as collected until the dispute resolves, which
-  is what ``dispute_lost`` is for.
+* **Owed** is what the client was billed for, whether or not it has been
+  paid: ``session`` rows (the full-rate visit charge) and ``patient_resp``
+  rows (what the payer said the client owes after adjudication). A bill stays
+  a bill; a payment CANCELS it rather than erasing it.
+
+  That distinction is the whole design, and getting it backwards is the bug
+  this module had first. If a paid bill stopped being owed, a ``session`` row
+  — which is both the bill and its own payment attempt — would lose its owed
+  side the moment it succeeded while keeping its collected side, and every
+  client who had paid would read as being owed a refund. Keeping both sides
+  makes a paid session net to exactly zero, which is what it is.
+* **Collected** is money that actually arrived: ``session``, ``copay`` and
+  ``payment`` rows in a status where the practice is holding the funds. A
+  ``refunded``, ``failed`` or ``dispute_lost`` row collected nothing; a
+  ``disputed`` row is money the practice is holding but may lose, and it
+  counts as collected until the dispute resolves, which is what
+  ``dispute_lost`` is for.
+* ``payment`` exists so that money can be collected against a bill somebody
+  else raised. A ``session`` charge cannot do that job: it is itself a bill,
+  so using one to settle a ``patient_resp`` would re-bill the very amount it
+  was paying off.
 * **Written off** is ``write_off`` rows. They reduce the balance without
   anyone paying.
 * ``contractual_adjustment`` is owed by nobody — a participating practice
@@ -46,11 +58,12 @@ if TYPE_CHECKING:
 
     from ..models.payments import PatientCharge
 
-#: Kinds that put money on the client's tab.
+#: Kinds that put money on the client's tab. Owed regardless of status: a
+#: bill is a bill until it is paid off, written off or credited away.
 _OWED_KINDS = frozenset({"session", "patient_resp"})
 
 #: Kinds that represent money the client actually handed over.
-_COLLECTED_KINDS = frozenset({"session", "copay"})
+_COLLECTED_KINDS = frozenset({"session", "copay", "payment"})
 
 #: Statuses in which money is in the practice's hands. ``disputed`` is here
 #: deliberately: the funds are held pending the cardholder's bank, and the
@@ -110,17 +123,16 @@ class _Bucket:
 
 
 def _is_owed(charge: PatientCharge) -> bool:
-    """An owed row is one that was billed and has not been paid or settled.
+    """A bill, whether or not it has since been paid.
 
-    ``settled_by_charge_id`` is what lets a ``patient_resp`` row stop being
-    owed when a separate charge collects it: the money arrived on a different
-    row, so without this the same dollar would be owed and collected at once.
+    Deliberately does NOT consult ``status`` or ``settled_by_charge_id``.
+    Both were tried and both were wrong for the same reason: they removed the
+    bill while leaving the payment, so the balance went negative by the amount
+    collected instead of to zero. Payment is subtracted by the collected side;
+    settlement is provenance for the statement (which charge paid which bill),
+    not an input to the arithmetic.
     """
-    if charge.kind not in _OWED_KINDS:
-        return False
-    if charge.settled_by_charge_id is not None:
-        return False
-    return charge.status not in _MONEY_ARRIVED
+    return charge.kind in _OWED_KINDS
 
 
 def _is_collected(charge: PatientCharge) -> bool:
