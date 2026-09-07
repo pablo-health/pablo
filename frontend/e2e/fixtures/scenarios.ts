@@ -83,10 +83,38 @@ export async function giveSessionWithCodes(
   })
 }
 
+export interface AvailabilityRule {
+  id: string
+  rule_type: string
+  params: Record<string, unknown>
+}
+
+/**
+ * Working hours on one weekday (0 = Monday, matching the engine's
+ * `date.weekday()`), which is what makes free slots exist at all: a
+ * clinician with no rules reads as "availability not set up" rather than
+ * "no openings".
+ *
+ * Rules accumulate, and two identical ones would produce every slot twice,
+ * so a spec that seeds several should give each its own weekday.
+ */
+export async function giveWorkingHours(
+  api: ApiClient,
+  dayOfWeek: number,
+  hours: { start?: string; end?: string } = {},
+): Promise<AvailabilityRule> {
+  return api.post<AvailabilityRule>("/api/availability/rules", {
+    rule_type: "working_hours",
+    params: { day_of_week: dayOfWeek, start: hours.start ?? "09:00", end: hours.end ?? "17:00" },
+  })
+}
+
 export interface BookingLink {
   id: string
   slug: string
+  host_name: string
   title: string
+  duration_minutes: number
   is_active: boolean
 }
 
