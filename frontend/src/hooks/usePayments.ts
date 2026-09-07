@@ -3,6 +3,7 @@
 "use client"
 
 import type {
+  BalanceResponse,
   CardOnFileResponse,
   CardSetupResponse,
   ChargeAmountResponse,
@@ -10,10 +11,12 @@ import type {
   CreateChargeRequest,
 } from "@/types/payments"
 import {
+  chargeBalance,
   completeCardSetup,
   createCharge,
   fetchCardOnFile,
   fetchChargeAmount,
+  fetchPatientBalance,
   listCharges,
   startCardSetup,
 } from "@/lib/api/payments"
@@ -63,6 +66,21 @@ export function usePatientCharges(patientId: string | undefined, token?: string)
 }
 
 /**
+ * What the client owes, totalled on the server from their ledger.
+ *
+ * Retried, unlike the card reads beside it: this route is not gated on the
+ * card processor, so a failure here is a real failure rather than the settled
+ * fact that a deployment takes no cards.
+ */
+export function usePatientBalance(patientId: string | undefined, token?: string) {
+  return useAuthQuery<BalanceResponse>({
+    queryKey: queryKeys.payments.balance(patientId ?? ""),
+    queryFn: () => fetchPatientBalance(patientId!, token),
+    enabled: !!patientId,
+  })
+}
+
+/**
  * Mint a SetupIntent and the Stripe.js configuration that goes with it.
  *
  * Invalidates nothing: no card exists yet, and one only will once the browser
@@ -100,6 +118,30 @@ export function useCreateCharge(token?: string) {
     { patientId: string; data: CreateChargeRequest }
   >({
     mutationFn: ({ patientId, data }) => createCharge(patientId, data, token),
-    invalidateKeys: ({ patientId }) => [queryKeys.payments.charges(patientId)],
+    invalidateKeys: ({ patientId }) => [
+      queryKeys.payments.charges(patientId),
+      queryKeys.payments.balance(patientId),
+    ],
+  })
+}
+
+/**
+ * Charge the card on file for the whole balance.
+ *
+ * Invalidates the balance as well as the ledger: the point of the action is
+ * that the figure in the chart header changes, and leaving it stale would
+ * show the clinician a debt they have just collected.
+ *
+ * A decline resolves with a `failed` row rather than rejecting, exactly as
+ * `useCreateCharge` does, so callers read `data.status`.
+ */
+export function useChargeBalance(token?: string) {
+  return useAuthMutation<ChargeResponse, { patientId: string }>({
+    mutationFn: ({ patientId }) => chargeBalance(patientId, token),
+    invalidateKeys: ({ patientId }) => [
+      queryKeys.payments.charges(patientId),
+      queryKeys.payments.balance(patientId),
+      queryKeys.billing.balances(),
+    ],
   })
 }

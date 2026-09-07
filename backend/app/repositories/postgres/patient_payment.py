@@ -230,6 +230,16 @@ class PostgresPatientPaymentRepository(PatientPaymentRepository):
         )
         return [_to_charge(row) for row in rows]
 
+    def list_all_charges(self) -> list[PatientCharge]:
+        rows = (
+            self._session.execute(
+                select(PatientChargeRow).order_by(PatientChargeRow.created_at, PatientChargeRow.id)
+            )
+            .scalars()
+            .all()
+        )
+        return [_to_charge(row) for row in rows]
+
     def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
         if not appointment_ids:
             return set()

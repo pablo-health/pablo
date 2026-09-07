@@ -146,6 +146,21 @@ class PatientPaymentRepository(ABC):
         """This client's ledger, newest first."""
 
     @abstractmethod
+    def list_all_charges(self) -> list[PatientCharge]:
+        """Every ledger row the caller can see, oldest first.
+
+        Backs the practice-wide balances view, which has to total each
+        client's ledger to know which clients have a balance at all — there
+        is no stored figure to select on, by design.
+
+        No client filter and no clinician argument: the request's session is
+        already scoped to one practice's schema, and the ``has_patient_access``
+        row policy hides the clients this clinician holds no grant on. Adding
+        a predicate here would put a second, drifting copy of that rule beside
+        the one the database enforces.
+        """
+
+    @abstractmethod
     def succeeded_appointment_ids(self, appointment_ids: list[str]) -> set[str]:
         """Which of these appointments have at least one succeeded charge.
 

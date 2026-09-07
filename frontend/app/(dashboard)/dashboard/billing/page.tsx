@@ -2,6 +2,7 @@
 
 "use client"
 
+import { BalancesView } from "@/components/billing/BalancesView"
 import { BillerExport } from "@/components/billing/BillerExport"
 import { BillingSetupGate } from "@/components/billing/BillingSetupGate"
 import { ClaimsTracker } from "@/components/billing/claims/ClaimsTracker"
@@ -28,6 +29,9 @@ export default function BillingPage() {
             <TabsTrigger value="unbilled" data-testid="billing-tab-unbilled">
               Unbilled
             </TabsTrigger>
+            <TabsTrigger value="balances" data-testid="billing-tab-balances">
+              Balances
+            </TabsTrigger>
             <TabsTrigger value="claims" data-testid="billing-tab-claims">
               Claims
             </TabsTrigger>
@@ -38,6 +42,9 @@ export default function BillingPage() {
           <TabsContent value="unbilled" className="space-y-6">
             <UnbilledQueue />
             <BillerExport />
+          </TabsContent>
+          <TabsContent value="balances">
+            <BalancesView />
           </TabsContent>
           <TabsContent value="claims">
             <ClaimsTracker />

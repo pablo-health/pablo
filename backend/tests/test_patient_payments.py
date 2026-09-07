@@ -1191,3 +1191,164 @@ class TestPatientBalance:
 
         logged = repository.list_for_user(_USER_ID)
         assert [entry.resource_id for entry in logged] == [_PATIENT_ID]
+
+
+class TestChargeBalance:
+    """``POST /api/patients/{id}/charge-balance`` — collect the whole balance."""
+
+    def _ledger(self, *charges: PatientCharge) -> _FakePayments:
+        payments = _FakePayments(_stored_card())
+        payments.charges.extend(charges)
+        return payments
+
+    def _row(self, **overrides: Any) -> PatientCharge:
+        row: dict[str, Any] = {
+            "id": "c1",
+            "patient_id": _PATIENT_ID,
+            "amount_cents": 4_000,
+            "currency": "usd",
+            "status": "pending",
+            "kind": "patient_resp",
+            "created_by_user_id": _USER_ID,
+            "created_at": datetime.now(UTC),
+        }
+        row.update(overrides)
+        return PatientCharge(**row)
+
+    def _post(self, client: TestClient) -> Any:
+        return client.post(f"/api/patients/{_PATIENT_ID}/charge-balance")
+
+    def test_it_charges_what_the_ledger_says_is_owed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The amount is read here, not sent: a figure the browser saw before a
+        remittance landed must not be the figure that gets charged."""
+        payments = self._ledger(self._row(amount_cents=6_200))
+        client = _client(payments, _FakePatients())
+        seen = _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        response = self._post(client)
+
+        assert response.status_code == 200
+        assert response.json()["amount_cents"] == 6_200
+        assert _create_call(seen)["data"]["amount"] == 6_200
+
+    def test_the_row_is_a_payment_not_a_session_charge(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A session row is itself a bill, so paying a balance with one would
+        re-bill the very amount it settles — which is what ``payment`` is for."""
+        payments = self._ledger(self._row())
+        client = _client(payments, _FakePatients())
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        assert self._post(client).json()["kind"] == "payment"
+
+    def test_the_balance_reads_zero_afterwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The point of the whole action, checked through the balance route so
+        it is the real arithmetic and not a restatement of it."""
+        payments = self._ledger(self._row(amount_cents=4_000))
+        client = _client(payments, _FakePatients())
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        assert client.get(f"/api/patients/{_PATIENT_ID}/balance").json()["balance_cents"] == 4_000
+
+        self._post(client)
+
+        assert client.get(f"/api/patients/{_PATIENT_ID}/balance").json()["balance_cents"] == 0
+
+    def test_it_stamps_the_bills_it_cleared(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Provenance for the statement: which payment cleared which bill."""
+        payments = self._ledger(self._row(id="resp-1"))
+        client = _client(payments, _FakePatients())
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        payment_id = self._post(client).json()["id"]
+
+        cleared = next(c for c in payments.charges if c.id == "resp-1")
+        assert cleared.settled_by_charge_id == payment_id
+
+    def test_a_decline_stamps_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No money arrived, so no bill was cleared — and the balance stands."""
+        payments = self._ledger(self._row(id="resp-1"))
+        client = _client(payments, _FakePatients())
+        _charge_transport(
+            monkeypatch,
+            402,
+            {"error": {"decline_code": "insufficient_funds", "payment_intent": {"id": _PI_ID}}},
+        )
+
+        response = self._post(client)
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "failed"
+        assert next(c for c in payments.charges if c.id == "resp-1").settled_by_charge_id is None
+        assert client.get(f"/api/patients/{_PATIENT_ID}/balance").json()["balance_cents"] == 4_000
+
+    def test_a_session_row_is_not_stamped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """It is its own payment attempt, so "which charge paid it" is already
+        answered by its own status; a declined one is retried from the note."""
+        payments = self._ledger(self._row(id="sess-1", kind="session", status="failed"))
+        client = _client(payments, _FakePatients())
+        _charge_transport(monkeypatch, 200, {"id": _PI_ID, "status": "succeeded"})
+
+        self._post(client)
+
+        assert next(c for c in payments.charges if c.id == "sess-1").settled_by_charge_id is None
+
+    def test_nothing_owed_is_409(self) -> None:
+        """Which is also what makes a double-clicked button safe: the second
+        click finds a zero balance rather than taking the money twice."""
+        payments = self._ledger()
+        client = _client(payments, _FakePatients())
+
+        response = self._post(client)
+
+        assert response.status_code == 409
+        assert payments.charges == []
+
+    def test_a_credit_balance_is_409_rather_than_a_negative_charge(self) -> None:
+        payments = self._ledger(self._row(kind="credit", status="succeeded"))
+        client = _client(payments, _FakePatients())
+
+        assert self._post(client).status_code == 409
+
+    def test_an_implausible_balance_is_refused(self) -> None:
+        """The same blast-radius cap the per-charge route applies, which a
+        balance built from many rows can reach with nobody typing it."""
+        payments = self._ledger(self._row(amount_cents=1_000_001))
+        client = _client(payments, _FakePatients())
+
+        assert self._post(client).status_code == 422
+        # Refused before anything was staged: the only row is the bill itself.
+        assert [row.id for row in payments.charges] == ["c1"]
+
+    def test_no_card_on_file_is_409(self) -> None:
+        payments = _FakePayments(card=None)
+        payments.charges.append(self._row())
+        client = _client(payments, _FakePatients())
+
+        assert self._post(client).status_code == 409
+
+    def test_foreign_client_is_404(self) -> None:
+        client = _client(self._ledger(self._row()), _FakePatients(visible=False))
+
+        assert self._post(client).status_code == 404
+
+    def test_the_charge_is_audited_before_the_processor_is_called(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The § 164.312(b) event is "this clinician asked to charge this
+        client", true the moment the row exists — not only when it succeeds."""
+        payments = self._ledger(self._row())
+        repository = InMemoryAuditRepository()
+        client = _client(payments, _FakePatients(), audit=AuditService(repository))
+        _charge_transport(
+            monkeypatch,
+            402,
+            {"error": {"decline_code": "card_declined", "payment_intent": {"id": _PI_ID}}},
+        )
+
+        self._post(client)
+
+        logged = repository.list_for_user(_USER_ID)
+        assert [entry.action for entry in logged] == ["patient_charge_created"]
+        assert logged[0].resource_id == _PATIENT_ID

@@ -1,11 +1,18 @@
 // Copyright (c) 2026 Pablo Health, LLC. Licensed under AGPL-3.0.
 
 /**
- * PatientSummary tests — the eligibility badge in the chart header.
+ * PatientSummary tests — the badges in the chart header.
  *
- * The badge is seen before the first session, so it lives beside the name:
- * present when a plan is on file, absent when there is none (no plan is not
- * a coverage status), and never worded as a payment guarantee.
+ * Both are things a clinician needs BEFORE the session rather than after
+ * hunting for them on a tab, so both live beside the name.
+ *
+ * The eligibility badge is present when a plan is on file, absent when there
+ * is none (no plan is not a coverage status), and never worded as a payment
+ * guarantee. The balance line says what the client owes, says "Credit" rather
+ * than a negative number when the practice owes them, and says nothing at all
+ * when the account is settled — which is the ordinary case, and "Owes $0.00"
+ * beside every name is noise that trains people to stop reading the line that
+ * matters.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest"
@@ -15,10 +22,29 @@ import { PatientSummary } from "../PatientSummary"
 import type { PatientResponse } from "@/types/patients"
 
 const mockUsePatientCoverage = vi.fn()
+const mockUsePatientBalance = vi.fn()
 
 vi.mock("@/hooks/useCoverage", () => ({
   usePatientCoverage: (...args: unknown[]) => mockUsePatientCoverage(...args),
 }))
+
+vi.mock("@/hooks/usePayments", () => ({
+  usePatientBalance: (...args: unknown[]) => mockUsePatientBalance(...args),
+}))
+
+function balanceOf(balanceCents: number) {
+  return {
+    data: {
+      owed_cents: Math.max(balanceCents, 0),
+      collected_cents: 0,
+      written_off_cents: 0,
+      adjusted_cents: 0,
+      credited_cents: Math.max(-balanceCents, 0),
+      balance_cents: balanceCents,
+      by_visit: [],
+    },
+  }
+}
 
 const PATIENT = {
   id: "patient-1",
@@ -37,6 +63,7 @@ const PATIENT = {
 describe("PatientSummary", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUsePatientBalance.mockReturnValue({ data: undefined })
   })
 
   it("shows the plan's last answer beside the name", () => {
@@ -72,5 +99,45 @@ describe("PatientSummary", () => {
     render(<PatientSummary patient={PATIENT} />)
 
     expect(screen.queryByTestId("eligibility-badge")).not.toBeInTheDocument()
+  })
+
+  describe("the balance line", () => {
+    beforeEach(() => {
+      mockUsePatientCoverage.mockReturnValue({ data: null })
+    })
+
+    it("says what the client owes", () => {
+      mockUsePatientBalance.mockReturnValue(balanceOf(6200))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.getByTestId("chart-balance")).toHaveTextContent("Owes $62.00")
+    })
+
+    it("says Credit rather than a negative number when the practice owes", () => {
+      mockUsePatientBalance.mockReturnValue(balanceOf(-1000))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      const badge = screen.getByTestId("chart-balance")
+      expect(badge).toHaveTextContent("Credit $10.00")
+      expect(badge).not.toHaveTextContent("-$")
+    })
+
+    it("shows no line at all when the account is settled", () => {
+      mockUsePatientBalance.mockReturnValue(balanceOf(0))
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.queryByTestId("chart-balance")).not.toBeInTheDocument()
+    })
+
+    it("shows no line while the balance is still loading", () => {
+      mockUsePatientBalance.mockReturnValue({ data: undefined })
+
+      render(<PatientSummary patient={PATIENT} />)
+
+      expect(screen.queryByTestId("chart-balance")).not.toBeInTheDocument()
+    })
   })
 })
