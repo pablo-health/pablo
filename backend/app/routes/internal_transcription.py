@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from ..models.session import TherapySession
+    from ..repositories.session import TherapySessionRepository
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,58 @@ def _record_transcript_upload_audit(session: TherapySession, user_id: str) -> No
         )
 
 
+def _finish_without_transcript(
+    session: TherapySession,
+    session_repo: TherapySessionRepository,
+    standalone_db: Any,
+) -> dict[str, str]:
+    """Resolve a session whose recording produced no speech.
+
+    A silent recording, or one where nothing was captured, is an outcome
+    rather than a fault. The empty string used to reach
+    ``UploadTranscriptToSessionRequest``, whose ``content`` requires at least
+    one character, and the ValidationError escaped as a 500 — which Cloud
+    Tasks retried, turning one silent recording into a burst of server errors
+    while the session sat unresolved.
+
+    Ends the session terminally with a reason the clinician can read, and
+    returns the success shape so the queue stops re-driving it. The caller
+    returns immediately, which is also what keeps the SOAP worker unqueued:
+    there is nothing to generate a note from.
+    """
+    logger.info(
+        "Session %s produced an empty transcript; finishing without a note",
+        session.id,
+    )
+    session.status = SessionStatus.FAILED
+    session.error = "No speech was detected in this recording."
+    session_repo.update(session)
+    if standalone_db:
+        standalone_db.commit()
+    return {
+        "id": session.id,
+        "status": session.status,
+        "message": "Transcript was empty; nothing to generate.",
+    }
+
+
+def _advance_to_recording_complete(
+    session: TherapySession, session_repo: TherapySessionRepository
+) -> None:
+    """AssemblyAI completes while the session is still TRANSCRIBING, but
+    ``prepare_transcript_session_for_generation`` requires
+    recording_complete/failed — so advance it first."""
+    if session.status == SessionStatus.TRANSCRIBING:
+        session.status = SessionStatus.RECORDING_COMPLETE
+        session_repo.update(session)
+    elif session.status != SessionStatus.FAILED:
+        logger.warning(
+            "Session %s in unexpected status %s (expected transcribing); proceeding",
+            session.id,
+            session.status,
+        )
+
+
 def process_transcription_result(
     *,
     session_id: str,
@@ -270,6 +323,17 @@ def process_transcription_result(
                 "message": "Transcript already processed.",
             }
 
+        # A transcript with nothing in it is a real outcome — a silent
+        # recording, or one where no speech was captured — not a fault to
+        # raise on. UploadTranscriptToSessionRequest requires at least one
+        # character, so an empty string reached pydantic and the
+        # ValidationError escaped as a 500. Cloud Tasks then retried it, so a
+        # single silent recording produced a burst of server errors while the
+        # session sat unresolved. Resolve it here instead, terminally, and
+        # return the success shape so the queue stops re-driving it.
+        if not transcript_content.strip():
+            return _finish_without_transcript(session, session_repo, standalone_db)
+
         # Generation already handed off (a retry, or the second AssemblyAI
         # channel completing right behind the first). The transcript is
         # persisted and the session is PROCESSING; don't re-persist (that
@@ -281,18 +345,7 @@ def process_transcription_result(
                 session.id,
             )
         else:
-            # AssemblyAI completes while the session is still TRANSCRIBING;
-            # prepare_transcript_session_for_generation requires
-            # recording_complete/failed, so advance it first.
-            if session.status == SessionStatus.TRANSCRIBING:
-                session.status = SessionStatus.RECORDING_COMPLETE
-                session_repo.update(session)
-            elif session.status != SessionStatus.FAILED:
-                logger.warning(
-                    "Session %s in unexpected status %s (expected transcribing); proceeding",
-                    session.id,
-                    session.status,
-                )
+            _advance_to_recording_complete(session, session_repo)
 
             transcript_request = UploadTranscriptToSessionRequest(
                 format=transcript_format,

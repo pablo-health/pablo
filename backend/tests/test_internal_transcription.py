@@ -818,3 +818,66 @@ class TestDeleteStagedSpeechObjects:
         assert "audio/s1/therapist.pcm" not in logged
         assert "audio/s1/client.pcm" not in logged
         assert mock_logger.warning.call_count == 2
+
+
+class TestEmptyTranscript:
+    """A recording with no speech in it is an outcome, not a fault.
+
+    The empty string used to reach UploadTranscriptToSessionRequest, whose
+    content field requires a character; the ValidationError escaped as a 500
+    and Cloud Tasks retried it, so one silent recording produced a burst of
+    server errors while the session stayed unresolved.
+    """
+
+    @staticmethod
+    def _run(content: str) -> tuple[dict[str, str], MagicMock, MagicMock, MagicMock]:
+        session = types.SimpleNamespace(id="s1", status=it.SessionStatus.TRANSCRIBING, error=None)
+        session_repo = MagicMock()
+        session_repo.get.return_value = session
+        session_service = MagicMock()
+        db = MagicMock()
+
+        with (
+            patch.object(it, "get_settings", return_value=MagicMock()),
+            patch.object(it, "_resolve_schema_for_user", return_value=None),
+            patch.object(it, "create_standalone_session", return_value=db),
+            patch.object(it, "publish_request_session", return_value=object()),
+            patch.object(it, "restore_request_session"),
+            patch.object(it, "arm_current_user_id"),
+            patch.object(it, "get_session_repository", return_value=session_repo),
+            patch.object(it, "get_patient_repository"),
+            patch.object(it, "get_notes_repository"),
+            patch.object(it, "RegistryNoteGenerationService"),
+            patch.object(it, "NoteService"),
+            patch.object(it, "SessionService", return_value=session_service),
+            patch.object(it, "_record_transcript_upload_audit"),
+            patch.object(it, "_meter_recorded_session"),
+            patch.object(it, "enqueue_cloud_task") as enqueue,
+        ):
+            result = it.process_transcription_result(
+                session_id="s1", user_id="u1", transcript_content=content
+            )
+        return result, session, session_service, enqueue
+
+    def test_empty_transcript_finishes_the_session_without_raising(self) -> None:
+        result, session, session_service, enqueue = self._run("")
+
+        assert session.status == it.SessionStatus.FAILED
+        assert session.error == "No speech was detected in this recording."
+        assert result["status"] == it.SessionStatus.FAILED
+        # Nothing to generate a note from, so the worker must not be queued —
+        # that is what stopped Cloud Tasks re-driving the same failure.
+        enqueue.assert_not_called()
+        session_service.prepare_transcript_session_for_generation.assert_not_called()
+
+    def test_whitespace_only_transcript_is_treated_as_empty(self) -> None:
+        _result, session, _service, enqueue = self._run("   \n\t  ")
+
+        assert session.status == it.SessionStatus.FAILED
+        enqueue.assert_not_called()
+
+    def test_a_real_transcript_still_persists_and_queues_generation(self) -> None:
+        _result, _session, session_service, enqueue = self._run("Therapist: hello")
+
+        session_service.prepare_transcript_session_for_generation.assert_called_once()
+        enqueue.assert_called_once()
