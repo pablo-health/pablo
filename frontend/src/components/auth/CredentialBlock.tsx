@@ -457,7 +457,7 @@ export function CredentialBlock({
               type="button"
               onClick={handlePasskeyLogin}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="auth-provider-button w-full flex items-center justify-center gap-3 border-2 px-6 py-3.5 rounded-lg font-medium hover:shadow-md active:scale-[0.98] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Fingerprint className="h-5 w-5" />
               Sign in with a passkey

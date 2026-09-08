@@ -271,6 +271,11 @@
   --auth-action-bg: #d4952f;
   --auth-action-bg-hover: #b07a24;
   --auth-action-fg: #ffffff;
+  --auth-provider-bg: #ffffff;
+  --auth-provider-bg-hover: #fefcf8;
+  --auth-provider-fg: #3d2b1f;
+  --auth-provider-border: #d8c7b0;
+  --auth-provider-border-hover: #d4952f;
 }
 
 [data-theme="dark"] {
@@ -321,6 +326,11 @@
   --auth-action-bg: #e8a849;
   --auth-action-bg-hover: #f0c074;
   --auth-action-fg: #1b1815;
+  --auth-provider-bg: #302a24;
+  --auth-provider-bg-hover: #3a3229;
+  --auth-provider-fg: #f5f1ea;
+  --auth-provider-border: #5f5549;
+  --auth-provider-border-hover: #e8a849;
 }
 
 [data-theme="high-contrast"] {
@@ -365,6 +375,11 @@
   --auth-action-bg: #8a5300;
   --auth-action-bg-hover: #6b4000;
   --auth-action-fg: #ffffff;
+  --auth-provider-bg: #ffffff;
+  --auth-provider-bg-hover: #fff4e0;
+  --auth-provider-fg: #000000;
+  --auth-provider-border: #000000;
+  --auth-provider-border-hover: #8a5300;
 
   /* Editorial calendar status chips — high-contrast ramp.
      confirmed: amber glow (active/upcoming)
@@ -413,6 +428,11 @@
   --auth-action-bg: #0b5394;
   --auth-action-bg-hover: #073763;
   --auth-action-fg: #ffffff;
+  --auth-provider-bg: #ffffff;
+  --auth-provider-bg-hover: #e8eef5;
+  --auth-provider-fg: #1f2933;
+  --auth-provider-border: #7a8896;
+  --auth-provider-border-hover: #0b5394;
 
   /* Editorial calendar status chips — cold clinical progression.
      confirmed: active record blue (light blue, readable)
@@ -441,6 +461,17 @@
   .auth-brand-panel {
     background: var(--brand-panel-bg);
     color: var(--brand-panel-fg);
+  }
+
+  .auth-provider-button {
+    background: var(--auth-provider-bg);
+    border-color: var(--auth-provider-border);
+    color: var(--auth-provider-fg);
+  }
+
+  .auth-provider-button:hover {
+    background: var(--auth-provider-bg-hover);
+    border-color: var(--auth-provider-border-hover);
   }
 
   .auth-primary {

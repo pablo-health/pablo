@@ -9,7 +9,7 @@ export function AuthGoogleButton({ onClick }: AuthGoogleButtonProps) {
     <button
       onClick={onClick}
       type="button"
-      className="w-full flex items-center justify-center gap-3 bg-white border-2 border-neutral-300 text-neutral-700 px-6 py-3.5 rounded-lg font-medium hover:bg-neutral-50 hover:border-primary-400 hover:shadow-md active:scale-[0.98] transition-all duration-200"
+      className="auth-provider-button w-full flex items-center justify-center gap-3 border-2 px-6 py-3.5 rounded-lg font-medium hover:shadow-md active:scale-[0.98] transition-all duration-200"
     >
       <svg className="w-5 h-5" viewBox="0 0 24 24">
         <path
