@@ -127,6 +127,18 @@ def _build_app() -> FastAPI:
         # An unexpected, non-API exception (e.g. a DB driver error). It
         # must be caught by the catch-all handler, logged as one record,
         # and rendered as a generic 500 envelope.
+        #
+        # Deliberately SYNC: FastAPI runs a sync route in a threadpool, which
+        # does not inherit the request's context. That is the case where the
+        # route_template contextvar reads empty (see the async twin below).
+        raise RuntimeError("kaboom")
+
+    @app.get("/boom-async")
+    async def boom_async() -> None:
+        raise RuntimeError("kaboom")
+
+    @app.get("/patients/{patient_id}/boom")
+    def boom_with_id(patient_id: str) -> None:
         raise RuntimeError("kaboom")
 
     return app
@@ -177,6 +189,47 @@ def test_unhandled_exception_returns_500_envelope(unhandled_logs: io.StringIO) -
     assert record["error_class"] == "RuntimeError"
     assert "Traceback (most recent call last)" in record["exc_info"]
     assert record["http_method"] == "GET"
+
+
+def test_unhandled_log_carries_the_route_from_a_sync_endpoint(
+    unhandled_logs: io.StringIO,
+) -> None:
+    """The traceback line is the most useful thing we emit, and it could not be
+    attributed to an endpoint.
+
+    A sync route runs in a threadpool, which does not inherit the request's
+    context, so the route_template contextvar the formatter reads is empty —
+    every unhandled exception raised under run_sync_in_worker_thread logged
+    with no route at all.
+    """
+    client = TestClient(_build_app(), raise_server_exceptions=False)
+    client.get("/boom")
+
+    (record,) = _lines(unhandled_logs)
+    assert record["route_template"] == "/boom"
+
+
+def test_unhandled_log_carries_the_route_from_an_async_endpoint(
+    unhandled_logs: io.StringIO,
+) -> None:
+    client = TestClient(_build_app(), raise_server_exceptions=False)
+    client.get("/boom-async")
+
+    (record,) = _lines(unhandled_logs)
+    assert record["route_template"] == "/boom-async"
+
+
+def test_unhandled_log_carries_the_template_never_the_populated_path(
+    unhandled_logs: io.StringIO,
+) -> None:
+    """This record lands in a log stream read outside the request. The concrete
+    path carries record ids; only the pattern may be logged."""
+    client = TestClient(_build_app(), raise_server_exceptions=False)
+    client.get("/patients/8f14e45f-ceea-467a-9f6e-4d2c1a3b5555/boom")
+
+    (record,) = _lines(unhandled_logs)
+    assert record["route_template"] == "/patients/{patient_id}/boom"
+    assert "8f14e45f" not in json.dumps(record)
 
 
 def _lines(buf: io.StringIO) -> list[dict[str, object]]:
