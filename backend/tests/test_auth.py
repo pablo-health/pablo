@@ -2,6 +2,7 @@
 
 """Tests for Firebase authentication and Identity Platform multi-tenancy."""
 
+import logging
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -97,6 +98,31 @@ class TestVerifyFirebaseToken:
 
             assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
             assert exc_info.value.detail["error"]["code"] == "USER_DISABLED"  # type: ignore[index]
+
+    def test_deleted_user(self) -> None:
+        """A well-formed, unexpired token for an account that has since been
+        deleted. Verification fetches the user record (check_revoked=True) and
+        finds nothing; the client needs to sign in again, not a server error."""
+        with patch(VERIFY_PATCH) as mock_verify:
+            mock_verify.side_effect = firebase_auth.UserNotFoundError("No user record found")
+
+            with pytest.raises(HTTPException) as exc_info:
+                verify_firebase_token("deleted-user-token")
+
+            assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+            assert exc_info.value.detail["error"]["code"] == "USER_NOT_FOUND"  # type: ignore[index]
+
+    def test_deleted_user_rejection_logs_no_token_material(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with patch(VERIFY_PATCH) as mock_verify:
+            mock_verify.side_effect = firebase_auth.UserNotFoundError("No user record found")
+
+            with caplog.at_level(logging.WARNING), pytest.raises(HTTPException):
+                verify_firebase_token("deleted-user-token-SECRET")
+
+        assert "USER_NOT_FOUND" in caplog.text
+        assert "SECRET" not in caplog.text
 
 
 class TestTokenCaching:
