@@ -156,6 +156,30 @@ def _log_auth_failed(request: Request, exc: StarletteHTTPException) -> None:
         _auth_logger.exception("auth_failed emit raised")
 
 
+def _unhandled_log_extra(request: Request) -> dict[str, str]:
+    """Fields for the unhandled-exception record, including the route.
+
+    ``JSONFormatter`` normally fills ``route_template`` from a contextvar, but
+    that contextvar is empty for a whole class of failures: a sync route runs
+    in a threadpool, which does not inherit the request's context, so anything
+    raised under ``run_sync_in_worker_thread`` logged its traceback with no
+    route on it at all. The most useful line we emit could not be attributed to
+    an endpoint.
+
+    The route is right here on the request, so read it here. The formatter
+    skips an ``extra`` key it has already filled from a contextvar, so this
+    fills the gap without overriding the request-scoped value where that works.
+
+    The TEMPLATE, never ``request.url.path`` — the concrete path carries record
+    ids, and this line lands in a log stream read outside the request.
+    """
+    extra = {"http_method": request.method}
+    template = getattr(request.scope.get("route"), "path", None)
+    if isinstance(template, str) and template:
+        extra["route_template"] = template
+    return extra
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Wire APIError subclasses to the JSON-envelope response."""
 
@@ -205,7 +229,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         _logger.error(
             "unhandled_exception",
             exc_info=exc,
-            extra={"http_method": request.method},
+            extra=_unhandled_log_extra(request),
         )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
