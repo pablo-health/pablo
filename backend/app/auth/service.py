@@ -195,6 +195,23 @@ def verify_firebase_token(token: str) -> dict[str, Any]:
                 }
             },
         ) from err
+    except firebase_auth.UserNotFoundError as err:
+        # check_revoked=True makes the SDK fetch the user record, which raises
+        # this when the account has since been deleted. The token itself is
+        # well-formed and unexpired, so it lands here rather than in any of the
+        # clauses above — and without this clause it escaped as a 500, telling
+        # a client that needs to sign in again that the server was at fault.
+        logger.warning("Firebase ID token rejected: user not found (USER_NOT_FOUND)")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": {
+                    "code": "USER_NOT_FOUND",
+                    "message": "User account no longer exists",
+                    "details": {},
+                }
+            },
+        ) from err
     except firebase_auth.InvalidIdTokenError as err:
         # Logs the PyJWT failure reason only — no token or credential value.
         # nosemgrep
