@@ -186,7 +186,7 @@ export function FirebaseLoginScreen() {
               <Image src="/pablo-login.webp" alt="" width={44} height={44} className="object-contain" />
               <span className="font-display text-2xl font-bold text-primary-600">Pablo</span>
             </div>
-            <span className="text-xs text-neutral-500">AI documentation for mental health clinicians</span>
+            <span className="text-xs text-neutral-500">The AI-native front office for mental health clinicians</span>
           </div>
 
           <AuthHeader
@@ -216,9 +216,9 @@ export function FirebaseLoginScreen() {
 
 function LoginBrandPanel() {
   const points = [
-    "AI drafts your SOAP notes from the session for you to review, edit, and finalize",
-    "Chat right on a patient's chart to get answers in context",
-    "Compliance items and notes to finalize, tracked in one place",
+    "Your practice inbox, sorted — with routine replies drafted and safety messages held for you",
+    "Session notes drafted for you to review, edit, and finalize",
+    "Your schedule, charts, payments, and compliance work together in one place",
     "HIPAA-compliant by design",
   ]
   return (
@@ -235,7 +235,7 @@ function LoginBrandPanel() {
           className="mt-6 max-w-xs font-display text-2xl leading-snug"
           style={{ color: "var(--brand-panel-fg)" }}
         >
-          Let AI carry the documentation, so your evenings and weekends are yours again.
+          Let AI carry the work of running your practice, so your evenings and weekends are yours again.
         </p>
         <div className="mt-8 flex flex-col gap-2">
           <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.09em] text-brand-panel-muted">
