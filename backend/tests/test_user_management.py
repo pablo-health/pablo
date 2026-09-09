@@ -99,8 +99,8 @@ class TestAllowlistCRUD:
     def test_list_allowlist(
         self, client: Any, mock_allowlist_repo: InMemoryAllowlistRepository
     ) -> None:
-        mock_allowlist_repo.add("a@example.com", "admin")
-        mock_allowlist_repo.add("b@example.com", "admin")
+        mock_allowlist_repo.add("a@example.com", "admin", practice_id="default")
+        mock_allowlist_repo.add("b@example.com", "admin", practice_id="default")
 
         response = client.get("/api/admin/allowlist")
         assert response.status_code == 200
@@ -114,7 +114,7 @@ class TestAllowlistCRUD:
     def test_remove_from_allowlist(
         self, client: Any, mock_allowlist_repo: InMemoryAllowlistRepository
     ) -> None:
-        mock_allowlist_repo.add("remove-me@example.com", "admin")
+        mock_allowlist_repo.add("remove-me@example.com", "admin", practice_id="default")
 
         response = client.delete("/api/admin/allowlist/remove-me@example.com")
         assert response.status_code == 200
