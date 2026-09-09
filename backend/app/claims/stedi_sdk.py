@@ -37,8 +37,13 @@ from typing import TYPE_CHECKING
 from stedi import Stedi
 from stedi.config import Config
 
+from .sdk_runtime import run_on_sdk_loop, shutdown_sdk_loop
+
 if TYPE_CHECKING:
     from .credentials import ClearinghouseCredentials
+
+#: Shutdown waits on in-flight sessions closing, not on a network round trip.
+_SHUTDOWN_TIMEOUT_SECONDS = 10.0
 
 
 def sdk_config(credentials: ClearinghouseCredentials) -> Config:
@@ -56,8 +61,51 @@ def sdk_config(credentials: ClearinghouseCredentials) -> Config:
 def sdk_client(credentials: ClearinghouseCredentials) -> Stedi:
     """An SDK client for this practice's account.
 
-    The client holds a connection pool and is an async context manager; callers
-    that make more than one call should hold it open rather than building one
-    per request.
+    Prefer :func:`client_for` — a client holds a connection pool, and building
+    one per call throws away every keep-alive connection and leaks the session
+    behind it. This exists for tests that want an unshared client.
     """
     return Stedi(sdk_config(credentials))
+
+
+#: Clients live as long as the process, keyed by the credentials they
+#: authenticate with. Keyed rather than a single module-level client because
+#: ``SettingsClearinghouseCredentialProvider`` deliberately re-reads settings
+#: on every call, so that a redeployed API key takes effect without a code
+#: change; a bare singleton would pin the first key it ever saw and go on
+#: authenticating as it. Only ever touched from the SDK loop, which is
+#: single-threaded, so it needs no lock of its own.
+_clients: dict[tuple[str, str | None], Stedi] = {}
+
+
+async def client_for(credentials: ClearinghouseCredentials) -> Stedi:
+    """The shared client for these credentials, built on first use.
+
+    Must be awaited on the SDK loop (see :mod:`app.claims.sdk_runtime`): the
+    client cannot be constructed off a running loop at all, and one built on a
+    different loop could not be reused from this one.
+    """
+    key = (credentials.api_key, credentials.base_url)
+    client = _clients.get(key)
+    if client is None:
+        client = Stedi(sdk_config(credentials))
+        _clients[key] = client
+    return client
+
+
+async def close_clients() -> None:
+    """Close every cached client. Awaited on the SDK loop at shutdown."""
+    while _clients:
+        _, client = _clients.popitem()
+        await client.__aexit__(None, None, None)
+
+
+def shutdown_sdk() -> None:
+    """Release everything this module owns. Call once on application shutdown.
+
+    Closing the clients before stopping the loop is the order that matters:
+    the sessions have to be closed *by* the loop they were opened on, and a
+    stopped loop cannot run the coroutine that closes them.
+    """
+    run_on_sdk_loop(close_clients(), timeout=_SHUTDOWN_TIMEOUT_SECONDS)
+    shutdown_sdk_loop()
