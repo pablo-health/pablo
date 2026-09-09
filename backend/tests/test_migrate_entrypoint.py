@@ -175,3 +175,97 @@ def test_it_never_forces_past_the_preflight(monkeypatch: pytest.MonkeyPatch) -> 
         f"the migrate job passed force={seen.get('force')!r} — an unattended job "
         "must not override a pre-flight refusal"
     )
+
+
+class TestTheJobCanStillSpeakAfterAlembicConfiguresLogging:
+    """The refusal has to reach the log, or the deploy fails saying nothing.
+
+    On 2026-09-09 it did exactly that: the OSS migrate job ran the whole
+    alembic chain, then exited 1 with twenty lines of alembic INFO and not one
+    word about why. ``logging.config.fileConfig`` defaults to
+    ``disable_existing_loggers=True``, so alembic's own logging setup switched
+    off the logger ``bin/migrate.py`` had created at import — the only logger
+    the single-practice migration writes its pre-flight report and its refusal
+    to. Two hours of the failure being invisible, for one default.
+    """
+
+    def test_env_py_keeps_existing_loggers_alive(self) -> None:
+        """Asserted against the call itself, because the symptom is silence.
+
+        A behavioural test here would have to run a real alembic upgrade and
+        then prove a negative about output, which is exactly the shape of test
+        that passes for the wrong reason. The argument IS the behaviour.
+        """
+        import ast  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        env_py = _Path(__file__).resolve().parents[1] / "alembic" / "env.py"
+        tree = ast.parse(env_py.read_text(encoding="utf-8"))
+
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "fileConfig"
+        ]
+        assert calls, "alembic/env.py no longer calls fileConfig — has logging moved?"
+
+        for call in calls:
+            kwargs = {kw.arg: kw.value for kw in call.keywords}
+            assert "disable_existing_loggers" in kwargs, (
+                "alembic/env.py calls fileConfig without disable_existing_loggers. "
+                "The default is True, which switches off every logger that already "
+                "exists — including bin/migrate.py's, which is where the "
+                "single-practice migration explains why it is blocking a deploy."
+            )
+            value = kwargs["disable_existing_loggers"]
+            assert isinstance(value, ast.Constant), (
+                "disable_existing_loggers is computed rather than literal, so "
+                "whether the migrate job can report is decided at runtime"
+            )
+            assert value.value is False, (
+                "disable_existing_loggers must be False; anything else silences "
+                "the migrate job's own reporting"
+            )
+
+    def test_a_logger_made_before_fileconfig_still_emits(self) -> None:
+        """The property itself, against the real alembic.ini.
+
+        Guards the case where somebody keeps the keyword but points env.py at a
+        config whose own ``[loggers]`` section disables things.
+
+        Captured on the logger rather than through ``caplog``: ``fileConfig``
+        replaces the root handlers, which removes pytest's, so caplog would
+        report silence here even when the logger is perfectly alive. That is
+        the test lying about the product, and it is exactly the failure mode
+        this class exists to catch, so it is worth not reproducing.
+        """
+        import logging  # noqa: PLC0415
+        from logging.config import fileConfig  # noqa: PLC0415
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        before = logging.getLogger("pablo.test.made_before_alembic")
+        ini = _Path(__file__).resolve().parents[1] / "alembic.ini"
+
+        fileConfig(str(ini), disable_existing_loggers=False)
+
+        assert not before.disabled, (
+            "a logger created before alembic configured logging was disabled by it"
+        )
+
+        seen: list[str] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                seen.append(record.getMessage())
+
+        handler = _Capture()
+        before.addHandler(handler)
+        before.setLevel(logging.ERROR)
+        try:
+            before.error("the refusal a deploy depends on")
+        finally:
+            before.removeHandler(handler)
+
+        assert seen == ["the refusal a deploy depends on"]
