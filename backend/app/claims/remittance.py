@@ -26,13 +26,21 @@ in it at all. The claim stays where it is and waits.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
+
+from .receipts import record
+from .transitions import advance, next_state
 
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from ..models.claims import Claim
     from ..models.claims_timeline import ClaimTimeline
+    from .receipts import ClaimPipeline
+
+logger = logging.getLogger(__name__)
 
 #: The state-machine events a remittance can drive. See
 #: ``app.claims.transitions``; every one of these is legal from both
@@ -51,6 +59,11 @@ class RemittancePosting:
     #: money — what ties this claim to funds in the practice's account.
     trace_number: str | None
     adjudicated_at: datetime
+    #: The latest adjudicating entry this reading is based on. Keys the
+    #: receipt, so re-reading a timeline that has not changed posts nothing
+    #: a second time, while a reversal arriving later is a new entry and
+    #: does post.
+    source_id: str
 
 
 def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePosting | None:
@@ -68,7 +81,8 @@ def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePos
         return None
 
     paid_cents = timeline.paid_cents
-    adjudicated_at = max(payment.processed_at for payment in adjudications)
+    latest = max(adjudications, key=lambda payment: payment.processed_at)
+    adjudicated_at = latest.processed_at
     money = [payment for payment in adjudications if payment.is_money]
     trace_number = next(
         (
@@ -87,6 +101,7 @@ def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePos
             patient_responsibility_cents=timeline.patient_responsibility_cents,
             trace_number=None,
             adjudicated_at=adjudicated_at,
+            source_id=latest.id,
         )
 
     event: RemittanceEvent = "pay" if paid_cents >= charged_cents > 0 else "pay_partial"
@@ -96,4 +111,59 @@ def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePos
         patient_responsibility_cents=timeline.patient_responsibility_cents,
         trace_number=trace_number,
         adjudicated_at=adjudicated_at,
+        source_id=latest.id,
     )
+
+
+def apply_posting(
+    pipeline: ClaimPipeline, claim: Claim, posting: RemittancePosting
+) -> tuple[Claim, bool]:
+    """Write a remittance onto a claim; the claim after, and whether it moved.
+
+    Idempotent on the vendor's own entry id. Re-reading a timeline that has
+    not changed writes nothing a second time — which matters because reading
+    is cheap and will happen on a schedule, while double-posting money is a
+    number a practice would have to unpick by hand.
+
+    A claim already in a terminal state is left alone rather than raising:
+    a payer that sends a second remittance for a claim we have already
+    closed is telling us something, but it is not a reason to fail the whole
+    polling pass.
+    """
+    if pipeline.receipts.vendor_event_seen(posting.source_id):
+        return claim, False
+    if next_state(claim.state, posting.event) is None:
+        logger.info(
+            "remittance_not_applicable claim_id=%s state=%s event=%s",
+            claim.id,
+            claim.state,
+            posting.event,
+        )
+        return claim, False
+
+    now = pipeline.now()
+    moved = advance(claim, posting.event, now=now)
+    stored = pipeline.claims.update(
+        moved.model_copy(update={"total_paid_cents": posting.paid_cents})
+    )
+    record(
+        pipeline,
+        stored,
+        "adjudicated",
+        detail={
+            "disposition": posting.event,
+            "paid_cents": posting.paid_cents,
+            "patient_responsibility_cents": posting.patient_responsibility_cents,
+            "trace_number": posting.trace_number,
+        },
+        vendor_event_id=posting.source_id,
+        occurred_at=posting.adjudicated_at,
+        touches_receipt_clock=True,
+    )
+    logger.info(
+        "remittance_posted claim_id=%s event=%s paid_cents=%d",
+        stored.id,
+        posting.event,
+        posting.paid_cents,
+    )
+    return stored, True

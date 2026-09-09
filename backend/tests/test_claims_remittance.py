@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.claims.remittance import posting_for
+import pytest
+from app.claims.remittance import apply_posting, posting_for
 from app.models.claims_timeline import ClaimTimeline, TimelinePayment
+
+from .claims_pipeline_fakes import make_harness, restore_listeners
 
 _EARLIER = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 _LATER = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -163,3 +166,87 @@ class TestReversal:
         assert posting is not None
         assert posting.trace_number == "EFT2"
         assert posting.paid_cents == 8000
+
+
+@pytest.fixture
+def harness():
+    made = make_harness()
+    yield made
+    restore_listeners()
+
+
+def _paid_posting(**overrides):
+    timeline = _timeline(_payment(disposition="paid", paid=8000, trace="EFT1", **overrides))
+    posting = posting_for(timeline, charged_cents=CHARGED)
+    assert posting is not None
+    return posting
+
+
+class TestApplyingAPosting:
+    def test_the_claim_moves_and_records_what_the_payer_did(self, harness) -> None:
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+
+        stored, moved = apply_posting(harness.pipeline, claim, _paid_posting())
+
+        assert moved is True
+        assert stored.state == "partial"
+        assert stored.total_paid_cents == 8000
+        receipt = harness.receipts.list_for_claim(claim.id)[-1]
+        assert receipt.kind == "adjudicated"
+        assert receipt.detail["paid_cents"] == 8000
+        assert receipt.detail["trace_number"] == "EFT1"
+
+    def test_reading_the_same_remittance_twice_posts_once(self, harness) -> None:
+        """Reading is cheap and will run on a schedule; paying twice is not."""
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        posting = _paid_posting()
+
+        first, moved_first = apply_posting(harness.pipeline, claim, posting)
+        second, moved_second = apply_posting(harness.pipeline, first, posting)
+
+        assert (moved_first, moved_second) == (True, False)
+        assert second.total_paid_cents == 8000
+        kinds = [r.kind for r in harness.receipts.list_for_claim(claim.id)]
+        assert kinds.count("adjudicated") == 1
+
+    def test_a_claim_already_closed_is_left_alone(self, harness) -> None:
+        """A second remittance on a settled claim is news, not a reason to fail."""
+        claim = harness.add(state="paid", total_charge_cents=CHARGED)
+
+        stored, moved = apply_posting(harness.pipeline, claim, _paid_posting())
+
+        assert moved is False
+        assert stored.state == "paid"
+
+    def test_a_full_payment_pays_the_claim(self, harness) -> None:
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        timeline = _timeline(_payment(disposition="paid", paid=CHARGED, trace="EFT1"))
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+
+        stored, moved = apply_posting(harness.pipeline, claim, posting)
+
+        assert moved is True
+        assert stored.state == "paid"
+        assert stored.total_paid_cents == CHARGED
+
+    def test_a_denial_denies_the_claim(self, harness) -> None:
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        timeline = _timeline(_payment(disposition="denied", paid=0))
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+
+        stored, moved = apply_posting(harness.pipeline, claim, posting)
+
+        assert moved is True
+        assert stored.state == "denied"
+        assert stored.total_paid_cents == 0
+
+    def test_a_stalled_claim_can_still_be_paid(self, harness) -> None:
+        """A stalled claim is one nobody has heard from, not one that is over."""
+        claim = harness.add(state="stalled", total_charge_cents=CHARGED)
+
+        stored, moved = apply_posting(harness.pipeline, claim, _paid_posting())
+
+        assert moved is True
+        assert stored.state == "partial"
