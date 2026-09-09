@@ -204,21 +204,30 @@ def ensure_schemas(engine: Engine) -> None:
                     session.commit()
                     logger.info("Created default practice in registry")
                 elif existing.schema_name == DEFAULT_PRACTICE_SCHEMA:
-                    # An install from before the template and the live
-                    # practice were separated. Its charts are in the template
-                    # schema, so re-pointing the row here would silently
-                    # orphan every one of them — moving the data is a
-                    # migration with a pre-flight, not a line in the boot
-                    # path. Left exactly as it is, and said out loud, because
-                    # this deployment is running without row-level security
-                    # until that migration runs.
-                    logger.warning(
-                        "Practice '%s' is still registered against the template schema '%s'. "
-                        "Its data is in a schema that carries no row policies. Run the "
-                        "single-practice migration to move it onto '%s'.",
-                        DEFAULT_PRACTICE_ID,
-                        DEFAULT_PRACTICE_SCHEMA,
-                        DEFAULT_PRACTICE_OWN_SCHEMA,
+                    # An install from before the template and the live practice
+                    # were separated. Its charts are in the template schema, so
+                    # re-pointing the row here would silently orphan every one
+                    # of them — moving the data is a migration with a pre-flight
+                    # (``app.db.single_practice_migration``), not a line in a
+                    # boot path.
+                    #
+                    # This used to warn and carry on. Carrying on means serving
+                    # a database whose chart schema has no row policies at all,
+                    # and a warning in a startup log is not a control: nobody is
+                    # reading it, and the deployment looks healthy. Refusing is
+                    # the honest state — the operator gets one actionable line
+                    # instead of an install that works until someone notices it
+                    # never had isolation.
+                    raise RuntimeError(
+                        f"Practice '{DEFAULT_PRACTICE_ID}' is still registered against the "
+                        f"template schema '{DEFAULT_PRACTICE_SCHEMA}', which carries no row "
+                        f"policies. Refusing to start: serving from it would run this "
+                        f"deployment without row-level security over live charts.\n\n"
+                        f"    python backend/bin/migrate_default_practice.py --check\n"
+                        f"    python backend/bin/migrate_default_practice.py\n\n"
+                        f"The first reports what would happen and changes nothing; the second "
+                        f"moves the data onto '{DEFAULT_PRACTICE_OWN_SCHEMA}' and applies the "
+                        f"policies."
                     )
         finally:
             conn.execute(
