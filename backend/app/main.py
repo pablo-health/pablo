@@ -62,6 +62,7 @@ from .routes import (
     note_types,
     notes,
     passkey,
+    patient_appointments,
     patient_documents,
     patient_payments,
     patient_statements,
@@ -235,6 +236,8 @@ app.include_router(billing_queue.router)
 app.include_router(practice_balances.router)
 app.include_router(billing_export.router)
 app.include_router(scheduling.router)
+# Runs as the patient, not as a clinician — see the module docstring.
+app.include_router(patient_appointments.router)
 app.include_router(sessions.router)
 app.include_router(internal_transcription.router)
 app.include_router(dashboard.router)

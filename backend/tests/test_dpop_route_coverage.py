@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from app.auth.patient_context import get_patient_context
 from app.auth.route_security import truly_public
 from app.auth.service import (
     get_current_user_no_mfa,
@@ -64,12 +65,28 @@ _MARKERS: dict[str, tuple] = {
     "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims),
     "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
     "truly-public": (truly_public,),
+    "patient-principal": (get_patient_context,),
 }
 
 # Postures the DPoP middleware can enforce against (the request resolves to
 # an authenticated user the device is bound to) OR for which a proof is not
 # applicable (service-account callers are never companions).
-_DPOP_COVERED_POSTURES = {"mfa-required", "pre-mfa-onboarding", "service-account-auth"}
+#
+# "patient-principal" is in the second group. The device this binding exists
+# for is the clinician's enrolled desktop install — the one that registers a
+# public key at the OAuth code exchange (``CompanionDeviceRow``). A patient
+# session resolves to a patient id, not to a ``user_id`` the middleware could
+# bind, and a patient holds no enrolled device key, so there is no proof to
+# demand. Note the word "companion" carries two meanings in this tree: the
+# clinician's native install, which is what DPoP binds, and the patient-facing
+# surface, which is a browser. If a patient-facing NATIVE app ever enrolls a
+# device key, this classification is the thing to revisit first.
+_DPOP_COVERED_POSTURES = {
+    "mfa-required",
+    "pre-mfa-onboarding",
+    "service-account-auth",
+    "patient-principal",
+}
 
 # The only posture with no authenticated user. Every route here MUST be
 # allow-listed below with a justification.
