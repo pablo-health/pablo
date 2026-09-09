@@ -166,7 +166,7 @@ def tenant_a_client(
 
     monkeypatch.setattr(
         "app.db.middleware._resolve_schema_from_request",
-        lambda _request: tenant_a_schema,
+        lambda _request: (tenant_a_schema, "resolved"),
     )
 
     def _tenant_context() -> TenantContext:

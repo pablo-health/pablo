@@ -200,7 +200,7 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
 
     monkeypatch.setattr(
         "app.db.middleware._resolve_schema_from_request",
-        lambda _request: tenant_schema,
+        lambda _request: (tenant_schema, "resolved"),
     )
 
     def _tenant_context() -> TenantContext:

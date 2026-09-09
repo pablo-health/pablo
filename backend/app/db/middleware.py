@@ -123,28 +123,51 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
         logger.debug("Middleware identity verification skipped (token parse failed)")
 
 
-def _resolve_schema_from_request(request: Request) -> str | None:
+# Why a request ended up on the default schema. Coarse labels carrying no
+# identifiers — enough to tell the cases apart when reading logs, since they
+# have different causes. An unauthenticated request is the ordinary one.
+UNRESOLVED_UNAUTHENTICATED = "unauthenticated"
+UNRESOLVED_NO_EMAIL = "identity-carries-no-email"
+UNRESOLVED_NO_MAPPING = "no-practice-mapping-for-identity"
+UNRESOLVED_LOOKUP_RAISED = "practice-lookup-raised"
+
+
+def _resolve_schema_from_request(request: Request) -> tuple[str | None, str]:
     """Extract tenant schema from the Authorization header.
 
     Reuses the identity ``_verify_and_stash_clinician_identity`` already
     verified for this request, then resolves the practice schema from its
     email. Tenant resolution is email-based, so it is provider-agnostic.
-    Returns None if unauthenticated or no mapping. Errors are swallowed —
-    auth dependencies will reject bad tokens later.
+
+    Returns ``(schema, reason)``. The reason exists so the caller can say WHY
+    a request is running on the default schema. Deployments that keep their
+    practice data in per-practice schemas will not find those tables on the
+    default one, so an unqualified query there reports a missing relation —
+    an error that describes the symptom rather than the cause. Naming the
+    reason turns that into something a log can answer directly.
+
+    Errors are still swallowed here — dependencies validate the token
+    afterwards, and a transient lookup failure should not become a 500 in the
+    middleware — but the caller now records that one occurred, rather than it
+    passing unremarked.
     """
     identity = getattr(request.state, "verified_identity", None)
-    if identity is None or not identity.email:
-        return None
+    if identity is None:
+        return None, UNRESOLVED_UNAUTHENTICATED
+    if not identity.email:
+        return None, UNRESOLVED_NO_EMAIL
 
     try:
         from ..auth.service import _resolve_practice_from_email
 
         practice = _resolve_practice_from_email(identity.email)
         if practice:
-            return practice[1]  # schema_name
-    except Exception:
-        logger.debug("Middleware schema resolution skipped (practice lookup failed)")
-    return None
+            return practice[1], "resolved"  # schema_name
+    except Exception as exc:
+        # Exception TYPE only — never the message, which can carry the email
+        # or row content (guardrail #5).
+        return None, f"{UNRESOLVED_LOOKUP_RAISED}:{type(exc).__name__}"
+    return None, UNRESOLVED_NO_MAPPING
 
 
 class DatabaseSessionMiddleware(BaseHTTPMiddleware):
@@ -178,14 +201,33 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         # This prevents race conditions where repo factories query the DB
         # before get_tenant_context sets the schema.
         schema = DEFAULT_PRACTICE_SCHEMA
+        unresolved_reason: str | None = None
         if settings.multi_tenancy_enabled:
-            resolved = _resolve_schema_from_request(request)
+            resolved, reason = _resolve_schema_from_request(request)
             if resolved:
                 schema = resolved
+            elif reason != UNRESOLVED_UNAUTHENTICATED:
+                # Public routes have no identity and read no practice data, so
+                # that case is ordinary and stays quiet — logging it would bury
+                # the cases worth reading.
+                unresolved_reason = reason
         set_tenant_schema(session, schema)
 
         try:
             response = await call_next(request)
+            if unresolved_reason is not None:
+                # Logged after routing so the route TEMPLATE is available —
+                # never request.url.path, which carries record ids.
+                route = request.scope.get("route")
+                logger.warning(
+                    "tenant_schema_unresolved route=%s method=%s status=%s reason=%s "
+                    "fell_back_to=%s",
+                    getattr(route, "path", "unmatched"),
+                    request.method,
+                    getattr(response, "status_code", "unknown"),
+                    unresolved_reason,
+                    DEFAULT_PRACTICE_SCHEMA,
+                )
             # Guard: refuse to commit if the session still points at the
             # default 'practice' schema and multi-tenancy is on.  This
             # catches any code path that forgot to call set_tenant_schema

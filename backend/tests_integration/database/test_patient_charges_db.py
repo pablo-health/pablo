@@ -576,7 +576,8 @@ def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[Test
     from app.payments.provider import register_payment_credential_provider  # noqa: PLC0415
 
     monkeypatch.setattr(
-        "app.db.middleware._resolve_schema_from_request", lambda _request: tenant_schema
+        "app.db.middleware._resolve_schema_from_request",
+        lambda _request: (tenant_schema, "resolved"),
     )
     register_payment_credential_provider(_AlwaysConfigured())
     try:
