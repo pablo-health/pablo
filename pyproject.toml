@@ -65,6 +65,10 @@ httpx = ">=0.28.0"
 # Security: pin transitive dep floor (CVE fixes in 3.13.4)
 aiohttp = ">=3.14.1"
 
+# Clearinghouse: the vendor's own SDK, generated from their API models. Its
+# transport is aiohttp, which is already here for the pin above.
+stedi = "^1.0.0"
+
 email-validator = "^2.3.0"
 python-multipart = ">=0.0.32"
 google-cloud-storage = "^3.13.0"
