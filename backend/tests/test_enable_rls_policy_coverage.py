@@ -101,10 +101,39 @@ def test_unknown_id_only_table_raises_rather_than_deny_all() -> None:
 
 
 def test_user_id_table_still_gets_isolation_policy() -> None:
-    session = _run({"appointments": {"id", "user_id"}})
+    """A clinician-owned table with no patient arm keeps exactly one policy.
+
+    ``availability_rules`` is the plain case: ``user_id`` and no
+    ``patient_id``, so the generic owner branch handles it and nothing
+    patient-scoped is attached.
+    """
+    session = _run({"availability_rules": {"id", "user_id"}})
     ddl = " ".join(session.executed)
+    assert "CREATE POLICY rls_user_isolation ON practice_test.availability_rules" in ddl
+    assert "user_id::text = current_setting('app.current_user_id', true)" in ddl
+    assert "CREATE POLICY rls_patient_self_read" not in ddl
+
+
+def test_appointments_gets_both_the_clinician_and_patient_arms() -> None:
+    """``appointments`` is owned by a clinician and readable by its patient.
+
+    Both arms, and no patient write arm. The column set includes
+    ``patient_id`` because the real table has it — and because
+    ``_apply_patient_principal_policies`` refuses to build a policy
+    against a missing column rather than shipping one that matches
+    nothing.
+    """
+    session = _run({"appointments": {"id", "user_id", "patient_id"}})
+    ddl = " ".join(session.executed)
+
     assert "CREATE POLICY rls_user_isolation ON practice_test.appointments" in ddl
     assert "user_id::text = current_setting('app.current_user_id', true)" in ddl
+
+    assert "CREATE POLICY rls_patient_self_read ON practice_test.appointments" in ddl
+    assert "patient_id::text = current_setting('app.current_patient_id', true)" in ddl
+
+    assert "CREATE POLICY rls_patient_self_write ON practice_test.appointments" not in ddl
+    assert "CREATE POLICY rls_patient_self_insert ON practice_test.appointments" not in ddl
 
 
 # ---------------------------------------------------------------------------

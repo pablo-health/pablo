@@ -984,6 +984,12 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 PATIENT_READABLE_TABLES: dict[str, str] = {
     "patients": "id",
     "outcome_measures": "patient_id",
+    # Read-only deliberately: booking and cancelling answer to the
+    # practice's own rules — notice periods, which types are bookable,
+    # whether a request needs confirming — so they belong to a route that
+    # can consult those rules, not to a row policy that only knows who is
+    # asking.
+    "appointments": "patient_id",
 }
 
 # Of those, the ones a patient may also WRITE. Read and write stay separate

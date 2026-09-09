@@ -553,3 +553,341 @@ class TestPatientPrincipalWrites:
         assert "INSERT" in commands or "ALL" in commands, (
             f"no patient INSERT arm on outcome_measures; policy commands present: {commands}"
         )
+
+
+@pytest.fixture(scope="module")
+def two_appointments(
+    engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
+) -> tuple[str, str]:
+    """One future appointment each for A and B, booked clinician-side.
+
+    Distinct start times on purpose: the active-slot uniqueness index
+    would reject two live appointments for the same clinician at the same
+    instant, and a fixture that fails to seed makes every assertion below
+    vacuous rather than false.
+    """
+    patient_a, patient_b = two_patients
+    appt_a = str(uuid.uuid4())
+    appt_b = str(uuid.uuid4())
+
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+        conn.execute(text("RESET app.current_patient_id"))
+        conn.execute(
+            text("SELECT set_config('app.current_user_id', :u, false)"),
+            {"u": _CLINICIAN},
+        )
+        for appt_id, patient_id, days in ((appt_a, patient_a, 7), (appt_b, patient_b, 8)):
+            conn.execute(
+                text(
+                    "INSERT INTO appointments (id, user_id, patient_id, title, "
+                    "start_at, end_at, duration_minutes, status, session_type, "
+                    "is_exception, reminder_24h_sent, reminder_1h_sent, created_at) "
+                    "VALUES (CAST(:aid AS uuid), CAST(:uid AS uuid), "
+                    "CAST(:pid AS uuid), 'Session', "
+                    "now() + make_interval(days => :d), "
+                    "now() + make_interval(days => :d) + interval '50 minutes', "
+                    "50, 'scheduled', 'therapy', false, false, false, now())"
+                ),
+                {"aid": appt_id, "uid": _CLINICIAN, "pid": patient_id, "d": days},
+            )
+    return appt_a, appt_b
+
+
+def _visible_appointment_ids(conn) -> set[str]:  # type: ignore[no-untyped-def]
+    return {str(r) for r in conn.execute(text("SELECT id FROM appointments")).scalars().all()}
+
+
+class TestPatientAppointmentIsolation:
+    """A patient sees their own appointments, and only their own.
+
+    ``appointments`` carries both ``user_id`` and ``patient_id``, so it
+    holds a clinician arm and a patient arm at once. Both directions are
+    asserted: the patient arm grants what it should, and it does not
+    reach past the caller.
+    """
+
+    def test_a_sees_their_own_appointment(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        two_appointments: tuple[str, str],
+    ) -> None:
+        """Visibility control. Without this the invisibility test proves nothing."""
+        patient_a, _ = two_patients
+        appt_a, _ = two_appointments
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            assert _visible_appointment_ids(conn) == {appt_a}
+        finally:
+            conn.close()
+
+    def test_a_cannot_see_bs_appointment(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        two_appointments: tuple[str, str],
+    ) -> None:
+        patient_a, _ = two_patients
+        _, appt_b = two_appointments
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            assert appt_b not in _visible_appointment_ids(conn)
+        finally:
+            conn.close()
+
+    def test_b_sees_only_their_own(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        two_appointments: tuple[str, str],
+    ) -> None:
+        """The symmetric case: the policy is not accidentally keyed to A."""
+        _, patient_b = two_patients
+        appt_a, appt_b = two_appointments
+
+        conn = _as_patient(engine, tenant_schema, patient_b)
+        try:
+            visible = _visible_appointment_ids(conn)
+            assert visible == {appt_b}
+            assert appt_a not in visible
+        finally:
+            conn.close()
+
+    def test_naming_bs_appointment_outright_returns_nothing(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        two_appointments: tuple[str, str],
+    ) -> None:
+        """The IDOR move: armed as A, request B's appointment by primary key.
+
+        This is the shape a patient-facing route is most likely to get
+        wrong — loading by id and trusting the caller named their own.
+        """
+        patient_a, _ = two_patients
+        appt_a, appt_b = two_appointments
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            # Control: the same query shape finds A's own appointment.
+            own = conn.execute(
+                text("SELECT id FROM appointments WHERE id = CAST(:a AS uuid)"),
+                {"a": appt_a},
+            ).scalar()
+            assert str(own) == appt_a
+
+            stolen = conn.execute(
+                text("SELECT id FROM appointments WHERE id = CAST(:a AS uuid)"),
+                {"a": appt_b},
+            ).scalar()
+            assert stolen is None, "a patient read another patient's appointment by id"
+        finally:
+            conn.close()
+
+    def test_the_clinician_still_sees_both(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_appointments: tuple[str, str],
+    ) -> None:
+        """The patient arm must widen access, never narrow the clinician's.
+
+        Both arms are permissive and therefore OR together, so adding one
+        cannot remove a row from the other. Asserted rather than assumed,
+        because the cost of being wrong is a therapist's calendar
+        emptying out.
+        """
+        appt_a, appt_b = two_appointments
+
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_patient_id"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN},
+            )
+            visible = _visible_appointment_ids(conn)
+        assert {appt_a, appt_b} <= visible
+
+    def test_the_read_arm_exists_on_appointments(self, engine: Engine, tenant_schema: str) -> None:
+        """Provisioning must create the read arm, and only the read arm.
+
+        Asserted against ``pg_policies`` so that a regression — the arm
+        dropped, or a write arm added by accident — is caught here rather
+        than as a surprise several layers up.
+        """
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT policyname, cmd FROM pg_policies "
+                    "WHERE schemaname = :s AND tablename = 'appointments'"
+                ),
+                {"s": tenant_schema},
+            ).all()
+        by_name = {r[0]: r[1] for r in rows}
+
+        assert by_name.get("rls_patient_self_read") == "SELECT", (
+            f"patient read arm missing or not SELECT-only on appointments; policies: {by_name}"
+        )
+        assert "rls_patient_self_write" not in by_name, (
+            "appointments grew a patient UPDATE arm; booking rules live in the "
+            f"route, not in a row policy. Policies: {by_name}"
+        )
+        assert "rls_patient_self_insert" not in by_name, (
+            f"appointments grew a patient INSERT arm; see above. Policies: {by_name}"
+        )
+
+
+class TestPatientCannotWriteAppointments:
+    """Read-only means read-only, asserted per command.
+
+    The three commands fail in two different ways, and conflating them
+    would let a regression pass. INSERT raises: no patient INSERT arm
+    exists and the clinician arm's ``WITH CHECK`` cannot match a request
+    that never armed ``app.current_user_id``. UPDATE and DELETE are
+    quieter — the patient arm is ``FOR SELECT`` and so contributes no
+    ``USING`` clause to either, leaving the row simply not visible to
+    modify, which Postgres reports as zero rows affected rather than an
+    error. Those two are therefore asserted twice: nothing was touched,
+    and the row is still what it was.
+    """
+
+    def test_a_patient_cannot_insert_an_appointment(
+        self, engine: Engine, tenant_schema: str, two_patients: tuple[str, str]
+    ) -> None:
+        """Self-booking must go through a route that can read the practice's rules."""
+        patient_a, _ = two_patients
+        forged = str(uuid.uuid4())
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            with pytest.raises(ProgrammingError) as excinfo:
+                conn.execute(
+                    text(
+                        "INSERT INTO appointments (id, user_id, patient_id, title, "
+                        "start_at, end_at, duration_minutes, status, session_type, "
+                        "is_exception, reminder_24h_sent, reminder_1h_sent, created_at) "
+                        "VALUES (CAST(:aid AS uuid), CAST(:uid AS uuid), "
+                        "CAST(:pid AS uuid), 'Self-booked', "
+                        "now() + interval '30 days', "
+                        "now() + interval '30 days' + interval '50 minutes', "
+                        "50, 'scheduled', 'therapy', false, false, false, now())"
+                    ),
+                    {"aid": forged, "uid": _CLINICIAN, "pid": patient_a},
+                )
+            assert "row-level security" in str(excinfo.value).lower()
+        finally:
+            conn.rollback()
+            conn.close()
+
+        # And no row was left behind — checked as the clinician, who can
+        # see every appointment in the practice.
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_patient_id"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN},
+            )
+            found = conn.execute(
+                text("SELECT count(*) FROM appointments WHERE id = CAST(:a AS uuid)"),
+                {"a": forged},
+            ).scalar_one()
+        assert found == 0, "a patient principal created an appointment"
+
+    def test_a_patient_cannot_move_their_own_appointment(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        two_appointments: tuple[str, str],
+    ) -> None:
+        """Rescheduling is a route's decision — notice periods, confirmation.
+
+        The patient can SEE this row, which is what makes the case worth
+        asserting: visibility is not permission.
+        """
+        patient_a, _ = two_patients
+        appt_a, _ = two_appointments
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            # Control: the row is visible to this principal, so a zero
+            # rowcount below means "not permitted", not "not found".
+            assert appt_a in _visible_appointment_ids(conn)
+
+            result = conn.execute(
+                text(
+                    "UPDATE appointments SET start_at = now() + interval '90 days' "
+                    "WHERE id = CAST(:a AS uuid)"
+                ),
+                {"a": appt_a},
+            )
+            assert result.rowcount == 0, "a patient principal rescheduled their own appointment"
+            conn.commit()
+        finally:
+            conn.close()
+
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_patient_id"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN},
+            )
+            moved = conn.execute(
+                text(
+                    "SELECT start_at > now() + interval '60 days' FROM appointments "
+                    "WHERE id = CAST(:a AS uuid)"
+                ),
+                {"a": appt_a},
+            ).scalar_one()
+        assert moved is False, "the appointment moved despite a zero rowcount"
+
+    def test_a_patient_cannot_delete_their_own_appointment(
+        self,
+        engine: Engine,
+        tenant_schema: str,
+        two_patients: tuple[str, str],
+        two_appointments: tuple[str, str],
+    ) -> None:
+        """Cancelling is a status change made by a route, never a DELETE.
+
+        A row that vanishes takes the practice's record of the booking
+        with it, so this one matters beyond the permission question.
+        """
+        patient_a, _ = two_patients
+        appt_a, _ = two_appointments
+
+        conn = _as_patient(engine, tenant_schema, patient_a)
+        try:
+            assert appt_a in _visible_appointment_ids(conn)
+
+            result = conn.execute(
+                text("DELETE FROM appointments WHERE id = CAST(:a AS uuid)"),
+                {"a": appt_a},
+            )
+            assert result.rowcount == 0, "a patient principal deleted an appointment"
+            conn.commit()
+        finally:
+            conn.close()
+
+        with engine.connect() as conn:
+            conn.execute(text(f"SET search_path = {tenant_schema}, platform, public"))
+            conn.execute(text("RESET app.current_patient_id"))
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :u, false)"),
+                {"u": _CLINICIAN},
+            )
+            survives = conn.execute(
+                text("SELECT count(*) FROM appointments WHERE id = CAST(:a AS uuid)"),
+                {"a": appt_a},
+            ).scalar_one()
+        assert survives == 1, "the appointment was deleted despite a zero rowcount"
