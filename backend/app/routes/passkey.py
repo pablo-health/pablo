@@ -41,7 +41,11 @@ from ..models.passkey import (
     RecoveryCodeRedeem,
 )
 from ..models.user import User
-from ..rate_limit import require_rate_limit
+from ..rate_limit import (
+    check_recovery_redeem_account_limit,
+    require_passkey_login_rate_limit,
+    require_recovery_redeem_rate_limit,
+)
 from ..repositories import UserRepository, get_user_repository
 from ..services import AuditService, get_audit_service
 from ..services.backup_code_service import BackupCodeService, get_backup_code_service
@@ -199,7 +203,7 @@ def revoke_credential(
 def authenticate_begin(
     _payload: PasskeyAuthenticationBegin,
     passkey_service: PasskeyService = Depends(get_passkey_service),
-    _: None = Depends(require_rate_limit),
+    _: None = Depends(require_passkey_login_rate_limit),
     _public: None = Depends(truly_public),
 ) -> dict[str, Any]:
     """Return usernameless WebAuthn authentication options + store the challenge."""
@@ -212,7 +216,7 @@ def authenticate_finish(
     request: Request,
     passkey_service: PasskeyService = Depends(get_passkey_service),
     audit: AuditService = Depends(get_audit_service),
-    _: None = Depends(require_rate_limit),
+    _: None = Depends(require_passkey_login_rate_limit),
     _public: None = Depends(truly_public),
 ) -> PasskeyAuthenticationResult:
     """Verify the assertion and mint the passkey-factor custom token.
@@ -263,7 +267,7 @@ def redeem_recovery_code(
     passkey_service: PasskeyService = Depends(get_passkey_service),
     backup: BackupCodeService = Depends(get_backup_code_service),
     audit: AuditService = Depends(get_audit_service),
-    _: None = Depends(require_rate_limit),
+    _: None = Depends(require_recovery_redeem_rate_limit),
 ) -> PasskeyAuthenticationResult:
     """Redeem a one-time backup code as the SECOND factor and mint a session.
 
@@ -281,6 +285,11 @@ def redeem_recovery_code(
     TODO (slice 3 follow-ups, see PABLO-gqp): force re-enrolment before PHI,
     re-issue a fresh code set, and email a "recovery code used" alert.
     """
+    # Bound guessing against THIS account, whatever address it arrives from.
+    # The IP limit above cannot do that: an attacker rotates addresses, and a
+    # shared office address would otherwise let one person's attempts spend a
+    # colleague's budget.
+    check_recovery_redeem_account_limit(user.id)
     if not backup.redeem(user.id, payload.code):
         raise UnauthorizedError(
             "Invalid or already-used recovery code.", code="INVALID_RECOVERY_CODE"
