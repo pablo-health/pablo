@@ -61,8 +61,37 @@ records, which is why this is a refusal rather than a warning.
 rather than merely inconvenient: there is no column left on the row that says
 whose chart it was.
 
+## Identities, and why nobody gets locked out
+
+Resolution reads `platform.email_tenant_mappings` and nothing else. Before
+`AllowlistRepository.add` started writing that mapping alongside the grant, an
+operator added an email to `allowed_emails` and that was the whole story — the
+request got a context with no practice attached. Those identities **resolve to
+nothing**.
+
+While a deployment could skip resolution entirely, that was survivable. Once
+every deployment runs a real practice schema, resolution is on the login path
+for every user, and an identity that resolves to nothing **cannot sign in**.
+
+So this migration carries the backfill, as
+[`identity-to-practice-resolution.md`](identity-to-practice-resolution.md)
+specifies. It maps every identity the platform knows about — everyone in
+`platform.users`, plus everyone in `allowed_emails` who has not signed up yet —
+onto the deployment's practice, writing the same `tenant_id`/`practice_id` pair a
+grant writes, so a backfilled row is indistinguishable from a granted one.
+
+The backfill runs **first**, before anything is renamed, so a failure there
+leaves the deployment exactly as it was. Afterwards the migration re-checks and
+**refuses** if any identity still resolves to nothing: a leftover means something
+wrote a mapping-less identity this code does not model, and whether people can
+sign in is not a thing to find out about afterwards.
+
+`--check` reports unresolvable identities without failing, because unlike the row
+counts this is not something to fix by hand — the migration fixes it.
+
 ## What it does, in order
 
+0. backfill `email_tenant_mappings` for every unresolvable identity
 1. `ALTER SCHEMA practice RENAME TO practice_default`
 2. re-point `platform.practices` at the new name
 3. rebuild `practice` from the tenant template (it is a template again)

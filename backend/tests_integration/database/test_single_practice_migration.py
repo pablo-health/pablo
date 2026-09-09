@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,9 +38,11 @@ from app.db.single_practice_migration import (
     PreflightError,
     Shape,
     _classify,
+    backfill_identity_mappings,
     is_migrated,
     migrate,
     preflight,
+    unresolvable_identities,
 )
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
@@ -484,6 +487,150 @@ def test_running_it_twice_is_safe(old_shape, superuser_engine) -> None:
     migrate(engine)  # must not raise, must not move anything
 
     assert _count(superuser_engine, DEFAULT_PRACTICE_OWN_SCHEMA, "patients") == 3
+
+
+# ---------------------------------------------------------------------------
+# Identity resolution: nobody gets locked out
+# ---------------------------------------------------------------------------
+
+
+def _seed_identity(conn, *, email: str, as_user: bool, with_mapping: bool) -> None:
+    """An identity in the shape a pre-mapping deployment left behind.
+
+    The user row goes in through the ORM rather than raw SQL: ``platform.users``
+    has grown NOT NULL columns whose defaults are Python-side (``status``,
+    ``chat_quality_review_opt_in``, …), so a hand-written INSERT has to be
+    updated every time one lands. The ORM already knows them.
+    """
+    if as_user:
+        from app.db.platform_models import PlatformUserRow  # noqa: PLC0415
+
+        with Session(bind=conn) as session:
+            session.add(
+                PlatformUserRow(
+                    id=str(uuid.uuid4()),
+                    email=email,
+                    name="Test User",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            session.flush()
+    else:
+        conn.execute(
+            text(
+                f"INSERT INTO {PLATFORM_SCHEMA}.allowed_emails "  # noqa: S608 - PLATFORM_SCHEMA is a module constant, not input
+                f"(email, practice_id, added_by, added_at) "
+                f"VALUES (:e, NULL, 'test', now())"
+            ),
+            {"e": email},
+        )
+    if with_mapping:
+        conn.execute(
+            text(
+                f"INSERT INTO {PLATFORM_SCHEMA}.email_tenant_mappings "  # noqa: S608 - PLATFORM_SCHEMA is a module constant, not input
+                f"(email, tenant_id, practice_id, created_at) "
+                f"VALUES (:e, :p, :p, now())"
+            ),
+            {"e": email, "p": DEFAULT_PRACTICE_ID},
+        )
+
+
+def _clear_identities(conn, emails: list[str]) -> None:
+    for table in ("email_tenant_mappings", "allowed_emails", "users"):
+        conn.execute(
+            text(f"DELETE FROM {PLATFORM_SCHEMA}.{table} WHERE email = ANY(:e)"),  # noqa: S608
+            {"e": emails},
+        )
+
+
+@pytest.fixture
+def identities(old_shape):
+    """Seed identities and clean them up, whatever the test does to them."""
+    engine = old_shape
+    seeded: list[str] = []
+
+    def _seed(email: str, *, as_user: bool = True, with_mapping: bool = False) -> str:
+        with engine.begin() as conn:
+            _seed_identity(conn, email=email, as_user=as_user, with_mapping=with_mapping)
+        seeded.append(email)
+        return email
+
+    try:
+        yield engine, _seed
+    finally:
+        with engine.begin() as conn:
+            _clear_identities(conn, seeded)
+
+
+def test_an_unmapped_identity_is_reported_as_unresolvable(identities) -> None:
+    """Before ``AllowlistRepository.add`` wrote the mapping alongside the grant,
+    an operator added an email and that was the whole story. Those rows resolve
+    to nothing — survivable while resolution was skippable, a locked-out user
+    once it is not."""
+    engine, seed = identities
+    stranded = seed("legacy-user@example.com", as_user=True, with_mapping=False)
+    seed("already-mapped@example.com", as_user=True, with_mapping=True)
+
+    unresolvable = unresolvable_identities(engine)
+
+    assert stranded in unresolvable
+    assert "already-mapped@example.com" not in unresolvable
+
+
+def test_a_granted_but_unregistered_email_also_counts(identities) -> None:
+    """Somebody granted access who has not signed up yet still has to be able to
+    when they do — ``allowed_emails`` is half the population, not a footnote."""
+    engine, seed = identities
+    invited = seed("invited@example.com", as_user=False, with_mapping=False)
+
+    assert invited in unresolvable_identities(engine)
+
+
+def test_the_backfill_maps_everyone_and_is_idempotent(identities) -> None:
+    engine, seed = identities
+    seed("a@example.com", as_user=True, with_mapping=False)
+    seed("b@example.com", as_user=False, with_mapping=False)
+    seed("c@example.com", as_user=True, with_mapping=True)
+
+    first = backfill_identity_mappings(engine)
+    assert first >= 2  # a and b; the fixture database may hold others
+
+    assert unresolvable_identities(engine) == []
+
+    # Second pass finds nothing — the INSERT selects only unmapped rows.
+    assert backfill_identity_mappings(engine) == 0
+
+
+def test_the_backfill_writes_the_same_shape_a_grant_would(identities) -> None:
+    """A backfilled row must be indistinguishable from one ``add`` wrote, or the
+    login path will treat two populations differently."""
+    engine, seed = identities
+    email = seed("shape@example.com", as_user=True, with_mapping=False)
+
+    backfill_identity_mappings(engine)
+
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"SELECT tenant_id, practice_id FROM {PLATFORM_SCHEMA}.email_tenant_mappings "  # noqa: S608 - PLATFORM_SCHEMA is a module constant, not input
+                f"WHERE email = :e"
+            ),
+            {"e": email},
+        ).one()
+    assert row == (DEFAULT_PRACTICE_ID, DEFAULT_PRACTICE_ID)
+
+
+def test_migrate_backfills_so_nobody_is_left_unresolvable(identities) -> None:
+    """The end-to-end promise of the decision note: after migrating, every
+    identity the platform knows about resolves to a practice."""
+    engine, seed = identities
+    seed("pre-existing@example.com", as_user=True, with_mapping=False)
+    with engine.begin() as conn:
+        _seed_patient(conn, DEFAULT_PRACTICE_SCHEMA, str(uuid.uuid4()))
+
+    migrate(engine)
+
+    assert unresolvable_identities(engine) == []
 
 
 def test_boot_refuses_against_an_unmigrated_deployment(old_shape) -> None:

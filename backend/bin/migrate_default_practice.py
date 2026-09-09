@@ -25,6 +25,9 @@ import argparse
 import logging
 import sys
 
+#: Identities to name in the --check summary before eliding.
+_MAX_LISTED = 5
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -54,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         is_migrated,
         migrate,
         preflight,
+        unresolvable_identities,
     )
 
     try:
@@ -68,6 +72,19 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = preflight(engine)
     print(format_report(counts))
+
+    # Reported separately from the row counts because it is a different kind of
+    # problem with a different remedy: these identities are not lost data, they
+    # are people who could not sign in — and unlike the row counts, the migration
+    # FIXES this one by backfilling. So --check reports it without failing.
+    stranded = unresolvable_identities(engine)
+    if stranded:
+        shown = ", ".join(stranded[:_MAX_LISTED]) + (" …" if len(stranded) > _MAX_LISTED else "")
+        print(
+            f"\n{len(stranded)} identity/identities currently resolve to no practice "
+            f"({shown}).\nThe migration maps them onto the deployment's practice; "
+            f"nothing to fix by hand."
+        )
 
     lost = sum(c.orphaned for c in counts)
     if args.check:
