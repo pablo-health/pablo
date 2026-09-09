@@ -6,14 +6,21 @@
     python backend/bin/migrate_default_practice.py --check    # pre-flight only
     python backend/bin/migrate_default_practice.py            # pre-flight, then migrate
 
-Explicit rather than automatic, deliberately. The alternative — migrating at
-boot — would run an irreversible schema rename inside a startup path, where
-the operator is not watching, cannot answer a question, and a refusal reads as
-a crashloop. An explicit command can be run twice, can be run with ``--check``
-first, and puts a person in front of the numbers before any chart moves.
+**Nobody has to run this.** The migrate job runs it automatically after
+``alembic upgrade head`` (see ``backend/bin/migrate.py``), which is where every
+other schema change already happens: before the rollout, with the database in
+front of it and its output in the log. A deployment that would lose a chart
+fails there, with nothing deployed.
 
-Boot refuses to serve an unmigrated deployment and names this command, so
-skipping it is not something anyone can do by accident.
+This command exists for the case where you want the numbers BEFORE a deploy
+rather than during one. ``--check`` is read-only and answers "would this be
+clean?" without changing anything, which is worth knowing on a database whose
+history you are unsure of.
+
+Running it at BOOT was considered and rejected — an irreversible rename in a
+startup path, where nobody is watching and a refusal reads as a crashloop. Boot
+instead refuses to serve an unmigrated deployment, which is now a backstop
+rather than the mechanism.
 
 Exit codes: 0 migrated or already migrated; 1 pre-flight found rows that would
 become invisible (nothing changed); 2 usage or connection error.
