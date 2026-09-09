@@ -15,6 +15,7 @@ or polluting ``pytest.ini`` with a new marker.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -44,6 +45,7 @@ from app.services.chat_turn_service import (
     _first_window_gap_sequence,
     _StreamOutcome,
 )
+from app.services.llm_telemetry import LLMSpanRequest, llm_span
 from openinference.semconv.trace import OpenInferenceSpanKindValues, SpanAttributes
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -441,6 +443,118 @@ class TestClientDisconnect:
             assert drive_task.cancelled()
 
         asyncio.run(_impl())
+
+
+class _SpanBackedHangingGateway(ChatLLMGateway):
+    """Like ``_HangingChatGateway``, but brackets the stream in an OTel
+    span the way the real Gemini gateway does (see ``chat_llm_gateway
+    .stream_completion``). Exercises the same context-attach-around-a-
+    yield shape so a disconnect test through this gateway would catch a
+    regression in how that context gets torn down.
+    """
+
+    async def stream_completion(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        prior_turns: list[UserAssistantTurn],
+        new_user_text: str,
+        max_output_tokens: int,
+        temperature: float = 0.4,
+    ):
+        with llm_span(LLMSpanRequest(operation="chat", model=model)):
+            yield StreamEvent(delta="first")
+            await asyncio.Event().wait()
+            yield StreamEvent(finish_reason="stop")  # pragma: no cover — unreachable
+
+
+class _SpanBackedGateway(ChatLLMGateway):
+    """Completes normally, span-wrapped like ``_SpanBackedHangingGateway``."""
+
+    async def stream_completion(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        prior_turns: list[UserAssistantTurn],
+        new_user_text: str,
+        max_output_tokens: int,
+        temperature: float = 0.4,
+    ):
+        with llm_span(LLMSpanRequest(operation="chat", model=model)):
+            yield StreamEvent(delta="hello")
+            yield StreamEvent(finish_reason="stop", output_tokens=1)
+
+
+class TestOtelContextTeardown:
+    """Regression coverage for PABLO-sbhz: a client disconnect (or even a
+    normal completed turn) closes the gateway's span-wrapped generator
+    from ``_one_attempt`` without draining it to ``StopAsyncIteration``.
+    Left to garbage collection, asyncio's async-generator finalizer
+    closes it from an unrelated task/context, and the OTel SDK's
+    ``context.detach()`` on exit from ``tracer.start_as_current_span()``
+    then finds a token that belongs to a different context and logs an
+    ERROR from ``opentelemetry.context`` — a disconnect, not a bug.
+    """
+
+    def test_early_close_does_not_log_otel_context_error(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        service = ChatTurnService(
+            chat_repo=chat_repo,
+            notes_repo=notes_repo,
+            gateway=_SpanBackedHangingGateway(),
+        )
+
+        async def _impl() -> None:
+            outcome = _StreamOutcome()
+            gen = service._stream_with_retry(
+                _make_context(),
+                system_prompt="sys",
+                prior_turns=[],
+                user_text="hi",
+                outcome=outcome,
+            )
+            first = await gen.__anext__()
+            assert first.data["text"] == "first"
+            await gen.aclose()
+            # Give any stray finalizer callback a chance to run so a
+            # regression would actually surface here, not after the test.
+            for _ in range(20):
+                await asyncio.sleep(0)
+
+        with caplog.at_level(logging.ERROR, logger="opentelemetry.context"):
+            asyncio.run(_impl())
+
+        otel_errors = [r for r in caplog.records if r.name == "opentelemetry.context"]
+        assert otel_errors == []
+
+    def test_normal_completion_attaches_and_detaches_cleanly(
+        self,
+        chat_repo: InMemoryChatRepository,
+        notes_repo: InMemoryNotesRepository,
+        span_exporter: InMemorySpanExporter,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        service = ChatTurnService(
+            chat_repo=chat_repo,
+            notes_repo=notes_repo,
+            gateway=_SpanBackedGateway(),
+        )
+
+        with caplog.at_level(logging.ERROR, logger="opentelemetry.context"):
+            events = _drain(service, _make_context())
+
+        assert events[-1].kind == "done"
+        otel_errors = [r for r in caplog.records if r.name == "opentelemetry.context"]
+        assert otel_errors == []
+
+        spans = [s for s in span_exporter.get_finished_spans() if s.name == "llm.chat"]
+        assert len(spans) == 1
 
 
 # ---------------------------------------------------------------------------
