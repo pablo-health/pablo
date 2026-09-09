@@ -253,6 +253,71 @@ class TestApplyingAPosting:
         assert stored.state == "partial"
 
 
+class _Ledger:
+    """Just enough of the charge repository to see what was written."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    def add_ledger_row(self, **row):
+        self.rows.append(row)
+        return row
+
+
+class TestTheClientsShareReachesTheirLedger:
+    def test_what_the_payer_says_the_client_owes_becomes_a_ledger_row(self, harness) -> None:
+        """Otherwise the money stops at the claim and nobody bills the client."""
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+        timeline = _timeline(_payment(disposition="paid", paid=8000, responsibility=2000))
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+
+        apply_posting(harness.pipeline, claim, posting, charges=ledger)
+
+        assert len(ledger.rows) == 1
+        row = ledger.rows[0]
+        assert row["kind"] == "patient_resp"
+        assert row["amount_cents"] == 2000
+        assert row["claim_id"] == claim.id
+        assert row["patient_id"] == claim.patient_id
+
+    def test_a_client_who_owes_nothing_gets_no_row(self, harness) -> None:
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+        timeline = _timeline(_payment(disposition="paid", paid=CHARGED, responsibility=None))
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+
+        apply_posting(harness.pipeline, claim, posting, charges=ledger)
+
+        assert ledger.rows == []
+
+    def test_reading_the_same_remittance_twice_bills_the_client_once(self, harness) -> None:
+        """The receipt's idempotency has to cover the ledger write too."""
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+        timeline = _timeline(_payment(disposition="paid", paid=8000, responsibility=2000))
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+
+        first, _ = apply_posting(harness.pipeline, claim, posting, charges=ledger)
+        apply_posting(harness.pipeline, first, posting, charges=ledger)
+
+        assert len(ledger.rows) == 1
+
+    def test_the_whole_charge_going_to_deductible_bills_the_whole_charge(self, harness) -> None:
+        claim = harness.add(state="payer_accepted", total_charge_cents=CHARGED)
+        ledger = _Ledger()
+        timeline = _timeline(_payment(disposition="paid", paid=0, responsibility=CHARGED))
+        posting = posting_for(timeline, charged_cents=CHARGED)
+        assert posting is not None
+
+        apply_posting(harness.pipeline, claim, posting, charges=ledger)
+
+        assert ledger.rows[0]["amount_cents"] == CHARGED
+
+
 class _Timelines:
     """A stand-in clearinghouse: what it knows, keyed by vendor claim id."""
 

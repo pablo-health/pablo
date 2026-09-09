@@ -30,6 +30,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from ..db.models import DEFAULT_CHARGE_CURRENCY
 from .clearinghouse import ClearinghouseError
 from .receipts import record
 from .transitions import advance, next_state
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
 
     from ..models.claims import Claim
     from ..models.claims_timeline import ClaimTimeline
+    from ..repositories.patient_payment import PatientPaymentRepository
     from .receipts import ClaimPipeline
     from .sdk_timeline import ClaimTimelineSource
 
@@ -119,7 +121,11 @@ def posting_for(timeline: ClaimTimeline, *, charged_cents: int) -> RemittancePos
 
 
 def apply_posting(
-    pipeline: ClaimPipeline, claim: Claim, posting: RemittancePosting
+    pipeline: ClaimPipeline,
+    claim: Claim,
+    posting: RemittancePosting,
+    *,
+    charges: PatientPaymentRepository | None = None,
 ) -> tuple[Claim, bool]:
     """Write a remittance onto a claim; the claim after, and whether it moved.
 
@@ -169,17 +175,41 @@ def apply_posting(
         occurred_at=posting.adjudicated_at,
         touches_receipt_clock=True,
     )
+    if charges is not None and posting.patient_responsibility_cents > 0:
+        # What the payer says the client owes becomes a row on the client's
+        # own ledger. Without this the money stops at the claim: the practice
+        # can see that a payer paid $80 of $150 and the client is never told
+        # about the $20.
+        #
+        # Written inside the same branch that records the receipt, so the
+        # receipt's idempotency covers it too — a second read of the same
+        # remittance cannot bill a client twice.
+        charges.add_ledger_row(
+            patient_id=stored.patient_id,
+            kind="patient_resp",
+            amount_cents=posting.patient_responsibility_cents,
+            currency=DEFAULT_CHARGE_CURRENCY,
+            user_id=pipeline.principal_user_id,
+            claim_id=stored.id,
+            note=f"payer remittance {posting.source_id}",
+        )
+
     logger.info(
-        "remittance_posted claim_id=%s event=%s paid_cents=%d",
+        "remittance_posted claim_id=%s event=%s paid_cents=%d patient_resp_cents=%d",
         stored.id,
         posting.event,
         posting.paid_cents,
+        posting.patient_responsibility_cents,
     )
     return stored, True
 
 
 def post_remittances(
-    pipeline: ClaimPipeline, timelines: ClaimTimelineSource, claims: Iterable[Claim]
+    pipeline: ClaimPipeline,
+    timelines: ClaimTimelineSource,
+    claims: Iterable[Claim],
+    *,
+    charges: PatientPaymentRepository | None = None,
 ) -> int:
     """Read each claim's timeline and post whatever the payer decided.
 
@@ -202,6 +232,6 @@ def post_remittances(
         posting = posting_for(timeline, charged_cents=claim.total_charge_cents)
         if posting is None:
             continue
-        _, did_move = apply_posting(pipeline, claim, posting)
+        _, did_move = apply_posting(pipeline, claim, posting, charges=charges)
         moved += int(did_move)
     return moved
