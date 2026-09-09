@@ -67,7 +67,7 @@ from ..scheduling_engine.exceptions import (
     InvalidAppointmentError,
     RuleViolationError,
 )
-from ..scheduling_engine.models.appointment import AppointmentStatus
+from ..scheduling_engine.models.appointment import AppointmentStatus, CancellationActor
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
 from ..scheduling_engine.services.scheduling_policy import load_policy, may_self_book
@@ -99,8 +99,14 @@ _SLOT_TAKEN = "That time is no longer available."
 _NO_CLINICIAN = "This account is not set up for online booking yet."
 _NO_SUCH_APPOINTMENT = "No such appointment."
 _ALREADY_SETTLED = "That appointment can no longer be changed online."
-_TOO_LATE_TO_CANCEL = "It is too close to the appointment to cancel it online."
-_TOO_LATE_TO_RESCHEDULE = "It is too close to the appointment to move it online."
+#: Moving an appointment late is refused; CANCELLING it late is not. The
+#: message says so, because a patient who cannot make it needs to know there
+#: is still a way to tell the practice — the alternative is that they say
+#: nothing and simply do not arrive.
+_TOO_LATE_TO_RESCHEDULE = (
+    "It is too close to the appointment to move it online. You can still "
+    "cancel it, and the practice's notice policy will apply."
+)
 
 #: Fallback when an appointment type carries no length of its own.
 _DEFAULT_DURATION_MINUTES = 50
@@ -284,6 +290,17 @@ def _require_changeable(appointment: Appointment) -> None:
         raise _refuse(_ALREADY_SETTLED, "NOT_CHANGEABLE", status.HTTP_409_CONFLICT)
 
 
+def _inside_cutoff(appointment: Appointment, *, cutoff_hours: int, now: datetime) -> bool:
+    """Whether less notice is being given than the practice asks for.
+
+    For cancelling this decides a FEE, not permission — see
+    :func:`cancel_appointment`. An appointment already in the past is inside
+    every non-negative cutoff, so "cancelling last Tuesday" is covered without
+    a separate check.
+    """
+    return _as_utc(appointment.start_at) - now < timedelta(hours=cutoff_hours)
+
+
 def _require_outside_cutoff(
     appointment: Appointment, *, cutoff_hours: int, message: str, code: str, now: datetime
 ) -> None:
@@ -293,10 +310,11 @@ def _require_outside_cutoff(
     slot open needs to know when it stops being reclaimable, and 24 hours is a
     default rather than a rule.
 
-    An appointment already in the past is inside every non-negative cutoff, so
-    this covers "you cannot cancel last Tuesday" without a separate check.
+    Used by rescheduling only. Cancelling deliberately does NOT refuse — the
+    two are different questions, and the difference is explained where cancel
+    handles it.
     """
-    if _as_utc(appointment.start_at) - now < timedelta(hours=cutoff_hours):
+    if _inside_cutoff(appointment, cutoff_hours=cutoff_hours, now=now):
         raise _refuse(message, code, status.HTTP_409_CONFLICT)
 
 
@@ -373,6 +391,7 @@ def _to_patient_view(appointment: Appointment) -> PatientAppointmentResponse:
         video_platform=appointment.video_platform,
         recurrence_rule=appointment.recurrence_rule,
         recurring_appointment_id=appointment.recurring_appointment_id,
+        late_cancellation=appointment.late_cancellation,
     )
 
 
@@ -659,41 +678,53 @@ def cancel_appointment(
     audit: AuditService = Depends(get_audit_service),
     _: None = Depends(subscription_exempt),
 ) -> PatientAppointmentResponse:
-    """Cancel one of the calling patient's own appointments.
+    """Cancel one of the calling patient's own appointments. Always allowed.
 
     POST rather than DELETE, because nothing is deleted. The row survives as a
-    CANCELLED appointment: it is part of the clinical record of the
-    relationship, it is what a late-cancellation policy is applied to, and the
-    slot it frees is freed by the status change alone — availability treats
-    everything that is not cancelled as busy.
+    CANCELLED appointment: it is part of the record of the relationship, it is
+    what a late-cancellation fee is applied to, and the slot it frees is freed
+    by the status change alone — availability treats everything not cancelled
+    as busy.
 
-    Gated on ``self_book_existing`` like every other route in this module. A
-    practice that has not turned online booking on has not agreed to online
-    cancellation either, and there is no separate flag to read: the safe
-    reading of "unconfigured" stays "not allowed". If cancelling should be
-    available to practices that book their patients themselves — a defensible
-    position, since the alternative to an easy cancellation is a no-show —
-    that is a new policy field and a deliberate decision, not something to
-    infer here.
+    **``cancel_cutoff_hours`` is a fee boundary, not a permission boundary.**
+    It says how much notice a patient may give WITHOUT PENALTY; it does not say
+    when they stop being allowed to tell the practice. Refusing a late
+    cancellation does not prevent the cancellation — it converts it into a
+    no-show, and the practice loses the slot, the warning, and any chance of
+    filling it. So a patient inside the window is cancelled and marked
+    ``late_cancellation``, and the response says so, rather than being turned
+    away.
+
+    Not gated on ``self_book_existing`` either, unlike the booking routes.
+    That flag governs whether patients may put appointments INTO the diary;
+    taking one back out is not the same permission, and a practice that books
+    its own patients still wants to hear that one of them cannot come.
+
+    Who cancelled is recorded alongside when. Without it a lapsed hold, a
+    clinician rearranging their week and a patient cancelling an hour ahead
+    are the same row, and only one of those is chargeable to anybody.
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
     with owner_session(patient) as (session, owner):
         policy = load_policy(session)
-        _require_self_booking(policy)
 
         service = SchedulingService(PostgresAppointmentRepository(session))
         appointment = _own_appointment(service, owner, patient, appointment_id)
         _require_changeable(appointment)
-        _require_outside_cutoff(
+
+        late = _inside_cutoff(
             appointment,
             cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
-            message=_TOO_LATE_TO_CANCEL,
-            code="INSIDE_CANCEL_CUTOFF",
             now=now,
         )
-
-        cancelled = service.cancel_appointment(appointment_id, owner)
+        cancelled = service.cancel_appointment(
+            appointment_id,
+            owner,
+            cancelled_by=CancellationActor.PATIENT,
+            cancelled_by_id=patient.patient_id,
+            late=late,
+        )
         session.commit()
 
     audit.log_patient_principal_action(

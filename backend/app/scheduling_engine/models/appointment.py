@@ -34,6 +34,26 @@ class RecurrenceFrequency(StrEnum):
     MONTHLY = "monthly"
 
 
+class CancellationActor(StrEnum):
+    """Who cancelled, which decides whether a late cancellation means anything.
+
+    A practice's notice period is a fee boundary, not a permission one — anyone
+    may cancel at any time — so the row has to carry enough to tell a
+    chargeable cancellation from one that could never be. A clinician
+    rearranging their own week and a hold nobody answered are both late by the
+    clock and neither is the patient's doing.
+
+    The values mirror ``models.audit.ACTOR_TYPE_*`` deliberately, and are
+    restated rather than imported: this package talks to repository ABCs and
+    knows nothing about the audit log, and a cross-layer import to save three
+    strings would be the wrong trade.
+    """
+
+    PATIENT = "patient"
+    CLINICIAN = "clinician"
+    SYSTEM = "system"
+
+
 @dataclass
 class Appointment:
     """A scheduled appointment between a therapist and patient.
@@ -111,6 +131,27 @@ class Appointment:
     # stored. None for every appointment that never went through that path.
     confirmation_token_hash: str | None = None
 
+    # --- Cancellation record ------------------------------------------------
+    #
+    # Set together, only when the status becomes cancelled, and never cleared.
+    # ``updated_at`` cannot stand in for ``cancelled_at``: any later edit moves
+    # it, so by the time a fee is worked out the timestamp may say nothing
+    # about when the slot was actually given up.
+    #
+    # All three are None on a row cancelled before this was recorded, which is
+    # honestly "not known" rather than a claim that it was early, by nobody, or
+    # on time.
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None  # CancellationActor value
+    cancelled_by_id: str | None = None  # None for SYSTEM, which is nobody
+
+    # Whether the notice given fell short of the practice's cancellation
+    # window. Frozen here at the moment of cancelling rather than derived on
+    # read, because the policy is editable: recomputing later would silently
+    # rewrite whether a past cancellation was chargeable every time a practice
+    # changed its mind about the notice period.
+    late_cancellation: bool | None = None
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -153,6 +194,10 @@ class Appointment:
             reminder_1h_sent=data.get("reminder_1h_sent", False),
             pending_expires_at=data.get("pending_expires_at"),
             confirmation_token_hash=data.get("confirmation_token_hash"),
+            cancelled_at=data.get("cancelled_at"),
+            cancelled_by=data.get("cancelled_by"),
+            cancelled_by_id=data.get("cancelled_by_id"),
+            late_cancellation=data.get("late_cancellation"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -195,6 +240,10 @@ class Appointment:
             "confirmation_token_hash": self.confirmation_token_hash,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,
+            "cancelled_at": self.cancelled_at,
+            "cancelled_by": self.cancelled_by,
+            "cancelled_by_id": self.cancelled_by_id,
+            "late_cancellation": self.late_cancellation,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

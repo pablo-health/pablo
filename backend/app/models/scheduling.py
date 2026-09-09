@@ -757,6 +757,27 @@ class PatientAppointmentResponse(BaseModel):
     video_platform: str | None = None
     recurrence_rule: str | None = None
     recurring_appointment_id: str | None = None
+    late_cancellation: bool | None = Field(
+        default=None,
+        description=(
+            "True when this was cancelled with less notice than the practice "
+            "asks for, so its notice policy may apply. None on anything not "
+            "cancelled, and on cancellations made before this was recorded."
+        ),
+    )
+    """Whether a fee may follow, told to the person who might be charged it.
+
+    Included where the rest of the billing fields are deliberately withheld,
+    because this one is about the patient's own conduct and its consequence
+    for them — not staff-authored coding. Being charged a late-cancellation
+    fee without ever being told the cancellation counted as late is the kind
+    of surprise the withholding rule exists to prevent, not an instance of it.
+
+    The AMOUNT stays out. Fees live on the appointment type with per-patient
+    overrides, and quoting money here would open a far larger surface than
+    this route should — "the practice's policy may apply" is what a patient
+    needs at this moment.
+    """
 
 
 class PatientAppointmentListResponse(BaseModel):

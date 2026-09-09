@@ -83,6 +83,10 @@ def _to_patient_view(appointment: Appointment) -> PatientAppointmentResponse:
         video_platform=appointment.video_platform,
         recurrence_rule=appointment.recurrence_rule,
         recurring_appointment_id=appointment.recurring_appointment_id,
+        # Carried here too, not just on the cancel response: a patient looking
+        # back at their appointments should see which cancellations counted as
+        # late, rather than only being told once at the moment they did it.
+        late_cancellation=appointment.late_cancellation,
     )
 
 

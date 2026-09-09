@@ -180,6 +180,13 @@ class TestTheResponseWithholdsStaffColumns:
             "video_platform",
             "recurrence_rule",
             "recurring_appointment_id",
+            # Added deliberately, against the withholding rule above rather
+            # than as an exception to it: this one is about the patient's own
+            # conduct and its consequence for them. Being charged a
+            # late-cancellation fee without ever being told the cancellation
+            # counted as late is the surprise that rule exists to prevent.
+            # The fee AMOUNT stays out — see PatientAppointmentResponse.
+            "late_cancellation",
         }
 
 

@@ -17,7 +17,12 @@ from ..exceptions import (
     InvalidRecurrenceError,
     RuleViolationError,
 )
-from ..models.appointment import Appointment, AppointmentStatus, RecurrenceFrequency
+from ..models.appointment import (
+    Appointment,
+    AppointmentStatus,
+    CancellationActor,
+    RecurrenceFrequency,
+)
 from ..models.availability import EnforcementLevel
 from .recurrence import RecurrenceGenerator
 
@@ -429,10 +434,26 @@ class SchedulingService:
             appointment.status = AppointmentStatus.CANCELLED
             appointment.pending_expires_at = None
             appointment.updated_at = _now()
+            # A hold nobody answered is late by the clock and chargeable to
+            # nobody. Saying so explicitly matters: left unset, a lapsed
+            # request would be indistinguishable from a patient who cancelled
+            # at the last minute, and the difference is a fee.
+            appointment.cancelled_at = _now()
+            appointment.cancelled_by = CancellationActor.SYSTEM
+            appointment.cancelled_by_id = None
+            appointment.late_cancellation = False
             expired.append(self._repo.update(appointment))
         return expired
 
-    def cancel_appointment(self, appointment_id: str, user_id: str) -> Appointment:
+    def cancel_appointment(
+        self,
+        appointment_id: str,
+        user_id: str,
+        *,
+        cancelled_by: str = CancellationActor.CLINICIAN,
+        cancelled_by_id: str | None = None,
+        late: bool | None = None,
+    ) -> Appointment:
         """Cancel a single appointment.
 
         Clears any confirmation token along with it — once a clinician has
@@ -440,11 +461,26 @@ class SchedulingService:
         signal that tells the confirm endpoint a cancelled-with-a-hash row
         apart from this one is a lapsed hold rather than a killed one: the
         expiry sweep deliberately leaves the hash in place.
+
+        Records WHO cancelled and WHEN, because a practice's notice period is
+        a fee boundary rather than a permission one: anybody may cancel at any
+        time, so the row is the only thing that can afterwards distinguish a
+        chargeable late cancellation from a clinician rearranging their own
+        week. ``late`` is decided by the caller, which is the layer that knows
+        the practice's policy — and is frozen here rather than derived on read,
+        since an editable policy would otherwise rewrite the past.
+
+        The default actor is the clinician, which is what every in-app cancel
+        has always been. Callers acting for somebody else say so.
         """
         appointment = self.get_appointment(appointment_id, user_id)
         appointment.status = AppointmentStatus.CANCELLED
         appointment.pending_expires_at = None
         appointment.confirmation_token_hash = None
+        appointment.cancelled_at = _now()
+        appointment.cancelled_by = cancelled_by
+        appointment.cancelled_by_id = cancelled_by_id
+        appointment.late_cancellation = late
         appointment.updated_at = _now()
         return self._repo.update(appointment)
 

@@ -892,6 +892,31 @@ def test_a_booking_is_audited_as_the_patient(
 # bearing ones rather than a formality.
 
 
+def _cancellation_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
+    """The cancellation columns, read as the clinician.
+
+    Read from the database rather than trusted from the response: these are
+    the columns a fee would be argued from months later, so what matters is
+    what persisted, not what one endpoint said at the time.
+    """
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        row = conn.execute(
+            text(
+                "SELECT cancelled_at, cancelled_by, cancelled_by_id, late_cancellation "
+                "FROM appointments WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": appointment_id},
+        ).one()
+    return {
+        "cancelled_at": row[0],
+        "cancelled_by": row[1],
+        "cancelled_by_id": row[2],
+        "late_cancellation": row[3],
+    }
+
+
 def _status_of(engine: Engine, appointment_id: str) -> str:
     """Read one appointment's status out of band, as the clinician."""
     with engine.begin() as conn:
@@ -1005,10 +1030,16 @@ def test_a_stranger_appointment_is_404_not_403(
         assert response.json()["detail"]["error"]["code"] == "NOT_FOUND"
 
 
-def test_cancelling_inside_the_cutoff_is_refused(
+def test_cancelling_inside_the_cutoff_succeeds_and_is_marked_late(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
-    """Past the practice's own cutoff the slot stops being reclaimable online."""
+    """The notice period is a fee boundary, not a permission boundary.
+
+    Refusing here would not prevent the cancellation — it would convert it
+    into a no-show, and the practice would lose the slot, the warning, and any
+    chance of filling it. So the cancellation goes through, and the row
+    carries what a fee would have to be argued from.
+    """
     _open_policy(engine)
     _clear_appointments(engine)
     appointment_id = _seed_appointment(engine, practice["a"], _at(10))
@@ -1017,9 +1048,70 @@ def test_cancelling_inside_the_cutoff_is_refused(
 
     response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
 
-    assert response.status_code == 409, response.text
-    assert response.json()["detail"]["error"]["code"] == "INSIDE_CANCEL_CUTOFF"
-    assert _status_of(engine, appointment_id) == "confirmed"
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+    # Told to the person who might be charged for it.
+    assert response.json()["late_cancellation"] is True
+    assert _status_of(engine, appointment_id) == "cancelled"
+
+    record = _cancellation_of(engine, appointment_id)
+    assert record["late_cancellation"] is True
+    assert record["cancelled_by"] == "patient"
+    assert str(record["cancelled_by_id"]) == str(practice["a"])
+    assert record["cancelled_at"] is not None
+
+
+def test_cancelling_with_notice_is_not_marked_late(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The control. Without it, "marked late" above proves nothing."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["late_cancellation"] is False
+    record = _cancellation_of(engine, appointment_id)
+    assert record["late_cancellation"] is False
+    assert record["cancelled_by"] == "patient"
+
+
+def test_a_clinician_cancellation_is_never_the_patients_late_one(
+    engine: Engine, practice: dict[str, Any]
+) -> None:
+    """The distinction the columns exist for.
+
+    A clinician rearranging their own week is late by the clock and chargeable
+    to nobody. Before these columns it was the same row as a patient
+    cancelling an hour beforehand.
+    """
+    from app.db import arm_current_user_id, set_tenant_schema  # noqa: PLC0415
+    from app.repositories.postgres.appointment import (  # noqa: PLC0415
+        PostgresAppointmentRepository,
+    )
+    from app.scheduling_engine.services.scheduling import SchedulingService  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    with OrmSession(bind=engine) as s:
+        set_tenant_schema(s, _SCHEMA)
+        arm_current_user_id(s, _CLINICIAN)
+        SchedulingService(PostgresAppointmentRepository(s)).cancel_appointment(
+            appointment_id, _CLINICIAN
+        )
+        s.commit()
+
+    record = _cancellation_of(engine, appointment_id)
+    assert record["cancelled_by"] == "clinician"
+    assert record["late_cancellation"] is None, (
+        "a clinician cancellation was marked late, which would make it look "
+        "chargeable to the patient"
+    )
 
 
 def test_an_already_cancelled_appointment_cannot_be_cancelled_again(
@@ -1234,23 +1326,51 @@ def test_rescheduling_needs_the_stronger_factor(
     assert _start_of(engine, appointment_id) == _at(10)
 
 
-def test_neither_verb_works_while_self_booking_is_off(
+def test_self_booking_off_stops_moving_an_appointment_but_not_cancelling_one(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
-    """Dark by default covers changing an appointment, not just making one."""
+    """The two verbs answer to different permissions, deliberately.
+
+    ``self_book_existing`` governs putting appointments INTO the diary. Taking
+    one back out is not that permission: a practice that books its own
+    patients still wants to hear that one of them cannot come, and the only
+    alternative it leaves the patient is to say nothing and not turn up.
+    """
     _open_policy(engine)
     _clear_appointments(engine)
     appointment_id = _seed_appointment(engine, practice["a"], _at(10))
     _set_policy(engine, self_book_existing=False)
 
-    cancel = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
     move = patient_a_client.post(
         f"/api/patient/booking/{appointment_id}/reschedule",
         json={"start_at": _at(14).isoformat()},
     )
-
-    for response in (cancel, move):
-        assert response.status_code == 403, response.text
-        assert response.json()["detail"]["error"]["code"] == "SELF_BOOKING_DISABLED"
-    assert _status_of(engine, appointment_id) == "confirmed"
+    assert move.status_code == 403, move.text
+    assert move.json()["detail"]["error"]["code"] == "SELF_BOOKING_DISABLED"
     assert _start_of(engine, appointment_id) == _at(10)
+
+    cancel = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+    assert cancel.status_code == 200, cancel.text
+    assert _status_of(engine, appointment_id) == "cancelled"
+
+
+def test_a_late_reschedule_is_refused_and_points_at_cancelling(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """A patient turned away from moving it must be told what they CAN do.
+
+    Otherwise the refusal reads as "nothing you can do online", and the
+    practice hears nothing at all.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    _set_policy(engine, reschedule_cutoff_hours=24 * 400)
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "cancel" in response.json()["detail"]["error"]["message"].lower()
