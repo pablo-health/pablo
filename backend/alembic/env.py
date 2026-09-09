@@ -24,7 +24,19 @@ from app.settings import get_settings
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # ``disable_existing_loggers`` defaults to True, which switches off every
+    # logger that already exists when alembic configures logging — including
+    # the ones belonging to whatever invoked it.
+    #
+    # That is not theoretical. ``bin/migrate.py`` creates its module logger at
+    # import, runs ``alembic upgrade head``, and then runs the single-practice
+    # migration and reports what it found. With the default, everything that
+    # second half logs — the pre-flight report, and the explanation when it
+    # REFUSES and fails the deploy — went nowhere. On 2026-09-09 the OSS deploy
+    # job exited 1 after a clean upgrade with no message of any kind: twenty
+    # lines of alembic INFO, then nothing. The one code path whose whole job is
+    # to say why it is blocking a rollout was the one that could not speak.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 platform_metadata = PlatformBase.metadata
