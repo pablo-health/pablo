@@ -1170,3 +1170,178 @@ class TestNaiveInputIsHostIndependent:
             USER_ID, "2026-08-26T08:00:00", "2026-08-26T08:50:00", tz=NY
         ).conflicts
         assert len(naive_early) == 1
+
+
+# 2026-03-16 is a Monday, so this week runs Mon 16 through Sun 22.
+_MON, _TUE, _WED, _THU, _FRI = (f"2026-03-{d}" for d in (16, 17, 18, 19, 20))
+_SAT, _SUN = "2026-03-21", "2026-03-22"
+
+#: The three lengths a practice actually runs: a short screening call, a long
+#: first session, and the ordinary hour.
+_CONSULT, _SESSION, _INTAKE = 15, 50, 90
+
+
+def _office_hours(rule_repo: InMemoryAvailabilityRuleRepository) -> None:
+    """Nine to five, Monday to Friday — five rules, one per weekday.
+
+    There is no rule shape that says "weekdays"; ``working_hours`` carries a
+    single ``day_of_week``, so an ordinary week is five rows. Worth building
+    once here, because every test below starts from it and because the
+    five-rule week is the configuration a real practice has and the suite
+    otherwise only ever exercised one day at a time.
+    """
+    for day in range(5):
+        rule_repo.create(
+            _rule(
+                RuleType.WORKING_HOURS,
+                {"day_of_week": day, "start": "09:00", "end": "17:00"},
+                rule_id=f"wh-{day}",
+            )
+        )
+
+
+class TestAnOrdinaryPracticeWeek:
+    """Nine to five Monday to Friday, and the three appointment lengths.
+
+    Everything above tests one rule against one day. A practice is a set of
+    rules against a week, and the interaction is where a configuration either
+    works or quietly does not.
+    """
+
+    def test_every_weekday_opens_and_the_weekend_does_not(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        _office_hours(rule_repo)
+
+        for day in (_MON, _TUE, _WED, _THU, _FRI):
+            result = engine.get_free_slots(USER_ID, day, _SESSION)
+            assert result.configured is True
+            assert result.slots, f"{day} offered nothing"
+            assert result.slots[0].start == f"{day}T09:00:00Z"
+
+        for day in (_SAT, _SUN):
+            result = engine.get_free_slots(USER_ID, day, _SESSION)
+            # Configured, but closed. A weekend with no working-hours rule is
+            # not an unconfigured practice, and callers key off that difference
+            # to tell "set up your availability" from "nothing free that day".
+            assert result.configured is True
+            assert result.slots == [], f"{day} offered slots with no rule covering it"
+
+    def test_each_appointment_length_gets_its_own_lattice(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        """A consult, a session and an intake do not tile the day the same way.
+
+        Duration is the one thing about an appointment type the engine does
+        take, and it takes it per query rather than from the type — so this is
+        the whole of the type-awareness that exists.
+        """
+        _office_hours(rule_repo)
+
+        counts = {
+            length: len(engine.get_free_slots(USER_ID, _WED, length).slots)
+            for length in (_CONSULT, _SESSION, _INTAKE)
+        }
+
+        # 09:00-17:00 is 480 minutes; back-to-back tiling gives floor(480/n).
+        assert counts == {_CONSULT: 32, _SESSION: 9, _INTAKE: 5}
+        assert engine.get_free_slots(USER_ID, _WED, _INTAKE).slots[-1].start == f"{_WED}T15:00:00Z"
+
+    def test_a_booking_blocks_the_time_whatever_length_is_asked_for(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        """One booked hour is unavailable to a consult as much as to a session."""
+        _office_hours(rule_repo)
+        appt_repo.create(_appt(f"{_WED}T10:00:00Z", f"{_WED}T10:50:00Z", appt_id="a1"))
+
+        for length in (_CONSULT, _SESSION, _INTAKE):
+            starts = {s.start for s in engine.get_free_slots(USER_ID, _WED, length).slots}
+            overlapping = {
+                start for start in starts if f"{_WED}T10:00:00Z" <= start < f"{_WED}T10:50:00Z"
+            }
+            assert not overlapping, f"{length}-minute query offered a booked time: {overlapping}"
+
+
+class TestWhatTheCapCannotSay:
+    """Characterization. ``max_per_day`` is ``{"max": N}`` and nothing else.
+
+    These tests pin behaviour that is currently correct-as-built but narrower
+    than a practice needs, so that the day the rule shape grows a scope, the
+    tests that must change are the ones named for the limitation rather than a
+    scatter of unrelated assertions. The gap itself is tracked separately.
+    """
+
+    def test_a_cap_applies_to_every_day_not_the_one_it_was_meant_for(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        """ "Only two on Wednesdays" is not expressible; it becomes "two a day".
+
+        A therapist who wants a lighter Wednesday has to cap every day at the
+        Wednesday number, because the rule carries no ``day_of_week``. Thursday
+        closing here is the whole point of the test.
+        """
+        _office_hours(rule_repo)
+        rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 2}, rule_id="cap"))
+        for i, day in enumerate((_WED, _THU)):
+            appt_repo.create(_appt(f"{day}T09:00:00Z", f"{day}T09:50:00Z", appt_id=f"x{i}a"))
+            appt_repo.create(_appt(f"{day}T11:00:00Z", f"{day}T11:50:00Z", appt_id=f"x{i}b"))
+
+        assert engine.get_free_slots(USER_ID, _WED, _SESSION).slots == []
+        assert engine.get_free_slots(USER_ID, _THU, _SESSION).slots == [], (
+            "Thursday stayed open, so a per-day scope exists after all — "
+            "this test and the rule shape have diverged"
+        )
+        # Friday is untouched: the cap is counted per day, so an empty day is
+        # open. That is what makes the limitation bearable and also what makes
+        # it easy to miss.
+        assert engine.get_free_slots(USER_ID, _FRI, _SESSION).slots
+
+    def test_one_cap_counts_consults_and_intakes_alike(
+        self,
+        rule_repo: InMemoryAvailabilityRuleRepository,
+        appt_repo: InMemoryAppointmentRepository,
+        engine: AvailabilityEngine,
+    ) -> None:
+        """ "Two intakes a day, plus as many sessions as fit" is not expressible.
+
+        The cap counts appointments, and the engine never reads an appointment
+        type at all — so a fifteen-minute screening call and a ninety-minute
+        first session are the same one unit against it.
+        """
+        _office_hours(rule_repo)
+        rule_repo.create(_rule(RuleType.MAX_PER_DAY, {"max": 2}, rule_id="cap"))
+        appt_repo.create(_appt(f"{_WED}T09:00:00Z", f"{_WED}T09:15:00Z", appt_id="consult"))
+        appt_repo.create(_appt(f"{_WED}T10:00:00Z", f"{_WED}T11:30:00Z", appt_id="intake"))
+
+        # Two appointments, 105 minutes of a 480-minute day used, and the day
+        # is shut to everything — including the fifteen-minute slot that would
+        # physically fit six times over.
+        for length in (_CONSULT, _SESSION, _INTAKE):
+            assert engine.get_free_slots(USER_ID, _WED, length).slots == [], (
+                f"the cap let a {length}-minute appointment through"
+            )
+
+    def test_no_rule_can_restrict_a_kind_of_appointment_to_certain_days(
+        self, rule_repo: InMemoryAvailabilityRuleRepository, engine: AvailabilityEngine
+    ) -> None:
+        """ "Intakes on Tuesdays and Thursdays only" has no rule to carry it.
+
+        Blocking a day blocks it for everything, so the closest expressible
+        configuration also removes the ordinary sessions the practice wanted to
+        keep. Asserted rather than described, because a reader who assumes
+        otherwise will assume it quietly.
+        """
+        _office_hours(rule_repo)
+        rule_repo.create(_rule(RuleType.BLOCK_DAY_OF_WEEK, {"day_of_week": 2}, rule_id="no-wed"))
+
+        assert engine.get_free_slots(USER_ID, _WED, _INTAKE).slots == []
+        assert engine.get_free_slots(USER_ID, _WED, _SESSION).slots == [], (
+            "blocking a day for intakes left ordinary sessions bookable, so a "
+            "type-scoped block exists — this test and the rule shape have diverged"
+        )
