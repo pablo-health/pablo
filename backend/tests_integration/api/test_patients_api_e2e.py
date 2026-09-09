@@ -41,7 +41,6 @@ Run: ``make test-integration``.
 from __future__ import annotations
 
 import os
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -54,7 +53,7 @@ from sqlalchemy import create_engine, text
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request
     from fastapi.testclient import TestClient
     from sqlalchemy.engine import Engine
 
@@ -79,6 +78,11 @@ os.environ.setdefault("ENVIRONMENT", "development")
 # imported (which happens in the ``fastapi_app`` fixture below).
 os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 
+# The identity the resolver looks up in ``tenant_schema`` below and the one
+# ``e2e_client`` stashes on the request must name the same practice, or the
+# schema the middleware resolves and the one the route runs against diverge.
+_TENANT_EMAIL = "e2e-patients@example.com"
+
 
 @pytest.fixture(scope="module")
 def engine() -> Iterator[Engine]:
@@ -101,11 +105,14 @@ def engine() -> Iterator[Engine]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    """Provision a tenant schema the same way pentest provisioning does.
+    """Provision a tenant schema the same way pentest provisioning does, and
+    map ``_TENANT_EMAIL`` to it so ``e2e_client`` resolves it for real.
 
-    Calls ``create_practice_schema`` directly — that's the function
-    ``PentestTenantService.provision`` invokes. RLS is enabled via
-    ``enable_rls_on_schema`` as a side effect, matching prod.
+    ``_seeded_practice`` provisions through ``create_practice_schema`` —
+    the same function ``PentestTenantService.provision`` invokes — so RLS
+    is enabled via ``enable_rls_on_schema`` exactly as prod does; it also
+    inserts the practice, platform user and email mapping rows that
+    ``app.auth.service._resolve_practice_from_email`` reads.
 
     Note: prior to running this we warm the pool with a connection
     that sets ``search_path = practice, platform, public``. The RLS
@@ -117,15 +124,16 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
     tracked separately — but reproducing the pentest's FK finding
     requires getting past the policy creation step the way prod does.
     """
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+        _seeded_practice,
+    )
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
         conn.commit()
 
-    schema = f"practice_test_e2e_{uuid.uuid4().hex[:8]}"
-    create_practice_schema(engine, schema)
-    yield schema
+    with _seeded_practice(engine, _TENANT_EMAIL) as schema:
+        yield schema
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
@@ -156,7 +164,7 @@ def e2e_user(e2e_user_id: str):
 
     return User(
         id=e2e_user_id,
-        email="e2e-patients@example.com",
+        email=_TENANT_EMAIL,
         name="E2E Patients User",
         created_at=datetime(2024, 1, 1, tzinfo=UTC),
         baa_accepted_at=datetime(2024, 1, 1, tzinfo=UTC),
@@ -177,8 +185,10 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
 
     Wiring:
       * ``DatabaseSessionMiddleware`` opens a session per request and
-        sets ``search_path``. We patch its schema resolver to return
-        ``tenant_schema`` (no Firebase token to decode in tests).
+        sets ``search_path``. There's no Firebase token to decode in
+        tests, so we stand in for the one thing it would have produced —
+        a verified identity — and let the middleware's own resolver look
+        ``_TENANT_EMAIL`` up against the rows ``tenant_schema`` seeded.
       * Auth dependencies are overridden to return ``e2e_user`` — no
         Firebase round-trip, no MFA, no allowlist check.
       * ``get_tenant_context`` is overridden to set
@@ -186,6 +196,7 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
         production dependency on the same line in
         ``auth.service.get_tenant_context``.
     """
+    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
     from app.auth.service import (  # noqa: PLC0415
         TenantContext,
         get_current_user,
@@ -198,10 +209,14 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     from app.db import get_db_session  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        "app.db.middleware._resolve_schema_from_request",
-        lambda _request: (tenant_schema, "resolved"),
+    identity = VerifiedIdentity(
+        provider="test", subject_id=e2e_user_id, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
     )
+
+    def _stash_identity(request: Request) -> None:
+        request.state.verified_identity = identity
+
+    monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)
 
     def _tenant_context() -> TenantContext:
         session = get_db_session()

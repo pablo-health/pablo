@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from app.services.chat_llm_gateway import FakeChatLLMGateway
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Request
     from fastapi.testclient import TestClient
     from sqlalchemy.engine import Engine
 
@@ -75,6 +75,11 @@ os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 # surface 404s and the routes under test never run.
 os.environ.setdefault("ENABLE_PATIENT_CHAT", "true")
 
+# The identity the resolver looks up in ``tenant_schema`` below and the one
+# ``e2e_client`` stashes on the request must name the same practice, or the
+# schema the middleware resolves and the one the route runs against diverge.
+_TENANT_EMAIL = "e2e-chat@example.com"
+
 
 # ---------------------------------------------------------------------------
 # Module-scoped infra: alembic head + tenant schema + FastAPI app
@@ -94,7 +99,12 @@ def engine() -> Iterator[Engine]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    """Provision a tenant schema and map ``_TENANT_EMAIL`` to it, so
+    ``e2e_client`` resolves it through the real lookup rather than a stand-in.
+    """
+    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+        _seeded_practice,
+    )
 
     # Warm the pool with a connection whose search_path includes
     # ``practice`` so the RLS policy CREATE that references
@@ -105,9 +115,8 @@ def tenant_schema(engine: Engine) -> Iterator[str]:
         conn.execute(text("SET search_path = practice, platform, public"))
         conn.commit()
 
-    schema = f"practice_test_chat_{uuid.uuid4().hex[:8]}"
-    create_practice_schema(engine, schema)
-    yield schema
+    with _seeded_practice(engine, _TENANT_EMAIL) as schema:
+        yield schema
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
@@ -136,7 +145,7 @@ def e2e_user(e2e_user_id: str):
 
     return User(
         id=e2e_user_id,
-        email="e2e-chat@example.com",
+        email=_TENANT_EMAIL,
         name="E2E Chat User",
         created_at=datetime(2024, 1, 1, tzinfo=UTC),
         baa_accepted_at=datetime(2024, 1, 1, tzinfo=UTC),
@@ -161,6 +170,7 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     fake_gateway: FakeChatLLMGateway,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
+    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
     from app.auth.service import (  # noqa: PLC0415
         TenantContext,
         get_current_user,
@@ -174,10 +184,18 @@ def e2e_client(  # noqa: PLR0913 — fixture composition mirrors the FastAPI dep
     from app.routes.chat import get_chat_llm_gateway  # noqa: PLC0415
     from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        "app.db.middleware._resolve_schema_from_request",
-        lambda _request: (tenant_schema, "resolved"),
+    # There's no Firebase token to decode in tests, so stand in for the one
+    # thing it would have produced — a verified identity — and let the
+    # middleware's own resolver look ``_TENANT_EMAIL`` up against the rows
+    # ``tenant_schema`` seeded, rather than handing it a fixed schema.
+    identity = VerifiedIdentity(
+        provider="test", subject_id=e2e_user_id, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
     )
+
+    def _stash_identity(request: Request) -> None:
+        request.state.verified_identity = identity
+
+    monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)
 
     def _tenant_context() -> TenantContext:
         session = get_db_session()

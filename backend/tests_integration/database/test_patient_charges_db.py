@@ -91,6 +91,16 @@ os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 
 _CLINICIAN_A = "3c5f2c0a-8e2d-5b9f-9e8d-8e4f7c3e3c03"
 _CLINICIAN_B = "4d6a3d1b-9f3e-5cab-af9e-9f5a8d4f4d04"
+_CLINICIAN_A_EMAIL = "clinician-a@example.com"
+_CLINICIAN_B_EMAIL = "clinician-b@example.com"
+
+# The email the resolver looks up in ``tenant_schema`` below and the one
+# ``client`` stashes on the request must name the same practice, or the
+# schema the middleware resolves and the one the routes run against
+# diverge. Clinician A's is as good as any — both clinicians share this
+# one practice schema, and RLS (not schema separation) is what tells
+# them apart.
+_TENANT_EMAIL = _CLINICIAN_A_EMAIL
 
 #: Which clinician a request speaks for. Stands in for the bearer token the
 #: real auth chain would decode; the seam it replaces is the auth layer, not
@@ -141,16 +151,21 @@ def engine() -> Iterator[Engine]:
 
 @pytest.fixture(scope="module")
 def tenant_schema(engine: Engine) -> Iterator[str]:
-    """A schema built by the real provisioning path, so the DDL is the shipped DDL."""
-    from app.db.provisioning import create_practice_schema  # noqa: PLC0415
+    """A schema built by the real provisioning path, so the DDL is the shipped DDL.
+
+    Also maps ``_TENANT_EMAIL`` to it, so ``client`` below resolves it
+    through the real lookup rather than a stand-in.
+    """
+    from tests_integration.database.test_tenant_resolution_db import (  # noqa: PLC0415
+        _seeded_practice,
+    )
 
     with engine.connect() as conn:
         conn.execute(text("SET search_path = practice, platform, public"))
         conn.commit()
 
-    schema = f"practice_test_charges_{uuid.uuid4().hex[:8]}"
-    create_practice_schema(engine, schema)
-    yield schema
+    with _seeded_practice(engine, _TENANT_EMAIL) as schema:
+        yield schema
     with engine.connect() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         conn.commit()
@@ -535,8 +550,8 @@ def _build_app(tenant_schema: str) -> FastAPI:
     from app.routes.patient_payments import router  # noqa: PLC0415
 
     users = {
-        _CLINICIAN_A: _user(_CLINICIAN_A, "clinician-a@example.com"),
-        _CLINICIAN_B: _user(_CLINICIAN_B, "clinician-b@example.com"),
+        _CLINICIAN_A: _user(_CLINICIAN_A, _CLINICIAN_A_EMAIL),
+        _CLINICIAN_B: _user(_CLINICIAN_B, _CLINICIAN_B_EMAIL),
     }
 
     app = FastAPI()
@@ -573,12 +588,21 @@ def _build_app(tenant_schema: str) -> FastAPI:
 
 @pytest.fixture
 def client(tenant_schema: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    from app.auth.providers import VerifiedIdentity  # noqa: PLC0415
     from app.payments.provider import register_payment_credential_provider  # noqa: PLC0415
 
-    monkeypatch.setattr(
-        "app.db.middleware._resolve_schema_from_request",
-        lambda _request: (tenant_schema, "resolved"),
+    # There's no Firebase token to decode in tests, so stand in for the one
+    # thing it would have produced — a verified identity — and let the
+    # middleware's own resolver look ``_TENANT_EMAIL`` up against the rows
+    # ``tenant_schema`` seeded, rather than handing it a fixed schema.
+    identity = VerifiedIdentity(
+        provider="test", subject_id=_CLINICIAN_A, email=_TENANT_EMAIL, mfa_satisfied=True, claims={}
     )
+
+    def _stash_identity(request: Request) -> None:
+        request.state.verified_identity = identity
+
+    monkeypatch.setattr("app.db.middleware._verify_and_stash_clinician_identity", _stash_identity)
     register_payment_credential_provider(_AlwaysConfigured())
     try:
         yield TestClient(_build_app(tenant_schema))
