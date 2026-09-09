@@ -98,6 +98,11 @@ class OrphanCount:
     total: int
 
 
+#: How many stranded identities to name in the refusal before eliding. Enough
+#: to recognise a pattern, few enough that the message stays readable.
+_MAX_STRANDED_LISTED = 20
+
+
 class PreflightError(RuntimeError):
     """The pre-flight found rows that would become invisible. Nothing was changed."""
 
@@ -277,6 +282,69 @@ def format_report(counts: list[OrphanCount]) -> str:
     return "\n".join(lines)
 
 
+#: Every identity that must be able to sign in after the migration: everyone who
+#: already has an account, plus everyone granted access who has not signed up yet.
+#: Resolution reads ``email_tenant_mappings`` and nothing else, so an identity
+#: absent from it resolves to nothing.
+_IDENTITY_EMAILS = (
+    f"SELECT lower(email) AS email FROM {PLATFORM_SCHEMA}.users "  # noqa: S608
+    f"UNION SELECT lower(email) FROM {PLATFORM_SCHEMA}.allowed_emails"
+)
+
+
+def unresolvable_identities(engine: Engine) -> list[str]:
+    """Emails that would resolve to no practice, and so could not sign in.
+
+    Before ``AllowlistRepository.add`` wrote the mapping alongside the grant,
+    an operator added an email to ``allowed_emails`` and that was the whole
+    story — the request got a context with no practice attached. Those rows
+    have no mapping. While a deployment could skip resolution entirely that was
+    survivable; once every deployment runs a real practice schema, resolution is
+    on the login path for every user and an identity that resolves to nothing
+    cannot sign in.
+
+    So the decision note (``docs/architecture/identity-to-practice-resolution.md``)
+    puts the backfill on this migration, and makes this count the proof that no
+    user was left behind.
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                f"SELECT i.email FROM ({_IDENTITY_EMAILS}) i "  # noqa: S608 - PLATFORM_SCHEMA is a module constant, not input
+                f"LEFT JOIN {PLATFORM_SCHEMA}.email_tenant_mappings m "
+                f"  ON m.email = i.email "
+                f"WHERE m.email IS NULL "
+                f"ORDER BY i.email"
+            )
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def backfill_identity_mappings(engine: Engine, practice_id: str = DEFAULT_PRACTICE_ID) -> int:
+    """Map every unresolvable identity onto ``practice_id``. Returns how many.
+
+    Safe to re-run: the INSERT selects only rows with no mapping, so a second
+    pass finds nothing. ``tenant_id`` and ``practice_id`` both carry the practice
+    id — the same pair ``AllowlistRepository.add`` writes, so a backfilled row is
+    indistinguishable from one written by a grant.
+    """
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                f"INSERT INTO {PLATFORM_SCHEMA}.email_tenant_mappings "  # noqa: S608 - PLATFORM_SCHEMA is a module constant, not input
+                f"(email, tenant_id, practice_id, created_at) "
+                f"SELECT i.email, :pid, :pid, now() "
+                f"FROM ({_IDENTITY_EMAILS}) i "
+                f"LEFT JOIN {PLATFORM_SCHEMA}.email_tenant_mappings m "
+                f"  ON m.email = i.email "
+                f"WHERE m.email IS NULL "
+                f"ON CONFLICT (email) DO NOTHING"
+            ),
+            {"pid": practice_id},
+        )
+    return int(result.rowcount or 0)
+
+
 def is_migrated(engine: Engine) -> bool:
     """Whether this deployment already lives in its own practice schema.
 
@@ -330,6 +398,34 @@ def migrate(engine: Engine, *, force: bool = False) -> list[OrphanCount]:
             "Single-practice migration: proceeding under --force with %d table(s) "
             "holding rows no principal can read",
             len(lost),
+        )
+
+    # Identities first, before anything is renamed. Resolution is about to become
+    # mandatory on the login path, and an identity granted access before
+    # ``AllowlistRepository.add`` started writing the mapping alongside the grant
+    # resolves to nothing — which after this is not a degraded account, it is a
+    # user who cannot sign in. Doing it up front means a failure here leaves the
+    # deployment exactly as it was.
+    backfilled = backfill_identity_mappings(engine)
+    if backfilled:
+        logger.info(
+            "Single-practice migration: mapped %d identity/identities onto '%s' "
+            "that previously resolved to no practice",
+            backfilled,
+            DEFAULT_PRACTICE_ID,
+        )
+
+    stranded = unresolvable_identities(engine)
+    if stranded:
+        # The backfill covers every identity the platform knows about, so a
+        # leftover means something wrote a mapping-less identity we do not model.
+        # Refuse: signing in is not something to find out about afterwards.
+        raise PreflightError(
+            f"Refusing to migrate: {len(stranded)} identity/identities still "
+            f"resolve to no practice after the backfill, and could not sign in "
+            f"once resolution is mandatory:\n  "
+            + "\n  ".join(stranded[:_MAX_STRANDED_LISTED])
+            + ("\n  …" if len(stranded) > _MAX_STRANDED_LISTED else "")
         )
 
     with engine.begin() as conn:
