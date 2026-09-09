@@ -397,7 +397,7 @@ class TestHardSeparation:
         monkeypatch.setattr(
             middleware_module,
             "_resolve_schema_from_request",
-            lambda _request: "practice_abc",
+            lambda _request: ("practice_abc", "resolved"),
         )
 
         request = MagicMock()
