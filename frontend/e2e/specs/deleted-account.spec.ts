@@ -36,9 +36,12 @@ test("a token for a deleted account is rejected with 401, not 500", async () => 
     "a token that refers to nobody must be rejected, not raised on",
   ).toBe(401)
 
-  const body = (await response.json()) as { error?: { code?: string } }
+  // The envelope arrives nested under `detail`: routes raise
+  // HTTPException(detail={"error": {...}}), and FastAPI renders an
+  // HTTPException as {"detail": <detail>}.
+  const body = (await response.json()) as { detail?: { error?: { code?: string } } }
   expect(
-    body.error?.code,
+    body.detail?.error?.code,
     "the client needs to know to sign in again, which a generic error does not say",
   ).toBe("USER_NOT_FOUND")
 })

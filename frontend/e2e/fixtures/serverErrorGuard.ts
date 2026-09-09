@@ -70,7 +70,11 @@ export function attachServerErrorGuard(page: Page): ServerErrorGuard {
 
   const onResponse = (response: Response) => {
     const status = response.status()
-    if (status < 500) return
+    // 503 is excluded on purpose. The auth path returns it while a tenant is
+    // still provisioning — a deliberate "not ready, retry", not a fault — so
+    // treating it as a failure would fail any spec that races provisioning.
+    // Everything else in the 5xx range means the request was not handled.
+    if (status < 500 || status === 503) return
     all.push({
       status,
       method: response.request().method(),
