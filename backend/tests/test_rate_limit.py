@@ -10,6 +10,7 @@ grind against an expensive endpoint. The first window to breach raises 429.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -20,11 +21,18 @@ from app.rate_limit import (
     InMemorySlidingWindow,
     NamespacedLimiter,
     RedisSlidingWindow,
+    _get_passkey_login_limiter,
     _get_preauth_limiter,
     _get_public_booking_browse_limiter,
     _get_public_booking_write_limiter,
+    _get_recovery_redeem_account_limiter,
+    _get_recovery_redeem_limiter,
+    check_recovery_redeem_account_limit,
+    require_passkey_login_rate_limit,
     require_public_booking_rate_limit,
     require_public_booking_write_rate_limit,
+    require_recovery_redeem_rate_limit,
+    reset_passkey_limiters,
     reset_preauth_limiter,
     reset_public_booking_limiters,
 )
@@ -111,9 +119,11 @@ class _FakeRequest:
 def _clean_limiters() -> Any:
     reset_preauth_limiter()
     reset_public_booking_limiters()
+    reset_passkey_limiters()
     yield
     reset_preauth_limiter()
     reset_public_booking_limiters()
+    reset_passkey_limiters()
 
 
 def test_public_booking_does_not_share_the_preauth_window() -> None:
@@ -166,6 +176,88 @@ def test_public_booking_windows_isolate_by_client_ip() -> None:
 def test_public_booking_limiters_are_distinct_objects() -> None:
     assert _get_public_booking_browse_limiter() is not _get_public_booking_write_limiter()
     assert _get_public_booking_browse_limiter() is not _get_preauth_limiter()
+
+
+# --------------------------------------------------- passkey sign-in + recovery
+
+
+def test_passkey_login_does_not_share_the_preauth_window() -> None:
+    """A practice signing in must not spend the native app's budget.
+
+    Separation comes from the key namespace, not from holding distinct
+    objects — a Redis limiter keys purely on the string it is handed.
+    """
+    request = _FakeRequest("203.0.113.20")
+    for _ in range(60):
+        require_passkey_login_rate_limit(request)
+
+    # The pre-auth window (10/60s) is untouched from the same address.
+    for _ in range(10):
+        _get_preauth_limiter().check("203.0.113.20")
+
+
+def test_passkey_login_window_covers_a_practice_arriving_together() -> None:
+    """One sign-in costs two requests, so the budget is half its size in people.
+
+    A shared office address is a single key here. At the old shared 10/60s
+    that was five sign-ins a minute for an entire practice.
+    """
+    request = _FakeRequest("203.0.113.21")
+    ceremonies = 30
+    for _ in range(ceremonies):
+        require_passkey_login_rate_limit(request)  # authenticate/begin
+        require_passkey_login_rate_limit(request)  # authenticate/finish
+
+
+def test_recovery_redemption_survives_exhausted_sign_in_budget() -> None:
+    """The point of the split: recovery works when sign-in is failing.
+
+    Someone reaches for a recovery code precisely because their passkey is
+    not working, having just spent attempts discovering that.
+    """
+    request = _FakeRequest("203.0.113.22")
+    with contextlib.suppress(HTTPException):
+        for _ in range(200):
+            require_passkey_login_rate_limit(request)
+
+    # Sign-in from this address is now refused...
+    with pytest.raises(HTTPException):
+        require_passkey_login_rate_limit(request)
+
+    # ...and recovery from the same address still works.
+    require_recovery_redeem_rate_limit(request)
+
+
+def test_recovery_redemption_is_bounded_per_account() -> None:
+    """An address-keyed limit cannot bound guessing against one account.
+
+    An attacker rotates addresses and slips under it. The per-account window
+    is what actually bounds attempts against a single person's codes.
+    """
+    for _ in range(5):
+        check_recovery_redeem_account_limit("user-abc")
+
+    with pytest.raises(HTTPException):
+        check_recovery_redeem_account_limit("user-abc")
+
+    # A different account is unaffected — one person's attempts must not
+    # lock out another's recovery.
+    check_recovery_redeem_account_limit("user-def")
+
+
+def test_recovery_account_limit_is_independent_of_client_ip() -> None:
+    """Rotating addresses does not buy more attempts against one account."""
+    for _ in range(5):
+        check_recovery_redeem_account_limit("user-ghi")
+
+    with pytest.raises(HTTPException):
+        check_recovery_redeem_account_limit("user-ghi")
+
+
+def test_passkey_limiters_are_distinct_objects() -> None:
+    assert _get_passkey_login_limiter() is not _get_recovery_redeem_limiter()
+    assert _get_passkey_login_limiter() is not _get_preauth_limiter()
+    assert _get_recovery_redeem_limiter() is not _get_recovery_redeem_account_limiter()
 
 
 # ------------------------------------------------------------- redis limiters
