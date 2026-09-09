@@ -542,20 +542,42 @@ class ChatTurnService:
             is_first_attempt = attempt_count == 1
             buffer: list[str] = []
             final: StreamEvent | None = None
-            async for event in self._gateway.stream_completion(
+            stream = self._gateway.stream_completion(
                 model=context.model,
                 system_prompt=system_prompt,
                 prior_turns=prior_turns,
                 new_user_text=user_text,
                 max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-            ):
-                if event.delta:
-                    buffer.append(event.delta)
-                    if is_first_attempt:
-                        await live_queue.put(event)
-                if event.finish_reason is not None:
-                    final = event
-                    break
+            )
+            try:
+                async for event in stream:
+                    if event.delta:
+                        buffer.append(event.delta)
+                        if is_first_attempt:
+                            await live_queue.put(event)
+                    if event.finish_reason is not None:
+                        final = event
+                        break
+            finally:
+                # Breaking out of ``async for`` on the finish-reason event
+                # above leaves ``stream`` un-exhausted. Left to garbage
+                # collection, asyncio's async-generator finalizer closes it
+                # from an unrelated task/context (whatever happens to be
+                # running when it gets collected) rather than this one —
+                # and the gateway wraps its stream in an OTel span via
+                # ``llm_span``, whose ``context.detach()`` on close requires
+                # the *same* context that attached. A cross-context detach
+                # raises inside the SDK and logs an ERROR from
+                # ``opentelemetry.context``, even though nothing here is
+                # actually broken. Closing explicitly, in this task, keeps
+                # attach and detach on the same context.
+                #
+                # ``ChatLLMGateway.stream_completion`` is declared to return
+                # the broader ``AsyncIterator`` (see its docstring) so that
+                # subclasses can use ``async def`` + ``yield`` bodies, but
+                # every concrete implementation is in fact an async
+                # generator and therefore has ``aclose()``.
+                await stream.aclose()  # type: ignore[attr-defined]
             outcome.buffer = buffer
             if (
                 final is not None
