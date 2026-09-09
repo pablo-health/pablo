@@ -12,10 +12,17 @@ a server up on loopback and watching the requests arrive rather than by
 asserting on a string. That is the property the end-to-end harness's
 stand-in clearinghouse depends on, and the reason a mock transport is not
 enough here: the harness fails at the socket, not at the URL.
+
+That second property has to hold for *both* clients while operations move
+from the older ``httpx`` adapter onto the vendor's SDK, or the harness would
+be exercising one of them and not the other. The SDK spells the setting
+``endpoint_uri``; the test below proves it behaves like ``ApiBases.resolve``
+— replacing the origin and leaving the operation's version path alone.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,7 +39,9 @@ from app.claims.stedi import (
     ApiBases,
     StediClearinghouseClient,
 )
+from app.claims.stedi_sdk import sdk_client, sdk_config
 from app.models.claims_transport import EnrollmentFilters
+from stedi.models import ListClaimsInput
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,6 +57,8 @@ _RESPONSES: dict[str, dict[str, Any]] = {
         "processedAt": "2026-09-06T00:00:00Z",
     },
     "/2024-09-01/enrollments": {"items": []},
+    #: The claim-lifecycle API the SDK speaks, on its own version path.
+    "/2025-03-07/claims": {"claims": []},
 }
 
 
@@ -129,3 +140,62 @@ class TestConfiguredBaseUrl:
             "/2023-08-01/transactions/txn-1",
             "/2024-09-01/enrollments",
         ]
+
+
+class TestConfiguredBaseUrlReachesTheSdk:
+    """The same origin, honoured by the vendor's SDK.
+
+    Operations move from the ``httpx`` adapter onto the SDK one at a time, so
+    for as long as that is in progress the stand-in clearinghouse has to
+    answer for both. These pin the two halves of that: the setting is carried
+    across, and a real call lands on the configured origin with the
+    operation's own version path still on it.
+    """
+
+    def test_no_configured_base_url_leaves_the_sdk_on_the_vendors_hosts(self) -> None:
+        async def build() -> str | object | None:
+            return sdk_config(
+                ClearinghouseCredentials(api_key="test_placeholder", mode="test")
+            ).endpoint_uri
+
+        assert asyncio.run(build()) is None
+
+    def test_a_configured_base_url_becomes_the_sdk_endpoint(self) -> None:
+        async def build() -> str | object | None:
+            return sdk_config(
+                ClearinghouseCredentials(
+                    api_key="test_placeholder",
+                    mode="test",
+                    base_url="http://fake-clearinghouse:8080/",
+                )
+            ).endpoint_uri
+
+        assert asyncio.run(build()) == "http://fake-clearinghouse:8080"
+
+    def test_building_a_config_outside_an_event_loop_is_refused(self) -> None:
+        """Pinned because it shapes how callers may hold a client.
+
+        The SDK builds its transport — and with it an ``aiohttp`` session —
+        while the config is being constructed, so there is no loop-free way
+        to make one at import or dependency-injection time.
+        """
+        with pytest.raises(RuntimeError):
+            sdk_config(ClearinghouseCredentials(api_key="test_placeholder", mode="test"))
+
+    def test_an_sdk_call_lands_on_the_origin_keeping_its_version_path(
+        self, recording_server: tuple[str, list[str]]
+    ) -> None:
+        origin, received = recording_server
+        credentials = ClearinghouseCredentials(
+            api_key="test_placeholder", mode="test", base_url=origin
+        )
+
+        async def list_claims() -> None:
+            async with sdk_client(credentials) as client:
+                await client.list_claims(ListClaimsInput())
+
+        asyncio.run(list_claims())
+
+        # The origin was replaced; `/2025-03-07` — the claim-lifecycle API's
+        # own version path, which no code here supplies — was not.
+        assert received == ["/2025-03-07/claims"]
