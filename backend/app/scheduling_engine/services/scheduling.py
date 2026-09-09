@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from datetime import date as date_type
 from typing import TYPE_CHECKING
 
@@ -17,7 +17,13 @@ from ..exceptions import (
     InvalidRecurrenceError,
     RuleViolationError,
 )
-from ..models.appointment import Appointment, AppointmentStatus, RecurrenceFrequency
+from ..models.appointment import (
+    Appointment,
+    AppointmentStatus,
+    CancellationActor,
+    ChangeRecord,
+    RecurrenceFrequency,
+)
 from ..models.availability import EnforcementLevel
 from .recurrence import RecurrenceGenerator
 
@@ -249,12 +255,19 @@ class SchedulingService:
         user_id: str,
         *,
         tz: tzinfo = UTC,
-        **updates: str | int | bool | None,
+        **updates: str | int | bool | datetime | None,
     ) -> Appointment:
         """Update fields on an existing appointment.
 
         ``tz`` is the zone availability rules are evaluated in — see
         ``AvailabilityEngine.check_conflicts``. Defaults to UTC.
+
+        ``datetime`` is in the value type because the time fields genuinely
+        take one — they are normalised through ``_as_datetime`` a few lines
+        down, exactly as ``create_appointment``'s ``data`` mapping already
+        declares. It was missing only because every existing caller forwards a
+        ``**dict[str, Any]`` from ``model_dump``, which type-checks against
+        anything; the first caller to pass a datetime by name found it.
         """
         appointment = self.get_appointment(appointment_id, user_id)
 
@@ -422,10 +435,123 @@ class SchedulingService:
             appointment.status = AppointmentStatus.CANCELLED
             appointment.pending_expires_at = None
             appointment.updated_at = _now()
+            # A hold nobody answered is late by the clock and chargeable to
+            # nobody. Saying so explicitly matters: left unset, a lapsed
+            # request would be indistinguishable from a patient who cancelled
+            # at the last minute, and the difference is a fee.
+            appointment.cancelled_at = _now()
+            appointment.cancelled_by = CancellationActor.SYSTEM
+            appointment.cancelled_by_id = None
+            appointment.late_cancellation = False
             expired.append(self._repo.update(appointment))
         return expired
 
-    def cancel_appointment(self, appointment_id: str, user_id: str) -> Appointment:
+    def reschedule_appointment(
+        self,
+        appointment_id: str,
+        user_id: str,
+        *,
+        start_at: datetime,
+        tz: tzinfo = UTC,
+        record: ChangeRecord | None = None,
+    ) -> Appointment:
+        """Move an appointment to a new time, leaving two rows behind.
+
+        A move is not an edit. One slot is given up and another is taken, and
+        both of those happened — so the original is CANCELLED, carrying the
+        full cancellation record, and a NEW appointment is created at the new
+        time. ``superseded_by_id`` links them, which is what distinguishes a
+        move from an outright cancellation: both are cancelled rows, and only
+        one of them still has a patient coming.
+
+        Updating ``start_at`` in place would be less code and worse history.
+        The abandoned slot — the thing a late-change fee is charged for —
+        would be overwritten, and a patient who moved the same appointment
+        three times would leave one row that remembered only the last move.
+
+        Returns the NEW appointment. Its id differs from the one passed in;
+        callers holding the old id are holding a cancelled row.
+
+        The new time is vetted BEFORE anything is written and the whole thing
+        is one transaction, so a patient who gives up their Tuesday cannot
+        discover that Thursday was gone all along and now they have neither.
+        """
+        original = self.get_appointment(appointment_id, user_id)
+        duration = original.duration_minutes
+        start_dt = _as_datetime(start_at, tz)
+        end_dt = start_dt + timedelta(minutes=duration)
+
+        # The original still occupies its own slot at this point, so exclude it
+        # — otherwise a move that overlaps the old time collides with itself.
+        self._reject_if_overlapping(
+            user_id, start_dt, end_dt, exclude_appointment_id=appointment_id
+        )
+        self.rule_warnings = self._check_availability_rules(user_id, start_dt, end_dt, tz)
+
+        now = _now()
+        replacement = Appointment(
+            id=str(uuid.uuid4()),
+            user_id=original.user_id,
+            patient_id=original.patient_id,
+            title=original.title,
+            start_at=start_dt,
+            end_at=end_dt,
+            duration_minutes=duration,
+            # A moved request is still a request; a moved booking is still
+            # booked. Rescheduling is not the moment to decide either.
+            status=original.status,
+            session_type=original.session_type,
+            appointment_type_id=original.appointment_type_id,
+            video_link=original.video_link,
+            video_platform=original.video_platform,
+            notes=original.notes,
+            note_type=original.note_type,
+            # Series membership travels, and a moved occurrence is by
+            # definition no longer where the pattern put it.
+            recurrence_rule=original.recurrence_rule,
+            recurring_appointment_id=original.recurring_appointment_id,
+            recurrence_index=original.recurrence_index,
+            is_exception=True if original.recurring_appointment_id else original.is_exception,
+            pending_expires_at=original.pending_expires_at,
+            created_at=now,
+            updated_at=now,
+        )
+        # Deliberately NOT carried across:
+        #   google_event_id / google_calendar_id / google_sync_status, ical_*,
+        #     ehr_appointment_url — those identify the external event for the
+        #     OLD time. Copying them would point two rows at one event and
+        #     make the next sync delete or overwrite the wrong one.
+        #   session_id — the clinical session, which belongs to the encounter
+        #     that did or did not happen at the original time.
+        #   confirmation_token_hash — a credential minted for the old hold.
+        #   reminder_24h_sent / reminder_1h_sent — reminders for the new time
+        #     have not been sent, and resetting them is the point.
+        #   service_code / modifiers / unit_count / place_of_service /
+        #     diagnosis_codes — entered against a visit that has not occurred.
+        created = self._repo.create(replacement)
+
+        original.status = AppointmentStatus.CANCELLED
+        original.pending_expires_at = None
+        original.confirmation_token_hash = None
+        original.superseded_by_id = created.id
+        original.cancelled_at = now
+        original.updated_at = now
+        change = record or ChangeRecord()
+        original.cancelled_by = change.by
+        original.cancelled_by_id = change.by_id
+        original.late_cancellation = change.late
+        original.late_change_acknowledged = change.acknowledged
+        self._repo.update(original)
+
+        return created
+
+    def cancel_appointment(
+        self,
+        appointment_id: str,
+        user_id: str,
+        *,
+        record: ChangeRecord | None = None,
+    ) -> Appointment:
         """Cancel a single appointment.
 
         Clears any confirmation token along with it — once a clinician has
@@ -433,11 +559,29 @@ class SchedulingService:
         signal that tells the confirm endpoint a cancelled-with-a-hash row
         apart from this one is a lapsed hold rather than a killed one: the
         expiry sweep deliberately leaves the hash in place.
+
+        Records WHO cancelled and WHEN, because a practice's notice period is
+        a fee boundary rather than a permission one: anybody may cancel at any
+        time, so the row is the only thing that can afterwards distinguish a
+        chargeable late cancellation from a clinician rearranging their own
+        week. ``late`` is decided by the caller, which is the layer that knows
+        the practice's policy — and is frozen here rather than derived on read,
+        since an editable policy would otherwise rewrite the past.
+
+        Omitting ``record`` means the clinician cancelled with nothing else
+        recorded, which is what every in-app cancel has always been. Callers
+        acting for somebody else say so.
         """
         appointment = self.get_appointment(appointment_id, user_id)
         appointment.status = AppointmentStatus.CANCELLED
         appointment.pending_expires_at = None
         appointment.confirmation_token_hash = None
+        record = record or ChangeRecord()
+        appointment.cancelled_at = _now()
+        appointment.cancelled_by = record.by
+        appointment.cancelled_by_id = record.by_id
+        appointment.late_cancellation = record.late
+        appointment.late_change_acknowledged = record.acknowledged
         appointment.updated_at = _now()
         return self._repo.update(appointment)
 

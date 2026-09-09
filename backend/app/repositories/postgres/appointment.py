@@ -382,6 +382,12 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         reminder_1h_sent=row.reminder_1h_sent,
         pending_expires_at=row.pending_expires_at,
         confirmation_token_hash=row.confirmation_token_hash,
+        cancelled_at=row.cancelled_at,
+        cancelled_by=row.cancelled_by,
+        cancelled_by_id=row.cancelled_by_id,
+        late_cancellation=row.late_cancellation,
+        superseded_by_id=row.superseded_by_id,
+        late_change_acknowledged=row.late_change_acknowledged,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -423,5 +429,11 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.reminder_1h_sent = appt.reminder_1h_sent
     row.pending_expires_at = appt.pending_expires_at
     row.confirmation_token_hash = appt.confirmation_token_hash
+    row.cancelled_at = appt.cancelled_at
+    row.cancelled_by = appt.cancelled_by
+    row.cancelled_by_id = appt.cancelled_by_id
+    row.late_cancellation = appt.late_cancellation
+    row.superseded_by_id = appt.superseded_by_id
+    row.late_change_acknowledged = appt.late_change_acknowledged
     row.created_at = appt.created_at
     row.updated_at = appt.updated_at

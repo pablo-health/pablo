@@ -53,6 +53,8 @@ from ..models.audit import AuditAction, ResourceType
 from ..models.scheduling import (
     PatientAppointmentResponse,
     PatientBookingRequest,
+    PatientCancelRequest,
+    PatientRescheduleRequest,
     PatientSlotListResponse,
     PatientSlotResponse,
 )
@@ -62,8 +64,14 @@ from ..repositories.postgres.availability_rule import PostgresAvailabilityRuleRe
 from ..repositories.postgres.user import PostgresUserRepository
 from ..scheduling_engine.exceptions import (
     AppointmentConflictError,
+    AppointmentNotFoundError,
     InvalidAppointmentError,
     RuleViolationError,
+)
+from ..scheduling_engine.models.appointment import (
+    AppointmentStatus,
+    CancellationActor,
+    ChangeRecord,
 )
 from ..scheduling_engine.services.availability import AvailabilityEngine
 from ..scheduling_engine.services.scheduling import SchedulingService
@@ -94,6 +102,17 @@ _TOO_SOON = "That time is sooner than this practice accepts online bookings."
 _TOO_FAR = "That date is further ahead than this practice takes bookings."
 _SLOT_TAKEN = "That time is no longer available."
 _NO_CLINICIAN = "This account is not set up for online booking yet."
+_NO_SUCH_APPOINTMENT = "No such appointment."
+_ALREADY_SETTLED = "That appointment can no longer be changed online."
+#: Shown when a change falls inside the notice period and the caller has not
+#: confirmed it knows. Not a refusal in substance — the same request carrying
+#: the acknowledgement succeeds — but it MUST read as a warning a patient can
+#: act on, because it is the only thing standing between them and a fee they
+#: were never told about.
+_LATE_CHANGE_NEEDS_ACK = (
+    "This is inside the practice's notice period, so its cancellation policy "
+    "may apply. Confirm to go ahead."
+)
 
 #: Fallback when an appointment type carries no length of its own.
 _DEFAULT_DURATION_MINUTES = 50
@@ -237,11 +256,106 @@ def _bookable_type(session: Session, owner: str, session_type: str) -> Appointme
     raise _refuse(_TYPE_NOT_BOOKABLE, "TYPE_NOT_BOOKABLE", status.HTTP_403_FORBIDDEN)
 
 
+def _own_appointment(
+    service: SchedulingService, owner: str, patient: PatientContext, appointment_id: str
+) -> Appointment:
+    """One appointment, only if it belongs to the calling patient.
+
+    This is the load-bearing check on both change routes, and the reason they
+    cannot simply hand the path id to the service. ``get_appointment`` and
+    ``cancel_appointment`` are keyed on the CLINICIAN's user id, which on the
+    owner-armed session is satisfied by every appointment in the practice. Pass
+    the id through unchecked and a patient can cancel or move a stranger's
+    Tuesday by guessing a uuid — the same "two principals on one transaction"
+    shape the slot computation has, arriving through the write path instead.
+
+    A patient's own row and a row belonging to somebody else are both answered
+    with 404. Distinguishing them would turn this route into an oracle for
+    which appointment ids exist in the practice, which is worth more to an
+    attacker than the row itself.
+    """
+    try:
+        appointment = service.get_appointment(appointment_id, owner)
+    except AppointmentNotFoundError as exc:
+        raise _refuse(_NO_SUCH_APPOINTMENT, "NOT_FOUND", status.HTTP_404_NOT_FOUND) from exc
+    if str(appointment.patient_id) != str(patient.patient_id):
+        raise _refuse(_NO_SUCH_APPOINTMENT, "NOT_FOUND", status.HTTP_404_NOT_FOUND)
+    return appointment
+
+
+def _require_changeable(appointment: Appointment) -> None:
+    """Refuse an appointment that has already been settled one way or another.
+
+    Only a PENDING request or a CONFIRMED booking is still a future
+    arrangement a patient can change. Cancelling an already-cancelled row is a
+    no-op worth refusing rather than reporting as success, and a COMPLETED or
+    NO_SHOW row is a clinical record of something that already happened —
+    letting a patient rewrite its time would edit history, not a schedule.
+    """
+    if appointment.status not in {AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED}:
+        raise _refuse(_ALREADY_SETTLED, "NOT_CHANGEABLE", status.HTTP_409_CONFLICT)
+
+
+def _inside_cutoff(appointment: Appointment, *, cutoff_hours: int, now: datetime) -> bool:
+    """Whether less notice is being given than the practice asks for.
+
+    For cancelling this decides a FEE, not permission — see
+    :func:`cancel_appointment`. An appointment already in the past is inside
+    every non-negative cutoff, so "cancelling last Tuesday" is covered without
+    a separate check.
+    """
+    return _as_utc(appointment.start_at) - now < timedelta(hours=cutoff_hours)
+
+
+def _late_change(
+    appointment: Appointment, *, cutoff_hours: int, now: datetime, acknowledged: bool
+) -> bool:
+    """Whether this change is late, refusing it if nobody has said they know.
+
+    The notice period never withholds permission — a patient who cannot attend
+    must always be able to say so, because the alternative is a no-show, which
+    costs the practice the slot AND the warning. What it does is cost money,
+    and being charged for something nobody mentioned is its own harm.
+
+    So a late change without an acknowledgement is refused ONCE, with a message
+    written to be shown to the patient; the identical request carrying
+    ``acknowledge_late_change`` then succeeds. Two calls, not a wall.
+
+    Making the flag REQUIRED rather than merely recorded is the whole point. A
+    boolean a client may optionally send records what the client claimed. A
+    boolean the API demands cannot be reached without the client having been
+    handed the warning to display, which is what turns it into evidence.
+    """
+    if not _inside_cutoff(appointment, cutoff_hours=cutoff_hours, now=now):
+        return False
+    if not acknowledged:
+        raise _refuse(
+            _LATE_CHANGE_NEEDS_ACK, "LATE_CHANGE_NOT_ACKNOWLEDGED", status.HTTP_409_CONFLICT
+        )
+    return True
+
+
 def _window(policy: dict[str, object], *, now: datetime) -> tuple[datetime, datetime]:
     """The earliest and latest instants this practice will take a booking for."""
     min_notice = int(policy["min_notice_hours"])  # type: ignore[call-overload]
     max_horizon = int(policy["max_horizon_days"])  # type: ignore[call-overload]
     return now + timedelta(hours=min_notice), now + timedelta(days=max_horizon)
+
+
+def _require_inside_window(policy: dict[str, object], start_at: datetime, *, now: datetime) -> None:
+    """Refuse a time outside the practice's notice and horizon windows.
+
+    Shared by booking and rescheduling rather than written twice. Moving an
+    appointment is placing a booking at the new time, so it answers to the same
+    two limits; a reschedule route that skipped them would be a way to reach
+    tomorrow morning through the back door of an appointment booked properly
+    last month.
+    """
+    earliest, latest = _window(policy, now=now)
+    if start_at < earliest:
+        raise _refuse(_TOO_SOON, "INSIDE_NOTICE_WINDOW", status.HTTP_409_CONFLICT)
+    if start_at > latest:
+        raise _refuse(_TOO_FAR, "OUTSIDE_HORIZON", status.HTTP_409_CONFLICT)
 
 
 def _require_offered_slot(
@@ -294,6 +408,7 @@ def _to_patient_view(appointment: Appointment) -> PatientAppointmentResponse:
         video_platform=appointment.video_platform,
         recurrence_rule=appointment.recurrence_rule,
         recurring_appointment_id=appointment.recurring_appointment_id,
+        late_cancellation=appointment.late_cancellation,
     )
 
 
@@ -385,11 +500,7 @@ def book_appointment(
         appointment_type = _bookable_type(session, owner, payload.session_type)
 
         start_at = _as_utc(payload.start_at)
-        earliest, latest = _window(policy, now=datetime.now(UTC))
-        if start_at < earliest:
-            raise _refuse(_TOO_SOON, "INSIDE_NOTICE_WINDOW", status.HTTP_409_CONFLICT)
-        if start_at > latest:
-            raise _refuse(_TOO_FAR, "OUTSIDE_HORIZON", status.HTTP_409_CONFLICT)
+        _require_inside_window(policy, start_at, now=datetime.now(UTC))
 
         duration = (
             payload.duration_minutes
@@ -474,3 +585,189 @@ def book_appointment(
         resource_id=created.id,
     )
     return _to_patient_view(created)
+
+
+@router.post("/{appointment_id}/reschedule", response_model=PatientAppointmentResponse)
+def reschedule_appointment(
+    request: Request,
+    appointment_id: str,
+    payload: PatientRescheduleRequest,
+    patient: CurrentPatient,
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> PatientAppointmentResponse:
+    """Move one of the calling patient's own appointments to a different time.
+
+    A reschedule is a cancellation and a booking that must not be separable —
+    a patient who gives up their Tuesday should not be able to discover that
+    Thursday was gone all along and now they have neither. So the new time is
+    vetted BEFORE anything is written, against the same notice window, horizon
+    and offered-slot check a fresh booking answers to, and the row moves in one
+    transaction or not at all.
+
+    Both ends are gated, and they are different gates:
+
+    * the OLD time answers to ``reschedule_cutoff_hours``, which — exactly as
+      for cancelling — decides a FEE and not permission. Inside it the move
+      still happens; it is recorded as late and needs the acknowledgement.
+    * the NEW time answers to the full booking policy, because placing an
+      appointment there is placing a booking there. That one really is a
+      refusal: the practice does not take bookings at that hour from anybody.
+
+    **A move leaves two appointments, and the response is the new one.** The
+    original is cancelled and linked to its replacement, so the slot given up
+    survives as a record — which is what a late-change fee is charged for — and
+    a patient who moves the same appointment three times leaves three records
+    rather than one row that remembers only the last move. The returned ``id``
+    is therefore NOT the id in the path.
+
+    The kind of appointment does not change. Only the time is in the request,
+    so a short check-in cannot be converted into a long slot the practice never
+    opened, and the existing duration travels to the new row.
+    """
+    _require_stepped_up(patient)
+    now = datetime.now(UTC)
+    with owner_session(patient) as (session, owner):
+        policy = load_policy(session)
+        _require_self_booking(policy)
+
+        tz = _owner_timezone(session, owner)
+        engine = AvailabilityEngine(
+            PostgresAvailabilityRuleRepository(session),
+            PostgresAppointmentRepository(session),
+        )
+        service = SchedulingService(PostgresAppointmentRepository(session), engine)
+
+        appointment = _own_appointment(service, owner, patient, appointment_id)
+        _require_changeable(appointment)
+        late = _late_change(
+            appointment,
+            cutoff_hours=int(policy["reschedule_cutoff_hours"]),  # type: ignore[call-overload]
+            now=now,
+            acknowledged=payload.acknowledge_late_change,
+        )
+
+        start_at = _as_utc(payload.start_at)
+        if start_at == _as_utc(appointment.start_at):
+            # Asking for the time it already has. Answering SLOT_TAKEN here
+            # would be true and useless — the thing holding the slot is this
+            # very appointment — and cancelling it to recreate it identically
+            # would churn the record for nothing. The honest answer is the
+            # unchanged row.
+            return _to_patient_view(appointment)
+
+        duration = appointment.duration_minutes or _DEFAULT_DURATION_MINUTES
+        _require_inside_window(policy, start_at, now=now)
+
+        # Same pair of guards the booking path uses, for the same reason: the
+        # client is never trusted about availability, and a reschedule is a
+        # booking. The overlap check excludes the original, so moving within
+        # the diary does not collide with itself — but the RULE check does not
+        # exclude it, so a practice running buffers can find an appointment's
+        # own buffer blocking the slot next to it. That is existing engine
+        # behaviour, shared with the clinician-side reschedule, and is not
+        # worked around here.
+        _require_offered_slot(engine, owner, start_at, duration, tz=tz)
+
+        try:
+            moved = service.reschedule_appointment(
+                appointment_id,
+                owner,
+                start_at=start_at,
+                tz=tz,
+                record=ChangeRecord(
+                    by=CancellationActor.PATIENT,
+                    by_id=patient.patient_id,
+                    late=late,
+                    acknowledged=payload.acknowledge_late_change if late else None,
+                ),
+            )
+        except AppointmentConflictError as exc:
+            raise _refuse(_SLOT_TAKEN, "SLOT_TAKEN", status.HTTP_409_CONFLICT) from exc
+        except RuleViolationError as exc:
+            raise _refuse(_SLOT_TAKEN, "SLOT_TAKEN", status.HTTP_409_CONFLICT) from exc
+        except InvalidAppointmentError as exc:
+            raise _refuse(str(exc), "INVALID_BOOKING", status.HTTP_400_BAD_REQUEST) from exc
+
+        session.commit()
+
+    audit.log_patient_principal_action(
+        action=AuditAction.APPOINTMENT_UPDATED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id=moved.id,
+    )
+    return _to_patient_view(moved)
+
+
+@router.post("/{appointment_id}/cancel", response_model=PatientAppointmentResponse)
+def cancel_appointment(
+    request: Request,
+    appointment_id: str,
+    patient: CurrentPatient,
+    payload: PatientCancelRequest = PatientCancelRequest(),
+    audit: AuditService = Depends(get_audit_service),
+    _: None = Depends(subscription_exempt),
+) -> PatientAppointmentResponse:
+    """Cancel one of the calling patient's own appointments. Always allowed.
+
+    POST rather than DELETE, because nothing is deleted. The row survives as a
+    CANCELLED appointment: it is part of the record of the relationship, it is
+    what a late-cancellation fee is applied to, and the slot it frees is freed
+    by the status change alone — availability treats everything not cancelled
+    as busy.
+
+    **``cancel_cutoff_hours`` is a fee boundary, not a permission boundary.**
+    It says how much notice a patient may give WITHOUT PENALTY; it does not say
+    when they stop being allowed to tell the practice. Refusing a late
+    cancellation does not prevent the cancellation — it converts it into a
+    no-show, and the practice loses the slot, the warning, and any chance of
+    filling it. So a patient inside the window is cancelled and marked
+    ``late_cancellation``, and the response says so, rather than being turned
+    away.
+
+    Not gated on ``self_book_existing`` either, unlike the booking routes.
+    That flag governs whether patients may put appointments INTO the diary;
+    taking one back out is not the same permission, and a practice that books
+    its own patients still wants to hear that one of them cannot come.
+
+    Who cancelled is recorded alongside when. Without it a lapsed hold, a
+    clinician rearranging their week and a patient cancelling an hour ahead
+    are the same row, and only one of those is chargeable to anybody.
+    """
+    _require_stepped_up(patient)
+    now = datetime.now(UTC)
+    with owner_session(patient) as (session, owner):
+        policy = load_policy(session)
+
+        service = SchedulingService(PostgresAppointmentRepository(session))
+        appointment = _own_appointment(service, owner, patient, appointment_id)
+        _require_changeable(appointment)
+
+        late = _late_change(
+            appointment,
+            cutoff_hours=int(policy["cancel_cutoff_hours"]),  # type: ignore[call-overload]
+            now=now,
+            acknowledged=payload.acknowledge_late_change,
+        )
+        cancelled = service.cancel_appointment(
+            appointment_id,
+            owner,
+            record=ChangeRecord(
+                by=CancellationActor.PATIENT,
+                by_id=patient.patient_id,
+                late=late,
+                acknowledged=payload.acknowledge_late_change if late else None,
+            ),
+        )
+        session.commit()
+
+    audit.log_patient_principal_action(
+        action=AuditAction.APPOINTMENT_CANCELLED,
+        request=request,
+        patient_id=patient.patient_id,
+        resource_type=ResourceType.APPOINTMENT,
+        resource_id=cancelled.id,
+    )
+    return _to_patient_view(cancelled)

@@ -757,6 +757,27 @@ class PatientAppointmentResponse(BaseModel):
     video_platform: str | None = None
     recurrence_rule: str | None = None
     recurring_appointment_id: str | None = None
+    late_cancellation: bool | None = Field(
+        default=None,
+        description=(
+            "True when this was cancelled with less notice than the practice "
+            "asks for, so its notice policy may apply. None on anything not "
+            "cancelled, and on cancellations made before this was recorded."
+        ),
+    )
+    """Whether a fee may follow, told to the person who might be charged it.
+
+    Included where the rest of the billing fields are deliberately withheld,
+    because this one is about the patient's own conduct and its consequence
+    for them — not staff-authored coding. Being charged a late-cancellation
+    fee without ever being told the cancellation counted as late is the kind
+    of surprise the withholding rule exists to prevent, not an instance of it.
+
+    The AMOUNT stays out. Fees live on the appointment type with per-patient
+    overrides, and quoting money here would open a far larger surface than
+    this route should — "the practice's policy may apply" is what a patient
+    needs at this moment.
+    """
 
 
 class PatientAppointmentListResponse(BaseModel):
@@ -824,3 +845,40 @@ class PatientBookingRequest(BaseModel):
             "free slot."
         ),
     )
+
+
+#: Shared by both change verbs, because the promise is identical.
+_ACKNOWLEDGE_DESCRIPTION = (
+    "Set true to confirm the patient was told this change falls inside the "
+    "practice's notice period and may incur its policy. REQUIRED for a late "
+    "change: without it the request is refused with LATE_CHANGE_NOT_"
+    "ACKNOWLEDGED, and the refusal is what the client shows them. Ignored "
+    "when the change is not late."
+)
+
+
+class PatientCancelRequest(BaseModel):
+    """What a patient may say when cancelling. Only an acknowledgement.
+
+    A body at all, on a route that otherwise needs none, so that a late
+    cancellation can be confirmed rather than merely reported afterwards.
+    """
+
+    acknowledge_late_change: bool = Field(default=False, description=_ACKNOWLEDGE_DESCRIPTION)
+
+
+class PatientRescheduleRequest(BaseModel):
+    """A patient moving one of their own appointments to a different time.
+
+    Only the time. The appointment being moved is named in the path, the
+    patient comes from the principal, and the kind of appointment is whatever
+    it already was — a reschedule that could also change the session type
+    would be a booking wearing a different verb, and would let a patient
+    convert a short check-in into a long slot the practice never opened.
+
+    ``duration_minutes`` is absent for the same reason: the length travels with
+    the existing appointment, so there is nothing to negotiate here.
+    """
+
+    start_at: datetime
+    acknowledge_late_change: bool = Field(default=False, description=_ACKNOWLEDGE_DESCRIPTION)

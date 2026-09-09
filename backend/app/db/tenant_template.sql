@@ -137,7 +137,13 @@ CREATE TABLE __TENANT_SCHEMA__.appointments (
     diagnosis_codes jsonb,
     note_type character varying(30) DEFAULT 'soap'::character varying NOT NULL,
     confirmation_token_hash character varying(64),
-    appointment_type_id uuid
+    appointment_type_id uuid,
+    cancelled_at timestamp with time zone,
+    cancelled_by character varying(20),
+    cancelled_by_id uuid,
+    late_cancellation boolean,
+    superseded_by_id uuid,
+    late_change_acknowledged boolean
 );
 
 

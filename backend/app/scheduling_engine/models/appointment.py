@@ -34,6 +34,43 @@ class RecurrenceFrequency(StrEnum):
     MONTHLY = "monthly"
 
 
+class CancellationActor(StrEnum):
+    """Who cancelled, which decides whether a late cancellation means anything.
+
+    A practice's notice period is a fee boundary, not a permission one — anyone
+    may cancel at any time — so the row has to carry enough to tell a
+    chargeable cancellation from one that could never be. A clinician
+    rearranging their own week and a hold nobody answered are both late by the
+    clock and neither is the patient's doing.
+
+    The values mirror ``models.audit.ACTOR_TYPE_*`` deliberately, and are
+    restated rather than imported: this package talks to repository ABCs and
+    knows nothing about the audit log, and a cross-layer import to save three
+    strings would be the wrong trade.
+    """
+
+    PATIENT = "patient"
+    CLINICIAN = "clinician"
+    SYSTEM = "system"
+
+
+@dataclass(frozen=True)
+class ChangeRecord:
+    """Who gave up a slot, and on what terms.
+
+    The four facts always travel together and are only meaningful together —
+    "late" says nothing useful without who, and an acknowledgement means
+    nothing attached to a change that was not late. Passing them as one value
+    keeps that grouping visible instead of spreading it across a parameter
+    list where a caller can supply half of it.
+    """
+
+    by: str = CancellationActor.CLINICIAN
+    by_id: str | None = None
+    late: bool | None = None
+    acknowledged: bool | None = None
+
+
 @dataclass
 class Appointment:
     """A scheduled appointment between a therapist and patient.
@@ -111,6 +148,52 @@ class Appointment:
     # stored. None for every appointment that never went through that path.
     confirmation_token_hash: str | None = None
 
+    # --- Cancellation record ------------------------------------------------
+    #
+    # Set together, only when the status becomes cancelled, and never cleared.
+    # ``updated_at`` cannot stand in for ``cancelled_at``: any later edit moves
+    # it, so by the time a fee is worked out the timestamp may say nothing
+    # about when the slot was actually given up.
+    #
+    # All three are None on a row cancelled before this was recorded, which is
+    # honestly "not known" rather than a claim that it was early, by nobody, or
+    # on time.
+    cancelled_at: datetime | None = None
+    cancelled_by: str | None = None  # CancellationActor value
+    cancelled_by_id: str | None = None  # None for SYSTEM, which is nobody
+
+    # The appointment that replaced this one when it was rescheduled.
+    #
+    # A move is not an edit. It is one slot given up and another taken, so it
+    # leaves two rows: this one CANCELLED and carrying the full cancellation
+    # record above, and a new one at the new time. The link is what separates
+    # "they moved" from "they cancelled outright" — both are cancelled rows,
+    # and only one of them still has a patient coming.
+    #
+    # Keeping both rows is also what makes a move history exist at all. Moving
+    # a row in place overwrites ``start_at``, so the abandoned slot — the thing
+    # a late-change fee is actually charged for — stops existing, and only the
+    # most recent move could ever be reconstructed.
+    superseded_by_id: str | None = None
+
+    # Whether the person was told the change fell inside the notice period and
+    # went ahead anyway. Set only alongside a late change.
+    #
+    # Worth being precise about what this proves: it is an attestation made by
+    # the caller, not evidence that a human read a dialog. It is worth
+    # recording because the API REFUSES a late change that does not carry it —
+    # so a client cannot reach this state without having been handed the
+    # warning to show. That is the same standing as any click-through consent:
+    # good evidence, not proof.
+    late_change_acknowledged: bool | None = None
+
+    # Whether the notice given fell short of the practice's cancellation
+    # window. Frozen here at the moment of cancelling rather than derived on
+    # read, because the policy is editable: recomputing later would silently
+    # rewrite whether a past cancellation was chargeable every time a practice
+    # changed its mind about the notice period.
+    late_cancellation: bool | None = None
+
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -153,6 +236,12 @@ class Appointment:
             reminder_1h_sent=data.get("reminder_1h_sent", False),
             pending_expires_at=data.get("pending_expires_at"),
             confirmation_token_hash=data.get("confirmation_token_hash"),
+            cancelled_at=data.get("cancelled_at"),
+            cancelled_by=data.get("cancelled_by"),
+            cancelled_by_id=data.get("cancelled_by_id"),
+            late_cancellation=data.get("late_cancellation"),
+            superseded_by_id=data.get("superseded_by_id"),
+            late_change_acknowledged=data.get("late_change_acknowledged"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
@@ -195,6 +284,12 @@ class Appointment:
             "confirmation_token_hash": self.confirmation_token_hash,
             "reminder_24h_sent": self.reminder_24h_sent,
             "reminder_1h_sent": self.reminder_1h_sent,
+            "cancelled_at": self.cancelled_at,
+            "cancelled_by": self.cancelled_by,
+            "cancelled_by_id": self.cancelled_by_id,
+            "late_cancellation": self.late_cancellation,
+            "superseded_by_id": self.superseded_by_id,
+            "late_change_acknowledged": self.late_change_acknowledged,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }

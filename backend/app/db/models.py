@@ -562,6 +562,39 @@ class AppointmentRow(Base):
     confirmation_token_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
+    # --- Cancellation record ---------------------------------------------
+    #
+    # A practice's notice period is a FEE boundary, not a permission one:
+    # anybody may cancel at any time, because the alternative to a late
+    # cancellation is a no-show, which costs the practice the slot AND the
+    # warning. These columns are what make the fee defensible afterwards.
+    #
+    # ``updated_at`` cannot stand in for ``cancelled_at``: any later edit
+    # moves it, so by billing time it may say nothing about when the slot was
+    # actually given up. And without ``cancelled_by`` a lapsed hold, a
+    # clinician rearranging their week, and a patient cancelling an hour
+    # ahead are the same row — only one of which anyone may be charged for.
+    #
+    # All NULL on rows cancelled before this shipped, which reads as "not
+    # known" rather than as a claim that the cancellation was early or nobody's.
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cancelled_by_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+    # Frozen at the moment of cancelling rather than derived on read: the
+    # policy is editable, so recomputing later would silently change whether a
+    # past cancellation had been chargeable.
+    late_cancellation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # The appointment that replaced this one when it was rescheduled. A move
+    # leaves two rows — this one cancelled, and a new one at the new time — so
+    # the slot given up survives as a record instead of being overwritten. Set
+    # means "moved"; NULL on a cancelled row means "cancelled outright". No
+    # foreign key, matching ``recurring_appointment_id``.
+    superseded_by_id: Mapped[str | None] = mapped_column(Uuid(as_uuid=False), nullable=True)
+    # The caller's attestation that it was told the change was late and went
+    # ahead. Load-bearing because the API REFUSES a late change without it, so
+    # a client cannot reach this state without having been handed the warning
+    # to show — which is what makes it evidence rather than a checkbox.
+    late_change_acknowledged: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     #: Which ``appointment_types`` row this is an instance of.
     #:
     #: Nullable because an appointment can outlive its type: deleting a type
