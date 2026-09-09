@@ -89,9 +89,28 @@ e2e-down:
 	$(E2E_COMPOSE) down --volumes --remove-orphans
 
 # Run all tests (unit + integration)
+#
+# TWO invocations, deliberately. In one, tests/conftest.py is imported first and
+# plants a placeholder DATABASE_URL; tests_integration/conftest.py read that as
+# "the caller supplied a database", stood down, and every integration module
+# skipped — the target exited 0 having run none of them (PABLO-1vep).
+#
+# The conftest now refuses that combination outright, so this split is no longer
+# what makes the target honest — it is what lets the target still DO both halves.
+# Coverage is appended (`--cov-append`) so the second run adds to the first
+# rather than overwriting it.
+# Both halves ALWAYS run, and the target fails if either did. Make gives each
+# line its own shell and stops at the first failure, which would mean a single
+# broken unit test hides the entire integration result — the one invocation this
+# replaced at least reported both. So the exit codes are collected instead.
 test-all:
-	@echo "Running all tests..."
-	cd backend && poetry run pytest tests/ tests_integration/ --cov=app --cov-report=term-missing --cov-report=html
+	@cd backend || exit 1; \
+	rc=0; \
+	echo "Running unit tests..."; \
+	poetry run pytest tests/ --cov=app --cov-report=term-missing || rc=1; \
+	echo "Running integration tests..."; \
+	poetry run pytest tests_integration/ --cov=app --cov-append --cov-report=term-missing --cov-report=html || rc=1; \
+	exit $$rc
 
 # Run all checks (lint + test)
 check: lint test

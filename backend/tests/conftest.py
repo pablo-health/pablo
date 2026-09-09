@@ -4,6 +4,8 @@
 
 import os
 
+from tests.placeholder_db import plant_placeholder_database_url
+
 # Set environment to development for all tests
 # CRITICAL: This must be set BEFORE importing app to ensure development mode
 os.environ["ENVIRONMENT"] = "development"
@@ -24,12 +26,20 @@ os.environ["ENABLE_PATIENT_CHAT"] = "true"
 # a real Cloud Logging stream. Tests that specifically exercise the
 # dual-write re-enable the flag per-test (see TestCloudLoggingDualWrite).
 os.environ["AUDIT_DUAL_WRITE_ENABLED"] = "false"
-# Provide a dummy DATABASE_URL so settings validation passes (never actually connected to)
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
-
 from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+# Provide a placeholder DATABASE_URL so settings validation passes (never
+# actually connected to). It also MARKS the value as a stand-in, so the
+# integration suite can tell it apart from a real database the caller
+# exported — without that marker, running both suites in one pytest
+# invocation silently skips every integration module (PABLO-1vep). See
+# ``tests/placeholder_db.py``.
+#
+# Must precede the ``patch("app.db...")`` calls below: those import ``app.db``,
+# which reads settings, which validates DATABASE_URL.
+plant_placeholder_database_url()
 
 # Patch database engine/session before importing app (which triggers ensure_schemas at import)
 _mock_session_instance = MagicMock()
