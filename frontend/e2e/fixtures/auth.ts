@@ -19,6 +19,7 @@ import { mkdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { ApiClient, createEmulatorUser } from "./api"
+import { attachServerErrorGuard } from "./serverErrorGuard"
 import { BASE_URL } from "./stack"
 
 export interface E2EUser {
@@ -71,7 +72,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
 
   signedInPage: async ({ page }, provide) => {
-    await provide(page)
+    // Watch the network, not just the rendered result: a page-load fan-out can
+    // lose a panel to a 500 and still satisfy every assertion in a spec.
+    const serverErrors = attachServerErrorGuard(page)
+    try {
+      await provide(page)
+    } finally {
+      serverErrors.dispose()
+      // After the spec body, so a spec's own failure surfaces first — this is
+      // extra information about a run, not a competing verdict.
+      serverErrors.assertNone()
+    }
   },
 
   api: async ({ onboardedUser }, provide) => {

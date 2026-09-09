@@ -65,6 +65,17 @@ export async function signInWithPassword(email: string, password: string): Promi
   return signedIn.idToken
 }
 
+/**
+ * Delete an emulator account, leaving its already-minted id token valid.
+ *
+ * That combination is the point: the token is well-formed and unexpired, but
+ * no longer refers to anyone. Verification fetches the user record (the
+ * backend verifies with revocation checking on) and finds nothing.
+ */
+export async function deleteEmulatorUser(idToken: string): Promise<void> {
+  await identityToolkit<Record<string, never>>("accounts:delete", { idToken })
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
