@@ -140,6 +140,27 @@ class PostgresAppointmentRepository(AppointmentRepository):
         )
         return [_row_to_appointment(r) for r in rows]
 
+    def list_for_patient_principal(self, patient_id: str) -> list[Appointment]:
+        """A patient's own appointments, read as the patient.
+
+        The ``patient_id`` predicate here is the primary isolation, not a
+        convenience. Row-level security backs it up only where per-practice
+        schemas exist — in a single-practice deployment the tables carry no
+        row policies at all, so a route that leaned on RLS alone would be
+        unscoped there. The caller passes an id that came from the
+        authenticated principal, never from the request.
+        """
+        rows = (
+            self._session.execute(
+                select(AppointmentRow)
+                .where(AppointmentRow.patient_id == patient_id)
+                .order_by(AppointmentRow.start_at)
+            )
+            .scalars()
+            .all()
+        )
+        return [_row_to_appointment(r) for r in rows]
+
     def get_by_session_ids(self, session_ids: list[str], user_id: str) -> dict[str, Appointment]:
         if not session_ids:
             return {}

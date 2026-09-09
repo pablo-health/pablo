@@ -707,3 +707,60 @@ class ImportClientsResponse(BaseModel):
     skipped: int
     mappings_created: int
     errors: list[str] = Field(default_factory=list)
+
+
+class PatientAppointmentResponse(BaseModel):
+    """One appointment, as its own patient may see it.
+
+    Deliberately NOT :class:`AppointmentResponse`. Row-level security is
+    row-level: it decides which rows a patient reaches, and has nothing to
+    say about which columns. So the appointments table is readable by its
+    patient in full at the database layer — including ``diagnosis_codes``,
+    ``service_code`` and the other visit-coding fields, the clinician's
+    ``notes``, the owning clinician's ``user_id``, ``session_id``,
+    ``confirmation_token_hash`` and the calendar-sync internals. This model
+    is the only thing between a patient and all of that, which is why it
+    names its fields rather than inheriting them.
+
+    Withheld, and why:
+
+    * ``user_id`` — the clinician's internal identifier. The patient knows
+      who they see; they do not need the database's name for them.
+    * ``notes`` — written by the clinician, for the clinician.
+    * ``service_code``, ``modifiers``, ``unit_count``, ``place_of_service``,
+      ``diagnosis_codes`` — billing and clinical coding, staff-authored. A
+      patient is entitled to their diagnoses on request; a self-serve API
+      response is not that request, and minimum necessary governs what a
+      route returns by default.
+    * ``note_type``, ``session_id`` — internal links to clinical records.
+    * ``appointment_type_id``, ``recurrence_index``, ``is_exception`` —
+      internal scheduling bookkeeping with no meaning to a patient.
+    * ``confirmation_token_hash`` — a credential digest.
+    * ``google_*``, ``ical_*``, ``ehr_appointment_url`` — sync state and
+      internal system URLs.
+    * ``pending_expires_at`` — when a held slot lapses. Withheld for now
+      because nothing patient-facing explains it yet; it becomes useful the
+      day a portal shows "we are holding this until…", and adding it then
+      is a deliberate decision rather than a default.
+
+    ``recurrence_rule`` IS included: "every week" is something the person
+    attending should be able to see about their own appointment.
+    """
+
+    id: str
+    start_at: datetime
+    end_at: datetime
+    duration_minutes: int
+    status: str
+    session_type: str
+    video_link: str | None = None
+    video_platform: str | None = None
+    recurrence_rule: str | None = None
+    recurring_appointment_id: str | None = None
+
+
+class PatientAppointmentListResponse(BaseModel):
+    """The patient's own appointments, soonest first."""
+
+    data: list[PatientAppointmentResponse]
+    total: int

@@ -40,6 +40,24 @@ class AppointmentRepository(ABC):
         """List appointments for a specific patient."""
 
     @abstractmethod
+    def list_for_patient_principal(self, patient_id: str) -> list[Appointment]:
+        """List a patient's own appointments, for the patient themselves.
+
+        Deliberately separate from :meth:`list_by_patient` rather than a
+        default argument on it. That method asks "may this clinician see
+        this patient's calendar?" and answers through
+        ``patient_clinicians``; a patient has no clinician grant and no
+        ``user_id``, so passing a sentinel through the same method would
+        mean a caller who forgot the sentinel silently gets the wrong
+        authorization question answered.
+
+        There is no ``user_id`` argument on purpose: the only id this
+        method accepts is the one the patient principal already
+        established, so there is no second id for a caller to confuse it
+        with.
+        """
+
+    @abstractmethod
     def list_overlapping(
         self,
         user_id: str,
@@ -230,6 +248,16 @@ class InMemoryAppointmentRepository(AppointmentRepository):
     ) -> list[Appointment]:
         if not self._can_access(patient_id, user_id):
             return []
+        return sorted(
+            [a for a in self._appointments.values() if a.patient_id == patient_id],
+            key=lambda a: a.start_at,
+        )
+
+    def list_for_patient_principal(self, patient_id: str) -> list[Appointment]:
+        # No access check: the patient principal IS the authorization. The
+        # clinician grant this class models does not apply — a patient has
+        # no entry in it, and requiring one would deny every patient their
+        # own calendar.
         return sorted(
             [a for a in self._appointments.values() if a.patient_id == patient_id],
             key=lambda a: a.start_at,

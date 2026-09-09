@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 # conftest.py mocks the DB engine + session factory and sets
 # ENVIRONMENT=development before any app code is imported, so this
 # import does not need a live Postgres.
+from app.auth.patient_context import get_patient_context
 from app.auth.route_security import truly_public
 from app.auth.service import (
     get_current_user_no_mfa,
@@ -68,6 +69,15 @@ SECURITY_MARKERS: dict[str, tuple] = {
     "pre-mfa-onboarding": (get_current_user_no_mfa, get_session_peek_claims),
     "service-account-auth": (require_pentest_runner, require_cloud_tasks_invoker),
     "truly-public": (truly_public,),
+    # A patient authenticated as themselves. Authenticated, but not as a
+    # clinician: the clinician MFA markers above all resolve a ``User``,
+    # and a patient has no ``User`` record to resolve. Its own factor
+    # strength travels on the principal (``PatientContext.auth_strength``)
+    # and is decided by whichever front door minted it, so "did this caller
+    # clear MFA" is not the question to ask here — "is this a patient at
+    # all" is, and ``get_patient_context`` is the only thing that answers
+    # it. It refuses a clinician credential offered to a patient route.
+    "patient-principal": (get_patient_context,),
 }
 
 
