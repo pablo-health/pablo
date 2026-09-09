@@ -404,7 +404,7 @@ class TestGetCurrentUser:
 
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
-        allowlist_repo.add("allowed@example.com", "admin")
+        allowlist_repo.add("allowed@example.com", "admin", practice_id="default")
         # Pre-seed mapping so the test exercises the legacy-backfill path
         # (stable id = firebase uid). A separate test covers the
         # fresh-signup case where a UUID is generated.
@@ -1060,7 +1060,7 @@ class TestUserIdentityMapping:
 
         user_repo = InMemoryUserRepository()
         allowlist_repo = InMemoryAllowlistRepository()
-        allowlist_repo.add("fresh@example.com", "admin")
+        allowlist_repo.add("fresh@example.com", "admin", practice_id="default")
         identity_repo = InMemoryIdentityRepository()  # empty
 
         with patch("app.auth.service.get_settings") as mock_settings:

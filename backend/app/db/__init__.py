@@ -96,9 +96,20 @@ _current_patient_id: ContextVar[str | None] = ContextVar("_current_patient_id", 
 # threadpool-worker hop that discards a sync dependency's ContextVar set.
 _RLS_PATIENT_ID_KEY = "rls_current_patient_id"
 
-# Default practice schema for Pablo Solo (single practice)
+# The provisioning TEMPLATE schema. Every practice schema is built from
+# this one; no practice's data ever lives in it. ``enable_rls_on_schema``
+# skips it deliberately, which is only safe because it holds no rows —
+# see ``DEFAULT_PRACTICE_ID`` below.
 DEFAULT_PRACTICE_SCHEMA = "practice"
 PLATFORM_SCHEMA = "platform"
+
+# The practice a deployment provisions for itself at boot. One practice is
+# the ordinary case, and it is a practice like any other: same
+# ``create_practice_schema`` path, same registry row, same row-level
+# security. The id is deliberately boring and permanent — it becomes a
+# schema name and appears in every ``search_path``.
+DEFAULT_PRACTICE_ID = "default"
+DEFAULT_PRACTICE_OWN_SCHEMA = f"{DEFAULT_PRACTICE_SCHEMA}_{DEFAULT_PRACTICE_ID}"
 
 
 @lru_cache(maxsize=1)

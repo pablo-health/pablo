@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from ...db.platform_models import PlatformAllowedEmailRow
+from ...db.platform_models import EmailTenantMappingRow, PlatformAllowedEmailRow
 from ...utcnow import utc_now
 from ..allowlist import AllowlistRepository
 
@@ -24,26 +24,55 @@ class PostgresAllowlistRepository(AllowlistRepository):
         row = self._session.get(PlatformAllowedEmailRow, email.lower())
         return row is not None
 
-    def add(self, email: str, added_by: str) -> None:
+    def add(self, email: str, added_by: str, *, practice_id: str) -> None:
         now = utc_now()
-        row = self._session.get(PlatformAllowedEmailRow, email.lower())
+        normalized = email.lower()
+
+        row = self._session.get(PlatformAllowedEmailRow, normalized)
         if row is None:
             row = PlatformAllowedEmailRow(
-                email=email.lower(),
+                email=normalized,
+                practice_id=practice_id,
                 added_by=added_by,
                 added_at=now,
             )
             self._session.add(row)
         else:
+            row.practice_id = practice_id
             row.added_by = added_by
             row.added_at = now
+
+        # The mapping the login path reads. Written here, in the same
+        # session as the grant, so the two cannot drift apart: an email
+        # that is allowed is an email that resolves.
+        mapping = self._session.get(EmailTenantMappingRow, normalized)
+        if mapping is None:
+            self._session.add(
+                EmailTenantMappingRow(
+                    email=normalized,
+                    tenant_id=practice_id,
+                    practice_id=practice_id,
+                    created_at=now,
+                )
+            )
+        else:
+            mapping.tenant_id = practice_id
+            mapping.practice_id = practice_id
+
         self._session.flush()
 
     def remove(self, email: str) -> bool:
-        row = self._session.get(PlatformAllowedEmailRow, email.lower())
+        normalized = email.lower()
+        row = self._session.get(PlatformAllowedEmailRow, normalized)
         if row is None:
             return False
         self._session.delete(row)
+        # Revoking the grant retires the mapping with it, for the same
+        # reason granting creates it: a mapping without a grant is an
+        # identity that resolves to a practice it may no longer enter.
+        mapping = self._session.get(EmailTenantMappingRow, normalized)
+        if mapping is not None:
+            self._session.delete(mapping)
         self._session.flush()
         return True
 

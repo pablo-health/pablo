@@ -6,14 +6,14 @@ import logging
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from ..api_errors import BadRequestError, NotFoundError
-from ..auth.service import require_admin_hardware_key
+from ..auth.service import TenantContext, get_tenant_context, require_admin_hardware_key
 from ..db import get_db_session
 from ..models import User
 from ..models.audit import AuditAction, ResourceType
@@ -164,11 +164,24 @@ def list_allowlist(
 def add_to_allowlist(
     request: AddToAllowlistRequest,
     admin: User = Depends(require_admin_hardware_key),
+    ctx: TenantContext = Depends(get_tenant_context),
     allowlist_repo: AllowlistRepository = Depends(get_allowlist_repository),
 ) -> dict[str, str]:
-    """Add an email to the allowlist (this IS the invitation)."""
-    allowlist_repo.add(request.email, admin.id)
-    logger.info("Admin %s added email to allowlist", admin.id)
+    """Add an email to the allowlist (this IS the invitation).
+
+    The invitation is into the inviting admin's own practice — that is
+    what makes it an invitation rather than a bare grant, and it is what
+    the invitee's first login resolves through.
+    """
+    if not ctx.practice_id:
+        # Refusing beats writing a grant that cannot resolve: the invitee
+        # would sign in successfully and land nowhere.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This account is not attached to a practice, so it cannot invite anyone.",
+        )
+    allowlist_repo.add(request.email, admin.id, practice_id=ctx.practice_id)
+    logger.info("Admin %s invited an email into practice %s", admin.id, ctx.practice_id)
     return {"message": "Email added to allowlist", "email": request.email.lower()}
 
 

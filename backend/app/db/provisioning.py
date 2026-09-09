@@ -22,7 +22,13 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from ..utcnow import utc_now
-from . import DEFAULT_PRACTICE_SCHEMA, PLATFORM_SCHEMA, _validate_schema_name
+from . import (
+    DEFAULT_PRACTICE_ID,
+    DEFAULT_PRACTICE_OWN_SCHEMA,
+    DEFAULT_PRACTICE_SCHEMA,
+    PLATFORM_SCHEMA,
+    _validate_schema_name,
+)
 from .platform_models import PlatformBase, PracticeRow
 
 if TYPE_CHECKING:
@@ -152,8 +158,21 @@ def ensure_schemas(engine: Engine) -> None:
             # the ``is_pentest`` column itself.
             _ensure_pentest_tenant_guards(engine)
 
-            # Create default practice schema and tables
+            # Build the provisioning template. Nothing lives here — it is
+            # the shape every practice schema is cloned from.
             create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
+
+            # And the deployment's own practice, through the same path every
+            # other practice uses. It used to be that the template WAS the
+            # live practice: boot registered ``platform.practices`` against
+            # ``practice`` itself, and ``enable_rls_on_schema`` returns early
+            # on exactly that name, so the live database ran with no row
+            # policies at all. One practice is the ordinary case, not a
+            # special one, so it gets a real ``practice_*`` schema with the
+            # same policies as any other — which is also what lets a patient
+            # principal authenticate here, since its fence requires that
+            # prefix (``app.auth.patient_context._is_tenant_schema``).
+            create_practice_schema(engine, DEFAULT_PRACTICE_OWN_SCHEMA)
 
             # Per-tenant schema evolution belongs in the alembic chain
             # (``backend/alembic/versions/``), fanned out at deploy time
@@ -170,13 +189,13 @@ def ensure_schemas(engine: Engine) -> None:
 
             with Session(engine) as session:
                 session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
-                existing = session.get(PracticeRow, "default")
+                existing = session.get(PracticeRow, DEFAULT_PRACTICE_ID)
                 if not existing:
                     session.add(
                         PracticeRow(
-                            id="default",
+                            id=DEFAULT_PRACTICE_ID,
                             name="Default Practice",
-                            schema_name=DEFAULT_PRACTICE_SCHEMA,
+                            schema_name=DEFAULT_PRACTICE_OWN_SCHEMA,
                             owner_email="",
                             product="pablo",
                             created_at=_now(),
@@ -184,6 +203,23 @@ def ensure_schemas(engine: Engine) -> None:
                     )
                     session.commit()
                     logger.info("Created default practice in registry")
+                elif existing.schema_name == DEFAULT_PRACTICE_SCHEMA:
+                    # An install from before the template and the live
+                    # practice were separated. Its charts are in the template
+                    # schema, so re-pointing the row here would silently
+                    # orphan every one of them — moving the data is a
+                    # migration with a pre-flight, not a line in the boot
+                    # path. Left exactly as it is, and said out loud, because
+                    # this deployment is running without row-level security
+                    # until that migration runs.
+                    logger.warning(
+                        "Practice '%s' is still registered against the template schema '%s'. "
+                        "Its data is in a schema that carries no row policies. Run the "
+                        "single-practice migration to move it onto '%s'.",
+                        DEFAULT_PRACTICE_ID,
+                        DEFAULT_PRACTICE_SCHEMA,
+                        DEFAULT_PRACTICE_OWN_SCHEMA,
+                    )
         finally:
             conn.execute(
                 text("SELECT pg_advisory_unlock(:k)"),
