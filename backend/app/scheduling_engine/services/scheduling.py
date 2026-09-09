@@ -249,12 +249,19 @@ class SchedulingService:
         user_id: str,
         *,
         tz: tzinfo = UTC,
-        **updates: str | int | bool | None,
+        **updates: str | int | bool | datetime | None,
     ) -> Appointment:
         """Update fields on an existing appointment.
 
         ``tz`` is the zone availability rules are evaluated in — see
         ``AvailabilityEngine.check_conflicts``. Defaults to UTC.
+
+        ``datetime`` is in the value type because the time fields genuinely
+        take one — they are normalised through ``_as_datetime`` a few lines
+        down, exactly as ``create_appointment``'s ``data`` mapping already
+        declares. It was missing only because every existing caller forwards a
+        ``**dict[str, Any]`` from ``model_dump``, which type-checks against
+        anything; the first caller to pass a datetime by name found it.
         """
         appointment = self.get_appointment(appointment_id, user_id)
 

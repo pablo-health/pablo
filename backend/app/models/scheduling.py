@@ -824,3 +824,19 @@ class PatientBookingRequest(BaseModel):
             "free slot."
         ),
     )
+
+
+class PatientRescheduleRequest(BaseModel):
+    """A patient moving one of their own appointments to a different time.
+
+    Only the time. The appointment being moved is named in the path, the
+    patient comes from the principal, and the kind of appointment is whatever
+    it already was — a reschedule that could also change the session type
+    would be a booking wearing a different verb, and would let a patient
+    convert a short check-in into a long slot the practice never opened.
+
+    ``duration_minutes`` is absent for the same reason: the length travels with
+    the existing appointment, so there is nothing to negotiate here.
+    """
+
+    start_at: datetime

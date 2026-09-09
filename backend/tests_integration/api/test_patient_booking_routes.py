@@ -881,3 +881,376 @@ def test_a_booking_is_audited_as_the_patient(
 
     assert rows, "the booking wrote no patient-actor audit row"
     assert str(rows[0][1]) == practice["a"], "the audit row names somebody other than the patient"
+
+
+# --- reschedule and cancel -------------------------------------------------
+#
+# The route these exercise is keyed on the CLINICIAN's user id, because that is
+# what SchedulingService takes and the owner-armed session satisfies it for
+# every appointment in the practice. Ownership is therefore checked in the
+# route and nowhere else, which makes the cross-patient tests below the load-
+# bearing ones rather than a formality.
+
+
+def _status_of(engine: Engine, appointment_id: str) -> str:
+    """Read one appointment's status out of band, as the clinician."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        return conn.execute(
+            text("SELECT status FROM appointments WHERE id = CAST(:i AS uuid)"),
+            {"i": appointment_id},
+        ).scalar_one()
+
+
+def _start_of(engine: Engine, appointment_id: str) -> datetime:
+    """Read one appointment's start instant out of band, as the clinician."""
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
+        value = conn.execute(
+            text("SELECT start_at FROM appointments WHERE id = CAST(:i AS uuid)"),
+            {"i": appointment_id},
+        ).scalar_one()
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _open_policy(engine: Engine) -> None:
+    """Self-booking on, with cutoffs short enough that the target day clears."""
+    _set_policy(
+        engine,
+        self_book_existing=True,
+        self_book_mode="auto",
+        min_notice_hours=1,
+        max_horizon_days=60,
+        cancel_cutoff_hours=24,
+        reschedule_cutoff_hours=24,
+    )
+
+
+def test_a_patient_cancels_their_own_appointment(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The ordinary case, and the control for every refusal below."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+    assert _status_of(engine, appointment_id) == "cancelled"
+
+
+def test_a_cancelled_slot_is_offered_again(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Cancelling frees the time — the status change IS the release.
+
+    Nothing is deleted, so this is the assertion that proves the row stopped
+    holding its slot rather than merely changing a word in a column.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    taken = _at(10)
+    appointment_id = _seed_appointment(engine, practice["a"], taken)
+
+    date = _date_param()
+    while_held = _starts(patient_a_client.get("/api/patient/booking/slots", params={"date": date}))
+    assert taken not in while_held, "fixture wrong: the seeded appointment did not hold its slot"
+
+    patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    after = _starts(patient_a_client.get("/api/patient/booking/slots", params={"date": date}))
+    assert taken in after
+
+
+def test_a_patient_cannot_cancel_another_patients_appointment(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The one that matters. The service call underneath would accept this.
+
+    ``cancel_appointment`` is keyed on the clinician, and the session is armed
+    as the clinician, so patient B's row is perfectly reachable — an id in the
+    path is the whole of the request. Only the route's ownership check stands
+    between a patient and a stranger's Tuesday.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    theirs = _seed_appointment(engine, practice["b"], _at(10))
+
+    response = patient_a_client.post(f"/api/patient/booking/{theirs}/cancel")
+
+    assert response.status_code == 404, response.text
+    assert _status_of(engine, theirs) == "confirmed", "patient B's appointment was cancelled"
+
+
+def test_a_stranger_appointment_is_404_not_403(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Somebody else's row and no row at all answer identically.
+
+    A 403 here would confirm the id exists, turning the route into an oracle
+    for which appointment ids are real in this practice.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    theirs = _seed_appointment(engine, practice["b"], _at(10))
+    nonexistent = str(uuid.uuid4())
+
+    for target in (theirs, nonexistent):
+        response = patient_a_client.post(f"/api/patient/booking/{target}/cancel")
+        assert response.status_code == 404, (target, response.text)
+        assert response.json()["detail"]["error"]["code"] == "NOT_FOUND"
+
+
+def test_cancelling_inside_the_cutoff_is_refused(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Past the practice's own cutoff the slot stops being reclaimable online."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    # Wide enough to swallow the target day, which sits two weeks out.
+    _set_policy(engine, cancel_cutoff_hours=24 * 400)
+
+    response = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["error"]["code"] == "INSIDE_CANCEL_CUTOFF"
+    assert _status_of(engine, appointment_id) == "confirmed"
+
+
+def test_an_already_cancelled_appointment_cannot_be_cancelled_again(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """A no-op reported as success would tell the patient nothing true."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    assert patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel").status_code == 200
+
+    again = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["error"]["code"] == "NOT_CHANGEABLE"
+
+
+def test_cancelling_needs_the_stronger_factor(
+    engine: Engine, practice: dict[str, Any], single_factor_client: Any
+) -> None:
+    """An invite link that reached the wrong inbox must not empty a diary."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = single_factor_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["error"]["code"] == "STEP_UP_REQUIRED"
+    assert _status_of(engine, appointment_id) == "confirmed"
+
+
+def test_cancelling_is_audited_as_the_patient(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """§164.312(b): the patient acted, so the row must say it was them."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    assert patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel").status_code == 200
+
+    with engine.begin() as conn:
+        conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
+        # Read as the patient, matching the booking-audit test above:
+        # audit_logs is row-scoped, and a patient-actor row is the patient's.
+        conn.execute(
+            text("SELECT set_config('app.current_user_id', :p, false)"), {"p": practice["a"]}
+        )
+        rows = conn.execute(
+            text(
+                "SELECT actor_type, user_id, action FROM audit_logs "
+                "WHERE resource_id = :r AND actor_type = 'patient' "
+                "AND action = 'appointment_cancelled'"
+            ),
+            {"r": appointment_id},
+        ).fetchall()
+
+    assert rows, "the cancellation wrote no patient-actor audit row"
+    assert str(rows[0][1]) == practice["a"], "the audit row names somebody other than the patient"
+
+
+def test_a_patient_reschedules_their_own_appointment(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The row moves, and it is the same row rather than a new one."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["id"] == appointment_id
+    assert _start_of(engine, appointment_id) == _at(14)
+
+
+def test_rescheduling_frees_the_old_time_and_takes_the_new_one(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Both halves, because a move that only did one would still return 200."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    old, new = _at(10), _at(14)
+    appointment_id = _seed_appointment(engine, practice["a"], old)
+
+    patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule", json={"start_at": new.isoformat()}
+    )
+
+    offered = _starts(
+        patient_a_client.get("/api/patient/booking/slots", params={"date": _date_param()})
+    )
+    assert old in offered, "the vacated time was not offered again"
+    assert new not in offered, "the new time is still being offered"
+
+
+def test_a_patient_cannot_reschedule_another_patients_appointment(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Same hole as cancel, through the other verb."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    theirs = _seed_appointment(engine, practice["b"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{theirs}/reschedule", json={"start_at": _at(14).isoformat()}
+    )
+
+    assert response.status_code == 404, response.text
+    assert _start_of(engine, theirs) == _at(10), "patient B's appointment moved"
+
+
+def test_rescheduling_onto_a_taken_time_is_refused(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The new time answers to the diary, not to the caller.
+
+    Patient B holds it, and nothing in the response may say so.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    mine = _seed_appointment(engine, practice["a"], _at(10))
+    _seed_appointment(engine, practice["b"], _at(14))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{mine}/reschedule", json={"start_at": _at(14).isoformat()}
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["error"]["code"] == "SLOT_TAKEN"
+    assert _start_of(engine, mine) == _at(10)
+    body = response.text
+    assert str(practice["b"]) not in body
+    assert _CLINICIAN not in body
+
+
+def test_rescheduling_to_a_time_the_engine_never_offered_is_refused(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """A reschedule is a booking, so it faces the availability check too.
+
+    03:07 is outside the seeded working day and off the slot lattice besides;
+    without this guard the only obstacle would be a raw overlap test, which an
+    empty small hour passes.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(3, 7).isoformat()},
+    )
+
+    assert response.status_code == 409, response.text
+    assert _start_of(engine, appointment_id) == _at(10)
+
+
+def test_rescheduling_inside_the_cutoff_is_refused(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The OLD time's cutoff, which is a different question from the new time."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    _set_policy(engine, reschedule_cutoff_hours=24 * 400)
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["error"]["code"] == "INSIDE_RESCHEDULE_CUTOFF"
+    assert _start_of(engine, appointment_id) == _at(10)
+
+
+def test_rescheduling_to_the_same_time_is_the_unchanged_appointment(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """SLOT_TAKEN would be true and useless — the holder is this very row."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(10).isoformat()},
+    )
+
+    assert response.status_code == 200, response.text
+    assert _start_of(engine, appointment_id) == _at(10)
+
+
+def test_rescheduling_needs_the_stronger_factor(
+    engine: Engine, practice: dict[str, Any], single_factor_client: Any
+) -> None:
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    response = single_factor_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    assert response.status_code == 403, response.text
+    assert _start_of(engine, appointment_id) == _at(10)
+
+
+def test_neither_verb_works_while_self_booking_is_off(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Dark by default covers changing an appointment, not just making one."""
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    _set_policy(engine, self_book_existing=False)
+
+    cancel = patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+    move = patient_a_client.post(
+        f"/api/patient/booking/{appointment_id}/reschedule",
+        json={"start_at": _at(14).isoformat()},
+    )
+
+    for response in (cancel, move):
+        assert response.status_code == 403, response.text
+        assert response.json()["detail"]["error"]["code"] == "SELF_BOOKING_DISABLED"
+    assert _status_of(engine, appointment_id) == "confirmed"
+    assert _start_of(engine, appointment_id) == _at(10)
