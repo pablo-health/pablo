@@ -51,11 +51,16 @@ def _run_pytest(
         else:
             env[key] = value
 
+    # ``-o addopts=`` clears pyproject's addopts, which carry --cov. Without it
+    # each child writes backend/.coverage in the same cwd as the parent, and the
+    # --cov-fail-under gate on `make test` becomes a race between whoever writes
+    # last.
+    #
     # S603: the argv is this interpreter plus literal pytest flags built in this
     # module — no external input reaches it. check=False is the point: the exit
     # code IS the assertion.
     return subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-o", "addopts=", *args],
         cwd=BACKEND,
         env=env,
         capture_output=True,
@@ -107,20 +112,30 @@ def test_running_both_suites_in_one_invocation_fails_rather_than_skipping() -> N
     assert "placeholder DATABASE_URL" in result.stdout + result.stderr
 
 
-def test_a_real_database_url_is_left_alone() -> None:
-    """The bring-your-own-database workflow still works.
+def test_a_supplied_database_url_actually_runs_the_suite() -> None:
+    """The bring-your-own-database workflow RUNS, rather than collecting and skipping.
 
-    The guard keys on the marker, not on the URL text, so a caller who exported
-    a real ``DATABASE_URL`` — even one that happens to look like the placeholder
-    — is never refused. Collection is expected to succeed here; whether those
-    tests would then PASS depends on the database really being there, which is
-    not what this asserts.
+    This is the second door onto the same bug and the sharper test of the two.
+    `DATABASE_BACKEND=postgres` used to be set only on the testcontainers path,
+    so exporting a real `DATABASE_URL` — the workflow the conftest docstring
+    advertises — collected the whole suite and skipped every test of it, exit 0.
+
+    It runs the bootstrap-contract module, which carries no `skipif` and asserts
+    what every other module's `skipif` requires. `-p no:randomly` is not needed;
+    what matters is that a **skip is not a pass here**: the module either
+    executes and asserts, or the assertion never runs and the summary says
+    `skipped` instead of `passed`, which the check below rejects.
+
+    No container: a supplied URL takes the early-return path, so this is fast
+    and needs no Docker even though it is a real run rather than a collection.
     """
     result = _run_pytest(
-        "tests_integration/",
-        "--collect-only",
+        "tests_integration/test_bootstrap_contract.py",
+        "-q",
         env_overrides={
-            "DATABASE_URL": PLACEHOLDER_DATABASE_URL,  # same text, no marker
+            # A real URL as far as the bootstrap is concerned. Nothing connects
+            # to it — the contract module only reads environment variables.
+            "DATABASE_URL": "postgresql://pablo:pablo_dev@localhost:5432/pablo",
             PLACEHOLDER_MARKER_ENV: None,
         },
     )
@@ -128,6 +143,38 @@ def test_a_real_database_url_is_left_alone() -> None:
     combined = result.stdout + result.stderr
     assert "placeholder DATABASE_URL" not in combined, combined[-2000:]
     assert result.returncode == 0, combined[-2000:]
+    # The load-bearing half: "3 passed" and "3 skipped" are both exit 0, and
+    # mass-skipping WAS the bug.
+    assert "passed" in combined, combined[-2000:]
+    assert "skipped" not in combined, (
+        "the supplied-database path collected the suite and skipped it — "
+        f"PABLO-1vep's other door\n{combined[-2000:]}"
+    )
+
+
+def test_deleting_the_backend_advertisement_is_caught() -> None:
+    """A regression in the bootstrap must fail something.
+
+    `DATABASE_BACKEND=postgres` is the single line whose absence turns the whole
+    integration suite into skips. Assert that the contract module — not this
+    file's own subprocess plumbing — is what notices, by running it with the
+    variable forced to a wrong value.
+    """
+    result = _run_pytest(
+        "tests_integration/test_bootstrap_contract.py",
+        "-q",
+        env_overrides={
+            "DATABASE_URL": "postgresql://pablo:pablo_dev@localhost:5432/pablo",
+            "DATABASE_BACKEND": "sqlite",  # what a broken bootstrap leaves behind
+            PLACEHOLDER_MARKER_ENV: None,
+        },
+    )
+
+    assert result.returncode != 0, (
+        "a bootstrap advertising the wrong backend was not caught; every module "
+        f"in the suite would silently skip\n{(result.stdout + result.stderr)[-2000:]}"
+    )
+    assert "DATABASE_BACKEND=postgres" in result.stdout + result.stderr
 
 
 def test_unit_suite_alone_still_runs() -> None:

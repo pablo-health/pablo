@@ -104,7 +104,8 @@ e2e-down:
 # broken unit test hides the entire integration result — the one invocation this
 # replaced at least reported both. So the exit codes are collected instead.
 test-all:
-	@cd backend && rc=0; \
+	@cd backend || exit 1; \
+	rc=0; \
 	echo "Running unit tests..."; \
 	poetry run pytest tests/ --cov=app --cov-report=term-missing || rc=1; \
 	echo "Running integration tests..."; \

@@ -69,6 +69,16 @@ def pytest_configure(config: pytest.Config) -> None:
         )
 
     if os.environ.get("DATABASE_URL"):
+        # The bring-your-own-database path, and the SECOND door onto the same
+        # silent skip. Every module here is guarded by
+        # ``skipif(... DATABASE_BACKEND != "postgres")``, and that variable used
+        # to be set ONLY on the testcontainers path below. So exporting a real
+        # DATABASE_URL — the workflow this module's docstring advertises —
+        # collected the whole suite and skipped every test of it, exit 0.
+        #
+        # The caller supplied a Postgres URL; say so. ``setdefault`` leaves an
+        # explicit DATABASE_BACKEND alone.
+        os.environ.setdefault("DATABASE_BACKEND", "postgres")
         return
 
     # Disable the Ryuk reaper container — it mounts the host docker
