@@ -20,6 +20,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..utcnow import utc_now
 from . import (
@@ -96,6 +97,77 @@ def _now() -> datetime:
 _PROVISIONING_LOCK_KEY = 7283194065831042197
 
 
+def _has_any_practice(engine: Engine) -> bool:
+    """Whether this deployment has registered a practice already.
+
+    The question boot needs answered before it provisions a default one, and
+    deliberately "any practice", not "the default practice". A deployment that
+    provisions tenants explicitly may never register one called ``default`` —
+    asking only about that id would conclude the database was empty and invent
+    a schema alongside a hundred real ones.
+
+    Returns False on a database that has no ``platform.practices`` yet, which
+    is a first boot: the table is created moments earlier in the same
+    function, so this is belt and braces rather than an expected path.
+    """
+    from sqlalchemy.orm import Session
+
+    try:
+        with Session(engine) as session:
+            session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
+            return session.query(PracticeRow.id).first() is not None
+    except SQLAlchemyError:
+        logger.warning(
+            "Could not read the practice registry; treating this as a first boot",
+            exc_info=True,
+        )
+        return False
+
+
+def _provision_core_schemas(engine: Engine) -> None:
+    """The provisioning template, and the deployment's own practice if it has none.
+
+    The template holds nothing — it is the shape every practice schema is
+    cloned from — so every deployment builds it.
+
+    The deployment's own practice is conditional, and the condition is the
+    point. It used to be that the template WAS the live practice: boot
+    registered ``platform.practices`` against ``practice`` itself, and
+    ``enable_rls_on_schema`` returns early on exactly that name, so the live
+    database ran with no row policies at all. One practice is the ordinary
+    case, not a special one, so it gets a real ``practice_*`` schema with the
+    same policies as any other — which is also what lets a patient principal
+    authenticate, since its fence requires that prefix
+    (``app.auth.patient_context._is_tenant_schema``).
+
+    Doing that UNCONDITIONALLY creates an orphan on any deployment that
+    provisions its own tenants. The extra schema is in the database and in
+    nobody's registry, so every per-tenant migration — they all iterate
+    ``platform.practices`` — skips it forever. It drifts quietly until
+    something notices, and what notices is this same boot path: the next
+    ``create_practice_schema`` re-runs the RLS guard over the accumulated
+    staleness and refuses to start.
+
+    That is not hypothetical. A retired table (``booking_policy``) was dropped
+    from every REGISTERED tenant, survived in one unregistered schema, and took
+    a deployment down at boot on 2026-09-09. The guard was right; the schema
+    should never have existed.
+
+    Asking the registry rather than reading a flag keeps it one rule for
+    everyone: a first boot on an empty database gets its practice with no
+    operator step, and a database that already has practices is left alone.
+    """
+    create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
+
+    if _has_any_practice(engine):
+        logger.debug(
+            "Practices already registered; not provisioning '%s'",
+            DEFAULT_PRACTICE_OWN_SCHEMA,
+        )
+        return
+    create_practice_schema(engine, DEFAULT_PRACTICE_OWN_SCHEMA)
+
+
 def ensure_schemas(engine: Engine) -> None:
     """Create platform + default practice schemas if they don't exist.
 
@@ -158,21 +230,7 @@ def ensure_schemas(engine: Engine) -> None:
             # the ``is_pentest`` column itself.
             _ensure_pentest_tenant_guards(engine)
 
-            # Build the provisioning template. Nothing lives here — it is
-            # the shape every practice schema is cloned from.
-            create_practice_schema(engine, DEFAULT_PRACTICE_SCHEMA)
-
-            # And the deployment's own practice, through the same path every
-            # other practice uses. It used to be that the template WAS the
-            # live practice: boot registered ``platform.practices`` against
-            # ``practice`` itself, and ``enable_rls_on_schema`` returns early
-            # on exactly that name, so the live database ran with no row
-            # policies at all. One practice is the ordinary case, not a
-            # special one, so it gets a real ``practice_*`` schema with the
-            # same policies as any other — which is also what lets a patient
-            # principal authenticate here, since its fence requires that
-            # prefix (``app.auth.patient_context._is_tenant_schema``).
-            create_practice_schema(engine, DEFAULT_PRACTICE_OWN_SCHEMA)
+            _provision_core_schemas(engine)
 
             # Per-tenant schema evolution belongs in the alembic chain
             # (``backend/alembic/versions/``), fanned out at deploy time
@@ -190,19 +248,26 @@ def ensure_schemas(engine: Engine) -> None:
             with Session(engine) as session:
                 session.execute(text(f"SET search_path = {PLATFORM_SCHEMA}, public"))
                 existing = session.get(PracticeRow, DEFAULT_PRACTICE_ID)
-                if not existing:
-                    session.add(
-                        PracticeRow(
-                            id=DEFAULT_PRACTICE_ID,
-                            name="Default Practice",
-                            schema_name=DEFAULT_PRACTICE_OWN_SCHEMA,
-                            owner_email="",
-                            product="pablo",
-                            created_at=_now(),
+                # Only register the default practice when this boot actually
+                # provisioned its schema. Writing the row on a deployment that
+                # has other practices would point the registry at a schema
+                # nothing created — the mirror image of the orphan above, and
+                # worse, because a registered-but-absent practice fails at the
+                # first request rather than at boot.
+                if existing is None:
+                    if not _has_any_practice(engine):
+                        session.add(
+                            PracticeRow(
+                                id=DEFAULT_PRACTICE_ID,
+                                name="Default Practice",
+                                schema_name=DEFAULT_PRACTICE_OWN_SCHEMA,
+                                owner_email="",
+                                product="pablo",
+                                created_at=_now(),
+                            )
                         )
-                    )
-                    session.commit()
-                    logger.info("Created default practice in registry")
+                        session.commit()
+                        logger.info("Created default practice in registry")
                 elif existing.schema_name == DEFAULT_PRACTICE_SCHEMA:
                     # An install from before the template and the live practice
                     # were separated. Its charts are in the template schema, so
