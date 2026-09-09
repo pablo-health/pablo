@@ -18,7 +18,7 @@ written falls through to nothing rather than raising.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..models.claims_timeline import (
     AcknowledgmentOutcome,
@@ -29,9 +29,14 @@ from ..models.claims_timeline import (
     TimelineSubmission,
 )
 from ..money import dollars_to_cents
+from .clearinghouse import ClearinghouseError
+from .sdk_runtime import run_on_sdk_loop, translate_sdk_error
+from .stedi_sdk import client_for
 
 if TYPE_CHECKING:
     from stedi.models import GetClaimTimelineOutput
+
+    from .credentials import ClearinghouseCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +122,39 @@ def _payment(summary: Any) -> TimelinePayment:
         trace_number=summary.check_or_eft_trace_number,
         processed_at=summary.processed_at,
     )
+
+
+class ClaimTimelineSource(Protocol):
+    """Where a claim's history comes from.
+
+    A narrow seam of its own rather than another method on
+    ``ClearinghouseClient``: only the vendor's newer claim-lifecycle API can
+    answer this, and giving the older adapter a method it would have to
+    refuse is worse than letting callers ask for the capability they need.
+    """
+
+    def timeline_for(self, vendor_claim_id: str) -> ClaimTimeline:
+        """Everything the clearinghouse knows about this claim."""
+        ...
+
+
+class SdkClaimTimelines:
+    """Claim timelines, read through the vendor SDK from synchronous callers."""
+
+    def __init__(self, credentials: ClearinghouseCredentials) -> None:
+        self._credentials = credentials
+
+    def timeline_for(self, vendor_claim_id: str) -> ClaimTimeline:
+        async def read() -> ClaimTimeline:
+            client = await client_for(self._credentials)
+            return await fetch_timeline(client, vendor_claim_id)
+
+        try:
+            return run_on_sdk_loop(read())
+        except ClearinghouseError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the vendor's, translated
+            raise translate_sdk_error(exc) from exc
 
 
 async def fetch_timeline(client: Any, claim_id: str, *, max_pages: int = 20) -> ClaimTimeline:

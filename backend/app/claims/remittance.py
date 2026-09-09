@@ -30,15 +30,18 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
+from .clearinghouse import ClearinghouseError
 from .receipts import record
 from .transitions import advance, next_state
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from datetime import datetime
 
     from ..models.claims import Claim
     from ..models.claims_timeline import ClaimTimeline
     from .receipts import ClaimPipeline
+    from .sdk_timeline import ClaimTimelineSource
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +133,13 @@ def apply_posting(
     closed is telling us something, but it is not a reason to fail the whole
     polling pass.
     """
-    if pipeline.receipts.vendor_event_seen(posting.source_id):
+    # Scoped to the claim rather than the vendor's entry id alone. The
+    # uniqueness constraint behind this spans the whole table, so an id the
+    # vendor ever reused across claims would silently skip a real payment
+    # on the second one. Namespacing costs nothing and removes the
+    # assumption that the vendor's ids are globally unique forever.
+    event_key = f"{claim.id}:{posting.source_id}"
+    if pipeline.receipts.vendor_event_seen(event_key):
         return claim, False
     if next_state(claim.state, posting.event) is None:
         logger.info(
@@ -156,7 +165,7 @@ def apply_posting(
             "patient_responsibility_cents": posting.patient_responsibility_cents,
             "trace_number": posting.trace_number,
         },
-        vendor_event_id=posting.source_id,
+        vendor_event_id=event_key,
         occurred_at=posting.adjudicated_at,
         touches_receipt_clock=True,
     )
@@ -167,3 +176,32 @@ def apply_posting(
         posting.paid_cents,
     )
     return stored, True
+
+
+def post_remittances(
+    pipeline: ClaimPipeline, timelines: ClaimTimelineSource, claims: Iterable[Claim]
+) -> int:
+    """Read each claim's timeline and post whatever the payer decided.
+
+    Returns how many claims moved.
+
+    One claim's clearinghouse failing is not the pass failing: the others are
+    still worth reading, and a claim that could not be read this time is read
+    again on the next pass. A claim the clearinghouse has no id for was never
+    filed through it and has no timeline to ask about.
+    """
+    moved = 0
+    for claim in claims:
+        if not claim.vendor_claim_id:
+            continue
+        try:
+            timeline = timelines.timeline_for(claim.vendor_claim_id)
+        except ClearinghouseError:
+            logger.warning("remittance_read_failed claim_id=%s", claim.id)
+            continue
+        posting = posting_for(timeline, charged_cents=claim.total_charge_cents)
+        if posting is None:
+            continue
+        _, did_move = apply_posting(pipeline, claim, posting)
+        moved += int(did_move)
+    return moved

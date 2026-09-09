@@ -13,7 +13,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from app.claims.remittance import apply_posting, posting_for
+from app.claims.clearinghouse import ClearinghouseUnavailableError
+from app.claims.remittance import apply_posting, post_remittances, posting_for
 from app.models.claims_timeline import ClaimTimeline, TimelinePayment
 
 from .claims_pipeline_fakes import make_harness, restore_listeners
@@ -250,3 +251,84 @@ class TestApplyingAPosting:
 
         assert moved is True
         assert stored.state == "partial"
+
+
+class _Timelines:
+    """A stand-in clearinghouse: what it knows, keyed by vendor claim id."""
+
+    def __init__(self, **by_id: ClaimTimeline) -> None:
+        self._by_id = by_id
+        self.asked: list[str] = []
+
+    def timeline_for(self, vendor_claim_id: str) -> ClaimTimeline:
+        self.asked.append(vendor_claim_id)
+        found = self._by_id.get(vendor_claim_id)
+        if found is None:
+            raise ClearinghouseUnavailableError(vendor_claim_id)
+        return found
+
+
+class TestThePass:
+    def test_each_claim_is_read_and_posted(self, harness) -> None:
+        first = harness.add(
+            state="payer_accepted", total_charge_cents=CHARGED, vendor_claim_id="v1"
+        )
+        second = harness.add(
+            state="payer_accepted", total_charge_cents=CHARGED, vendor_claim_id="v2"
+        )
+        timelines = _Timelines(
+            v1=_timeline(_payment(disposition="paid", paid=CHARGED)),
+            # Deliberately the same entry id as v1's: the receipt key is
+            # scoped to the claim, so one claim's payment must not swallow
+            # another's.
+            v2=_timeline(_payment(disposition="denied", paid=0)),
+        )
+
+        moved = post_remittances(harness.pipeline, timelines, [first, second])
+
+        assert moved == 2
+        assert harness.get(first.id).state == "paid"
+        assert harness.get(second.id).state == "denied"
+
+    def test_a_claim_the_clearinghouse_never_filed_is_not_asked_about(self, harness) -> None:
+        claim = harness.add(state="validated", total_charge_cents=CHARGED, vendor_claim_id=None)
+        timelines = _Timelines()
+
+        assert post_remittances(harness.pipeline, timelines, [claim]) == 0
+        assert timelines.asked == []
+
+    def test_one_claim_failing_does_not_stop_the_others(self, harness) -> None:
+        """The next pass reads it again; the rest are still worth posting."""
+        broken = harness.add(
+            state="payer_accepted", total_charge_cents=CHARGED, vendor_claim_id="missing"
+        )
+        fine = harness.add(state="payer_accepted", total_charge_cents=CHARGED, vendor_claim_id="v2")
+        timelines = _Timelines(v2=_timeline(_payment(disposition="paid", paid=CHARGED)))
+
+        moved = post_remittances(harness.pipeline, timelines, [broken, fine])
+
+        assert moved == 1
+        assert harness.get(broken.id).state == "payer_accepted"
+        assert harness.get(fine.id).state == "paid"
+
+    def test_a_claim_the_payer_has_not_decided_on_is_left_alone(self, harness) -> None:
+        claim = harness.add(
+            state="payer_accepted", total_charge_cents=CHARGED, vendor_claim_id="v1"
+        )
+        timelines = _Timelines(v1=ClaimTimeline())
+
+        assert post_remittances(harness.pipeline, timelines, [claim]) == 0
+        assert harness.get(claim.id).state == "payer_accepted"
+
+    def test_running_the_pass_twice_posts_once(self, harness) -> None:
+        """It runs on a schedule; the second read must be a no-op."""
+        claim = harness.add(
+            state="payer_accepted", total_charge_cents=CHARGED, vendor_claim_id="v1"
+        )
+        timelines = _Timelines(v1=_timeline(_payment(disposition="paid", paid=CHARGED)))
+
+        first = post_remittances(harness.pipeline, timelines, [claim])
+        second = post_remittances(harness.pipeline, timelines, [harness.get(claim.id)])
+
+        assert (first, second) == (1, 0)
+        assert harness.get(claim.id).total_paid_cents == CHARGED
