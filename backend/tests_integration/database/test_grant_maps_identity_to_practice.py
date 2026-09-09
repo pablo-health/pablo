@@ -140,10 +140,15 @@ class TestGrantingAlsoMaps:
         repo.add(email, "admin-user", practice_id=practice)
         assert _mapping_for(session, email) is not None  # control
 
-        assert repo.remove(email) is True
+        # Called on its own line: an ``assert`` is stripped under ``-O``, and
+        # this one has to actually run for the rest of the test to mean
+        # anything.
+        removed = repo.remove(email)
+        assert removed is True
 
         assert _mapping_for(session, email) is None, "the mapping outlived the grant"
         assert repo.is_allowed(email) is False
 
     def test_removing_an_unknown_email_is_not_an_error(self, session: Session) -> None:
-        assert _repo(session).remove(f"nobody-{uuid.uuid4().hex[:8]}@example.com") is False
+        removed = _repo(session).remove(f"nobody-{uuid.uuid4().hex[:8]}@example.com")
+        assert removed is False

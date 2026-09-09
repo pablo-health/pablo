@@ -1697,6 +1697,12 @@ def enable_rls_on_all_practice_schemas(engine: Engine | None = None) -> None:
 from .tenant_session import run_in_tenant, tenant_db_session  # noqa: E402
 
 __all__ = [
+    # Schema names. Read from other modules rather than from here, so they
+    # have to be exported deliberately or they read as dead constants.
+    "DEFAULT_PRACTICE_ID",
+    "DEFAULT_PRACTICE_OWN_SCHEMA",
+    "DEFAULT_PRACTICE_SCHEMA",
+    "PLATFORM_SCHEMA",
     "register_overlay_not_row_scoped",
     "rls_forced_tenant_tables",
     "run_in_tenant",
