@@ -79,6 +79,10 @@ class _SdkLoop:
             logger.info("clearinghouse_sdk_loop_started")
             return loop
 
+    def started(self) -> bool:
+        with self._lock:
+            return self._loop is not None
+
     def close(self) -> None:
         """Stop the loop and join its thread. Safe to call when never started."""
         with self._lock:
@@ -111,6 +115,11 @@ def run_on_sdk_loop[T](
         future.cancel()
         msg = f"the clearinghouse did not answer within {timeout:.0f}s"
         raise ClearinghouseUnavailableError(msg) from exc
+
+
+def sdk_loop_running() -> bool:
+    """Whether the loop has been started — i.e. whether anything used the SDK."""
+    return _sdk_loop.started()
 
 
 def shutdown_sdk_loop() -> None:

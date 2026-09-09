@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING
 from stedi import Stedi
 from stedi.config import Config
 
-from .sdk_runtime import run_on_sdk_loop, shutdown_sdk_loop
+from .sdk_runtime import run_on_sdk_loop, sdk_loop_running, shutdown_sdk_loop
 
 if TYPE_CHECKING:
     from .credentials import ClearinghouseCredentials
@@ -106,6 +106,11 @@ def shutdown_sdk() -> None:
     Closing the clients before stopping the loop is the order that matters:
     the sessions have to be closed *by* the loop they were opened on, and a
     stopped loop cannot run the coroutine that closes them.
+
+    A deployment that never calls the clearinghouse never starts the loop, and
+    this must not start one just to stop it again.
     """
+    if not sdk_loop_running():
+        return
     run_on_sdk_loop(close_clients(), timeout=_SHUTDOWN_TIMEOUT_SECONDS)
     shutdown_sdk_loop()

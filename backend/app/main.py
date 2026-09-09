@@ -153,6 +153,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
+    # The clearinghouse SDK runs on a loop of its own, on a daemon thread, and
+    # its clients hold sessions that have to be closed by that loop rather than
+    # this one. Nothing starts it unless a clearinghouse call was actually
+    # made, so on a deployment that files no claims this does nothing.
+    from .claims.stedi_sdk import shutdown_sdk
+
+    await asyncio.to_thread(shutdown_sdk)
+
 
 app = FastAPI(
     title=settings.api_title,

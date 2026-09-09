@@ -27,10 +27,11 @@ from app.claims.clearinghouse import (
 from app.claims.credentials import ClearinghouseCredentials
 from app.claims.sdk_runtime import (
     run_on_sdk_loop,
+    sdk_loop_running,
     shutdown_sdk_loop,
     translate_sdk_error,
 )
-from app.claims.stedi_sdk import _clients, client_for, close_clients
+from app.claims.stedi_sdk import _clients, client_for, close_clients, shutdown_sdk
 from smithy_core.exceptions import CallError
 from stedi import models as sdk_models
 
@@ -114,6 +115,24 @@ class TestTheClientCache:
         )
 
         assert default is not stand_in
+
+    def test_shutdown_does_nothing_when_nothing_used_the_sdk(self) -> None:
+        """Most deployments file no claims; shutdown must not start a loop to stop one."""
+        shutdown_sdk_loop()
+        assert not sdk_loop_running()
+
+        shutdown_sdk()
+
+        assert not sdk_loop_running()
+
+    def test_shutdown_closes_the_clients_and_the_loop(self) -> None:
+        run_on_sdk_loop(client_for(_credentials()))
+        assert sdk_loop_running()
+
+        shutdown_sdk()
+
+        assert not _clients
+        assert not sdk_loop_running()
 
     def test_closing_empties_the_cache(self) -> None:
         run_on_sdk_loop(client_for(_credentials()))
