@@ -10,21 +10,36 @@ Boot now provisions `practice_default` and registers that. An existing
 deployment is not touched automatically: moving live charts is a migration with
 a pre-flight, not a line in a startup path.
 
-## Running it
+## It runs itself
+
+The migrate job runs this after `alembic upgrade head` — see
+`backend/bin/migrate.py`. There is no manual step, and no ordering to remember.
+
+That is the right place because it is neither of the two obvious alternatives.
+At **boot** it would be an irreversible rename where nobody is watching, and a
+refusal would read as a crashloop. As an **operator command** it would be a
+manual step in the middle of every upgrade path, discovered only by hitting the
+boot refusal — including by a self-hoster who has no idea the step exists.
+
+The migrate job runs *before* the rollout, with the database in front of it and
+its output in the log, and it is where every other schema change already
+happens. A deployment that would lose a chart fails there, with **nothing
+deployed and the database untouched** — a far better failure than a refused boot
+after a new revision is live.
+
+Boot still refuses to serve an unmigrated deployment. That is now a backstop
+rather than the mechanism: it catches an install that reached production some
+other way, instead of being the thing that tells you to act.
+
+### Asking first
 
 ```bash
-python backend/bin/migrate_default_practice.py --check   # report only, changes nothing
-python backend/bin/migrate_default_practice.py           # pre-flight, then migrate
+python backend/bin/migrate_default_practice.py --check
 ```
 
-The first is safe to run any time, including against production, and is worth
-running well before you intend to migrate — it tells you whether the data needs
+Read-only, safe against production, and worth running before a deploy on a
+database whose history you are unsure of — it tells you whether the data needs
 fixing first, which is the part that can take time.
-
-Boot **refuses to start** against an unmigrated deployment and prints these
-commands. That is deliberate: the previous behaviour warned and carried on,
-which meant serving a chart schema with no isolation while everything looked
-healthy.
 
 ## What the pre-flight is actually checking
 
