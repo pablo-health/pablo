@@ -13,45 +13,34 @@ is under test here is what the ROUTE does with a principal once it has one
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import pytest
 from app.auth.patient_context import AuthStrength, PatientContext, get_patient_context
 from app.main import app
 from app.repositories import get_appointment_repository
+from app.repositories.audit import InMemoryAuditRepository
 from app.route_introspection import iter_api_routes
 from app.scheduling_engine.models.appointment import Appointment
 from app.scheduling_engine.repositories.appointment import InMemoryAppointmentRepository
 from app.services.audit_service import AuditService, get_audit_service
 from fastapi.testclient import TestClient
 
+if TYPE_CHECKING:
+    from app.models.audit import AuditLogEntry
+
 _PATIENT_A = "11111111-1111-4111-8111-111111111111"
 _PATIENT_B = "22222222-2222-4222-8222-222222222222"
 _CLINICIAN = "33333333-3333-4333-8333-333333333333"
 
 
-class _RecordingAudit(AuditService):
-    """Captures entries instead of persisting them."""
+def _audit_entries(repo: InMemoryAuditRepository, patient_id: str) -> list[AuditLogEntry]:
+    """What the audit actually recorded, read back the way a reader would.
 
-    def __init__(self) -> None:
-        self.entries: list[dict[str, object]] = []
-
-    def log_patient_principal_action(  # type: ignore[override]
-        self,
-        action,
-        request,
-        patient_id,
-        resource_type,
-        resource_id,
-        session_id=None,
-        changes=None,
-    ):
-        self.entries.append(
-            {
-                "action": str(action),
-                "patient_id": patient_id,
-                "resource_id": resource_id,
-            }
-        )
+    ``log_patient_principal_action`` writes the acting patient into
+    ``user_id``, so the actor query finds a patient's own actions.
+    """
+    return sorted(repo.list_for_user(patient_id), key=lambda e: e.resource_id or "")
 
 
 def _appointment(appt_id: str, patient_id: str, *, days: int) -> Appointment:
@@ -83,12 +72,18 @@ def repo() -> InMemoryAppointmentRepository:
 
 
 @pytest.fixture
-def audit() -> _RecordingAudit:
-    return _RecordingAudit()
+def audit_repo() -> InMemoryAuditRepository:
+    """The real AuditService is used, with its storage swapped.
+
+    A hand-written double would have to imitate what the service records —
+    and would then pass whether or not the service actually records it. This
+    way ``actor_type`` and the rest are the values production writes.
+    """
+    return InMemoryAuditRepository()
 
 
 @pytest.fixture
-def client(repo: InMemoryAppointmentRepository, audit: _RecordingAudit):
+def client(repo: InMemoryAppointmentRepository, audit_repo: InMemoryAuditRepository):
     def _as_patient_a() -> PatientContext:
         return PatientContext(
             patient_id=_PATIENT_A,
@@ -99,7 +94,7 @@ def client(repo: InMemoryAppointmentRepository, audit: _RecordingAudit):
 
     app.dependency_overrides[get_patient_context] = _as_patient_a
     app.dependency_overrides[get_appointment_repository] = lambda: repo
-    app.dependency_overrides[get_audit_service] = lambda: audit
+    app.dependency_overrides[get_audit_service] = lambda: AuditService(audit_repo)
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -192,22 +187,41 @@ class TestAudit:
     def test_every_disclosed_appointment_is_audited(
         self,
         client,
-        audit: _RecordingAudit,
+        audit_repo: InMemoryAuditRepository,
     ) -> None:
         """Per row, not per request — 'who saw what' needs the what."""
         client.get("/api/patient/appointments")
 
-        assert [e["resource_id"] for e in audit.entries] == ["appt-a1", "appt-a2"]
-        assert {e["patient_id"] for e in audit.entries} == {_PATIENT_A}
+        entries = _audit_entries(audit_repo, _PATIENT_A)
+        assert [e.resource_id for e in entries] == ["appt-a1", "appt-a2"]
+        assert {e.resource_type for e in entries} == {"appointment"}
 
     def test_the_audit_records_the_patient_as_the_actor(
         self,
         client,
-        audit: _RecordingAudit,
+        audit_repo: InMemoryAuditRepository,
+    ) -> None:
+        """The row must say a PATIENT did this, not a clinician.
+
+        ``actor_type`` is what the audit policy splits on, so a read
+        recorded as anything else would both misattribute the disclosure
+        and, on a real database, be refused by the policy arm.
+        """
+        client.get("/api/patient/appointments")
+
+        entries = _audit_entries(audit_repo, _PATIENT_A)
+        assert entries, "no audit entry was written for a PHI read"
+        assert all(e.actor_type == "patient" for e in entries)
+        assert all(e.user_id == _PATIENT_A for e in entries)
+        assert all(e.patient_id == _PATIENT_A for e in entries)
+
+    def test_no_audit_entry_names_another_patient(
+        self,
+        client,
+        audit_repo: InMemoryAuditRepository,
     ) -> None:
         client.get("/api/patient/appointments")
-        assert audit.entries, "no audit entry was written for a PHI read"
-        assert all(e["patient_id"] == _PATIENT_A for e in audit.entries)
+        assert not _audit_entries(audit_repo, _PATIENT_B)
 
 
 class TestTheRouteTakesNoPatientIdFromTheCaller:

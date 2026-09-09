@@ -42,16 +42,21 @@ from ..models.scheduling import (
     PatientAppointmentResponse,
 )
 from ..repositories import get_appointment_repository
+from ..scheduling_engine.repositories.appointment import AppointmentRepository
 from ..services.audit_service import AuditService, get_audit_service
 
 if TYPE_CHECKING:
     from ..scheduling_engine.models.appointment import Appointment
-    from ..scheduling_engine.repositories.appointment import AppointmentRepository
 
 router = APIRouter(prefix="/api/patient", tags=["patient-appointments"])
 
 CurrentPatient = Annotated[PatientContext, Depends(get_patient_context)]
-Appointments = Annotated["AppointmentRepository", Depends(get_appointment_repository)]
+# Imported at runtime, not under TYPE_CHECKING: this is a runtime
+# expression, so a string forward reference to a type-checking-only name
+# resolves here only for as long as nothing asks it to. ``Appointment``
+# below stays type-checking-only because it is used in an annotation, which
+# ``from __future__ import annotations`` never evaluates.
+Appointments = Annotated[AppointmentRepository, Depends(get_appointment_repository)]
 
 # Spelled out rather than aliased like the two above: the route-audit
 # guardrail reads parameter annotations looking for the tenant
