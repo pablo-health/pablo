@@ -30,8 +30,11 @@ on:
 permissions:
   contents: read
 
+# ``e2e-`` prefix: see the matching note in ci.yml. deploy.yml calls both of us
+# from one run, where ``github.workflow`` and ``github.run_id`` are identical for
+# each, so an unprefixed group makes the two siblings cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: e2e-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:

@@ -16,8 +16,16 @@ on:
 permissions:
   contents: read
 
+# The ``ci-`` prefix is load-bearing, not decoration. deploy.yml calls this
+# workflow AND e2e.yml as reusable workflows from the same run. In a reusable
+# workflow ``github.workflow`` is the CALLER's name ("Deploy") and
+# ``github.run_id`` is the caller's run — both identical for the two siblings —
+# so without a per-workflow prefix they compute the SAME group and, with
+# cancel-in-progress, cancel each other. Whichever started second won, the other
+# died a second after starting, ``build-backend`` (which needs both) was skipped,
+# and every deploy of main failed on a missing image. Prefix each caller.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:

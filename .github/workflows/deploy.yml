@@ -220,7 +220,17 @@ jobs:
     # opt-out). Keep this job alive in that case while still failing on
     # an actual migrate failure. When migrate found the database parked,
     # skip the rollout — a new revision can't serve without its database.
-    if: always() && !failure() && !cancelled() && needs.migrate.outputs.db_parked != 'true'
+    #
+    # The explicit build-backend check is what `always()` costs: `always()`
+    # tolerates ANY need being skipped, not just `migrate`. When build-backend
+    # was skipped this job still ran and tried to roll out an image nobody had
+    # pushed, so the rollout failed on `Image ... not found` — a confusing
+    # report for a build that never happened. A skipped build means there is
+    # nothing to deploy, which is not the same as a deploy that failed.
+    if: >-
+      always() && !failure() && !cancelled()
+      && needs.build-backend.result == 'success'
+      && needs.migrate.outputs.db_parked != 'true'
     runs-on: ubuntu-latest
     steps:
       - id: auth
