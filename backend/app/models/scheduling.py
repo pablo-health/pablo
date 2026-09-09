@@ -764,3 +764,63 @@ class PatientAppointmentListResponse(BaseModel):
 
     data: list[PatientAppointmentResponse]
     total: int
+
+
+class PatientSlotResponse(BaseModel):
+    """One bookable opening, as an unauthenticated-adjacent caller may see it.
+
+    **Times only, and that is the entire security property.** Free slots are
+    computed from the WHOLE diary — a slot is free precisely because no other
+    patient holds it — so the computation necessarily reads every appointment
+    in the practice. What comes back must carry nothing about the appointments
+    that shaped it: no patient names, no ids, no status, not even a count of
+    what was excluded. Two instants and a duration.
+
+    That is why this is a model with three fields rather than a projection of
+    :class:`~app.scheduling_engine.models.conflict.TimeSlot`. ``TimeSlot`` grew
+    an ``over_cap`` flag once already; a model that inherits or spreads would
+    have started returning it, and "how full is my therapist's day" is not the
+    patient's to read.
+    """
+
+    start_at: datetime
+    end_at: datetime
+    duration_minutes: int
+
+
+class PatientSlotListResponse(BaseModel):
+    """The openings a patient could book on one date.
+
+    ``configured`` is deliberately absent. The engine distinguishes "this
+    clinician has no availability rules at all" from "the rules leave nothing
+    open today", and that difference is operational — it tells a clinician to
+    go set their hours. To a patient both mean "nothing to book", and saying
+    which would leak whether the practice has finished setting itself up.
+    """
+
+    data: list[PatientSlotResponse]
+    total: int
+
+
+class PatientBookingRequest(BaseModel):
+    """What a patient may say when booking.
+
+    Notice what is NOT here: no ``patient_id`` — that comes from the
+    authenticated principal, so there is no id to smuggle — and no
+    ``user_id``, ``status``, ``notes`` or coding fields. A patient chooses a
+    time and a kind of appointment. Everything else about the row is decided
+    by the server.
+    """
+
+    start_at: datetime
+    session_type: str
+    duration_minutes: int | None = Field(
+        default=None,
+        ge=5,
+        le=240,
+        description=(
+            "Omit to use the practice's default for this appointment type. A "
+            "value here is a request, not a promise: it still has to land in a "
+            "free slot."
+        ),
+    )
