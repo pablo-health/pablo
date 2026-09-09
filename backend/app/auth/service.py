@@ -580,6 +580,49 @@ def _await_provisioning_ready(practice_id: str) -> None:
     )
 
 
+def _ensure_tenant_mapping(email: str) -> None:
+    """Map a newly auto-provisioned identity onto the deployment's practice.
+
+    ``AllowlistRepository.add`` writes the grant and the mapping as one
+    operation, so an email admitted through the allowlist always resolves. A
+    deployment that does NOT gate signups has no such call: the auto-provision
+    path below creates the platform user and nothing else, so the identity
+    resolves to nothing.
+
+    That was survivable while resolution could be skipped. It is not now —
+    resolution is on the login path for every user, and an identity with no
+    mapping gets ``NO_PRACTICE`` on every request. A user who just signed up
+    successfully and can do nothing at all is the worst version of this.
+
+    So the invariant the decision note states — nothing writes one without the
+    other (``docs/architecture/identity-to-practice-resolution.md``) — is
+    honoured on this path too. It maps to the deployment's own practice by NAME,
+    never by counting how many exist: "if there is only one, use it" is the
+    special case that note rejected, and it would sit here on the auth path.
+
+    Idempotent, and never overwrites: an email that already resolves keeps
+    whatever practice it resolves to, so this cannot move a user between
+    practices on a re-login.
+    """
+    from ..db import DEFAULT_PRACTICE_ID, create_standalone_session
+    from ..db.platform_models import EmailTenantMappingRow
+
+    normalized = email.lower()
+    with create_standalone_session() as db:
+        if db.get(EmailTenantMappingRow, normalized) is not None:
+            return
+        db.add(
+            EmailTenantMappingRow(
+                email=normalized,
+                tenant_id=DEFAULT_PRACTICE_ID,
+                practice_id=DEFAULT_PRACTICE_ID,
+                created_at=utc_now(),
+            )
+        )
+        db.commit()
+    logger.info("Mapped auto-provisioned identity onto practice '%s'", DEFAULT_PRACTICE_ID)
+
+
 def _email_has_tenant_mapping(email: str) -> bool:
     """True if `email` has an `EmailTenantMappingRow` in the platform schema.
 
@@ -757,6 +800,11 @@ def _resolve_user(
             status="approved",
         )
         user_repo.update(user)
+        # The grant path writes the mapping alongside the grant; this path has
+        # no grant, so it writes it here. Without this the user is created
+        # successfully and then gets NO_PRACTICE on every request.
+        if email:
+            _ensure_tenant_mapping(email)
         logger.info("Auto-provisioned user %s", user.id)
 
     if user.status == "disabled":

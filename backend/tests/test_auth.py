@@ -425,6 +425,56 @@ class TestGetCurrentUser:
         assert user.status == "approved"
 
     @patch("app.auth.service.verify_firebase_token")
+    def test_an_ungated_signup_is_mapped_to_a_practice(self, mock_verify: MagicMock) -> None:
+        """A deployment that does not gate signups still has to produce a
+        resolvable identity.
+
+        ``AllowlistRepository.add`` writes the grant and the mapping together, so
+        an allowlisted email always resolves. With ``restrict_signups`` off there
+        is no such call, and the auto-provision path used to create the platform
+        user and nothing else. While resolution could be skipped that was
+        invisible; now it means the user signs up successfully and then gets
+        NO_PRACTICE on every request (PABLO-2g6.1).
+        """
+        mock_verify.return_value = {
+            "uid": "ungated-user",
+            "email": "Ungated@Example.com",
+            "name": "Ungated User",
+            "firebase": {},
+        }
+
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = InMemoryAllowlistRepository()
+        identity_repo = _identity_repo_for("ungated-user")
+        mapped: list[tuple[str, str]] = []
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._ensure_tenant_mapping") as mock_map,
+        ):
+            mock_settings.return_value.is_development = True
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = False
+            mock_map.side_effect = lambda email: mapped.append(("mapped", email))
+
+            get_current_user(
+                _mock_request(),
+                mock_verify.return_value,
+                user_repo,
+                allowlist_repo,
+                identity_repo,
+            )
+
+        assert mapped, (
+            "an ungated signup created a user with no practice mapping — it would "
+            "get NO_PRACTICE on every request"
+        )
+        # Normalisation is the mapping's job, not the caller's; the helper lowers
+        # it. What matters here is that the address it was handed is the one that
+        # signed in.
+        assert mapped[0][1].lower() == "ungated@example.com"
+
+    @patch("app.auth.service.verify_firebase_token")
     def test_rejects_non_allowlisted_user(self, mock_verify: MagicMock) -> None:
         mock_verify.return_value = {
             "uid": "blocked-user",
