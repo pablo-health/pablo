@@ -162,21 +162,19 @@ class Appointment:
     cancelled_by: str | None = None  # CancellationActor value
     cancelled_by_id: str | None = None  # None for SYSTEM, which is nobody
 
-    # --- Reschedule record --------------------------------------------------
+    # The appointment that replaced this one when it was rescheduled.
     #
-    # Moving an appointment overwrites ``start_at``, so without these the time
-    # that was given up simply stops existing — and that abandoned slot is
-    # exactly what a late-change fee is charged for. ``rescheduled_from`` keeps
-    # it.
+    # A move is not an edit. It is one slot given up and another taken, so it
+    # leaves two rows: this one CANCELLED and carrying the full cancellation
+    # record above, and a new one at the new time. The link is what separates
+    # "they moved" from "they cancelled outright" — both are cancelled rows,
+    # and only one of them still has a patient coming.
     #
-    # Only the most recent move is held here. A patient who moves the same
-    # appointment three times leaves three audit entries and one row, which is
-    # enough to charge for the latest change and not enough to see a pattern;
-    # a per-change history would need its own table.
-    rescheduled_at: datetime | None = None
-    rescheduled_from: datetime | None = None
-    rescheduled_by: str | None = None  # CancellationActor value
-    late_reschedule: bool | None = None
+    # Keeping both rows is also what makes a move history exist at all. Moving
+    # a row in place overwrites ``start_at``, so the abandoned slot — the thing
+    # a late-change fee is actually charged for — stops existing, and only the
+    # most recent move could ever be reconstructed.
+    superseded_by_id: str | None = None
 
     # Whether the person was told the change fell inside the notice period and
     # went ahead anyway. Set only alongside a late change.
@@ -242,10 +240,7 @@ class Appointment:
             cancelled_by=data.get("cancelled_by"),
             cancelled_by_id=data.get("cancelled_by_id"),
             late_cancellation=data.get("late_cancellation"),
-            rescheduled_at=data.get("rescheduled_at"),
-            rescheduled_from=data.get("rescheduled_from"),
-            rescheduled_by=data.get("rescheduled_by"),
-            late_reschedule=data.get("late_reschedule"),
+            superseded_by_id=data.get("superseded_by_id"),
             late_change_acknowledged=data.get("late_change_acknowledged"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
@@ -293,10 +288,7 @@ class Appointment:
             "cancelled_by": self.cancelled_by,
             "cancelled_by_id": self.cancelled_by_id,
             "late_cancellation": self.late_cancellation,
-            "rescheduled_at": self.rescheduled_at,
-            "rescheduled_from": self.rescheduled_from,
-            "rescheduled_by": self.rescheduled_by,
-            "late_reschedule": self.late_reschedule,
+            "superseded_by_id": self.superseded_by_id,
             "late_change_acknowledged": self.late_change_acknowledged,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

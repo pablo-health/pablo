@@ -892,31 +892,16 @@ def test_a_booking_is_audited_as_the_patient(
 # bearing ones rather than a formality.
 
 
-def _reschedule_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
-    """The reschedule columns, read as the clinician.
-
-    From the database, not the response: ``rescheduled_from`` exists precisely
-    because it outlives the request that set it.
-    """
+def _supersede_of(engine: Engine, appointment_id: str) -> str | None:
+    """The replacement this appointment was superseded by, if any."""
     with engine.begin() as conn:
         conn.execute(text(f"SET search_path = {_SCHEMA}, platform, public"))
         conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
-        row = conn.execute(
-            text(
-                "SELECT rescheduled_at, rescheduled_from, rescheduled_by, late_reschedule, "
-                "late_change_acknowledged FROM appointments WHERE id = CAST(:i AS uuid)"
-            ),
+        value = conn.execute(
+            text("SELECT superseded_by_id FROM appointments WHERE id = CAST(:i AS uuid)"),
             {"i": appointment_id},
-        ).one()
-    return {
-        "rescheduled_at": row[0],
-        "rescheduled_from": row[1]
-        if row[1] is None or row[1].tzinfo
-        else row[1].replace(tzinfo=UTC),
-        "rescheduled_by": row[2],
-        "late_reschedule": row[3],
-        "late_change_acknowledged": row[4],
-    }
+        ).scalar_one()
+    return str(value) if value else None
 
 
 def _cancellation_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
@@ -931,8 +916,8 @@ def _cancellation_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
         conn.execute(text("SELECT set_config('app.current_user_id', :u, false)"), {"u": _CLINICIAN})
         row = conn.execute(
             text(
-                "SELECT cancelled_at, cancelled_by, cancelled_by_id, late_cancellation "
-                "FROM appointments WHERE id = CAST(:i AS uuid)"
+                "SELECT cancelled_at, cancelled_by, cancelled_by_id, late_cancellation, "
+                "late_change_acknowledged FROM appointments WHERE id = CAST(:i AS uuid)"
             ),
             {"i": appointment_id},
         ).one()
@@ -941,6 +926,7 @@ def _cancellation_of(engine: Engine, appointment_id: str) -> dict[str, Any]:
         "cancelled_by": row[1],
         "cancelled_by_id": row[2],
         "late_cancellation": row[3],
+        "late_change_acknowledged": row[4],
     }
 
 
@@ -1204,22 +1190,86 @@ def test_cancelling_is_audited_as_the_patient(
     assert str(rows[0][1]) == practice["a"], "the audit row names somebody other than the patient"
 
 
-def test_a_patient_reschedules_their_own_appointment(
+def test_a_reschedule_leaves_the_old_slot_cancelled_and_a_new_appointment(
     engine: Engine, practice: dict[str, Any], patient_a_client: Any
 ) -> None:
-    """The row moves, and it is the same row rather than a new one."""
+    """A move is one slot given up and another taken, so it leaves two rows.
+
+    The original keeps its own start time — which is the whole point, since
+    that abandoned slot is what a late-change fee is charged for — and points
+    at the replacement.
+    """
     _open_policy(engine)
     _clear_appointments(engine)
-    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+    original_id = _seed_appointment(engine, practice["a"], _at(10))
 
     response = patient_a_client.post(
-        f"/api/patient/booking/{appointment_id}/reschedule",
+        f"/api/patient/booking/{original_id}/reschedule",
         json={"start_at": _at(14).isoformat()},
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["id"] == appointment_id
-    assert _start_of(engine, appointment_id) == _at(14)
+    new_id = response.json()["id"]
+    assert new_id != original_id, "the row was moved in place, losing the old slot"
+
+    # The original: cancelled, still remembering the time it gave up, linked.
+    assert _status_of(engine, original_id) == "cancelled"
+    assert _start_of(engine, original_id) == _at(10)
+    assert _supersede_of(engine, original_id) == new_id
+
+    # The replacement: a real appointment at the new time, superseding nothing.
+    assert _status_of(engine, new_id) == "confirmed"
+    assert _start_of(engine, new_id) == _at(14)
+    assert _supersede_of(engine, new_id) is None
+
+
+def test_an_outright_cancellation_supersedes_nothing(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """The link is what tells a move from a cancellation.
+
+    Both are cancelled rows. Only one of them still has a patient coming, and
+    without this assertion the two would be indistinguishable to billing.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    appointment_id = _seed_appointment(engine, practice["a"], _at(10))
+
+    patient_a_client.post(f"/api/patient/booking/{appointment_id}/cancel")
+
+    assert _status_of(engine, appointment_id) == "cancelled"
+    assert _supersede_of(engine, appointment_id) is None
+
+
+def test_moving_twice_leaves_a_chain_not_one_forgetful_row(
+    engine: Engine, practice: dict[str, Any], patient_a_client: Any
+) -> None:
+    """Every slot given up survives, which is the reason for the second row.
+
+    Moving in place could only ever remember the most recent change, so a
+    patient who moved three times would look like a patient who moved once.
+    """
+    _open_policy(engine)
+    _clear_appointments(engine)
+    first_id = _seed_appointment(engine, practice["a"], _at(9))
+
+    second_id = patient_a_client.post(
+        f"/api/patient/booking/{first_id}/reschedule",
+        json={"start_at": _at(11).isoformat()},
+    ).json()["id"]
+    third_id = patient_a_client.post(
+        f"/api/patient/booking/{second_id}/reschedule",
+        json={"start_at": _at(15).isoformat()},
+    ).json()["id"]
+
+    assert len({first_id, second_id, third_id}) == 3
+    assert _supersede_of(engine, first_id) == second_id
+    assert _supersede_of(engine, second_id) == third_id
+    assert _supersede_of(engine, third_id) is None
+    # Each abandoned slot is still readable at the time it was abandoned.
+    assert _start_of(engine, first_id) == _at(9)
+    assert _start_of(engine, second_id) == _at(11)
+    assert _start_of(engine, third_id) == _at(15)
 
 
 def test_rescheduling_frees_the_old_time_and_takes_the_new_one(
@@ -1318,6 +1368,8 @@ def test_rescheduling_to_the_same_time_is_the_unchanged_appointment(
     )
 
     assert response.status_code == 200, response.text
+    assert response.json()["id"] == appointment_id, "an identical time churned a new row"
+    assert _status_of(engine, appointment_id) == "confirmed"
     assert _start_of(engine, appointment_id) == _at(10)
 
 
@@ -1385,14 +1437,17 @@ def test_a_late_reschedule_goes_through_once_acknowledged(
     )
 
     assert response.status_code == 200, response.text
-    assert _start_of(engine, appointment_id) == _at(14)
+    new_id = response.json()["id"]
+    assert _start_of(engine, new_id) == _at(14)
 
-    record = _reschedule_of(engine, appointment_id)
-    assert record["late_reschedule"] is True
-    assert record["rescheduled_by"] == "patient"
+    # The chargeable event is the slot that was given up, so the record lives
+    # on the row that gave it up.
+    record = _cancellation_of(engine, appointment_id)
+    assert record["late_cancellation"] is True
+    assert record["cancelled_by"] == "patient"
     assert record["late_change_acknowledged"] is True
-    # The slot actually given up, which start_at no longer remembers.
-    assert record["rescheduled_from"] == _at(10)
+    assert _start_of(engine, appointment_id) == _at(10)
+    assert _supersede_of(engine, appointment_id) == new_id
 
 
 def test_an_on_time_reschedule_is_not_marked_late(
@@ -1409,9 +1464,9 @@ def test_an_on_time_reschedule_is_not_marked_late(
     )
 
     assert response.status_code == 200, response.text
-    record = _reschedule_of(engine, appointment_id)
-    assert record["late_reschedule"] is False
-    assert record["rescheduled_from"] == _at(10)
+    record = _cancellation_of(engine, appointment_id)
+    assert record["late_cancellation"] is False
+    assert record["cancelled_by"] == "patient"
     assert record["late_change_acknowledged"] is None, (
         "an on-time change recorded an acknowledgement, which would make the "
         "column meaningless as evidence"

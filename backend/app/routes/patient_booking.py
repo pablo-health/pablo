@@ -614,14 +614,16 @@ def reschedule_appointment(
       appointment there is placing a booking there. That one really is a
       refusal: the practice does not take bookings at that hour from anybody.
 
-    The slot given up is kept in ``rescheduled_from``, because ``start_at`` is
-    about to stop remembering it and that abandoned slot is what a late-change
-    fee is charged for. Only the most recent move is held; a patient who moves
-    the same appointment three times leaves three audit entries and one row.
+    **A move leaves two appointments, and the response is the new one.** The
+    original is cancelled and linked to its replacement, so the slot given up
+    survives as a record — which is what a late-change fee is charged for — and
+    a patient who moves the same appointment three times leaves three records
+    rather than one row that remembers only the last move. The returned ``id``
+    is therefore NOT the id in the path.
 
     The kind of appointment does not change. Only the time is in the request,
     so a short check-in cannot be converted into a long slot the practice never
-    opened, and the existing duration travels with the row.
+    opened, and the existing duration travels to the new row.
     """
     _require_stepped_up(patient)
     now = datetime.now(UTC)
@@ -644,13 +646,14 @@ def reschedule_appointment(
             now=now,
             acknowledged=payload.acknowledge_late_change,
         )
-        released = _as_utc(appointment.start_at)
 
         start_at = _as_utc(payload.start_at)
         if start_at == _as_utc(appointment.start_at):
             # Asking for the time it already has. Answering SLOT_TAKEN here
             # would be true and useless — the thing holding the slot is this
-            # very appointment — so the honest answer is the unchanged row.
+            # very appointment — and cancelling it to recreate it identically
+            # would churn the record for nothing. The honest answer is the
+            # unchanged row.
             return _to_patient_view(appointment)
 
         duration = appointment.duration_minutes or _DEFAULT_DURATION_MINUTES
@@ -658,29 +661,26 @@ def reschedule_appointment(
 
         # Same pair of guards the booking path uses, for the same reason: the
         # client is never trusted about availability, and a reschedule is a
-        # booking. ``update_appointment`` excludes this row from the OVERLAP
-        # check, so moving within the diary does not collide with itself — but
-        # it does not exclude it from the RULE check, so a practice running
-        # buffers can find an appointment's own buffer blocking the slot next
-        # to it. That is existing engine behaviour, shared with the
-        # clinician-side reschedule, and is not worked around here.
+        # booking. The overlap check excludes the original, so moving within
+        # the diary does not collide with itself — but the RULE check does not
+        # exclude it, so a practice running buffers can find an appointment's
+        # own buffer blocking the slot next to it. That is existing engine
+        # behaviour, shared with the clinician-side reschedule, and is not
+        # worked around here.
         _require_offered_slot(engine, owner, start_at, duration, tz=tz)
 
         try:
-            moved = service.update_appointment(
+            moved = service.reschedule_appointment(
                 appointment_id,
                 owner,
-                tz=tz,
                 start_at=start_at,
-                end_at=start_at + timedelta(minutes=duration),
-                # The slot being given up, kept because ``start_at`` is about
-                # to stop remembering it — and the abandoned slot is what a
-                # late-change fee is charged for.
-                rescheduled_at=now,
-                rescheduled_from=released,
-                rescheduled_by=CancellationActor.PATIENT,
-                late_reschedule=late,
-                late_change_acknowledged=payload.acknowledge_late_change if late else None,
+                tz=tz,
+                record=ChangeRecord(
+                    by=CancellationActor.PATIENT,
+                    by_id=patient.patient_id,
+                    late=late,
+                    acknowledged=payload.acknowledge_late_change if late else None,
+                ),
             )
         except AppointmentConflictError as exc:
             raise _refuse(_SLOT_TAKEN, "SLOT_TAKEN", status.HTTP_409_CONFLICT) from exc

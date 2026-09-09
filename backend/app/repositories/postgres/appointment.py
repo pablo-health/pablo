@@ -386,10 +386,7 @@ def _row_to_appointment(row: AppointmentRow) -> Appointment:
         cancelled_by=row.cancelled_by,
         cancelled_by_id=row.cancelled_by_id,
         late_cancellation=row.late_cancellation,
-        rescheduled_at=row.rescheduled_at,
-        rescheduled_from=row.rescheduled_from,
-        rescheduled_by=row.rescheduled_by,
-        late_reschedule=row.late_reschedule,
+        superseded_by_id=row.superseded_by_id,
         late_change_acknowledged=row.late_change_acknowledged,
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -436,10 +433,7 @@ def _appointment_to_row(appt: Appointment, row: AppointmentRow) -> None:
     row.cancelled_by = appt.cancelled_by
     row.cancelled_by_id = appt.cancelled_by_id
     row.late_cancellation = appt.late_cancellation
-    row.rescheduled_at = appt.rescheduled_at
-    row.rescheduled_from = appt.rescheduled_from
-    row.rescheduled_by = appt.rescheduled_by
-    row.late_reschedule = appt.late_reschedule
+    row.superseded_by_id = appt.superseded_by_id
     row.late_change_acknowledged = appt.late_change_acknowledged
     row.created_at = appt.created_at
     row.updated_at = appt.updated_at
