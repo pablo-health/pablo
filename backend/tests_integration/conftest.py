@@ -16,6 +16,7 @@ import os
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.placeholder_db import database_url_is_placeholder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -48,6 +49,25 @@ class _PgState:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Bring up the Postgres container before app modules are imported."""
+    # The unit suite plants a placeholder ``DATABASE_URL`` to get past settings
+    # validation. Read as "a database is configured" it makes this function
+    # stand down, ``DATABASE_BACKEND`` never becomes ``postgres``, and every
+    # module here skips — so a combined run exits 0 having executed none of the
+    # integration suite (PABLO-1vep). Refuse instead of skipping: a run that
+    # cannot do what was asked should say so, not report success.
+    if database_url_is_placeholder():
+        raise pytest.UsageError(
+            "The integration suite was started with the unit suite's placeholder "
+            "DATABASE_URL, which is not a real database.\n\n"
+            "This happens when both suites run in ONE pytest invocation "
+            "(`pytest tests/ tests_integration/`): tests/conftest.py is imported "
+            "first and plants the placeholder, so this conftest would stand down "
+            "and every integration module would skip — reporting success without "
+            "running anything.\n\n"
+            "Run them as separate invocations (`make test-all` now does), or "
+            "export a real DATABASE_URL to use your own database."
+        )
+
     if os.environ.get("DATABASE_URL"):
         return
 
