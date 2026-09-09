@@ -74,3 +74,31 @@ class EligibilitySummary(BaseModel):
     requires_authorization: bool | None = None
     carveout_administrator: CarveoutAdministrator | None = None
     aaa_errors: list[AaaError] = []
+
+
+class EligibilityOutcome(BaseModel):
+    """What a clearinghouse client returns: the answer, not the payer's document.
+
+    ``stored`` is that document, kept verbatim on the coverage row so a later
+    question has something to read that this summary did not anticipate.
+    """
+
+    status: EligibilityStatus
+    payer_name: str | None = None
+    plan_name: str | None = None
+    plan_begin: str | None = None
+    copay_cents: int | None = None
+    coinsurance_pct: float | None = None
+    deductible_remaining_cents: int | None = None
+    visit_limit: VisitLimit | None = None
+    requires_authorization: bool | None = None
+    carveout_administrator: CarveoutAdministrator | None = None
+    aaa_errors: list[AaaError] = []
+    stored: dict[str, object] = {}
+
+    def at(self, checked_at: datetime) -> EligibilitySummary:
+        """This outcome as the chart's summary, asked at ``checked_at``."""
+        return EligibilitySummary(
+            checked_at=checked_at,
+            **self.model_dump(exclude={"stored"}),
+        )
