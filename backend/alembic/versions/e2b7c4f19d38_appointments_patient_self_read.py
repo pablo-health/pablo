@@ -17,21 +17,16 @@ rows back — an empty calendar, not an error — while the same request on a
 tenant provisioned yesterday works fine. That is the worst shape of bug to
 find from the outside, because nothing anywhere reports a failure.
 
-``enable_rls_on_schema`` is idempotent and self-healing by construction
-(DROP POLICY IF EXISTS before each CREATE; not-row-scoped tables get RLS
-disabled each run), so this migration just invokes it and lets it true the
-schema up to the shape provisioning would build today. Same approach, and
-the same reasoning, as ``b6e1d8c4a7f2_heal_tenant_rls_policies``: the
-semantics wanted here are "match what provisioning builds now", not a
-frozen snapshot of one CREATE POLICY statement — and re-running
-provisioning's own function is the only version of that which cannot drift
-away from it.
+So this re-runs ``enable_rls_on_schema``, which is idempotent and
+self-healing, and lets it true each schema up to the shape provisioning
+would build today. ``b6e1d8c4a7f2_heal_tenant_rls_policies`` does the same
+thing for the same reasons, including why calling app code from a
+migration is the right call here.
 
-The per-tenant fan-out applies this to every practice schema. The
-deploy-time default path is a no-op: ``enable_rls_on_schema`` skips the
-``practice`` template schema by design, and provisioning re-applies RLS
-when a tenant is cloned from it. ``tenant_template.sql`` is therefore
-unchanged by this revision, which is expected rather than an omission.
+``tenant_template.sql`` is unchanged by this revision, which is expected
+rather than an omission: ``enable_rls_on_schema`` skips the ``practice``
+template schema by design, and provisioning re-applies RLS when a tenant
+is cloned from it.
 
 Revision ID: e2b7c4f19d38
 Revises: a1f6c30b9d47
@@ -77,10 +72,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Re-running the heal would restore the arm this revision added, since
-    # it reads the live registry rather than a snapshot. Dropping the
-    # policy by hand instead would leave the schema disagreeing with the
-    # code that provisions new ones, which is the drift this revision
-    # exists to remove. Reverting the registration is the real inverse,
-    # and that is a code change, not a DDL one.
+    # No DDL inverse: the real inverse is unregistering the table, which is
+    # a code change. Dropping the policy here would just leave the schema
+    # disagreeing with what provisioning builds.
     pass

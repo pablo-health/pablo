@@ -984,20 +984,11 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 PATIENT_READABLE_TABLES: dict[str, str] = {
     "patients": "id",
     "outcome_measures": "patient_id",
-    # A patient may see their own appointments. Read-only on purpose, and
-    # deliberately absent from PATIENT_WRITABLE_TABLES below: booking,
-    # rescheduling and cancelling are decisions a practice's own rules get
-    # a say in — notice periods, which session types are on offer, whether
-    # a request needs confirming — so they belong to a route that can
-    # consult those rules, not to a row policy that only knows who is
-    # asking. Granting write here would let a patient move their own
-    # appointment straight through the database and around every one of
-    # them.
-    #
-    # ``appointments`` is clinician-scoped on ``user_id`` as well. The two
-    # arms are permissive and therefore OR together, so this widens what a
-    # patient principal can see without narrowing the clinician's view by
-    # a single row.
+    # Read-only deliberately: booking and cancelling answer to the
+    # practice's own rules — notice periods, which types are bookable,
+    # whether a request needs confirming — so they belong to a route that
+    # can consult those rules, not to a row policy that only knows who is
+    # asking.
     "appointments": "patient_id",
 }
 

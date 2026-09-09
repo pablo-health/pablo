@@ -117,16 +117,11 @@ def test_user_id_table_still_gets_isolation_policy() -> None:
 def test_appointments_gets_both_the_clinician_and_patient_arms() -> None:
     """``appointments`` is owned by a clinician and readable by its patient.
 
-    The two arms are permissive, so they OR together: the clinician arm
-    is unchanged and the patient arm is additive. The read arm is
-    ``FOR SELECT`` alone — booking, rescheduling and cancelling belong to
-    a route that can consult the practice's rules, so no patient write
-    arm may appear here.
-
-    The column set must include ``patient_id``: the real table has it,
-    and ``_apply_patient_principal_policies`` refuses to build a policy
-    against a column that is missing rather than shipping one that
-    matches nothing.
+    Both arms, and no patient write arm. The column set includes
+    ``patient_id`` because the real table has it — and because
+    ``_apply_patient_principal_policies`` refuses to build a policy
+    against a missing column rather than shipping one that matches
+    nothing.
     """
     session = _run({"appointments": {"id", "user_id", "patient_id"}})
     ddl = " ".join(session.executed)

@@ -602,10 +602,9 @@ class TestPatientAppointmentIsolation:
     """A patient sees their own appointments, and only their own.
 
     ``appointments`` carries both ``user_id`` and ``patient_id``, so it
-    holds a clinician arm and a patient arm at once. Permissive policies
-    OR together, which is what makes that safe — but "safe" is a claim
-    about behaviour, so both directions are asserted: the patient arm
-    grants what it should, and it does not reach past the caller.
+    holds a clinician arm and a patient arm at once. Both directions are
+    asserted: the patient arm grants what it should, and it does not
+    reach past the caller.
     """
 
     def test_a_sees_their_own_appointment(
@@ -749,16 +748,15 @@ class TestPatientAppointmentIsolation:
 class TestPatientCannotWriteAppointments:
     """Read-only means read-only, asserted per command.
 
-    The three write commands fail in two different ways, and conflating
-    them would let a real regression pass. INSERT is refused outright:
-    the clinician arm's ``WITH CHECK`` cannot match a request that never
-    armed ``app.current_user_id``, and no patient INSERT arm exists.
-    UPDATE and DELETE are quieter — the patient arm is ``FOR SELECT``, so
-    it contributes no ``USING`` clause to either, the clinician arm's
-    ``USING`` fails, and the row is simply not visible to modify.
-    Postgres reports that as zero rows affected, not as an error. So each
-    of those is asserted twice: nothing was touched, and the row is still
-    what it was.
+    The three commands fail in two different ways, and conflating them
+    would let a regression pass. INSERT raises: no patient INSERT arm
+    exists and the clinician arm's ``WITH CHECK`` cannot match a request
+    that never armed ``app.current_user_id``. UPDATE and DELETE are
+    quieter — the patient arm is ``FOR SELECT`` and so contributes no
+    ``USING`` clause to either, leaving the row simply not visible to
+    modify, which Postgres reports as zero rows affected rather than an
+    error. Those two are therefore asserted twice: nothing was touched,
+    and the row is still what it was.
     """
 
     def test_a_patient_cannot_insert_an_appointment(
