@@ -124,10 +124,6 @@ class AssemblyAiSubmitRequest(BaseModel):
 
 def _validate_tenant_db(tenant_db: str) -> None:
     """Validate that tenant_db corresponds to an active tenant."""
-    settings = get_settings()
-    if not settings.multi_tenancy_enabled:
-        return
-
     with create_standalone_session() as db:
         practice = (
             db.execute(select(PracticeRow).where(PracticeRow.tenant_id == tenant_db))
@@ -144,10 +140,6 @@ def _validate_tenant_db(tenant_db: str) -> None:
 
 def _resolve_schema_for_user(user_id: str) -> str | None:
     """Resolve tenant schema from user_id via platform lookup."""
-    settings = get_settings()
-    if not settings.multi_tenancy_enabled:
-        return None
-
     with create_standalone_session() as tmp:
         user_row = tmp.get(PlatformUserRow, user_id)
         if user_row:

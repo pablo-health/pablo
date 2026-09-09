@@ -425,6 +425,56 @@ class TestGetCurrentUser:
         assert user.status == "approved"
 
     @patch("app.auth.service.verify_firebase_token")
+    def test_an_ungated_signup_is_mapped_to_a_practice(self, mock_verify: MagicMock) -> None:
+        """A deployment that does not gate signups still has to produce a
+        resolvable identity.
+
+        ``AllowlistRepository.add`` writes the grant and the mapping together, so
+        an allowlisted email always resolves. With ``restrict_signups`` off there
+        is no such call, and the auto-provision path used to create the platform
+        user and nothing else. While resolution could be skipped that was
+        invisible; now it means the user signs up successfully and then gets
+        NO_PRACTICE on every request (PABLO-2g6.1).
+        """
+        mock_verify.return_value = {
+            "uid": "ungated-user",
+            "email": "Ungated@Example.com",
+            "name": "Ungated User",
+            "firebase": {},
+        }
+
+        user_repo = InMemoryUserRepository()
+        allowlist_repo = InMemoryAllowlistRepository()
+        identity_repo = _identity_repo_for("ungated-user")
+        mapped: list[tuple[str, str]] = []
+
+        with (
+            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service._ensure_tenant_mapping") as mock_map,
+        ):
+            mock_settings.return_value.is_development = True
+            mock_settings.return_value.require_mfa = False
+            mock_settings.return_value.restrict_signups = False
+            mock_map.side_effect = lambda email: mapped.append(("mapped", email))
+
+            get_current_user(
+                _mock_request(),
+                mock_verify.return_value,
+                user_repo,
+                allowlist_repo,
+                identity_repo,
+            )
+
+        assert mapped, (
+            "an ungated signup created a user with no practice mapping — it would "
+            "get NO_PRACTICE on every request"
+        )
+        # Normalisation is the mapping's job, not the caller's; the helper lowers
+        # it. What matters here is that the address it was handed is the one that
+        # signed in.
+        assert mapped[0][1].lower() == "ungated@example.com"
+
+    @patch("app.auth.service.verify_firebase_token")
     def test_rejects_non_allowlisted_user(self, mock_verify: MagicMock) -> None:
         mock_verify.return_value = {
             "uid": "blocked-user",
@@ -443,7 +493,6 @@ class TestGetCurrentUser:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = True
 
             decoded = mock_verify.return_value
             with pytest.raises(HTTPException) as exc_info:
@@ -484,7 +533,6 @@ class TestGetCurrentUser:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = True
 
             decoded = mock_verify.return_value
             user = get_current_user(
@@ -494,45 +542,6 @@ class TestGetCurrentUser:
         assert user.email == "owner@newpractice.com"
         assert user.status == "approved"
         mock_tenant_lookup.assert_called_once_with("owner@newpractice.com")
-
-    @patch("app.auth.service.verify_firebase_token")
-    def test_skips_tenant_fallback_when_multi_tenancy_disabled(
-        self, mock_verify: MagicMock
-    ) -> None:
-        """Single-tenant deployments must not honor the mapping fallback.
-
-        EmailTenantMappingRow is not meaningful when multi-tenancy is off,
-        so the explicit allowlist remains the only gate.
-        """
-        mock_verify.return_value = {
-            "uid": "stranger",
-            "email": "stranger@example.com",
-            "firebase": {},
-        }
-
-        user_repo = InMemoryUserRepository()
-        allowlist_repo = InMemoryAllowlistRepository()
-        identity_repo = _identity_repo_for()
-
-        with (
-            patch("app.auth.service.get_settings") as mock_settings,
-            patch(
-                "app.auth.service._email_has_tenant_mapping", return_value=True
-            ) as mock_tenant_lookup,
-        ):
-            mock_settings.return_value.is_development = False
-            mock_settings.return_value.require_mfa = False
-            mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = False
-
-            decoded = mock_verify.return_value
-            with pytest.raises(HTTPException) as exc_info:
-                get_current_user(_mock_request(), decoded, user_repo, allowlist_repo, identity_repo)
-
-        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-        assert exc_info.value.detail["error"]["code"] == "SIGNUP_NOT_ALLOWED"  # type: ignore[index]
-        # Single-tenant deployments must not even consult the mapping table.
-        mock_tenant_lookup.assert_not_called()
 
     @patch("app.auth.service.verify_firebase_token")
     def test_allows_e2e_prefixed_user_without_allowlist(self, mock_verify: MagicMock) -> None:
@@ -559,7 +568,6 @@ class TestGetCurrentUser:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = True
             mock_settings.return_value.is_prod_project = False
 
             decoded = mock_verify.return_value
@@ -602,7 +610,6 @@ class TestGetCurrentUser:
                 mock_settings.return_value.is_development = False
                 mock_settings.return_value.require_mfa = False
                 mock_settings.return_value.restrict_signups = True
-                mock_settings.return_value.multi_tenancy_enabled = True
                 mock_settings.return_value.is_prod_project = False
 
                 with pytest.raises(HTTPException) as exc_info:
@@ -634,7 +641,6 @@ class TestGetCurrentUser:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = True
             mock_settings.return_value.is_prod_project = False
 
             user = get_current_user(
@@ -663,7 +669,6 @@ class TestGetCurrentUser:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = True
             mock_settings.return_value.is_prod_project = True
 
             with pytest.raises(HTTPException) as exc_info:
@@ -693,7 +698,6 @@ class TestGetCurrentUser:
             mock_settings.return_value.is_development = False
             mock_settings.return_value.require_mfa = False
             mock_settings.return_value.restrict_signups = True
-            mock_settings.return_value.multi_tenancy_enabled = True
             mock_settings.return_value.is_prod_project = True
 
             with pytest.raises(HTTPException) as exc_info:
@@ -841,28 +845,12 @@ class TestGetTenantContext:
     The context resolves via _resolve_practice_from_email (Postgres lookup).
     """
 
-    def test_single_tenant_mode_returns_default(self) -> None:
-        """When multi_tenancy_enabled=False, returns default context."""
-        decoded = {"uid": "user123", "email": "dr@example.com", "firebase": {}}
-
-        with patch("app.auth.service.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
-
-            ctx = get_tenant_context(
-                _mock_request(),
-                decoded,
-                InMemoryUserRepository(),
-                _identity_repo_for("user123"),
-            )
-
-        assert ctx == TenantContext(user_id="user123")
-
     def test_resolves_practice_from_email(self) -> None:
         """Email resolved to practice via Postgres lookup."""
         decoded = {"uid": "user123", "email": "dr@example.com", "firebase": {}}
 
         with (
-            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service.get_settings"),
             patch(
                 "app.auth.service._resolve_practice_from_email",
                 return_value=("practice-abc", "practice_abc"),
@@ -874,7 +862,7 @@ class TestGetTenantContext:
             # tests exercise the gate end-to-end.
             patch("app.auth.service._await_provisioning_ready"),
         ):
-            mock_settings.return_value.multi_tenancy_enabled = True
+            pass
 
             # Set request-scoped DB session (normally done by middleware)
             mock_session = MagicMock()
@@ -927,10 +915,10 @@ class TestGetTenantContext:
         user_repo.update(admin_user)
 
         with (
-            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service.get_settings"),
             patch("app.auth.service._resolve_practice_from_email", return_value=None),
         ):
-            mock_settings.return_value.multi_tenancy_enabled = True
+            pass
 
             ctx = get_tenant_context(
                 _mock_request(), decoded, user_repo, _identity_repo_for("admin-uid")
@@ -951,10 +939,10 @@ class TestGetTenantContext:
         user_repo.update(regular_user)
 
         with (
-            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service.get_settings"),
             patch("app.auth.service._resolve_practice_from_email", return_value=None),
         ):
-            mock_settings.return_value.multi_tenancy_enabled = True
+            pass
 
             with pytest.raises(HTTPException) as exc_info:
                 get_tenant_context(
@@ -969,10 +957,10 @@ class TestGetTenantContext:
         decoded = {"uid": "unknown", "email": "unknown@example.com", "firebase": {}}
 
         with (
-            patch("app.auth.service.get_settings") as mock_settings,
+            patch("app.auth.service.get_settings"),
             patch("app.auth.service._resolve_practice_from_email", return_value=None),
         ):
-            mock_settings.return_value.multi_tenancy_enabled = True
+            pass
 
             with pytest.raises(HTTPException) as exc_info:
                 get_tenant_context(
@@ -989,8 +977,8 @@ class TestGetTenantContext:
         """Token without uid is rejected."""
         decoded = {"email": "dr@example.com", "firebase": {}}
 
-        with patch("app.auth.service.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = True
+        with patch("app.auth.service.get_settings"):
+            pass
 
             with pytest.raises(HTTPException) as exc_info:
                 get_tenant_context(

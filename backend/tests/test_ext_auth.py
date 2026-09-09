@@ -357,23 +357,6 @@ def test_check_allowlist_e2etest_lookalike_does_not_bypass(
         assert result.allowed is False, f"{email!r} should not bypass"
 
 
-def test_check_allowlist_skips_mapping_fallback_when_multi_tenancy_off(
-    patch_settings: MagicMock,
-    patch_allowlist_repo: MagicMock,
-    patch_db_session: MagicMock,
-) -> None:
-    """In single-tenant deployments, EmailTenantMappingRow isn't meaningful;
-    don't bypass the explicit allowlist."""
-    patch_settings.return_value = _dev_settings(multi_tenancy_enabled=False)
-    repo = MagicMock()
-    repo.is_allowed.return_value = False
-    patch_allowlist_repo.return_value = repo
-
-    result = check_allowlist(CheckAllowlistRequest(email="stranger@example.com"), _make_request())
-    assert result.allowed is False
-    patch_db_session.assert_not_called()
-
-
 def test_check_allowlist_e2etest_prefix_rejected_in_prod(
     patch_settings: MagicMock,
     patch_allowlist_repo: MagicMock,

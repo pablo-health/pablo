@@ -87,7 +87,6 @@ pytestmark = pytest.mark.skipif(
 # to the ``practice`` template and the routes below would read an empty
 # ledger out of the wrong schema.
 os.environ.setdefault("ENVIRONMENT", "development")
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 
 _CLINICIAN_A = "3c5f2c0a-8e2d-5b9f-9e8d-8e4f7c3e3c03"
 _CLINICIAN_B = "4d6a3d1b-9f3e-5cab-af9e-9f5a8d4f4d04"

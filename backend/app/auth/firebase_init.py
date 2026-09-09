@@ -21,9 +21,9 @@ def initialize_firebase_app() -> firebase_admin.App:
       for non-GCP hosts (e.g. AWS) that have no Application Default Credentials
     - Otherwise: Application Default Credentials (ADC)
 
-    Note: Pablo's multi-tenancy is resolved from the user's email to a
-    practice schema (see ``multi_tenancy_enabled``), not from Identity
-    Platform tenants — this App is a plain single-pool token verifier.
+    Note: Pablo resolves a user's email to a practice schema via
+    ``platform.email_tenant_mappings``, not from Identity Platform tenants —
+    this App is a plain single-pool token verifier.
     """
     settings = get_settings()
     project_id = settings.effective_firebase_project_id

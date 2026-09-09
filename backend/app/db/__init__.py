@@ -382,15 +382,10 @@ def release_db_connection() -> None:
 def assert_tenant_schema_set() -> None:
     """Verify the session's search_path is NOT the default 'practice' schema.
 
-    Call this before any write operation when multi_tenancy_enabled=True.
-    Prevents accidental cross-tenant data leakage (HIPAA violation).
-    Raises RuntimeError if the schema hasn't been switched from the default.
+    Call this before any write operation. Prevents accidental cross-tenant data
+    leakage (HIPAA violation). Raises RuntimeError if the schema hasn't been
+    switched from the default.
     """
-    from ..settings import get_settings
-
-    if not get_settings().multi_tenancy_enabled:
-        return
-
     session = _request_session.get()
     if session is None:
         return
@@ -403,8 +398,8 @@ def assert_tenant_schema_set() -> None:
     )
     if is_default:
         msg = (
-            f"TENANT ISOLATION VIOLATION: search_path is '{search_path}' "
-            f"(default schema) but multi_tenancy_enabled=True. "
+            f"TENANT ISOLATION VIOLATION: search_path is '{search_path}', "
+            f"the provisioning template rather than a practice schema. "
             f"This would write data to the shared schema instead of the tenant's schema. "
             f"Ensure get_tenant_context() ran before this code path."
         )
@@ -985,13 +980,16 @@ def register_overlay_not_row_scoped(*table_names: str) -> None:
 #
 # IMPORTANT — where these policies do and do not apply. RLS is applied
 # per tenant schema, and ``enable_rls_on_schema`` deliberately returns
-# early for ``DEFAULT_PRACTICE_SCHEMA``. In a single-practice deployment
-# (``multi_tenancy_enabled=False``, the default) all data lives in that
-# schema and carries no row policies at all — clinician or patient. So
-# ``app.current_patient_id`` enforces nothing there, and patient
-# isolation rests entirely on each route's own predicates. Anyone writing
-# a patient route in that posture must not treat RLS as the backstop; it
-# is a backstop only where per-practice schemas exist.
+# early for ``DEFAULT_PRACTICE_SCHEMA`` — which is now only ever the
+# provisioning template. Every deployment runs a real ``practice_*``
+# schema (PABLO-2g6), so these policies are live everywhere and
+# ``app.current_patient_id`` is a genuine backstop rather than one that
+# happened to be absent on the default configuration.
+#
+# It is still only a backstop. RLS has no column granularity, so a
+# patient principal can read every column of a row it is allowed at all —
+# each route's response allow-list is what decides which of those columns
+# a patient actually sees.
 PATIENT_READABLE_TABLES: dict[str, str] = {
     "patients": "id",
     "outcome_measures": "patient_id",

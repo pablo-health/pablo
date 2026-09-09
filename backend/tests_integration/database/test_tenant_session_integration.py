@@ -14,11 +14,12 @@ Runs only when DATABASE_URL and DATABASE_BACKEND=postgres are set.
 The conftest.py in tests_integration/ provisions those via testcontainers
 when they are absent.
 
-IMPORTANT: ``MULTI_TENANCY_ENABLED`` is set to ``false`` for this entire
-module so the ``assert_tenant_schema_set`` guard (which checks the schema
-name against the default) does not block explicit-schema writes in the
-integration canary tables.  The guard logic is tested separately in the
-unit tests (test_tenant_session.py) using mocks.
+This module used to set ``MULTI_TENANCY_ENABLED=false`` so the
+``assert_tenant_schema_set`` guard would not block its explicit-schema writes
+to the canary tables. The flag is gone (PABLO-2g6.1) and the guard is now
+unconditional — and these tests pass anyway, which is the flag's whole epitaph:
+there was never any single-practice logic behind it. The guard's own logic is
+tested separately in test_tenant_session.py using mocks.
 """
 
 from __future__ import annotations
@@ -45,7 +46,6 @@ pytestmark = pytest.mark.skipif(
 # Disable the fail-closed guard so writes to the explicit canary schemas
 # are not blocked.  The guard behaviour is unit-tested with mocks in
 # tests/test_tenant_session.py.
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "false")
 
 _SUFFIX = uuid.uuid4().hex[:8]
 # Caller user_ids are native uuid columns; readable names below.

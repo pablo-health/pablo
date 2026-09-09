@@ -175,11 +175,10 @@ def check_allowlist(
     # let Firebase create the account. Without this, self-serve signup
     # cannot complete when restrict_signups is on, because provisioning
     # populates the tenant mapping but not platform.allowed_emails.
-    if settings.multi_tenancy_enabled:
-        session = get_db_session()
-        mapping = session.get(EmailTenantMappingRow, request.email.lower())
-        if mapping is not None:
-            return CheckAllowlistResponse(allowed=True)
+    session = get_db_session()
+    mapping = session.get(EmailTenantMappingRow, request.email.lower())
+    if mapping is not None:
+        return CheckAllowlistResponse(allowed=True)
 
     return CheckAllowlistResponse(allowed=False)
 

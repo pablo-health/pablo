@@ -56,7 +56,6 @@ class _Settings:
     def __init__(self, current: str = _SECRET, previous: str = "") -> None:
         self.stripe_patient_billing_webhook_secret = SecretStr(current)
         self.stripe_patient_billing_webhook_secret_previous = SecretStr(previous)
-        self.multi_tenancy_enabled = True
 
 
 class _FakeConn:
@@ -215,7 +214,8 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     session = _FakePlatformSession(practice=_FakePractice(), processed_ids=set())
     settings = _Settings()
     monkeypatch.setattr(payment_webhooks, "get_settings", lambda: settings)
-    monkeypatch.setattr(reconcile, "get_settings", lambda: settings)
+    # ``reconcile`` no longer calls ``get_settings`` — settings reach it as a
+    # parameter from the route. Patching a name it does not import would fail.
     monkeypatch.setattr(reconcile, "get_engine", lambda: _FakeEngine(conn))
     monkeypatch.setattr(reconcile, "create_standalone_session", lambda: session)
 
@@ -547,28 +547,6 @@ class TestReconciliation:
 
 
 class TestPracticeResolution:
-    def test_a_single_practice_deployment_falls_back_to_the_default_schema(
-        self, harness: dict[str, Any]
-    ) -> None:
-        """A deployment running one practice has no registry to key on and
-        stamps no practice id, so its events resolve to the default schema."""
-        harness["settings"].multi_tenancy_enabled = False
-        event = _event(
-            "payment_intent.succeeded",
-            {
-                "id": "pi_ours",
-                "metadata": {"pablo_charge_id": _CHARGE_ID, "pablo_user_id": _USER_ID},
-            },
-        )
-
-        response = _post(harness, event)
-
-        assert response.status_code == 200
-        seen = [sql for sql, _ in harness["conn"].statements]
-        assert any("search_path = practice," in sql for sql in seen)
-        # Nothing named a practice, so the dedupe row names none either.
-        assert harness["session"].added[0].practice_id is None
-
     def test_a_multi_practice_deployment_refuses_to_guess(self, harness: dict[str, Any]) -> None:
         """With several practices in one deployment, an event that names none
         cannot be placed. Acknowledge it rather than picking a schema."""

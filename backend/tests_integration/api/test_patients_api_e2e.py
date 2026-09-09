@@ -69,14 +69,12 @@ pytestmark = pytest.mark.skipif(
 # Same pattern other integration tests use — ENVIRONMENT must be set
 # before any ``app.*`` import.
 os.environ.setdefault("ENVIRONMENT", "development")
-# Enable multi-tenancy so DatabaseSessionMiddleware honors per-request
-# schema resolution. With ``multi_tenancy_enabled=False`` (the default)
-# the middleware short-circuits to ``DEFAULT_PRACTICE_SCHEMA`` and the
-# monkey-patched schema resolver is never called — every INSERT lands
-# in the ``practice`` template instead of the test tenant. Settings is
-# lru_cached on first read, so this must be set before ``app.main`` is
-# imported (which happens in the ``fastapi_app`` fixture below).
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
+# DatabaseSessionMiddleware honours per-request schema resolution
+# unconditionally. This used to need ``MULTI_TENANCY_ENABLED=true``, because
+# with the flag off the middleware short-circuited to
+# ``DEFAULT_PRACTICE_SCHEMA``, the monkey-patched resolver was never called,
+# and every INSERT landed in the ``practice`` template rather than the test
+# tenant. The flag is gone (PABLO-2g6.1) and resolution always runs.
 
 # The identity the resolver looks up in ``tenant_schema`` below and the one
 # ``e2e_client`` stashes on the request must name the same practice, or the
