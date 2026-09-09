@@ -2,7 +2,7 @@
 
 """The claims pipeline on a schedule: send, ask, and watch.
 
-Three stages, run in order for every active practice with a clearinghouse
+Four stages, run in order for every active practice with a clearinghouse
 configured, clinician by clinician in that clinician's own tenant session
 (see ``app.claims.fanout``):
 
@@ -10,6 +10,10 @@ configured, clinician by clinician in that clinician's own tenant session
   (``app.claims.submit_worker``);
 * ``status`` — read the feed for claims still waiting on an
   acknowledgement (``app.claims.status_worker``);
+* ``remit`` — read each waiting claim's timeline and post what the payer
+  decided (``app.claims.remittance``). After ``status`` on purpose: a claim
+  the payer accepted in this same run can then be paid in it too, rather
+  than waiting a whole interval to notice;
 * ``watchdog`` — stall what has timed out and raise the deadline ladder
   (``app.claims.watchdog``).
 
@@ -40,6 +44,7 @@ from collections import Counter
 from dataclasses import asdict
 from typing import TYPE_CHECKING
 
+from ..claims.credentials import get_clearinghouse_credential_provider
 from ..claims.fanout import (
     PracticeContext,
     TenantRun,
@@ -47,7 +52,10 @@ from ..claims.fanout import (
     for_each_clinician,
     load_submission_account,
 )
-from ..claims.status_worker import poll_acknowledgments
+from ..claims.receipts import owned_by_principal
+from ..claims.remittance import post_remittances
+from ..claims.sdk_timeline import SdkClaimTimelines
+from ..claims.status_worker import AWAITING_STATES, poll_acknowledgments
 from ..claims.submit_worker import submit_pending
 from ..claims.watchdog import run_watchdog
 from ..db import create_standalone_session
@@ -56,11 +64,12 @@ from ..settings import get_settings
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from ..claims.sdk_timeline import ClaimTimelineSource
     from ..claims.submit_worker import SubmissionAccount
 
 logger = logging.getLogger(__name__)
 
-STAGES: tuple[str, ...] = ("submit", "status", "watchdog")
+STAGES: tuple[str, ...] = ("submit", "status", "remit", "watchdog")
 DEFAULT_MAX_TENANTS = 500
 DEFAULT_MAX_PER_TENANT = 200
 
@@ -68,6 +77,18 @@ DEFAULT_MAX_PER_TENANT = 200
 def _account_for(practice: PracticeContext) -> SubmissionAccount | None:
     with create_standalone_session(practice.schema) as session:
         return load_submission_account(session, practice.practice_id)
+
+
+def _timelines_for(practice: PracticeContext) -> ClaimTimelineSource | None:
+    """Where this practice's claim timelines come from, if anywhere.
+
+    ``None`` on a deployment with no clearinghouse configured, which is the
+    ordinary case for one that does not bill insurance at all.
+    """
+    credentials = get_clearinghouse_credential_provider().get(practice.practice_id)
+    if credentials is None:
+        return None
+    return SdkClaimTimelines(credentials)
 
 
 def run_practice(
@@ -78,6 +99,7 @@ def run_practice(
     account = _account_for(practice) if "submit" in stages else None
     if "submit" in stages and account is None:
         logger.info("claims_pipeline_cannot_file schema=%s reason=billing_profile", practice.schema)
+    timelines = _timelines_for(practice) if "remit" in stages else None
 
     def work(run: TenantRun, _user_id: str) -> None:
         if account is not None:
@@ -99,6 +121,19 @@ def run_practice(
                 limit=max_per_tenant,
             )
             totals.update({f"status_{k}": v for k, v in asdict(polled).items()})
+        if timelines is not None:
+            # After the acknowledgement pass, so a claim the payer accepted
+            # in this same run can be paid in it too rather than waiting a
+            # whole interval to notice.
+            waiting = [
+                claim
+                for claim in run.pipeline.claims.list_by_state(
+                    AWAITING_STATES, limit=max_per_tenant
+                )
+                if owned_by_principal(run.pipeline, claim, practice.user_ids)
+            ]
+            totals["remit_read"] += len(waiting)
+            totals["remit_posted"] += post_remittances(run.pipeline, timelines, waiting)
         if "watchdog" in stages:
             watched = run_watchdog(
                 run.pipeline,
@@ -151,7 +186,7 @@ def _parse_argv(argv: list[str] | None) -> argparse.Namespace:
         "--stage",
         choices=(*STAGES, "all"),
         default="all",
-        help="Which stage to run (default: all three, in order).",
+        help="Which stage to run (default: all of them, in order).",
     )
     parser.add_argument(
         "--max-tenants",

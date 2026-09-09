@@ -153,7 +153,7 @@ class SdkClaimTimelines:
             return run_on_sdk_loop(read())
         except ClearinghouseError:
             raise
-        except Exception as exc:  # noqa: BLE001 — the vendor's, translated
+        except Exception as exc:
             raise translate_sdk_error(exc) from exc
 
 
