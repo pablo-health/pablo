@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from ..settings import get_settings
 from . import (
     DEFAULT_PRACTICE_SCHEMA,
     _current_patient_id,
@@ -47,10 +46,9 @@ def _verify_and_stash_clinician_identity(request: Request) -> None:
     * ``get_patient_context`` treats the presence of a stashed identity as
       "this credential belongs to a clinician" and refuses the request.
       That is the only structural thing keeping a clinician's token from
-      being offered to a patient resolver. Gating it on
-      ``multi_tenancy_enabled`` would silently disarm that guard on every
-      single-tenant install — which is the default, and the configuration
-      a self-hosted patient companion would run in.
+      being offered to a patient resolver, so it runs unconditionally,
+      before any schema resolution — a guard that only arms once something
+      else has succeeded is a guard with a hole in it.
 
     Errors are swallowed: this is a cache-priming step, and a bad token
     must be rejected by the auth dependencies with their specific error
@@ -188,13 +186,10 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         session = get_session_factory()()
         _request_session.set(session)
 
-        settings = get_settings()
-
-        # Verify the bearer token before any dependency runs, regardless of
-        # tenancy mode. Deliberately outside the multi-tenancy branch below:
-        # `get_patient_context` reads the stash to refuse clinician
-        # credentials on patient routes, and that guard has to work on
-        # single-tenant installs too. See the function's docstring.
+        # Verify the bearer token before any dependency runs, and before the
+        # schema is resolved: `get_patient_context` reads the stash to refuse
+        # clinician credentials on patient routes, and that guard must not
+        # depend on resolution having succeeded. See the function's docstring.
         _verify_and_stash_clinician_identity(request)
 
         # Resolve tenant schema from auth token before any dependencies run.
@@ -202,15 +197,14 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         # before get_tenant_context sets the schema.
         schema = DEFAULT_PRACTICE_SCHEMA
         unresolved_reason: str | None = None
-        if settings.multi_tenancy_enabled:
-            resolved, reason = _resolve_schema_from_request(request)
-            if resolved:
-                schema = resolved
-            elif reason != UNRESOLVED_UNAUTHENTICATED:
-                # Public routes have no identity and read no practice data, so
-                # that case is ordinary and stays quiet — logging it would bury
-                # the cases worth reading.
-                unresolved_reason = reason
+        resolved, reason = _resolve_schema_from_request(request)
+        if resolved:
+            schema = resolved
+        elif reason != UNRESOLVED_UNAUTHENTICATED:
+            # Public routes have no identity and read no practice data, so
+            # that case is ordinary and stays quiet — logging it would bury
+            # the cases worth reading.
+            unresolved_reason = reason
         set_tenant_schema(session, schema)
 
         try:
@@ -257,11 +251,13 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _assert_tenant_isolation(session: Session) -> None:
-        """Prevent commits to the default practice schema when multi-tenancy is on."""
-        settings = get_settings()
-        if not settings.multi_tenancy_enabled:
-            return
+        """Prevent commits to the provisioning template schema.
 
+        Every deployment runs a real ``practice_*`` schema, so a commit whose
+        search_path still leads with the template is a request that never
+        resolved a practice — writing there would put a tenant's data in the
+        shape every future tenant is cloned from.
+        """
         from sqlalchemy import text
 
         result = session.execute(text("SHOW search_path"))
@@ -271,8 +267,8 @@ class DatabaseSessionMiddleware(BaseHTTPMiddleware):
         first_schema = search_path.split(",")[0].strip().strip('"')
         if first_schema == DEFAULT_PRACTICE_SCHEMA:
             logger.error(
-                "TENANT ISOLATION VIOLATION blocked: attempted commit to default "
-                "'%s' schema with multi_tenancy_enabled=True. "
+                "TENANT ISOLATION VIOLATION blocked: attempted commit to the "
+                "provisioning template schema '%s'. "
                 "Dirty=%d New=%d Deleted=%d search_path='%s'",
                 DEFAULT_PRACTICE_SCHEMA,
                 len(session.dirty),

@@ -40,7 +40,6 @@ pytestmark = pytest.mark.skipif(
     ),
 )
 
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "false")
 
 _PATIENT_A = "0b1d0f4c-4a7a-4d3f-9a1e-7c2b5f8e4d10"
 _PATIENT_B = "9e7c2a18-3f5b-4c62-8d0a-1b6e9f3c7a24"

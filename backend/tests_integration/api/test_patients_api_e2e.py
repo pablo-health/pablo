@@ -76,7 +76,6 @@ os.environ.setdefault("ENVIRONMENT", "development")
 # in the ``practice`` template instead of the test tenant. Settings is
 # lru_cached on first read, so this must be set before ``app.main`` is
 # imported (which happens in the ``fastapi_app`` fixture below).
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 
 # The identity the resolver looks up in ``tenant_schema`` below and the one
 # ``e2e_client`` stashes on the request must name the same practice, or the

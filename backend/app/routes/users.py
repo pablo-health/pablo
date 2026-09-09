@@ -199,30 +199,28 @@ def get_user_status(
         "profile_basics_completed_at": user.profile_basics_completed_at,
     }
 
-    settings = get_settings()
+    from ..auth.service import _resolve_practice_from_email
 
-    if settings.multi_tenancy_enabled:
-        from ..auth.service import _resolve_practice_from_email
+    practice = _resolve_practice_from_email(user.email)
+    if practice:
+        result["practice_id"] = practice[0]
 
-        practice = _resolve_practice_from_email(user.email)
-        if practice:
-            result["practice_id"] = practice[0]
+        from ..db import get_db_session
+        from ..db.platform_models import PracticeRow
 
-            from ..db import get_db_session
-            from ..db.platform_models import PracticeRow
-
-            practice_row = get_db_session().get(PracticeRow, practice[0])
-            if practice_row is not None:
-                result["practice_name"] = practice_row.name
-                result["practice_phone"] = practice_row.phone
-                # Free text as the professional-info step captured it: one
-                # line, unparsed. A practice that never filled it in reads
-                # as null rather than "", so a caller can tell "not set"
-                # from "set to nothing".
-                address = (practice_row.address or "").strip()
-                result["practice_address"] = address or None
+        practice_row = get_db_session().get(PracticeRow, practice[0])
+        if practice_row is not None:
+            result["practice_name"] = practice_row.name
+            result["practice_phone"] = practice_row.phone
+            # Free text as the professional-info step captured it: one
+            # line, unparsed. A practice that never filled it in reads
+            # as null rather than "", so a caller can tell "not set"
+            # from "set to nothing".
+            address = (practice_row.address or "").strip()
+            result["practice_address"] = address or None
 
     # Include subscription/trial info when subscription enforcement is enabled.
+    settings = get_settings()
     if settings.is_saas:
         from .subscription import _get_subscription_info  # type: ignore[import-not-found]
 

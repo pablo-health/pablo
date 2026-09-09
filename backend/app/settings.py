@@ -348,17 +348,6 @@ class Settings(BaseSettings):
         description="Allow credentials in CORS requests",
     )
 
-    # Multi-Tenancy Settings
-    multi_tenancy_enabled: bool = Field(
-        default=False,
-        description=(
-            "Enable per-practice multi-tenancy. When enabled, requests are "
-            "routed to per-practice PostgreSQL schemas, resolved from the "
-            "authenticated user's email via the platform.email_tenant_mappings "
-            "table (not from a token claim)."
-        ),
-    )
-
     # Pentest runner (Google service-account OIDC auth)
     pentest_runner_sa_email: str = Field(
         default="",

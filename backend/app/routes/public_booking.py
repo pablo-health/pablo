@@ -209,10 +209,14 @@ def get_public_booking_context(
         # to scope; multi-tenancy and RLS only exist on the Postgres path.
         session = None
     if session is not None:
-        if get_settings().multi_tenancy_enabled:
-            if link.practice_schema is None:
-                raise NotFoundError(_LINK_NOT_FOUND)
-            set_tenant_schema(session, link.practice_schema)
+        # ``booking_links`` is platform-scoped — a public slug has to resolve
+        # before any tenant schema can be selected — so the link carries the
+        # schema it belongs to. A link without one resolves to no practice and
+        # 404s rather than falling back to the template, which is the only
+        # fail-closed answer for an unauthenticated caller.
+        if link.practice_schema is None:
+            raise NotFoundError(_LINK_NOT_FOUND)
+        set_tenant_schema(session, link.practice_schema)
         arm_current_user_id(session, link.user_id)
 
     owner = user_repo.get(link.user_id)

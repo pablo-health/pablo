@@ -443,10 +443,6 @@ def get_tenant_context(
     )
     user_id_var.set(str(pablo_user_id))
 
-    settings = get_settings()
-    if not settings.multi_tenancy_enabled:
-        return TenantContext(user_id=pablo_user_id)
-
     # Resolve practice from user's email
     email = _extract_email(decoded_token)
     if email:
@@ -720,9 +716,7 @@ def _resolve_user(
         is_prod_project = settings.is_prod_project
         is_pentest_user = not is_prod_project and bool(email and PENTEST_EMAIL_PATTERN.match(email))
         is_e2e_user = not is_prod_project and bool(email and E2E_EMAIL_PATTERN.match(email))
-        is_provisioned_tenant = bool(
-            email and settings.multi_tenancy_enabled and _email_has_tenant_mapping(email)
-        )
+        is_provisioned_tenant = bool(email and _email_has_tenant_mapping(email))
         if (
             settings.restrict_signups
             and not is_pentest_user

@@ -72,7 +72,6 @@ class TestUpdateProfile:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -88,7 +87,6 @@ class TestUpdateProfile:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -119,7 +117,6 @@ class TestUpdateProfile:
             ),
             patch("app.db.get_db_session", return_value=fake_session),
         ):
-            mock_settings.return_value.multi_tenancy_enabled = True
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -148,7 +145,6 @@ class TestUpdateProfile:
             ),
             patch("app.db.get_db_session", return_value=fake_session),
         ):
-            mock_settings.return_value.multi_tenancy_enabled = True
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -331,7 +327,6 @@ class TestTitleAndCredentials:
         )
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -352,7 +347,6 @@ class TestTitleAndCredentials:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -460,7 +454,6 @@ class TestTitleAndCredentials:
         )
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -511,7 +504,6 @@ class TestOnboardingState:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -528,7 +520,6 @@ class TestOnboardingState:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -546,7 +537,6 @@ class TestOnboardingState:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -562,7 +552,6 @@ class TestOnboardingState:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 
@@ -663,7 +652,6 @@ class TestSecurityGuideAcknowledgment:
         mock_user_repo.update(mock_user)
 
         with patch("app.settings.get_settings") as mock_settings:
-            mock_settings.return_value.multi_tenancy_enabled = False
             mock_settings.return_value.is_saas = False
             response = client.get("/api/users/me/status")
 

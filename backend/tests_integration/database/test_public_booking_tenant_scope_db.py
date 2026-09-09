@@ -105,24 +105,21 @@ def engine():
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _multi_tenancy_enabled():
-    """Force ``multi_tenancy_enabled`` on for this module's tests only.
+def _fresh_settings():
+    """Clear the settings cache around this module.
 
-    ``get_settings`` is a process-wide ``lru_cache``, and sibling integration
-    modules in this same directory (test_tenant_session_integration.py,
-    test_patient_guc_integration.py) rely on it reading *false*. Setting the
-    env var at import time would leak into whichever of those runs next in
-    the same pytest process, so this restores the prior value (and clears
-    the cache again) on the way out rather than just setting and forgetting.
+    This fixture used to force ``multi_tenancy_enabled`` on and restore the
+    previous value afterwards, because ``get_settings`` is a process-wide
+    ``lru_cache`` and sibling modules in this directory relied on it reading
+    *false*. The flag is gone (PABLO-2g6.1) — every deployment resolves a
+    practice — so there is no value to set or restore.
+
+    The cache clears remain: settings are still cached process-wide, and a
+    module that runs after one which mutated the environment should not inherit
+    a stale object.
     """
-    previous = os.environ.get("MULTI_TENANCY_ENABLED")
-    os.environ["MULTI_TENANCY_ENABLED"] = "true"
     get_settings.cache_clear()
     yield
-    if previous is None:
-        os.environ.pop("MULTI_TENANCY_ENABLED", None)
-    else:
-        os.environ["MULTI_TENANCY_ENABLED"] = previous
     get_settings.cache_clear()
 
 

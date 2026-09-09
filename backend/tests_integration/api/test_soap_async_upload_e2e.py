@@ -65,7 +65,6 @@ pytestmark = pytest.mark.skipif(
 os.environ.setdefault("ENVIRONMENT", "development")
 # Multi-tenancy on so the worker actually has to resolve + set a schema rather
 # than short-circuiting to DEFAULT_PRACTICE_SCHEMA — the whole point here.
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 
 _USER_A = "9d1c4b2a-7e63-4f10-9a2b-1c0d5e6f7a80"
 _USER_B = "2f8e6d5c-4b3a-4291-8c7d-6e5f4a3b2c10"

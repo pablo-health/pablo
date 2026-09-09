@@ -364,33 +364,29 @@ class TestHardSeparation:
         assert response.status_code == 401
         assert sloppy.calls == [], "a clinician credential reached a patient resolver"
 
-    @pytest.mark.parametrize("multi_tenancy", [True, False])
     def test_the_real_middleware_stashes_the_identity_the_guard_reads(
-        self, monkeypatch: pytest.MonkeyPatch, multi_tenancy: bool
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The guard above is only worth anything if the wiring feeds it.
 
         The previous test installs its own middleware to set
         ``verified_identity``, so it proves the guard works *given* that
         state — not that anything in production produces it. The real
-        producer is ``DatabaseSessionMiddleware``, and the verify-and-stash
-        step used to sit inside its ``if settings.multi_tenancy_enabled:``
-        branch. That flag defaults to False, so on a single-tenant install
-        — the default, and the shape a self-hosted companion would run —
-        nothing ever set the value and the guard was dead code while its
-        docstring claimed otherwise.
+        producer is ``DatabaseSessionMiddleware``.
 
-        Parametrized over both tenancy modes precisely because only one of
-        them was broken, and the broken one was the default.
+        The verify-and-stash step once sat inside a
+        ``if settings.multi_tenancy_enabled:`` branch whose flag defaulted to
+        False, so on the default configuration nothing ever set the value and
+        the guard was dead code while its docstring claimed otherwise. This test
+        was parametrized over both modes because only one of them was broken.
+        The flag is gone (PABLO-2g6.1) and the step is unconditional, so there
+        is one mode left — but the assertion is worth keeping exactly as it is,
+        because what it really pins is that the producer runs BEFORE schema
+        resolution rather than downstream of it.
         """
 
         identity = SimpleNamespace(provider="oidc", email="clinician@example.test", claims={})
 
-        monkeypatch.setattr(
-            middleware_module,
-            "get_settings",
-            lambda: SimpleNamespace(multi_tenancy_enabled=multi_tenancy),
-        )
         monkeypatch.setattr(middleware_module, "get_session_factory", lambda: MagicMock)
         monkeypatch.setattr(middleware_module, "set_tenant_schema", lambda *_: None)
         monkeypatch.setattr("app.auth.service.verify_token", lambda _token: identity)
@@ -412,8 +408,7 @@ class TestHardSeparation:
 
         assert getattr(request.state, "verified_identity", None) is not None, (
             "DatabaseSessionMiddleware did not stash an identity, so "
-            "get_patient_context's clinician guard is dead code "
-            f"(multi_tenancy_enabled={multi_tenancy})"
+            "get_patient_context's clinician guard is dead code"
         )
 
     def test_a_rejected_token_ends_the_clinician_chain_in_401_not_a_fallback(

@@ -298,7 +298,6 @@ class _StripeSettings:
     def __init__(self) -> None:
         self.stripe_patient_billing_webhook_secret = SecretStr(_STRIPE_SECRET)
         self.stripe_patient_billing_webhook_secret_previous = SecretStr("")
-        self.multi_tenancy_enabled = True
 
 
 @pytest.fixture(scope="module")
@@ -309,14 +308,14 @@ def payment_app(practices: Practices) -> Iterator[FastAPI]:
     practice lookup, the ledger update and the dedupe ledger are the shipped
     ones, running against the container's Postgres.
     """
-    from app.payments import reconcile  # noqa: PLC0415
     from app.routes import payment_webhooks  # noqa: PLC0415
 
     del practices
     with pytest.MonkeyPatch.context() as mp:
         settings = _StripeSettings()
         mp.setattr(payment_webhooks, "get_settings", lambda: settings)
-        mp.setattr(reconcile, "get_settings", lambda: settings)
+        # ``reconcile`` takes settings as a parameter from the route rather than
+        # importing ``get_settings``, so there is no name here to patch.
         app = FastAPI()
         app.include_router(payment_webhooks.router)
         yield app

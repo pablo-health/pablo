@@ -70,7 +70,6 @@ pytestmark = pytest.mark.skipif(
 os.environ.setdefault("ENVIRONMENT", "development")
 # Enable multi-tenancy so DatabaseSessionMiddleware honors per-request
 # schema resolution — same rationale as test_patients_api_e2e.py.
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "true")
 # The chat router is feature-flagged. Without this the entire ``/api/chat/*``
 # surface 404s and the routes under test never run.
 os.environ.setdefault("ENABLE_PATIENT_CHAT", "true")

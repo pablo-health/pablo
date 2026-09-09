@@ -25,14 +25,12 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from sqlalchemy import text
 
 from ..db import (
-    DEFAULT_PRACTICE_SCHEMA,
     PLATFORM_SCHEMA,
     _validate_schema_name,
     create_standalone_session,
     get_engine,
 )
 from ..db.platform_models import PracticeRow, ProcessedPaymentEventRow
-from ..settings import get_settings
 
 if TYPE_CHECKING:
     from ..settings import Settings
@@ -289,9 +287,10 @@ def resolve_practice_schema(practice_id: str | None) -> tuple[str | None, str] |
     rather than making the processor retry something no retry can fix.
     """
     if practice_id is None:
-        if get_settings().multi_tenancy_enabled:
-            return None
-        return None, DEFAULT_PRACTICE_SCHEMA
+        # No practice on the event, and nothing to fall back to: every
+        # deployment runs a real practice schema, so there is no "the one
+        # schema" to guess at. The caller acknowledges rather than retrying.
+        return None
 
     with create_standalone_session() as db:
         practice = db.get(PracticeRow, practice_id)

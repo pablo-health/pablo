@@ -45,7 +45,6 @@ pytestmark = pytest.mark.skipif(
 # Disable the fail-closed guard so writes to the explicit canary schemas
 # are not blocked.  The guard behaviour is unit-tested with mocks in
 # tests/test_tenant_session.py.
-os.environ.setdefault("MULTI_TENANCY_ENABLED", "false")
 
 _SUFFIX = uuid.uuid4().hex[:8]
 # Caller user_ids are native uuid columns; readable names below.
