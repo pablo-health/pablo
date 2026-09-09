@@ -72,9 +72,19 @@ def _seeded_practice(engine: Engine, email: str) -> Iterator[str]:
 
     with OrmSession(engine) as session:
         session.add(
-            PracticeRow(id=practice_id, name="Resolution Test", schema_name=schema, created_at=now)
+            PracticeRow(
+                id=practice_id,
+                name="Resolution Test",
+                schema_name=schema,
+                owner_email=email,
+                created_at=now,
+            )
         )
-        session.add(PlatformUserRow(id=str(uuid.uuid4()), email=email, created_at=now))
+        session.add(
+            PlatformUserRow(
+                id=str(uuid.uuid4()), email=email, name="Resolution Test", created_at=now
+            )
+        )
         session.add(
             EmailTenantMappingRow(
                 email=email, tenant_id=practice_id, practice_id=practice_id, created_at=now
