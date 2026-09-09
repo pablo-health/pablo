@@ -17,6 +17,7 @@ written falls through to nothing rather than raising.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from ..models.claims_timeline import (
@@ -31,6 +32,8 @@ from ..money import dollars_to_cents
 
 if TYPE_CHECKING:
     from stedi.models import GetClaimTimelineOutput
+
+logger = logging.getLogger(__name__)
 
 #: How the vendor's payment status codes read as money.
 #:
@@ -114,6 +117,38 @@ def _payment(summary: Any) -> TimelinePayment:
         trace_number=summary.check_or_eft_trace_number,
         processed_at=summary.processed_at,
     )
+
+
+async def fetch_timeline(client: Any, claim_id: str, *, max_pages: int = 20) -> ClaimTimeline:
+    """Every page of one claim's timeline, read through the vendor's SDK.
+
+    Paged eagerly rather than lazily: the caller is deciding what a payer did
+    to a claim, and an answer built from the first page only would be wrong
+    rather than incomplete — a reversal on page two subtracts from a payment
+    on page one.
+
+    ``max_pages`` is a stop, not a budget. A claim with more entries than
+    this has something wrong with it, and looping forever on a vendor that
+    keeps handing back a cursor is worse than reporting what we have.
+    """
+    from stedi.models import GetClaimTimelineInput  # noqa: PLC0415 — vendor import at call time
+
+    combined = ClaimTimeline()
+    page_token: str | None = None
+    for _ in range(max_pages):
+        output = await client.get_claim_timeline(
+            GetClaimTimelineInput(id=claim_id, page_token=page_token)
+        )
+        page = timeline_from_sdk(output)
+        combined.submissions.extend(page.submissions)
+        combined.acknowledgments.extend(page.acknowledgments)
+        combined.payments.extend(page.payments)
+        page_token = page.next_page_token
+        if not page_token:
+            return combined
+    logger.warning("claim_timeline_pages_exhausted claim_id=%s pages=%d", claim_id, max_pages)
+    combined.next_page_token = page_token
+    return combined
 
 
 def timeline_from_sdk(output: GetClaimTimelineOutput) -> ClaimTimeline:

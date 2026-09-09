@@ -10,10 +10,11 @@ carrying a zero, a reversal that has to subtract.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
-from app.claims.sdk_timeline import timeline_from_sdk
+from app.claims.sdk_timeline import fetch_timeline, timeline_from_sdk
 from stedi.models import (
     ClaimAcknowledgmentSummary,
     ClaimPaymentInformationSummary,
@@ -172,6 +173,51 @@ class TestTheOtherEntries:
         )
 
         assert timeline_from_sdk(_timeline(event)).acknowledgments[0].outcome == "unknown"
+
+
+class TestFetchingEveryPage:
+    """A one-page read would be wrong, not merely incomplete."""
+
+    class _PagingClient:
+        def __init__(self, pages: list[GetClaimTimelineOutput]) -> None:
+            self._pages = pages
+            self.seen_tokens: list[str | None] = []
+
+        async def get_claim_timeline(self, inp) -> GetClaimTimelineOutput:
+            self.seen_tokens.append(inp.page_token)
+            return self._pages[len(self.seen_tokens) - 1]
+
+    def test_a_reversal_on_a_later_page_still_subtracts(self) -> None:
+        client = self._PagingClient(
+            [
+                GetClaimTimelineOutput(
+                    items=[_payment_event(status="PROCESSED_AS_PRIMARY", paid="80.00")],
+                    next_page_token="page-2",  # noqa: S106 - a cursor, not a credential
+                ),
+                GetClaimTimelineOutput(
+                    items=[_payment_event(status="REVERSAL_OF_PREVIOUS_PAYMENT", paid="-80.00")]
+                ),
+            ]
+        )
+
+        timeline = asyncio.run(fetch_timeline(client, "clm_1"))
+
+        assert client.seen_tokens == [None, "page-2"]
+        assert len(timeline.payments) == 2
+        assert timeline.paid_cents == 0
+
+    def test_a_vendor_that_never_stops_paging_is_cut_off(self) -> None:
+        """Reporting what we have beats looping forever."""
+        endless = GetClaimTimelineOutput(
+            items=[],
+            next_page_token="always",  # noqa: S106 - a cursor, not a credential
+        )
+        client = self._PagingClient([endless] * 10)
+
+        timeline = asyncio.run(fetch_timeline(client, "clm_1", max_pages=3))
+
+        assert len(client.seen_tokens) == 3
+        assert timeline.next_page_token == "always"
 
 
 class TestPaging:
